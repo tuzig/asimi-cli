@@ -1,0 +1,84 @@
+[server]
+host = "localhost"
+port = 3000
+
+[database]
+host = "localhost"
+port = 5432
+user = "asimi"
+password = "asimi"
+name = "asimi_dev"
+
+[logging]
+level = "info"
+format = "text"
+
+[llm]
+provider = "openai"
+model = "gpt-3.5-turbo"
+api_key = ""
+base_url = ""
+api_key_helper = ""
+cleanup_period_days = 30
+include_coauthored_by = true
+force_login_method = ""
+enable_all_project_mcp_servers = false
+enabled_mcpjson_servers = []
+disabled_mcpjson_servers = []
+aws_auth_refresh = ""
+aws_credential_export = ""
+auto_updates = true
+preferred_notif_channel = "iterm2"
+theme = ""
+verbose = false
+anthropic_api_key = ""
+anthropic_auth_token = ""
+anthropic_custom_headers = ""
+anthropic_small_fast_model = ""
+anthropic_small_fast_model_aws_region = ""
+aws_bearer_token_bedrock = ""
+bash_default_timeout_ms = 0
+bash_max_timeout_ms = 0
+bash_max_output_length = 0
+bash_maintain_project_working_dir = false
+api_key_helper_ttl_ms = 0
+skip_auto_install = false
+max_output_tokens = 0
+use_bedrock = false
+use_vertex = false
+skip_bedrock_auth = false
+skip_vertex_auth = false
+disable_nonesential_traffic = false
+disable_terminal_title = false
+disable_auto_updater = false
+disable_bug_command = false
+disable_cost_warnings = false
+disable_error_reporting = false
+disable_non_essential_model_calls = false
+disable_telemetry = false
+http_proxy = ""
+https_proxy = ""
+max_thinking_tokens = 0
+mcp_timeout = 0
+mcp_tool_timeout = 0
+max_mcp_output_tokens = 25000
+use_builtin_ripgrep = false
+
+# Permission settings
+[permission]
+allow = []
+ask = []
+deny = []
+additional_directories = []
+default_mode = ""
+disable_bypass_permissions_mode = ""
+
+# Hooks settings
+[hooks]
+pre_tool = []
+post_tool = []
+
+# Status line settings
+[statusline]
+enabled = false
+template = ""
