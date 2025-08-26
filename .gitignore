@@ -1,0 +1,9 @@
+# Binaries
+asimi-cli
+
+# Test coverage
+coverage.txt
+
+# IDE files
+*.swp
+*.swo

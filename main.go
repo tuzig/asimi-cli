@@ -1,18 +1,24 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
+	"github.com/tmc/langchaingo/tools"
 )
 
 type runCmd struct{}
 
 type promptCmd struct {
 	Prompt string `arg:"" help:"Prompt to send to the LLM"`
+}
+
+type agentCmd struct {
+	Prompt string `arg:"" help:"Prompt to send to the agent"`
 }
 
 type versionCmd struct{}
@@ -25,6 +31,9 @@ var cli struct {
 	
 	// Add prompt command
 	Prompt promptCmd `cmd:"p" help:"Send a prompt to the configured LLM"`
+
+	// Add agent command
+	Agent agentCmd `cmd:"a" help:"Run the agent with the given prompt"`
 }
 
 func (v versionCmd) Run() error {
@@ -197,6 +206,56 @@ func (p promptCmd) Run() error {
 	}
 	
 	fmt.Println(response)
+	return nil
+}
+
+func (a agentCmd) Run() error {
+	// Load configuration
+	config, err := LoadConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Get the LLM client
+	llm, err := getLLMClient(config)
+	if err != nil {
+		return fmt.Errorf("failed to create LLM client: %w", err)
+	}
+
+	// Create tools for the agent
+	agentTools := []tools.Tool{
+		ReadFileTool{},
+		WriteFileTool{},
+		ListDirectoryTool{},
+		ReplaceTextTool{},
+	}
+
+	// Create the agent
+	agent := CreateAgent(llm, agentTools)
+
+	// Create the executor
+	executor := CreateExecutor(agent)
+
+	// Execute the agent with the given prompt
+	ctx := context.Background()
+	result, err := executor.Call(ctx, map[string]any{
+		"input": a.Prompt,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to execute agent: %w", err)
+	}
+
+	// Print the result
+	output, ok := result["output"]
+	if ok {
+		fmt.Println(output)
+	} else {
+		fmt.Println("Agent completed successfully")
+		for key, value := range result {
+			fmt.Printf("%s: %v\n", key, value)
+		}
+	}
+
 	return nil
 }
 
