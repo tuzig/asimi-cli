@@ -122,6 +122,7 @@ type EditorComponent struct {
 func NewEditorComponent(width, height int) EditorComponent {
 	ta := textarea.New()
 	ta.Placeholder = "Type your message here..."
+	ta.ShowLineNumbers = false
 	ta.Focus()
 
 	// Set the dimensions

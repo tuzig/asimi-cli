@@ -10,33 +10,24 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
+	"github.com/tmc/langchaingo/agents"
+	"github.com/tmc/langchaingo/callbacks"
+	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/schema"
 	"github.com/tmc/langchaingo/tools"
 )
 
 type runCmd struct{}
 
-type promptCmd struct {
-	Prompt string `arg:"" help:"Prompt to send to the LLM"`
-}
-
-type agentCmd struct {
-	Prompt string `arg:"" help:"Prompt to send to the agent"`
-}
-
 type versionCmd struct{}
 
 var cli struct {
 	Version versionCmd `cmd:"" help:"Print version information"`
+	Prompt  string     `short:"p" help:"Prompt to send to the agent"`
 
 	// Add a default command to run the Bubble Tea app
 	Run runCmd `cmd:"" default:"1" help:"Run the interactive application"`
-	
-	// Add prompt command
-	Prompt promptCmd `cmd:"p" help:"Send a prompt to the configured LLM"`
-
-	// Add agent command
-	Agent agentCmd `cmd:"a" help:"Run the agent with the given prompt"`
 }
 
 func (v versionCmd) Run() error {
@@ -44,20 +35,17 @@ func (v versionCmd) Run() error {
 	return nil
 }
 
-func (r runCmd) Run() error {
+func (r *runCmd) Run() error {
+	// This command will only be run when no prompt is provided.
+	// The logic in main() will handle the non-interactive case.
+
 	// Check if we are running in a terminal
-	// If not, print a message and exit
-	// This is to prevent the program from hanging when run in non-interactive environments
-	// like when running in a CI/CD pipeline or when the output is redirected
-	// to a file or another program.
-	// It's a good practice to check for this and provide a helpful message.
 	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsTerminal(os.Stdin.Fd()) {
 		fmt.Println("This program requires a terminal to run.")
 		fmt.Println("Please run it in a terminal emulator.")
 		return nil
 	}
 
-	// Load configuration
 	config, err := LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Using defaults due to config load failure: %v\n", err)
@@ -87,111 +75,110 @@ func (r runCmd) Run() error {
 		}
 	}
 
-	// Get the LLM client
-	llm, err := getLLMClient(config)
-	if err != nil {
-		return fmt.Errorf("failed to create LLM client: %w", err)
-	}
-
 	// Create the TUI model
-	tuiModel := NewTUIModel(config, &llm)
+	handler := &toolCallbackHandler{}
+	tuiModel := NewTUIModel(config, handler)
 
 	p := tea.NewProgram(tuiModel)
+	handler.p = p
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("alas, there's been an error: %w", err)
 	}
 	return nil
 }
 
-func (p promptCmd) Run() error {
-	// Load configuration
-	config, err := LoadConfig()
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-	
-	// Send the prompt to the LLM and print the response
-	response, err := sendPrompt(config, p.Prompt)
-	if err != nil {
-		return fmt.Errorf("failed to send prompt to LLM: %w", err)
-	}
-	
-	fmt.Println(response)
-	return nil
+type responseMsg string
+type errMsg struct{ err error }
+type toolStartMsg struct{ name string }
+type toolEndMsg struct{ result string }
+
+type toolCallbackHandler struct {
+	p *tea.Program
 }
 
-func (a agentCmd) Run() error {
-	// Load configuration
-	config, err := LoadConfig()
+func (h *toolCallbackHandler) HandleToolStart(ctx context.Context, input string) {
+	h.p.Send(toolStartMsg{name: "unknown"})
+}
+func (h *toolCallbackHandler) HandleToolEnd(ctx context.Context, output string) {
+	if h.p != nil {
+		h.p.Send(toolEndMsg{result: output})
+	}
+}
+func (h *toolCallbackHandler) HandleLLMStart(ctx context.Context, prompts []string) {}
+func (h *toolCallbackHandler) HandleLLMError(ctx context.Context, err error)         {}
+func (h *toolCallbackHandler) HandleChainError(ctx context.Context, err error)       {}
+func (h *toolCallbackHandler) HandleStreamingFunc(ctx context.Context, chunk []byte) {}
+func (h *toolCallbackHandler) HandleLLMGenerateContentEnd(ctx context.Context, res *llms.ContentResponse) {
+}
+func (h *toolCallbackHandler) HandleLLMGenerateContentStart(ctx context.Context, ms []llms.MessageContent) {
+}
+func (h *toolCallbackHandler) HandleText(ctx context.Context, text string)            {}
+func (h *toolCallbackHandler) HandleToolError(ctx context.Context, err error)         {}
+func (h *toolCallbackHandler) HandleRetrieverStart(ctx context.Context, query string) {}
+func (h *toolCallbackHandler) HandleRetrieverEnd(ctx context.Context, query string, documents []schema.Document) {
+}
+func (h *toolCallbackHandler) HandleChainEnd(ctx context.Context, outputs map[string]any)       {}
+func (h *toolCallbackHandler) HandleChainStart(ctx context.Context, inputs map[string]any)      {}
+func (h *toolCallbackHandler) HandleAgentAction(ctx context.Context, action schema.AgentAction) {}
+func (h *toolCallbackHandler) HandleAgentFinish(ctx context.Context, finish schema.AgentFinish) {}
+
+type toolWrapper struct {
+	t       tools.Tool
+	handler callbacks.Handler
+}
+
+func (tw *toolWrapper) Name() string {
+	return tw.t.Name()
+}
+
+func (tw *toolWrapper) Description() string {
+	return tw.t.Description()
+}
+
+func (tw *toolWrapper) Call(ctx context.Context, input string) (string, error) {
+	if tw.handler != nil {
+		tw.handler.HandleToolStart(ctx, input)
+	}
+
+	output, err := tw.t.Call(ctx, input)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	// Get the LLM client
-	llm, err := getLLMClient(config)
-	if err != nil {
-		return fmt.Errorf("failed to create LLM client: %w", err)
-	}
-
-	// Create tools for the agent
-	agentTools := []tools.Tool{
-		ReadFileTool{},
-		WriteFileTool{},
-		ListDirectoryTool{},
-		ReplaceTextTool{},
-	}
-
-	// Create the agent
-	agent := CreateAgent(llm, agentTools)
-
-	// Create the executor
-	executor := CreateExecutor(agent)
-
-	// Execute the agent with the given prompt
-	ctx := context.Background()
-	result, err := executor.Call(ctx, map[string]any{
-		"input": a.Prompt,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to execute agent: %w", err)
-	}
-
-	// Print the result
-	output, ok := result["output"]
-	if ok {
-		fmt.Println(output)
-	} else {
-		fmt.Println("Agent completed successfully")
-		for key, value := range result {
-			fmt.Printf("%s: %v\n", key, value)
+		if tw.handler != nil {
+			tw.handler.HandleToolError(ctx, err)
 		}
+		return "", err
 	}
 
-	return nil
+	if tw.handler != nil {
+		tw.handler.HandleToolEnd(ctx, output)
+	}
+
+	return output, nil
 }
+
+var _ tools.Tool = &toolWrapper{}
 
 // TUIModel represents the bubbletea model for the TUI
 type TUIModel struct {
 	config        *Config
-	llm           *llms.Model
+	agent         *agents.Executor
 	width, height int
-	
+
 	// UI Components
-	status         StatusComponent
-	editor         EditorComponent
-	messages       MessagesComponent
-	fileViewer     *FileViewer
-	completions    CompletionDialog
-	toastManager   ToastManager
-	modal          *BaseModal
-	
+	status       StatusComponent
+	editor       EditorComponent
+	messages     MessagesComponent
+	fileViewer   *FileViewer
+	completions  CompletionDialog
+	toastManager ToastManager
+	modal        *BaseModal
+
 	// UI Flags & State
 	showCompletionDialog bool
 	messagesRight        bool
-	
+
 	// Session state
 	sessionActive bool
-	
+
 	// Command registry
 	commandRegistry CommandRegistry
 }
@@ -205,7 +192,7 @@ func (m TUIModel) Init() tea.Cmd {
 // Update implements bubbletea.Model
 func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -262,15 +249,21 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						// Add user message to messages
 						m.messages.AddMessage(fmt.Sprintf("You: %s", content))
-						
+
 						// Mark session as active
 						m.sessionActive = true
-						
+
 						// Clear editor
 						m.editor.SetValue("")
-						
-						// Simulate AI response (in a real implementation, this would call the LLM)
-						m.messages.AddMessage("AI: I received your message!")
+
+						// Send the prompt to the agent
+						cmds = append(cmds, func() tea.Msg {
+							response, err := chains.Run(context.Background(), m.agent, content)
+							if err != nil {
+								return errMsg{err}
+							}
+							return responseMsg(response)
+						})
 					}
 				}
 			}
@@ -301,23 +294,35 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle messages layout
 			m.messagesRight = !m.messagesRight
 		}
-		
+
 	case tea.WindowSizeMsg:
 		// Handle window resize
 		m.width = msg.Width
 		m.height = msg.Height
-		
+
 		// Update component dimensions
 		m.updateComponentDimensions()
+
+	case responseMsg:
+		m.messages.AddMessage(fmt.Sprintf("AI: %s", string(msg)))
+
+	case toolStartMsg:
+		m.messages.AddMessage(fmt.Sprintf("Tool Used: %s", msg.name))
+
+	case toolEndMsg:
+		m.messages.AddMessage(fmt.Sprintf("Tool Result: %s", msg.result))
+
+	case errMsg:
+		m.messages.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 	}
-	
+
 	// Update components
 	m.editor, _ = m.editor.Update(msg)
 	m.messages, _ = m.messages.Update(msg)
 	if m.fileViewer != nil && m.fileViewer.Active {
 		m.fileViewer, _ = m.fileViewer.Update(msg)
 	}
-	
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -327,41 +332,41 @@ func (m *TUIModel) updateComponentDimensions() {
 	// - Status bar: 1 line at bottom
 	// - Editor: 5 lines at bottom
 	// - Messages/File viewer: remaining space
-	
+
 	statusHeight := 1
 	editorHeight := 5
 	messagesHeight := m.height - statusHeight - editorHeight
-	
+
 	// Update components
 	m.status.SetWidth(m.width)
-	
+
 	if m.messagesRight && m.fileViewer != nil && m.fileViewer.Active {
 		// Split screen layout
 		messagesWidth := m.width / 2
 		viewerWidth := m.width - messagesWidth
-		
+
 		m.messages.SetWidth(messagesWidth)
 		m.messages.SetHeight(messagesHeight)
-		
+
 		m.fileViewer.SetWidth(viewerWidth)
 		m.fileViewer.SetHeight(messagesHeight)
 	} else {
 		// Full width layout
 		m.messages.SetWidth(m.width)
 		m.messages.SetHeight(messagesHeight)
-		
+
 		if m.fileViewer != nil {
 			m.fileViewer.SetWidth(m.width)
 			m.fileViewer.SetHeight(messagesHeight)
 		}
 	}
-	
+
 	m.editor.SetWidth(m.width)
 	m.editor.SetHeight(editorHeight)
-	
+
 	// Update status info
 	m.status.SetAgent(fmt.Sprintf("%s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
-	m.status.SetWorkingDir(".") // In a real implementation, get current working directory
+	m.status.SetWorkingDir(".")   // In a real implementation, get current working directory
 	m.status.SetGitBranch("main") // In a real implementation, get current git branch
 }
 
@@ -371,7 +376,7 @@ func (m TUIModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "Initializing..."
 	}
-	
+
 	// Render the appropriate view based on session state
 	var mainContent string
 	if !m.sessionActive {
@@ -382,7 +387,7 @@ func (m TUIModel) View() string {
 		// In a real implementation, you would pass the actual messages
 		mainContent = RenderChatView(m.messages.Messages, m.width, m.height-6)
 	}
-	
+
 	// Build the full view
 	view := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -390,7 +395,7 @@ func (m TUIModel) View() string {
 		m.editor.View(),
 		m.status.View(),
 	)
-	
+
 	// Add completion dialog if visible
 	if m.showCompletionDialog {
 		// Position the completion dialog above the editor
@@ -400,34 +405,34 @@ func (m TUIModel) View() string {
 			view = lipgloss.JoinVertical(lipgloss.Left, view, dialog)
 		}
 	}
-	
+
 	// Add modal if active
 	if m.modal != nil {
 		modalView := m.modal.Render()
 		// In a real implementation, you would overlay the modal on top of the main view
 		view = lipgloss.JoinVertical(lipgloss.Left, view, modalView)
 	}
-	
+
 	// Add toast notifications
 	toastView := m.toastManager.View()
 	if toastView != "" {
 		// In a real implementation, you would position the toast appropriately
 		view = lipgloss.JoinVertical(lipgloss.Left, view, toastView)
 	}
-	
+
 	return view
 }
 
 // NewTUIModel creates a new TUI model
-func NewTUIModel(config *Config, llm *llms.Model) TUIModel {
+func NewTUIModel(config *Config, handler *toolCallbackHandler) TUIModel {
+
 	registry := NewCommandRegistry()
-	
+
 	model := TUIModel{
-		config:       config,
-		llm:          llm,
-		width:        80,  // Default width
-		height:       24,  // Default height
-		
+		config: config,
+		width:  80, // Default width
+		height: 24, // Default height
+
 		// Initialize components
 		status:       NewStatusComponent(80),
 		editor:       NewEditorComponent(80, 5),
@@ -436,31 +441,54 @@ func NewTUIModel(config *Config, llm *llms.Model) TUIModel {
 		completions:  NewCompletionDialog(),
 		toastManager: NewToastManager(),
 		modal:        nil,
-		
+
 		// UI Flags
 		showCompletionDialog: false,
 		messagesRight:        false,
-		
+
 		// Session state
 		sessionActive: false,
-		
+
 		// Command registry
 		commandRegistry: registry,
 	}
-	
+
 	// Set initial status info
 	model.status.SetAgent(fmt.Sprintf("%s (%s)", config.LLM.Provider, config.LLM.Model))
-	model.status.SetWorkingDir(".") // In a real implementation, get current working directory
+	model.status.SetWorkingDir(".")   // In a real implementation, get current working directory
 	model.status.SetGitBranch("main") // In a real implementation, get current git branch
-	
+
+	agent, err := getAgent(config, handler)
+	if err != nil {
+		// This is a critical error, so we'll panic
+		panic(err)
+	}
+	model.agent = agent
+
 	return model
 }
 
 func main() {
 	ctx := kong.Parse(&cli)
 
-	// Kong will automatically run the default command when no subcommand is specified
-	// so we don't need to manually check for it
+	if cli.Prompt != "" {
+		// Non-interactive mode
+		config, err := LoadConfig()
+		if err != nil {
+			fmt.Printf("Error loading configuration: %v\n", err)
+			os.Exit(1)
+		}
+
+		response, err := sendPromptToAgent(config, cli.Prompt)
+		if err != nil {
+			fmt.Printf("Error from agent: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(response)
+		os.Exit(0)
+	}
+
+	// Interactive mode
 	err := ctx.Run()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)

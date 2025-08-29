@@ -14,8 +14,8 @@ level = "info"
 format = "text"
 
 [llm]
-provider = "openai"
-model = "gpt-3.5-turbo"
+provider = "googleai"
+model = "gemini-1.5-flash"
 api_key = ""
 base_url = ""
 api_key_helper = ""

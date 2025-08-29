@@ -1,8 +1,11 @@
 # Binaries
 asimi-cli
+asimi
 
 # Test coverage
 coverage.txt
+coverage.out
+coverage.html
 
 # IDE files
 *.swp
