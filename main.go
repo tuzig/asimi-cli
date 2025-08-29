@@ -222,16 +222,27 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Get selected completion
 				selected := m.completions.GetSelected()
 				if selected != "" {
-					// Add to editor
-					current := m.editor.Value()
-					// Find the last space or start of line
-					lastSpace := strings.LastIndex(current, " ")
-					if lastSpace == -1 {
-						// Replace the whole content
-						m.editor.SetValue(selected + " ")
+					if strings.HasPrefix(selected, "@") {
+						// It's a file completion
+						filePath := strings.TrimPrefix(selected, "@")
+						content, err := os.ReadFile(filePath)
+						if err != nil {
+							m.messages.AddMessage(fmt.Sprintf("Error reading file: %v", err))
+						} else {
+							m.editor.SetValue(string(content))
+						}
 					} else {
-						// Replace from last space
-						m.editor.SetValue(current[:lastSpace+1] + selected + " ")
+						// Add to editor
+						current := m.editor.Value()
+						// Find the last space or start of line
+						lastSpace := strings.LastIndex(current, " ")
+						if lastSpace == -1 {
+							// Replace the whole content
+							m.editor.SetValue(selected + " ")
+						} else {
+							// Replace from last space
+							m.editor.SetValue(current[:lastSpace+1] + selected + " ")
+						}
 					}
 				}
 				m.showCompletionDialog = false
