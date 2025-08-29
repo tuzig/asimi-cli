@@ -62,8 +62,9 @@ func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 	for _, cmd := range model.commandRegistry.GetAllCommands() {
 		helpText += fmt.Sprintf("  %s - %s\n", cmd.Name, cmd.Description)
 	}
-	
+
 	model.messages.AddMessage(helpText)
+	model.sessionActive = true
 	return nil
 }
 

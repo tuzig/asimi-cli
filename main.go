@@ -232,16 +232,11 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.editor.SetValue(string(content))
 						}
 					} else {
-						// Add to editor
-						current := m.editor.Value()
-						// Find the last space or start of line
-						lastSpace := strings.LastIndex(current, " ")
-						if lastSpace == -1 {
-							// Replace the whole content
-							m.editor.SetValue(selected + " ")
-						} else {
-							// Replace from last space
-							m.editor.SetValue(current[:lastSpace+1] + selected + " ")
+						// It's a command completion
+						cmd, exists := m.commandRegistry.GetCommand(selected)
+						if exists {
+							// Execute command
+							cmd.Handler(&m, []string{})
 						}
 					}
 				}
