@@ -195,8 +195,15 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "q" {
+			if m.fileViewer != nil && m.fileViewer.Active {
+				m.fileViewer.Close()
+				return m, nil
+			}
+			return m, tea.Quit
+		}
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, tea.Quit
 		case "esc":
 			// Close any open dialogs or viewers

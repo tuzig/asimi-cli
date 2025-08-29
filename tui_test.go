@@ -471,7 +471,7 @@ func TestToastManager(t *testing.T) {
 
 	// Test adding a toast
 	message := "Test toast message"
-	tostType := "info"
+	toastType := "info"
 	timeout := 5 * time.Second
 
 	toastManager.AddToast(message, toastType, timeout)
