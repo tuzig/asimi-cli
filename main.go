@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -32,7 +33,7 @@ var cli struct {
 }
 
 func initLogger() {
-	logFile, err := os.OpenFile("./asimi/asimi.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile(".asimi/asimi.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		panic(err)
 	}
@@ -91,6 +92,10 @@ func (r *runCmd) Run() error {
 
 	p := tea.NewProgram(tuiModel)
 	handler.p = p
+	scheduler := NewCoreToolScheduler(p)
+	tuiModel.scheduler = scheduler
+	handler.scheduler = scheduler
+
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("alas, there's been an error: %w", err)
 	}
@@ -99,20 +104,17 @@ func (r *runCmd) Run() error {
 
 type responseMsg string
 type errMsg struct{ err error }
-type toolStartMsg struct{ name string }
-type toolEndMsg struct{ result string }
 
 type toolCallbackHandler struct {
-	p *tea.Program
+	p         *tea.Program
+	scheduler *CoreToolScheduler
 }
 
 func (h *toolCallbackHandler) HandleToolStart(ctx context.Context, input string) {
-	h.p.Send(toolStartMsg{name: "unknown"})
+	// Now handled by the CoreToolScheduler
 }
 func (h *toolCallbackHandler) HandleToolEnd(ctx context.Context, output string) {
-	if h.p != nil {
-		h.p.Send(toolEndMsg{result: output})
-	}
+	// Now handled by the CoreToolScheduler
 }
 func (h *toolCallbackHandler) HandleLLMStart(ctx context.Context, prompts []string)  {}
 func (h *toolCallbackHandler) HandleLLMError(ctx context.Context, err error)         {}
@@ -147,6 +149,14 @@ func (tw *toolWrapper) Description() string {
 
 func (tw *toolWrapper) Call(ctx context.Context, input string) (string, error) {
 	slog.Info("Tool call", "tool", tw.t.Name(), "input", input)
+
+	if h, ok := tw.handler.(*toolCallbackHandler); ok && h.scheduler != nil {
+		resultChan := h.scheduler.Schedule(tw.t, input)
+		result := <-resultChan
+		return result.Output, result.Error
+	}
+
+	// Fallback for non-TUI mode
 	if tw.handler != nil {
 		tw.handler.HandleToolStart(ctx, input)
 	}
@@ -194,6 +204,10 @@ type TUIModel struct {
 
 	// Command registry
 	commandRegistry CommandRegistry
+
+	// Scheduler
+	scheduler        *CoreToolScheduler
+	userMessageQueue []string
 }
 
 // Init implements bubbletea.Model
@@ -315,6 +329,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for name := range m.commandRegistry.Commands {
 				commandNames = append(commandNames, name)
 			}
+			sort.Strings(commandNames)
 			m.completions.SetOptions(commandNames)
 			m.completions.Show()
 		case "@":
@@ -347,11 +362,14 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case responseMsg:
 		m.messages.AddMessage(fmt.Sprintf("AI: %s", string(msg)))
 
-	case toolStartMsg:
-		m.messages.AddMessage(fmt.Sprintf("Tool Used: %s", msg.name))
-
-	case toolEndMsg:
-		m.messages.AddMessage(fmt.Sprintf("Tool Result: %s", msg.result))
+	case ToolCallScheduledMsg:
+		m.messages.AddMessage(fmt.Sprintf("Tool Scheduled: %s", msg.Call.Tool.Name()))
+	case ToolCallExecutingMsg:
+		m.messages.AddMessage(fmt.Sprintf("Tool Executing: %s", msg.Call.Tool.Name()))
+	case ToolCallSuccessMsg:
+		m.messages.AddMessage(fmt.Sprintf("Tool Succeeded: %s", msg.Call.Tool.Name()))
+	case ToolCallErrorMsg:
+		m.messages.AddMessage(fmt.Sprintf("Tool Errored: %s: %v", msg.Call.Tool.Name(), msg.Call.Error))
 
 	case errMsg:
 		m.messages.AddMessage(fmt.Sprintf("Error: %v", msg.err))
@@ -473,11 +491,11 @@ func (m TUIModel) View() string {
 }
 
 // NewTUIModel creates a new TUI model
-func NewTUIModel(config *Config, handler *toolCallbackHandler) TUIModel {
+func NewTUIModel(config *Config, handler *toolCallbackHandler) *TUIModel {
 
 	registry := NewCommandRegistry()
 
-	model := TUIModel{
+	model := &TUIModel{
 		config: config,
 		width:  80, // Default width
 		height: 24, // Default height
@@ -501,6 +519,9 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) TUIModel {
 
 		// Command registry
 		commandRegistry: registry,
+
+		// Scheduler
+		userMessageQueue: make([]string, 0),
 	}
 
 	// Set initial status info
