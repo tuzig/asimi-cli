@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -335,8 +336,16 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "@":
 			// Show completion dialog with files
 			m.showCompletionDialog = true
-			// TODO: Use real file names. For that we need to add a getFileTree() method to the App to scan the file system and collect all files. Files should be sorted alphabaticly
-			m.completions.SetOptions([]string{"@main.go", "@config.go", "@llm.go", "@agent.go", "@tui.go"})
+			files, err := getFileTree(".")
+			if err != nil {
+				m.messages.AddMessage(fmt.Sprintf("Error scanning files: %v", err))
+			} else {
+				options := make([]string, len(files))
+				for i, f := range files {
+					options[i] = "@" + f
+				}
+				m.completions.SetOptions(options)
+			}
 			m.completions.Show()
 		case "tab":
 			if m.showCompletionDialog {
@@ -566,4 +575,44 @@ func main() {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func getFileTree(root string) ([]string, error) {
+	var files []string
+	// Directories to ignore at any level
+	ignoreDirs := map[string]bool{
+		".git":    true,
+		"vendor":  true,
+		".asimi":  true,
+		"archive": true,
+	}
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			if ignoreDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// We only want files.
+		// Let's make sure the path is relative to the root.
+		relPath, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, relPath)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Strings(files)
+	return files, nil
 }

@@ -19,6 +19,18 @@ func TestFileCompletion(t *testing.T) {
 	// Create a new test model
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 200))
 
+	// Get file list to find main.go
+	files, err := getFileTree(".")
+	require.NoError(t, err)
+	mainGoIndex := -1
+	for i, f := range files {
+		if f == "main.go" {
+			mainGoIndex = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, mainGoIndex, "main.go not found in file tree")
+
 	// Simulate typing "@"
 	tm.Type("@")
 
@@ -27,7 +39,12 @@ func TestFileCompletion(t *testing.T) {
 		return strings.Contains(string(bts), "@main.go")
 	}, teatest.WithCheckInterval(time.Millisecond*100), teatest.WithDuration(time.Second*3))
 
-	// Simulate pressing enter to select the first file
+	// Simulate pressing tab to select "@main.go"
+	for i := 0; i < mainGoIndex; i++ {
+		tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	}
+
+	// Simulate pressing enter to select the file
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Wait for a bit to let the file be read
@@ -45,7 +62,8 @@ func TestFileCompletion(t *testing.T) {
 	require.Contains(t, tuiModel.filesContentToSend["main.go"], "package main")
 
 	// Assert that the prompt was not sent and the editor is still focused
-	require.Len(t, tuiModel.messages.Messages, 2, "A message about the loaded file should be present")
+	require.NotEmpty(t, tuiModel.messages.Messages)
+	require.Contains(t, tuiModel.messages.Messages[len(tuiModel.messages.Messages)-1], "Loaded file: main.go")
 	require.True(t, tuiModel.editor.TextArea.Focused(), "The editor should remain focused")
 }
 
