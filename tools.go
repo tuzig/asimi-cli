@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -28,7 +27,6 @@ func (t ReadFileTool) Description() string {
 }
 
 func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
-	log.Printf("ReadFileTool called with input: %s", input)
 	var params ReadFileInput
 	err := json.Unmarshal([]byte(input), &params)
 	if err != nil {
@@ -41,10 +39,8 @@ func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
 
 	content, err := os.ReadFile(params.Path)
 	if err != nil {
-		log.Printf("ReadFileTool error: %v", err)
 		return "", err
 	}
-	log.Printf("ReadFileTool success")
 	return string(content), nil
 }
 
@@ -66,11 +62,9 @@ func (t WriteFileTool) Description() string {
 }
 
 func (t WriteFileTool) Call(ctx context.Context, input string) (string, error) {
-	log.Printf("WriteFileTool called with input: %s", input)
 	var params WriteFileInput
 	err := json.Unmarshal([]byte(input), &params)
 	if err != nil {
-		log.Printf("WriteFileTool error during unmarshal: %v", err)
 		return "", fmt.Errorf("invalid input: %w. The input should be a JSON object with 'path' and 'content' fields", err)
 	}
 
@@ -80,10 +74,8 @@ func (t WriteFileTool) Call(ctx context.Context, input string) (string, error) {
 
 	err = os.WriteFile(params.Path, []byte(params.Content), 0644)
 	if err != nil {
-		log.Printf("WriteFileTool error during file write: %v", err)
 		return "", err
 	}
-	log.Printf("WriteFileTool success")
 	return fmt.Sprintf("Successfully wrote to %s", params.Path), nil
 }
 
@@ -104,7 +96,6 @@ func (t ListDirectoryTool) Description() string {
 }
 
 func (t ListDirectoryTool) Call(ctx context.Context, input string) (string, error) {
-	log.Printf("ListDirectoryTool called with input: %s", input)
 	var params ListDirectoryInput
 	err := json.Unmarshal([]byte(input), &params)
 	if err != nil {
@@ -122,7 +113,6 @@ func (t ListDirectoryTool) Call(ctx context.Context, input string) (string, erro
 
 	files, err := os.ReadDir(params.Path)
 	if err != nil {
-		log.Printf("ListDirectoryTool error: %v", err)
 		return "", err
 	}
 
@@ -130,7 +120,6 @@ func (t ListDirectoryTool) Call(ctx context.Context, input string) (string, erro
 	for _, file := range files {
 		fileNames = append(fileNames, file.Name())
 	}
-	log.Printf("ListDirectoryTool success")
 	return strings.Join(fileNames, "\n"), nil
 }
 
@@ -153,17 +142,14 @@ func (t ReplaceTextTool) Description() string {
 }
 
 func (t ReplaceTextTool) Call(ctx context.Context, input string) (string, error) {
-	log.Printf("ReplaceTextTool called with input: %s", input)
 	var params ReplaceTextInput
 	err := json.Unmarshal([]byte(input), &params)
 	if err != nil {
-		log.Printf("ReplaceTextTool error during unmarshal: %v", err)
 		return "", fmt.Errorf("invalid input: %w. The input should be a JSON object with 'path', 'old_text', and 'new_text' fields", err)
 	}
 
 	content, err := os.ReadFile(params.Path)
 	if err != nil {
-		log.Printf("ReplaceTextTool error during file read: %v", err)
 		return "", err
 	}
 
@@ -171,10 +157,8 @@ func (t ReplaceTextTool) Call(ctx context.Context, input string) (string, error)
 
 	err = os.WriteFile(params.Path, []byte(newContent), 0644)
 	if err != nil {
-		log.Printf("ReplaceTextTool error during file write: %v", err)
 		return "", err
 	}
-	log.Printf("ReplaceTextTool success")
 	return "Successfully replaced text", nil
 }
 

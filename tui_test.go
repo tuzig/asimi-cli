@@ -66,19 +66,10 @@ func TestTUIModelKeyMsgQuit(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil)
 
 	// Send a quit key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 
-	// Should return quit command
-	require.NotNil(t, cmd)
-
-	// Execute the command to verify it's a quit command
-	result := cmd()
-	_, ok := result.(tea.QuitMsg)
-	require.True(t, ok)
-
-	// Model should be unchanged
-	_, ok = newModel.(TUIModel)
-	require.True(t, ok)
+	// Should not return a quit command
+	require.Nil(t, cmd)
 }
 
 // TestTUIModelKeyMsgCtrlC tests quitting the application with Ctrl+C
@@ -192,7 +183,7 @@ func TestTUIModelKeyMsgEsc(t *testing.T) {
 
 	// Activate file viewer
 	if model.fileViewer != nil {
-		model.fileViewer.Active = true
+		model.fileViewer.LoadFile("test.txt", "test content")
 	}
 
 	// Send escape key message
@@ -212,7 +203,7 @@ func TestTUIModelKeyMsgEsc(t *testing.T) {
 
 	// File viewer should be closed
 	if updatedModel.fileViewer != nil {
-		require.False(t, updatedModel.fileViewer.Active)
+		require.Empty(t, updatedModel.fileViewer.FilePath)
 	}
 
 	// Should still be a TUIModel
@@ -424,7 +415,6 @@ func TestFileViewer(t *testing.T) {
 	viewer := NewFileViewer(50, 10)
 
 	// Initially should not be active
-	require.False(t, viewer.Active)
 	require.Empty(t, viewer.FilePath)
 	require.Empty(t, viewer.Content)
 
@@ -433,7 +423,6 @@ func TestFileViewer(t *testing.T) {
 	testContent := "This is test content"
 	viewer.LoadFile(testPath, testContent)
 
-	require.True(t, viewer.Active)
 	require.Equal(t, testPath, viewer.FilePath)
 	require.Equal(t, testContent, viewer.Content)
 
@@ -446,7 +435,6 @@ func TestFileViewer(t *testing.T) {
 
 	// Test closing
 	viewer.Close()
-	require.False(t, viewer.Active)
 	require.Empty(t, viewer.FilePath)
 	require.Empty(t, viewer.Content)
 }
