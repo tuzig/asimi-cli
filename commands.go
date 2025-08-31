@@ -21,12 +21,12 @@ func NewCommandRegistry() CommandRegistry {
 	registry := CommandRegistry{
 		Commands: make(map[string]Command),
 	}
-	
+
 	// Register built-in commands
 	registry.RegisterCommand("/help", "Show help information", handleHelpCommand)
 	registry.RegisterCommand("/new", "Start a new session", handleNewSessionCommand)
 	registry.RegisterCommand("/quit", "Quit the application", handleQuitCommand)
-	
+
 	return registry
 }
 

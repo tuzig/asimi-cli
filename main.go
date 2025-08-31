@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -28,6 +29,15 @@ var cli struct {
 
 	// Add a default command to run the Bubble Tea app
 	Run runCmd `cmd:"" default:"1" help:"Run the interactive application"`
+}
+
+func initLogger() {
+	logFile, err := os.OpenFile("./asimi/asimi.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		panic(err)
+	}
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(logFile, nil)))
 }
 
 func (v versionCmd) Run() error {
@@ -136,12 +146,14 @@ func (tw *toolWrapper) Description() string {
 }
 
 func (tw *toolWrapper) Call(ctx context.Context, input string) (string, error) {
+	slog.Info("Tool call", "tool", tw.t.Name(), "input", input)
 	if tw.handler != nil {
 		tw.handler.HandleToolStart(ctx, input)
 	}
 
 	output, err := tw.t.Call(ctx, input)
 	if err != nil {
+		slog.Error("Tool retured an error", "error", err)
 		if tw.handler != nil {
 			tw.handler.HandleToolError(ctx, err)
 		}
@@ -164,21 +176,21 @@ type TUIModel struct {
 	width, height int
 
 	// UI Components
-	status            StatusComponent
-	editor            EditorComponent
-	messages          MessagesComponent
-	fileContentViewer *FileViewer
-	fileViewer        *FileViewer
-	completions       CompletionDialog
-	toastManager      ToastManager
-	modal             *BaseModal
+	status       StatusComponent
+	editor       EditorComponent
+	messages     MessagesComponent
+	fileViewer   *FileViewer
+	completions  CompletionDialog
+	toastManager ToastManager
+	modal        *BaseModal
 
 	// UI Flags & State
 	showCompletionDialog bool
 	messagesRight        bool
 
 	// Session state
-	sessionActive bool
+	sessionActive      bool
+	filesContentToSend map[string]string
 
 	// Command registry
 	commandRegistry CommandRegistry
@@ -209,7 +221,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if err != nil {
 							m.messages.AddMessage(fmt.Sprintf("Error reading file: %v", err))
 						} else {
-							m.fileContentViewer.LoadFile(filePath, string(content))
+							m.filesContentToSend[filePath] = string(content)
+							m.messages.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
 						}
 					} else {
 						// It's a command completion
@@ -233,14 +246,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "q":
-			if m.fileViewer != nil && m.fileViewer.Active {
-				m.fileViewer.Close()
-				return m, nil
-			}
-			return m, tea.Quit
 		case "ctrl+c":
 			return m, tea.Quit
+		case "q":
 		case "esc":
 			// Close any open dialogs or viewers
 			if m.modal != nil {
@@ -284,9 +292,13 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Send the prompt to the agent
 					cmds = append(cmds, func() tea.Msg {
 						fullPrompt := content
-						if m.fileContentViewer != nil && m.fileContentViewer.Active {
-							fullPrompt = m.fileContentViewer.Content + "\n" + content
-							m.fileContentViewer.Close()
+						if len(m.filesContentToSend) > 0 {
+							var fileContents []string
+							for path, content := range m.filesContentToSend {
+								fileContents = append(fileContents, fmt.Sprintf("---\n%s---\n%s", path, content))
+							}
+							fullPrompt = strings.Join(fileContents, "\n\n") + "\n" + content
+							m.filesContentToSend = make(map[string]string)
 						}
 						response, err := chains.Run(context.Background(), m.agent, fullPrompt)
 						if err != nil {
@@ -308,7 +320,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "@":
 			// Show completion dialog with files
 			m.showCompletionDialog = true
-			// In a real implementation, you would get actual file names
+			// TODO: Use real file names. For that we need to add a getFileTree() method to the App to scan the file system and collect all files. Files should be sorted alphabaticly
 			m.completions.SetOptions([]string{"@main.go", "@config.go", "@llm.go", "@agent.go", "@tui.go"})
 			m.completions.Show()
 		case "tab":
@@ -359,9 +371,6 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.fileViewer != nil && m.fileViewer.Active {
 		m.fileViewer, _ = m.fileViewer.Update(msg)
 	}
-	if m.fileContentViewer != nil && m.fileContentViewer.Active {
-		m.fileContentViewer, _ = m.fileContentViewer.Update(msg)
-	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -380,7 +389,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	// Update components
 	m.status.SetWidth(m.width)
 
-	if (m.messagesRight && m.fileViewer != nil && m.fileViewer.Active) || (m.fileContentViewer != nil && m.fileContentViewer.Active) {
+	if m.messagesRight && m.fileViewer != nil && m.fileViewer.Active {
 		// Split screen layout
 		messagesWidth := m.width / 2
 		viewerWidth := m.width - messagesWidth
@@ -419,9 +428,7 @@ func (m TUIModel) View() string {
 
 	// Render the appropriate view based on session state
 	var mainContent string
-	if m.fileContentViewer != nil && m.fileContentViewer.Active {
-		mainContent = m.fileContentViewer.View()
-	} else if !m.sessionActive {
+	if !m.sessionActive {
 		// Home view
 		mainContent = RenderHomeView(m.width, m.height-6) // Account for editor and status
 	} else {
@@ -476,21 +483,21 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) TUIModel {
 		height: 24, // Default height
 
 		// Initialize components
-		status:            NewStatusComponent(80),
-		editor:            NewEditorComponent(80, 5),
-		messages:          NewMessagesComponent(80, 18),
-		fileContentViewer: NewFileViewer(80, 18),
-		fileViewer:        NewFileViewer(80, 18),
-		completions:       NewCompletionDialog(),
-		toastManager:      NewToastManager(),
-		modal:             nil,
+		status:       NewStatusComponent(80),
+		editor:       NewEditorComponent(80, 5),
+		messages:     NewMessagesComponent(80, 18),
+		fileViewer:   NewFileViewer(80, 18),
+		completions:  NewCompletionDialog(),
+		toastManager: NewToastManager(),
+		modal:        nil,
 
 		// UI Flags
 		showCompletionDialog: false,
 		messagesRight:        false,
 
 		// Session state
-		sessionActive: false,
+		sessionActive:      false,
+		filesContentToSend: make(map[string]string),
 
 		// Command registry
 		commandRegistry: registry,
@@ -512,6 +519,7 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) TUIModel {
 }
 
 func main() {
+	initLogger()
 	ctx := kong.Parse(&cli)
 
 	if cli.Prompt != "" {

@@ -6,7 +6,6 @@ asimi
 coverage.txt
 coverage.out
 coverage.html
-
-# IDE files
 *.swp
 *.swo
+*.log
