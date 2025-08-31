@@ -43,6 +43,10 @@ func TestFileCompletion(t *testing.T) {
 
 	// Assert that the file viewer contains the file content
 	require.Contains(t, tuiModel.fileContentViewer.Content, "package main")
+
+	// Assert that the prompt was not sent and the editor is still focused
+	require.Len(t, tuiModel.messages.Messages, 1, "A prompt should not have been sent to the LLM")
+	require.True(t, tuiModel.editor.TextArea.Focused(), "The editor should remain focused")
 }
 
 func TestSlashCommandCompletion(t *testing.T) {

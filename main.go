@@ -196,6 +196,43 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.showCompletionDialog {
+			switch msg.String() {
+			case "enter":
+				// Get selected completion
+				selected := m.completions.GetSelected()
+				if selected != "" {
+					if strings.HasPrefix(selected, "@") {
+						// It's a file completion
+						filePath := strings.TrimPrefix(selected, "@")
+						content, err := os.ReadFile(filePath)
+						if err != nil {
+							m.messages.AddMessage(fmt.Sprintf("Error reading file: %v", err))
+						} else {
+							m.fileContentViewer.LoadFile(filePath, string(content))
+							m.editor.SetValue("")
+						}
+					} else {
+						// It's a command completion
+						cmd, exists := m.commandRegistry.GetCommand(selected)
+						if exists {
+							// Execute command
+							cmds = append(cmds, cmd.Handler(&m, []string{}))
+						}
+					}
+				}
+				m.showCompletionDialog = false
+				m.completions.Hide()
+				return m, tea.Batch(cmds...)
+			case "tab":
+				m.completions.SelectNext()
+				return m, nil
+			case "shift+tab":
+				m.completions.SelectPrev()
+				return m, nil
+			}
+		}
+
 		if msg.String() == "q" {
 			if m.fileViewer != nil && m.fileViewer.Active {
 				m.fileViewer.Close()
@@ -218,73 +255,46 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showCompletionDialog = false
 			}
 		case "enter":
-			// Submit the editor content or select completion
-			if m.showCompletionDialog {
-				// Get selected completion
-				selected := m.completions.GetSelected()
-				if selected != "" {
-					if strings.HasPrefix(selected, "@") {
-						// It's a file completion
-						filePath := strings.TrimPrefix(selected, "@")
-						content, err := os.ReadFile(filePath)
-						if err != nil {
-							m.messages.AddMessage(fmt.Sprintf("Error reading file: %v", err))
-						} else {
-							m.fileContentViewer.LoadFile(filePath, string(content))
-							m.editor.SetValue("")
-						}
-					} else {
-						// It's a command completion
-						cmd, exists := m.commandRegistry.GetCommand(selected)
+			// Submit the editor content
+			content := m.editor.Value()
+			if content != "" {
+				// Check if it's a command
+				if content[0] == '/' {
+					// Handle command
+					parts := strings.Fields(content)
+					if len(parts) > 0 {
+						cmdName := parts[0]
+						cmd, exists := m.commandRegistry.GetCommand(cmdName)
 						if exists {
 							// Execute command
-							cmd.Handler(&m, []string{})
+							cmd.Handler(&m, parts[1:])
+						} else {
+							m.messages.AddMessage(fmt.Sprintf("Unknown command: %s", cmdName))
 						}
 					}
-				}
-				m.showCompletionDialog = false
-				m.completions.Hide()
-			} else {
-				content := m.editor.Value()
-				if content != "" {
-					// Check if it's a command
-					if content[0] == '/' {
-						// Handle command
-						parts := strings.Fields(content)
-						if len(parts) > 0 {
-							cmdName := parts[0]
-							cmd, exists := m.commandRegistry.GetCommand(cmdName)
-							if exists {
-								// Execute command
-								cmd.Handler(&m, parts[1:])
-							} else {
-								m.messages.AddMessage(fmt.Sprintf("Unknown command: %s", cmdName))
-							}
+				} else {
+					// Add user message to messages
+					m.messages.AddMessage(fmt.Sprintf("You: %s", content))
+
+					// Mark session as active
+					m.sessionActive = true
+
+					// Clear editor
+					m.editor.SetValue("")
+
+					// Send the prompt to the agent
+					cmds = append(cmds, func() tea.Msg {
+						fullPrompt := content
+						if m.fileContentViewer != nil && m.fileContentViewer.Active {
+							fullPrompt = m.fileContentViewer.Content + "\n" + content
+							m.fileContentViewer.Close()
 						}
-					} else {
-						// Add user message to messages
-						m.messages.AddMessage(fmt.Sprintf("You: %s", content))
-
-						// Mark session as active
-						m.sessionActive = true
-
-						// Clear editor
-						m.editor.SetValue("")
-
-						// Send the prompt to the agent
-						cmds = append(cmds, func() tea.Msg {
-							fullPrompt := content
-							if m.fileContentViewer != nil && m.fileContentViewer.Active {
-								fullPrompt = m.fileContentViewer.Content + "\n" + content
-								m.fileContentViewer.Close()
-							}
-							response, err := chains.Run(context.Background(), m.agent, fullPrompt)
+						response, err := chains.Run(context.Background(), m.agent, fullPrompt)
 							if err != nil {
 								return errMsg{err}
 							}
 							return responseMsg(response)
 						})
-					}
 				}
 			}
 		case "/":
@@ -334,6 +344,14 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.messages.AddMessage(fmt.Sprintf("Error: %v", msg.err))
+
+	case showHelpMsg:
+		helpText := "Available commands:\n"
+		for _, cmd := range m.commandRegistry.GetAllCommands() {
+			helpText += fmt.Sprintf("  %s - %s\n", cmd.Name, cmd.Description)
+		}
+		m.messages.AddMessage(helpText)
+		m.sessionActive = true
 	}
 
 	// Update components

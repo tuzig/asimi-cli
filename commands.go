@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -56,16 +55,13 @@ func (cr CommandRegistry) GetAllCommands() []Command {
 }
 
 // Command handlers
-func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
-	// Show help information
-	helpText := "Available commands:\n"
-	for _, cmd := range model.commandRegistry.GetAllCommands() {
-		helpText += fmt.Sprintf("  %s - %s\n", cmd.Name, cmd.Description)
-	}
 
-	model.messages.AddMessage(helpText)
-	model.sessionActive = true
-	return nil
+type showHelpMsg struct{}
+
+func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
+	return func() tea.Msg {
+		return showHelpMsg{}
+	}
 }
 
 func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
