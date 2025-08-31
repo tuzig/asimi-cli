@@ -41,8 +41,8 @@ func TestFileCompletion(t *testing.T) {
 	tuiModel, ok := finalModel.(TUIModel)
 	require.True(t, ok)
 
-	// Assert that the editor contains the file content
-	require.Contains(t, tuiModel.editor.Value(), "package main")
+	// Assert that the file viewer contains the file content
+	require.Contains(t, tuiModel.fileContentViewer.Content, "package main")
 }
 
 func TestSlashCommandCompletion(t *testing.T) {

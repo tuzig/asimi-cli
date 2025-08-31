@@ -167,6 +167,7 @@ type TUIModel struct {
 	status       StatusComponent
 	editor       EditorComponent
 	messages     MessagesComponent
+	fileContentViewer   *FileViewer
 	fileViewer   *FileViewer
 	completions  CompletionDialog
 	toastManager ToastManager
@@ -229,7 +230,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if err != nil {
 							m.messages.AddMessage(fmt.Sprintf("Error reading file: %v", err))
 						} else {
-							m.editor.SetValue(string(content))
+							m.fileContentViewer.LoadFile(filePath, string(content))
+							m.editor.SetValue("")
 						}
 					} else {
 						// It's a command completion
@@ -271,7 +273,12 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 						// Send the prompt to the agent
 						cmds = append(cmds, func() tea.Msg {
-							response, err := chains.Run(context.Background(), m.agent, content)
+							fullPrompt := content
+							if m.fileContentViewer != nil && m.fileContentViewer.Active {
+								fullPrompt = m.fileContentViewer.Content + "\n" + content
+								m.fileContentViewer.Close()
+							}
+							response, err := chains.Run(context.Background(), m.agent, fullPrompt)
 							if err != nil {
 								return errMsg{err}
 							}
@@ -335,6 +342,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.fileViewer != nil && m.fileViewer.Active {
 		m.fileViewer, _ = m.fileViewer.Update(msg)
 	}
+	if m.fileContentViewer != nil && m.fileContentViewer.Active {
+		m.fileContentViewer, _ = m.fileContentViewer.Update(msg)
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -353,7 +363,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	// Update components
 	m.status.SetWidth(m.width)
 
-	if m.messagesRight && m.fileViewer != nil && m.fileViewer.Active {
+	if (m.messagesRight && m.fileViewer != nil && m.fileViewer.Active) || (m.fileContentViewer != nil && m.fileContentViewer.Active) {
 		// Split screen layout
 		messagesWidth := m.width / 2
 		viewerWidth := m.width - messagesWidth
@@ -392,7 +402,9 @@ func (m TUIModel) View() string {
 
 	// Render the appropriate view based on session state
 	var mainContent string
-	if !m.sessionActive {
+	if m.fileContentViewer != nil && m.fileContentViewer.Active {
+		mainContent = m.fileContentViewer.View()
+	} else if !m.sessionActive {
 		// Home view
 		mainContent = RenderHomeView(m.width, m.height-6) // Account for editor and status
 	} else {
@@ -450,6 +462,7 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) TUIModel {
 		status:       NewStatusComponent(80),
 		editor:       NewEditorComponent(80, 5),
 		messages:     NewMessagesComponent(80, 18),
+		fileContentViewer:   NewFileViewer(80, 18),
 		fileViewer:   NewFileViewer(80, 18),
 		completions:  NewCompletionDialog(),
 		toastManager: NewToastManager(),
