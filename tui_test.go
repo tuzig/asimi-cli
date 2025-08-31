@@ -165,12 +165,19 @@ func TestTUIModelKeyMsgCommand(t *testing.T) {
 	model.editor.SetValue(command)
 
 	// Send an enter key message
-	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
+	require.NotNil(t, cmd)
+
+	// Simulate the command execution
+	msg := cmd()
+	newModel, cmd = newModel.Update(msg)
 	require.Nil(t, cmd)
 
-	// For now, we're just checking that it doesn't crash
-	// A more comprehensive test would check that the command was processed
+	// Should have added the help message
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	require.Contains(t, updatedModel.messages.Messages[len(updatedModel.messages.Messages)-1], "Available commands:")
 }
 
 // TestTUIModelKeyMsgEsc tests the escape key functionality

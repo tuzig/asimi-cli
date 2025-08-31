@@ -104,7 +104,7 @@ func (h *toolCallbackHandler) HandleToolEnd(ctx context.Context, output string) 
 		h.p.Send(toolEndMsg{result: output})
 	}
 }
-func (h *toolCallbackHandler) HandleLLMStart(ctx context.Context, prompts []string) {}
+func (h *toolCallbackHandler) HandleLLMStart(ctx context.Context, prompts []string)  {}
 func (h *toolCallbackHandler) HandleLLMError(ctx context.Context, err error)         {}
 func (h *toolCallbackHandler) HandleChainError(ctx context.Context, err error)       {}
 func (h *toolCallbackHandler) HandleStreamingFunc(ctx context.Context, chunk []byte) {}
@@ -164,14 +164,14 @@ type TUIModel struct {
 	width, height int
 
 	// UI Components
-	status       StatusComponent
-	editor       EditorComponent
-	messages     MessagesComponent
-	fileContentViewer   *FileViewer
-	fileViewer   *FileViewer
-	completions  CompletionDialog
-	toastManager ToastManager
-	modal        *BaseModal
+	status            StatusComponent
+	editor            EditorComponent
+	messages          MessagesComponent
+	fileContentViewer *FileViewer
+	fileViewer        *FileViewer
+	completions       CompletionDialog
+	toastManager      ToastManager
+	modal             *BaseModal
 
 	// UI Flags & State
 	showCompletionDialog bool
@@ -210,7 +210,6 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.messages.AddMessage(fmt.Sprintf("Error reading file: %v", err))
 						} else {
 							m.fileContentViewer.LoadFile(filePath, string(content))
-							m.editor.SetValue("")
 						}
 					} else {
 						// It's a command completion
@@ -233,14 +232,13 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if msg.String() == "q" {
+		switch msg.String() {
+		case "q":
 			if m.fileViewer != nil && m.fileViewer.Active {
 				m.fileViewer.Close()
 				return m, nil
 			}
 			return m, tea.Quit
-		}
-		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "esc":
@@ -267,7 +265,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cmd, exists := m.commandRegistry.GetCommand(cmdName)
 						if exists {
 							// Execute command
-							cmd.Handler(&m, parts[1:])
+							command := cmd.Handler(&m, parts[1:])
+							cmds = append(cmds, command)
 						} else {
 							m.messages.AddMessage(fmt.Sprintf("Unknown command: %s", cmdName))
 						}
@@ -290,11 +289,11 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.fileContentViewer.Close()
 						}
 						response, err := chains.Run(context.Background(), m.agent, fullPrompt)
-							if err != nil {
-								return errMsg{err}
-							}
-							return responseMsg(response)
-						})
+						if err != nil {
+							return errMsg{err}
+						}
+						return responseMsg(response)
+					})
 				}
 			}
 		case "/":
@@ -477,14 +476,14 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) TUIModel {
 		height: 24, // Default height
 
 		// Initialize components
-		status:       NewStatusComponent(80),
-		editor:       NewEditorComponent(80, 5),
-		messages:     NewMessagesComponent(80, 18),
-		fileContentViewer:   NewFileViewer(80, 18),
-		fileViewer:   NewFileViewer(80, 18),
-		completions:  NewCompletionDialog(),
-		toastManager: NewToastManager(),
-		modal:        nil,
+		status:            NewStatusComponent(80),
+		editor:            NewEditorComponent(80, 5),
+		messages:          NewMessagesComponent(80, 18),
+		fileContentViewer: NewFileViewer(80, 18),
+		fileViewer:        NewFileViewer(80, 18),
+		completions:       NewCompletionDialog(),
+		toastManager:      NewToastManager(),
+		modal:             nil,
 
 		// UI Flags
 		showCompletionDialog: false,
