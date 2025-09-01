@@ -136,6 +136,7 @@ func NewAgent(config *Config, opts ...AgentOption) (*Agent, error) {
 		&toolWrapper{t: WriteFileTool{}, handler: options.handler},
 		&toolWrapper{t: ListDirectoryTool{}, handler: options.handler},
 		&toolWrapper{t: ReplaceTextTool{}, handler: options.handler},
+		&toolWrapper{t: RunShellCommand{}, handler: options.handler},
 	}
 
 	executorOpts := []agents.Option{

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/tmc/langchaingo/tools"
 )
@@ -162,7 +166,97 @@ func (t ReplaceTextTool) Call(ctx context.Context, input string) (string, error)
 	return "Successfully replaced text", nil
 }
 
-var _ tools.Tool = ReadFileTool{}
-var _ tools.Tool = WriteFileTool{}
-var _ tools.Tool = ListDirectoryTool{}
-var _ tools.Tool = ReplaceTextTool{}
+// RunShellCommand is a tool for running shell commands
+type RunShellCommand struct{}
+
+// RunShellCommandInput is the input for the RunShellCommand tool
+type RunShellCommandInput struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+	Directory   string `json:"directory"`
+}
+
+// RunShellCommandOutput is the output of the RunShellCommand tool
+type RunShellCommandOutput struct {
+	Stdout         string `json:"stdout"`
+	Stderr         string `json:"stderr"`
+	ExitCode       int    `json:"exitCode"`
+	Signal         int    `json:"signal,omitempty"`
+	Error          string `json:"error,omitempty"`
+	PID            int    `json:"pid,omitempty"`
+	BackgroundPids []int  `json:"backgroundPids,omitempty"`
+}
+
+func (t RunShellCommand) Name() string {
+	return "run_shell_command"
+}
+
+func (t RunShellCommand) Description() string {
+	return "Executes a shell command. The input should be a JSON object with 'command', 'description', and 'directory' fields."
+}
+
+func (t RunShellCommand) Call(ctx context.Context, input string) (string, error) {
+	var params RunShellCommandInput
+	err := json.Unmarshal([]byte(input), &params)
+	if err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+
+	output := RunShellCommandOutput{}
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd.exe", "/c", params.Command)
+	} else {
+		cmd = exec.CommandContext(ctx, "bash", "-c", params.Command)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Dir = params.Directory
+
+	runErr := cmd.Run()
+
+	output.Stdout = stdout.String()
+	output.Stderr = stderr.String()
+
+	if cmd.Process != nil {
+		output.PID = cmd.Process.Pid
+	}
+
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			output.ExitCode = exitErr.ExitCode()
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				if status.Signaled() {
+					output.Signal = int(status.Signal())
+				}
+			}
+		} else {
+			output.Error = runErr.Error()
+			output.ExitCode = -1
+		}
+	} else {
+		if cmd.ProcessState != nil {
+			output.ExitCode = cmd.ProcessState.ExitCode()
+		} else {
+			output.ExitCode = 0
+		}
+	}
+
+	outputBytes, err := json.Marshal(output)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal output: %w", err)
+	}
+
+	return string(outputBytes), nil
+}
+
+var availableTools = []tools.Tool{
+	ReadFileTool{},
+	WriteFileTool{},
+	ListDirectoryTool{},
+	ReplaceTextTool{},
+	RunShellCommand{},
+}
