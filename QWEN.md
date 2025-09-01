@@ -17,7 +17,8 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 - langchaingo for llm communications, tools, chains and more
 
 ## TODOs
-[] The agent should an env tag to the llm's input
+[] Add a per-model system prompt, starting with gemini. The specs are in @specs/prompts.md
+[] add an env tag at the begining of each chat
 <env>
  <os platform="darwin" shell="zsh"/>
   <paths>
@@ -37,3 +38,6 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 [] Handle the <thought> llm output tag
 [] Add the local time at the bottom right of the status line
 
+[] Add a theme - a collection of functions that render given text, editing highlights, borders, etc. Example functions: RenderAI, RenderUser, RenderTool
+[] Handle the <thought> llm output tag as toast messages
+[] Add the local time at the bottom right of the status line

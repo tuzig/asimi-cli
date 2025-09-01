@@ -265,95 +265,6 @@ func (e EditorComponent) View() string {
 	return e.Style.Render(e.TextArea.View())
 }
 
-// FileViewer represents a file content viewer
-type FileViewer struct {
-	Viewport viewport.Model
-	FilePath string
-	Content  string
-	Width    int
-	Height   int
-	Active   bool
-	Style    lipgloss.Style
-}
-
-// NewFileViewer creates a new file viewer
-func NewFileViewer(width, height int) *FileViewer {
-	vp := viewport.New(width-2, height-2) // Account for borders
-
-	return &FileViewer{
-		Viewport: vp,
-		Width:    width,
-		Height:   height,
-		Active:   false,
-		Style: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
-			Width(width).
-			Height(height),
-	}
-}
-
-// SetWidth updates the width of the file viewer
-func (fv *FileViewer) SetWidth(width int) {
-	fv.Width = width
-	fv.Style = fv.Style.Width(width)
-	fv.Viewport.Width = width - 2
-}
-
-// SetHeight updates the height of the file viewer
-func (fv *FileViewer) SetHeight(height int) {
-	fv.Height = height
-	fv.Style = fv.Style.Height(height)
-	fv.Viewport.Height = height - 2
-}
-
-// LoadFile loads a file's content into the viewer
-func (fv *FileViewer) LoadFile(filePath, content string) {
-	fv.FilePath = filePath
-	fv.Content = content
-	fv.Viewport.SetContent(content)
-	fv.Active = true
-}
-
-// Close closes the file viewer
-func (fv *FileViewer) Close() {
-	fv.FilePath = ""
-	fv.Content = ""
-	fv.Viewport.SetContent("")
-	fv.Active = false
-}
-
-// Update handles messages for the file viewer
-func (fv *FileViewer) Update(msg interface{}) (*FileViewer, interface{}) {
-	var cmd interface{}
-	fv.Viewport, cmd = fv.Viewport.Update(msg)
-	return fv, cmd
-}
-
-// View renders the file viewer
-func (fv *FileViewer) View() string {
-	if !fv.Active {
-		return ""
-	}
-
-	title := fv.FilePath
-	if title == "" {
-		title = "File Viewer"
-	}
-
-	// Create a header with the file path
-	header := lipgloss.NewStyle().
-		Background(lipgloss.Color("62")).
-		Foreground(lipgloss.Color("230")).
-		Padding(0, 1).
-		Render(title)
-
-	// Render the viewport with the header
-	content := fv.Style.Render(fv.Viewport.View())
-
-	return lipgloss.JoinVertical(lipgloss.Left, header, content)
-}
-
 // MessagesComponent represents the chat view
 type MessagesComponent struct {
 	Viewport viewport.Model
@@ -629,7 +540,6 @@ type TUIModel struct {
 	status       StatusComponent
 	editor       EditorComponent
 	messages     MessagesComponent
-	fileViewer   *FileViewer
 	completions  CompletionDialog
 	toastManager ToastManager
 	modal        *BaseModal
@@ -671,9 +581,6 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.modal != nil {
 				m.modal = nil
-			}
-			if m.fileViewer != nil && m.fileViewer.Active {
-				m.fileViewer.Close()
 			}
 			if m.showCompletionDialog {
 				m.showCompletionDialog = false
@@ -869,9 +776,6 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	m.messages, _ = m.messages.Update(msg)
-	if m.fileViewer != nil && m.fileViewer.Active {
-		m.fileViewer, _ = m.fileViewer.Update(msg)
-	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -934,26 +838,9 @@ func (m *TUIModel) updateComponentDimensions() {
 	// Update components
 	m.status.SetWidth(m.width)
 
-	if m.messagesRight && m.fileViewer != nil && m.fileViewer.Active {
-		// Split screen layout
-		messagesWidth := m.width / 2
-		viewerWidth := m.width - messagesWidth
-
-		m.messages.SetWidth(messagesWidth)
-		m.messages.SetHeight(messagesHeight)
-
-		m.fileViewer.SetWidth(viewerWidth)
-		m.fileViewer.SetHeight(messagesHeight)
-	} else {
-		// Full width layout
-		m.messages.SetWidth(m.width)
-		m.messages.SetHeight(messagesHeight)
-
-		if m.fileViewer != nil {
-			m.fileViewer.SetWidth(m.width)
-			m.fileViewer.SetHeight(messagesHeight)
-		}
-	}
+	// Full width layout
+	m.messages.SetWidth(m.width)
+	m.messages.SetHeight(messagesHeight)
 
 	m.editor.SetWidth(m.width)
 	m.editor.SetHeight(editorHeight)
@@ -1031,7 +918,6 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) *TUIModel {
 		status:       NewStatusComponent(80),
 		editor:       NewEditorComponent(80, 5),
 		messages:     NewMessagesComponent(80, 18),
-		fileViewer:   NewFileViewer(80, 18),
 		completions:  NewCompletionDialog(),
 		toastManager: NewToastManager(),
 		modal:        nil,

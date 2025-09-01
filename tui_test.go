@@ -192,17 +192,11 @@ func TestTUIModelKeyboardInteraction(t *testing.T) {
 			setup: func(model *TUIModel) {
 				model.modal = NewBaseModal("Test", "Test content", 30, 10)
 				model.showCompletionDialog = true
-				if model.fileViewer != nil {
-					model.fileViewer.LoadFile("test.txt", "test content")
-				}
 			},
 			verify: func(t *testing.T, model *TUIModel, cmd tea.Cmd) {
 				require.Nil(t, cmd)
 				require.Nil(t, model.modal)
 				require.False(t, model.showCompletionDialog)
-				if model.fileViewer != nil {
-					require.Empty(t, model.fileViewer.FilePath)
-				}
 			},
 		},
 		{
@@ -493,35 +487,6 @@ func TestStatusComponent(t *testing.T) {
 	require.Contains(t, view, "test-agent")
 	require.Contains(t, view, "/test/dir")
 	require.Contains(t, view, "main")
-}
-
-// TestFileViewer tests the file viewer component
-func TestFileViewer(t *testing.T) {
-	viewer := NewFileViewer(50, 10)
-
-	// Initially should not be active
-	require.Empty(t, viewer.FilePath)
-	require.Empty(t, viewer.Content)
-
-	// Test loading a file
-	testPath := "test.txt"
-	testContent := "This is test content"
-	viewer.LoadFile(testPath, testContent)
-
-	require.Equal(t, testPath, viewer.FilePath)
-	require.Equal(t, testContent, viewer.Content)
-
-	// Test dimensions
-	viewer.SetWidth(60)
-	require.Equal(t, 60, viewer.Width)
-
-	viewer.SetHeight(15)
-	require.Equal(t, 15, viewer.Height)
-
-	// Test closing
-	viewer.Close()
-	require.Empty(t, viewer.FilePath)
-	require.Empty(t, viewer.Content)
 }
 
 // TestBaseModal tests the base modal component
