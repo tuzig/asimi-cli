@@ -17,9 +17,25 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 - langchaingo for llm communications, tools, chains and more
 
 ## TODOs
-[x] Add a pre-commit hook to `just test`
-[x] Add E2E tests for @<file> including auto completion and asserating the file content is included. The TUI is probably borken so fix ALL the errors that conme up 
-[x] Add E2e tests for slash commands including auto completion. The TUI is probably borken so fix ALL the errors that conme up .
-[x] @specs/todo.md Please complete the specification by Adding a section: "integration" detailing all the required changes in the existing code base
 [] file inclusion shouldn't add the file content to the user's prompt on the UI. Embedd only when sending to the LLM
 [] Change completion to use the up & down arrows and the tab or enter to select and esc to abort
+[] Add the local time at the bottom right of the status line
+[] Add a theme - a collection of functions that render given text, editing highlights, borders, etc. Example functions: RenderAI, RenderUser, RenderTool
+[] Handle the <thought> llm output tag
+[] The agent should an env tag to the llm's input
+<env>
+ <os platform="darwin" shell="zsh"/>
+  <paths>
+    <cwd>/Users/daonb/src/gemini-cli/packages/cli</cwd>
+    <root>/Users/daonb/src/gemini-cli</root>
+    <home>/Users/daonb</home>
+  </paths>
+  <project type="nodejs" manifest="package.json">
+    <scripts>
+      <script name="test"/>
+      <script name="lint"/>
+      <script name="build"/>
+    </scripts>
+  </project>
+</env>
+

@@ -625,6 +625,12 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.filesContentToSend[filePath] = string(content)
 							m.messages.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
 						}
+						currentValue := m.editor.Value()
+						lastAt := strings.LastIndex(currentValue, "@")
+						if lastAt != -1 {
+							newValue := currentValue[:lastAt] + selected + " "
+							m.editor.SetValue(newValue)
+						}
 					} else {
 						// It's a command completion
 						cmd, exists := m.commandRegistry.GetCommand(selected)
@@ -632,6 +638,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// Execute command
 							cmds = append(cmds, cmd.Handler(&m, []string{}))
 						}
+						m.editor.SetValue("")
 					}
 				}
 				m.showCompletionDialog = false
@@ -668,6 +675,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// Execute command
 							command := cmd.Handler(&m, parts[1:])
 							cmds = append(cmds, command)
+							m.editor.SetValue("")
 						} else {
 							m.messages.AddMessage(fmt.Sprintf("Unknown command: %s", cmdName))
 						}
@@ -702,6 +710,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "/":
+			m.editor, _ = m.editor.Update(msg)
 			// Show completion dialog with commands
 			m.showCompletionDialog = true
 			var commandNames []string
@@ -734,6 +743,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+l":
 			// Toggle messages layout
 			m.messagesRight = !m.messagesRight
+		default:
+			m.editor, _ = m.editor.Update(msg)
 		}
 
 	case tea.WindowSizeMsg:
@@ -768,8 +779,6 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionActive = true
 	}
 
-	// Update components
-	m.editor, _ = m.editor.Update(msg)
 	m.messages, _ = m.messages.Update(msg)
 	if m.fileViewer != nil && m.fileViewer.Active {
 		m.fileViewer, _ = m.fileViewer.Update(msg)
@@ -789,17 +798,40 @@ func (m *TUIModel) updateFileCompletions() {
 
 	var filteredFiles []string
 	for _, file := range m.allFiles {
-		if strings.Contains(file, searchQuery) {
-			filteredFiles = append(filteredFiles, "@"+file)
+		if strings.Contains(strings.ToLower(file), strings.ToLower(searchQuery)) {
+			filteredFiles = append(filteredFiles, file)
 		}
 	}
 
-	// Limit to top 7
-	if len(filteredFiles) > 7 {
-		filteredFiles = filteredFiles[:7]
+	// Sort by the position of the search query
+	sort.Slice(filteredFiles, func(i, j int) bool {
+		s1 := filteredFiles[i]
+		s2 := filteredFiles[j]
+		lowerS1 := strings.ToLower(s1)
+		lowerS2 := strings.ToLower(s2)
+		lowerSearch := strings.ToLower(searchQuery)
+
+		i1 := strings.Index(lowerS1, lowerSearch)
+		i2 := strings.Index(lowerS2, lowerSearch)
+
+		if i1 == i2 {
+			return s1 < s2
+		}
+
+		return i1 < i2
+	})
+
+	var options []string
+	for _, file := range filteredFiles {
+		options = append(options, "@"+file)
 	}
 
-	m.completions.SetOptions(filteredFiles)
+	// Limit to top 7
+	if len(options) > 7 {
+		options = options[:7]
+	}
+
+	m.completions.SetOptions(options)
 }
 
 // updateComponentDimensions updates the dimensions of all components based on the window size

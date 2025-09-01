@@ -19,7 +19,7 @@ func TestFileCompletion(t *testing.T) {
 	// Create a new test model
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 200))
 
-	// Get file list to find main.go
+	// Get file list and find the inex of main.go
 	files, err := getFileTree(".")
 	require.NoError(t, err)
 	mainGoIndex := -1
@@ -32,7 +32,7 @@ func TestFileCompletion(t *testing.T) {
 	require.NotEqual(t, -1, mainGoIndex, "main.go not found in file tree")
 
 	// Simulate typing "@"
-	tm.Type("@main.go")
+	tm.Type("@main.")
 
 	// Wait for the completion dialog to appear
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
@@ -52,6 +52,9 @@ func TestFileCompletion(t *testing.T) {
 	finalModel := tm.FinalModel(t)
 	tuiModel, ok := finalModel.(TUIModel)
 	require.True(t, ok)
+
+	// Assert that the prompt was completed to @main.go
+	require.Equal(t, "@main.go ", tuiModel.editor.TextArea.Value())
 
 	// Assert that the file viewer contains the file content
 	require.Contains(t, tuiModel.filesContentToSend["main.go"], "package main")
