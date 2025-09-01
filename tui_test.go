@@ -211,8 +211,8 @@ func TestTUIModelKeyMsgEsc(t *testing.T) {
 	require.True(t, ok)
 }
 
-// TestTUIModelKeyMsgTab tests tab navigation in completion dialog
-func TestTUIModelKeyMsgTab(t *testing.T) {
+// TestTUIModelKeyMsgDown tests down arrow navigation in completion dialog
+func TestTUIModelKeyMsgDown(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil)
 
 	// Show completion dialog with options
@@ -223,8 +223,8 @@ func TestTUIModelKeyMsgTab(t *testing.T) {
 	// Initial selection should be 0
 	require.Equal(t, 0, model.completions.Selected)
 
-	// Send tab key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	// Send down key message
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
 
 	require.Nil(t, cmd)
 
@@ -234,8 +234,8 @@ func TestTUIModelKeyMsgTab(t *testing.T) {
 	require.Equal(t, 1, updatedModel.completions.Selected)
 }
 
-// TestTUIModelKeyMsgShiftTab tests shift+tab navigation in completion dialog
-func TestTUIModelKeyMsgShiftTab(t *testing.T) {
+// TestTUIModelKeyMsgUp tests up arrow navigation in completion dialog
+func TestTUIModelKeyMsgUp(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil)
 
 	// Show completion dialog with options
@@ -246,8 +246,8 @@ func TestTUIModelKeyMsgShiftTab(t *testing.T) {
 	// Set selection to middle item
 	model.completions.Selected = 1
 
-	// Send shift+tab key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	// Send up key message
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyUp})
 
 	require.Nil(t, cmd)
 
@@ -466,10 +466,10 @@ func TestToastManager(t *testing.T) {
 
 	// Test adding a toast
 	message := "Test toast message"
-	toastType := "info"
+	tostType := "info"
 	timeout := 5 * time.Second
 
-	toastManager.AddToast(message, toastType, timeout)
+	toastManager.AddToast(message, tostType, timeout)
 	require.Equal(t, 1, len(toastManager.Toasts))
 
 	// Test view rendering
@@ -483,7 +483,7 @@ func TestToastManager(t *testing.T) {
 	require.Empty(t, toastManager.Toasts)
 
 	// Test updating (removing expired toasts)
-	toastManager.AddToast(message, toastType, 1*time.Millisecond)
+	toastManager.AddToast(message, tostType, 1*time.Millisecond)
 	time.Sleep(2 * time.Millisecond) // Wait for toast to expire
 	updatedManager := toastManager.Update()
 	require.Empty(t, updatedManager.Toasts)
@@ -508,4 +508,32 @@ func TestRenderChatView(t *testing.T) {
 	for _, msg := range messages {
 		require.Contains(t, view, msg)
 	}
+}
+
+// TestTUIModelKeyMsgTabCompletion tests tab to select in completion dialog
+func TestTUIModelKeyMsgTabCompletion(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil)
+
+	// Show completion dialog with options
+	model.showCompletionDialog = true
+	model.completions.SetOptions([]string{"/help", "option2", "option3"})
+	model.completions.Show()
+
+	// Initial selection should be 0
+	require.Equal(t, 0, model.completions.Selected)
+
+	// Send tab key message
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	require.NotNil(t, cmd)
+
+	// Simulate the command execution
+	msg := cmd()
+	newModel, cmd = newModel.Update(msg)
+	require.Nil(t, cmd)
+
+	// Should have added the help message
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	require.Contains(t, updatedModel.messages.Messages[len(updatedModel.messages.Messages)-1], "Available commands:")
 }

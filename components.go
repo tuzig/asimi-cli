@@ -611,7 +611,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.showCompletionDialog {
 			switch msg.String() {
-			case "enter":
+			case "enter", "tab":
 				// Get selected completion
 				selected := m.completions.GetSelected()
 				if selected != "" {
@@ -644,10 +644,10 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showCompletionDialog = false
 				m.completions.Hide()
 				return m, tea.Batch(cmds...)
-			case "tab":
+			case "down":
 				m.completions.SelectNext()
 				return m, nil
-			case "shift+tab":
+			case "up":
 				m.completions.SelectPrev()
 				return m, nil
 			default:
@@ -732,14 +732,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateFileCompletions()
 			}
 			m.completions.Show()
-		case "tab":
-			if m.showCompletionDialog {
-				m.completions.SelectNext()
-			}
-		case "shift+tab":
-			if m.showCompletionDialog {
-				m.completions.SelectPrev()
-			}
+		
 		case "ctrl+l":
 			// Toggle messages layout
 			m.messagesRight = !m.messagesRight
