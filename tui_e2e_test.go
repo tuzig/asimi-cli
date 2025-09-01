@@ -36,7 +36,7 @@ func TestFileCompletion(t *testing.T) {
 
 	// Wait for the completion dialog to appear
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
-		return strings.Contains(string(bts), "@main.go")
+		return strings.Contains(string(bts), "main.go")
 	}, teatest.WithCheckInterval(time.Millisecond*100), teatest.WithDuration(time.Second*3))
 
 	// Simulate pressing enter to select the file

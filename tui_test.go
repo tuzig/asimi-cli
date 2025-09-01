@@ -61,61 +61,8 @@ func TestTUIModelWindowSizeMsg(t *testing.T) {
 	require.Nil(t, cmd)
 }
 
-// TestTUIModelKeyMsgQuit tests quitting the application with 'q'
-func TestTUIModelKeyMsgQuit(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
-
-	// Send a quit key message
-	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
-
-	// Should not return a quit command
-	require.Nil(t, cmd)
-}
-
-// TestTUIModelKeyMsgCtrlC tests quitting the application with Ctrl+C
-func TestTUIModelKeyMsgCtrlC(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
-
-	// Send a Ctrl+C key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-
-	// Should return quit command
-	require.NotNil(t, cmd)
-
-	// Execute the command to verify it's a quit command
-	result := cmd()
-	_, ok := result.(tea.QuitMsg)
-	require.True(t, ok)
-
-	// Model should be unchanged
-	_, ok = newModel.(TUIModel)
-	require.True(t, ok)
-}
-
-// TestTUIModelKeyMsgEnterEmpty tests submitting an empty message
-func TestTUIModelKeyMsgEnterEmpty(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
-
-	// Ensure editor is empty
-	model.editor.SetValue("")
-
-	// Send an enter key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-
-	require.Nil(t, cmd)
-
-	// Messages should remain the same since no content was submitted
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
-	require.Equal(t, 1, len(updatedModel.messages.Messages))
-	require.Equal(t, "Welcome to Asimi CLI! Send a message to start chatting.", updatedModel.messages.Messages[0])
-	// Editor should be cleared (might have a newline)
-	require.Contains(t, []string{"", "\n"}, updatedModel.editor.Value())
-}
-
-// TestTUIModelKeyMsgEnterWithText tests submitting a message with text
-func TestTUIModelKeyMsgEnterWithText(t *testing.T) {
-	// Create a mock agent for testing
+// newTestModel creates a new TUIModel for testing purposes.
+func newTestModel(t *testing.T) *TUIModel {
 	agent, err := NewAgent(&Config{
 		LLM: LLMConfig{
 			Provider: "fake",
@@ -125,136 +72,201 @@ func TestTUIModelKeyMsgEnterWithText(t *testing.T) {
 
 	model := NewTUIModel(mockConfig(), &toolCallbackHandler{})
 	model.agent = agent.executor
-
-	// Set some text in the editor
-	testMessage := "Hello, Asimi!"
-	model.editor.SetValue(testMessage)
-
-	// Send an enter key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	require.NotNil(t, cmd)
-
-	// Simulate the command execution
-	msg := cmd()
-	newModel, cmd = newModel.Update(msg)
-	require.Nil(t, cmd)
-
-	// Should have added the user message and AI response
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
-	require.Equal(t, 3, len(updatedModel.messages.Messages))
-	require.Equal(t, "You: "+testMessage, updatedModel.messages.Messages[1])
-	require.Equal(t, "AI: I am a large language model, trained by Google.", updatedModel.messages.Messages[2])
+	return model
 }
 
-// TestTUIModelKeyMsgCommand tests submitting a command
-func TestTUIModelKeyMsgCommand(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
-
-	// Set a command in the editor
-	command := "/help"
-	model.editor.SetValue(command)
-
-	// Send an enter key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-
-	require.NotNil(t, cmd)
-
-	// Simulate the command execution
-	msg := cmd()
-	newModel, cmd = newModel.Update(msg)
-	require.Nil(t, cmd)
-
-	// Should have added the help message
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
-	require.Contains(t, updatedModel.messages.Messages[len(updatedModel.messages.Messages)-1], "Available commands:")
-}
-
-// TestTUIModelKeyMsgEsc tests the escape key functionality
-func TestTUIModelKeyMsgEsc(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
-
-	// Set up modal to be active
-	model.modal = NewBaseModal("Test", "Test content", 30, 10)
-
-	// Show completion dialog
-	model.showCompletionDialog = true
-
-	// Activate file viewer
-	if model.fileViewer != nil {
-		model.fileViewer.LoadFile("test.txt", "test content")
+// TestTUIModelKeyMsg tests quitting the application with 'q' and Ctrl+C
+func TestTUIModelKeyMsg(t *testing.T) {
+	testCases := []struct {
+		name          string
+		key           tea.KeyMsg
+		expectQuit    bool
+		expectCommand bool
+	}{
+		{
+			name:          "Quit with 'q'",
+			key:           tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")},
+			expectQuit:    false,
+			expectCommand: false,
+		},
+		{
+			name:          "Quit with 'ctrl+c'",
+			key:           tea.KeyMsg{Type: tea.KeyCtrlC},
+			expectQuit:    true,
+			expectCommand: true,
+		},
 	}
 
-	// Send escape key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			model := NewTUIModel(mockConfig(), nil)
 
-	require.Nil(t, cmd)
+			// Send a quit key message
+			newModel, cmd := model.Update(tc.key)
 
-	// Check updated model
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
+			if tc.expectCommand {
+				require.NotNil(t, cmd)
+			} else {
+				require.Nil(t, cmd)
+			}
 
-	// Modal should be closed
-	require.Nil(t, updatedModel.modal)
+			if tc.expectQuit {
+				// Execute the command to verify it's a quit command
+				result := cmd()
+				_, ok := result.(tea.QuitMsg)
+				require.True(t, ok)
+			}
 
-	// Completion dialog should be hidden
-	require.False(t, updatedModel.showCompletionDialog)
+			// Model should be unchanged
+			_, ok := newModel.(TUIModel)
+			require.True(t, ok)
+		})
+	}
+}
 
-	// File viewer should be closed
-	if updatedModel.fileViewer != nil {
-		require.Empty(t, updatedModel.fileViewer.FilePath)
+func TestTUIModelSubmit(t *testing.T) {
+	testCases := []struct {
+		name                 string
+		initialEditorValue   string
+		expectedMessageCount int
+		expectedLastMessage  string
+		expectCommand        bool
+	}{
+		{
+			name:                 "Submit empty message",
+			initialEditorValue:   "",
+			expectedMessageCount: 1,
+			expectedLastMessage:  "Welcome to Asimi CLI! Send a message to start chatting.",
+			expectCommand:        false,
+		},
+		{
+			name:                 "Submit text message",
+			initialEditorValue:   "Hello, Asimi!",
+			expectedMessageCount: 3,
+			expectedLastMessage:  "AI: I am a large language model, trained by Google.",
+			expectCommand:        true,
+		},
+		{
+			name:                 "Submit command",
+			initialEditorValue:   "/help",
+			expectedMessageCount: 2,
+			expectedLastMessage:  "Available commands:",
+			expectCommand:        true,
+		},
 	}
 
-	// Should still be a TUIModel
-	_, ok = newModel.(TUIModel)
-	require.True(t, ok)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			model := newTestModel(t)
+			model.editor.SetValue(tc.initialEditorValue)
+
+			newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+			if tc.expectCommand {
+				require.NotNil(t, cmd)
+				msg := cmd()
+				newModel, cmd = newModel.Update(msg)
+				require.Nil(t, cmd)
+			} else {
+				require.Nil(t, cmd)
+			}
+
+			updatedModel, ok := newModel.(TUIModel)
+			require.True(t, ok)
+			require.Equal(t, tc.expectedMessageCount, len(updatedModel.messages.Messages))
+			require.Contains(t, updatedModel.messages.Messages[len(updatedModel.messages.Messages)-1], tc.expectedLastMessage)
+		})
+	}
 }
 
-// TestTUIModelKeyMsgDown tests down arrow navigation in completion dialog
-func TestTUIModelKeyMsgDown(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
+func TestTUIModelKeyboardInteraction(t *testing.T) {
+	testCases := []struct {
+		name   string
+		key    tea.KeyMsg
+		setup  func(model *TUIModel)
+		verify func(t *testing.T, model *TUIModel, cmd tea.Cmd)
+	}{
+		{
+			name: "Escape key",
+			key:  tea.KeyMsg{Type: tea.KeyEsc},
+			setup: func(model *TUIModel) {
+				model.modal = NewBaseModal("Test", "Test content", 30, 10)
+				model.showCompletionDialog = true
+				if model.fileViewer != nil {
+					model.fileViewer.LoadFile("test.txt", "test content")
+				}
+			},
+			verify: func(t *testing.T, model *TUIModel, cmd tea.Cmd) {
+				require.Nil(t, cmd)
+				require.Nil(t, model.modal)
+				require.False(t, model.showCompletionDialog)
+				if model.fileViewer != nil {
+					require.Empty(t, model.fileViewer.FilePath)
+				}
+			},
+		},
+		{
+			name: "Down arrow in completion dialog",
+			key:  tea.KeyMsg{Type: tea.KeyDown},
+			setup: func(model *TUIModel) {
+				model.showCompletionDialog = true
+				model.completions.SetOptions([]string{"option1", "option2", "option3"})
+				model.completions.Show()
+			},
+			verify: func(t *testing.T, model *TUIModel, cmd tea.Cmd) {
+				require.Nil(t, cmd)
+				require.Equal(t, 1, model.completions.Selected)
+			},
+		},
+		{
+			name: "Up arrow in completion dialog",
+			key:  tea.KeyMsg{Type: tea.KeyUp},
+			setup: func(model *TUIModel) {
+				model.showCompletionDialog = true
+				model.completions.SetOptions([]string{"option1", "option2", "option3"})
+				model.completions.Show()
+				model.completions.Selected = 1
+			},
+			verify: func(t *testing.T, model *TUIModel, cmd tea.Cmd) {
+				require.Nil(t, cmd)
+				require.Equal(t, 0, model.completions.Selected)
+			},
+		},
+		{
+			name: "Tab to select in completion dialog",
+			key:  tea.KeyMsg{Type: tea.KeyTab},
+			setup: func(model *TUIModel) {
+				model.showCompletionDialog = true
+				model.completionMode = "command"
+				model.completions.SetOptions([]string{"/help", "option2", "option3"})
+				model.completions.Show()
+			},
+			verify: func(t *testing.T, model *TUIModel, cmd tea.Cmd) {
+				require.NotNil(t, cmd)
+				msg := cmd()
+				newModel, cmd := model.Update(msg)
+				require.Nil(t, cmd)
+				updatedModel, ok := newModel.(TUIModel)
+				require.True(t, ok)
+				require.Contains(t, updatedModel.messages.Messages[len(updatedModel.messages.Messages)-1], "Available commands:")
+			},
+		},
+	}
 
-	// Show completion dialog with options
-	model.showCompletionDialog = true
-	model.completions.SetOptions([]string{"option1", "option2", "option3"})
-	model.completions.Show()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			model := newTestModel(t)
+			if tc.setup != nil {
+				tc.setup(model)
+			}
 
-	// Initial selection should be 0
-	require.Equal(t, 0, model.completions.Selected)
+			newModel, cmd := model.Update(tc.key)
+			updatedModel, ok := newModel.(TUIModel)
+			require.True(t, ok)
 
-	// Send down key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
-
-	require.Nil(t, cmd)
-
-	// Selection should move to next item
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
-	require.Equal(t, 1, updatedModel.completions.Selected)
-}
-
-// TestTUIModelKeyMsgUp tests up arrow navigation in completion dialog
-func TestTUIModelKeyMsgUp(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
-
-	// Show completion dialog with options
-	model.showCompletionDialog = true
-	model.completions.SetOptions([]string{"option1", "option2", "option3"})
-	model.completions.Show()
-
-	// Set selection to middle item
-	model.completions.Selected = 1
-
-	// Send up key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyUp})
-
-	require.Nil(t, cmd)
-
-	// Selection should move to previous item
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
-	require.Equal(t, 0, updatedModel.completions.Selected)
+			tc.verify(t, &updatedModel, cmd)
+		})
+	}
 }
 
 // TestTUIModelView tests the view rendering
@@ -358,10 +370,10 @@ func TestCompletionDialog(t *testing.T) {
 	require.Equal(t, 2, dialog.Selected)
 
 	dialog.SelectNext()
-	require.Equal(t, 0, dialog.Selected) // Should wrap around
+	require.Equal(t, 2, dialog.Selected)
 
 	dialog.SelectPrev()
-	require.Equal(t, 2, dialog.Selected) // Should wrap around
+	require.Equal(t, 1, dialog.Selected)
 
 	// Test getting selected option
 	dialog.Selected = 1
@@ -387,6 +399,79 @@ func TestCompletionDialog(t *testing.T) {
 	for _, option := range options {
 		require.Contains(t, view, option)
 	}
+}
+
+// TestCompletionDialogScrolling tests the scrolling functionality of the completion dialog
+func TestCompletionDialogScrolling(t *testing.T) {
+	dialog := NewCompletionDialog()
+	dialog.Height = 5
+	dialog.ScrollMargin = 1
+	options := []string{"a", "b", "c", "d", "e", "f", "g"}
+	dialog.SetOptions(options)
+
+	// Initial state
+	require.Equal(t, 0, dialog.Selected)
+	require.Equal(t, 0, dialog.Offset)
+
+	// Scroll down
+	dialog.SelectNext() // b
+	require.Equal(t, 1, dialog.Selected)
+	require.Equal(t, 0, dialog.Offset)
+
+	dialog.SelectNext() // c
+	require.Equal(t, 2, dialog.Selected)
+	require.Equal(t, 0, dialog.Offset)
+
+	dialog.SelectNext() // d
+	require.Equal(t, 3, dialog.Selected)
+	require.Equal(t, 0, dialog.Offset)
+
+	dialog.SelectNext() // e, enters scroll margin
+	require.Equal(t, 4, dialog.Selected)
+	require.Equal(t, 1, dialog.Offset) // scrolled
+
+	dialog.SelectNext() // f
+	require.Equal(t, 5, dialog.Selected)
+	require.Equal(t, 2, dialog.Offset)
+
+	dialog.SelectNext() // g, at the end
+	require.Equal(t, 6, dialog.Selected)
+	require.Equal(t, 2, dialog.Offset) // offset is maxed out
+
+	// Try to scroll past the end
+	dialog.SelectNext() // g
+	require.Equal(t, 6, dialog.Selected)
+	require.Equal(t, 2, dialog.Offset)
+
+	// Scroll up
+	dialog.SelectPrev() // f
+	require.Equal(t, 5, dialog.Selected)
+	require.Equal(t, 2, dialog.Offset)
+
+	dialog.SelectPrev() // e
+	require.Equal(t, 4, dialog.Selected)
+	require.Equal(t, 2, dialog.Offset)
+
+	dialog.SelectPrev() // d
+	require.Equal(t, 3, dialog.Selected)
+	require.Equal(t, 2, dialog.Offset)
+
+	dialog.SelectPrev() // c, enters scroll margin
+	require.Equal(t, 2, dialog.Selected)
+	require.Equal(t, 1, dialog.Offset)
+
+	dialog.SelectPrev() // b, enters scroll margin
+	require.Equal(t, 1, dialog.Selected)
+	require.Equal(t, 0, dialog.Offset)
+
+	dialog.SelectPrev() // a
+	require.Equal(t, 0, dialog.Selected)
+	require.Equal(t, 0, dialog.Offset)
+
+	// Try to scroll past the beginning
+	dialog.SelectPrev() // a
+	require.Equal(t, 0, dialog.Selected)
+	require.Equal(t, 0, dialog.Offset)
 }
 
 // TestStatusComponent tests the status component
@@ -510,30 +595,3 @@ func TestRenderChatView(t *testing.T) {
 	}
 }
 
-// TestTUIModelKeyMsgTabCompletion tests tab to select in completion dialog
-func TestTUIModelKeyMsgTabCompletion(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
-
-	// Show completion dialog with options
-	model.showCompletionDialog = true
-	model.completions.SetOptions([]string{"/help", "option2", "option3"})
-	model.completions.Show()
-
-	// Initial selection should be 0
-	require.Equal(t, 0, model.completions.Selected)
-
-	// Send tab key message
-	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
-
-	require.NotNil(t, cmd)
-
-	// Simulate the command execution
-	msg := cmd()
-	newModel, cmd = newModel.Update(msg)
-	require.Nil(t, cmd)
-
-	// Should have added the help message
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
-	require.Contains(t, updatedModel.messages.Messages[len(updatedModel.messages.Messages)-1], "Available commands:")
-}

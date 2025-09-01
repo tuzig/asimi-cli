@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +18,46 @@ import (
 	"github.com/tmc/langchaingo/chains"
 )
 
+func getFileTree(root string) ([]string, error) {
+	var files []string
+	// Directories to ignore at any level
+	ignoreDirs := map[string]bool{
+		".git":    true,
+		"vendor":  true,
+		".asimi":  true,
+		"archive": true,
+	}
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			if ignoreDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// We only want files.
+		// Let's make sure the path is relative to the root.
+		relPath, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, relPath)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Strings(files)
+	return files, nil
+}
+
 // CompletionDialog represents the autocompletion pop-up
 type CompletionDialog struct {
 	Options           []string
@@ -23,10 +65,12 @@ type CompletionDialog struct {
 	Visible           bool
 	Width             int
 	Height            int
+	Offset            int
 	PositionX         int
 	PositionY         int
 	Style             lipgloss.Style
 	SelectedItemStyle lipgloss.Style
+	ScrollMargin      int
 }
 
 // NewCompletionDialog creates a new completion dialog
@@ -37,6 +81,7 @@ func NewCompletionDialog() CompletionDialog {
 		Visible:  false,
 		Width:    30,
 		Height:   10,
+		Offset:   0,
 		Style: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).
@@ -45,6 +90,7 @@ func NewCompletionDialog() CompletionDialog {
 		SelectedItemStyle: lipgloss.NewStyle().
 			Background(lipgloss.Color("62")).
 			Foreground(lipgloss.Color("230")),
+		ScrollMargin: 4,
 	}
 }
 
@@ -57,6 +103,7 @@ func (c *CompletionDialog) SetOptions(options []string) {
 	if c.Selected < 0 {
 		c.Selected = 0
 	}
+	c.Offset = 0
 }
 
 // Show makes the dialog visible
@@ -71,17 +118,33 @@ func (c *CompletionDialog) Hide() {
 
 // SelectNext moves selection to the next item
 func (c *CompletionDialog) SelectNext() {
-	if len(c.Options) > 0 {
-		c.Selected = (c.Selected + 1) % len(c.Options)
+	slog.Info("Select Next")
+	if len(c.Options) == 0 {
+		return
 	}
+	next := c.Selected + 1
+	if next >= len(c.Options) {
+		return
+	}
+	slog.Info(">>>", "next", next, "offset", c.Offset, "height", c.Height)
+	if next >= c.Offset+c.Height-c.ScrollMargin {
+		if c.Offset < len(c.Options)-c.Height {
+			c.Offset++
+		}
+	}
+	c.Selected = next
 }
 
 // SelectPrev moves selection to the previous item
 func (c *CompletionDialog) SelectPrev() {
-	if len(c.Options) > 0 {
+	slog.Info("Select Prev")
+	if c.Selected > 0 {
 		c.Selected--
-		if c.Selected < 0 {
-			c.Selected = len(c.Options) - 1
+		slog.Info(">>>", "selected", c.Selected, "offset", c.Offset)
+		if c.Selected < c.Offset+c.ScrollMargin {
+			if c.Offset > 0 {
+				c.Offset--
+			}
 		}
 	}
 }
@@ -96,13 +159,21 @@ func (c CompletionDialog) GetSelected() string {
 
 // View renders the completion dialog
 func (c CompletionDialog) View() string {
+	slog.Info("view")
 	if !c.Visible || len(c.Options) == 0 {
 		return ""
 	}
-
-	// Create the content
-	lines := make([]string, 0, len(c.Options))
-	for i, option := range c.Options {
+	start := c.Offset
+	end := c.Offset + c.Height
+	slog.Info(">>>", "start", start, "end", end)
+	lines := make([]string, 0, c.Height)
+	for i := start; i < end; i++ {
+		if i >= len(c.Options) {
+			slog.Info("...", "i", i, "len", len(c.Options))
+			lines = append(lines, "...")
+			continue
+		}
+		option := c.Options[i]
 		if i == c.Selected {
 			lines = append(lines, c.SelectedItemStyle.Render(option))
 		} else {
@@ -110,6 +181,7 @@ func (c CompletionDialog) View() string {
 		}
 	}
 
+	slog.Info("lines", "len", len(lines))
 	// Join the lines and render with style
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
 	return c.Style.Render(content)
@@ -564,6 +636,7 @@ type TUIModel struct {
 
 	// UI Flags & State
 	showCompletionDialog bool
+	completionMode       string // "file" or "command"
 	messagesRight        bool
 
 	// Session state
@@ -605,6 +678,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.showCompletionDialog {
 				m.showCompletionDialog = false
 				m.completions.Hide()
+				m.completionMode = ""
 			}
 			return m, nil
 		}
@@ -615,23 +689,40 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Get selected completion
 				selected := m.completions.GetSelected()
 				if selected != "" {
-					if strings.HasPrefix(selected, "@") {
+					if m.completionMode == "file" {
 						// It's a file completion
-						filePath := strings.TrimPrefix(selected, "@")
+						filePath := selected
 						content, err := os.ReadFile(filePath)
-						if err != nil {
-							m.messages.AddMessage(fmt.Sprintf("Error reading file: %v", err))
-						} else {
-							m.filesContentToSend[filePath] = string(content)
-							m.messages.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
-						}
+							if err != nil {
+								m.messages.AddMessage(fmt.Sprintf("Error reading file: %v", err))
+							} else {
+								m.filesContentToSend[filePath] = string(content)
+								m.messages.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
+							}
 						currentValue := m.editor.Value()
 						lastAt := strings.LastIndex(currentValue, "@")
 						if lastAt != -1 {
-							newValue := currentValue[:lastAt] + selected + " "
-							m.editor.SetValue(newValue)
+							// Ensure we correctly handle the text before the @
+							prefix := currentValue[:lastAt]
+							// Find the end of the word being completed
+							wordEnd := -1
+							for i := lastAt + 1; i < len(currentValue); i++ {
+								if currentValue[i] == ' ' {
+									wordEnd = i
+									break
+								}
+							}
+							if wordEnd == -1 {
+								wordEnd = len(currentValue)
+							}
+							// Replace the partial file name with the full one
+							newValue := prefix + "@" + selected + " " + currentValue[wordEnd:]
+							m.editor.SetValue(strings.TrimSpace(newValue) + " ")
+						} else {
+							// Fallback, though we should always find an @
+							m.editor.SetValue("@" + selected + " ")
 						}
-					} else {
+					} else if m.completionMode == "command" {
 						// It's a command completion
 						cmd, exists := m.commandRegistry.GetCommand(selected)
 						if exists {
@@ -643,6 +734,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.showCompletionDialog = false
 				m.completions.Hide()
+				m.completionMode = ""
 				return m, tea.Batch(cmds...)
 			case "down":
 				m.completions.SelectNext()
@@ -653,7 +745,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				// Any other key press updates the completion list
 				m.editor, _ = m.editor.Update(msg)
-				m.updateFileCompletions()
+				if m.completionMode == "file" {
+					m.updateFileCompletions()
+				}
 				return m, nil
 			}
 		}
@@ -688,7 +782,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sessionActive = true
 
 					// Clear editor
-					m.editor.SetValue("")
+				m.editor.SetValue("")
 
 					// Send the prompt to the agent
 					cmds = append(cmds, func() tea.Msg {
@@ -713,6 +807,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.editor, _ = m.editor.Update(msg)
 			// Show completion dialog with commands
 			m.showCompletionDialog = true
+			m.completionMode = "command"
 			var commandNames []string
 			for name := range m.commandRegistry.Commands {
 				commandNames = append(commandNames, name)
@@ -724,6 +819,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.editor, _ = m.editor.Update(msg)
 			// Show completion dialog with files
 			m.showCompletionDialog = true
+			m.completionMode = "file"
 			files, err := getFileTree(".")
 			if err != nil {
 				m.messages.AddMessage(fmt.Sprintf("Error scanning files: %v", err))
@@ -732,7 +828,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateFileCompletions()
 			}
 			m.completions.Show()
-		
+
 		case "ctrl+l":
 			// Toggle messages layout
 			m.messagesRight = !m.messagesRight
@@ -780,6 +876,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+
 func (m *TUIModel) updateFileCompletions() {
 	inputValue := m.editor.Value()
 	parts := strings.Split(inputValue, "@")
@@ -787,6 +884,7 @@ func (m *TUIModel) updateFileCompletions() {
 		m.completions.SetOptions([]string{})
 		return
 	}
+	// TODO: ensure this works well by adding a test for two file inclusing in one input
 	searchQuery := parts[len(parts)-1]
 
 	var filteredFiles []string
@@ -816,14 +914,9 @@ func (m *TUIModel) updateFileCompletions() {
 
 	var options []string
 	for _, file := range filteredFiles {
-		options = append(options, "@"+file)
+		// TODO: add a nerdfont emojie based on file type
+		options = append(options, file)
 	}
-
-	// Limit to top 7
-	if len(options) > 7 {
-		options = options[:7]
-	}
-
 	m.completions.SetOptions(options)
 }
 
@@ -945,6 +1038,7 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) *TUIModel {
 
 		// UI Flags
 		showCompletionDialog: false,
+		completionMode:       "",
 		messagesRight:        false,
 
 		// Session state
