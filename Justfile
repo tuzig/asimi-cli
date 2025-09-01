@@ -7,3 +7,9 @@ test: modules
 
 build: modules
     go build -o asimi .
+
+dlv:
+    go install github.com/go-delve/delve/cmd/dlv@latest
+
+debug: dlv
+    dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./asimi -- --config config/default.toml
