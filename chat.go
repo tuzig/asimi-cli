@@ -1,0 +1,118 @@
+package main
+
+import (
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// ChatComponent represents the chat view
+type ChatComponent struct {
+	Viewport viewport.Model
+	Messages []string
+	Width    int
+	Height   int
+	Style    lipgloss.Style
+}
+
+// NewChatComponent creates a new chat component
+func NewChatComponent(width, height int) ChatComponent {
+	vp := viewport.New(width-2, height-2) // Account for borders
+	vp.SetContent("Welcome to Asimi CLI! Send a message to start chatting.")
+
+	return ChatComponent{
+		Viewport: vp,
+		Messages: []string{"Welcome to Asimi CLI! Send a message to start chatting."},
+		Width:    width,
+		Height:   height,
+		Style: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Width(width).
+			Height(height),
+	}
+}
+
+// SetWidth updates the width of the chat component
+func (c *ChatComponent) SetWidth(width int) {
+	c.Width = width
+	c.Style = c.Style.Width(width)
+	c.Viewport.Width = width - 2
+	c.updateContent()
+}
+
+// SetHeight updates the height of the chat component
+func (c *ChatComponent) SetHeight(height int) {
+	c.Height = height
+	c.Style = c.Style.Height(height)
+	c.Viewport.Height = height - 2
+	c.updateContent()
+}
+
+// AddMessage adds a new message to the chat component
+func (c *ChatComponent) AddMessage(message string) {
+	c.Messages = append(c.Messages, message)
+	c.updateContent()
+}
+
+// updateContent updates the viewport content based on the messages
+func (c *ChatComponent) updateContent() {
+	var messageViews []string
+	for _, message := range c.Messages {
+		var messageStyle lipgloss.Style
+		if strings.HasPrefix(message, "You:") {
+			messageStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("230")).
+				Padding(0, 1)
+		} else {
+			messageStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240")).
+				Padding(0, 1)
+		}
+		messageViews = append(messageViews, messageStyle.Render(message))
+	}
+	content := lipgloss.JoinVertical(lipgloss.Left, messageViews...)
+	c.Viewport.SetContent(content)
+	c.Viewport.GotoBottom()
+}
+
+// Update handles messages for the chat component
+// Update handles messages for the chat component
+func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
+	var cmd interface{}
+	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			c.Viewport.LineUp(1)
+		case tea.MouseWheelDown:
+			c.Viewport.LineDown(1)
+		}
+	}
+	c.Viewport, cmd = c.Viewport.Update(msg)
+	return c, cmd
+}
+
+// View renders the chat component
+func (c ChatComponent) View() string {
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("62")).
+		Padding(0, 1)
+
+	header := headerStyle.Render("Asimi CLI - Chat Session")
+
+	// The viewport contains the messages. We render it inside the component's styled border.
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		c.Viewport.View(),
+	)
+
+	// Adjust height for the header
+	c.Style = c.Style.Height(c.Height)
+	c.Viewport.Height = c.Height - 3 // Account for border and header
+
+	return c.Style.Render(content)
+}

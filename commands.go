@@ -67,8 +67,8 @@ func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	// Start a new session
 	model.sessionActive = false
-	model.messages = NewMessagesComponent(model.messages.Width, model.messages.Height)
-	model.messages.AddMessage("Started a new session. How can I help you today?")
+	model.chat = NewChatComponent(model.chat.Width, model.chat.Height)
+	model.chat.AddMessage("Started a new session. How can I help you today?")
 	return nil
 }
 

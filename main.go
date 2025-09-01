@@ -83,7 +83,7 @@ func (r *runCmd) Run() error {
 	handler := &toolCallbackHandler{}
 	tuiModel := NewTUIModel(config, handler)
 
-	p := tea.NewProgram(tuiModel)
+	p := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	handler.p = p
 	agent, err := NewAgent(config, WithCallbacks(handler), WithTea(p))
 	if err != nil {

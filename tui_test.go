@@ -124,7 +124,7 @@ func TestTUIModelKeyMsg(t *testing.T) {
 	}
 }
 
-func TestTUIModelSubmit(t *testing.T) {
+	func TestTUIModelSubmit(t *testing.T) {
 	testCases := []struct {
 		name                 string
 		initialEditorValue   string
@@ -158,7 +158,7 @@ func TestTUIModelSubmit(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			model := newTestModel(t)
-			model.editor.SetValue(tc.initialEditorValue)
+			model.prompt.SetValue(tc.initialEditorValue)
 
 			newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -173,8 +173,8 @@ func TestTUIModelSubmit(t *testing.T) {
 
 			updatedModel, ok := newModel.(TUIModel)
 			require.True(t, ok)
-			require.Equal(t, tc.expectedMessageCount, len(updatedModel.messages.Messages))
-			require.Contains(t, updatedModel.messages.Messages[len(updatedModel.messages.Messages)-1], tc.expectedLastMessage)
+			require.Equal(t, tc.expectedMessageCount, len(updatedModel.chat.Messages))
+			require.Contains(t, updatedModel.chat.Messages[len(updatedModel.chat.Messages)-1], tc.expectedLastMessage)
 		})
 	}
 }
@@ -242,7 +242,7 @@ func TestTUIModelKeyboardInteraction(t *testing.T) {
 				require.Nil(t, cmd)
 				updatedModel, ok := newModel.(TUIModel)
 				require.True(t, ok)
-				require.Contains(t, updatedModel.messages.Messages[len(updatedModel.messages.Messages)-1], "Available commands:")
+				require.Contains(t, updatedModel.chat.Messages[len(updatedModel.chat.Messages)-1], "Available commands:")
 			},
 		},
 	}
@@ -293,43 +293,43 @@ func TestTUIModelView(t *testing.T) {
 	require.Contains(t, view, "Asimi CLI - Chat Session")
 }
 
-// TestEditorComponent tests the editor component
-func TestEditorComponent(t *testing.T) {
-	editor := NewEditorComponent(50, 10)
+// TestPromptComponent tests the prompt component
+func TestPromptComponent(t *testing.T) {
+	prompt := NewPromptComponent(50, 10)
 
 	// Test setting and getting value
 	testValue := "Test content"
-	editor.SetValue(testValue)
-	require.Equal(t, testValue, editor.Value())
+	prompt.SetValue(testValue)
+	require.Equal(t, testValue, prompt.Value())
 
 	// Test dimensions
-	editor.SetWidth(60)
-	require.Equal(t, 60, editor.Width)
+	prompt.SetWidth(60)
+	require.Equal(t, 60, prompt.Width)
 
-	editor.SetHeight(15)
-	require.Equal(t, 15, editor.Height)
+	prompt.SetHeight(15)
+	require.Equal(t, 15, prompt.Height)
 }
 
-// TestMessagesComponent tests the messages component
-func TestMessagesComponent(t *testing.T) {
-	messages := NewMessagesComponent(50, 10)
+// TestChatComponent tests the chat component
+func TestChatComponent(t *testing.T) {
+	chat := NewChatComponent(50, 10)
 
 	// Should have initial welcome message
-	require.Equal(t, 1, len(messages.Messages))
-	require.Equal(t, "Welcome to Asimi CLI! Send a message to start chatting.", messages.Messages[0])
+	require.Equal(t, 1, len(chat.Messages))
+	require.Equal(t, "Welcome to Asimi CLI! Send a message to start chatting.", chat.Messages[0])
 
 	// Test adding a message
 	testMessage := "Test message"
-	messages.AddMessage(testMessage)
-	require.Equal(t, 2, len(messages.Messages))
-	require.Equal(t, testMessage, messages.Messages[1])
+	chat.AddMessage(testMessage)
+	require.Equal(t, 2, len(chat.Messages))
+	require.Equal(t, testMessage, chat.Messages[1])
 
 	// Test dimensions
-	messages.SetWidth(60)
-	require.Equal(t, 60, messages.Width)
+	chat.SetWidth(60)
+	require.Equal(t, 60, chat.Width)
 
-	messages.SetHeight(15)
-	require.Equal(t, 15, messages.Height)
+	chat.SetHeight(15)
+	require.Equal(t, 15, chat.Height)
 }
 
 // TestCompletionDialog tests the completion dialog
@@ -538,25 +538,3 @@ func TestToastManager(t *testing.T) {
 	updatedManager := toastManager.Update()
 	require.Empty(t, updatedManager.Toasts)
 }
-
-// TestRenderHomeView tests the home view rendering
-func TestRenderHomeView(t *testing.T) {
-	view := RenderHomeView(80, 24)
-	require.NotEmpty(t, view)
-	require.Contains(t, view, "Asimi CLI - Interactive Coding Agent")
-	require.Contains(t, view, "Your AI-powered coding assistant")
-}
-
-// TestRenderChatView tests the chat view rendering
-func TestRenderChatView(t *testing.T) {
-	messages := []string{"Message 1", "Message 2", "Message 3"}
-	view := RenderChatView(messages, 80, 24)
-	require.NotEmpty(t, view)
-	require.Contains(t, view, "Asimi CLI - Chat Session")
-
-	// Check that messages are included
-	for _, msg := range messages {
-		require.Contains(t, view, msg)
-	}
-}
-
