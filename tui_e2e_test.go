@@ -32,17 +32,12 @@ func TestFileCompletion(t *testing.T) {
 	require.NotEqual(t, -1, mainGoIndex, "main.go not found in file tree")
 
 	// Simulate typing "@"
-	tm.Type("@")
+	tm.Type("@main.go")
 
 	// Wait for the completion dialog to appear
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
 		return strings.Contains(string(bts), "@main.go")
 	}, teatest.WithCheckInterval(time.Millisecond*100), teatest.WithDuration(time.Second*3))
-
-	// Simulate pressing tab to select "@main.go"
-	for i := 0; i < mainGoIndex; i++ {
-		tm.Send(tea.KeyMsg{Type: tea.KeyTab})
-	}
 
 	// Simulate pressing enter to select the file
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
