@@ -116,15 +116,15 @@ func TestTUIModelKeyMsgEnterEmpty(t *testing.T) {
 // TestTUIModelKeyMsgEnterWithText tests submitting a message with text
 func TestTUIModelKeyMsgEnterWithText(t *testing.T) {
 	// Create a mock agent for testing
-	agent, err := getAgent(&Config{
+	agent, err := NewAgent(&Config{
 		LLM: LLMConfig{
 			Provider: "fake",
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 
 	model := NewTUIModel(mockConfig(), &toolCallbackHandler{})
-	model.agent = agent
+	model.agent = agent.executor
 
 	// Set some text in the editor
 	testMessage := "Hello, Asimi!"

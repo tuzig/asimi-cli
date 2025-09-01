@@ -938,12 +938,5 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) *TUIModel {
 	model.status.SetWorkingDir(".")   // In a real implementation, get current working directory
 	model.status.SetGitBranch("main") // In a real implementation, get current git branch
 
-	agent, err := getAgent(config, handler)
-	if err != nil {
-		// This is a critical error, so we'll panic
-		panic(err)
-	}
-	model.agent = agent
-
 	return model
 }

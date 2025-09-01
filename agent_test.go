@@ -13,16 +13,16 @@ import (
 
 func TestAgentWithFakeLLM(t *testing.T) {
 	// Create the agent
-	agent, err := getAgent(&Config{
+	agent, err := NewAgent(&Config{
 		LLM: LLMConfig{
 			Provider: "fake",
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 
 	// Execute the agent with a test prompt
 	ctx := context.Background()
-	result, err := agent.Call(ctx, map[string]any{
+	result, err := agent.executor.Call(ctx, map[string]any{
 		"input": "Read the test file and create an output file with 'Hello, World!'",
 	})
 	require.NoError(t, err)

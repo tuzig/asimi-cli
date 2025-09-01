@@ -87,9 +87,13 @@ func (r *runCmd) Run() error {
 
 	p := tea.NewProgram(tuiModel)
 	handler.p = p
-	scheduler := NewCoreToolScheduler(p)
-	tuiModel.scheduler = scheduler
-	handler.scheduler = scheduler
+	agent, err := NewAgent(config, WithCallbacks(handler), WithTea(p))
+	if err != nil {
+		return fmt.Errorf("failed to create agent: %w", err)
+	}
+	tuiModel.agent = agent.executor
+	tuiModel.scheduler = agent.scheduler
+	handler.scheduler = agent.scheduler
 
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("alas, there's been an error: %w", err)

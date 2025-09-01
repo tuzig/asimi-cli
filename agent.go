@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tmc/langchaingo/agents"
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic"
@@ -15,8 +17,35 @@ import (
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/memory"
 	"github.com/tmc/langchaingo/tools"
-	"github.com/tmc/langchaingo/callbacks"
 )
+
+// Agent struct encapsulates the executor and the scheduler
+type Agent struct {
+	executor  *agents.Executor
+	scheduler *CoreToolScheduler
+}
+
+// AgentOption is a functional option for configuring the agent.
+type AgentOption func(*agentOptions)
+
+type agentOptions struct {
+	handler callbacks.Handler
+	program *tea.Program
+}
+
+// WithCallbacks sets the callback handler for the agent.
+func WithCallbacks(handler callbacks.Handler) AgentOption {
+	return func(opts *agentOptions) {
+		opts.handler = handler
+	}
+}
+
+// WithTea sets the bubbletea program for the agent.
+func WithTea(p *tea.Program) AgentOption {
+	return func(opts *agentOptions) {
+		opts.program = p
+	}
+}
 
 // getLLMClient creates and returns an LLM client based on the configuration
 func getLLMClient(config *Config) (llms.Model, error) {
@@ -90,38 +119,58 @@ func getLLMClient(config *Config) (llms.Model, error) {
 	}
 }
 
-// getAgent creates and returns a new conversational agent executor
-func getAgent(config *Config, handler callbacks.Handler) (*agents.Executor, error) {
+// NewAgent creates and returns a new conversational agent
+func NewAgent(config *Config, opts ...AgentOption) (*Agent, error) {
+	options := &agentOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	llm, err := getLLMClient(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LLM client: %w", err)
 	}
 
 	agentTools := []tools.Tool{
-		&toolWrapper{t: ReadFileTool{}, handler: handler},
-		&toolWrapper{t: WriteFileTool{}, handler: handler},
-		&toolWrapper{t: ListDirectoryTool{}, handler: handler},
-		&toolWrapper{t: ReplaceTextTool{}, handler: handler},
+		&toolWrapper{t: ReadFileTool{}, handler: options.handler},
+		&toolWrapper{t: WriteFileTool{}, handler: options.handler},
+		&toolWrapper{t: ListDirectoryTool{}, handler: options.handler},
+		&toolWrapper{t: ReplaceTextTool{}, handler: options.handler},
 	}
 
-	agent := agents.NewConversationalAgent(llm, agentTools)
-	executor := agents.NewExecutor(
-		agent,
+	executorOpts := []agents.Option{
 		agents.WithMemory(memory.NewConversationBuffer()),
-		agents.WithCallbacksHandler(handler),
+	}
+	if options.handler != nil {
+		executorOpts = append(executorOpts, agents.WithCallbacksHandler(options.handler))
+	}
+
+	executor := agents.NewExecutor(
+		agents.NewConversationalAgent(llm, agentTools),
+		executorOpts...,
 	)
 
-	return executor, nil
+	var scheduler *CoreToolScheduler
+	if options.program != nil {
+		scheduler = NewCoreToolScheduler(options.program)
+	}
+
+	agent := &Agent{
+		executor:  executor,
+		scheduler: scheduler,
+	}
+
+	return agent, nil
 }
 
 // sendPromptToAgent sends a prompt to the agent and returns the response
 func sendPromptToAgent(config *Config, prompt string) (string, error) {
-	executor, err := getAgent(config, nil)
+	agent, err := NewAgent(config)
 	if err != nil {
 		return "", fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	response, err := chains.Run(context.Background(), executor, prompt)
+	response, err := chains.Run(context.Background(), agent.executor, prompt)
 	if err != nil {
 		return "", fmt.Errorf("failed to run agent: %w", err)
 	}
