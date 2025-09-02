@@ -17,11 +17,6 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 - langchaingo for llm communications, tools, chains and more
 
 ## TODOs
-[] file inclusion shouldn't add the file content to the user's prompt on the UI. Embedd only when sending to the LLM
-[] Change completion to use the up & down arrows and the tab or enter to select and esc to abort
-[] Add the local time at the bottom right of the status line
-[] Add a theme - a collection of functions that render given text, editing highlights, borders, etc. Example functions: RenderAI, RenderUser, RenderTool
-[] Handle the <thought> llm output tag
 [] The agent should an env tag to the llm's input
 <env>
  <os platform="darwin" shell="zsh"/>
@@ -38,4 +33,7 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
     </scripts>
   </project>
 </env>
+[] Add a theme - a collection of functions that render given text, editing highlights, borders, etc. Example functions: RenderAI, RenderUser, RenderTool
+[] Handle the <thought> llm output tag
+[] Add the local time at the bottom right of the status line
 
