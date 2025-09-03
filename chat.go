@@ -3,9 +3,10 @@ package main
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wordwrap"
 )
 
 // ChatComponent represents the chat view
@@ -71,14 +72,15 @@ func (c *ChatComponent) updateContent() {
 				Foreground(lipgloss.Color("240")).
 				Padding(0, 1)
 		}
-		messageViews = append(messageViews, messageStyle.Render(message))
+
+		messageViews = append(messageViews,
+			messageStyle.Render(wordwrap.String(message, c.Width)))
 	}
 	content := lipgloss.JoinVertical(lipgloss.Left, messageViews...)
 	c.Viewport.SetContent(content)
 	c.Viewport.GotoBottom()
 }
 
-// Update handles messages for the chat component
 // Update handles messages for the chat component
 func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
 	var cmd interface{}
