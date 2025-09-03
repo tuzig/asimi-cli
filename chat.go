@@ -58,6 +58,12 @@ func (c *ChatComponent) AddMessage(message string) {
 	c.updateContent()
 }
 
+// Replace last message
+func (c *ChatComponent) ReplaceLastMessage(message string) {
+	c.Messages[len(c.Messages)-1] = message
+	c.updateContent()
+}
+
 // updateContent updates the viewport content based on the messages
 func (c *ChatComponent) updateContent() {
 	var messageViews []string
@@ -99,18 +105,7 @@ func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
 
 // View renders the chat component
 func (c ChatComponent) View() string {
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("62")).
-		Padding(0, 1)
-
-	header := headerStyle.Render("Asimi CLI - Chat Session")
-
-	// The viewport contains the messages. We render it inside the component's styled border.
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		c.Viewport.View(),
-	)
+	content := lipgloss.JoinVertical(lipgloss.Left, c.Viewport.View())
 
 	// Adjust height for the header
 	c.Style = c.Style.Height(c.Height)

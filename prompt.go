@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wordwrap"
 )
 
 // PromptComponent represents the user input text area
@@ -22,8 +23,8 @@ func NewPromptComponent(width, height int) PromptComponent {
 	ta.Focus()
 
 	// Set the dimensions
-	ta.SetWidth(width - 2)   // Account for borders
-	ta.SetHeight(height - 2) // Account for borders
+	ta.SetWidth(width - 2) // Account for borders
+	ta.SetHeight(height)   // Account for borders
 
 	return PromptComponent{
 		TextArea: ta,
@@ -48,7 +49,7 @@ func (p *PromptComponent) SetWidth(width int) {
 func (p *PromptComponent) SetHeight(height int) {
 	p.Height = height
 	p.Style = p.Style.Height(height)
-	p.TextArea.SetHeight(height - 2)
+	p.TextArea.SetHeight(height)
 }
 
 // SetValue sets the text value of the prompt
@@ -80,5 +81,5 @@ func (p PromptComponent) Update(msg interface{}) (PromptComponent, interface{}) 
 
 // View renders the prompt component
 func (p PromptComponent) View() string {
-	return p.Style.Render(p.TextArea.View())
+	return p.Style.Render(wordwrap.String(p.TextArea.View(), p.Width))
 }

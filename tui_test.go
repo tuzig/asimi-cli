@@ -124,7 +124,7 @@ func TestTUIModelKeyMsg(t *testing.T) {
 	}
 }
 
-	func TestTUIModelSubmit(t *testing.T) {
+func TestTUIModelSubmit(t *testing.T) {
 	testCases := []struct {
 		name                 string
 		initialEditorValue   string
@@ -290,7 +290,7 @@ func TestTUIModelView(t *testing.T) {
 	model.sessionActive = true
 	view = model.View()
 	require.NotEmpty(t, view)
-	require.Contains(t, view, "Asimi CLI - Chat Session")
+	require.Contains(t, view, "Welcome to Asimi")
 }
 
 // TestPromptComponent tests the prompt component
