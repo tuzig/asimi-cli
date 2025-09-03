@@ -290,11 +290,11 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ToolCallScheduledMsg:
 		m.chat.AddMessage(fmt.Sprintf("Tool Scheduled: %s", msg.Call.Tool.Name()))
 	case ToolCallExecutingMsg:
-		m.chat.AddMessage(fmt.Sprintf("Tool Executing: %s", msg.Call.Tool.Name()))
+		m.chat.ReplaceLastMessage(fmt.Sprintf("Tool Executing: %s", msg.Call.Tool.Name()))
 	case ToolCallSuccessMsg:
-		m.chat.AddMessage(fmt.Sprintf("Tool Succeeded: %s", msg.Call.Tool.Name()))
+		m.chat.ReplaceLastMessage(fmt.Sprintf("Tool Succeeded: %s", msg.Call.Tool.Name()))
 	case ToolCallErrorMsg:
-		m.chat.AddMessage(fmt.Sprintf("Tool Errored: %s: %v", msg.Call.Tool.Name(), msg.Call.Error))
+		m.chat.ReplaceLastMessage(fmt.Sprintf("Tool Errored: %s: %v", msg.Call.Tool.Name(), msg.Call.Error))
 
 	case errMsg:
 		m.chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
