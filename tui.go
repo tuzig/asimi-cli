@@ -364,17 +364,18 @@ func (m *TUIModel) updateComponentDimensions() {
 	// - chat/File viewer: remaining space
 
 	statusHeight := 1
-	promptHeight := 5
-	chatHeight := m.height - statusHeight - promptHeight
+	promptHeight := 2
+	width := m.width - 2
+	chatHeight := m.height - statusHeight - promptHeight - 4
 
 	// Update components
-	m.status.SetWidth(m.width)
+	m.status.SetWidth(width + 1)
 
 	// Full width layout
-	m.chat.SetWidth(m.width)
+	m.chat.SetWidth(width)
 	m.chat.SetHeight(chatHeight)
 
-	m.prompt.SetWidth(m.width)
+	m.prompt.SetWidth(width)
 	m.prompt.SetHeight(promptHeight)
 
 	// Update status info
