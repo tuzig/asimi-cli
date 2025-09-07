@@ -185,35 +185,30 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "q":
 		case "enter":
 			// Submit the prompt content
 			content := m.prompt.Value()
 			if content != "" {
-				// Check if it's a command
 				if content[0] == '/' {
-					// Handle command
+					// TODO: move the slash command update to m.chat.Update()
 					parts := strings.Fields(content)
 					if len(parts) > 0 {
 						cmdName := parts[0]
 						cmd, exists := m.commandRegistry.GetCommand(cmdName)
 						if exists {
-							// Execute command
 							command := cmd.Handler(&m, parts[1:])
 							cmds = append(cmds, command)
 							m.prompt.SetValue("")
 						} else {
+							// TODO: use toast for this
 							m.chat.AddMessage(fmt.Sprintf("Unknown command: %s", cmdName))
 						}
 					}
 				} else {
-					// Add user message to chat
+					// move the this block to m.prompt.Update()
 					m.chat.AddMessage(fmt.Sprintf("You: %s", content))
-
-					// Mark session as active
 					m.sessionActive = true
 
-					// Clear prompt
 					m.prompt.SetValue("")
 
 					// Send the prompt to the agent
@@ -235,6 +230,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					})
 				}
 			}
+		// TODO: Give slash a special treatment only when in the start of the prompt
 		case "/":
 			m.prompt, _ = m.prompt.Update(msg)
 			// Show completion dialog with commands
@@ -261,6 +257,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.completions.Show()
 
+		// TODO: remove ctrl+l and `m.messagesRight`
 		case "ctrl+l":
 			// Toggle messages layout
 			m.messagesRight = !m.messagesRight
