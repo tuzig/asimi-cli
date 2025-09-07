@@ -75,7 +75,7 @@ func (c *ChatComponent) updateContent() {
 				Padding(0, 1)
 		} else {
 			messageStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#a0a0a0")).
+				Foreground(lipgloss.Color("#b0b0b0")).
 				Padding(0, 1)
 		}
 
