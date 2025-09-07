@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	time "time"
 
@@ -537,4 +538,51 @@ func TestToastManager(t *testing.T) {
 	time.Sleep(2 * time.Millisecond) // Wait for toast to expire
 	updatedManager := toastManager.Update()
 	require.Empty(t, updatedManager.Toasts)
+}
+
+// TestTUIModelUpdateFileCompletions tests the file completion functionality with multiple files
+func TestTUIModelUpdateFileCompletions(t *testing.T) {
+	model := newTestModel(t)
+	
+	// Set up mock file list
+	model.allFiles = []string{
+		"main.go",
+		"utils.go",
+		"config.json",
+		"README.md",
+		"docs/guide.md",
+		"test/utils_test.go",
+	}
+	
+	// Test single file completion
+	model.prompt.SetValue("@mai")
+	model.updateFileCompletions()
+	require.Equal(t, 1, len(model.completions.Options))
+	require.Contains(t, model.completions.Options[0], "main.go")
+	
+	// Test multiple matching files
+	model.prompt.SetValue("@util")
+	model.updateFileCompletions()
+	require.Equal(t, 2, len(model.completions.Options))
+	require.True(t, 
+		(strings.Contains(model.completions.Options[0], "utils.go") && strings.Contains(model.completions.Options[1], "utils_test.go")) ||
+		(strings.Contains(model.completions.Options[1], "utils.go") && strings.Contains(model.completions.Options[0], "utils_test.go")))
+	
+	// Test multiple file references in one input
+	model.prompt.SetValue("Check these files: @main.go and @config")
+	model.updateFileCompletions()
+	require.Equal(t, 1, len(model.completions.Options))
+	require.Contains(t, model.completions.Options[0], "config.json")
+	
+	// Test file completion with icons
+	for _, option := range model.completions.Options {
+		// Should have an icon followed by the file name
+		require.True(t, strings.Contains(option, " "))
+		parts := strings.SplitN(option, " ", 2)
+		require.Equal(t, 2, len(parts))
+		// First part should be an icon
+		require.True(t, len(parts[0]) > 0)
+		// Second part should be the file name
+		require.True(t, len(parts[1]) > 0)
+	}
 }

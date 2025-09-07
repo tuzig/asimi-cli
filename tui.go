@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,7 +31,6 @@ type TUIModel struct {
 	// UI Flags & State
 	showCompletionDialog bool
 	completionMode       string // "file" or "command"
-	messagesRight        bool
 
 	// Session state
 	sessionActive      bool
@@ -66,7 +66,6 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) *TUIModel {
 		// UI Flags
 		showCompletionDialog: false,
 		completionMode:       "",
-		messagesRight:        false,
 
 		// Session state
 		sessionActive:      false,
@@ -122,11 +121,10 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				selected := m.completions.GetSelected()
 				if selected != "" {
 					if m.completionMode == "file" {
-						// It's a file completion
 						filePath := selected
 						content, err := os.ReadFile(filePath)
 						if err != nil {
-							m.chat.AddMessage(fmt.Sprintf("Error reading file: %v", err))
+							m.toastManager.AddToast(fmt.Sprintf("Error reading file: %v", err), "error", time.Second*3)
 						} else {
 							m.filesContentToSend[filePath] = string(content)
 							m.chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
@@ -189,8 +187,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Submit the prompt content
 			content := m.prompt.Value()
 			if content != "" {
-				if content[0] == '/' {
-					// TODO: move the slash command update to m.chat.Update()
+				// TODO: move the slash command update to m.chat.Update()
+				if strings.HasPrefix(content, "/") {
 					parts := strings.Fields(content)
 					if len(parts) > 0 {
 						cmdName := parts[0]
@@ -200,8 +198,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							cmds = append(cmds, command)
 							m.prompt.SetValue("")
 						} else {
-							// TODO: use toast for this
-							m.chat.AddMessage(fmt.Sprintf("Unknown command: %s", cmdName))
+							m.toastManager.AddToast(fmt.Sprintf("Unknown command: %s", cmdName), "error", time.Second*3)
 						}
 					}
 				} else {
@@ -230,19 +227,24 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					})
 				}
 			}
-		// TODO: Give slash a special treatment only when in the start of the prompt
+		// Only trigger command completion when slash is at the start of the prompt
 		case "/":
-			m.prompt, _ = m.prompt.Update(msg)
-			// Show completion dialog with commands
-			m.showCompletionDialog = true
-			m.completionMode = "command"
-			var commandNames []string
-			for name := range m.commandRegistry.Commands {
-				commandNames = append(commandNames, name)
+			// Only show command completion if we're at the beginning of the input
+			if m.prompt.Value() == "" {
+				m.prompt, _ = m.prompt.Update(msg)
+				// Show completion dialog with commands
+				m.showCompletionDialog = true
+				m.completionMode = "command"
+				var commandNames []string
+				for name := range m.commandRegistry.Commands {
+					commandNames = append(commandNames, name)
+				}
+				sort.Strings(commandNames)
+				m.completions.SetOptions(commandNames)
+				m.completions.Show()
+			} else {
+				m.prompt, _ = m.prompt.Update(msg)
 			}
-			sort.Strings(commandNames)
-			m.completions.SetOptions(commandNames)
-			m.completions.Show()
 		case "@":
 			m.prompt, _ = m.prompt.Update(msg)
 			// Show completion dialog with files
@@ -257,10 +259,6 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.completions.Show()
 
-		// TODO: remove ctrl+l and `m.messagesRight`
-		case "ctrl+l":
-			// Toggle messages layout
-			m.messagesRight = !m.messagesRight
 		default:
 			m.prompt, _ = m.prompt.Update(msg)
 		}
@@ -312,13 +310,21 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *TUIModel) updateFileCompletions() {
 	inputValue := m.prompt.Value()
-	parts := strings.Split(inputValue, "@")
-	if len(parts) < 2 {
+
+	// Find the last @ character to determine what we're completing
+	lastAt := strings.LastIndex(inputValue, "@")
+	if lastAt == -1 {
 		m.completions.SetOptions([]string{})
 		return
 	}
-	// TODO: ensure this works well by adding a test for two file inclusing in one input
-	searchQuery := parts[len(parts)-1]
+
+	// Extract the text after the last @ for completion
+	searchQuery := inputValue[lastAt+1:]
+
+	// If there's a space in the search query, we're likely starting a new file reference
+	if spaceIndex := strings.Index(searchQuery, " "); spaceIndex != -1 {
+		searchQuery = searchQuery[spaceIndex+1:]
+	}
 
 	var filteredFiles []string
 	for _, file := range m.allFiles {
@@ -347,7 +353,6 @@ func (m *TUIModel) updateFileCompletions() {
 
 	var options []string
 	for _, file := range filteredFiles {
-		// TODO: add a nerdfont emojie based on file type
 		options = append(options, file)
 	}
 	m.completions.SetOptions(options)
@@ -458,7 +463,6 @@ func renderHomeView(width, height int) string {
 		"▶ Use / to access commands (e.g., /help, /new)",
 		"▶ Use @ to reference files (e.g., @main.go)",
 		"▶ Press Ctrl+C or Q to quit",
-		"▶ Press Ctrl+L to toggle layout",
 	}
 
 	// Style for commands
