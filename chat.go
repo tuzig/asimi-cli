@@ -48,7 +48,7 @@ func (c *ChatComponent) SetWidth(width int) {
 func (c *ChatComponent) SetHeight(height int) {
 	c.Height = height
 	c.Style = c.Style.Height(height)
-	c.Viewport.Height = height - 2
+	c.Viewport.Height = height
 	c.updateContent()
 }
 
