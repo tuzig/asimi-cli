@@ -101,12 +101,12 @@ type LLMConfig struct {
 
 // PermissionConfig holds permission configuration
 type PermissionConfig struct {
-	Allow                         []string `koanf:"allow"`
-	Ask                           []string `koanf:"ask"`
-	Deny                          []string `koanf:"deny"`
-	AdditionalDirectories         []string `koanf:"additional_directories"`
-	DefaultMode                   string   `koanf:"default_mode"`
-	DisableBypassPermissionsMode  string   `koanf:"disable_bypass_permissions_mode"`
+	Allow                        []string `koanf:"allow"`
+	Ask                          []string `koanf:"ask"`
+	Deny                         []string `koanf:"deny"`
+	AdditionalDirectories        []string `koanf:"additional_directories"`
+	DefaultMode                  string   `koanf:"default_mode"`
+	DisableBypassPermissionsMode string   `koanf:"disable_bypass_permissions_mode"`
 }
 
 // HooksConfig holds hooks configuration
@@ -126,12 +126,10 @@ func LoadConfig() (*Config, error) {
 	// Create a new koanf instance
 	k := koanf.New(".")
 
-	// 1. Load default configuration
 	if err := k.Load(file.Provider("config/default.toml"), toml.Parser()); err != nil {
 		log.Printf("Failed to load default config: %v", err)
 	}
 
-	// 2. Load user configuration from home directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Printf("Failed to get user home directory: %v", err)
@@ -162,7 +160,7 @@ func LoadConfig() (*Config, error) {
 			k.Set("llm.api_key", openaiKey)
 		}
 	}
-	
+
 	// Check for ANTHROPIC_API_KEY if using Anthropic
 	if k.String("llm.provider") == "anthropic" && k.String("llm.api_key") == "" {
 		if anthropicKey := os.Getenv("ANTHROPIC_API_KEY"); anthropicKey != "" {

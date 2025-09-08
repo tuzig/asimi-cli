@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tmc/langchaingo/agents"
@@ -16,6 +19,7 @@ import (
 	"github.com/tmc/langchaingo/llms/ollama"
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/memory"
+	"github.com/tmc/langchaingo/prompts"
 	"github.com/tmc/langchaingo/tools"
 )
 
@@ -33,6 +37,26 @@ type agentOptions struct {
 	program *tea.Program
 }
 
+var promptPartials = map[string]any{
+	"SandboxStatus":  "none",
+	"UserMemory":     "",
+	"ProjectContext": "",
+	"Env":            "",
+	"ReadFile":       "read_file",
+	"WriteFile":      "write_file",
+	"Grep":           "grep",
+	"Glob":           "glob",
+	"Edit":           "replace_text",
+	"Shell":          "run_shell_command",
+	"ReadManyFiles":  "read_many_files",
+	"Memory":         "",
+	"LS":             "list_files",
+	"history":        "",
+}
+
+//go:embed prompts/system_prompt.tmpl
+var systemPromptTemplate string
+
 // WithCallbacks sets the callback handler for the agent.
 func WithCallbacks(handler callbacks.Handler) AgentOption {
 	return func(opts *agentOptions) {
@@ -48,10 +72,11 @@ func WithTea(p *tea.Program) AgentOption {
 }
 
 // getLLMClient creates and returns an LLM client based on the configuration
-func getLLMClient(config *Config) (llms.Model, error) {
+func getLLMClient(config *Config, cb callbacks.Handler) (llms.Model, error) {
 	switch config.LLM.Provider {
 	case "fake":
-		return fake.NewFakeLLM([]string{"AI:I am a large language model, trained by Google."}), nil
+		llm := fake.NewFakeLLM([]string{})
+		return llm, nil
 	case "ollama":
 		// For Ollama, we can use default options or customize based on config
 		opts := []ollama.Option{
@@ -126,9 +151,19 @@ func NewAgent(config *Config, opts ...AgentOption) (*Agent, error) {
 		opt(options)
 	}
 
-	llm, err := getLLMClient(config)
+	llm, err := getLLMClient(config, options.handler)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LLM client: %w", err)
+	}
+
+	return NewAgentWithLLM(config, llm, opts...)
+}
+
+// NewAgentWithLLM creates and returns a new conversational agent with a given LLM
+func NewAgentWithLLM(config *Config, llm llms.Model, opts ...AgentOption) (*Agent, error) {
+	options := &agentOptions{}
+	for _, opt := range opts {
+		opt(options)
 	}
 
 	agentTools := []tools.Tool{
@@ -137,7 +172,24 @@ func NewAgent(config *Config, opts ...AgentOption) (*Agent, error) {
 		&toolWrapper{t: ListDirectoryTool{}, handler: options.handler},
 		&toolWrapper{t: ReplaceTextTool{}, handler: options.handler},
 		&toolWrapper{t: RunShellCommand{}, handler: options.handler},
+		&toolWrapper{t: ReadManyFilesTool{}, handler: options.handler},
 	}
+
+	partials := make(map[string]any, len(promptPartials))
+	for k, v := range promptPartials {
+		partials[k] = v
+	}
+	partials["UserMemory"] = readAgentsMDFromCWD()
+	partials["Env"] = buildEnvBlock()
+
+	promptTemplate := prompts.PromptTemplate{
+		Template:         systemPromptTemplate,
+		TemplateFormat:   prompts.TemplateFormatGoTemplate,
+		InputVariables:   []string{"input", "agent_scratchpad"},
+		PartialVariables: partials,
+	}
+
+	agent := agents.NewConversationalAgent(llm, agentTools, agents.WithPrompt(promptTemplate))
 
 	executorOpts := []agents.Option{
 		agents.WithMemory(memory.NewConversationBuffer()),
@@ -147,7 +199,7 @@ func NewAgent(config *Config, opts ...AgentOption) (*Agent, error) {
 	}
 
 	executor := agents.NewExecutor(
-		agents.NewConversationalAgent(llm, agentTools),
+		agent,
 		executorOpts...,
 	)
 
@@ -156,12 +208,64 @@ func NewAgent(config *Config, opts ...AgentOption) (*Agent, error) {
 		scheduler = NewCoreToolScheduler(options.program)
 	}
 
-	agent := &Agent{
+	agentInstance := &Agent{
 		executor:  executor,
 		scheduler: scheduler,
 	}
 
-	return agent, nil
+	return agentInstance, nil
+}
+
+// buildEnvBlock constructs a minimal <env> XML snippet containing OS and paths.
+func buildEnvBlock() string {
+	cwd, _ := os.Getwd()
+	home, _ := os.UserHomeDir()
+	root := findProjectRoot(cwd)
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "bash"
+	}
+	osName := map[string]string{
+		"darwin":    "macOS",
+		"linux":     "Linux",
+		"windows":   "Windows",
+		"freebsd":   "FreeBSD",
+		"openbsd":   "OpenBSD",
+		"netbsd":    "NetBSD",
+		"dragonfly": "DragonFlyBSD",
+		"solaris":   "Solaris",
+		"aix":       "AIX",
+		"android":   "Android",
+		"ios":       "iOS",
+	}[runtime.GOOS]
+	if osName == "" {
+		osName = runtime.GOOS
+	}
+	return fmt.Sprintf(`
+<env>
+ <os>%s</os>
+ <paths>
+  <cwd>%s</cwd>
+  <project_root>%s</project_root>
+  <home>%s</home>
+ </paths>
+</env>\n `, runtime.GOOS, shell, root, home)
+}
+
+// readAgentsMDFromCWD reads the contents of AGENTS.md from the current
+// working directory. If the file does not exist or an error occurs, it
+// returns an empty string.
+func readAgentsMDFromCWD() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(wd, "AGENTS.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // sendPromptToAgent sends a prompt to the agent and returns the response
@@ -171,10 +275,17 @@ func sendPromptToAgent(config *Config, prompt string) (string, error) {
 		return "", fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	response, err := chains.Run(context.Background(), agent.executor, prompt)
+	response, err := chains.Call(context.Background(), agent.executor, map[string]any{
+		"input": prompt,
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to run agent: %w", err)
+		return "", fmt.Errorf("failed to compile system prompt: %w", err)
 	}
 
-	return response, nil
+	output, ok := response["output"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid agent output type")
+	}
+
+	return output, nil
 }

@@ -214,16 +214,20 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if len(m.filesContentToSend) > 0 {
 							var fileContents []string
 							for path, content := range m.filesContentToSend {
-								fileContents = append(fileContents, fmt.Sprintf("---\n%s---\n%s", path, content))
+								fileContents = append(fileContents, fmt.Sprintf("--- Context from: %s ---\n%s\n--- End of Context from: %s ---", path, content, path))
 							}
 							fullPrompt = strings.Join(fileContents, "\n\n") + "\n" + content
 							m.filesContentToSend = make(map[string]string)
 						}
-						response, err := chains.Run(context.Background(), m.agent, fullPrompt)
+						outputs, err := chains.Call(context.Background(), m.agent, map[string]any{"input": fullPrompt})
 						if err != nil {
 							return errMsg{err}
 						}
-						return responseMsg(response)
+						out, ok := outputs["output"].(string)
+						if !ok {
+							return errMsg{fmt.Errorf("invalid agent output type")}
+						}
+						return responseMsg(out)
 					})
 				}
 			}

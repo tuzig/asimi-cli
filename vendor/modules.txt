@@ -67,6 +67,8 @@ github.com/atotto/clipboard
 github.com/aymanbagabas/go-osc52/v2
 # github.com/aymanbagabas/go-udiff v0.2.0
 ## explicit; go 1.18
+github.com/aymanbagabas/go-udiff
+github.com/aymanbagabas/go-udiff/lcs
 # github.com/charmbracelet/bubbles v0.21.0
 ## explicit; go 1.23.0
 github.com/charmbracelet/bubbles/cursor
@@ -94,8 +96,10 @@ github.com/charmbracelet/x/ansi/parser
 github.com/charmbracelet/x/cellbuf
 # github.com/charmbracelet/x/exp/golden v0.0.0-20241011142426-46044092ad91
 ## explicit; go 1.19
+github.com/charmbracelet/x/exp/golden
 # github.com/charmbracelet/x/exp/teatest v0.0.0-20250829135019-44e44e21330d
 ## explicit; go 1.23.0
+github.com/charmbracelet/x/exp/teatest
 # github.com/charmbracelet/x/term v0.2.1
 ## explicit; go 1.18
 github.com/charmbracelet/x/term

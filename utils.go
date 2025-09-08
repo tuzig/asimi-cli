@@ -45,3 +45,19 @@ func getFileTree(root string) ([]string, error) {
 	sort.Strings(files)
 	return files, nil
 }
+
+// findProjectRoot returns the nearest ancestor directory (including start)
+// that contains a project marker like .git or go.mod. Falls back to start.
+func findProjectRoot(start string) string {
+	dir := start
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == "/" {
+			return start
+		}
+		dir = parent
+	}
+}

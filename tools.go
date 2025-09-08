@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/tmc/langchaingo/tools"
+	"github.com/yargevad/filepathx"
 )
 
 // ReadFileInput is the input for the ReadFileTool
@@ -92,7 +93,7 @@ type ListDirectoryInput struct {
 type ListDirectoryTool struct{}
 
 func (t ListDirectoryTool) Name() string {
-	return "list_directory"
+	return "list_files"
 }
 
 func (t ListDirectoryTool) Description() string {
@@ -173,7 +174,7 @@ type RunShellCommand struct{}
 type RunShellCommandInput struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
-	Directory   string `json:"directory"`
+	Path        string `json:"path"`
 }
 
 // RunShellCommandOutput is the output of the RunShellCommand tool
@@ -214,7 +215,7 @@ func (t RunShellCommand) Call(ctx context.Context, input string) (string, error)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Dir = params.Directory
+	cmd.Dir = params.Path
 
 	runErr := cmd.Run()
 
@@ -259,4 +260,65 @@ var availableTools = []tools.Tool{
 	ListDirectoryTool{},
 	ReplaceTextTool{},
 	RunShellCommand{},
+	ReadManyFilesTool{},
+}
+
+// ReadManyFilesInput is the input for the ReadManyFilesTool.
+type ReadManyFilesInput struct {
+	Paths []string `json:"paths"`
+}
+
+// ReadManyFilesTool is a tool for reading multiple files using glob patterns.
+type ReadManyFilesTool struct{}
+
+func (t ReadManyFilesTool) Name() string {
+	return "read_many_files"
+}
+
+func (t ReadManyFilesTool) Description() string {
+	return "Reads content from multiple files specified by wildcard paths. The input should be a JSON object with a 'paths' field, which is an array of strings."
+}
+
+func (t ReadManyFilesTool) Call(ctx context.Context, input string) (string, error) {
+	var params ReadManyFilesInput
+	err := json.Unmarshal([]byte(input), &params)
+	if err != nil {
+		return "", fmt.Errorf("invalid input: %w. The input should be a JSON object with a 'paths' field", err)
+	}
+
+	var contentBuilder strings.Builder
+	var allMatches []string
+
+	for _, pattern := range params.Paths {
+		matches, err := filepathx.Glob(pattern)
+		if err != nil {
+			// Silently ignore glob errors for now, or maybe log them.
+			// For now, just continue.
+			continue
+		}
+		allMatches = append(allMatches, matches...)
+	}
+
+	// Create a map to track unique matches
+	uniqueMatchesMap := make(map[string]bool)
+	var uniqueMatches []string
+	for _, match := range allMatches {
+		if !uniqueMatchesMap[match] {
+			uniqueMatchesMap[match] = true
+			uniqueMatches = append(uniqueMatches, match)
+		}
+	}
+
+	for _, path := range uniqueMatches {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			// If we can't read a file, we can skip it and continue.
+			continue
+		}
+		contentBuilder.WriteString(fmt.Sprintf("---\t%s---\n", path))
+		contentBuilder.Write(content)
+		contentBuilder.WriteString("\n")
+	}
+
+	return contentBuilder.String(), nil
 }

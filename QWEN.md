@@ -17,24 +17,7 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 - langchaingo for llm communications, tools, chains and more
 
 ## TODOs
-[] Add a per-model system prompt, starting with gemini. The specs are in @specs/prompts.md
-[] add an env tag at the begining of each chat
-<env>
- <os platform="darwin" shell="zsh"/>
-  <paths>
-    <cwd>/Users/daonb/src/gemini-cli/packages/cli</cwd>
-    <root>/Users/daonb/src/gemini-cli</root>
-    <home>/Users/daonb</home>
-  </paths>
-  <project type="nodejs" manifest="package.json">
-    <scripts>
-      <script name="test"/>
-      <script name="lint"/>
-      <script name="build"/>
-    </scripts>
-  </project>
-</env>
-[] Add a theme - a collection of functions that render given text, editing highlights, borders, etc. Example functions: RenderAI, RenderUser, RenderTool
+[] Add a theme - a collection of functions and colors that render given text, editing highlights, borders, etc. Example functions: RenderAI, RenderUser, RenderTool
 [] Handle the <thought> llm output tag
 [] Add the local time at the bottom right of the status line
 
