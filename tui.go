@@ -1,24 +1,21 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"sort"
-	"strings"
-	"time"
+    "context"
+    "fmt"
+    "os"
+    "sort"
+    "strings"
+    "time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/tmc/langchaingo/agents"
-	"github.com/tmc/langchaingo/chains"
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/lipgloss"
 )
 
 // TUIModel represents the bubbletea model for the TUI
 type TUIModel struct {
-	config        *Config
-	agent         *agents.Executor
-	width, height int
+    config        *Config
+    width, height int
 
 	// UI Components
 	status       StatusComponent
@@ -31,22 +28,17 @@ type TUIModel struct {
 	// UI Flags & State
 	showCompletionDialog bool
 	completionMode       string // "file" or "command"
-
-	// Session state
-	sessionActive      bool
-	filesContentToSend map[string]string
+	sessionActive        bool
 
 	// Command registry
 	commandRegistry CommandRegistry
 
-	// Scheduler
-	scheduler        *CoreToolScheduler
-	userMessageQueue []string
-	allFiles         []string
+	// Application services (passed in, not owned)
+	session *Session
 }
 
 // NewTUIModel creates a new TUI model
-func NewTUIModel(config *Config, handler *toolCallbackHandler) *TUIModel {
+func NewTUIModel(config *Config) *TUIModel {
 
 	registry := NewCommandRegistry()
 
@@ -66,16 +58,13 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) *TUIModel {
 		// UI Flags
 		showCompletionDialog: false,
 		completionMode:       "",
-
-		// Session state
-		sessionActive:      false,
-		filesContentToSend: make(map[string]string),
+		sessionActive:        false,
 
 		// Command registry
 		commandRegistry: registry,
 
-		// Scheduler
-		userMessageQueue: make([]string, 0),
+		// Application services (injected)
+		session: nil,
 	}
 
 	// Set initial status info
@@ -84,6 +73,11 @@ func NewTUIModel(config *Config, handler *toolCallbackHandler) *TUIModel {
 	model.status.SetGitBranch("main") // In a real implementation, get current git branch
 
 	return model
+}
+
+// SetSession sets the session for the TUI model
+func (m *TUIModel) SetSession(session *Session) {
+	m.session = session
 }
 
 // Init implements bubbletea.Model
@@ -125,8 +119,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						content, err := os.ReadFile(filePath)
 						if err != nil {
 							m.toastManager.AddToast(fmt.Sprintf("Error reading file: %v", err), "error", time.Second*3)
-						} else {
-							m.filesContentToSend[filePath] = string(content)
+						} else if m.session != nil {
+							m.session.AddContextFile(filePath, string(content))
 							m.chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
 						}
 						currentValue := m.prompt.Value()
@@ -176,7 +170,10 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Any other key press updates the completion list
 				m.prompt, _ = m.prompt.Update(msg)
 				if m.completionMode == "file" {
-					m.updateFileCompletions()
+					files, err := getFileTree(".")
+					if err == nil {
+						m.updateFileCompletions(files)
+					}
 				}
 				return m, nil
 			}
@@ -210,27 +207,17 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Send the prompt to the agent
 					cmds = append(cmds, func() tea.Msg {
-						fullPrompt := content
-						if len(m.filesContentToSend) > 0 {
-							var fileContents []string
-							for path, content := range m.filesContentToSend {
-								fileContents = append(fileContents, fmt.Sprintf("--- Context from: %s ---\n%s\n--- End of Context from: %s ---", path, content, path))
-							}
-							fullPrompt = strings.Join(fileContents, "\n\n") + "\n" + content
-							m.filesContentToSend = make(map[string]string)
-						}
-						outputs, err := chains.Call(context.Background(), m.agent, map[string]any{"input": fullPrompt})
-						if err != nil {
-							return errMsg{err}
-						}
-						out, ok := outputs["output"].(string)
-						if !ok {
-							return errMsg{fmt.Errorf("invalid agent output type")}
-						}
-						return responseMsg(out)
-					})
-				}
-			}
+                    if m.session == nil {
+                        return errMsg{fmt.Errorf("no session available to handle prompt")}
+                    }
+                    out, err := m.session.Ask(context.Background(), content)
+                    if err != nil {
+                        return errMsg{err}
+                    }
+                    return responseMsg(out)
+                })
+            }
+        }
 		// Only trigger command completion when slash is at the start of the prompt
 		case "/":
 			// Only show command completion if we're at the beginning of the input
@@ -258,8 +245,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				m.chat.AddMessage(fmt.Sprintf("Error scanning files: %v", err))
 			} else {
-				m.allFiles = files
-				m.updateFileCompletions()
+				m.updateFileCompletions(files)
 			}
 			m.completions.Show()
 
@@ -312,7 +298,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *TUIModel) updateFileCompletions() {
+func (m *TUIModel) updateFileCompletions(files []string) {
 	inputValue := m.prompt.Value()
 
 	// Find the last @ character to determine what we're completing
@@ -331,7 +317,7 @@ func (m *TUIModel) updateFileCompletions() {
 	}
 
 	var filteredFiles []string
-	for _, file := range m.allFiles {
+	for _, file := range files {
 		if strings.Contains(strings.ToLower(file), strings.ToLower(searchQuery)) {
 			filteredFiles = append(filteredFiles, file)
 		}

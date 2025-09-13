@@ -1,0 +1,511 @@
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	_ "embed"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/prompts"
+	lctools "github.com/tmc/langchaingo/tools"
+)
+
+// Session is a lightweight chat loop that uses llms.Model directly
+// and native provider tool/function-calling. It executes tools via the
+// existing CoreToolScheduler and keeps conversation state locally.
+type Session struct {
+	llm      llms.Model
+	messages []llms.MessageContent
+
+	// toolCatalog maps tool name -> concrete tool for execution
+	toolCatalog map[string]lctools.Tool
+	// toolDefs are the LLM-facing tool/function definitions
+	toolDefs []llms.Tool
+	// provider indicates which LLM provider is in use (e.g., openai, anthropic, googleai)
+	provider string
+
+	// Tool call loop detection
+	lastToolCallKey         string
+	toolCallRepetitionCount int
+
+	// Tool scheduler for coordinating tool execution
+	scheduler *CoreToolScheduler
+
+	// Context files to include with prompts
+	contextFiles map[string]string
+}
+
+// Local copies of prompt partials and template used by the session, to decouple from agent.go.
+var sessPromptPartials = map[string]any{
+	"SandboxStatus":  "none",
+	"UserMemory":     "",
+	"ProjectContext": "",
+	"Env":            "",
+	"ReadFile":       "read_file",
+	"WriteFile":      "write_file",
+	"Grep":           "grep",
+	"Glob":           "glob",
+	"Edit":           "replace_text",
+	"Shell":          "run_shell_command",
+	"ReadManyFiles":  "read_many_files",
+	"Memory":         "",
+	"LS":             "list_files",
+	"history":        "",
+}
+
+//go:embed prompts/system_prompt.tmpl
+var sessSystemPromptTemplate string
+
+// NewSession creates a new Session instance with a system prompt and tools.
+func NewSession(llm llms.Model, cfg *Config) (*Session, error) {
+	s := &Session{
+		llm:         llm,
+		toolCatalog: map[string]lctools.Tool{},
+	}
+	if cfg != nil {
+		s.provider = strings.ToLower(cfg.LLM.Provider)
+	}
+
+	// Build system prompt from the existing template and partials, same as the agent.
+	partials := make(map[string]any, len(sessPromptPartials))
+	for k, v := range sessPromptPartials {
+		partials[k] = v
+	}
+	partials["UserMemory"] = sessReadAgentsMDFromCWD()
+	partials["Env"] = sessBuildEnvBlock()
+
+	pt := prompts.PromptTemplate{
+		Template:         sessSystemPromptTemplate,
+		TemplateFormat:   prompts.TemplateFormatGoTemplate,
+		InputVariables:   []string{"input", "agent_scratchpad"},
+		PartialVariables: partials,
+	}
+
+	// Render with empty input/scratchpad since this is a system message.
+	sys, err := pt.Format(map[string]any{"input": "", "agent_scratchpad": ""})
+	if err != nil {
+		return nil, fmt.Errorf("formatting system prompt: %w", err)
+	}
+	s.messages = append(s.messages, llms.MessageContent{
+		Role:  llms.ChatMessageTypeSystem,
+		Parts: []llms.ContentPart{llms.TextPart(sys)},
+	})
+
+	// Build tool schema for the model and execution catalog for the scheduler.
+	s.toolDefs, s.toolCatalog = buildLLMTools()
+	s.scheduler = NewCoreToolScheduler()
+	s.contextFiles = make(map[string]string)
+	return s, nil
+}
+
+// AddContextFile adds file content to the context for the next prompt
+func (s *Session) AddContextFile(path, content string) {
+	s.contextFiles[path] = content
+}
+
+// ClearContext removes all file content from the context
+func (s *Session) ClearContext() {
+	s.contextFiles = make(map[string]string)
+}
+
+// HasContextFiles returns true if there are files in the context
+func (s *Session) HasContextFiles() bool {
+	return len(s.contextFiles) > 0
+}
+
+// GetContextFiles returns a copy of the context files map
+func (s *Session) GetContextFiles() map[string]string {
+	result := make(map[string]string)
+	for k, v := range s.contextFiles {
+		result[k] = v
+	}
+	return result
+}
+
+// buildPromptWithContext builds a prompt that includes all file content
+func (s *Session) buildPromptWithContext(userPrompt string) string {
+	if len(s.contextFiles) == 0 {
+		return userPrompt
+	}
+
+	var fileContents []string
+	for path, content := range s.contextFiles {
+		fileContents = append(fileContents, fmt.Sprintf("--- Context from: %s ---\n%s\n--- End of Context from: %s ---", path, content, path))
+	}
+
+	return strings.Join(fileContents, "\n\n") + "\n" + userPrompt
+}
+
+// getToolCallKey generates a unique key for a tool call based on name and arguments
+func (s *Session) getToolCallKey(name, argsJSON string) string {
+	keyString := fmt.Sprintf("%s:%s", name, argsJSON)
+	hash := sha256.Sum256([]byte(keyString))
+	return hex.EncodeToString(hash[:])
+}
+
+// checkToolCallLoop detects if the same tool call is being repeated
+func (s *Session) checkToolCallLoop(name, argsJSON string) bool {
+	const toolCallLoopThreshold = 3 // More conservative than gemini-cli's 5
+
+	key := s.getToolCallKey(name, argsJSON)
+	if s.lastToolCallKey == key {
+		s.toolCallRepetitionCount++
+	} else {
+		s.lastToolCallKey = key
+		s.toolCallRepetitionCount = 1
+	}
+
+	if s.toolCallRepetitionCount >= toolCallLoopThreshold {
+		slog.Warn("tool call loop detected", "tool", name, "count", s.toolCallRepetitionCount)
+		return true
+	}
+
+	return false
+}
+
+// prepareUserMessage builds the prompt with context and adds it to the message history
+func (s *Session) prepareUserMessage(prompt string) {
+	fullPrompt := s.buildPromptWithContext(prompt)
+	s.messages = append(s.messages, llms.MessageContent{
+		Role:  llms.ChatMessageTypeHuman,
+		Parts: []llms.ContentPart{llms.TextPart(fullPrompt)},
+	})
+}
+
+// generateLLMResponse calls the LLM with fallback handling for tool options
+func (s *Session) generateLLMResponse(ctx context.Context) (*llms.ContentChoice, error) {
+	// Build call options; try with explicit tool choice first, then without, then no tools.
+	var callOptsWithChoice []llms.CallOption
+	var callOptsNoChoice []llms.CallOption
+	if len(s.toolDefs) > 0 {
+		callOptsNoChoice = []llms.CallOption{llms.WithTools(s.toolDefs)}
+		callOptsWithChoice = append([]llms.CallOption{}, callOptsNoChoice...)
+		callOptsWithChoice = append(callOptsWithChoice, llms.WithToolChoice("auto"))
+	}
+
+	// Attempt with explicit tool choice first.
+	resp, err := s.llm.GenerateContent(ctx, s.messages, callOptsWithChoice...)
+	if err != nil && len(callOptsNoChoice) > 0 {
+		fmt.Sprintf("Got an error %v", err)
+		return nil, err
+	}
+	// Log the raw normalized response structure from langchaingo.
+	if err != nil && len(callOptsNoChoice) > 0 {
+		// As a last resort, try with no tools at all.
+		resp, err = s.llm.GenerateContent(ctx, s.messages)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("empty response choices")
+	}
+	return resp.Choices[0], nil
+}
+
+// handleAssistantResponse processes assistant text content and adds it to messages
+func (s *Session) handleAssistantResponse(choice *llms.ContentChoice, currentFinalText string) string {
+	if strings.TrimSpace(choice.Content) == "" {
+		return currentFinalText
+	}
+
+	// Store last assistant and final text (truncate in logs).
+	finalText := choice.Content
+	ct := choice.Content
+	if len(ct) > 160 {
+		ct = ct[:160] + "…"
+	}
+	s.messages = append(s.messages, llms.MessageContent{
+		Role:  llms.ChatMessageTypeAI,
+		Parts: []llms.ContentPart{llms.TextPart(choice.Content)},
+	})
+	return finalText
+}
+
+// executeToolCall executes a single tool call and adds the response to the message
+func (s *Session) executeToolCall(ctx context.Context, tool lctools.Tool, tc llms.ToolCall, argsJSON string, toolResponseMsg *llms.MessageContent) {
+	var out string
+	var callErr error
+
+	if s.scheduler != nil {
+		ch := s.scheduler.Schedule(tool, argsJSON)
+		res := <-ch
+		out, callErr = res.Output, res.Error
+	} else {
+		out, callErr = tool.Call(ctx, argsJSON)
+	}
+
+	if callErr != nil {
+		toolResponseMsg.Parts = append(toolResponseMsg.Parts, llms.ToolCallResponse{
+			ToolCallID: tc.ID,
+			Name:       tc.FunctionCall.Name,
+			Content:    fmt.Sprintf("Error: %v", callErr),
+		})
+	} else {
+		toolResponseMsg.Parts = append(toolResponseMsg.Parts, llms.ToolCallResponse{
+			ToolCallID: tc.ID,
+			Name:       tc.FunctionCall.Name,
+			Content:    out,
+		})
+	}
+}
+
+// processToolCalls handles executing tool calls and building response messages
+func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCall, finalText string) (llms.MessageContent, bool) {
+	toolResponseMsg := llms.MessageContent{Role: llms.ChatMessageTypeTool}
+
+	for _, tc := range toolCalls {
+		if tc.FunctionCall == nil {
+			continue
+		}
+		name := tc.FunctionCall.Name
+		argsJSON := tc.FunctionCall.Arguments
+
+		// Check for tool call loops
+		if s.checkToolCallLoop(name, argsJSON) {
+			return toolResponseMsg, true // shouldReturn = true
+		}
+
+		tool, ok := s.toolCatalog[name]
+		if !ok {
+			// If the model requested an unknown tool, feed an error response back.
+			toolResponseMsg.Parts = append(toolResponseMsg.Parts, llms.ToolCallResponse{
+				ToolCallID: tc.ID,
+				Name:       name,
+				Content:    fmt.Sprintf("error: unknown tool %q", name),
+			})
+			continue
+		}
+
+		// Execute tool and add response
+		s.executeToolCall(ctx, tool, tc, argsJSON, &toolResponseMsg)
+	}
+
+	return toolResponseMsg, false // shouldReturn = false
+}
+
+// Ask sends a user prompt through the native loop. It returns the final assistant text.
+// It handles provider-native tool calls by executing them and feeding results back.
+func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
+	// Build prompt with context if available and add to messages
+	s.prepareUserMessage(prompt)
+	// Clear context after building the prompt
+	defer s.ClearContext()
+
+	// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
+	// Cap at a few iterations to avoid infinite loops.
+	const maxIters = 15
+	var finalText string
+	var lastAssistant string
+	var hadAnyToolCall bool
+	for i := 0; i < maxIters; i++ {
+		choice, err := s.generateLLMResponse(ctx)
+		if err != nil {
+			return "", err
+		}
+
+		// Record assistant visible text if any
+		finalText = s.handleAssistantResponse(choice, finalText)
+
+		// Handle tool calls, if any.
+		if len(choice.ToolCalls) == 0 {
+			// Give the model another turn to issue tool calls if it only planned.
+			// Stop if it repeats the same assistant content.
+			if hadAnyToolCall || strings.TrimSpace(choice.Content) == strings.TrimSpace(lastAssistant) {
+				break
+			}
+			lastAssistant = choice.Content
+			continue
+		}
+		hadAnyToolCall = true
+
+		// Process tool calls and add responses
+		toolResponseMsg, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls, finalText)
+		if shouldReturn {
+			return finalText, nil
+		}
+
+		// Append the aggregated tool responses and continue the loop.
+		if len(toolResponseMsg.Parts) > 0 {
+			s.messages = append(s.messages, toolResponseMsg)
+			// Continue to next iteration to let the model incorporate tool results.
+			continue
+		}
+
+		// No tool responses to send; break.
+		break
+	}
+	return finalText, nil
+}
+
+// parseReActAction extracts a tool name and JSON arguments from text containing lines like:
+// "Action: tool_name" and "Action Input: { ... }".
+func parseReActAction(text string) (name string, argsJSON string, ok bool) {
+	if text == "" {
+		return "", "", false
+	}
+	var tool string
+	var args string
+	lines := strings.Split(text, "\n")
+	for _, ln := range lines {
+		l := strings.TrimSpace(ln)
+		if strings.HasPrefix(strings.ToLower(l), "action:") {
+			tool = strings.TrimSpace(l[len("Action:"):])
+		} else if strings.HasPrefix(strings.ToLower(l), "action input:") {
+			args = strings.TrimSpace(l[len("Action Input:"):])
+		}
+	}
+	if tool == "" || args == "" {
+		return "", "", false
+	}
+	return tool, args, true
+}
+
+// sessBuildEnvBlock constructs a minimal <env> XML snippet containing OS and paths.
+func sessBuildEnvBlock() string {
+	cwd, _ := os.Getwd()
+	home, _ := os.UserHomeDir()
+	root := findProjectRoot(cwd)
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "bash"
+	}
+	return fmt.Sprintf(`
+<env>
+ <os>%s</os>
+ <paths>
+  <cwd>%s</cwd>
+  <project_root>%s</project_root>
+  <home>%s</home>
+ </paths>
+</env>\n `, runtime.GOOS, shell, root, home)
+}
+
+// sessReadAgentsMDFromCWD reads the contents of AGENTS.md from the current working directory.
+func sessReadAgentsMDFromCWD() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(wd, "AGENTS.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// buildLLMTools returns the LLM tool/function definitions and a catalog by name for execution.
+func buildLLMTools() ([]llms.Tool, map[string]lctools.Tool) {
+	// Map our concrete tools by name for execution.
+	execCatalog := map[string]lctools.Tool{}
+	for _, t := range availableTools {
+		execCatalog[t.Name()] = t
+	}
+
+	// Helper to produce a basic JSON schema for function parameters.
+	obj := func(props map[string]any, required []string) map[string]any {
+		m := map[string]any{
+			"type":       "object",
+			"properties": props,
+		}
+		if len(required) > 0 {
+			m["required"] = required
+		}
+		return m
+	}
+
+	str := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
+
+	defs := []llms.Tool{
+		{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        "read_file",
+				Description: "Reads a file and returns its content.",
+				Parameters: obj(map[string]any{
+					"path": str("Absolute or relative path to the file"),
+				}, []string{"path"}),
+			},
+		},
+		{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        "write_file",
+				Description: "Writes content to a file, creating or overwriting it.",
+				Parameters: obj(map[string]any{
+					"path":    str("Target file path"),
+					"content": str("File contents to write"),
+				}, []string{"path", "content"}),
+			},
+		},
+		{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        "list_files",
+				Description: "Lists the contents of a directory.",
+				Parameters: obj(map[string]any{
+					"path": str("Directory path (defaults to '.')"),
+				}, nil),
+			},
+		},
+		{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        "replace_text",
+				Description: "Replaces all occurrences of a string in a file with another string.",
+				Parameters: obj(map[string]any{
+					"path":     str("File path"),
+					"old_text": str("Text to replace"),
+					"new_text": str("Replacement text"),
+				}, []string{"path", "old_text", "new_text"}),
+			},
+		},
+		{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        "run_shell_command",
+				Description: "Executes a shell command in an optional directory.",
+				Parameters: obj(map[string]any{
+					"command":     str("Shell command to run"),
+					"description": str("Short description of the command"),
+					"path":        str("Working directory for the command"),
+				}, []string{"command"}),
+			},
+		},
+		{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        "read_many_files",
+				Description: "Reads content from multiple files specified by wildcard paths.",
+				Parameters: obj(map[string]any{
+					"paths": map[string]any{
+						"type":        "array",
+						"description": "Array of file paths or glob patterns to read",
+						"items": map[string]any{
+							"type":        "string",
+							"description": "A file path or glob pattern",
+						},
+					},
+				}, []string{"paths"}),
+			},
+		},
+	}
+
+	return defs, execCatalog
+}
+
+// Utility to pretty-print any struct for debug (unused but handy during dev).
+func toJSON(v any) string {
+	b, _ := json.MarshalIndent(v, "", "  ")
+	return string(b)
+}

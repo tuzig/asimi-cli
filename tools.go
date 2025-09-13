@@ -158,13 +158,28 @@ func (t ReplaceTextTool) Call(ctx context.Context, input string) (string, error)
 		return "", err
 	}
 
-	newContent := strings.ReplaceAll(string(content), params.OldText, params.NewText)
+	oldContent := string(content)
+	
+	// Check if old_string and new_string are identical
+	if params.OldText == params.NewText {
+		return fmt.Sprintf("No changes to apply. The old_string and new_string are identical in file: %s", params.Path), nil
+	}
+	
+	newContent := strings.ReplaceAll(oldContent, params.OldText, params.NewText)
+	
+	// Count how many replacements were made
+	occurrences := strings.Count(oldContent, params.OldText)
+	
+	if occurrences == 0 {
+		return fmt.Sprintf("No occurrences of '%s' found in %s", params.OldText, params.Path), nil
+	}
 
 	err = os.WriteFile(params.Path, []byte(newContent), 0644)
 	if err != nil {
 		return "", err
 	}
-	return "Successfully replaced text", nil
+	
+	return fmt.Sprintf("Successfully modified file: %s (%d replacements)", params.Path, occurrences), nil
 }
 
 // RunShellCommand is a tool for running shell commands

@@ -1,12 +1,12 @@
 package main
 
 import (
-	"context"
-	"sync"
+    "context"
+    "log/slog"
+    "sync"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/google/uuid"
-	"github.com/tmc/langchaingo/tools"
+    "github.com/google/uuid"
+    "github.com/tmc/langchaingo/tools"
 )
 
 // ToolCallStatus represents the status of a tool call
@@ -43,25 +43,24 @@ type CoreToolScheduler struct {
 	mu          sync.Mutex
 	toolCalls   map[string]*ToolCall
 	queue       []*ToolCall
-	program     *tea.Program
 	isBusy      bool
 	resultChans map[string]chan ToolCallResult
 }
 
 // NewCoreToolScheduler creates a new CoreToolScheduler
-func NewCoreToolScheduler(p *tea.Program) *CoreToolScheduler {
+func NewCoreToolScheduler() *CoreToolScheduler {
 	return &CoreToolScheduler{
 		toolCalls:   make(map[string]*ToolCall),
 		queue:       make([]*ToolCall, 0),
-		program:     p,
 		resultChans: make(map[string]chan ToolCallResult),
 	}
 }
 
 // Schedule adds a new tool call to the scheduler and returns a channel for the result
 func (s *CoreToolScheduler) Schedule(tool tools.Tool, input string) <-chan ToolCallResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+    slog.Info("scheduler.enqueue", "tool", tool.Name())
+    s.mu.Lock()
+    defer s.mu.Unlock()
 
 	id := uuid.New().String()
 	call := &ToolCall{
@@ -76,33 +75,31 @@ func (s *CoreToolScheduler) Schedule(tool tools.Tool, input string) <-chan ToolC
 	resultChan := make(chan ToolCallResult, 1)
 	s.resultChans[id] = resultChan
 
-	if s.program != nil {
-		s.program.Send(ToolCallScheduledMsg{Call: call})
-	}
+    toolNotify(ToolCallScheduledMsg{Call: call})
 	s.processQueue()
 
 	return resultChan
 }
 
 func (s *CoreToolScheduler) processQueue() {
-	if s.isBusy || len(s.queue) == 0 {
-		return
-	}
-	s.isBusy = true
+    if s.isBusy || len(s.queue) == 0 {
+        slog.Info("scheduler.idle_or_empty", "busy", s.isBusy, "queued", len(s.queue))
+        return
+    }
+    s.isBusy = true
 
 	call := s.queue[0]
 	s.queue = s.queue[1:]
 
-	call.Status = StatusExecuting
-	if s.program != nil {
-		s.program.Send(ToolCallExecutingMsg{Call: call})
-	}
+    call.Status = StatusExecuting
+    toolNotify(ToolCallExecutingMsg{Call: call})
 
-	go func() {
-		// NOTE: We are calling the tool's Call method directly here.
-		// The toolWrapper's Call method is what schedules the tool.
-		// This means the tool passed to Schedule should be the unwrapped tool.
-		output, err := call.Tool.Call(context.Background(), call.Input)
+    go func() {
+        // NOTE: We are calling the tool's Call method directly here.
+        // The toolWrapper's Call method is what schedules the tool.
+        // This means the tool passed to Schedule should be the unwrapped tool.
+        slog.Info("scheduler.exec", "tool", call.Tool.Name())
+        output, err := call.Tool.Call(context.Background(), call.Input)
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -112,18 +109,14 @@ func (s *CoreToolScheduler) processQueue() {
 		if err != nil {
 			call.Status = StatusError
 			call.Error = err
-			if s.program != nil {
-				s.program.Send(ToolCallErrorMsg{Call: call})
-			}
+            toolNotify(ToolCallErrorMsg{Call: call})
 			if resultChan != nil {
 				resultChan <- ToolCallResult{Error: err}
 			}
 		} else {
 			call.Status = StatusSuccess
 			call.Result = output
-			if s.program != nil {
-				s.program.Send(ToolCallSuccessMsg{Call: call})
-			}
+            toolNotify(ToolCallSuccessMsg{Call: call})
 			if resultChan != nil {
 				resultChan <- ToolCallResult{Output: output}
 			}

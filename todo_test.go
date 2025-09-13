@@ -52,8 +52,9 @@ func (m *mockModel) View() string {
 
 func TestCoreToolScheduler(t *testing.T) {
 	model := &mockModel{}
-	program := tea.NewProgram(model, tea.WithoutRenderer(), tea.WithInput(nil))
-	scheduler := NewCoreToolScheduler(program)
+    // Use the package-level program so the scheduler can send messages to it.
+    program = tea.NewProgram(model, tea.WithoutRenderer(), tea.WithInput(nil))
+	scheduler := NewCoreToolScheduler()
 
 	done := make(chan struct{})
 	go func() {

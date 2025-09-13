@@ -123,35 +123,41 @@ type StatusLineConfig struct {
 
 // LoadConfig loads configuration from multiple sources
 func LoadConfig() (*Config, error) {
-	// Create a new koanf instance
-	k := koanf.New(".")
+    // Create a new koanf instance
+    k := koanf.New(".")
 
-	if err := k.Load(file.Provider("config/default.toml"), toml.Parser()); err != nil {
-		log.Printf("Failed to load default config: %v", err)
-	}
+    homeDir, err := os.UserHomeDir()
+    if err != nil {
+        log.Printf("Failed to get user home directory: %v", err)
+    } else {
+        userConfigPath := filepath.Join(homeDir, ".config", "asimi", "conf.toml")
+        if err := k.Load(file.Provider(userConfigPath), toml.Parser()); err != nil {
+            log.Printf("Failed to load user config from %s: %v", userConfigPath, err)
+        }
+    }
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Printf("Failed to get user home directory: %v", err)
-	} else {
-		userConfigPath := filepath.Join(homeDir, ".config", "asimi", "conf.toml")
-		if err := k.Load(file.Provider(userConfigPath), toml.Parser()); err != nil {
-			log.Printf("Failed to load user config from %s: %v", userConfigPath, err)
-		}
-	}
+    // 2. Load project-local config (overrides user config if present)
+    projectConfigPath := filepath.Join(".asimi", "conf.toml")
+    if _, err := os.Stat(projectConfigPath); err == nil {
+        if err := k.Load(file.Provider(projectConfigPath), toml.Parser()); err != nil {
+            log.Printf("Failed to load project config from %s: %v", projectConfigPath, err)
+        }
+    } else if !os.IsNotExist(err) {
+        log.Printf("Unable to stat project config at %s: %v", projectConfigPath, err)
+    }
 
-	// 3. Load environment variables
-	// Environment variables with prefix "ASIMI_" will override config values
-	// e.g., ASIMI_SERVER_PORT=8080 will override the server port
-	k.Load(env.Provider(".", env.Opt{
-		Prefix: "ASIMI_",
-		TransformFunc: func(key, value string) (string, any) {
-			// Transform environment variable names to match config keys
-			// ASIMI_SERVER_PORT becomes "server.port"
-			key = strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, "ASIMI_")), "_", ".")
-			return key, value
-		},
-	}), nil)
+    // 3. Load environment variables
+    // Environment variables with prefix "ASIMI_" will override config values
+    // e.g., ASIMI_SERVER_PORT=8080 will override the server port
+    k.Load(env.Provider(".", env.Opt{
+        Prefix: "ASIMI_",
+        TransformFunc: func(key, value string) (string, any) {
+            // Transform environment variable names to match config keys
+            // ASIMI_SERVER_PORT becomes "server.port"
+            key = strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, "ASIMI_")), "_", ".")
+            return key, value
+        },
+    }), nil)
 
 	// Special handling for API keys from standard environment variables
 	// Check for OPENAI_API_KEY if using OpenAI

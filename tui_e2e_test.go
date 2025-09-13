@@ -10,13 +10,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 	"github.com/stretchr/testify/require"
+	"github.com/tmc/langchaingo/llms/fake"
 )
 
 func TestFileCompletion(t *testing.T) {
 	// Create a new TUI model for testing
 	config := mockConfig()
-	handler := &toolCallbackHandler{}
-	model := NewTUIModel(config, handler)
+	model := NewTUIModel(config)
+	
+	// Set up a mock session for the test
+	llm := fake.NewFakeLLM([]string{})
+	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}})
+	require.NoError(t, err)
+	model.SetSession(sess)
 
 	// Create a new test model
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 200))
@@ -59,7 +65,8 @@ func TestFileCompletion(t *testing.T) {
 	require.Equal(t, "@main.go ", tuiModel.prompt.TextArea.Value())
 
 	// Assert that the file viewer contains the file content
-	require.Contains(t, tuiModel.filesContentToSend["main.go"], "package main")
+	contextFiles := tuiModel.session.GetContextFiles()
+	require.Contains(t, contextFiles["main.go"], "package main")
 
 	// Assert that the prompt was not sent and the editor is still focused
 	require.NotEmpty(t, tuiModel.chat.Messages)
@@ -70,8 +77,13 @@ func TestFileCompletion(t *testing.T) {
 func TestSlashCommandCompletion(t *testing.T) {
 	// Create a new TUI model for testing
 	config := mockConfig()
-	handler := &toolCallbackHandler{}
-	model := NewTUIModel(config, handler)
+	model := NewTUIModel(config)
+	
+	// Set up a mock session for the test
+	llm := fake.NewFakeLLM([]string{})
+	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}})
+	require.NoError(t, err)
+	model.SetSession(sess)
 
 	// Create a new test model
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 200))
@@ -102,7 +114,6 @@ func TestSlashCommandCompletion(t *testing.T) {
 	require.Contains(t, tuiModel.chat.Messages[len(tuiModel.chat.Messages)-1], "Available commands:")
 }
 
-// This test is skipped because it requires a live agent and is flaky.
 func TestLiveAgentE2E(t *testing.T) {
 	if os.Getenv("GEMINI_API_KEY") == "" {
 		t.Skip("GEMINI_API_KEY not set, skipping live agent test")
@@ -114,6 +125,6 @@ func TestLiveAgentE2E(t *testing.T) {
 	require.NoError(t, err, "output", string(output))
 
 	// Assert the output
-	require.Contains(t, string(output), "I am a")
+	require.Contains(t, string(output), "I am ")
 	require.NotContains(t, string(output), "Error")
 }

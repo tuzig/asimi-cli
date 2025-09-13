@@ -104,86 +104,9 @@ You are running outside of a sandbox container, directly on the user's system. F
 
 
 
-# Format Instructions
+## Tool Usage Guidance
 
-To use a tool, use exactly this format:
-
-Thought: Do I need to use a tool? Yes
-Action: the action to take, should be one of [{{.ReadFile}}, {{.WriteFile}}, {{.LS}}, {{.Edit}}, {{.Shell}}, {{.ReadManyFiles}}]
-Action Input: the input to the action
-Observation: the result of the action
-
-IMORTANT: If you are finished and have a final answer to the user, start your answer with "AI: "
-
-## Examples (Illustrating Tone and Workflow)
-<example>
-user: 1 + 2
-model:
-Thought: Do I need to use a tool? No
-AI: 3
-</example>
-
-<example>
-user: is 13 a prime number?
-model:
-Thought: Do I need to use a tool? No
-AI: true
-</example>
-
-<example>
-user: list files here.
-model:
-Thought: Do I need to use a tool? Yes
-Action: {{.LS}}
-Action Input: { "path": "<absolute_path>" }
-Observation: README.md\nmain.go\ngo.mod
-Thought: Do I need to use a tool? No
-AI: README.md\nmain.go\ngo.mod
-</example>
-
-<example>
-user: run the tests
-model:
-Thought: Do I need to use a tool? Yes
-Action: {{.Shell}}
-Action Input: { "command": "just test", "path": "/path/to/project", "description": "running the tests" }
-Observation: ... all tests passed ...
-Thought: Do I need to use a tool? No
-AI: All tests passed.
-</example>
-
-<example>
-user: Refactor the auth logic in src/auth.py to use the requests library instead of urllib.
-model:
-Thought: Do I need to use a tool? Yes
-Action: {{.Shell}}
-Action Input: { "command": "find . -name tests/test_auth.py", "path": "/path/to/project", "description": "check for test coverage" }
-Observation: tests/test_auth.py
-Thought: Do I need to use a tool? Yes
-Action: {{.ReadFile}}
-Action Input: { "path": "/path/to/requirements.txt" }
-Observation: ... includes requests ...
-Thought: Do I need to use a tool? No
-AI: Plan:\n1. Replace urllib calls with requests.\n2. Add try/except around network calls.\n3. Remove urllib import.\n4. Run linter and tests to verify.
-</example>
-
-<example>
-user: Delete the temp directory.
-model:
-Thought: Do I need to use a tool? No
-AI: I can run `rm -rf /path/to/project/temp`. This will permanently delete the directory and all its contents.
-</example>
-
-<example>
-user: Write tests for someFile.ts
-model:
-Thought: Do I need to use a tool? Yes
-Action: {{.ReadFile}}
-Action Input: { "path": "/path/to/someFile.ts" }
-Observation: ...
-Thought: Do I need to use a tool? No
-AI: I'll add a test file following existing conventions.
-</example>
+Use your provider's native function calling to invoke tools. Do not print tool invocations as plain text; instead, call the function directly so results can be returned to you by the runtime and incorporated into your next response.
 
 {{if .ProjectContext}}
 --- Context from: {{.ProjectContextFile}} ---

@@ -9,15 +9,19 @@ import (
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
-	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/schema"
-	"github.com/tmc/langchaingo/tools"
+	"github.com/tmc/langchaingo/llms/anthropic"
+	"github.com/tmc/langchaingo/llms/fake"
+	"github.com/tmc/langchaingo/llms/googleai"
+	"github.com/tmc/langchaingo/llms/ollama"
+	"github.com/tmc/langchaingo/llms/openai"
 )
 
 type runCmd struct{}
 
 type versionCmd struct{}
+
+var program *tea.Program
 
 var cli struct {
 	Version versionCmd `cmd:"version" help:"Print version information"`
@@ -80,20 +84,24 @@ func (r *runCmd) Run() error {
 	}
 
 	// Create the TUI model
-	handler := &toolCallbackHandler{}
-	tuiModel := NewTUIModel(config, handler)
+	tuiModel := NewTUIModel(config)
 
-	p := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	handler.p = p
-	agent, err := NewAgent(config, WithCallbacks(handler), WithTea(p))
+	program = tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
-	tuiModel.agent = agent.executor
-	tuiModel.scheduler = agent.scheduler
-	handler.scheduler = agent.scheduler
 
-	if _, err := p.Run(); err != nil {
+	llm, err := getLLMClient(config)
+	if err != nil { // if it fails, just skip native session setup
+		return fmt.Errorf("Failed to get the LLM client: %w", err)
+	}
+	sess, sessErr := NewSession(llm, config)
+	if sessErr != nil {
+		return fmt.Errorf("Failed to create a new session: %w", err)
+	}
+	tuiModel.SetSession(sess)
+
+	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("alas, there's been an error: %w", err)
 	}
 	return nil
@@ -102,98 +110,36 @@ func (r *runCmd) Run() error {
 type responseMsg string
 type errMsg struct{ err error }
 
-type toolCallbackHandler struct {
-	p         *tea.Program
-	scheduler *CoreToolScheduler
-}
 
-func (h *toolCallbackHandler) HandleToolStart(ctx context.Context, input string) {
-	// Now handled by the CoreToolScheduler
-}
-func (h *toolCallbackHandler) HandleToolEnd(ctx context.Context, output string) {
-	// Now handled by the CoreToolScheduler
-}
-func (h *toolCallbackHandler) HandleLLMStart(ctx context.Context, prompts []string)  {}
-func (h *toolCallbackHandler) HandleLLMError(ctx context.Context, err error)         {}
-func (h *toolCallbackHandler) HandleChainError(ctx context.Context, err error)       {}
-func (h *toolCallbackHandler) HandleStreamingFunc(ctx context.Context, chunk []byte) {}
-func (h *toolCallbackHandler) HandleLLMGenerateContentEnd(ctx context.Context, res *llms.ContentResponse) {
-}
-func (h *toolCallbackHandler) HandleLLMGenerateContentStart(ctx context.Context, ms []llms.MessageContent) {
-}
-func (h *toolCallbackHandler) HandleText(ctx context.Context, text string)            {}
-func (h *toolCallbackHandler) HandleToolError(ctx context.Context, err error)         {}
-func (h *toolCallbackHandler) HandleRetrieverStart(ctx context.Context, query string) {}
-func (h *toolCallbackHandler) HandleRetrieverEnd(ctx context.Context, query string, documents []schema.Document) {
-}
-func (h *toolCallbackHandler) HandleChainEnd(ctx context.Context, outputs map[string]any)       {}
-func (h *toolCallbackHandler) HandleChainStart(ctx context.Context, inputs map[string]any)      {}
-func (h *toolCallbackHandler) HandleAgentAction(ctx context.Context, action schema.AgentAction) {}
-func (h *toolCallbackHandler) HandleAgentFinish(ctx context.Context, finish schema.AgentFinish) {}
-
-type toolWrapper struct {
-	t       tools.Tool
-	handler callbacks.Handler
-}
-
-func (tw *toolWrapper) Name() string {
-	return tw.t.Name()
-}
-
-func (tw *toolWrapper) Description() string {
-	return tw.t.Description()
-}
-
-func (tw *toolWrapper) Call(ctx context.Context, input string) (string, error) {
-	slog.Info("Tool call", "tool", tw.t.Name(), "input", input)
-
-	if h, ok := tw.handler.(*toolCallbackHandler); ok && h.scheduler != nil {
-		resultChan := h.scheduler.Schedule(tw.t, input)
-		result := <-resultChan
-		return result.Output, result.Error
-	}
-
-	// Fallback for non-TUI mode
-	if tw.handler != nil {
-		tw.handler.HandleToolStart(ctx, input)
-	}
-
-	output, err := tw.t.Call(ctx, input)
-	if err != nil {
-		slog.Error("Tool retured an error", "error", err)
-		if tw.handler != nil {
-			tw.handler.HandleToolError(ctx, err)
-		}
-		return "", err
-	}
-
-	if tw.handler != nil {
-		tw.handler.HandleToolEnd(ctx, output)
-	}
-
-	return output, nil
-}
-
-var _ tools.Tool = &toolWrapper{}
 
 func main() {
 	initLogger()
 	ctx := kong.Parse(&cli)
 
 	if cli.Prompt != "" {
-		// Non-interactive mode
+		// Non-interactive mode via native Session path
 		config, err := LoadConfig()
 		if err != nil {
 			fmt.Printf("Error loading configuration: %v\n", err)
 			os.Exit(1)
 		}
 
-		response, err := sendPromptToAgent(config, cli.Prompt)
+		llm, err := getLLMClient(config)
 		if err != nil {
-			fmt.Printf("Error from agent: %v\n", err)
+			fmt.Printf("Error creating LLM client: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println(response)
+		sess, err := NewSession(llm, config)
+		if err != nil {
+			fmt.Printf("Error creating session: %v\n", err)
+			os.Exit(1)
+		}
+		out, err := sess.Ask(context.Background(), cli.Prompt)
+		if err != nil {
+			fmt.Printf("Error asking session: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(out)
 		os.Exit(0)
 	}
 
@@ -202,5 +148,102 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// toolNotify sends tool lifecycle messages to the TUI when available,
+// or prints a concise status line in non-interactive mode.
+func toolNotify(m any) {
+	if program != nil {
+		program.Send(m)
+		return
+	}
+	// Non-interactive: print to stdout
+	switch v := m.(type) {
+	case ToolCallScheduledMsg:
+		fmt.Printf("Tool Scheduled: %s\n", v.Call.Tool.Name())
+		slog.Info("tool.scheduled", "tool", v.Call.Tool.Name())
+	case ToolCallExecutingMsg:
+		fmt.Printf("Tool Executing: %s\n", v.Call.Tool.Name())
+		slog.Info("tool.executing", "tool", v.Call.Tool.Name())
+	case ToolCallSuccessMsg:
+		fmt.Printf("Tool Succeeded: %s\n", v.Call.Tool.Name())
+		slog.Info("tool.success", "tool", v.Call.Tool.Name())
+	case ToolCallErrorMsg:
+		fmt.Printf("Tool Errored: %s: %v\n", v.Call.Tool.Name(), v.Call.Error)
+		slog.Error("tool.error", "tool", v.Call.Tool.Name(), "error", v.Call.Error)
+	}
+}
+
+// getLLMClient creates and returns an LLM client based on the configuration
+func getLLMClient(config *Config) (llms.Model, error) {
+	switch config.LLM.Provider {
+	case "fake":
+		llm := fake.NewFakeLLM([]string{})
+		return llm, nil
+	case "ollama":
+		// For Ollama, we can use default options or customize based on config
+		opts := []ollama.Option{
+			ollama.WithModel(config.LLM.Model),
+		}
+
+		if config.LLM.BaseURL != "" {
+			opts = append(opts, ollama.WithServerURL(config.LLM.BaseURL))
+		}
+
+		return ollama.New(opts...)
+	case "openai":
+		// For OpenAI, we need to set the API key
+		opts := []openai.Option{
+			openai.WithModel(config.LLM.Model),
+		}
+
+		if config.LLM.APIKey != "" {
+			opts = append(opts, openai.WithToken(config.LLM.APIKey))
+		}
+
+		if config.LLM.BaseURL != "" {
+			opts = append(opts, openai.WithBaseURL(config.LLM.BaseURL))
+		}
+
+		return openai.New(opts...)
+	case "anthropic":
+		// For Anthropic, we need to set the API key
+		opts := []anthropic.Option{
+			anthropic.WithModel(config.LLM.Model),
+		}
+
+		if config.LLM.APIKey != "" {
+			opts = append(opts, anthropic.WithToken(config.LLM.APIKey))
+		}
+
+		if config.LLM.BaseURL != "" {
+			opts = append(opts, anthropic.WithBaseURL(config.LLM.BaseURL))
+		}
+
+		return anthropic.New(opts...)
+	case "googleai":
+		// For GoogleAI, we need to set the API key
+		apiKey := config.LLM.APIKey
+		if apiKey == "" {
+			apiKey = os.Getenv("GEMINI_API_KEY")
+			if apiKey == "" {
+				return nil, fmt.Errorf("missing Google AI API key. Set it in the config file or via GEMINI_API_KEY environment variable")
+			}
+		}
+
+		opts := []googleai.Option{
+			googleai.WithDefaultModel(config.LLM.Model),
+			googleai.WithAPIKey(apiKey),
+		}
+
+		// TODO: Add WithBaseURL to langchaingo's googleai implementation and send a PR
+		// if config.LLM.BaseURL != "" {
+		//     opts = append(opts, googleai.WithAPIEndpoint(config.LLM.BaseURL))
+		// }
+
+		return googleai.New(context.Background(), opts...)
+	default:
+		return nil, fmt.Errorf("unsupported LLM provider: %s", config.LLM.Provider)
 	}
 }

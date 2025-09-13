@@ -42,7 +42,7 @@ func mockConfig() *Config {
 
 // TestTUIModelInit tests the initialization of the TUI model
 func TestTUIModelInit(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
+	model := NewTUIModel(mockConfig())
 	cmd := model.Init()
 
 	// Init should return nil as there's no initial command
@@ -51,7 +51,7 @@ func TestTUIModelInit(t *testing.T) {
 
 // TestTUIModelWindowSizeMsg tests handling of window size messages
 func TestTUIModelWindowSizeMsg(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
+	model := NewTUIModel(mockConfig())
 
 	// Send a window size message
 	newModel, cmd := model.Update(tea.WindowSizeMsg{Width: 100, Height: 50})
@@ -65,17 +65,13 @@ func TestTUIModelWindowSizeMsg(t *testing.T) {
 
 // newTestModel creates a new TUIModel for testing purposes.
 func newTestModel(t *testing.T) (*TUIModel, *fake.LLM) {
-	llm := fake.NewFakeLLM([]string{})
-	agent, err := NewAgentWithLLM(&Config{
-		LLM: LLMConfig{
-			Provider: "fake",
-		},
-	}, llm)
-	require.NoError(t, err)
-
-	model := NewTUIModel(mockConfig(), &toolCallbackHandler{})
-	model.agent = agent.executor
-	return model, llm
+    llm := fake.NewFakeLLM([]string{})
+    model := NewTUIModel(mockConfig())
+    // Use native session path for tests now that legacy agent is removed.
+    sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}})
+    require.NoError(t, err)
+    model.SetSession(sess)
+    return model, llm
 }
 
 // TestTUIModelKeyMsg tests quitting the application with 'q' and Ctrl+C
@@ -102,7 +98,7 @@ func TestTUIModelKeyMsg(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			model := NewTUIModel(mockConfig(), nil)
+			model := NewTUIModel(mockConfig())
 
 			// Send a quit key message
 			newModel, cmd := model.Update(tc.key)
@@ -261,7 +257,7 @@ func TestTUIModelKeyboardInteraction(t *testing.T) {
 
 // TestTUIModelView tests the view rendering
 func TestTUIModelView(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil)
+	model := NewTUIModel(mockConfig())
 
 	// Test view rendering with default dimensions (should not show initializing)
 	view := model.View()
@@ -540,7 +536,7 @@ func TestTUIModelUpdateFileCompletions(t *testing.T) {
 	model, _ := newTestModel(t)
 
 	// Set up mock file list
-	model.allFiles = []string{
+	files := []string{
 		"main.go",
 		"utils.go",
 		"config.json",
@@ -551,13 +547,13 @@ func TestTUIModelUpdateFileCompletions(t *testing.T) {
 
 	// Test single file completion
 	model.prompt.SetValue("@mai")
-	model.updateFileCompletions()
+	model.updateFileCompletions(files)
 	require.Equal(t, 1, len(model.completions.Options))
 	require.Contains(t, model.completions.Options[0], "main.go")
 
 	// Test multiple matching files
 	model.prompt.SetValue("@util")
-	model.updateFileCompletions()
+	model.updateFileCompletions(files)
 	require.Equal(t, 2, len(model.completions.Options))
 	require.True(t,
 		(strings.Contains(model.completions.Options[0], "utils.go") && strings.Contains(model.completions.Options[1], "utils_test.go")) ||
@@ -565,7 +561,7 @@ func TestTUIModelUpdateFileCompletions(t *testing.T) {
 
 	// Test multiple file references in one input
 	model.prompt.SetValue("Check these files: @main.go and @config")
-	model.updateFileCompletions()
+	model.updateFileCompletions(files)
 	require.Equal(t, 1, len(model.completions.Options))
 	require.Contains(t, model.completions.Options[0], "config.json")
 
