@@ -18,8 +18,8 @@ import (
 	lctools "github.com/tmc/langchaingo/tools"
 )
 
-// ToolNotifyFunc is a function that handles tool lifecycle notifications
-type ToolNotifyFunc func(any)
+// NotifyFunc is a function that handles notifications
+type NotifyFunc func(any)
 
 // Session is a lightweight chat loop that uses llms.Model directly
 // and native provider tool/function-calling. It executes tools via the
@@ -46,8 +46,18 @@ type Session struct {
 	contextFiles map[string]string
 
 	// Tool notification function
-	notify ToolNotifyFunc
+	notify NotifyFunc
+
+	// Streaming state management
+	accumulatedContent strings.Builder
 }
+
+// notification messages
+type streamChunkMsg string
+type streamStartMsg struct{}
+type streamCompleteMsg struct{}
+type streamInterruptedMsg struct{ partialContent string }
+type streamErrorMsg struct{ err error }
 
 // Local copies of prompt partials and template used by the session, to decouple from agent.go.
 var sessPromptPartials = map[string]any{
@@ -71,7 +81,7 @@ var sessPromptPartials = map[string]any{
 var sessSystemPromptTemplate string
 
 // NewSession creates a new Session instance with a system prompt and tools.
-func NewSession(llm llms.Model, cfg *Config, toolNotify ToolNotifyFunc) (*Session, error) {
+func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, error) {
 	s := &Session{
 		llm:         llm,
 		toolCatalog: map[string]lctools.Tool{},
@@ -187,8 +197,7 @@ func (s *Session) prepareUserMessage(prompt string) {
 	})
 }
 
-// generateLLMResponse calls the LLM with fallback handling for tool options
-func (s *Session) generateLLMResponse(ctx context.Context) (*llms.ContentChoice, error) {
+func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ctx context.Context, chunk []byte) error) (*llms.ContentChoice, error) {
 	// Build call options; try with explicit tool choice first, then without, then no tools.
 	var callOptsWithChoice []llms.CallOption
 	var callOptsNoChoice []llms.CallOption
@@ -198,17 +207,12 @@ func (s *Session) generateLLMResponse(ctx context.Context) (*llms.ContentChoice,
 		callOptsWithChoice = append(callOptsWithChoice, llms.WithToolChoice("auto"))
 	}
 
+	// Add streaming option if requested
+	if streamingFunc != nil {
+		callOptsWithChoice = append(callOptsWithChoice, llms.WithStreamingFunc(streamingFunc))
+	}
 	// Attempt with explicit tool choice first.
 	resp, err := s.llm.GenerateContent(ctx, s.messages, callOptsWithChoice...)
-	if err != nil && len(callOptsNoChoice) > 0 {
-		fmt.Sprintf("Got an error %v", err)
-		return nil, err
-	}
-	// Log the raw normalized response structure from langchaingo.
-	if err != nil && len(callOptsNoChoice) > 0 {
-		// As a last resort, try with no tools at all.
-		resp, err = s.llm.GenerateContent(ctx, s.messages)
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +319,7 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 	var lastAssistant string
 	var hadAnyToolCall bool
 	for i := 0; i < maxIters; i++ {
-		choice, err := s.generateLLMResponse(ctx)
+		choice, err := s.generateLLMResponse(ctx, nil)
 		if err != nil {
 			return "", err
 		}
@@ -352,6 +356,133 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 		break
 	}
 	return finalText, nil
+}
+
+// AskStream sends a user prompt through the native loop with streaming support.
+// It launches the streaming process in a goroutine and returns immediately.
+// Uses the notify callback to send streaming chunks as they arrive.
+// Supports cancellation via the provided context.
+func (s *Session) AskStream(ctx context.Context, prompt string) {
+	// Launch streaming in a goroutine to avoid blocking the UI
+	go func() {
+		s.accumulatedContent.Reset()
+
+		// Ensure cleanup on exit
+		defer func() {
+			s.ClearContext()
+		}()
+
+		// Build prompt with context if available and add to messages
+		s.prepareUserMessage(prompt)
+
+		// Notify UI that streaming has started
+		if s.notify != nil {
+			s.notify(streamStartMsg{})
+		}
+
+		// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
+		// Cap at a few iterations to avoid infinite loops.
+		const maxIters = 15
+		for i := 0; i < maxIters; i++ {
+			// Check for cancellation
+			select {
+			case <-ctx.Done():
+				// Streaming was cancelled - add accumulated content to message history
+				accumulatedText := s.accumulatedContent.String()
+				if strings.TrimSpace(accumulatedText) != "" {
+					s.messages = append(s.messages, llms.MessageContent{
+						Role:  llms.ChatMessageTypeAI,
+						Parts: []llms.ContentPart{llms.TextPart(accumulatedText)},
+					})
+				}
+				if s.notify != nil {
+					s.notify(streamInterruptedMsg{partialContent: accumulatedText})
+				}
+				return
+			default:
+				// Continue with streaming
+			}
+
+			// Create streaming function that accumulates content and notifies UI
+			streamingFunc := func(ctx context.Context, chunk []byte) error {
+				// Check for cancellation in streaming callback
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				chunkStr := string(chunk)
+				s.accumulatedContent.WriteString(chunkStr)
+				if s.notify != nil {
+					s.notify(streamChunkMsg(chunkStr))
+				}
+				return nil
+			}
+
+			choice, err := s.generateLLMResponse(ctx, streamingFunc)
+			if err != nil {
+				// Check if this was a cancellation
+				if ctx.Err() != nil {
+					accumulatedText := s.accumulatedContent.String()
+					if strings.TrimSpace(accumulatedText) != "" {
+						s.messages = append(s.messages, llms.MessageContent{
+							Role:  llms.ChatMessageTypeAI,
+							Parts: []llms.ContentPart{llms.TextPart(accumulatedText)},
+						})
+					}
+					if s.notify != nil {
+						s.notify(streamInterruptedMsg{partialContent: accumulatedText})
+					}
+					return
+				}
+
+				// Regular error
+				if s.notify != nil {
+					s.notify(streamErrorMsg{err: err})
+				}
+				return
+			}
+
+			// Use accumulated content as the response
+			responseContent := s.accumulatedContent.String()
+
+			// Handle tool calls, if any.
+			if len(choice.ToolCalls) == 0 {
+				// No tool calls - streaming is complete
+				break
+			}
+
+			// Process tool calls and add responses
+			toolResponseMsg, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls, responseContent)
+			if shouldReturn {
+				break
+			}
+
+			// Append the aggregated tool responses and continue the loop.
+			if len(toolResponseMsg.Parts) > 0 {
+				s.messages = append(s.messages, toolResponseMsg)
+				// Continue to next iteration to let the model incorporate tool results.
+				continue
+			}
+
+			// No tool responses to send; break.
+			break
+		}
+
+		// Streaming completed successfully - add accumulated content to message history
+		finalText := s.accumulatedContent.String()
+		if strings.TrimSpace(finalText) != "" {
+			s.messages = append(s.messages, llms.MessageContent{
+				Role:  llms.ChatMessageTypeAI,
+				Parts: []llms.ContentPart{llms.TextPart(finalText)},
+			})
+		}
+
+		if s.notify != nil {
+			s.notify(streamCompleteMsg{})
+		}
+	}()
 }
 
 // parseReActAction extracts a tool name and JSON arguments from text containing lines like:

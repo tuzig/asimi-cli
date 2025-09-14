@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 type TUIModel struct {
 	config        *Config
 	width, height int
+	theme         *Theme // Add theme here
 
 	// UI Components
 	status       StatusComponent
@@ -30,6 +32,10 @@ type TUIModel struct {
 	completionMode       string // "file" or "command"
 	sessionActive        bool
 
+	// Streaming state
+	streamingActive bool
+	streamingCancel context.CancelFunc
+
 	// Command registry
 	commandRegistry CommandRegistry
 
@@ -41,11 +47,13 @@ type TUIModel struct {
 func NewTUIModel(config *Config) *TUIModel {
 
 	registry := NewCommandRegistry()
+	theme := NewTheme()
 
 	model := &TUIModel{
 		config: config,
 		width:  80, // Default width
 		height: 24, // Default height
+		theme:  theme,
 
 		// Initialize components
 		status:       NewStatusComponent(80),
@@ -97,6 +105,13 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "esc":
+			// Check if streaming is active first - cancel streaming via context
+			if m.streamingActive && m.streamingCancel != nil {
+				slog.Info("escape_during_streaming", "cancelling_context", true)
+				m.streamingCancel()
+				return m, nil
+			}
+
 			if m.modal != nil {
 				m.modal = nil
 			}
@@ -204,18 +219,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sessionActive = true
 
 					m.prompt.SetValue("")
-
-					// Send the prompt to the agent
-					cmds = append(cmds, func() tea.Msg {
-						if m.session == nil {
-							return errMsg{fmt.Errorf("no session available to handle prompt")}
-						}
-						out, err := m.session.Ask(context.Background(), content)
-						if err != nil {
-							return errMsg{err}
-						}
-						return responseMsg(out)
-					})
+					ctx, cancel := context.WithCancel(context.Background())
+					m.streamingCancel = cancel
+					m.session.AskStream(ctx, content)
 				}
 			}
 		// Only trigger command completion when slash is at the start of the prompt
@@ -283,6 +289,41 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
+
+	case streamStartMsg:
+		// Streaming has started
+		slog.Debug("streamStartMsg", "starting_stream", true)
+		m.streamingActive = true
+
+	case streamChunkMsg:
+		// For the first chunk, add a new AI message. For subsequent chunks, append to the last message.
+		slog.Debug("streamChunkMsg", "messages_count", len(m.chat.Messages), "chunk", string(msg))
+		if len(m.chat.Messages) == 0 || !strings.HasPrefix(m.chat.Messages[len(m.chat.Messages)-1], "AI:") {
+			m.chat.AddMessage(fmt.Sprintf("AI: %s", string(msg)))
+			slog.Info("added_new_message", "total_messages", len(m.chat.Messages))
+		} else {
+			m.chat.AppendToLastMessage(string(msg))
+			slog.Info("appended_to_last_message", "total_messages", len(m.chat.Messages))
+		}
+
+	case streamCompleteMsg:
+		// Streaming is complete, mark session as inactive
+		slog.Debug("streamCompleteMsg", "messages_count", len(m.chat.Messages))
+		m.streamingActive = false
+		m.streamingCancel = nil
+
+	case streamInterruptedMsg:
+		// Streaming was interrupted by user
+		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.partialContent))
+		m.streamingActive = false
+		m.streamingCancel = nil
+		m.chat.AddMessage("\nESC")
+
+	case streamErrorMsg:
+		slog.Error("streamErrorMsg", "error", msg.err)
+		m.chat.AddMessage(fmt.Sprintf("LLM Error: %v", msg.err))
+		m.streamingActive = false
+		m.streamingCancel = nil
 
 	case showHelpMsg:
 		helpText := "Available commands:\n"

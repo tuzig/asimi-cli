@@ -64,6 +64,16 @@ func (c *ChatComponent) ReplaceLastMessage(message string) {
 	c.updateContent()
 }
 
+// AppendToLastMessage appends text to the last message (for streaming)
+func (c *ChatComponent) AppendToLastMessage(text string) {
+	if len(c.Messages) == 0 {
+		c.AddMessage(text)
+		return
+	}
+	c.Messages[len(c.Messages)-1] += text
+	c.updateContent()
+}
+
 // updateContent updates the viewport content based on the messages
 func (c *ChatComponent) updateContent() {
 	var messageViews []string
