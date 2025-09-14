@@ -68,7 +68,7 @@ func newTestModel(t *testing.T) (*TUIModel, *fake.LLM) {
     llm := fake.NewFakeLLM([]string{})
     model := NewTUIModel(mockConfig())
     // Use native session path for tests now that legacy agent is removed.
-    sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}})
+    sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, func(any) {})
     require.NoError(t, err)
     model.SetSession(sess)
     return model, llm

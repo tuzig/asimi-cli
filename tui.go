@@ -1,21 +1,21 @@
 package main
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "sort"
-    "strings"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"time"
 
-    tea "github.com/charmbracelet/bubbletea"
-    "github.com/charmbracelet/lipgloss"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TUIModel represents the bubbletea model for the TUI
 type TUIModel struct {
-    config        *Config
-    width, height int
+	config        *Config
+	width, height int
 
 	// UI Components
 	status       StatusComponent
@@ -207,17 +207,17 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Send the prompt to the agent
 					cmds = append(cmds, func() tea.Msg {
-                    if m.session == nil {
-                        return errMsg{fmt.Errorf("no session available to handle prompt")}
-                    }
-                    out, err := m.session.Ask(context.Background(), content)
-                    if err != nil {
-                        return errMsg{err}
-                    }
-                    return responseMsg(out)
-                })
-            }
-        }
+						if m.session == nil {
+							return errMsg{fmt.Errorf("no session available to handle prompt")}
+						}
+						out, err := m.session.Ask(context.Background(), content)
+						if err != nil {
+							return errMsg{err}
+						}
+						return responseMsg(out)
+					})
+				}
+			}
 		// Only trigger command completion when slash is at the start of the prompt
 		case "/":
 			// Only show command completion if we're at the beginning of the input
@@ -273,13 +273,13 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.AddMessage(fmt.Sprintf("AI: %s", string(msg)))
 
 	case ToolCallScheduledMsg:
-		m.chat.AddMessage(fmt.Sprintf("Tool Scheduled: %s", msg.Call.Tool.Name()))
+		m.chat.AddMessage(fmt.Sprintf("Tool Scheduled: %s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
 	case ToolCallExecutingMsg:
-		m.chat.ReplaceLastMessage(fmt.Sprintf("Tool Executing: %s", msg.Call.Tool.Name()))
+		m.chat.AddMessage(fmt.Sprintf("Tool Executing: %s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
 	case ToolCallSuccessMsg:
-		m.chat.ReplaceLastMessage(fmt.Sprintf("Tool Succeeded: %s", msg.Call.Tool.Name()))
+		m.chat.AddMessage(fmt.Sprintf("Tool Succeeded: %s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
 	case ToolCallErrorMsg:
-		m.chat.ReplaceLastMessage(fmt.Sprintf("Tool Errored: %s: %v", msg.Call.Tool.Name(), msg.Call.Error))
+		m.chat.AddMessage(fmt.Sprintf("Tool Errored: %s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
 
 	case errMsg:
 		m.chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))

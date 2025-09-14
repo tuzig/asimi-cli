@@ -18,6 +18,9 @@ import (
 	lctools "github.com/tmc/langchaingo/tools"
 )
 
+// ToolNotifyFunc is a function that handles tool lifecycle notifications
+type ToolNotifyFunc func(any)
+
 // Session is a lightweight chat loop that uses llms.Model directly
 // and native provider tool/function-calling. It executes tools via the
 // existing CoreToolScheduler and keeps conversation state locally.
@@ -41,6 +44,9 @@ type Session struct {
 
 	// Context files to include with prompts
 	contextFiles map[string]string
+
+	// Tool notification function
+	notify ToolNotifyFunc
 }
 
 // Local copies of prompt partials and template used by the session, to decouple from agent.go.
@@ -65,10 +71,11 @@ var sessPromptPartials = map[string]any{
 var sessSystemPromptTemplate string
 
 // NewSession creates a new Session instance with a system prompt and tools.
-func NewSession(llm llms.Model, cfg *Config) (*Session, error) {
+func NewSession(llm llms.Model, cfg *Config, toolNotify ToolNotifyFunc) (*Session, error) {
 	s := &Session{
 		llm:         llm,
 		toolCatalog: map[string]lctools.Tool{},
+		notify:      toolNotify,
 	}
 	if cfg != nil {
 		s.provider = strings.ToLower(cfg.LLM.Provider)
@@ -101,7 +108,7 @@ func NewSession(llm llms.Model, cfg *Config) (*Session, error) {
 
 	// Build tool schema for the model and execution catalog for the scheduler.
 	s.toolDefs, s.toolCatalog = buildLLMTools()
-	s.scheduler = NewCoreToolScheduler()
+	s.scheduler = NewCoreToolScheduler(s.notify)
 	s.contextFiles = make(map[string]string)
 	return s, nil
 }

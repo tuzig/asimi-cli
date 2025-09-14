@@ -20,7 +20,7 @@ func TestFileCompletion(t *testing.T) {
 	
 	// Set up a mock session for the test
 	llm := fake.NewFakeLLM([]string{})
-	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}})
+	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, func(any) {})
 	require.NoError(t, err)
 	model.SetSession(sess)
 
@@ -81,7 +81,7 @@ func TestSlashCommandCompletion(t *testing.T) {
 	
 	// Set up a mock session for the test
 	llm := fake.NewFakeLLM([]string{})
-	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}})
+	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, func(any) {})
 	require.NoError(t, err)
 	model.SetSession(sess)
 

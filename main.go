@@ -95,7 +95,9 @@ func (r *runCmd) Run() error {
 	if err != nil { // if it fails, just skip native session setup
 		return fmt.Errorf("Failed to get the LLM client: %w", err)
 	}
-	sess, sessErr := NewSession(llm, config)
+	sess, sessErr := NewSession(llm, config, func(m any) {
+		program.Send(m)
+	})
 	if sessErr != nil {
 		return fmt.Errorf("Failed to create a new session: %w", err)
 	}
@@ -109,8 +111,6 @@ func (r *runCmd) Run() error {
 
 type responseMsg string
 type errMsg struct{ err error }
-
-
 
 func main() {
 	initLogger()
@@ -129,7 +129,7 @@ func main() {
 			fmt.Printf("Error creating LLM client: %v\n", err)
 			os.Exit(1)
 		}
-		sess, err := NewSession(llm, config)
+		sess, err := NewSession(llm, config, consoleToolNotify)
 		if err != nil {
 			fmt.Printf("Error creating session: %v\n", err)
 			os.Exit(1)
@@ -151,27 +151,21 @@ func main() {
 	}
 }
 
-// toolNotify sends tool lifecycle messages to the TUI when available,
-// or prints a concise status line in non-interactive mode.
-func toolNotify(m any) {
-	if program != nil {
-		program.Send(m)
-		return
-	}
-	// Non-interactive: print to stdout
+// consoleToolNotify prints tool lifecycle messages to stdout for non-interactive mode.
+func consoleToolNotify(m any) {
 	switch v := m.(type) {
 	case ToolCallScheduledMsg:
-		fmt.Printf("Tool Scheduled: %s\n", v.Call.Tool.Name())
-		slog.Info("tool.scheduled", "tool", v.Call.Tool.Name())
+		fmt.Printf("Tool Scheduled: %s with input: %s\n", v.Call.Tool.Name(), v.Call.Input)
+		slog.Info("tool.scheduled", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
 	case ToolCallExecutingMsg:
-		fmt.Printf("Tool Executing: %s\n", v.Call.Tool.Name())
-		slog.Info("tool.executing", "tool", v.Call.Tool.Name())
+		fmt.Printf("Tool Executing: %s with input: %s\n", v.Call.Tool.Name(), v.Call.Input)
+		slog.Info("tool.executing", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
 	case ToolCallSuccessMsg:
-		fmt.Printf("Tool Succeeded: %s\n", v.Call.Tool.Name())
-		slog.Info("tool.success", "tool", v.Call.Tool.Name())
+		fmt.Printf("Tool Succeeded: %s\nInput: %s\nOutput: %s\n", v.Call.Tool.Name(), v.Call.Input, v.Call.Result)
+		slog.Info("tool.success", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "output", v.Call.Result)
 	case ToolCallErrorMsg:
-		fmt.Printf("Tool Errored: %s: %v\n", v.Call.Tool.Name(), v.Call.Error)
-		slog.Error("tool.error", "tool", v.Call.Tool.Name(), "error", v.Call.Error)
+		fmt.Printf("Tool Errored: %s\nInput: %s\nError: %v\n", v.Call.Tool.Name(), v.Call.Input, v.Call.Error)
+		slog.Error("tool.error", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "error", v.Call.Error)
 	}
 }
 
