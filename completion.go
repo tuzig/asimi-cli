@@ -12,7 +12,7 @@ type CompletionDialog struct {
 	Selected          int
 	Visible           bool
 	Width             int
-	Height            int
+	MaxHeight         int // Maximum height when scrolling is needed
 	Offset            int
 	PositionX         int
 	PositionY         int
@@ -24,12 +24,12 @@ type CompletionDialog struct {
 // NewCompletionDialog creates a new completion dialog
 func NewCompletionDialog() CompletionDialog {
 	return CompletionDialog{
-		Options:  []string{},
-		Selected: 0,
-		Visible:  false,
-		Width:    30,
-		Height:   10,
-		Offset:   0,
+		Options:   []string{},
+		Selected:  0,
+		Visible:   false,
+		Width:     30,
+		MaxHeight: 10, // Maximum height when there are many options
+		Offset:    0,
 		Style: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).
@@ -74,9 +74,10 @@ func (c *CompletionDialog) SelectNext() {
 	if next >= len(c.Options) {
 		return
 	}
-	slog.Info(">>>", "next", next, "offset", c.Offset, "height", c.Height)
-	if next >= c.Offset+c.Height-c.ScrollMargin {
-		if c.Offset < len(c.Options)-c.Height {
+	effectiveHeight := c.getEffectiveHeight()
+	slog.Info(">>>", "next", next, "offset", c.Offset, "height", effectiveHeight)
+	if next >= c.Offset+effectiveHeight-c.ScrollMargin {
+		if c.Offset < len(c.Options)-effectiveHeight {
 			c.Offset++
 		}
 	}
@@ -105,22 +106,38 @@ func (c CompletionDialog) GetSelected() string {
 	return ""
 }
 
+// getEffectiveHeight returns the actual height based on number of options
+func (c CompletionDialog) getEffectiveHeight() int {
+	if len(c.Options) == 0 {
+		return 0
+	}
+	if len(c.Options) < c.MaxHeight {
+		return len(c.Options)
+	}
+	return c.MaxHeight
+}
+
 // View renders the completion dialog
 func (c CompletionDialog) View() string {
 	slog.Info("view")
 	if !c.Visible || len(c.Options) == 0 {
 		return ""
 	}
+
+	effectiveHeight := c.getEffectiveHeight()
 	start := c.Offset
-	end := c.Offset + c.Height
+	end := c.Offset + effectiveHeight
+
+	// Ensure end doesn't exceed available options
+	if end > len(c.Options) {
+		end = len(c.Options)
+	}
+
 	slog.Info(">>>", "start", start, "end", end)
-	lines := make([]string, 0, c.Height)
+	lines := make([]string, 0, effectiveHeight)
+
+	// Only add actual options, no "..." padding
 	for i := start; i < end; i++ {
-		if i >= len(c.Options) {
-			slog.Info("...", "i", i, "len", len(c.Options))
-			lines = append(lines, "...")
-			continue
-		}
 		option := c.Options[i]
 		if i == c.Selected {
 			lines = append(lines, c.SelectedItemStyle.Render(option))
