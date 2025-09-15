@@ -20,12 +20,14 @@ type TUIModel struct {
 	theme         *Theme // Add theme here
 
 	// UI Components
-	status       StatusComponent
-	prompt       PromptComponent
-	chat         ChatComponent
-	completions  CompletionDialog
-	toastManager ToastManager
-	modal        *BaseModal
+	status         StatusComponent
+	prompt         PromptComponent
+	chat           ChatComponent
+	completions    CompletionDialog
+	toastManager   ToastManager
+	modal          *BaseModal
+	providerModal  *ProviderSelectionModal
+	codeInputModal *CodeInputModal
 
 	// UI Flags & State
 	showCompletionDialog bool
@@ -56,12 +58,14 @@ func NewTUIModel(config *Config) *TUIModel {
 		theme:  theme,
 
 		// Initialize components
-		status:       NewStatusComponent(80),
-		prompt:       NewPromptComponent(80, 5),
-		chat:         NewChatComponent(80, 18),
-		completions:  NewCompletionDialog(),
-		toastManager: NewToastManager(),
-		modal:        nil,
+		status:         NewStatusComponent(80),
+		prompt:         NewPromptComponent(80, 5),
+		chat:           NewChatComponent(80, 18),
+		completions:    NewCompletionDialog(),
+		toastManager:   NewToastManager(),
+		modal:          nil,
+		providerModal:  nil,
+		codeInputModal: nil,
 
 		// UI Flags
 		showCompletionDialog: false,
@@ -75,8 +79,8 @@ func NewTUIModel(config *Config) *TUIModel {
 		session: nil,
 	}
 
-	// Set initial status info
-	model.status.SetAgent(fmt.Sprintf("%s (%s)", config.LLM.Provider, config.LLM.Model))
+	// Set initial status info - show disconnected state initially
+	model.status.SetAgent(fmt.Sprintf("🔌 %s (%s)", config.LLM.Provider, config.LLM.Model))
 	model.status.SetWorkingDir(".")   // In a real implementation, get current working directory
 	model.status.SetGitBranch("main") // In a real implementation, get current git branch
 
@@ -86,6 +90,34 @@ func NewTUIModel(config *Config) *TUIModel {
 // SetSession sets the session for the TUI model
 func (m *TUIModel) SetSession(session *Session) {
 	m.session = session
+	if session != nil {
+		m.status.SetAgent(fmt.Sprintf("✅ %s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+	} else {
+		m.status.SetAgent(fmt.Sprintf("🔌 %s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+	}
+}
+
+// reinitializeSession recreates the LLM client and session with current config
+func (m *TUIModel) reinitializeSession() error {
+	// Get the LLM client with the updated config
+	llm, err := getLLMClient(m.config)
+	if err != nil {
+		return fmt.Errorf("failed to create LLM client: %w", err)
+	}
+
+	// Create a new session with the LLM
+	sess, err := NewSession(llm, m.config, func(msg any) {
+		if program != nil {
+			program.Send(msg)
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	// Set the new session
+	m.SetSession(sess)
+	return nil
 }
 
 // Init implements bubbletea.Model
@@ -97,6 +129,9 @@ func (m TUIModel) Init() tea.Cmd {
 // Update implements bubbletea.Model
 func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	// Update toast manager to remove expired toasts
+	m.toastManager.Update()
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -123,6 +158,25 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Handle code input modal first
+		if m.codeInputModal != nil {
+			var cmd tea.Cmd
+			m.codeInputModal, cmd = m.codeInputModal.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+		// Handle provider modal input
+		if m.providerModal != nil {
+			var cmd tea.Cmd
+			m.providerModal, cmd = m.providerModal.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
 		if m.showCompletionDialog {
 			switch msg.String() {
 			case "enter", "tab":
@@ -216,12 +270,17 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					// move the this block to m.prompt.Update()
 					m.chat.AddMessage(fmt.Sprintf("You: %s", content))
-					m.sessionActive = true
 
-					m.prompt.SetValue("")
-					ctx, cancel := context.WithCancel(context.Background())
-					m.streamingCancel = cancel
-					m.session.AskStream(ctx, content)
+					if m.session != nil {
+						m.sessionActive = true
+						m.prompt.SetValue("")
+						ctx, cancel := context.WithCancel(context.Background())
+						m.streamingCancel = cancel
+						m.session.AskStream(ctx, content)
+					} else {
+						m.toastManager.AddToast("No LLM configured. Please use /login to configure an API key.", "error", time.Second*5)
+						m.prompt.SetValue("")
+					}
 				}
 			}
 		// Only trigger command completion when slash is at the start of the prompt
@@ -332,6 +391,40 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.chat.AddMessage(helpText)
 		m.sessionActive = true
+	case providerSelectedMsg:
+		m.providerModal = nil
+		provider := msg.provider.Key
+
+		// Handle Anthropic specially - show code input modal immediately
+		if provider == "anthropic" {
+			auth := &AuthAnthropic{}
+			authURL, verifier, err := auth.authorize()
+			if err != nil {
+				m.toastManager.AddToast(fmt.Sprintf("Auth failed: %v", err), "error", 4000)
+				return m, nil
+			}
+
+			// Open browser
+			if err := openBrowser(authURL); err != nil {
+				m.toastManager.AddToast("Failed to open browser", "warning", 3000)
+			}
+
+			// Show code input modal
+			m.codeInputModal = NewCodeInputModal(authURL, verifier)
+			m.config.LLM.Provider = provider
+			m.config.LLM.Model = "claude-3-5-sonnet-latest"
+			m.toastManager.AddToast("Logged in", "success", 3000)
+		} else {
+			// Other providers use the standard OAuth flow
+			cmds = append(cmds, m.performOAuthLogin(provider))
+		}
+	case modalCancelledMsg:
+		m.providerModal = nil
+		m.codeInputModal = nil
+		m.toastManager.AddToast("Login cancelled", "info", 2000)
+	case authCodeEnteredMsg:
+		m.codeInputModal = nil
+		cmds = append(cmds, m.completeAnthropicOAuth(msg.code, msg.verifier))
 	}
 
 	m.chat, _ = m.chat.Update(msg)
@@ -412,7 +505,11 @@ func (m *TUIModel) updateComponentDimensions() {
 	m.prompt.SetHeight(promptHeight)
 
 	// Update status info
-	m.status.SetAgent(fmt.Sprintf("%s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+	if m.session != nil {
+		m.status.SetAgent(fmt.Sprintf("✅ %s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+	} else {
+		m.status.SetAgent(fmt.Sprintf("🔌 %s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+	}
 	m.status.SetWorkingDir(".")   // In a real implementation, get current working directory
 	m.status.SetGitBranch("main") // In a real implementation, get current git branch
 }
@@ -457,6 +554,18 @@ func (m TUIModel) View() string {
 		modalView := m.modal.Render()
 		// In a real implementation, you would overlay the modal on top of the main view
 		view = lipgloss.JoinVertical(lipgloss.Left, view, modalView)
+	}
+
+	// Add provider modal if active (show modal over existing view)
+	if m.providerModal != nil {
+		modalView := m.providerModal.Render()
+		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
+	}
+
+	// Add code input modal if active (takes priority over provider modal)
+	if m.codeInputModal != nil {
+		modalView := m.codeInputModal.Render()
+		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
 	}
 
 	// Add toast notifications
