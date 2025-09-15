@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
@@ -36,7 +38,11 @@ func initLogger() {
 		panic(err)
 	}
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(logFile, nil)))
+	// Set log level to DEBUG to see debug messages
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(logFile, opts)))
 }
 
 func (v versionCmd) Run() error {
@@ -134,17 +140,23 @@ func main() {
 			fmt.Printf("Please configure authentication by running the program in interactive mode and using '/login'\n")
 			os.Exit(1)
 		}
-		sess, err := NewSession(llm, config, consoleToolNotify)
+		// Set up streaming for non-interactive mode
+		done := make(chan struct{})
+		var finalResponse strings.Builder
+		var mu sync.Mutex
+
+		sess, err := NewSession(llm, config, consoleStreamingNotify(done, &finalResponse, &mu))
 		if err != nil {
 			fmt.Printf("Error creating session: %v\n", err)
 			os.Exit(1)
 		}
-		out, err := sess.Ask(context.Background(), cli.Prompt)
-		if err != nil {
-			fmt.Printf("Error asking session: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(out)
+
+		// Start streaming
+		sess.AskStream(context.Background(), cli.Prompt)
+
+		// Wait for streaming to complete
+		<-done
+
 		os.Exit(0)
 	}
 
@@ -156,21 +168,47 @@ func main() {
 	}
 }
 
-// consoleToolNotify prints tool lifecycle messages to stdout for non-interactive mode.
-func consoleToolNotify(m any) {
-	switch v := m.(type) {
-	case ToolCallScheduledMsg:
-		fmt.Printf("Tool Scheduled: %s with input: %s\n", v.Call.Tool.Name(), v.Call.Input)
-		slog.Info("tool.scheduled", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
-	case ToolCallExecutingMsg:
-		fmt.Printf("Tool Executing: %s with input: %s\n", v.Call.Tool.Name(), v.Call.Input)
-		slog.Info("tool.executing", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
-	case ToolCallSuccessMsg:
-		fmt.Printf("Tool Succeeded: %s\nInput: %s\nOutput: %s\n", v.Call.Tool.Name(), v.Call.Input, v.Call.Result)
-		slog.Info("tool.success", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "output", v.Call.Result)
-	case ToolCallErrorMsg:
-		fmt.Printf("Tool Errored: %s\nInput: %s\nError: %v\n", v.Call.Tool.Name(), v.Call.Input, v.Call.Error)
-		slog.Error("tool.error", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "error", v.Call.Error)
+// consoleStreamingNotify handles streaming and tool messages for non-interactive mode
+func consoleStreamingNotify(done chan struct{}, finalResponse *strings.Builder, mu *sync.Mutex) func(any) {
+	return func(m any) {
+		switch v := m.(type) {
+		case ToolCallScheduledMsg:
+			fmt.Printf("Tool Scheduled: %s with input: %s\n", v.Call.Tool.Name(), v.Call.Input)
+			slog.Info("tool.scheduled", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
+		case ToolCallExecutingMsg:
+			fmt.Printf("Tool Executing: %s with input: %s\n", v.Call.Tool.Name(), v.Call.Input)
+			slog.Info("tool.executing", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
+		case ToolCallSuccessMsg:
+			fmt.Printf("Tool Succeeded: %s\nInput: %s\nOutput: %s\n", v.Call.Tool.Name(), v.Call.Input, v.Call.Result)
+			slog.Info("tool.success", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "output", v.Call.Result)
+		case ToolCallErrorMsg:
+			fmt.Printf("Tool Errored: %s\nInput: %s\nError: %v\n", v.Call.Tool.Name(), v.Call.Input, v.Call.Error)
+			slog.Error("tool.error", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "error", v.Call.Error)
+		case streamStartMsg:
+			slog.Debug("console streaming started")
+		case streamChunkMsg:
+			chunk := string(v)
+			slog.Debug("console streaming chunk", "chunk", chunk)
+			fmt.Print(chunk)
+			mu.Lock()
+			finalResponse.WriteString(chunk)
+			mu.Unlock()
+		case streamCompleteMsg:
+			fmt.Println() // Add newline after streaming
+			slog.Debug("console streaming completed")
+			close(done)
+		case streamInterruptedMsg:
+			slog.Debug("console streaming interrupted", "partial_content", v.partialContent)
+			fmt.Printf("\n[Interrupted] %s\n", v.partialContent)
+			mu.Lock()
+			finalResponse.WriteString(v.partialContent)
+			mu.Unlock()
+			close(done)
+		case streamErrorMsg:
+			slog.Debug("console streaming error", "error", v.err)
+			fmt.Printf("\nError: %v\n", v.err)
+			close(done)
+		}
 	}
 }
 
