@@ -390,7 +390,7 @@ func TestCompletionDialog(t *testing.T) {
 // TestCompletionDialogScrolling tests the scrolling functionality of the completion dialog
 func TestCompletionDialogScrolling(t *testing.T) {
 	dialog := NewCompletionDialog()
-	dialog.Height = 5
+	dialog.MaxHeight = 5
 	dialog.ScrollMargin = 1
 	options := []string{"a", "b", "c", "d", "e", "f", "g"}
 	dialog.SetOptions(options)

@@ -128,212 +128,262 @@ func (m TUIModel) Init() tea.Cmd {
 
 // Update implements bubbletea.Model
 func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
 	// Update toast manager to remove expired toasts
 	m.toastManager.Update()
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Always handle Ctrl+C and Esc first
-		switch msg.String() {
-		case "ctrl+c":
-			return m, tea.Quit
-		case "esc":
-			// Check if streaming is active first - cancel streaming via context
-			if m.streamingActive && m.streamingCancel != nil {
-				slog.Info("escape_during_streaming", "cancelling_context", true)
-				m.streamingCancel()
-				return m, nil
-			}
-
-			if m.modal != nil {
-				m.modal = nil
-			}
-			if m.showCompletionDialog {
-				m.showCompletionDialog = false
-				m.completions.Hide()
-				m.completionMode = ""
-			}
-			return m, nil
-		}
-
-		// Handle code input modal first
-		if m.codeInputModal != nil {
-			var cmd tea.Cmd
-			m.codeInputModal, cmd = m.codeInputModal.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-		}
-
-		// Handle provider modal input
-		if m.providerModal != nil {
-			var cmd tea.Cmd
-			m.providerModal, cmd = m.providerModal.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-		}
-		if m.showCompletionDialog {
-			switch msg.String() {
-			case "enter", "tab":
-				// Get selected completion
-				selected := m.completions.GetSelected()
-				if selected != "" {
-					if m.completionMode == "file" {
-						filePath := selected
-						content, err := os.ReadFile(filePath)
-						if err != nil {
-							m.toastManager.AddToast(fmt.Sprintf("Error reading file: %v", err), "error", time.Second*3)
-						} else if m.session != nil {
-							m.session.AddContextFile(filePath, string(content))
-							m.chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
-						}
-						currentValue := m.prompt.Value()
-						lastAt := strings.LastIndex(currentValue, "@")
-						if lastAt != -1 {
-							// Ensure we correctly handle the text before the @
-							prefix := currentValue[:lastAt]
-							// Find the end of the word being completed
-							wordEnd := -1
-							for i := lastAt + 1; i < len(currentValue); i++ {
-								if currentValue[i] == ' ' {
-									wordEnd = i
-									break
-								}
-							}
-							if wordEnd == -1 {
-								wordEnd = len(currentValue)
-							}
-							// Replace the partial file name with the full one
-							newValue := prefix + "@" + selected + " " + currentValue[wordEnd:]
-							m.prompt.SetValue(strings.TrimSpace(newValue) + " ")
-						} else {
-							// Fallback, though we should always find an @
-							m.prompt.SetValue("@" + selected + " ")
-						}
-					} else if m.completionMode == "command" {
-						// It's a command completion
-						cmd, exists := m.commandRegistry.GetCommand(selected)
-						if exists {
-							// Execute command
-							cmds = append(cmds, cmd.Handler(&m, []string{}))
-						}
-						m.prompt.SetValue("")
-					}
-				}
-				m.showCompletionDialog = false
-				m.completions.Hide()
-				m.completionMode = ""
-				return m, tea.Batch(cmds...)
-			case "down":
-				m.completions.SelectNext()
-				return m, nil
-			case "up":
-				m.completions.SelectPrev()
-				return m, nil
-			default:
-				// Any other key press updates the completion list
-				m.prompt, _ = m.prompt.Update(msg)
-				if m.completionMode == "file" {
-					files, err := getFileTree(".")
-					if err == nil {
-						m.updateFileCompletions(files)
-					}
-				}
-				return m, nil
-			}
-		}
-
-		switch msg.String() {
-		case "enter":
-			// Submit the prompt content
-			content := m.prompt.Value()
-			if content != "" {
-				// TODO: move the slash command update to m.chat.Update()
-				if strings.HasPrefix(content, "/") {
-					parts := strings.Fields(content)
-					if len(parts) > 0 {
-						cmdName := parts[0]
-						cmd, exists := m.commandRegistry.GetCommand(cmdName)
-						if exists {
-							command := cmd.Handler(&m, parts[1:])
-							cmds = append(cmds, command)
-							m.prompt.SetValue("")
-						} else {
-							m.toastManager.AddToast(fmt.Sprintf("Unknown command: %s", cmdName), "error", time.Second*3)
-						}
-					}
-				} else {
-					// move the this block to m.prompt.Update()
-					m.chat.AddMessage(fmt.Sprintf("You: %s", content))
-
-					if m.session != nil {
-						m.sessionActive = true
-						m.prompt.SetValue("")
-						ctx, cancel := context.WithCancel(context.Background())
-						m.streamingCancel = cancel
-						m.session.AskStream(ctx, content)
-					} else {
-						m.toastManager.AddToast("No LLM configured. Please use /login to configure an API key.", "error", time.Second*5)
-						m.prompt.SetValue("")
-					}
-				}
-			}
-		// Only trigger command completion when slash is at the start of the prompt
-		case "/":
-			// Only show command completion if we're at the beginning of the input
-			if m.prompt.Value() == "" {
-				m.prompt, _ = m.prompt.Update(msg)
-				// Show completion dialog with commands
-				m.showCompletionDialog = true
-				m.completionMode = "command"
-				var commandNames []string
-				for name := range m.commandRegistry.Commands {
-					commandNames = append(commandNames, name)
-				}
-				sort.Strings(commandNames)
-				m.completions.SetOptions(commandNames)
-				m.completions.Show()
-			} else {
-				m.prompt, _ = m.prompt.Update(msg)
-			}
-		case "@":
-			m.prompt, _ = m.prompt.Update(msg)
-			// Show completion dialog with files
-			m.showCompletionDialog = true
-			m.completionMode = "file"
-			files, err := getFileTree(".")
-			if err != nil {
-				m.chat.AddMessage(fmt.Sprintf("Error scanning files: %v", err))
-			} else {
-				m.updateFileCompletions(files)
-			}
-			m.completions.Show()
-
-		default:
-			m.prompt, _ = m.prompt.Update(msg)
-		}
+		return m.handleKeyMsg(msg)
 
 	case tea.MouseMsg:
-		switch msg.Type {
-		case tea.MouseWheelUp:
-			m.chat.Viewport.LineUp(1)
-		case tea.MouseWheelDown:
-			m.chat.Viewport.LineDown(1)
-		}
+		return m.handleMouseMsg(msg)
 
 	case tea.WindowSizeMsg:
-		// Handle window resize
-		m.width = msg.Width
-		m.height = msg.Height
+		return m.handleWindowSizeMsg(msg)
 
-		// Update component dimensions
-		m.updateComponentDimensions()
+	default:
+		return m.handleCustomMessages(msg)
+	}
+}
 
+// handleKeyMsg processes keyboard input
+func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Always handle Ctrl+C first
+	var cmd tea.Cmd
+
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	// Handle modals first (they need to handle their own escape keys)
+	if m.codeInputModal != nil {
+		m.codeInputModal, cmd = m.codeInputModal.Update(msg)
+		return m, cmd
+	}
+	if m.providerModal != nil {
+		m.providerModal, cmd = m.providerModal.Update(msg)
+		return m, cmd
+	}
+
+	// Handle escape key after modals have had a chance to process it
+	if msg.String() == "esc" {
+		return m.handleEscape()
+	}
+
+	// Handle completion dialog
+	if m.showCompletionDialog {
+		return m.handleCompletionDialog(msg)
+	}
+
+	// Handle regular key input
+	switch msg.String() {
+	case "enter":
+		return m.handleEnterKey()
+	case "/":
+		return m.handleSlashKey(msg)
+	case "@":
+		return m.handleAtKey(msg)
+	default:
+		m.prompt, _ = m.prompt.Update(msg)
+		return m, nil
+	}
+
+}
+
+// handleEscape handles the escape key
+func (m TUIModel) handleEscape() (tea.Model, tea.Cmd) {
+	// Check if streaming is active first - cancel streaming via context
+	if m.streamingActive && m.streamingCancel != nil {
+		slog.Info("escape_during_streaming", "cancelling_context", true)
+		m.streamingCancel()
+		return m, nil
+	}
+
+	m.modal = nil
+	if m.showCompletionDialog {
+		m.showCompletionDialog = false
+		m.completions.Hide()
+		m.completionMode = ""
+	}
+	return m, nil
+}
+
+// handleCompletionDialog handles the completion dialog interactions
+func (m TUIModel) handleCompletionDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", "tab":
+		return m.handleCompletionSelection()
+	case "down":
+		m.completions.SelectNext()
+		return m, nil
+	case "up":
+		m.completions.SelectPrev()
+		return m, nil
+	default:
+		// Any other key press updates the completion list
+		m.prompt, _ = m.prompt.Update(msg)
+		if m.completionMode == "file" {
+			files, err := getFileTree(".")
+			if err == nil {
+				m.updateFileCompletions(files)
+			}
+		} else if m.completionMode == "command" {
+			m.updateCommandCompletions()
+		}
+		return m, nil
+	}
+}
+
+// handleCompletionSelection handles when a completion is selected
+func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	selected := m.completions.GetSelected()
+	if selected != "" {
+		if m.completionMode == "file" {
+			filePath := selected
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				m.toastManager.AddToast(fmt.Sprintf("Error reading file: %v", err), "error", time.Second*3)
+			} else if m.session != nil {
+				m.session.AddContextFile(filePath, string(content))
+				m.chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
+			}
+			currentValue := m.prompt.Value()
+			lastAt := strings.LastIndex(currentValue, "@")
+			if lastAt != -1 {
+				// Ensure we correctly handle the text before the @
+				prefix := currentValue[:lastAt]
+				// Find the end of the word being completed
+				wordEnd := -1
+				for i := lastAt + 1; i < len(currentValue); i++ {
+					if currentValue[i] == ' ' {
+						wordEnd = i
+						break
+					}
+				}
+				if wordEnd == -1 {
+					wordEnd = len(currentValue)
+				}
+				// Replace the partial file name with the full one
+				newValue := prefix + "@" + selected + " " + currentValue[wordEnd:]
+				m.prompt.SetValue(strings.TrimSpace(newValue) + " ")
+			} else {
+				// Fallback, though we should always find an @
+				m.prompt.SetValue("@" + selected + " ")
+			}
+		} else if m.completionMode == "command" {
+			// It's a command completion
+			cmd, exists := m.commandRegistry.GetCommand(selected)
+			if exists {
+				// Execute command
+				cmds = append(cmds, cmd.Handler(&m, []string{}))
+			}
+			m.prompt.SetValue("")
+		}
+	}
+	m.showCompletionDialog = false
+	m.completions.Hide()
+	m.completionMode = ""
+	return m, tea.Batch(cmds...)
+}
+
+// handleEnterKey handles the enter key press
+func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	content := m.prompt.Value()
+	if content == "" {
+		return m, nil
+	}
+	if strings.HasPrefix(content, "/") {
+		parts := strings.Fields(content)
+		if len(parts) > 0 {
+			cmdName := parts[0]
+			cmd, exists := m.commandRegistry.GetCommand(cmdName)
+			if exists {
+				command := cmd.Handler(&m, parts[1:])
+				cmds = append(cmds, command)
+				m.prompt.SetValue("")
+			} else {
+				m.toastManager.AddToast(fmt.Sprintf("Unknown command: %s", cmdName), "error", time.Second*3)
+			}
+		}
+	} else {
+		m.chat.AddMessage(fmt.Sprintf("You: %s", content))
+		if m.session != nil {
+			m.sessionActive = true
+			m.prompt.SetValue("")
+			ctx, cancel := context.WithCancel(context.Background())
+			m.streamingCancel = cancel
+			m.session.AskStream(ctx, content)
+		} else {
+			m.toastManager.AddToast("No LLM configured. Please use /login to configure an API key.", "error", time.Second*5)
+			m.prompt.SetValue("")
+		}
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handleSlashKey handles the slash key for command completion
+func (m TUIModel) handleSlashKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Only show command completion if we're at the beginning of the input
+	if m.prompt.Value() == "" {
+		m.prompt, _ = m.prompt.Update(msg)
+		// Show completion dialog with commands
+		m.showCompletionDialog = true
+		m.completionMode = "command"
+		var commandNames []string
+		for name := range m.commandRegistry.Commands {
+			commandNames = append(commandNames, name)
+		}
+		sort.Strings(commandNames)
+		m.completions.SetOptions(commandNames)
+		m.completions.Show()
+	} else {
+		m.prompt, _ = m.prompt.Update(msg)
+	}
+	return m, nil
+}
+
+// handleAtKey handles the @ key for file completion
+func (m TUIModel) handleAtKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.prompt, _ = m.prompt.Update(msg)
+	// Show completion dialog with files
+	m.showCompletionDialog = true
+	m.completionMode = "file"
+	files, err := getFileTree(".")
+	if err != nil {
+		m.chat.AddMessage(fmt.Sprintf("Error scanning files: %v", err))
+	} else {
+		m.updateFileCompletions(files)
+	}
+	m.completions.Show()
+	return m, nil
+}
+
+// handleMouseMsg handles mouse events
+func (m TUIModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		m.chat.Viewport.LineUp(1)
+	case tea.MouseWheelDown:
+		m.chat.Viewport.LineDown(1)
+	}
+	return m, nil
+}
+
+// handleWindowSizeMsg handles window resize events
+func (m TUIModel) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	m.width = msg.Width
+	m.height = msg.Height
+	m.updateComponentDimensions()
+	return m, nil
+}
+
+// handleCustomMessages handles all custom message types
+func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
 	case responseMsg:
 		m.chat.AddMessage(fmt.Sprintf("AI: %s", string(msg)))
 
@@ -391,6 +441,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.chat.AddMessage(helpText)
 		m.sessionActive = true
+
 	case providerSelectedMsg:
 		m.providerModal = nil
 		provider := msg.provider.Key
@@ -416,20 +467,22 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toastManager.AddToast("Logged in", "success", 3000)
 		} else {
 			// Other providers use the standard OAuth flow
-			cmds = append(cmds, m.performOAuthLogin(provider))
+			return m, m.performOAuthLogin(provider)
 		}
+
 	case modalCancelledMsg:
 		m.providerModal = nil
 		m.codeInputModal = nil
 		m.toastManager.AddToast("Login cancelled", "info", 2000)
+
 	case authCodeEnteredMsg:
 		m.codeInputModal = nil
-		cmds = append(cmds, m.completeAnthropicOAuth(msg.code, msg.verifier))
+		return m, m.completeAnthropicOAuth(msg.code, msg.verifier)
 	}
 
 	m.chat, _ = m.chat.Update(msg)
 
-	return m, tea.Batch(cmds...)
+	return m, nil
 }
 
 func (m *TUIModel) updateFileCompletions(files []string) {
@@ -480,6 +533,34 @@ func (m *TUIModel) updateFileCompletions(files []string) {
 		options = append(options, file)
 	}
 	m.completions.SetOptions(options)
+}
+
+// updateCommandCompletions filters commands based on current input
+func (m *TUIModel) updateCommandCompletions() {
+	inputValue := m.prompt.Value()
+
+	// Extract the command being typed (everything after the first "/")
+	if !strings.HasPrefix(inputValue, "/") {
+		m.completions.SetOptions([]string{})
+		return
+	}
+
+	// Get the partial command name (without the leading "/")
+	searchQuery := strings.ToLower(inputValue[1:])
+
+	// Get all command names and filter them
+	var filteredCommands []string
+	for name := range m.commandRegistry.Commands {
+		// Check if the command starts with the search query
+		if strings.HasPrefix(strings.ToLower(name[1:]), searchQuery) { // name already includes "/"
+			filteredCommands = append(filteredCommands, name)
+		}
+	}
+
+	// Sort the filtered commands
+	sort.Strings(filteredCommands)
+
+	m.completions.SetOptions(filteredCommands)
 }
 
 // updateComponentDimensions updates the dimensions of all components based on the window size

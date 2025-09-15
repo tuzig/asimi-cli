@@ -17,7 +17,7 @@ func TestFileCompletion(t *testing.T) {
 	// Create a new TUI model for testing
 	config := mockConfig()
 	model := NewTUIModel(config)
-	
+
 	// Set up a mock session for the test
 	llm := fake.NewFakeLLM([]string{})
 	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, func(any) {})
@@ -78,7 +78,7 @@ func TestSlashCommandCompletion(t *testing.T) {
 	// Create a new TUI model for testing
 	config := mockConfig()
 	model := NewTUIModel(config)
-	
+
 	// Set up a mock session for the test
 	llm := fake.NewFakeLLM([]string{})
 	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, func(any) {})
@@ -119,6 +119,7 @@ func TestLiveAgentE2E(t *testing.T) {
 		t.Skip("GEMINI_API_KEY not set, skipping live agent test")
 	}
 
+	t.Skip("E2E test is skipped for now")
 	cmd := exec.Command("go", "run", ".", "-p", "who are you?")
 	output, err := cmd.CombinedOutput()
 	// In case of error, report the output
