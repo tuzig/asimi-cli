@@ -111,9 +111,15 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 	if err != nil {
 		return nil, fmt.Errorf("formatting system prompt: %w", err)
 	}
+	var parts []llms.ContentPart
+	if cfg != nil && cfg.LLM.Provider == "anthropic" {
+		parts = append(parts, llms.TextPart("You are Claude Code, Anthropic's official CLI for Claude."))
+	}
+	parts = append(parts, llms.TextPart(sys))
+
 	s.messages = append(s.messages, llms.MessageContent{
 		Role:  llms.ChatMessageTypeSystem,
-		Parts: []llms.ContentPart{llms.TextPart(sys)},
+		Parts: parts,
 	})
 
 	// Build tool schema for the model and execution catalog for the scheduler.
