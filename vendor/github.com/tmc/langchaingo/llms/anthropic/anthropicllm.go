@@ -173,27 +173,39 @@ func processAnthropicResponse(result *anthropicclient.MessageResponsePayload) (*
 		return nil, ErrEmptyResponse
 	}
 
-	choices := make([]*llms.ContentChoice, len(result.Content))
-	for i, content := range result.Content {
+	// Consolidate all content into a single choice to match OpenAI's behavior
+	// This fixes streaming tool calls by ensuring everything is in Choices[0]
+	var textContent strings.Builder
+	var toolCalls []llms.ToolCall
+	var allThinkingContent strings.Builder
+	var thinkingSignature string
+
+	for _, content := range result.Content {
 		switch content.GetType() {
 		case "text":
-			if textContent, ok := content.(*anthropicclient.TextContent); ok {
+			if tc, ok := content.(*anthropicclient.TextContent); ok {
 				// Extract thinking content from the response text
-				thinkingContent, outputContent := extractThinkingFromText(textContent.Text)
+				thinkingContent, outputContent := extractThinkingFromText(tc.Text)
 
-				choices[i] = &llms.ContentChoice{
-					Content:    textContent.Text,
-					StopReason: result.StopReason,
-					GenerationInfo: map[string]any{
-						"InputTokens":              result.Usage.InputTokens,
-						"OutputTokens":             result.Usage.OutputTokens,
-						"CacheCreationInputTokens": result.Usage.CacheCreationInputTokens,
-						"CacheReadInputTokens":     result.Usage.CacheReadInputTokens,
-						// Standardized fields for cross-provider compatibility
-						"ThinkingContent": thinkingContent, // Standardized field
-						"OutputContent":   outputContent,   // Standardized field
-					},
+				// Accumulate thinking content if present
+				if thinkingContent != "" {
+					if allThinkingContent.Len() > 0 {
+						allThinkingContent.WriteString("\n\n")
+					}
+					allThinkingContent.WriteString(thinkingContent)
 				}
+
+				// Use outputContent if thinking was extracted, otherwise use full text
+				contentToAdd := tc.Text
+				if outputContent != "" {
+					contentToAdd = outputContent
+				}
+
+				// Accumulate text content
+				if textContent.Len() > 0 && contentToAdd != "" {
+					textContent.WriteString("\n")
+				}
+				textContent.WriteString(contentToAdd)
 			} else {
 				return nil, fmt.Errorf("anthropic: %w for text message", ErrInvalidContentType)
 			}
@@ -203,40 +215,28 @@ func processAnthropicResponse(result *anthropicclient.MessageResponsePayload) (*
 				if err != nil {
 					return nil, fmt.Errorf("anthropic: failed to marshal tool use arguments: %w", err)
 				}
-				choices[i] = &llms.ContentChoice{
-					ToolCalls: []llms.ToolCall{
-						{
-							ID: toolUseContent.ID,
-							FunctionCall: &llms.FunctionCall{
-								Name:      toolUseContent.Name,
-								Arguments: string(argumentsJSON),
-							},
-						},
+				toolCalls = append(toolCalls, llms.ToolCall{
+					ID:   toolUseContent.ID,
+					Type: "function",
+					FunctionCall: &llms.FunctionCall{
+						Name:      toolUseContent.Name,
+						Arguments: string(argumentsJSON),
 					},
-					StopReason: result.StopReason,
-					GenerationInfo: map[string]any{
-						"InputTokens":              result.Usage.InputTokens,
-						"OutputTokens":             result.Usage.OutputTokens,
-						"CacheCreationInputTokens": result.Usage.CacheCreationInputTokens,
-						"CacheReadInputTokens":     result.Usage.CacheReadInputTokens,
-					},
-				}
+				})
 			} else {
 				return nil, fmt.Errorf("anthropic: %w for tool use message %T", ErrInvalidContentType, content)
 			}
 		case "thinking":
-			if thinkingContent, ok := content.(*anthropicclient.ThinkingContent); ok {
-				choices[i] = &llms.ContentChoice{
-					Content:    "", // Thinking content is not included in output
-					StopReason: result.StopReason,
-					GenerationInfo: map[string]any{
-						"ThinkingContent":          thinkingContent.Thinking,
-						"ThinkingSignature":        thinkingContent.Signature,
-						"InputTokens":              result.Usage.InputTokens,
-						"OutputTokens":             result.Usage.OutputTokens,
-						"CacheCreationInputTokens": result.Usage.CacheCreationInputTokens,
-						"CacheReadInputTokens":     result.Usage.CacheReadInputTokens,
-					},
+			if tc, ok := content.(*anthropicclient.ThinkingContent); ok {
+				// Accumulate thinking content from thinking blocks
+				if allThinkingContent.Len() > 0 {
+					allThinkingContent.WriteString("\n\n")
+				}
+				allThinkingContent.WriteString(tc.Thinking)
+
+				// Store signature if present
+				if tc.Signature != "" {
+					thinkingSignature = tc.Signature
 				}
 			} else {
 				return nil, fmt.Errorf("anthropic: %w for thinking message %T", ErrInvalidContentType, content)
@@ -246,8 +246,38 @@ func processAnthropicResponse(result *anthropicclient.MessageResponsePayload) (*
 		}
 	}
 
+	// Create consolidated generation info
+	generationInfo := map[string]any{
+		"InputTokens":              result.Usage.InputTokens,
+		"OutputTokens":             result.Usage.OutputTokens,
+		"CacheCreationInputTokens": result.Usage.CacheCreationInputTokens,
+		"CacheReadInputTokens":     result.Usage.CacheReadInputTokens,
+	}
+
+	// Add thinking content if present
+	if allThinkingContent.Len() > 0 {
+		generationInfo["ThinkingContent"] = allThinkingContent.String()
+		generationInfo["OutputContent"] = textContent.String()
+	}
+	if thinkingSignature != "" {
+		generationInfo["ThinkingSignature"] = thinkingSignature
+	}
+
+	// Create single consolidated choice
+	choice := &llms.ContentChoice{
+		Content:        textContent.String(),
+		ToolCalls:      toolCalls,
+		StopReason:     result.StopReason,
+		GenerationInfo: generationInfo,
+	}
+
+	// Set legacy FuncCall for backwards compatibility
+	if len(toolCalls) > 0 {
+		choice.FuncCall = toolCalls[0].FunctionCall
+	}
+
 	return &llms.ContentResponse{
-		Choices: choices,
+		Choices: []*llms.ContentChoice{choice},
 	}, nil
 }
 
@@ -383,34 +413,44 @@ func handleHumanMessage(msg llms.MessageContent) (anthropicclient.ChatMessage, e
 }
 
 func handleAIMessage(msg llms.MessageContent) (anthropicclient.ChatMessage, error) {
-	if toolCall, ok := msg.Parts[0].(llms.ToolCall); ok {
-		var inputStruct map[string]interface{}
-		err := json.Unmarshal([]byte(toolCall.FunctionCall.Arguments), &inputStruct)
-		if err != nil {
-			return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: failed to unmarshal tool call arguments: %w", err)
-		}
-		toolUse := anthropicclient.ToolUseContent{
-			Type:  "tool_use",
-			ID:    toolCall.ID,
-			Name:  toolCall.FunctionCall.Name,
-			Input: inputStruct,
-		}
+	var contents []anthropicclient.Content
 
-		return anthropicclient.ChatMessage{
-			Role:    RoleAssistant,
-			Content: []anthropicclient.Content{toolUse},
-		}, nil
+	// Process all parts in the message, supporting mixed content
+	for _, part := range msg.Parts {
+		switch p := part.(type) {
+		case llms.TextContent:
+			if strings.TrimSpace(p.Text) != "" { // Only add non-empty text
+				contents = append(contents, &anthropicclient.TextContent{
+					Type: "text",
+					Text: p.Text,
+				})
+			}
+		case llms.ToolCall:
+			var inputStruct map[string]interface{}
+			err := json.Unmarshal([]byte(p.FunctionCall.Arguments), &inputStruct)
+			if err != nil {
+				return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: failed to unmarshal tool call arguments: %w", err)
+			}
+			toolUse := anthropicclient.ToolUseContent{
+				Type:  "tool_use",
+				ID:    p.ID,
+				Name:  p.FunctionCall.Name,
+				Input: inputStruct,
+			}
+			contents = append(contents, toolUse)
+		default:
+			return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: %w for AI message part: %T", ErrInvalidContentType, part)
+		}
 	}
-	if textContent, ok := msg.Parts[0].(llms.TextContent); ok {
-		return anthropicclient.ChatMessage{
-			Role: RoleAssistant,
-			Content: []anthropicclient.Content{&anthropicclient.TextContent{
-				Type: "text",
-				Text: textContent.Text,
-			}},
-		}, nil
+
+	if len(contents) == 0 {
+		return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: AI message has no valid content parts")
 	}
-	return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: %w for AI message", ErrInvalidContentType)
+
+	return anthropicclient.ChatMessage{
+		Role:    RoleAssistant,
+		Content: contents,
+	}, nil
 }
 
 type ToolResult struct {
@@ -420,19 +460,30 @@ type ToolResult struct {
 }
 
 func handleToolMessage(msg llms.MessageContent) (anthropicclient.ChatMessage, error) {
-	if toolCallResponse, ok := msg.Parts[0].(llms.ToolCallResponse); ok {
-		toolContent := anthropicclient.ToolResultContent{
-			Type:      "tool_result",
-			ToolUseID: toolCallResponse.ToolCallID,
-			Content:   toolCallResponse.Content,
-		}
+	var contents []anthropicclient.Content
 
-		return anthropicclient.ChatMessage{
-			Role:    RoleUser,
-			Content: []anthropicclient.Content{toolContent},
-		}, nil
+	// Process all parts in the tool message, supporting multiple tool responses
+	for _, part := range msg.Parts {
+		if toolCallResponse, ok := part.(llms.ToolCallResponse); ok {
+			toolContent := anthropicclient.ToolResultContent{
+				Type:      "tool_result",
+				ToolUseID: toolCallResponse.ToolCallID,
+				Content:   toolCallResponse.Content,
+			}
+			contents = append(contents, toolContent)
+		} else {
+			return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: %w for tool message part: %T", ErrInvalidContentType, part)
+		}
 	}
-	return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: %w for tool message", ErrInvalidContentType)
+
+	if len(contents) == 0 {
+		return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: tool message has no valid tool response parts")
+	}
+
+	return anthropicclient.ChatMessage{
+		Role:    RoleUser,
+		Content: contents,
+	}, nil
 }
 
 // SupportsReasoning implements the ReasoningModel interface.

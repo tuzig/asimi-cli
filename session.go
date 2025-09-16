@@ -229,23 +229,32 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 	return resp.Choices[0], nil
 }
 
-// handleAssistantResponse processes assistant text content and adds it to messages
-func (s *Session) handleAssistantResponse(choice *llms.ContentChoice, currentFinalText string) string {
-	if strings.TrimSpace(choice.Content) == "" {
-		return currentFinalText
+// appendMessages adds LLM response content and tool calls to the message history
+func (s *Session) appendMessages(content string, toolCalls []llms.ToolCall) {
+	// Build the assistant message parts
+	var parts []llms.ContentPart
+
+	// Add text content if present
+	if strings.TrimSpace(content) != "" {
+		parts = append(parts, llms.TextPart(content))
 	}
 
-	// Store last assistant and final text (truncate in logs).
-	finalText := choice.Content
-	ct := choice.Content
-	if len(ct) > 160 {
-		ct = ct[:160] + "…"
+	// Add tool calls if present
+	for _, toolCall := range toolCalls {
+		parts = append(parts, llms.ToolCall{
+			ID:           toolCall.ID,
+			Type:         toolCall.Type,
+			FunctionCall: toolCall.FunctionCall,
+		})
 	}
-	s.messages = append(s.messages, llms.MessageContent{
-		Role:  llms.ChatMessageTypeAI,
-		Parts: []llms.ContentPart{llms.TextPart(choice.Content)},
-	})
-	return finalText
+
+	// Only add the assistant message if we have content or tool calls
+	if len(parts) > 0 {
+		s.messages = append(s.messages, llms.MessageContent{
+			Role:  llms.ChatMessageTypeAI,
+			Parts: parts,
+		})
+	}
 }
 
 // executeToolCall executes a single tool call and adds the response to the message
@@ -330,8 +339,11 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 			return "", err
 		}
 
-		// Record assistant visible text if any
-		finalText = s.handleAssistantResponse(choice, finalText)
+		// Record assistant response in message history
+		if strings.TrimSpace(choice.Content) != "" {
+			finalText = choice.Content
+		}
+		s.appendMessages(choice.Content, choice.ToolCalls)
 
 		// Handle tool calls, if any.
 		if len(choice.ToolCalls) == 0 {
@@ -395,12 +407,7 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			case <-ctx.Done():
 				// Streaming was cancelled - add accumulated content to message history
 				accumulatedText := s.accumulatedContent.String()
-				if strings.TrimSpace(accumulatedText) != "" {
-					s.messages = append(s.messages, llms.MessageContent{
-						Role:  llms.ChatMessageTypeAI,
-						Parts: []llms.ContentPart{llms.TextPart(accumulatedText)},
-					})
-				}
+				s.appendMessages(accumulatedText, nil)
 				if s.notify != nil {
 					s.notify(streamInterruptedMsg{partialContent: accumulatedText})
 				}
@@ -431,12 +438,7 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 				// Check if this was a cancellation
 				if ctx.Err() != nil {
 					accumulatedText := s.accumulatedContent.String()
-					if strings.TrimSpace(accumulatedText) != "" {
-						s.messages = append(s.messages, llms.MessageContent{
-							Role:  llms.ChatMessageTypeAI,
-							Parts: []llms.ContentPart{llms.TextPart(accumulatedText)},
-						})
-					}
+					s.appendMessages(accumulatedText, nil)
 					if s.notify != nil {
 						s.notify(streamInterruptedMsg{partialContent: accumulatedText})
 					}
@@ -452,6 +454,9 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 
 			// Use accumulated content as the response
 			responseContent := s.accumulatedContent.String()
+
+			// Add the assistant message with content and tool calls to message history
+			s.appendMessages(responseContent, choice.ToolCalls)
 
 			// Handle tool calls, if any.
 			if len(choice.ToolCalls) == 0 {
@@ -476,14 +481,9 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			break
 		}
 
-		// Streaming completed successfully - add accumulated content to message history
+		// Streaming completed successfully - add final accumulated content to message history if no tool calls were processed
 		finalText := s.accumulatedContent.String()
-		if strings.TrimSpace(finalText) != "" {
-			s.messages = append(s.messages, llms.MessageContent{
-				Role:  llms.ChatMessageTypeAI,
-				Parts: []llms.ContentPart{llms.TextPart(finalText)},
-			})
-		}
+		s.appendMessages(finalText, nil)
 
 		if s.notify != nil {
 			s.notify(streamCompleteMsg{})
