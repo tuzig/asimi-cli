@@ -25,9 +25,10 @@ type TUIModel struct {
 	chat           ChatComponent
 	completions    CompletionDialog
 	toastManager   ToastManager
-	modal          *BaseModal
-	providerModal  *ProviderSelectionModal
-	codeInputModal *CodeInputModal
+	modal               *BaseModal
+	providerModal       *ProviderSelectionModal
+	codeInputModal      *CodeInputModal
+	modelSelectionModal *ModelSelectionModal
 
 	// UI Flags & State
 	showCompletionDialog bool
@@ -156,6 +157,10 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle modals first (they need to handle their own escape keys)
+	if m.modelSelectionModal != nil {
+		m.modelSelectionModal, cmd = m.modelSelectionModal.Update(msg)
+		return m, cmd
+	}
 	if m.codeInputModal != nil {
 		m.codeInputModal, cmd = m.codeInputModal.Update(msg)
 		return m, cmd
@@ -473,11 +478,53 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modalCancelledMsg:
 		m.providerModal = nil
 		m.codeInputModal = nil
-		m.toastManager.AddToast("Login cancelled", "info", 2000)
+		m.modelSelectionModal = nil
+		m.toastManager.AddToast("Cancelled", "info", 2000)
 
 	case authCodeEnteredMsg:
 		m.codeInputModal = nil
 		return m, m.completeAnthropicOAuth(msg.code, msg.verifier)
+
+	case showModelSelectionMsg:
+		m.modelSelectionModal = NewModelSelectionModal(m.config.LLM.Model)
+		// Fetch models in background
+		return m, m.fetchModelsCommand()
+
+	case modelSelectedMsg:
+		m.modelSelectionModal = nil
+		oldModel := m.config.LLM.Model
+		m.config.LLM.Model = msg.model.ID
+
+		// Save config and reinitialize session
+		if err := SaveConfig(m.config); err != nil {
+			m.toastManager.AddToast(fmt.Sprintf("Failed to save config: %v", err), "error", 4000)
+			// Revert model change
+			m.config.LLM.Model = oldModel
+		} else {
+			// Reinitialize session with new model
+			if err := m.reinitializeSession(); err != nil {
+				m.toastManager.AddToast(fmt.Sprintf("Failed to update model: %v", err), "error", 4000)
+				// Revert model change
+				m.config.LLM.Model = oldModel
+				SaveConfig(m.config) // Try to save the reverted config
+			} else {
+				modelName := msg.model.DisplayName
+				if modelName == "" {
+					modelName = msg.model.ID
+				}
+				m.toastManager.AddToast(fmt.Sprintf("Model changed to %s", modelName), "success", 3000)
+			}
+		}
+
+	case modelsLoadedMsg:
+		if m.modelSelectionModal != nil {
+			m.modelSelectionModal.SetModels(msg.models)
+		}
+
+	case modelsLoadErrorMsg:
+		if m.modelSelectionModal != nil {
+			m.modelSelectionModal.SetError(msg.error)
+		}
 	}
 
 	m.chat, _ = m.chat.Update(msg)
@@ -646,6 +693,12 @@ func (m TUIModel) View() string {
 	// Add code input modal if active (takes priority over provider modal)
 	if m.codeInputModal != nil {
 		modalView := m.codeInputModal.Render()
+		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
+	}
+
+	// Add model selection modal if active (takes priority over other modals)
+	if m.modelSelectionModal != nil {
+		modalView := m.modelSelectionModal.Render()
 		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
 	}
 

@@ -194,6 +194,39 @@ func LoadConfig() (*Config, error) {
 	return &config, nil
 }
 
+// SaveConfig saves the current config to the project-level conf.toml file
+func SaveConfig(config *Config) error {
+	projectConfigPath := filepath.Join(".asimi", "conf.toml")
+
+	// Ensure .asimi directory exists
+	if err := os.MkdirAll(".asimi", 0o755); err != nil {
+		return fmt.Errorf("failed to create .asimi directory: %w", err)
+	}
+
+	// Create koanf instance and load current project config if it exists
+	k := koanf.New(".")
+	if _, err := os.Stat(projectConfigPath); err == nil {
+		if err := k.Load(file.Provider(projectConfigPath), toml.Parser()); err != nil {
+			return fmt.Errorf("failed to load existing project config: %w", err)
+		}
+	}
+
+	// Update the model setting
+	k.Set("llm.model", config.LLM.Model)
+
+	// Save to file
+	data, err := k.Marshal(toml.Parser())
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(projectConfigPath, data, 0o644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
+
 // UpdateUserLLMAuth updates or creates ~/.config/asimi/conf.toml with the given LLM auth settings.
 // It saves API keys securely in the keyring and only stores provider/model in the config file.
 func UpdateUserLLMAuth(provider, apiKey, model string) error {

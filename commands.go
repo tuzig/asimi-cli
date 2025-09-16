@@ -27,6 +27,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("/new", "Start a new session", handleNewSessionCommand)
 	registry.RegisterCommand("/quit", "Quit the application", handleQuitCommand)
 	registry.RegisterCommand("/login", "Login with OAuth provider selection", handleLoginCommand)
+	registry.RegisterCommand("/models", "Select AI model", handleModelsCommand)
 
 	return registry
 }
