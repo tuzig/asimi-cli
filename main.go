@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -317,11 +318,6 @@ func getLLMClient(config *Config) (llms.Model, error) {
 			googleai.WithAPIKey(apiKey),
 		}
 
-		// TODO: Add WithBaseURL to langchaingo's googleai implementation and send a PR
-		// if config.LLM.BaseURL != "" {
-		//     opts = append(opts, googleai.WithAPIEndpoint(config.LLM.BaseURL))
-		// }
-
 		return googleai.New(context.Background(), opts...)
 	default:
 		return nil, fmt.Errorf("unsupported LLM provider: %s", config.LLM.Provider)
@@ -351,6 +347,13 @@ func (t *anthropicOAuthTransport) RoundTrip(req *http.Request) (*http.Response, 
 	// Remove x-api-key header - critical for OAuth to work
 	r.Header.Del("x-api-key")
 	r.Header.Del("X-Api-Key") // Remove all case variations
+	
+	// Override URL based on ANTHROPIC_BASE_URL environment variable
+	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+		if parsedURL, err := url.Parse(baseURL + "/v1/messages"); err == nil {
+			r.URL = parsedURL
+		}
+	}
 
 	if t.base == nil {
 		t.base = http.DefaultTransport
