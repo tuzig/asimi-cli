@@ -41,7 +41,7 @@ func (c *ChatComponent) SetWidth(width int) {
 	c.Width = width
 	c.Style = c.Style.Width(width)
 	c.Viewport.Width = width - 2
-	c.updateContent()
+	c.UpdateContent()
 }
 
 // SetHeight updates the height of the chat component
@@ -49,19 +49,19 @@ func (c *ChatComponent) SetHeight(height int) {
 	c.Height = height
 	c.Style = c.Style.Height(height)
 	c.Viewport.Height = height
-	c.updateContent()
+	c.UpdateContent()
 }
 
 // AddMessage adds a new message to the chat component
 func (c *ChatComponent) AddMessage(message string) {
 	c.Messages = append(c.Messages, message)
-	c.updateContent()
+	c.UpdateContent()
 }
 
 // Replace last message
 func (c *ChatComponent) ReplaceLastMessage(message string) {
 	c.Messages[len(c.Messages)-1] = message
-	c.updateContent()
+	c.UpdateContent()
 }
 
 // AppendToLastMessage appends text to the last message (for streaming)
@@ -71,11 +71,11 @@ func (c *ChatComponent) AppendToLastMessage(text string) {
 		return
 	}
 	c.Messages[len(c.Messages)-1] += text
-	c.updateContent()
+	c.UpdateContent()
 }
 
-// updateContent updates the viewport content based on the messages
-func (c *ChatComponent) updateContent() {
+// UpdateContent updates the viewport content based on the messages
+func (c *ChatComponent) UpdateContent() {
 	var messageViews []string
 	for _, message := range c.Messages {
 		var messageStyle lipgloss.Style

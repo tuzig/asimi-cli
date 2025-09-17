@@ -34,6 +34,7 @@ type TUIModel struct {
 	showCompletionDialog bool
 	completionMode       string // "file" or "command"
 	sessionActive        bool
+	rawMode              bool   // Toggle between chat and raw session view
 
 	// Streaming state
 	streamingActive bool
@@ -44,6 +45,12 @@ type TUIModel struct {
 
 	// Application services (passed in, not owned)
 	session *Session
+
+	// Raw session history for debugging/inspection
+	rawSessionHistory []string
+
+	// Tool call tracking - maps tool call ID to chat message index
+	toolCallMessageIndex map[string]int
 }
 
 // NewTUIModel creates a new TUI model
@@ -72,12 +79,15 @@ func NewTUIModel(config *Config) *TUIModel {
 		showCompletionDialog: false,
 		completionMode:       "",
 		sessionActive:        false,
+		rawMode:              false,
 
 		// Command registry
 		commandRegistry: registry,
 
 		// Application services (injected)
-		session: nil,
+		session:              nil,
+		rawSessionHistory:    make([]string, 0),
+		toolCallMessageIndex: make(map[string]int),
 	}
 
 	// Set initial status info - show disconnected state initially
@@ -86,6 +96,13 @@ func NewTUIModel(config *Config) *TUIModel {
 	model.status.SetGitBranch("main") // In a real implementation, get current git branch
 
 	return model
+}
+
+// addToRawHistory adds an entry to the raw session history with a timestamp
+func (m *TUIModel) addToRawHistory(prefix, content string) {
+	timestamp := time.Now().Format("15:04:05")
+	entry := fmt.Sprintf("[%s] %s: %s", timestamp, prefix, content)
+	m.rawSessionHistory = append(m.rawSessionHistory, entry)
 }
 
 // SetSession sets the session for the TUI model
@@ -182,6 +199,8 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle regular key input
 	switch msg.String() {
+	case "ctrl+o":
+		return m.handleToggleRawMode()
 	case "enter":
 		return m.handleEnterKey()
 	case "/":
@@ -193,6 +212,12 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+}
+
+// handleToggleRawMode toggles between chat and raw session view
+func (m TUIModel) handleToggleRawMode() (tea.Model, tea.Cmd) {
+	m.rawMode = !m.rawMode
+	return m, nil
 }
 
 // handleEscape handles the escape key
@@ -305,6 +330,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		parts := strings.Fields(content)
 		if len(parts) > 0 {
 			cmdName := parts[0]
+			m.addToRawHistory("COMMAND", content) // Log the full command
 			cmd, exists := m.commandRegistry.GetCommand(cmdName)
 			if exists {
 				command := cmd.Handler(&m, parts[1:])
@@ -315,6 +341,8 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			}
 		}
 	} else {
+		// Add user input to raw history
+		m.addToRawHistory("USER", content)
 		m.chat.AddMessage(fmt.Sprintf("You: %s", content))
 		if m.session != nil {
 			m.sessionActive = true
@@ -390,27 +418,66 @@ func (m TUIModel) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd
 func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case responseMsg:
+		m.addToRawHistory("AI_RESPONSE", string(msg))
 		m.chat.AddMessage(fmt.Sprintf("AI: %s", string(msg)))
 
 	case ToolCallScheduledMsg:
-		m.chat.AddMessage(fmt.Sprintf("Tool Scheduled: %s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		m.addToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		// Add a new message and store its index
+		message := fmt.Sprintf("📋 %s scheduled", msg.Call.Tool.Name())
+		m.chat.AddMessage(message)
+		m.toolCallMessageIndex[msg.Call.ID] = len(m.chat.Messages) - 1
+
 	case ToolCallExecutingMsg:
-		m.chat.AddMessage(fmt.Sprintf("Tool Executing: %s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		m.addToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		// Update the existing message if we have its index
+		if idx, exists := m.toolCallMessageIndex[msg.Call.ID]; exists && idx < len(m.chat.Messages) {
+			m.chat.Messages[idx] = fmt.Sprintf("⚙️ %s running", msg.Call.Tool.Name())
+			m.chat.UpdateContent()
+		} else {
+			// Fallback: add a new message if we don't have the index
+			m.chat.AddMessage(fmt.Sprintf("⚙️ %s running", msg.Call.Tool.Name()))
+		}
+
 	case ToolCallSuccessMsg:
-		m.chat.AddMessage(fmt.Sprintf("Tool Succeeded: %s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
+		m.addToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
+		// Update the existing message if we have its index
+		if idx, exists := m.toolCallMessageIndex[msg.Call.ID]; exists && idx < len(m.chat.Messages) {
+			m.chat.Messages[idx] = fmt.Sprintf("✅ %s completed", msg.Call.Tool.Name())
+			m.chat.UpdateContent()
+			// Clean up the index mapping
+			delete(m.toolCallMessageIndex, msg.Call.ID)
+		} else {
+			// Fallback: add a new message if we don't have the index
+			m.chat.AddMessage(fmt.Sprintf("✅ %s completed", msg.Call.Tool.Name()))
+		}
+
 	case ToolCallErrorMsg:
-		m.chat.AddMessage(fmt.Sprintf("Tool Errored: %s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
+		m.addToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
+		// Update the existing message if we have its index
+		if idx, exists := m.toolCallMessageIndex[msg.Call.ID]; exists && idx < len(m.chat.Messages) {
+			m.chat.Messages[idx] = fmt.Sprintf("❌ %s failed", msg.Call.Tool.Name())
+			m.chat.UpdateContent()
+			// Clean up the index mapping
+			delete(m.toolCallMessageIndex, msg.Call.ID)
+		} else {
+			// Fallback: add a new message if we don't have the index
+			m.chat.AddMessage(fmt.Sprintf("❌ %s failed", msg.Call.Tool.Name()))
+		}
 
 	case errMsg:
+		m.addToRawHistory("ERROR", fmt.Sprintf("%v", msg.err))
 		m.chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 
 	case streamStartMsg:
 		// Streaming has started
+		m.addToRawHistory("STREAM_START", "AI streaming response started")
 		slog.Debug("streamStartMsg", "starting_stream", true)
 		m.streamingActive = true
 
 	case streamChunkMsg:
 		// For the first chunk, add a new AI message. For subsequent chunks, append to the last message.
+		m.addToRawHistory("STREAM_CHUNK", string(msg))
 		slog.Debug("streamChunkMsg", "messages_count", len(m.chat.Messages), "chunk", string(msg))
 		if len(m.chat.Messages) == 0 || !strings.HasPrefix(m.chat.Messages[len(m.chat.Messages)-1], "AI:") {
 			m.chat.AddMessage(fmt.Sprintf("AI: %s", string(msg)))
@@ -422,18 +489,21 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamCompleteMsg:
 		// Streaming is complete, mark session as inactive
+		m.addToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(m.chat.Messages))
 		m.streamingActive = false
 		m.streamingCancel = nil
 
 	case streamInterruptedMsg:
 		// Streaming was interrupted by user
+		m.addToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.partialContent))
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.partialContent))
 		m.streamingActive = false
 		m.streamingCancel = nil
 		m.chat.AddMessage("\nESC")
 
 	case streamErrorMsg:
+		m.addToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.err))
 		slog.Error("streamErrorMsg", "error", msg.err)
 		m.chat.AddMessage(fmt.Sprintf("LLM Error: %v", msg.err))
 		m.streamingActive = false
@@ -649,9 +719,12 @@ func (m TUIModel) View() string {
 		return "Initializing..."
 	}
 
-	// Render the appropriate view based on session state
+	// Render the appropriate view based on current mode
 	var mainContent string
-	if !m.sessionActive {
+	if m.rawMode {
+		// Raw session history view
+		mainContent = m.renderRawSessionView(m.width, m.height-6) // Account for prompt and status
+	} else if !m.sessionActive {
 		// Home view
 		mainContent = renderHomeView(m.width, m.height-6) // Account for prompt and status
 	} else {
@@ -760,6 +833,83 @@ func renderHomeView(width, height int) string {
 		Width(width).
 		Height(height).
 		Align(lipgloss.Center, lipgloss.Center).
+		Render(content)
+
+	return container
+}
+
+// renderRawSessionView renders the raw session view showing complete unfiltered history
+func (m TUIModel) renderRawSessionView(width, height int) string {
+	if len(m.rawSessionHistory) == 0 {
+		// Show empty state
+		emptyStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Align(lipgloss.Center).
+			Width(width)
+
+		emptyContent := emptyStyle.Render("Raw session history is empty\nPress Ctrl+O to return to chat")
+
+		container := lipgloss.NewStyle().
+			Width(width).
+			Height(height).
+			Align(lipgloss.Center, lipgloss.Center).
+			Render(emptyContent)
+
+		return container
+	}
+
+	// Create title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("39")).
+		Align(lipgloss.Center).
+		Width(width)
+
+	title := titleStyle.Render("Raw Session History (Press Ctrl+O to return to chat)")
+
+	// Style for raw history entries
+	entryStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		PaddingLeft(1).
+		Width(width - 2)
+
+	// Render all history entries
+	var historyViews []string
+	for _, entry := range m.rawSessionHistory {
+		// Word wrap long entries to fit the width
+		wrappedEntry := entry
+		if len(entry) > width-4 {
+			// Simple word wrap - in real implementation you might use wordwrap.String
+			for len(wrappedEntry) > width-4 {
+				breakPoint := width - 4
+				// Try to break at a space
+				for i := breakPoint; i > breakPoint-20 && i > 0; i-- {
+					if wrappedEntry[i] == ' ' {
+						breakPoint = i
+						break
+					}
+				}
+				historyViews = append(historyViews, entryStyle.Render(wrappedEntry[:breakPoint]))
+				wrappedEntry = "    " + wrappedEntry[breakPoint:] // Indent continuation lines
+			}
+			if len(wrappedEntry) > 0 {
+				historyViews = append(historyViews, entryStyle.Render(wrappedEntry))
+			}
+		} else {
+			historyViews = append(historyViews, entryStyle.Render(wrappedEntry))
+		}
+		historyViews = append(historyViews, "") // Add spacing between entries
+	}
+
+	historyContent := lipgloss.JoinVertical(lipgloss.Left, historyViews...)
+
+	// Combine title and content
+	content := lipgloss.JoinVertical(lipgloss.Left, title, "", historyContent)
+
+	// Create scrollable container
+	container := lipgloss.NewStyle().
+		Width(width).
+		Height(height).
 		Render(content)
 
 	return container
