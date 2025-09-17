@@ -219,11 +219,48 @@ func getLLMClient(config *Config) (llms.Model, error) {
 	if config.LLM.AuthToken == "" && config.LLM.APIKey == "" {
 		// Try OAuth tokens first
 		tokenData, err := GetTokenFromKeyring(config.LLM.Provider)
-		if err == nil && tokenData != nil && !IsTokenExpired(tokenData) {
-			config.LLM.AuthToken = tokenData.AccessToken
-			config.LLM.RefreshToken = tokenData.RefreshToken
+		if err == nil && tokenData != nil {
+			if IsTokenExpired(tokenData) {
+				// Token exists but expired - try to refresh it
+				slog.Info("Token expired, attempting refresh", "provider", config.LLM.Provider)
+
+				// Only attempt refresh for providers that support OAuth
+				if config.LLM.Provider == "anthropic" {
+					auth := &AuthAnthropic{}
+					newAccessToken, refreshErr := auth.access()
+					if refreshErr == nil {
+						// Successfully refreshed - update config with new token
+						slog.Info("Token refresh successful", "provider", config.LLM.Provider)
+						config.LLM.AuthToken = newAccessToken
+
+						// Get updated token data from keyring (auth.access() should have saved it)
+						updatedTokenData, _ := GetTokenFromKeyring(config.LLM.Provider)
+						if updatedTokenData != nil {
+							config.LLM.RefreshToken = updatedTokenData.RefreshToken
+						}
+					} else {
+						// Refresh failed - log error and fall back to API key
+						slog.Warn("Token refresh failed, falling back to API key",
+							"provider", config.LLM.Provider, "error", refreshErr)
+						apiKey, err := GetAPIKeyFromKeyring(config.LLM.Provider)
+						if err == nil && apiKey != "" {
+							config.LLM.APIKey = apiKey
+						}
+					}
+				} else {
+					// For non-Anthropic providers, just fall back to API key when token expired
+					apiKey, err := GetAPIKeyFromKeyring(config.LLM.Provider)
+					if err == nil && apiKey != "" {
+						config.LLM.APIKey = apiKey
+					}
+				}
+			} else {
+				// Token is still valid - use it
+				config.LLM.AuthToken = tokenData.AccessToken
+				config.LLM.RefreshToken = tokenData.RefreshToken
+			}
 		} else {
-			// Try API key from keyring
+			// No token data found - try API key from keyring
 			apiKey, err := GetAPIKeyFromKeyring(config.LLM.Provider)
 			if err == nil && apiKey != "" {
 				config.LLM.APIKey = apiKey
@@ -273,13 +310,8 @@ func getLLMClient(config *Config) (llms.Model, error) {
 
 		// Prefer OAuth access token over API key
 		if config.LLM.AuthToken != "" {
-			// For OAuth, we need to refresh the token if expired
-			auth := &AuthAnthropic{}
-			accessToken, err := auth.access()
-			if err != nil {
-				// If refresh fails, try using the stored token directly
-				accessToken = config.LLM.AuthToken
-			}
+			// Use the token we already have (either valid or freshly refreshed from above)
+			accessToken := config.LLM.AuthToken
 
 			// Pass placeholder to SDK to bypass API key validation
 			// The real authentication happens in the HTTP transport
