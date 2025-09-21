@@ -23,6 +23,14 @@ func TestFormatToolCall(t *testing.T) {
 			expected: "○ Read File(test.txt)\n  ⎿  Read 3 lines",
 		},
 		{
+			name:     "read_file with offset and limit",
+			toolName: "read_file",
+			input:    `{"path": "test.txt", "offset": 2, "limit": 2}`,
+			result:   "World\nTest",
+			err:      nil,
+			expected: "○ Read File(test.txt)\n  ⎿  Read 2 lines",
+		},
+		{
 			name:     "write_file success",
 			toolName: "write_file",
 			input:    `{"path": "output.txt", "content": "test content"}`,

@@ -76,6 +76,7 @@ type streamCompleteMsg struct{}
 type streamInterruptedMsg struct{ partialContent string }
 type streamErrorMsg struct{ err error }
 type streamMaxTurnsExceededMsg struct{ maxTurns int }
+type streamMaxTokensReachedMsg struct{ content string }
 
 // Local copies of prompt partials and template used by the session, to decouple from agent.go.
 var sessPromptPartials = map[string]any{
@@ -363,11 +364,22 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 			return "", err
 		}
 
-		// Record assistant response in message history
-		if strings.TrimSpace(choice.Content) != "" {
-			finalText = choice.Content
+		// Check if response was truncated due to max tokens
+		if choice.StopReason == "max_tokens" {
+			return choice.Content + "\n\n[Response truncated due to length limit]", nil
 		}
-		s.appendMessages(choice.Content, choice.ToolCalls)
+
+		// Build response with reasoning content if available
+		responseText := choice.Content
+		if choice.ReasoningContent != "" {
+			responseText = "<thinking>\n" + choice.ReasoningContent + "\n</thinking>\n\n" + choice.Content
+		}
+
+		// Record assistant response in message history
+		if strings.TrimSpace(responseText) != "" {
+			finalText = responseText
+		}
+		s.appendMessages(responseText, choice.ToolCalls)
 
 		// Handle tool calls, if any.
 		if len(choice.ToolCalls) == 0 {
@@ -485,6 +497,20 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 
 			// Use accumulated content as the response
 			responseContent := s.getStreamBuffer(false)
+
+			// Check if response was truncated due to max tokens
+			if choice.StopReason == "max_tokens" {
+				if s.notify != nil {
+					s.notify(streamMaxTokensReachedMsg{content: responseContent})
+				}
+				s.appendMessages(responseContent, choice.ToolCalls)
+				break
+			}
+
+			// Add reasoning content if available (for models like deepseek-reasoner)
+			if choice.ReasoningContent != "" && s.notify != nil {
+				s.notify(streamChunkMsg("\n\n<thinking>\n" + choice.ReasoningContent + "\n</thinking>\n\n"))
+			}
 
 			// Add the assistant message with content and tool calls to message history
 			s.appendMessages(responseContent, choice.ToolCalls)

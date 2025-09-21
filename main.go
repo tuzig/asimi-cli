@@ -253,6 +253,10 @@ func consoleStreamingNotify(done chan struct{}, finalResponse *strings.Builder, 
 			slog.Debug("console streaming error", "error", v.err)
 			fmt.Printf("\nError: %v\n", v.err)
 			close(done)
+		case streamMaxTokensReachedMsg:
+			slog.Debug("console streaming max tokens reached", "content", v.content)
+			fmt.Printf("\n\n[Response truncated due to length limit]\n")
+			close(done)
 		}
 	}
 }

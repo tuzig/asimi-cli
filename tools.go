@@ -17,7 +17,9 @@ import (
 
 // ReadFileInput is the input for the ReadFileTool
 type ReadFileInput struct {
-	Path string `json:"path"`
+	Path   string `json:"path"`
+	Offset int    `json:"offset,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
 // ReadFileTool is a tool for reading files
@@ -28,7 +30,7 @@ func (t ReadFileTool) Name() string {
 }
 
 func (t ReadFileTool) Description() string {
-	return "Reads a file and returns its content. The input should be a JSON object with a 'path' field."
+	return "Reads a file and returns its content. The input should be a JSON object with a 'path' field. Optionally specify 'offset' (line number to start from, 1-based) and 'limit' (number of lines to read)."
 }
 
 func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
@@ -46,7 +48,37 @@ func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(content), nil
+
+	contentStr := string(content)
+
+	// If no offset or limit specified, return full content
+	if params.Offset == 0 && params.Limit == 0 {
+		return contentStr, nil
+	}
+
+	lines := strings.Split(contentStr, "\n")
+	totalLines := len(lines)
+
+	// Handle offset (1-based, convert to 0-based)
+	startLine := 0
+	if params.Offset > 0 {
+		startLine = params.Offset - 1
+		if startLine >= totalLines {
+			return "", nil // Offset beyond file end
+		}
+	}
+
+	// Handle limit
+	endLine := totalLines
+	if params.Limit > 0 {
+		endLine = startLine + params.Limit
+		if endLine > totalLines {
+			endLine = totalLines
+		}
+	}
+
+	selectedLines := lines[startLine:endLine]
+	return strings.Join(selectedLines, "\n"), nil
 }
 
 // String formats a read_file tool call for display

@@ -517,6 +517,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamingActive = false
 		m.streamingCancel = nil
 
+	case streamMaxTokensReachedMsg:
+		// Max tokens reached, mark session as inactive and show warning
+		m.addToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.content))
+		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.content))
+		m.chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
+		m.streamingActive = false
+		m.streamingCancel = nil
+
 	case showHelpMsg:
 		helpText := "Available commands:\n"
 		for _, cmd := range m.commandRegistry.GetAllCommands() {
