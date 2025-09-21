@@ -49,6 +49,35 @@ func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
 	return string(content), nil
 }
 
+// String formats a read_file tool call for display
+func (t ReadFileTool) Format(input, result string, err error) string {
+	// Parse input JSON to extract path
+	var params ReadFileInput
+	json.Unmarshal([]byte(input), &params)
+
+	paramStr := ""
+	if params.Path != "" {
+		paramStr = fmt.Sprintf("(%s)", params.Path)
+	}
+
+	// First line: tool name and parameters
+	firstLine := fmt.Sprintf("○ Read File%s", paramStr)
+
+	// Second line: result summary
+	var secondLine string
+	if err != nil {
+		secondLine = fmt.Sprintf("  ⎿  Error: %v", err)
+	} else {
+		lines := strings.Count(result, "\n") + 1
+		if result == "" {
+			lines = 0
+		}
+		secondLine = fmt.Sprintf("  ⎿  Read %d lines", lines)
+	}
+
+	return firstLine + "\n" + secondLine
+}
+
 // WriteFileInput is the input for the WriteFileTool
 type WriteFileInput struct {
 	Path    string `json:"path"`
@@ -82,6 +111,31 @@ func (t WriteFileTool) Call(ctx context.Context, input string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("Successfully wrote to %s", params.Path), nil
+}
+
+// String formats a write_file tool call for display
+func (t WriteFileTool) Format(input, result string, err error) string {
+	// Parse input JSON to extract path
+	var params WriteFileInput
+	json.Unmarshal([]byte(input), &params)
+
+	paramStr := ""
+	if params.Path != "" {
+		paramStr = fmt.Sprintf("(%s)", params.Path)
+	}
+
+	// First line: tool name and parameters
+	firstLine := fmt.Sprintf("○ Write File%s", paramStr)
+
+	// Second line: result summary
+	var secondLine string
+	if err != nil {
+		secondLine = fmt.Sprintf("  ⎿  Error: %v", err)
+	} else {
+		secondLine = "  ⎿  File written successfully"
+	}
+
+	return firstLine + "\n" + secondLine
 }
 
 // ListDirectoryInput is the input for the ListDirectoryTool
@@ -128,6 +182,37 @@ func (t ListDirectoryTool) Call(ctx context.Context, input string) (string, erro
 	return strings.Join(fileNames, "\n"), nil
 }
 
+// String formats a list_files tool call for display
+func (t ListDirectoryTool) Format(input, result string, err error) string {
+	// Parse input JSON to extract path
+	var params ListDirectoryInput
+	json.Unmarshal([]byte(input), &params)
+
+	paramStr := ""
+	if params.Path != "" {
+		paramStr = fmt.Sprintf("(%s)", params.Path)
+	} else {
+		paramStr = "(.)"
+	}
+
+	// First line: tool name and parameters
+	firstLine := fmt.Sprintf("○ List Files%s", paramStr)
+
+	// Second line: result summary
+	var secondLine string
+	if err != nil {
+		secondLine = fmt.Sprintf("  ⎿  Error: %v", err)
+	} else {
+		files := strings.Split(strings.TrimSpace(result), "\n")
+		if result == "" {
+			files = []string{}
+		}
+		secondLine = fmt.Sprintf("  ⎿  Found %d items", len(files))
+	}
+
+	return firstLine + "\n" + secondLine
+}
+
 // ReplaceTextInput is the input for the ReplaceTextTool
 type ReplaceTextInput struct {
 	Path    string `json:"path"`
@@ -159,17 +244,17 @@ func (t ReplaceTextTool) Call(ctx context.Context, input string) (string, error)
 	}
 
 	oldContent := string(content)
-	
+
 	// Check if old_string and new_string are identical
 	if params.OldText == params.NewText {
 		return fmt.Sprintf("No changes to apply. The old_string and new_string are identical in file: %s", params.Path), nil
 	}
-	
+
 	newContent := strings.ReplaceAll(oldContent, params.OldText, params.NewText)
-	
+
 	// Count how many replacements were made
 	occurrences := strings.Count(oldContent, params.OldText)
-	
+
 	if occurrences == 0 {
 		return fmt.Sprintf("No occurrences of '%s' found in %s", params.OldText, params.Path), nil
 	}
@@ -178,8 +263,39 @@ func (t ReplaceTextTool) Call(ctx context.Context, input string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return fmt.Sprintf("Successfully modified file: %s (%d replacements)", params.Path, occurrences), nil
+}
+
+// String formats a replace_text tool call for display
+func (t ReplaceTextTool) Format(input, result string, err error) string {
+	// Parse input JSON to extract path
+	var params ReplaceTextInput
+	json.Unmarshal([]byte(input), &params)
+
+	paramStr := ""
+	if params.Path != "" {
+		paramStr = fmt.Sprintf("(%s)", params.Path)
+	}
+
+	// First line: tool name and parameters
+	firstLine := fmt.Sprintf("○ Replace Text%s", paramStr)
+
+	// Second line: result summary
+	var secondLine string
+	if err != nil {
+		secondLine = fmt.Sprintf("  ⎿  Error: %v", err)
+	} else {
+		if strings.Contains(result, "No occurrences") {
+			secondLine = "  ⎿  No matches found"
+		} else if strings.Contains(result, "No changes") {
+			secondLine = "  ⎿  No changes needed"
+		} else {
+			secondLine = "  ⎿  Text replaced successfully"
+		}
+	}
+
+	return firstLine + "\n" + secondLine
 }
 
 // RunShellCommand is a tool for running shell commands
@@ -269,13 +385,48 @@ func (t RunShellCommand) Call(ctx context.Context, input string) (string, error)
 	return string(outputBytes), nil
 }
 
-var availableTools = []tools.Tool{
-	ReadFileTool{},
-	WriteFileTool{},
-	ListDirectoryTool{},
-	ReplaceTextTool{},
-	RunShellCommand{},
-	ReadManyFilesTool{},
+// String formats a run_shell_command tool call for display
+func (t RunShellCommand) Format(input, result string, err error) string {
+	// Parse input JSON to extract command
+	var params RunShellCommandInput
+	json.Unmarshal([]byte(input), &params)
+
+	paramStr := ""
+	if params.Command != "" {
+		cmd := params.Command
+		// Truncate long commands
+		if len(cmd) > 50 {
+			cmd = cmd[:47] + "..."
+		}
+		paramStr = fmt.Sprintf("(%s)", cmd)
+	}
+
+	// First line: tool name and parameters
+	firstLine := fmt.Sprintf("○ Run Shell Command%s", paramStr)
+
+	// Second line: result summary
+	var secondLine string
+	if err != nil {
+		secondLine = fmt.Sprintf("  ⎿  Error: %v", err)
+	} else {
+		// Parse JSON output to get exit code
+		var output map[string]interface{}
+		if json.Unmarshal([]byte(result), &output) == nil {
+			if exitCode, ok := output["exitCode"].(float64); ok {
+				if exitCode == 0 {
+					secondLine = "  ⎿  Command completed successfully"
+				} else {
+					secondLine = fmt.Sprintf("  ⎿  Command failed (exit code %d)", int(exitCode))
+				}
+			} else {
+				secondLine = "  ⎿  Command executed"
+			}
+		} else {
+			secondLine = "  ⎿  Command executed"
+		}
+	}
+
+	return firstLine + "\n" + secondLine
 }
 
 // ReadManyFilesInput is the input for the ReadManyFilesTool.
@@ -336,4 +487,47 @@ func (t ReadManyFilesTool) Call(ctx context.Context, input string) (string, erro
 	}
 
 	return contentBuilder.String(), nil
+}
+
+// String formats a read_many_files tool call for display
+func (t ReadManyFilesTool) Format(input, result string, err error) string {
+	// Parse input JSON to extract paths
+	var params ReadManyFilesInput
+	json.Unmarshal([]byte(input), &params)
+
+	paramStr := ""
+	if len(params.Paths) == 1 {
+		paramStr = fmt.Sprintf("(%v)", params.Paths[0])
+	} else if len(params.Paths) > 1 {
+		paramStr = fmt.Sprintf("(%d files)", len(params.Paths))
+	}
+
+	// First line: tool name and parameters
+	firstLine := fmt.Sprintf("○ Read Many Files%s", paramStr)
+
+	// Second line: result summary
+	var secondLine string
+	if err != nil {
+		secondLine = fmt.Sprintf("  ⎿  Error: %v", err)
+	} else {
+		// Count files by counting "---\t" markers
+		fileCount := strings.Count(result, "---\t")
+		secondLine = fmt.Sprintf("  ⎿  Read %d files", fileCount)
+	}
+
+	return firstLine + "\n" + secondLine
+}
+
+type Tool interface {
+	tools.Tool
+	Format(input, result string, err error) string
+}
+
+var availableTools = []Tool{
+	ReadFileTool{},
+	WriteFileTool{},
+	ListDirectoryTool{},
+	ReplaceTextTool{},
+	RunShellCommand{},
+	ReadManyFilesTool{},
 }

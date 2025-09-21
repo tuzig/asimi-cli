@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -169,21 +170,64 @@ func main() {
 	}
 }
 
+// formatToolCall formats a tool call according to the spec: two lines with ⏺ and ⎿ symbols
+func formatToolCall(toolName, input, result string, err error) string {
+	// Parse input JSON to extract key parameters for the first line
+	var params map[string]interface{}
+	json.Unmarshal([]byte(input), &params)
+
+	for _, tool := range availableTools {
+		if tool.Name() == toolName {
+			return tool.Format(input, result, err)
+		}
+	}
+
+	// Add a special err message type
+	return fmt.Sprintf("Unknown tool: %s", toolName)
+
+}
+
 // consoleStreamingNotify handles streaming and tool messages for non-interactive mode
 func consoleStreamingNotify(done chan struct{}, finalResponse *strings.Builder, mu *sync.Mutex) func(any) {
+	// Track active tool calls to update their status
+	activeToolCalls := make(map[string]*toolCallDisplay)
+	
 	return func(m any) {
 		switch v := m.(type) {
 		case ToolCallScheduledMsg:
-			fmt.Printf("Tool Scheduled: %s with input: %s\n", v.Call.Tool.Name(), v.Call.Input)
+			// Create initial display with hollow circle
+			display := &toolCallDisplay{
+				toolName: v.Call.Tool.Name(),
+				input:    v.Call.Input,
+				status:   "scheduled",
+			}
+			activeToolCalls[v.Call.ID] = display
+			display.show()
 			slog.Info("tool.scheduled", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
 		case ToolCallExecutingMsg:
-			fmt.Printf("Tool Executing: %s with input: %s\n", v.Call.Tool.Name(), v.Call.Input)
+			// Update to half-filled circle
+			if display, exists := activeToolCalls[v.Call.ID]; exists {
+				display.status = "executing"
+				display.update()
+			}
 			slog.Info("tool.executing", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
 		case ToolCallSuccessMsg:
-			fmt.Printf("Tool Succeeded: %s\nInput: %s\nOutput: %s\n", v.Call.Tool.Name(), v.Call.Input, v.Call.Result)
+			// Update to full circle and show result
+			if display, exists := activeToolCalls[v.Call.ID]; exists {
+				display.status = "success"
+				display.result = v.Call.Result
+				display.complete()
+				delete(activeToolCalls, v.Call.ID)
+			}
 			slog.Info("tool.success", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "output", v.Call.Result)
 		case ToolCallErrorMsg:
-			fmt.Printf("Tool Errored: %s\nInput: %s\nError: %v\n", v.Call.Tool.Name(), v.Call.Input, v.Call.Error)
+			// Update to X and show error
+			if display, exists := activeToolCalls[v.Call.ID]; exists {
+				display.status = "error"
+				display.err = v.Call.Error
+				display.complete()
+				delete(activeToolCalls, v.Call.ID)
+			}
 			slog.Error("tool.error", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "error", v.Call.Error)
 		case streamStartMsg:
 			slog.Debug("console streaming started")
@@ -211,6 +255,100 @@ func consoleStreamingNotify(done chan struct{}, finalResponse *strings.Builder, 
 			close(done)
 		}
 	}
+}
+
+// toolCallDisplay manages the display of a tool call with dynamic status updates
+type toolCallDisplay struct {
+	toolName string
+	input    string
+	result   string
+	err      error
+	status   string // "scheduled", "executing", "success", "error"
+	linePos  int    // Track cursor position for updates
+}
+
+// show displays the initial tool call with hollow circle
+func (d *toolCallDisplay) show() {
+	formatted := d.formatWithStatus()
+	lines := strings.Split(formatted, "\n")
+	
+	// Print both lines and remember position
+	fmt.Print(lines[0])
+	if len(lines) > 1 {
+		fmt.Printf("\n%s", lines[1])
+	}
+	fmt.Print("\n")
+	
+	// Store position for updates (2 lines up from current position)
+	d.linePos = 2
+}
+
+// update modifies the existing display in place
+func (d *toolCallDisplay) update() {
+	formatted := d.formatWithStatus()
+	lines := strings.Split(formatted, "\n")
+	
+	// Move cursor up to overwrite previous lines
+	fmt.Printf("\033[%dA", d.linePos) // Move up
+	fmt.Print("\033[2K")              // Clear line
+	fmt.Print(lines[0])               // Print first line
+	
+	if len(lines) > 1 {
+		fmt.Print("\n\033[2K")        // Move down and clear line
+		fmt.Print(lines[1])           // Print second line
+	}
+	fmt.Print("\n")
+}
+
+// complete finalizes the display and moves cursor to next line
+func (d *toolCallDisplay) complete() {
+	formatted := d.formatWithStatus()
+	lines := strings.Split(formatted, "\n")
+	
+	// Move cursor up to overwrite previous lines
+	fmt.Printf("\033[%dA", d.linePos) // Move up
+	fmt.Print("\033[2K")              // Clear line
+	fmt.Print(lines[0])               // Print first line
+	
+	if len(lines) > 1 {
+		fmt.Print("\n\033[2K")        // Move down and clear line
+		fmt.Print(lines[1])           // Print second line
+	}
+	fmt.Print("\n")
+}
+
+// formatWithStatus formats the tool call with appropriate status indicator
+func (d *toolCallDisplay) formatWithStatus() string {
+	// Get the base format from the tool
+	var baseFormat string
+	for _, tool := range availableTools {
+		if tool.Name() == d.toolName {
+			baseFormat = tool.Format(d.input, d.result, d.err)
+			break
+		}
+	}
+	
+	if baseFormat == "" {
+		baseFormat = fmt.Sprintf("⏺ Unknown tool: %s\n  ⎿  Error: tool not found", d.toolName)
+	}
+	
+	// Replace the circle based on status
+	var statusCircle string
+	switch d.status {
+	case "scheduled":
+		statusCircle = "○" // Hollow circle
+	case "executing":
+		statusCircle = "◐" // Half-filled circle
+	case "success":
+		statusCircle = "●" // Full circle
+	case "error":
+		statusCircle = "✗" // X mark
+	default:
+		statusCircle = "○"
+	}
+	
+	// Replace the first ○ with the status circle
+	return strings.Replace(baseFormat, "○", statusCircle, 1)
 }
 
 // getLLMClient creates and returns an LLM client based on the configuration
@@ -379,7 +517,7 @@ func (t *anthropicOAuthTransport) RoundTrip(req *http.Request) (*http.Response, 
 	// Remove x-api-key header - critical for OAuth to work
 	r.Header.Del("x-api-key")
 	r.Header.Del("X-Api-Key") // Remove all case variations
-	
+
 	// Override URL based on ANTHROPIC_BASE_URL environment variable
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
 		if parsedURL, err := url.Parse(baseURL + "/v1/messages"); err == nil {

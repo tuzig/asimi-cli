@@ -342,12 +342,13 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 	defer s.ClearContext()
 
 	// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
-	// Cap at a few iterations to avoid infinite loops.
-	const maxIters = 15
+	// TODO: add max_iteration to the config
+	const maxIters = 50
 	var finalText string
 	var lastAssistant string
 	var hadAnyToolCall bool
-	for i := 0; i < maxIters; i++ {
+	var i int
+	for i = 0; i < maxIters; i++ {
 		choice, err := s.generateLLMResponse(ctx, nil)
 		if err != nil {
 			return "", err
@@ -387,7 +388,10 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 		// No tool responses to send; break.
 		break
 	}
-	return finalText, nil
+	if i < maxIters {
+		return finalText, nil
+	}
+	return fmt.Sprintf("%s\n\nEnded after %d interation", finalText, maxIters), nil
 }
 
 // AskStream sends a user prompt through the native loop with streaming support.
