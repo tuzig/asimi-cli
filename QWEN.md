@@ -19,11 +19,4 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 ## TODOs
 [] Improve read file by adding an optional offset and limit given in line numbers
 [] handle "stop_reason"="max_tokens"
-[] When streaming, assitant message repeats assitant_repeats.txt
-[] Add a theme - a collection of functions and colors that render given text, editing highlights, borders, etc. Example functions: RenderAI, RenderUser, RenderTool
-[] Handle the <thought> llm output tag
-[] Add the local time at the bottom right of the status line
-
-[] Add a theme - a collection of functions that render given text, editing highlights, borders, etc. Example functions: RenderAI, RenderUser, RenderTool
-[] Handle the <thought> llm output tag as toast messages
-[] Add the local time at the bottom right of the status line
+[] Display the model thoughts

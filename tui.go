@@ -509,6 +509,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamingActive = false
 		m.streamingCancel = nil
 
+	case streamMaxTurnsExceededMsg:
+		// Max turns exceeded, mark session as inactive and show warning
+		m.addToRawHistory("STREAM_MAX_TURNS_EXCEEDED", fmt.Sprintf("AI streaming ended after reaching max turns limit: %d", msg.maxTurns))
+		slog.Warn("streamMaxTurnsExceededMsg", "max_turns", msg.maxTurns)
+		m.chat.AddMessage(fmt.Sprintf("\n⚠️  Conversation ended after reaching maximum turn limit (%d turns)", msg.maxTurns))
+		m.streamingActive = false
+		m.streamingCancel = nil
+
 	case showHelpMsg:
 		helpText := "Available commands:\n"
 		for _, cmd := range m.commandRegistry.GetAllCommands() {

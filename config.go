@@ -106,6 +106,7 @@ type LLMConfig struct {
 	McpToolTimeout                int               `koanf:"mcp_tool_timeout"`
 	MaxMcpOutputTokens            int               `koanf:"max_mcp_output_tokens"`
 	UseBuiltinRipgrep             bool              `koanf:"use_builtin_ripgrep"`
+	MaxTurns                      int               `koanf:"max_turns"`
 	// OAuth tokens (optional) when authenticating via OAuth2
 	AuthToken    string `koanf:"auth_token"`
 	RefreshToken string `koanf:"refresh_token"`

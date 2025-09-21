@@ -50,6 +50,9 @@ type Session struct {
 
 	// Streaming state management
 	accumulatedContent strings.Builder
+
+	// Configuration
+	maxTurns int
 }
 
 // resetStreamBuffer safely resets the accumulated content buffer
@@ -72,6 +75,7 @@ type streamStartMsg struct{}
 type streamCompleteMsg struct{}
 type streamInterruptedMsg struct{ partialContent string }
 type streamErrorMsg struct{ err error }
+type streamMaxTurnsExceededMsg struct{ maxTurns int }
 
 // Local copies of prompt partials and template used by the session, to decouple from agent.go.
 var sessPromptPartials = map[string]any{
@@ -103,6 +107,13 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 	}
 	if cfg != nil {
 		s.provider = strings.ToLower(cfg.LLM.Provider)
+		// Set maxTurns from config, default to 50 if not configured
+		s.maxTurns = cfg.LLM.MaxTurns
+		if s.maxTurns <= 0 {
+			s.maxTurns = 50
+		}
+	} else {
+		s.maxTurns = 50
 	}
 
 	// Build system prompt from the existing template and partials, same as the agent.
@@ -342,13 +353,11 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 	defer s.ClearContext()
 
 	// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
-	// TODO: add max_iteration to the config
-	const maxIters = 50
 	var finalText string
 	var lastAssistant string
 	var hadAnyToolCall bool
 	var i int
-	for i = 0; i < maxIters; i++ {
+	for i = 0; i < s.maxTurns; i++ {
 		choice, err := s.generateLLMResponse(ctx, nil)
 		if err != nil {
 			return "", err
@@ -388,10 +397,10 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 		// No tool responses to send; break.
 		break
 	}
-	if i < maxIters {
+	if i < s.maxTurns {
 		return finalText, nil
 	}
-	return fmt.Sprintf("%s\n\nEnded after %d interation", finalText, maxIters), nil
+	return fmt.Sprintf("%s\n\nEnded after %d interation", finalText, s.maxTurns), nil
 }
 
 // AskStream sends a user prompt through the native loop with streaming support.
@@ -416,8 +425,8 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 
 		// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
 		// Cap at a few iterations to avoid infinite loops.
-		const maxIters = 15
-		for i := 0; i < maxIters; i++ {
+		var i int
+		for i = 0; i < s.maxTurns; i++ {
 			s.resetStreamBuffer()
 
 			// Check for cancellation
@@ -503,8 +512,13 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			break
 		}
 
+		// Check if we exceeded max turns and send appropriate notification
 		if s.notify != nil {
-			s.notify(streamCompleteMsg{})
+			if i >= s.maxTurns {
+				s.notify(streamMaxTurnsExceededMsg{maxTurns: s.maxTurns})
+			} else {
+				s.notify(streamCompleteMsg{})
+			}
 		}
 	}()
 }
