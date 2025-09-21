@@ -443,26 +443,26 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
 		// Update the existing message if we have its index
 		if idx, exists := m.toolCallMessageIndex[msg.Call.ID]; exists && idx < len(m.chat.Messages) {
-			m.chat.Messages[idx] = fmt.Sprintf("✅ %s completed", msg.Call.Tool.Name())
+			m.chat.Messages[idx] = formatToolCall(msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result, nil)
 			m.chat.UpdateContent()
 			// Clean up the index mapping
 			delete(m.toolCallMessageIndex, msg.Call.ID)
 		} else {
 			// Fallback: add a new message if we don't have the index
-			m.chat.AddMessage(fmt.Sprintf("✅ %s completed", msg.Call.Tool.Name()))
+			m.chat.AddMessage(formatToolCall(msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result, nil))
 		}
 
 	case ToolCallErrorMsg:
 		m.addToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
 		// Update the existing message if we have its index
 		if idx, exists := m.toolCallMessageIndex[msg.Call.ID]; exists && idx < len(m.chat.Messages) {
-			m.chat.Messages[idx] = fmt.Sprintf("❌ %s failed", msg.Call.Tool.Name())
+			m.chat.Messages[idx] = formatToolCall(msg.Call.Tool.Name(), msg.Call.Input, "", msg.Call.Error)
 			m.chat.UpdateContent()
 			// Clean up the index mapping
 			delete(m.toolCallMessageIndex, msg.Call.ID)
 		} else {
 			// Fallback: add a new message if we don't have the index
-			m.chat.AddMessage(fmt.Sprintf("❌ %s failed", msg.Call.Tool.Name()))
+			m.chat.AddMessage(formatToolCall(msg.Call.Tool.Name(), msg.Call.Input, "", msg.Call.Error))
 		}
 
 	case errMsg:
