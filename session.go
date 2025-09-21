@@ -52,6 +52,20 @@ type Session struct {
 	accumulatedContent strings.Builder
 }
 
+// resetStreamBuffer safely resets the accumulated content buffer
+func (s *Session) resetStreamBuffer() {
+	s.accumulatedContent.Reset()
+}
+
+// getStreamBuffer returns the current accumulated content and optionally resets it
+func (s *Session) getStreamBuffer(reset bool) string {
+	content := s.accumulatedContent.String()
+	if reset {
+		s.accumulatedContent.Reset()
+	}
+	return content
+}
+
 // notification messages
 type streamChunkMsg string
 type streamStartMsg struct{}
@@ -383,8 +397,6 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 func (s *Session) AskStream(ctx context.Context, prompt string) {
 	// Launch streaming in a goroutine to avoid blocking the UI
 	go func() {
-		s.accumulatedContent.Reset()
-
 		// Ensure cleanup on exit
 		defer func() {
 			s.ClearContext()
@@ -402,12 +414,16 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 		// Cap at a few iterations to avoid infinite loops.
 		const maxIters = 15
 		for i := 0; i < maxIters; i++ {
+			s.resetStreamBuffer()
+
 			// Check for cancellation
 			select {
 			case <-ctx.Done():
-				// Streaming was cancelled - add accumulated content to message history
-				accumulatedText := s.accumulatedContent.String()
-				s.appendMessages(accumulatedText, nil)
+				// Streaming was cancelled - add any accumulated content to message history
+				accumulatedText := s.getStreamBuffer(false)
+				if strings.TrimSpace(accumulatedText) != "" {
+					s.appendMessages(accumulatedText, nil)
+				}
 				if s.notify != nil {
 					s.notify(streamInterruptedMsg{partialContent: accumulatedText})
 				}
@@ -437,8 +453,10 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			if err != nil {
 				// Check if this was a cancellation
 				if ctx.Err() != nil {
-					accumulatedText := s.accumulatedContent.String()
-					s.appendMessages(accumulatedText, nil)
+					accumulatedText := s.getStreamBuffer(false)
+					if strings.TrimSpace(accumulatedText) != "" {
+						s.appendMessages(accumulatedText, nil)
+					}
 					if s.notify != nil {
 						s.notify(streamInterruptedMsg{partialContent: accumulatedText})
 					}
@@ -453,7 +471,7 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			}
 
 			// Use accumulated content as the response
-			responseContent := s.accumulatedContent.String()
+			responseContent := s.getStreamBuffer(false)
 
 			// Add the assistant message with content and tool calls to message history
 			s.appendMessages(responseContent, choice.ToolCalls)
@@ -480,10 +498,6 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			// No tool responses to send; break.
 			break
 		}
-
-		// Streaming completed successfully - add final accumulated content to message history if no tool calls were processed
-		finalText := s.accumulatedContent.String()
-		s.appendMessages(finalText, nil)
 
 		if s.notify != nil {
 			s.notify(streamCompleteMsg{})
