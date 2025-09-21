@@ -208,7 +208,7 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 	var callOptsWithChoice []llms.CallOption
 	var callOptsNoChoice []llms.CallOption
 	if len(s.toolDefs) > 0 {
-		callOptsNoChoice = []llms.CallOption{llms.WithTools(s.toolDefs)}
+		callOptsNoChoice = []llms.CallOption{llms.WithTools(s.toolDefs), llms.WithMaxTokens(64000)}
 		callOptsWithChoice = append([]llms.CallOption{}, callOptsNoChoice...)
 		callOptsWithChoice = append(callOptsWithChoice, llms.WithToolChoice("auto"))
 	}

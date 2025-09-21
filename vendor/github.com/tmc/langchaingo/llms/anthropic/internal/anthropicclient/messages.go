@@ -390,17 +390,14 @@ func handleContentBlockStartEvent(event map[string]interface{}, response Message
 				Type: eventType,
 			})
 		case "tool_use":
-			input, ok := event["input"].(map[string]interface{})
-			if !ok {
-				// If the input is not provided, it may be coming in a future event.
-				input = make(map[string]interface{})
-			}
-
+			// Don't try to get input from event - it comes later in input_json_delta events
+			// Initialize with nil so it gets populated properly later
 			response.Content = append(response.Content, &ToolUseContent{
-				Type:  eventType,
-				ID:    getString(contentBlock, "id"),
-				Name:  getString(contentBlock, "name"),
-				Input: input,
+				Type:      eventType,
+				ID:        getString(contentBlock, "id"),
+				Name:      getString(contentBlock, "name"),
+				Input:     nil, // Will be populated from input_json_delta events
+				inputData: "",  // Initialize the accumulator for streaming JSON
 			})
 		case "thinking":
 			response.Content = append(response.Content, &ThinkingContent{
