@@ -582,14 +582,12 @@ func sessBuildEnvBlock() string {
 		shell = "bash"
 	}
 	return fmt.Sprintf(`
-<env>
  <os>%s</os>
  <paths>
   <cwd>%s</cwd>
   <project_root>%s</project_root>
   <home>%s</home>
- </paths>
-</env>\n `, runtime.GOOS, shell, root, home)
+ </paths>`, runtime.GOOS, shell, root, home)
 }
 
 // sessReadAgentsMDFromCWD reads the contents of AGENTS.md from the current working directory.
