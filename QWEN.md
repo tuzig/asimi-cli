@@ -17,6 +17,5 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 - langchaingo for llm communications, tools, chains and more
 
 ## TODOs
-[] Improve read file by adding an optional offset and limit given in line numbers
-[] handle "stop_reason"="max_tokens"
-[] Display the model thoughts
+
+The todos are kept in the `Unreleased` section of `CHANGELOG.md`
