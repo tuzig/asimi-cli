@@ -13,9 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the asimi system prompt, support multi roles, including "Assistant", "Coder", "Tester" and reviewer
 
 ### To be Implemented
-- Improved system prompt based on ./specs/system_prompt_v2.md
-- Save the log file in `~/.lcal/share/asimi/log` and prevent it from exploding by adding `gopkg.in/natefinch/lumberjack.v2`
 - TODO list: adding a todo list and the todo write tool. branch `todo`
 
+### Implementing
 ### Done
+- Move the log file in `~/.local/share/asimi/log` and prevent it from exploding by adding `gopkg.in/natefinch/lumberjack.v2`
 

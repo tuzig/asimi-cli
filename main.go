@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/tmc/langchaingo/llms/googleai"
 	"github.com/tmc/langchaingo/llms/ollama"
 	"github.com/tmc/langchaingo/llms/openai"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type runCmd struct{}
@@ -35,9 +37,23 @@ var cli struct {
 }
 
 func initLogger() {
-	logFile, err := os.OpenFile(".asimi/asimi.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to get user home directory: %w", err))
+	}
+
+	logDir := filepath.Join(homeDir, ".local", "share", "asimi")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		panic(fmt.Errorf("failed to create log directory %s: %w", logDir, err))
+	}
+
+	// Set up lumberjack for log rotation
+	logFile := &lumberjack.Logger{
+		Filename:   filepath.Join(logDir, "asimi.log"),
+		MaxSize:    10, // megabytes
+		MaxBackups: 3,
+		MaxAge:     28, // days
+		Compress:   true,
 	}
 
 	// Set log level to DEBUG to see debug messages
@@ -191,7 +207,7 @@ func formatToolCall(toolName, input, result string, err error) string {
 func consoleStreamingNotify(done chan struct{}, finalResponse *strings.Builder, mu *sync.Mutex) func(any) {
 	// Track active tool calls to update their status
 	activeToolCalls := make(map[string]*toolCallDisplay)
-	
+
 	return func(m any) {
 		switch v := m.(type) {
 		case ToolCallScheduledMsg:
@@ -275,14 +291,14 @@ type toolCallDisplay struct {
 func (d *toolCallDisplay) show() {
 	formatted := d.formatWithStatus()
 	lines := strings.Split(formatted, "\n")
-	
+
 	// Print both lines and remember position
 	fmt.Print(lines[0])
 	if len(lines) > 1 {
 		fmt.Printf("\n%s", lines[1])
 	}
 	fmt.Print("\n")
-	
+
 	// Store position for updates (2 lines up from current position)
 	d.linePos = 2
 }
@@ -291,15 +307,15 @@ func (d *toolCallDisplay) show() {
 func (d *toolCallDisplay) update() {
 	formatted := d.formatWithStatus()
 	lines := strings.Split(formatted, "\n")
-	
+
 	// Move cursor up to overwrite previous lines
 	fmt.Printf("\033[%dA", d.linePos) // Move up
 	fmt.Print("\033[2K")              // Clear line
 	fmt.Print(lines[0])               // Print first line
-	
+
 	if len(lines) > 1 {
-		fmt.Print("\n\033[2K")        // Move down and clear line
-		fmt.Print(lines[1])           // Print second line
+		fmt.Print("\n\033[2K") // Move down and clear line
+		fmt.Print(lines[1])    // Print second line
 	}
 	fmt.Print("\n")
 }
@@ -308,15 +324,15 @@ func (d *toolCallDisplay) update() {
 func (d *toolCallDisplay) complete() {
 	formatted := d.formatWithStatus()
 	lines := strings.Split(formatted, "\n")
-	
+
 	// Move cursor up to overwrite previous lines
 	fmt.Printf("\033[%dA", d.linePos) // Move up
 	fmt.Print("\033[2K")              // Clear line
 	fmt.Print(lines[0])               // Print first line
-	
+
 	if len(lines) > 1 {
-		fmt.Print("\n\033[2K")        // Move down and clear line
-		fmt.Print(lines[1])           // Print second line
+		fmt.Print("\n\033[2K") // Move down and clear line
+		fmt.Print(lines[1])    // Print second line
 	}
 	fmt.Print("\n")
 }
@@ -331,11 +347,11 @@ func (d *toolCallDisplay) formatWithStatus() string {
 			break
 		}
 	}
-	
+
 	if baseFormat == "" {
 		baseFormat = fmt.Sprintf("⏺ Unknown tool: %s\n  ⎿  Error: tool not found", d.toolName)
 	}
-	
+
 	// Replace the circle based on status
 	var statusCircle string
 	switch d.status {
@@ -350,7 +366,7 @@ func (d *toolCallDisplay) formatWithStatus() string {
 	default:
 		statusCircle = "○"
 	}
-	
+
 	// Replace the first ○ with the status circle
 	return strings.Replace(baseFormat, "○", statusCircle, 1)
 }
