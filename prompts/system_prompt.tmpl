@@ -111,15 +111,9 @@ You are running outside of a sandbox container, directly on the user's system. F
 Use your provider's native function calling to invoke tools. Do not print tool invocations as plain text; instead, call the function directly so results can be returned to you by the runtime and incorporated into your next response.
 
 {{if .ProjectContext}}
---- Context from: {{.ProjectContextFile}} ---
+--- Context from AGENTS.md ---
 {{.ProjectContext}}
---- End of Context from: {{.ProjectContextFile}} ---
-{{end}}
-
-{{if .UserMemory}}
----
-
-{{.UserMemory}}
+--- End of Context from: AGENTS.md ---
 {{end}}
 
 # Final Reminder

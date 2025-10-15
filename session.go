@@ -122,7 +122,7 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 	for k, v := range sessPromptPartials {
 		partials[k] = v
 	}
-	partials["UserMemory"] = sessReadAgentsMDFromCWD()
+	partials["ProjectContext"] = readProjectContext()
 	partials["Env"] = sessBuildEnvBlock()
 
 	pt := prompts.PromptTemplate{
@@ -607,8 +607,8 @@ func sessBuildEnvBlock() string {
  </paths>`, runtime.GOOS, shell, root, home)
 }
 
-// sessReadAgentsMDFromCWD reads the contents of AGENTS.md from the current working directory.
-func sessReadAgentsMDFromCWD() string {
+// readProjectContext reads the contents of AGENTS.md from the current working directory.
+func readProjectContext() string {
 	wd, err := os.Getwd()
 	if err != nil {
 		return ""
