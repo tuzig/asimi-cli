@@ -165,6 +165,23 @@ func (s *Session) ClearContext() {
 	s.contextFiles = make(map[string]string)
 }
 
+// ClearHistory clears the conversation history but keeps the system message
+func (s *Session) ClearHistory() {
+	// Keep only the system message (first message)
+	if len(s.messages) > 0 && s.messages[0].Role == llms.ChatMessageTypeSystem {
+		s.messages = s.messages[:1]
+	} else {
+		s.messages = []llms.MessageContent{}
+	}
+
+	// Reset tool call tracking
+	s.lastToolCallKey = ""
+	s.toolCallRepetitionCount = 0
+
+	// Clear context files as well
+	s.ClearContext()
+}
+
 // HasContextFiles returns true if there are files in the context
 func (s *Session) HasContextFiles() bool {
 	return len(s.contextFiles) > 0
