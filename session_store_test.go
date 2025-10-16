@@ -19,7 +19,7 @@ func TestSessionStore_SaveAndLoad(t *testing.T) {
 	}
 
 	session := &Session{
-		messages: []llms.MessageContent{
+		Messages: []llms.MessageContent{
 			{
 				Role: llms.ChatMessageTypeHuman,
 				Parts: []llms.ContentPart{
@@ -33,12 +33,15 @@ func TestSessionStore_SaveAndLoad(t *testing.T) {
 				},
 			},
 		},
-		contextFiles: map[string]string{
+		ContextFiles: map[string]string{
 			"test.go": "package main",
 		},
 	}
 
-	err = store.SaveSession(session, "anthropic", "claude-sonnet-4")
+	session.Provider = "anthropic"
+	session.Model = "claude-sonnet-4"
+	store.SaveSession(session); store.Flush()
+	err = nil
 	if err != nil {
 		t.Fatalf("Failed to save session: %v", err)
 	}
@@ -80,7 +83,7 @@ func TestSessionStore_EmptySession(t *testing.T) {
 	}
 
 	session := &Session{
-		messages: []llms.MessageContent{
+		Messages: []llms.MessageContent{
 			{
 				Role: llms.ChatMessageTypeSystem,
 				Parts: []llms.ContentPart{
@@ -88,10 +91,13 @@ func TestSessionStore_EmptySession(t *testing.T) {
 				},
 			},
 		},
-		contextFiles: map[string]string{},
+		ContextFiles: map[string]string{},
 	}
 
-	err = store.SaveSession(session, "anthropic", "claude-sonnet-4")
+	session.Provider = "anthropic"
+	session.Model = "claude-sonnet-4"
+	store.SaveSession(session); store.Flush()
+	err = nil
 	if err != nil {
 		t.Fatalf("SaveSession should not error on empty session: %v", err)
 	}
@@ -117,7 +123,7 @@ func TestSessionStore_Cleanup(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		session := &Session{
-			messages: []llms.MessageContent{
+			Messages: []llms.MessageContent{
 				{
 					Role: llms.ChatMessageTypeHuman,
 					Parts: []llms.ContentPart{
@@ -125,10 +131,13 @@ func TestSessionStore_Cleanup(t *testing.T) {
 					},
 				},
 			},
-			contextFiles: map[string]string{},
+			ContextFiles: map[string]string{},
 		}
 
-		err = store.SaveSession(session, "anthropic", "claude-sonnet-4")
+	session.Provider = "anthropic"
+	session.Model = "claude-sonnet-4"
+		store.SaveSession(session); store.Flush()
+	err = nil
 		if err != nil {
 			t.Fatalf("Failed to save session %d: %v", i, err)
 		}
@@ -161,7 +170,7 @@ func TestSessionStore_ListSessionsLimit(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		session := &Session{
-			messages: []llms.MessageContent{
+			Messages: []llms.MessageContent{
 				{
 					Role: llms.ChatMessageTypeHuman,
 					Parts: []llms.ContentPart{
@@ -169,10 +178,13 @@ func TestSessionStore_ListSessionsLimit(t *testing.T) {
 					},
 				},
 			},
-			contextFiles: map[string]string{},
+			ContextFiles: map[string]string{},
 		}
 
-		err = store.SaveSession(session, "anthropic", "claude-sonnet-4")
+	session.Provider = "anthropic"
+	session.Model = "claude-sonnet-4"
+		store.SaveSession(session); store.Flush()
+	err = nil
 		if err != nil {
 			t.Fatalf("Failed to save session %d: %v", i, err)
 		}

@@ -46,7 +46,8 @@ type TUIModel struct {
 	commandRegistry CommandRegistry
 
 	// Application services (passed in, not owned)
-	session *Session
+	session      *Session
+	sessionStore *SessionStore
 
 	// Raw session history for debugging/inspection
 	rawSessionHistory []string
@@ -60,6 +61,24 @@ func NewTUIModel(config *Config) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
+
+	// Initialize session store if enabled
+	var store *SessionStore
+	if config.Session.Enabled {
+		maxSessions := 50
+		maxAgeDays := 30
+		if config.Session.MaxSessions > 0 {
+			maxSessions = config.Session.MaxSessions
+		}
+		if config.Session.MaxAgeDays > 0 {
+			maxAgeDays = config.Session.MaxAgeDays
+		}
+		var err error
+		store, err = NewSessionStore(maxSessions, maxAgeDays)
+		if err != nil {
+			slog.Error("failed to create session store", "error", err)
+		}
+	}
 
 	model := &TUIModel{
 		config: config,
@@ -88,6 +107,7 @@ func NewTUIModel(config *Config) *TUIModel {
 
 		// Application services (injected)
 		session:              nil,
+		sessionStore:         store,
 		rawSessionHistory:    make([]string, 0),
 		toolCallMessageIndex: make(map[string]int),
 	}
@@ -139,7 +159,7 @@ func (m *TUIModel) reinitializeSession() error {
 }
 
 func (m *TUIModel) saveSession() {
-	if m.session == nil || m.config == nil {
+	if m.session == nil || m.sessionStore == nil {
 		return
 	}
 
@@ -147,27 +167,8 @@ func (m *TUIModel) saveSession() {
 		return
 	}
 
-	maxSessions := 50
-	maxAgeDays := 30
-	if m.config.Session.MaxSessions > 0 {
-		maxSessions = m.config.Session.MaxSessions
-	}
-	if m.config.Session.MaxAgeDays > 0 {
-		maxAgeDays = m.config.Session.MaxAgeDays
-	}
-
-	store, err := NewSessionStore(maxSessions, maxAgeDays)
-	if err != nil {
-		slog.Error("failed to create session store for auto-save", "error", err)
-		return
-	}
-
-	err = store.SaveSession(m.session, m.config.LLM.Provider, m.config.LLM.Model)
-	if err != nil {
-		slog.Error("failed to auto-save session", "error", err)
-	} else {
-		slog.Debug("session auto-saved")
-	}
+	m.sessionStore.SaveSession(m.session)
+	slog.Debug("session auto-save queued")
 }
 
 // Init implements bubbletea.Model
@@ -521,6 +522,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat.AppendToLastMessage(string(msg))
 			slog.Debug("appended_to_last_message", "total_messages", len(m.chat.Messages))
 		}
+		m.saveSession()
 
 	case streamCompleteMsg:
 		m.addToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
@@ -666,13 +668,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionSelectedMsg:
 		m.sessionModal = nil
-		if msg.sessionData != nil {
+		if msg.session != nil {
 			if m.session != nil {
-				m.session.messages = msg.sessionData.Messages
-				m.session.contextFiles = msg.sessionData.ContextFiles
+				m.session.Messages = msg.session.Messages
+				m.session.ContextFiles = msg.session.ContextFiles
 			}
 			m.chat = NewChatComponent(m.chat.Width, m.chat.Height)
-			for _, msgContent := range msg.sessionData.Messages {
+			for _, msgContent := range msg.session.Messages {
 				if msgContent.Role == "user" || msgContent.Role == "assistant" {
 					for _, part := range msgContent.Parts {
 						if textPart, ok := part.(llms.TextContent); ok {
@@ -686,7 +688,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.sessionActive = true
-			timeStr := formatRelativeTime(msg.sessionData.Metadata.LastUpdated)
+			timeStr := formatRelativeTime(msg.session.LastUpdated)
 			m.toastManager.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
 		}
 

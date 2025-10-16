@@ -10,11 +10,11 @@ import (
 )
 
 type sessionsLoadedMsg struct {
-	sessions []SessionMetadata
+	sessions []Session
 }
 
 type sessionSelectedMsg struct {
-	sessionData *SessionData
+	session *Session
 }
 
 type sessionResumeErrorMsg struct {
@@ -23,7 +23,7 @@ type sessionResumeErrorMsg struct {
 
 type SessionSelectionModal struct {
 	*BaseModal
-	sessions     []SessionMetadata
+	sessions     []Session
 	selected     int
 	scrollOffset int
 	maxVisible   int
@@ -36,7 +36,7 @@ func NewSessionSelectionModal() *SessionSelectionModal {
 
 	return &SessionSelectionModal{
 		BaseModal:    baseModal,
-		sessions:     []SessionMetadata{},
+		sessions:     []Session{},
 		selected:     0,
 		scrollOffset: 0,
 		maxVisible:   10,
@@ -45,7 +45,7 @@ func NewSessionSelectionModal() *SessionSelectionModal {
 	}
 }
 
-func (m *SessionSelectionModal) SetSessions(sessions []SessionMetadata) {
+func (m *SessionSelectionModal) SetSessions(sessions []Session) {
 	m.sessions = sessions
 	m.loading = false
 	m.err = nil
@@ -106,7 +106,7 @@ func (m *SessionSelectionModal) Render() string {
 		line.WriteString(fmt.Sprintf("[%s] %s", timeStr, session.FirstPrompt))
 
 		var details strings.Builder
-		details.WriteString(fmt.Sprintf("    %d messages • %s", session.MessageCount, session.Model))
+		details.WriteString(fmt.Sprintf("    %d messages • %s", len(session.Messages), session.Model))
 		
 		currentDir, _ := os.Getwd()
 		if session.WorkingDir != "" && session.WorkingDir != currentDir {
@@ -212,11 +212,11 @@ func (m *SessionSelectionModal) loadSelectedSession() tea.Cmd {
 			return sessionResumeErrorMsg{err: fmt.Errorf("failed to create session store: %w", err)}
 		}
 
-		sessionData, err := store.LoadSession(sessionID)
+		session, err := store.LoadSession(sessionID)
 		if err != nil {
 			return sessionResumeErrorMsg{err: fmt.Errorf("failed to load session: %w", err)}
 		}
 
-		return sessionSelectedMsg{sessionData: sessionData}
+		return sessionSelectedMsg{session: session}
 	}
 }
