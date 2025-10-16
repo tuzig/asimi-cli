@@ -91,9 +91,7 @@ func NewTUIModel(config *Config) *TUIModel {
 	}
 
 	// Set initial status info - show disconnected state initially
-	model.status.SetAgent(fmt.Sprintf("🔌 %s (%s)", config.LLM.Provider, config.LLM.Model))
-	model.status.SetWorkingDir(".")   // In a real implementation, get current working directory
-	model.status.SetGitBranch("main") // In a real implementation, get current git branch
+	model.status.SetProvider(config.LLM.Provider, config.LLM.Model, false)
 
 	return model
 }
@@ -109,9 +107,9 @@ func (m *TUIModel) addToRawHistory(prefix, content string) {
 func (m *TUIModel) SetSession(session *Session) {
 	m.session = session
 	if session != nil {
-		m.status.SetAgent(fmt.Sprintf("✅ %s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
-		m.status.SetAgent(fmt.Sprintf("🔌 %s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
 	}
 }
 
@@ -727,12 +725,10 @@ func (m *TUIModel) updateComponentDimensions() {
 
 	// Update status info
 	if m.session != nil {
-		m.status.SetAgent(fmt.Sprintf("✅ %s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
-		m.status.SetAgent(fmt.Sprintf("🔌 %s (%s)", m.config.LLM.Provider, m.config.LLM.Model))
+		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
 	}
-	m.status.SetWorkingDir(".")   // In a real implementation, get current working directory
-	m.status.SetGitBranch("main") // In a real implementation, get current git branch
 }
 
 // View implements bubbletea.Model
