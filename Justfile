@@ -1,3 +1,6 @@
+run *args: modules
+    go run . {{ quote(args) }}
+
 modules:
     go mod vendor
 
