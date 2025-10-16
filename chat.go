@@ -86,18 +86,53 @@ func (c *ChatComponent) UpdateContent() {
 	var messageViews []string
 	for _, message := range c.Messages {
 		var messageStyle lipgloss.Style
-		if strings.HasPrefix(message, "You:") {
-			messageStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("230")).
-				Padding(0, 1)
+		
+		// Check if this is a thinking message
+		if strings.Contains(message, "<thinking>") && strings.Contains(message, "</thinking>") {
+			// Extract thinking content and regular content
+			thinkingContent, regularContent := extractThinkingContent(message)
+			
+			// Style thinking content differently
+			if thinkingContent != "" {
+				thinkingStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("240")).
+					Italic(true).
+					Padding(0, 1).
+					Border(lipgloss.RoundedBorder()).
+					BorderForeground(lipgloss.Color("240"))
+				
+				wrappedThinking := wordwrap.String("💭 Thinking: "+thinkingContent, c.Width-4)
+				messageViews = append(messageViews, thinkingStyle.Render(wrappedThinking))
+			}
+			
+			// Style regular content normally if present
+			if regularContent != "" {
+				if strings.HasPrefix(regularContent, "You:") {
+					messageStyle = lipgloss.NewStyle().
+						Foreground(lipgloss.Color("230")).
+						Padding(0, 1)
+				} else {
+					messageStyle = lipgloss.NewStyle().
+						Foreground(lipgloss.Color("#b0b0b0")).
+						Padding(0, 1)
+				}
+				messageViews = append(messageViews,
+					messageStyle.Render(wordwrap.String(regularContent, c.Width)))
+			}
 		} else {
-			messageStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#b0b0b0")).
-				Padding(0, 1)
+			// Regular message styling
+			if strings.HasPrefix(message, "You:") {
+				messageStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("230")).
+					Padding(0, 1)
+			} else {
+				messageStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#b0b0b0")).
+					Padding(0, 1)
+			}
+			messageViews = append(messageViews,
+				messageStyle.Render(wordwrap.String(message, c.Width)))
 		}
-
-		messageViews = append(messageViews,
-			messageStyle.Render(wordwrap.String(message, c.Width)))
 	}
 	content := lipgloss.JoinVertical(lipgloss.Left, messageViews...)
 	c.Viewport.SetContent(content)
@@ -106,6 +141,41 @@ func (c *ChatComponent) UpdateContent() {
 	if c.AutoScroll && !c.UserScrolled {
 		c.Viewport.GotoBottom()
 	}
+}
+
+// extractThinkingContent separates thinking content from regular content
+func extractThinkingContent(message string) (thinking, regular string) {
+	// Find thinking tags
+	startTag := "<thinking>"
+	endTag := "</thinking>"
+	
+	startIdx := strings.Index(message, startTag)
+	if startIdx == -1 {
+		return "", message
+	}
+	
+	endIdx := strings.Index(message, endTag)
+	if endIdx == -1 {
+		return "", message
+	}
+	
+	// Extract thinking content
+	thinkingStart := startIdx + len(startTag)
+	thinking = strings.TrimSpace(message[thinkingStart:endIdx])
+	
+	// Extract regular content (before and after thinking)
+	before := strings.TrimSpace(message[:startIdx])
+	after := strings.TrimSpace(message[endIdx+len(endTag):])
+	
+	if before != "" && after != "" {
+		regular = before + "\n\n" + after
+	} else if before != "" {
+		regular = before
+	} else {
+		regular = after
+	}
+	
+	return thinking, regular
 }
 
 // Update handles messages for the chat component
