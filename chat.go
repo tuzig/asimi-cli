@@ -34,7 +34,8 @@ func NewChatComponent(width, height int) ChatComponent {
 		UserScrolled: false, // User hasn't scrolled yet
 		Style: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
+			BorderForeground(lipgloss.Color("#F4DB53")). // Terminal7 chat border
+			Background(lipgloss.Color("#11051E")).       // Terminal7 chat background
 			Width(width).
 			Height(height),
 	}
@@ -95,11 +96,11 @@ func (c *ChatComponent) UpdateContent() {
 			// Style thinking content differently
 			if thinkingContent != "" {
 				thinkingStyle := lipgloss.NewStyle().
-					Foreground(lipgloss.Color("240")).
+					Foreground(lipgloss.Color("#004444")). // Terminal7 text-error color
 					Italic(true).
 					Padding(0, 1).
 					Border(lipgloss.RoundedBorder()).
-					BorderForeground(lipgloss.Color("240"))
+					BorderForeground(lipgloss.Color("#373702")) // Terminal7 dark border
 				
 				wrappedThinking := wordwrap.String("💭 Thinking: "+thinkingContent, c.Width-4)
 				messageViews = append(messageViews, thinkingStyle.Render(wrappedThinking))
@@ -109,11 +110,11 @@ func (c *ChatComponent) UpdateContent() {
 			if regularContent != "" {
 				if strings.HasPrefix(regularContent, "You:") {
 					messageStyle = lipgloss.NewStyle().
-						Foreground(lipgloss.Color("230")).
+						Foreground(lipgloss.Color("#F952F9")). // Terminal7 prompt border
 						Padding(0, 1)
 				} else {
 					messageStyle = lipgloss.NewStyle().
-						Foreground(lipgloss.Color("#b0b0b0")).
+						Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
 						Padding(0, 1)
 				}
 				messageViews = append(messageViews,
@@ -123,11 +124,11 @@ func (c *ChatComponent) UpdateContent() {
 			// Regular message styling
 			if strings.HasPrefix(message, "You:") {
 				messageStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("230")).
+					Foreground(lipgloss.Color("#F952F9")). // Terminal7 prompt border
 					Padding(0, 1)
 			} else {
 				messageStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#b0b0b0")).
+					Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
 					Padding(0, 1)
 			}
 			messageViews = append(messageViews,

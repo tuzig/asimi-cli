@@ -32,7 +32,8 @@ func NewPromptComponent(width, height int) PromptComponent {
 		Width:    width,
 		Style: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
+			BorderForeground(lipgloss.Color("#F952F9")). // Terminal7 prompt border
+			Background(lipgloss.Color("#271D30")).       // Terminal7 prompt background
 			Width(width).
 			Height(height),
 	}

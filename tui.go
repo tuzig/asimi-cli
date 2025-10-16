@@ -813,7 +813,7 @@ func renderHomeView(width, height int) string {
 	// Create a stylish welcome message
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("62")).
+		Foreground(lipgloss.Color("#F952F9")). // Terminal7 prompt border
 		Align(lipgloss.Center).
 		Width(width)
 
@@ -821,7 +821,7 @@ func renderHomeView(width, height int) string {
 
 	// Create a subtitle
 	subtitleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
+		Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
 		Align(lipgloss.Center).
 		Width(width)
 
@@ -837,7 +837,7 @@ func renderHomeView(width, height int) string {
 
 	// Style for commands
 	commandStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("230")).
+		Foreground(lipgloss.Color("#F4DB53")). // Terminal7 warning/chat border
 		PaddingLeft(2)
 
 	// Render commands
@@ -855,6 +855,7 @@ func renderHomeView(width, height int) string {
 	container := lipgloss.NewStyle().
 		Width(width).
 		Height(height).
+		Background(lipgloss.Color("#000000")). // Terminal7 pane background
 		Align(lipgloss.Center, lipgloss.Center).
 		Render(content)
 
@@ -866,7 +867,7 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 	if len(m.rawSessionHistory) == 0 {
 		// Show empty state
 		emptyStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
+			Foreground(lipgloss.Color("#004444")). // Terminal7 text-error
 			Align(lipgloss.Center).
 			Width(width)
 
@@ -875,6 +876,7 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 		container := lipgloss.NewStyle().
 			Width(width).
 			Height(height).
+			Background(lipgloss.Color("#000000")). // Terminal7 pane background
 			Align(lipgloss.Center, lipgloss.Center).
 			Render(emptyContent)
 
@@ -884,7 +886,7 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 	// Create title
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("39")).
+		Foreground(lipgloss.Color("#F4DB53")). // Terminal7 warning/chat border
 		Align(lipgloss.Center).
 		Width(width)
 
@@ -892,7 +894,7 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 
 	// Style for raw history entries
 	entryStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
+		Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
 		PaddingLeft(1).
 		Width(width - 2)
 
@@ -933,6 +935,7 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 	container := lipgloss.NewStyle().
 		Width(width).
 		Height(height).
+		Background(lipgloss.Color("#000000")). // Terminal7 pane background
 		Render(content)
 
 	return container
