@@ -27,7 +27,7 @@ type ChatComponent struct {
 
 // NewChatComponent creates a new chat component
 func NewChatComponent(width, height int) ChatComponent {
-	vp := viewport.New(width-2, height-2) // Account for borders
+	vp := viewport.New(width, height)
 	vp.SetContent("Welcome to Asimi CLI! Send a message to start chatting.")
 
 	return ChatComponent{
@@ -41,9 +41,7 @@ func NewChatComponent(width, height int) ChatComponent {
 		TouchDragging:    false,
 		TouchScrollSpeed: 3, // Lines to scroll per touch movement unit
 		Style: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#F4DB53")). // Terminal7 chat border
-			Background(lipgloss.Color("#11051E")).       // Terminal7 chat background
+			Background(lipgloss.Color("#11051E")). // Terminal7 chat background
 			Width(width).
 			Height(height),
 	}
@@ -53,7 +51,7 @@ func NewChatComponent(width, height int) ChatComponent {
 func (c *ChatComponent) SetWidth(width int) {
 	c.Width = width
 	c.Style = c.Style.Width(width)
-	c.Viewport.Width = width - 2
+	c.Viewport.Width = width
 	c.UpdateContent()
 }
 
@@ -265,9 +263,9 @@ func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
 func (c ChatComponent) View() string {
 	content := lipgloss.JoinVertical(lipgloss.Left, c.Viewport.View())
 
-	// Adjust height for the header
+	// Adjust height
 	c.Style = c.Style.Height(c.Height)
-	c.Viewport.Height = c.Height - 3 // Account for border and header
+	c.Viewport.Height = c.Height
 
 	return c.Style.Render(content)
 }

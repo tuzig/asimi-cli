@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -13,6 +14,7 @@ type StatusComponent struct {
 	Connected bool
 	Width     int
 	Style     lipgloss.Style
+	Session   *Session // Reference to session for token/time tracking
 }
 
 // NewStatusComponent creates a new status component
@@ -21,8 +23,7 @@ func NewStatusComponent(width int) StatusComponent {
 		Width: width,
 		Style: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
-			Padding(0, 1).
-			Width(width),
+			Padding(0),
 	}
 }
 
@@ -31,6 +32,11 @@ func (s *StatusComponent) SetProvider(provider, model string, connected bool) {
 	s.Provider = provider
 	s.Model = model
 	s.Connected = connected
+}
+
+// SetSession sets the session reference for tracking
+func (s *StatusComponent) SetSession(session *Session) {
+	s.Session = session
 }
 
 // SetAgent sets the current agent (legacy method for compatibility)
@@ -63,7 +69,6 @@ func (s *StatusComponent) SetWorkingDir(dir string) {
 // SetWidth updates the width of the status component
 func (s *StatusComponent) SetWidth(width int) {
 	s.Width = width
-	s.Style = s.Style.Width(width)
 }
 
 // View renders the status component
@@ -83,8 +88,10 @@ func (s StatusComponent) View() string {
 	middleWidth := lipgloss.Width(middleSection)
 
 	// Calculate spacing
+	// The style has Width() set, so lipgloss will handle padding internally
+	// We need to account for the horizontal padding (1 left + 1 right = 2 chars)
 	totalContentWidth := leftWidth + middleWidth + rightWidth
-	availableSpace := s.Width - 2 // Account for padding
+	availableSpace := s.Width - 2 // Account for horizontal padding
 
 	if totalContentWidth > availableSpace {
 		// Truncate if content is too long
@@ -147,20 +154,37 @@ func (s StatusComponent) renderLeftSection() string {
 	return "🌴 " + branchStyle.Render(branch)
 }
 
-// renderMiddleSection renders the middle section with git status
+// renderMiddleSection renders the middle section with token usage andsession age
 func (s StatusComponent) renderMiddleSection() string {
-	if !isGitRepository() {
+	// Return token usage and session age e.g, `🪣 63%   1h23:45 ⏱`
+	if s.Session == nil {
 		return ""
 	}
 
-	gitStatus := getGitStatus()
-	if gitStatus == "" {
-		return "" // Clean working directory, no status to show
+	// Get context usage percentage
+	usagePercent := s.Session.GetContextUsagePercent()
+
+	// Get session duration
+	duration := s.Session.GetSessionDuration()
+
+	// Format duration as h:mm:ss or mm:ss
+	hours := int(duration.Hours())
+	minutes := int(duration.Minutes()) % 60
+	seconds := int(duration.Seconds()) % 60
+
+	var durationStr string
+	if hours > 0 {
+		durationStr = fmt.Sprintf("%dh%02d:%02d", hours, minutes, seconds)
+	} else {
+		durationStr = fmt.Sprintf("%02d:%02d", minutes, seconds)
 	}
 
-	// Style git status with Terminal7 warning color
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F4DB53")) // Terminal7 warning/yellow
-	return statusStyle.Render(gitStatus)
+	// Format the output with icons
+	statusStr := fmt.Sprintf("🪣 %.0f%%   %s ⏱", usagePercent, durationStr)
+
+	// Style with Terminal7 text color
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#01FAFA"))
+	return statusStyle.Render(statusStr)
 }
 
 // renderRightSection renders the right section with provider info
@@ -171,7 +195,7 @@ func (s StatusComponent) renderRightSection() string {
 	// Style provider info
 	providerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#01FAFA")) // Terminal7 text color
 
-	return icon + " " + providerStyle.Render(providerModel)
+	return providerStyle.Render(providerModel) + " " + icon
 }
 
 // truncateString truncates a string to fit within maxWidth, adding "..." if needed

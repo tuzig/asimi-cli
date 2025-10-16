@@ -106,6 +106,7 @@ func (m *TUIModel) addToRawHistory(prefix, content string) {
 // SetSession sets the session for the TUI model
 func (m *TUIModel) SetSession(session *Session) {
 	m.session = session
+	m.status.SetSession(session) // Pass session to status component
 	if session != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
@@ -153,8 +154,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		// Handle chat scrolling first (including touch gestures)
-		if msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown || 
-		   msg.Type == tea.MouseLeft || msg.Type == tea.MouseMotion {
+		if msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown ||
+			msg.Type == tea.MouseLeft || msg.Type == tea.MouseMotion {
 			m.chat, _ = m.chat.Update(msg)
 		}
 		return m.handleMouseMsg(msg)
@@ -715,7 +716,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	chatHeight := m.height - statusHeight - promptHeight - 4
 
 	// Update components
-	m.status.SetWidth(width + 1)
+	m.status.SetWidth(width + 4)
 
 	// Full width layout
 	m.chat.SetWidth(width)

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/prompts"
@@ -51,6 +52,9 @@ type Session struct {
 
 	// Configuration
 	config *LLMConfig
+
+	// Session tracking
+	startTime time.Time
 }
 
 // resetStreamBuffer safely resets the accumulated content buffer
@@ -150,6 +154,7 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 	s.toolDefs, s.toolCatalog = buildLLMTools()
 	s.scheduler = NewCoreToolScheduler(s.notify)
 	s.contextFiles = make(map[string]string)
+	s.startTime = time.Now()
 
 	// Add AGENTS.md as a persistent context file if it exists
 	projectContext := readProjectContext()
@@ -186,6 +191,9 @@ func (s *Session) ClearHistory() {
 	// Reset tool call tracking
 	s.lastToolCallKey = ""
 	s.toolCallRepetitionCount = 0
+
+	// Reset session start time
+	s.startTime = time.Now()
 
 	s.ClearContext()
 }
@@ -735,4 +743,18 @@ func buildLLMTools() ([]llms.Tool, map[string]lctools.Tool) {
 func toJSON(v any) string {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	return string(b)
+}
+
+// GetSessionDuration returns the duration since the session started
+func (s *Session) GetSessionDuration() time.Duration {
+	return time.Since(s.startTime)
+}
+
+// GetContextUsagePercent returns the percentage of context used (0-100)
+func (s *Session) GetContextUsagePercent() float64 {
+	info := s.GetContextInfo()
+	if info.TotalTokens <= 0 {
+		return 0
+	}
+	return (float64(info.UsedTokens) / float64(info.TotalTokens)) * 100
 }

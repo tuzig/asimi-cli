@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### To be Implemented
 
+- Add markdown styling to the chat window. e.g, instead of `**bold**` renders `bold` in bold face.
+- support CTRL-Z for sending asimi to work in the background. Print a message telling the user "Asimi will be running in the bcbground now. Use `fg` to restore"
+
 ### Implementing
 ### Done
 - Bug fix: when the user scrolls the chat window stop autoscrolling
