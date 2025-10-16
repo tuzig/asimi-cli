@@ -5,9 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+var claudeVersionPattern = regexp.MustCompile(`\d+(\.\d+)?`)
 
 func getFileTree(root string) ([]string, error) {
 	var files []string
@@ -161,17 +164,17 @@ func shortenProviderModel(provider, model string) string {
 
 	// Shorten common model names
 	modelShort := model
-	if strings.Contains(strings.ToLower(model), "claude") {
-		if strings.Contains(model, "3.5") {
-			modelShort = "3.5"
-		} else if strings.Contains(model, "3-5") {
-			modelShort = "3.5"
-		} else if strings.Contains(model, "4") {
-			modelShort = "4"
-		} else if strings.Contains(model, "3") {
-			modelShort = "3"
+	lowerModel := strings.ToLower(model)
+	if strings.Contains(lowerModel, "claude") {
+		normalized := strings.ReplaceAll(lowerModel, "-", ".")
+		normalized = strings.ReplaceAll(normalized, "_", ".")
+		normalized = strings.ReplaceAll(normalized, " ", ".")
+		if match := claudeVersionPattern.FindString(normalized); match != "" {
+			modelShort = match
+		} else if strings.Contains(lowerModel, "instant") {
+			modelShort = "Instant"
 		}
-	} else if strings.Contains(strings.ToLower(model), "gpt") {
+	} else if strings.Contains(lowerModel, "gpt") {
 		if strings.Contains(model, "4") {
 			if strings.Contains(model, "turbo") {
 				modelShort = "4T"
@@ -181,7 +184,7 @@ func shortenProviderModel(provider, model string) string {
 		} else if strings.Contains(model, "3.5") {
 			modelShort = "3.5"
 		}
-	} else if strings.Contains(strings.ToLower(model), "gemini") {
+	} else if strings.Contains(lowerModel, "gemini") {
 		if strings.Contains(model, "pro") {
 			modelShort = "Pro"
 		} else if strings.Contains(model, "flash") {

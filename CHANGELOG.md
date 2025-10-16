@@ -9,10 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### To be Planned
-- Adding the "task" tool for sub agent tasks. It's main goal is to keep the context short by using sub agents. supports optional `model` param
+- Adding the "task" internal tool in `tools.go`. It's main goal is to keep the context short by using sub agents. supports optional `model` param
 - Add a `/resume` command that lists last X sessions (X set by the conf file) and let's the user choose which session to resume
-- Gracefully handle 429 errors
-- the asimi system prompt, support multi roles, including "Assistant", "Codfor asimi. Add the er", "Tester" and reviewer
+- Gracefully handle HTTP 429 errors from the model
 
 ### To be Implemented
 
@@ -43,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 -- right: <provider status icon><shorten provider and model. e.g. "Claude-4"
 - 
 - Support touch gesture for scrolling the chat
-### Done
+- bug fix: status bar shows distinct labels for Claude 4 and Claude 4.5 models
 - Move the log file in `~/.local/share/asimi/log` and prevent it from exploding by adding `gopkg.in/natefinch/lumberjack.v2`
 - Fix the /new command so it'll clear the context and not just the screen
 - Implement the `/context` command with token breakdown, bar visualization, and command output per `specs/context_command.md`
