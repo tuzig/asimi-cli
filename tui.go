@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/tmc/langchaingo/llms"
 )
 
 // TUIModel represents the bubbletea model for the TUI
@@ -29,6 +30,7 @@ type TUIModel struct {
 	providerModal       *ProviderSelectionModal
 	codeInputModal      *CodeInputModal
 	modelSelectionModal *ModelSelectionModal
+	sessionModal        *SessionSelectionModal
 
 	// UI Flags & State
 	showCompletionDialog bool
@@ -44,7 +46,8 @@ type TUIModel struct {
 	commandRegistry CommandRegistry
 
 	// Application services (passed in, not owned)
-	session *Session
+	session      *Session
+	sessionStore *SessionStore
 
 	// Raw session history for debugging/inspection
 	rawSessionHistory []string
@@ -58,6 +61,24 @@ func NewTUIModel(config *Config) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
+
+	// Initialize session store if enabled
+	var store *SessionStore
+	if config.Session.Enabled {
+		maxSessions := 50
+		maxAgeDays := 30
+		if config.Session.MaxSessions > 0 {
+			maxSessions = config.Session.MaxSessions
+		}
+		if config.Session.MaxAgeDays > 0 {
+			maxAgeDays = config.Session.MaxAgeDays
+		}
+		var err error
+		store, err = NewSessionStore(maxSessions, maxAgeDays)
+		if err != nil {
+			slog.Error("failed to create session store", "error", err)
+		}
+	}
 
 	model := &TUIModel{
 		config: config,
@@ -86,6 +107,7 @@ func NewTUIModel(config *Config) *TUIModel {
 
 		// Application services (injected)
 		session:              nil,
+		sessionStore:         store,
 		rawSessionHistory:    make([]string, 0),
 		toolCallMessageIndex: make(map[string]int),
 	}
@@ -136,6 +158,19 @@ func (m *TUIModel) reinitializeSession() error {
 	return nil
 }
 
+func (m *TUIModel) saveSession() {
+	if m.session == nil || m.sessionStore == nil {
+		return
+	}
+
+	if !m.config.Session.Enabled || !m.config.Session.AutoSave {
+		return
+	}
+
+	m.sessionStore.SaveSession(m.session)
+	slog.Debug("session auto-save queued")
+}
+
 // Init implements bubbletea.Model
 func (m TUIModel) Init() tea.Cmd {
 	// Initialize the TUI
@@ -177,6 +212,10 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle modals first (they need to handle their own escape keys)
+	if m.sessionModal != nil {
+		m.sessionModal, cmd = m.sessionModal.Update(msg)
+		return m, cmd
+	}
 	if m.modelSelectionModal != nil {
 		m.modelSelectionModal, cmd = m.modelSelectionModal.Update(msg)
 		return m, cmd
@@ -483,13 +522,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat.AppendToLastMessage(string(msg))
 			slog.Debug("appended_to_last_message", "total_messages", len(m.chat.Messages))
 		}
+		m.saveSession()
 
 	case streamCompleteMsg:
-		// Streaming is complete, mark session as inactive
 		m.addToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(m.chat.Messages))
 		m.streamingActive = false
 		m.streamingCancel = nil
+		m.saveSession()
 
 	case streamInterruptedMsg:
 		// Streaming was interrupted by user
@@ -574,6 +614,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerModal = nil
 		m.codeInputModal = nil
 		m.modelSelectionModal = nil
+		m.sessionModal = nil
 		m.toastManager.AddToast("Cancelled", "info", 2000)
 
 	case authCodeEnteredMsg:
@@ -620,6 +661,40 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modelSelectionModal != nil {
 			m.modelSelectionModal.SetError(msg.error)
 		}
+
+	case sessionsLoadedMsg:
+		m.sessionModal = NewSessionSelectionModal()
+		m.sessionModal.SetSessions(msg.sessions)
+
+	case sessionSelectedMsg:
+		m.sessionModal = nil
+		if msg.session != nil {
+			if m.session != nil {
+				m.session.Messages = msg.session.Messages
+				m.session.ContextFiles = msg.session.ContextFiles
+			}
+			m.chat = NewChatComponent(m.chat.Width, m.chat.Height)
+			for _, msgContent := range msg.session.Messages {
+				if msgContent.Role == "user" || msgContent.Role == "assistant" {
+					for _, part := range msgContent.Parts {
+						if textPart, ok := part.(llms.TextContent); ok {
+							prefix := "You: "
+							if msgContent.Role == "assistant" {
+								prefix = "AI: "
+							}
+							m.chat.AddMessage(prefix + textPart.Text)
+						}
+					}
+				}
+			}
+			m.sessionActive = true
+			timeStr := formatRelativeTime(msg.session.LastUpdated)
+			m.toastManager.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
+		}
+
+	case sessionResumeErrorMsg:
+		m.sessionModal = nil
+		m.toastManager.AddToast(fmt.Sprintf("Failed to resume session: %v", msg.err), "error", 4000)
 	}
 
 	m.chat, _ = m.chat.Update(msg)
@@ -792,6 +867,12 @@ func (m TUIModel) View() string {
 	// Add model selection modal if active (takes priority over other modals)
 	if m.modelSelectionModal != nil {
 		modalView := m.modelSelectionModal.Render()
+		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
+	}
+
+	// Add session selection modal if active (takes priority over other modals)
+	if m.sessionModal != nil {
+		modalView := m.sessionModal.Render()
 		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
 	}
 

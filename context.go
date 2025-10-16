@@ -130,16 +130,16 @@ func (s *Session) getModelContextSize() int {
 // CountSystemPromptTokens counts tokens in the system prompt.
 // This includes the base system prompt template (AGENTS.md is now in Memory files).
 func (s *Session) CountSystemPromptTokens() int {
-	if len(s.messages) == 0 {
+	if len(s.Messages) == 0 {
 		return 0
 	}
 
-	if s.messages[0].Role != llms.ChatMessageTypeSystem {
+	if s.Messages[0].Role != llms.ChatMessageTypeSystem {
 		return 0
 	}
 
 	var content strings.Builder
-	for _, part := range s.messages[0].Parts {
+	for _, part := range s.Messages[0].Parts {
 		if textPart, ok := part.(llms.TextContent); ok {
 			content.WriteString(textPart.Text)
 		}
@@ -165,12 +165,12 @@ func (s *Session) CountSystemToolsTokens() int {
 // CountMemoryFilesTokens counts tokens in context files.
 // This includes AGENTS.md and any files dynamically added via AddContextFile().
 func (s *Session) CountMemoryFilesTokens() int {
-	if len(s.contextFiles) == 0 {
+	if len(s.ContextFiles) == 0 {
 		return 0
 	}
 
 	totalTokens := 0
-	for path, content := range s.contextFiles {
+	for path, content := range s.ContextFiles {
 		totalTokens += s.countTokens(path)
 		totalTokens += s.countTokens(content)
 		totalTokens += memoryFileOverheadTokens
@@ -181,13 +181,13 @@ func (s *Session) CountMemoryFilesTokens() int {
 
 // CountMessagesTokens counts tokens in conversation history (excluding the system message).
 func (s *Session) CountMessagesTokens() int {
-	if len(s.messages) <= 1 {
+	if len(s.Messages) <= 1 {
 		return 0
 	}
 
 	totalTokens := 0
-	for i := 1; i < len(s.messages); i++ {
-		msg := s.messages[i]
+	for i := 1; i < len(s.Messages); i++ {
+		msg := s.Messages[i]
 		for _, part := range msg.Parts {
 			switch p := part.(type) {
 			case llms.TextContent:

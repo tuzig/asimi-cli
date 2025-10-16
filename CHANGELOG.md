@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### To be Planned
-- Adding the "task" internal tool in `tools.go`. It's main goal is to keep the context short by using sub agents. supports optional `model` param
-- Add a `/resume` command that lists last X sessions (X set by the conf file) and let's the user choose which session to resume
-- Gracefully handle HTTP 429 errors from the model
 
 ### To be Implemented
+- Adding the "task" internal tool in `tools.go`. See `specs/task_tool.md` for detailed implementation plan
+- Add a `/resume` command that lists last X sessions and let's the user choose which session to resume. See `specs/resume_command.md` for detailed implementation plan
+- Gracefully handle HTTP 429 errors from the model. See `specs/http_429_handling.md` for detailed implementation plan
 
 ### Implementing
 ### Done
