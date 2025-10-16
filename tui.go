@@ -152,8 +152,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyMsg(msg)
 
 	case tea.MouseMsg:
-		// Handle chat scrolling first
-		if msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown {
+		// Handle chat scrolling first (including touch gestures)
+		if msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown || 
+		   msg.Type == tea.MouseLeft || msg.Type == tea.MouseMotion {
 			m.chat, _ = m.chat.Update(msg)
 		}
 		return m.handleMouseMsg(msg)

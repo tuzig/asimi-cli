@@ -18,6 +18,11 @@ type ChatComponent struct {
 	Style            lipgloss.Style
 	AutoScroll       bool // Track if auto-scrolling is enabled
 	UserScrolled     bool // Track if user has manually scrolled
+	
+	// Touch gesture support
+	TouchStartY      int  // Y coordinate where touch/drag started
+	TouchDragging    bool // Whether we're currently in a touch drag
+	TouchScrollSpeed int  // Sensitivity for touch scrolling
 }
 
 // NewChatComponent creates a new chat component
@@ -26,12 +31,15 @@ func NewChatComponent(width, height int) ChatComponent {
 	vp.SetContent("Welcome to Asimi CLI! Send a message to start chatting.")
 
 	return ChatComponent{
-		Viewport:     vp,
-		Messages:     []string{"Welcome to Asimi CLI! Send a message to start chatting."},
-		Width:        width,
-		Height:       height,
-		AutoScroll:   true,  // Enable auto-scroll by default
-		UserScrolled: false, // User hasn't scrolled yet
+		Viewport:         vp,
+		Messages:         []string{"Welcome to Asimi CLI! Send a message to start chatting."},
+		Width:            width,
+		Height:           height,
+		AutoScroll:       true,  // Enable auto-scroll by default
+		UserScrolled:     false, // User hasn't scrolled yet
+		TouchStartY:      0,     // Initialize touch tracking
+		TouchDragging:    false,
+		TouchScrollSpeed: 3, // Lines to scroll per touch movement unit
 		Style: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#F4DB53")). // Terminal7 chat border
@@ -191,6 +199,38 @@ func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
 		case tea.MouseWheelDown:
 			c.Viewport.LineDown(1)
 			c.UserScrolled = true // User manually scrolled
+		case tea.MouseLeft:
+			// Start of touch/drag gesture
+			if msg.Action == tea.MouseActionPress {
+				c.TouchStartY = msg.Y
+				c.TouchDragging = true
+			} else if msg.Action == tea.MouseActionRelease {
+				c.TouchDragging = false
+			}
+		case tea.MouseMotion:
+			// Handle touch drag scrolling
+			if c.TouchDragging {
+				deltaY := c.TouchStartY - msg.Y
+				if deltaY != 0 {
+					// Calculate scroll amount based on delta
+					scrollLines := deltaY / c.TouchScrollSpeed
+					if scrollLines > 0 {
+						// Scroll down
+						for i := 0; i < scrollLines; i++ {
+							c.Viewport.LineDown(1)
+						}
+						c.UserScrolled = true
+					} else if scrollLines < 0 {
+						// Scroll up
+						for i := 0; i < -scrollLines; i++ {
+							c.Viewport.LineUp(1)
+						}
+						c.UserScrolled = true
+					}
+					// Update start position for next motion event
+					c.TouchStartY = msg.Y
+				}
+			}
 		}
 	case tea.KeyMsg:
 		// Track keyboard scrolling as well
