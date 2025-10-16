@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -18,7 +17,6 @@ const (
 	contextBarWidth          = 10
 	autocompactBufferRatio   = 0.225
 	memoryFileOverheadTokens = 20
-	defaultUnknownModelName  = "unknown"
 	defaultUnknownContextRef = 8192
 )
 
@@ -34,7 +32,7 @@ var extendedModelContextSizes = map[string]int{
 	"claude-3-5-haiku-latest":    200_000,
 	"claude-3-haiku-20240307":    200_000,
 	"claude-sonnet-4-5-20250929": 200_000,
-	
+
 	// Google Gemini models (not in langchaingo)
 	"gemini-1.5-flash":        1_000_000,
 	"gemini-1.5-flash-latest": 1_000_000,
@@ -91,51 +89,46 @@ func (s *Session) GetContextInfo() ContextInfo {
 
 // getModelName returns the configured model name when available, falling back to provider defaults.
 func (s *Session) getModelName() string {
-	if s.modelName != "" {
-		return s.modelName
+	if s.config != nil && s.config.Model != "" {
+		return s.config.Model
 	}
+	// TODO: Add a log Info message
+	return "Unknown"
 
-	switch s.provider {
-	case "anthropic":
-		return "claude-3-5-sonnet-latest"
-	case "openai":
-		return "gpt-4o"
-	case "googleai":
-		return "gemini-1.5-pro"
-	default:
-		return defaultUnknownModelName
-	}
 }
 
 // getModelContextSize returns the context window size for the current model.
 // First checks langchaingo's database (covers OpenAI models), then falls back to our extended list.
 func (s *Session) getModelContextSize() int {
 	modelName := s.getModelName()
-	
+
 	// First, try langchaingo's database (covers OpenAI models comprehensively)
 	if size := llms.GetModelContextSize(modelName); size > 2048 { // 2048 is langchaingo's default for unknown models
 		return size
 	}
-	
+
 	// Fall back to our extended database for non-OpenAI models
 	if size, ok := extendedModelContextSizes[strings.ToLower(modelName)]; ok && size > 0 {
 		return size
 	}
 
 	// Provider-based fallbacks
-	switch s.provider {
-	case "anthropic":
-		return 200_000
-	case "openai":
-		return 128_000  // Modern OpenAI default
-	case "googleai":
-		return 1_000_000
-	default:
-		return defaultUnknownContextRef
+	if s.config != nil {
+		switch strings.ToLower(s.config.Provider) {
+		case "anthropic":
+			return 200_000
+		case "openai":
+			return 128_000 // Modern OpenAI default
+		case "googleai":
+			return 1_000_000
+		}
 	}
+
+	return defaultUnknownContextRef
 }
 
 // CountSystemPromptTokens counts tokens in the system prompt.
+// This includes the base system prompt template (AGENTS.md is now in Memory files).
 func (s *Session) CountSystemPromptTokens() int {
 	if len(s.messages) == 0 {
 		return 0
@@ -170,6 +163,7 @@ func (s *Session) CountSystemToolsTokens() int {
 }
 
 // CountMemoryFilesTokens counts tokens in context files.
+// This includes AGENTS.md and any files dynamically added via AddContextFile().
 func (s *Session) CountMemoryFilesTokens() int {
 	if len(s.contextFiles) == 0 {
 		return 0
@@ -213,36 +207,16 @@ func (s *Session) CountMessagesTokens() int {
 	return totalTokens
 }
 
-// countTokens provides token counting with langchaingo for OpenAI models, 
+// countTokens provides token counting with langchaingo for OpenAI models,
 // falling back to estimation for other providers.
 func (s *Session) countTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	
-	modelName := s.getModelName()
-	
-	// Use langchaingo's accurate token counting for OpenAI models
-	if s.provider == "openai" {
-		return llms.CountTokens(modelName, text)
-	}
-	
-	// Fall back to our estimation for other providers
-	return estimateTokens(text)
-}
 
-// estimateTokens provides a rough token count estimate using a ~4 characters per token heuristic.
-// Used as fallback for non-OpenAI providers.
-func estimateTokens(text string) int {
-	if text == "" {
-		return 0
-	}
-	runes := utf8.RuneCountInString(text)
-	tokens := (runes + 3) / 4
-	if tokens < 1 {
-		tokens = 1
-	}
-	return tokens
+	modelName := s.getModelName()
+
+	return llms.CountTokens(modelName, text)
 }
 
 // renderContextInfo renders the context information as a formatted string.

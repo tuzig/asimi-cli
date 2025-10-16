@@ -22,9 +22,9 @@ type AnthropicModel struct {
 // AnthropicModelsResponse represents the response from /v1/models endpoint
 type AnthropicModelsResponse struct {
 	Data    []AnthropicModel `json:"data"`
-	FirstID string          `json:"first_id,omitempty"`
-	LastID  string          `json:"last_id,omitempty"`
-	HasMore bool            `json:"has_more"`
+	FirstID string           `json:"first_id,omitempty"`
+	LastID  string           `json:"last_id,omitempty"`
+	HasMore bool             `json:"has_more"`
 }
 
 // fetchAnthropicModels fetches available models from the Anthropic API

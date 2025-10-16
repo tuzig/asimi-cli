@@ -60,8 +60,10 @@ func TestGetContextInfo(t *testing.T) {
 	}
 
 	session := &Session{
-		provider:     "anthropic",
-		modelName:    "claude-3-5-sonnet-latest",
+		config: &LLMConfig{
+			Provider: "anthropic",
+			Model:    "claude-3-5-sonnet-latest",
+		},
 		messages:     []llms.MessageContent{system, user},
 		contextFiles: map[string]string{"file.txt": "abcd"},
 	}
@@ -105,8 +107,10 @@ func TestGetContextInfoWithOpenAI(t *testing.T) {
 	}
 
 	session := &Session{
-		provider:     "openai",
-		modelName:    "gpt-4o",
+		config: &LLMConfig{
+			Provider: "openai",
+			Model:    "gpt-4o",
+		},
 		messages:     []llms.MessageContent{system, user},
 		contextFiles: map[string]string{},
 	}
@@ -178,8 +182,10 @@ func TestHandleContextCommand(t *testing.T) {
 
 	t.Run("with session", func(t *testing.T) {
 		session := &Session{
-			provider:  "anthropic",
-			modelName: "claude-3-5-sonnet-latest",
+			config: &LLMConfig{
+				Provider: "anthropic",
+				Model:    "claude-3-5-sonnet-latest",
+			},
 			messages: []llms.MessageContent{
 				{
 					Role:  llms.ChatMessageTypeSystem,

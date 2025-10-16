@@ -33,6 +33,7 @@ var program *tea.Program
 var cli struct {
 	Version versionCmd `cmd:"version" help:"Print version information"`
 	Prompt  string     `short:"p" help:"Prompt to send to the agent"`
+	Debug   bool       `help:"Enable debug logging"`
 	Run     runCmd     `cmd:"" default:"1" help:"Run the interactive application"`
 }
 
@@ -56,9 +57,14 @@ func initLogger() {
 		Compress:   true,
 	}
 
-	// Set log level to DEBUG to see debug messages
+	// Set log level based on debug flag, default to INFO
+	logLevel := slog.LevelInfo
+	if cli.Debug {
+		logLevel = slog.LevelDebug
+	}
+
 	opts := &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: logLevel,
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(logFile, opts)))
 }
@@ -141,8 +147,8 @@ type responseMsg string
 type errMsg struct{ err error }
 
 func main() {
-	initLogger()
 	ctx := kong.Parse(&cli)
+	initLogger()
 
 	if cli.Prompt != "" {
 		// Non-interactive mode via native Session path

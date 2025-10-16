@@ -555,7 +555,7 @@ func (m *TUIModel) performOAuthLogin(provider string) tea.Cmd {
 
 		// Reinitialize LLM and session with new credentials
 		if err := m.reinitializeSession(); err != nil {
-			m.toastManager.AddToast("Failed to initialize AI session: " + err.Error(), "error", 5000)
+			m.toastManager.AddToast("Failed to initialize AI session: "+err.Error(), "error", 5000)
 			return showOauthFailed{err.Error()}
 		}
 
@@ -604,7 +604,7 @@ func (m *TUIModel) completeAnthropicOAuth(authCode, verifier string) tea.Cmd {
 
 		// Reinitialize LLM and session with new credentials
 		if err := m.reinitializeSession(); err != nil {
-			m.toastManager.AddToast("Failed to initialize AI session: " + err.Error(), "error", 5000)
+			m.toastManager.AddToast("Failed to initialize AI session: "+err.Error(), "error", 5000)
 			return showOauthFailed{err.Error()}
 		}
 
