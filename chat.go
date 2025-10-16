@@ -11,11 +11,13 @@ import (
 
 // ChatComponent represents the chat view
 type ChatComponent struct {
-	Viewport viewport.Model
-	Messages []string
-	Width    int
-	Height   int
-	Style    lipgloss.Style
+	Viewport         viewport.Model
+	Messages         []string
+	Width            int
+	Height           int
+	Style            lipgloss.Style
+	AutoScroll       bool // Track if auto-scrolling is enabled
+	UserScrolled     bool // Track if user has manually scrolled
 }
 
 // NewChatComponent creates a new chat component
@@ -24,10 +26,12 @@ func NewChatComponent(width, height int) ChatComponent {
 	vp.SetContent("Welcome to Asimi CLI! Send a message to start chatting.")
 
 	return ChatComponent{
-		Viewport: vp,
-		Messages: []string{"Welcome to Asimi CLI! Send a message to start chatting."},
-		Width:    width,
-		Height:   height,
+		Viewport:     vp,
+		Messages:     []string{"Welcome to Asimi CLI! Send a message to start chatting."},
+		Width:        width,
+		Height:       height,
+		AutoScroll:   true,  // Enable auto-scroll by default
+		UserScrolled: false, // User hasn't scrolled yet
 		Style: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).
@@ -56,6 +60,9 @@ func (c *ChatComponent) SetHeight(height int) {
 func (c *ChatComponent) AddMessage(message string) {
 	c.Messages = append(c.Messages, message)
 	c.UpdateContent()
+	// Reset auto-scroll when new message is added
+	c.AutoScroll = true
+	c.UserScrolled = false
 }
 
 // Replace last message
@@ -94,7 +101,11 @@ func (c *ChatComponent) UpdateContent() {
 	}
 	content := lipgloss.JoinVertical(lipgloss.Left, messageViews...)
 	c.Viewport.SetContent(content)
-	c.Viewport.GotoBottom()
+	
+	// Only auto-scroll if user hasn't manually scrolled
+	if c.AutoScroll && !c.UserScrolled {
+		c.Viewport.GotoBottom()
+	}
 }
 
 // Update handles messages for the chat component
@@ -105,8 +116,34 @@ func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
 		switch msg.Type {
 		case tea.MouseWheelUp:
 			c.Viewport.LineUp(1)
+			c.UserScrolled = true // User manually scrolled
 		case tea.MouseWheelDown:
 			c.Viewport.LineDown(1)
+			c.UserScrolled = true // User manually scrolled
+		}
+	case tea.KeyMsg:
+		// Track keyboard scrolling as well
+		switch msg.String() {
+		case "up", "k":
+			c.Viewport.LineUp(1)
+			c.UserScrolled = true
+		case "down", "j":
+			c.Viewport.LineDown(1)
+			c.UserScrolled = true
+		case "pgup":
+			c.Viewport.HalfViewUp()
+			c.UserScrolled = true
+		case "pgdown":
+			c.Viewport.HalfViewDown()
+			c.UserScrolled = true
+		case "home":
+			c.Viewport.GotoTop()
+			c.UserScrolled = true
+		case "end":
+			c.Viewport.GotoBottom()
+			// If user scrolls to bottom, re-enable auto-scroll
+			c.UserScrolled = false
+			c.AutoScroll = true
 		}
 	}
 	c.Viewport, cmd = c.Viewport.Update(msg)
