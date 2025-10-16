@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the asimi system prompt, support multi roles, including "Assistant", "Codfor asimi. Add the er", "Tester" and reviewer
 
 ### To be Implemented
+
+### Implementing
+### Done
 - Bug fix: when the user scrolls the chat window stop autoscrolling
 - Feature: display thinking
 - replace the color scheme with Terminal7's colors:
@@ -39,8 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 -- mid: <shorten git status> e.g, `[$!?]`
 -- right: <provider status icon><shorten provider and model. e.g. "Claude-4"
 - 
-- Support touch gesture for scrolling the chat 
-### Implementing
+- Support touch gesture for scrolling the chat
 ### Done
 - Move the log file in `~/.local/share/asimi/log` and prevent it from exploding by adding `gopkg.in/natefinch/lumberjack.v2`
 - Fix the /new command so it'll clear the context and not just the screen
