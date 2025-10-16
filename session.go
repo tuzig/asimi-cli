@@ -32,10 +32,6 @@ type Session struct {
 	toolCatalog map[string]lctools.Tool
 	// toolDefs are the LLM-facing tool/function definitions
 	toolDefs []llms.Tool
-	// provider indicates which LLM provider is in use (e.g., openai, anthropic, googleai)
-	provider string
-	// modelName stores the specific model identifier when available
-	modelName string
 
 	// Tool call loop detection
 	lastToolCallKey         string
@@ -54,7 +50,7 @@ type Session struct {
 	accumulatedContent strings.Builder
 
 	// Configuration
-	maxTurns int
+	config *LLMConfig
 }
 
 // resetStreamBuffer safely resets the accumulated content buffer
@@ -82,20 +78,19 @@ type streamMaxTokensReachedMsg struct{ content string }
 
 // Local copies of prompt partials and template used by the session, to decouple from agent.go.
 var sessPromptPartials = map[string]any{
-	"SandboxStatus":  "none",
-	"UserMemory":     "",
-	"ProjectContext": "",
-	"Env":            "",
-	"ReadFile":       "read_file",
-	"WriteFile":      "write_file",
-	"Grep":           "grep",
-	"Glob":           "glob",
-	"Edit":           "replace_text",
-	"Shell":          "run_shell_command",
-	"ReadManyFiles":  "read_many_files",
-	"Memory":         "",
-	"LS":             "list_files",
-	"history":        "",
+	"SandboxStatus": "none",
+	"UserMemory":    "",
+	"Env":           "",
+	"ReadFile":      "read_file",
+	"WriteFile":     "write_file",
+	"Grep":          "grep",
+	"Glob":          "glob",
+	"Edit":          "replace_text",
+	"Shell":         "run_shell_command",
+	"ReadManyFiles": "read_many_files",
+	"Memory":        "",
+	"LS":            "list_files",
+	"history":       "",
 }
 
 //go:embed prompts/system_prompt.tmpl
@@ -109,15 +104,16 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 		notify:      toolNotify,
 	}
 	if cfg != nil {
-		s.provider = strings.ToLower(cfg.LLM.Provider)
-		s.modelName = cfg.LLM.Model
-		// Set maxTurns from config, default to 50 if not configured
-		s.maxTurns = cfg.LLM.MaxTurns
-		if s.maxTurns <= 0 {
-			s.maxTurns = 50
+		s.config = &cfg.LLM
+		// Set default maxTurns if not configured
+		if s.config.MaxTurns <= 0 {
+			s.config.MaxTurns = 50
 		}
 	} else {
-		s.maxTurns = 50
+		// Create default config if none provided
+		s.config = &LLMConfig{
+			MaxTurns: 50,
+		}
 	}
 
 	// Build system prompt from the existing template and partials, same as the agent.
@@ -125,7 +121,6 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 	for k, v := range sessPromptPartials {
 		partials[k] = v
 	}
-	partials["ProjectContext"] = readProjectContext()
 	partials["Env"] = sessBuildEnvBlock()
 
 	pt := prompts.PromptTemplate{
@@ -141,7 +136,7 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 		return nil, fmt.Errorf("formatting system prompt: %w", err)
 	}
 	var parts []llms.ContentPart
-	if cfg != nil && cfg.LLM.Provider == "anthropic" {
+	if s.config != nil && s.config.Provider == "anthropic" {
 		parts = append(parts, llms.TextPart("You are Claude Code, Anthropic's official CLI for Claude."))
 	}
 	parts = append(parts, llms.TextPart(sys))
@@ -155,6 +150,12 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 	s.toolDefs, s.toolCatalog = buildLLMTools()
 	s.scheduler = NewCoreToolScheduler(s.notify)
 	s.contextFiles = make(map[string]string)
+
+	// Add AGENTS.md as a persistent context file if it exists
+	projectContext := readProjectContext()
+	if projectContext != "" {
+		s.contextFiles["AGENTS.md"] = projectContext
+	}
 	return s, nil
 }
 
@@ -163,12 +164,17 @@ func (s *Session) AddContextFile(path, content string) {
 	s.contextFiles[path] = content
 }
 
-// ClearContext removes all file content from the context
+// ClearContext removes all file content from the context except AGENTS.md
 func (s *Session) ClearContext() {
+	// Preserve AGENTS.md if it exists
+	agentsContent, hasAgents := s.contextFiles["AGENTS.md"]
 	s.contextFiles = make(map[string]string)
+	if hasAgents {
+		s.contextFiles["AGENTS.md"] = agentsContent
+	}
 }
 
-// ClearHistory clears the conversation history but keeps the system message
+// ClearHistory clears the conversation history but keeps the system message and AGENTS.md
 func (s *Session) ClearHistory() {
 	// Keep only the system message (first message)
 	if len(s.messages) > 0 && s.messages[0].Role == llms.ChatMessageTypeSystem {
@@ -181,7 +187,6 @@ func (s *Session) ClearHistory() {
 	s.lastToolCallKey = ""
 	s.toolCallRepetitionCount = 0
 
-	// Clear context files as well
 	s.ClearContext()
 }
 
@@ -378,7 +383,8 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 	var lastAssistant string
 	var hadAnyToolCall bool
 	var i int
-	for i = 0; i < s.maxTurns; i++ {
+	maxTurns := s.config.MaxTurns
+	for i = 0; i < maxTurns; i++ {
 		choice, err := s.generateLLMResponse(ctx, nil)
 		if err != nil {
 			return "", err
@@ -429,10 +435,10 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 		// No tool responses to send; break.
 		break
 	}
-	if i < s.maxTurns {
+	if i < maxTurns {
 		return finalText, nil
 	}
-	return fmt.Sprintf("%s\n\nEnded after %d interation", finalText, s.maxTurns), nil
+	return fmt.Sprintf("%s\n\nEnded after %d interation", finalText, maxTurns), nil
 }
 
 // AskStream sends a user prompt through the native loop with streaming support.
@@ -458,7 +464,8 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 		// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
 		// Cap at a few iterations to avoid infinite loops.
 		var i int
-		for i = 0; i < s.maxTurns; i++ {
+		maxTurns := s.config.MaxTurns
+		for i = 0; i < maxTurns; i++ {
 			s.resetStreamBuffer()
 
 			// Check for cancellation
@@ -560,8 +567,8 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 
 		// Check if we exceeded max turns and send appropriate notification
 		if s.notify != nil {
-			if i >= s.maxTurns {
-				s.notify(streamMaxTurnsExceededMsg{maxTurns: s.maxTurns})
+			if i >= maxTurns {
+				s.notify(streamMaxTurnsExceededMsg{maxTurns: maxTurns})
 			} else {
 				s.notify(streamCompleteMsg{})
 			}

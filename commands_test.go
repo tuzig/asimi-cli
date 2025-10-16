@@ -12,4 +12,3 @@ func TestCommandRegistryOrder(t *testing.T) {
 		t.Fatalf("expected first command to be /help, got %s", commands[0].Name)
 	}
 }
-

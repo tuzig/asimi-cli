@@ -251,7 +251,7 @@ func TestSession_ContextFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextFile1 := filepath.Join(tmpDir, "context1.txt")
 	contextFile2 := filepath.Join(tmpDir, "context2.txt")
-	
+
 	err := os.WriteFile(contextFile1, []byte("context file 1 content"), 0644)
 	assert.NoError(t, err)
 	err = os.WriteFile(contextFile2, []byte("context file 2 content"), 0644)
@@ -261,14 +261,17 @@ func TestSession_ContextFiles(t *testing.T) {
 	sess, err := NewSession(llm, &Config{}, func(any) {})
 	assert.NoError(t, err)
 
-	// Test HasContextFiles when empty
-	assert.False(t, sess.HasContextFiles())
+	// Test HasContextFiles - should be true if AGENTS.md exists, false otherwise
+	initialHasContext := sess.HasContextFiles()
+	initialFiles := sess.GetContextFiles()
+	initialCount := len(initialFiles)
+	// AGENTS.md may or may not be present depending on whether the file exists
 
 	// Add context files
 	content1, err := os.ReadFile(contextFile1)
 	assert.NoError(t, err)
 	sess.AddContextFile("context1.txt", string(content1))
-	
+
 	content2, err := os.ReadFile(contextFile2)
 	assert.NoError(t, err)
 	sess.AddContextFile("context2.txt", string(content2))
@@ -276,9 +279,9 @@ func TestSession_ContextFiles(t *testing.T) {
 	// Test HasContextFiles when files added
 	assert.True(t, sess.HasContextFiles())
 
-	// Test GetContextFiles
+	// Test GetContextFiles - should have initial count + 2 new files
 	contextFiles := sess.GetContextFiles()
-	assert.Len(t, contextFiles, 2)
+	assert.Len(t, contextFiles, initialCount+2)
 	assert.Equal(t, "context file 1 content", contextFiles["context1.txt"])
 	assert.Equal(t, "context file 2 content", contextFiles["context2.txt"])
 
@@ -287,14 +290,18 @@ func TestSession_ContextFiles(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, out, "CONTEXT:context1.txt,context2.txt")
 
-	// Verify context was cleared after Ask
-	assert.False(t, sess.HasContextFiles())
-	
-	// Test ClearContext explicitly
+	// Verify dynamically added context was cleared after Ask, but AGENTS.md persists
+	contextFiles = sess.GetContextFiles()
+	assert.Len(t, contextFiles, initialCount)
+	assert.Equal(t, initialHasContext, sess.HasContextFiles())
+
+	// Test ClearContext explicitly - should preserve AGENTS.md
 	sess.AddContextFile("test.txt", "test content")
 	assert.True(t, sess.HasContextFiles())
 	sess.ClearContext()
-	assert.False(t, sess.HasContextFiles())
+	assert.Equal(t, initialHasContext, sess.HasContextFiles())
+	contextFiles = sess.GetContextFiles()
+	assert.Len(t, contextFiles, initialCount)
 }
 
 // sessionMockLLMContext verifies that context files are included in prompts
@@ -337,7 +344,7 @@ func TestSession_MultipleToolCalls(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile1 := filepath.Join(tmpDir, "testdata1.txt")
 	testFile2 := filepath.Join(tmpDir, "testdata2.txt")
-	
+
 	err := os.WriteFile(testFile1, []byte("testdata1 content"), 0644)
 	assert.NoError(t, err)
 	err = os.WriteFile(testFile2, []byte("testdata2 content"), 0644)
