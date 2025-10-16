@@ -31,6 +31,7 @@ type Config struct {
 	Permission PermissionConfig `koanf:"permission"`
 	Hooks      HooksConfig      `koanf:"hooks"`
 	StatusLine StatusLineConfig `koanf:"statusline"`
+	Session    SessionConfig    `koanf:"session"`
 }
 
 // ServerConfig holds server configuration
@@ -132,6 +133,16 @@ type HooksConfig struct {
 type StatusLineConfig struct {
 	Enabled  bool   `koanf:"enabled"`
 	Template string `koanf:"template"`
+}
+
+// SessionConfig holds session persistence configuration
+type SessionConfig struct {
+	Enabled      bool `koanf:"enabled"`
+	MaxSessions  int  `koanf:"max_sessions"`
+	MaxAgeDays   int  `koanf:"max_age_days"`
+	ListLimit    int  `koanf:"list_limit"`
+	AutoSave     bool `koanf:"auto_save"`
+	SaveInterval int  `koanf:"save_interval"`
 }
 
 // LoadConfig loads configuration from multiple sources

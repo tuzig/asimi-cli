@@ -29,6 +29,7 @@ type TUIModel struct {
 	providerModal       *ProviderSelectionModal
 	codeInputModal      *CodeInputModal
 	modelSelectionModal *ModelSelectionModal
+	sessionModal        *SessionSelectionModal
 
 	// UI Flags & State
 	showCompletionDialog bool
@@ -136,6 +137,38 @@ func (m *TUIModel) reinitializeSession() error {
 	return nil
 }
 
+func (m *TUIModel) saveSession() {
+	if m.session == nil || m.config == nil {
+		return
+	}
+
+	if !m.config.Session.Enabled || !m.config.Session.AutoSave {
+		return
+	}
+
+	maxSessions := 50
+	maxAgeDays := 30
+	if m.config.Session.MaxSessions > 0 {
+		maxSessions = m.config.Session.MaxSessions
+	}
+	if m.config.Session.MaxAgeDays > 0 {
+		maxAgeDays = m.config.Session.MaxAgeDays
+	}
+
+	store, err := NewSessionStore(maxSessions, maxAgeDays)
+	if err != nil {
+		slog.Error("failed to create session store for auto-save", "error", err)
+		return
+	}
+
+	err = store.SaveSession(m.session, m.config.LLM.Provider, m.config.LLM.Model)
+	if err != nil {
+		slog.Error("failed to auto-save session", "error", err)
+	} else {
+		slog.Debug("session auto-saved")
+	}
+}
+
 // Init implements bubbletea.Model
 func (m TUIModel) Init() tea.Cmd {
 	// Initialize the TUI
@@ -177,6 +210,10 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle modals first (they need to handle their own escape keys)
+	if m.sessionModal != nil {
+		m.sessionModal, cmd = m.sessionModal.Update(msg)
+		return m, cmd
+	}
 	if m.modelSelectionModal != nil {
 		m.modelSelectionModal, cmd = m.modelSelectionModal.Update(msg)
 		return m, cmd
@@ -485,11 +522,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case streamCompleteMsg:
-		// Streaming is complete, mark session as inactive
 		m.addToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(m.chat.Messages))
 		m.streamingActive = false
 		m.streamingCancel = nil
+		m.saveSession()
 
 	case streamInterruptedMsg:
 		// Streaming was interrupted by user
@@ -574,6 +611,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerModal = nil
 		m.codeInputModal = nil
 		m.modelSelectionModal = nil
+		m.sessionModal = nil
 		m.toastManager.AddToast("Cancelled", "info", 2000)
 
 	case authCodeEnteredMsg:
@@ -620,6 +658,40 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modelSelectionModal != nil {
 			m.modelSelectionModal.SetError(msg.error)
 		}
+
+	case sessionsLoadedMsg:
+		m.sessionModal = NewSessionSelectionModal()
+		m.sessionModal.SetSessions(msg.sessions)
+
+	case sessionSelectedMsg:
+		m.sessionModal = nil
+		if msg.sessionData != nil {
+			if m.session != nil {
+				m.session.messages = msg.sessionData.Messages
+				m.session.contextFiles = msg.sessionData.ContextFiles
+			}
+			m.chat = NewChatComponent(m.chat.Width, m.chat.Height)
+			for _, msgContent := range msg.sessionData.Messages {
+				if msgContent.Role == "user" || msgContent.Role == "assistant" {
+					for _, part := range msgContent.Parts {
+						if textPart, ok := part.(llms.TextContent); ok {
+							prefix := "You: "
+							if msgContent.Role == "assistant" {
+								prefix = "AI: "
+							}
+							m.chat.AddMessage(prefix + string(textPart))
+						}
+					}
+				}
+			}
+			m.sessionActive = true
+			timeStr := formatRelativeTime(msg.sessionData.Metadata.LastUpdated)
+			m.toastManager.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
+		}
+
+	case sessionResumeErrorMsg:
+		m.sessionModal = nil
+		m.toastManager.AddToast(fmt.Sprintf("Failed to resume session: %v", msg.err), "error", 4000)
 	}
 
 	m.chat, _ = m.chat.Update(msg)
@@ -792,6 +864,12 @@ func (m TUIModel) View() string {
 	// Add model selection modal if active (takes priority over other modals)
 	if m.modelSelectionModal != nil {
 		modalView := m.modelSelectionModal.Render()
+		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
+	}
+
+	// Add session selection modal if active (takes priority over other modals)
+	if m.sessionModal != nil {
+		modalView := m.sessionModal.Render()
 		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
 	}
 

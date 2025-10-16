@@ -30,6 +30,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("/login", "Login with OAuth provider selection", handleLoginCommand)
 	registry.RegisterCommand("/models", "Select AI model", handleModelsCommand)
 	registry.RegisterCommand("/context", "Show context usage details", handleContextCommand)
+	registry.RegisterCommand("/resume", "Resume a previous session", handleResumeCommand)
 
 	return registry
 }
@@ -105,5 +106,44 @@ func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 		info := model.session.GetContextInfo()
 		return showContextMsg{content: renderContextInfo(info)}
+	}
+}
+
+func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
+	return func() tea.Msg {
+		config, err := LoadConfig()
+		if err != nil {
+			return sessionResumeErrorMsg{err: err}
+		}
+
+		if !config.Session.Enabled {
+			return showContextMsg{content: "Session resume is disabled in configuration."}
+		}
+
+		maxSessions := 50
+		maxAgeDays := 30
+		listLimit := 10
+
+		if config.Session.MaxSessions > 0 {
+			maxSessions = config.Session.MaxSessions
+		}
+		if config.Session.MaxAgeDays > 0 {
+			maxAgeDays = config.Session.MaxAgeDays
+		}
+		if config.Session.ListLimit > 0 {
+			listLimit = config.Session.ListLimit
+		}
+
+		store, err := NewSessionStore(maxSessions, maxAgeDays)
+		if err != nil {
+			return sessionResumeErrorMsg{err: err}
+		}
+
+		sessions, err := store.ListSessions(listLimit)
+		if err != nil {
+			return sessionResumeErrorMsg{err: err}
+		}
+
+		return sessionsLoadedMsg{sessions: sessions}
 	}
 }
