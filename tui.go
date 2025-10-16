@@ -20,11 +20,11 @@ type TUIModel struct {
 	theme         *Theme // Add theme here
 
 	// UI Components
-	status         StatusComponent
-	prompt         PromptComponent
-	chat           ChatComponent
-	completions    CompletionDialog
-	toastManager   ToastManager
+	status              StatusComponent
+	prompt              PromptComponent
+	chat                ChatComponent
+	completions         CompletionDialog
+	toastManager        ToastManager
 	modal               *BaseModal
 	providerModal       *ProviderSelectionModal
 	codeInputModal      *CodeInputModal
@@ -34,7 +34,7 @@ type TUIModel struct {
 	showCompletionDialog bool
 	completionMode       string // "file" or "command"
 	sessionActive        bool
-	rawMode              bool   // Toggle between chat and raw session view
+	rawMode              bool // Toggle between chat and raw session view
 
 	// Streaming state
 	streamingActive bool
@@ -366,12 +366,7 @@ func (m TUIModel) handleSlashKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Show completion dialog with commands
 		m.showCompletionDialog = true
 		m.completionMode = "command"
-		var commandNames []string
-		for name := range m.commandRegistry.Commands {
-			commandNames = append(commandNames, name)
-		}
-		sort.Strings(commandNames)
-		m.completions.SetOptions(commandNames)
+		m.completions.SetOptions(append([]string(nil), m.commandRegistry.order...))
 		m.completions.Show()
 	} else {
 		m.prompt, _ = m.prompt.Update(msg)
@@ -478,13 +473,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamChunkMsg:
 		// For the first chunk, add a new AI message. For subsequent chunks, append to the last message.
 		m.addToRawHistory("STREAM_CHUNK", string(msg))
-		slog.Debug("streamChunkMsg", "messages_count", len(m.chat.Messages), "chunk", string(msg))
 		if len(m.chat.Messages) == 0 || !strings.HasPrefix(m.chat.Messages[len(m.chat.Messages)-1], "AI:") {
 			m.chat.AddMessage(fmt.Sprintf("AI: %s", string(msg)))
-			slog.Info("added_new_message", "total_messages", len(m.chat.Messages))
+			slog.Debug("added_new_message", "total_messages", len(m.chat.Messages))
 		} else {
 			m.chat.AppendToLastMessage(string(msg))
-			slog.Info("appended_to_last_message", "total_messages", len(m.chat.Messages))
+			slog.Debug("appended_to_last_message", "total_messages", len(m.chat.Messages))
 		}
 
 	case streamCompleteMsg:
@@ -533,6 +527,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.AddMessage(helpText)
 		m.sessionActive = true
 
+	case showContextMsg:
+		m.addToRawHistory("CONTEXT", msg.content)
+		m.chat.AddMessage(msg.content)
+		m.sessionActive = true
+
 	case providerSelectedMsg:
 		m.providerModal = nil
 		provider := msg.provider.Key
@@ -560,6 +559,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Other providers use the standard OAuth flow
 			return m, m.performOAuthLogin(provider)
 		}
+
+	case showOauthFailed:
+		m.addToRawHistory("OAUTH_ERROR", msg.err)
+		errToast := fmt.Sprintf("OAuth failed: %s", msg.err)
+		m.toastManager.AddToast(errToast, "error", 4000)
+		m.chat.AddMessage(errToast)
+		m.sessionActive = false
 
 	case modalCancelledMsg:
 		m.providerModal = nil
@@ -683,15 +689,12 @@ func (m *TUIModel) updateCommandCompletions() {
 
 	// Get all command names and filter them
 	var filteredCommands []string
-	for name := range m.commandRegistry.Commands {
+	for _, name := range m.commandRegistry.order {
 		// Check if the command starts with the search query
 		if strings.HasPrefix(strings.ToLower(name[1:]), searchQuery) { // name already includes "/"
 			filteredCommands = append(filteredCommands, name)
 		}
 	}
-
-	// Sort the filtered commands
-	sort.Strings(filteredCommands)
 
 	m.completions.SetOptions(filteredCommands)
 }

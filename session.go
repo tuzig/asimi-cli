@@ -34,6 +34,8 @@ type Session struct {
 	toolDefs []llms.Tool
 	// provider indicates which LLM provider is in use (e.g., openai, anthropic, googleai)
 	provider string
+	// modelName stores the specific model identifier when available
+	modelName string
 
 	// Tool call loop detection
 	lastToolCallKey         string
@@ -108,6 +110,7 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 	}
 	if cfg != nil {
 		s.provider = strings.ToLower(cfg.LLM.Provider)
+		s.modelName = cfg.LLM.Model
 		// Set maxTurns from config, default to 50 if not configured
 		s.maxTurns = cfg.LLM.MaxTurns
 		if s.maxTurns <= 0 {

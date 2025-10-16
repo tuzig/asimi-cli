@@ -18,4 +18,4 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 
 ## TODOs
 
-The tasks to plan and to implement are in CHANGELOG.md . Please Update this file when you're finished planning or implementing. 
+The tasks to plan and to implement are defined in the `Unreleased` section of CHANGELOG.md . Please Update this file when you're finished planning or implementing.
