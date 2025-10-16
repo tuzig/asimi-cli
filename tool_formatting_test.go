@@ -94,17 +94,17 @@ func TestFormatToolCallLongCommand(t *testing.T) {
 	longCommand := "this is a very long command that should be truncated because it exceeds the limit"
 	input := `{"command": "` + longCommand + `", "description": "test"}`
 	result := formatToolCall("run_shell_command", input, `{"exitCode":0}`, nil)
-	
+
 	lines := strings.Split(result, "\n")
 	if len(lines) != 2 {
 		t.Fatalf("Expected 2 lines, got %d", len(lines))
 	}
-	
+
 	// Check that the command was truncated
 	if !strings.Contains(lines[0], "...") {
 		t.Errorf("Expected command to be truncated with '...', got: %s", lines[0])
 	}
-	
+
 	// Check that the truncated part is around 50 characters
 	if len(lines[0]) > 80 { // Allow some buffer for the prefix and formatting
 		t.Errorf("Command line too long after truncation: %s", lines[0])
