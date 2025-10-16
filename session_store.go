@@ -100,7 +100,7 @@ func (s *SessionStore) SaveSession(session *Session, provider, model string) err
 		if msg.Role == llms.ChatMessageTypeHuman {
 			for _, part := range msg.Parts {
 				if textPart, ok := part.(llms.TextContent); ok {
-					firstPrompt = string(textPart)
+					firstPrompt = textPart.Text
 					break
 				}
 			}

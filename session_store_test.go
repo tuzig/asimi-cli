@@ -23,13 +23,13 @@ func TestSessionStore_SaveAndLoad(t *testing.T) {
 			{
 				Role: llms.ChatMessageTypeHuman,
 				Parts: []llms.ContentPart{
-					llms.TextContent("Hello, world!"),
+					llms.TextContent{Text: "Hello, world!"},
 				},
 			},
 			{
 				Role: llms.ChatMessageTypeAI,
 				Parts: []llms.ContentPart{
-					llms.TextContent("Hi there!"),
+					llms.TextContent{Text: "Hi there!"},
 				},
 			},
 		},
@@ -84,7 +84,7 @@ func TestSessionStore_EmptySession(t *testing.T) {
 			{
 				Role: llms.ChatMessageTypeSystem,
 				Parts: []llms.ContentPart{
-					llms.TextContent("System prompt"),
+					llms.TextContent{Text: "System prompt"},
 				},
 			},
 		},
@@ -121,7 +121,7 @@ func TestSessionStore_Cleanup(t *testing.T) {
 				{
 					Role: llms.ChatMessageTypeHuman,
 					Parts: []llms.ContentPart{
-						llms.TextContent("Message " + string(rune('0'+i))),
+						llms.TextContent{Text: "Message " + string(rune('0'+i))},
 					},
 				},
 			},
@@ -165,7 +165,7 @@ func TestSessionStore_ListSessionsLimit(t *testing.T) {
 				{
 					Role: llms.ChatMessageTypeHuman,
 					Parts: []llms.ContentPart{
-						llms.TextContent("Message " + string(rune('0'+i))),
+						llms.TextContent{Text: "Message " + string(rune('0'+i))},
 					},
 				},
 			},

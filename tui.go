@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/tmc/langchaingo/llms"
 )
 
 // TUIModel represents the bubbletea model for the TUI
@@ -679,7 +680,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 							if msgContent.Role == "assistant" {
 								prefix = "AI: "
 							}
-							m.chat.AddMessage(prefix + string(textPart))
+							m.chat.AddMessage(prefix + textPart.Text)
 						}
 					}
 				}
