@@ -20,7 +20,6 @@ func NewStatusComponent(width int) StatusComponent {
 	return StatusComponent{
 		Width: width,
 		Style: lipgloss.NewStyle().
-			Background(lipgloss.Color("#271D30")). // Terminal7 prompt background
 			Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
 			Padding(0, 1).
 			Width(width),
