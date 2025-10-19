@@ -5,30 +5,39 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/reflow/wordwrap"
 )
 
 // ChatComponent represents the chat view
 type ChatComponent struct {
-	Viewport         viewport.Model
-	Messages         []string
-	Width            int
-	Height           int
-	Style            lipgloss.Style
-	AutoScroll       bool // Track if auto-scrolling is enabled
-	UserScrolled     bool // Track if user has manually scrolled
-	
+	Viewport     viewport.Model
+	Messages     []string
+	Width        int
+	Height       int
+	Style        lipgloss.Style
+	AutoScroll   bool // Track if auto-scrolling is enabled
+	UserScrolled bool // Track if user has manually scrolled
+
 	// Touch gesture support
 	TouchStartY      int  // Y coordinate where touch/drag started
 	TouchDragging    bool // Whether we're currently in a touch drag
 	TouchScrollSpeed int  // Sensitivity for touch scrolling
+
+	// Markdown rendering
+	markdownRenderer *glamour.TermRenderer
 }
 
 // NewChatComponent creates a new chat component
 func NewChatComponent(width, height int) ChatComponent {
 	vp := viewport.New(width, height)
 	vp.SetContent("Welcome to Asimi CLI! Send a message to start chatting.")
+
+	renderer, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width-4),
+	)
 
 	return ChatComponent{
 		Viewport:         vp,
@@ -40,6 +49,7 @@ func NewChatComponent(width, height int) ChatComponent {
 		TouchStartY:      0,     // Initialize touch tracking
 		TouchDragging:    false,
 		TouchScrollSpeed: 3, // Lines to scroll per touch movement unit
+		markdownRenderer: renderer,
 		Style: lipgloss.NewStyle().
 			Background(lipgloss.Color("#11051E")). // Terminal7 chat background
 			Width(width).
@@ -52,6 +62,15 @@ func (c *ChatComponent) SetWidth(width int) {
 	c.Width = width
 	c.Style = c.Style.Width(width)
 	c.Viewport.Width = width
+
+	// Update markdown renderer width
+	if c.markdownRenderer != nil {
+		c.markdownRenderer, _ = glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(width-4),
+		)
+	}
+
 	c.UpdateContent()
 }
 
@@ -93,12 +112,12 @@ func (c *ChatComponent) UpdateContent() {
 	var messageViews []string
 	for _, message := range c.Messages {
 		var messageStyle lipgloss.Style
-		
+
 		// Check if this is a thinking message
 		if strings.Contains(message, "<thinking>") && strings.Contains(message, "</thinking>") {
 			// Extract thinking content and regular content
 			thinkingContent, regularContent := extractThinkingContent(message)
-			
+
 			// Style thinking content differently
 			if thinkingContent != "" {
 				thinkingStyle := lipgloss.NewStyle().
@@ -107,24 +126,15 @@ func (c *ChatComponent) UpdateContent() {
 					Padding(0, 1).
 					Border(lipgloss.RoundedBorder()).
 					BorderForeground(lipgloss.Color("#373702")) // Terminal7 dark border
-				
+
 				wrappedThinking := wordwrap.String("💭 Thinking: "+thinkingContent, c.Width-4)
 				messageViews = append(messageViews, thinkingStyle.Render(wrappedThinking))
 			}
-			
+
 			// Style regular content normally if present
 			if regularContent != "" {
-				if strings.HasPrefix(regularContent, "You:") {
-					messageStyle = lipgloss.NewStyle().
-						Foreground(lipgloss.Color("#F952F9")). // Terminal7 prompt border
-						Padding(0, 1)
-				} else {
-					messageStyle = lipgloss.NewStyle().
-						Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
-						Padding(0, 1)
-				}
-				messageViews = append(messageViews,
-					messageStyle.Render(wordwrap.String(regularContent, c.Width)))
+				// Render AI messages with markdown
+				messageViews = append(messageViews, c.renderMarkdown(regularContent))
 			}
 		} else {
 			// Regular message styling
@@ -132,22 +142,52 @@ func (c *ChatComponent) UpdateContent() {
 				messageStyle = lipgloss.NewStyle().
 					Foreground(lipgloss.Color("#F952F9")). // Terminal7 prompt border
 					Padding(0, 1)
+				messageViews = append(messageViews,
+					messageStyle.Render(wordwrap.String(message, c.Width)))
+			} else if strings.HasPrefix(message, "AI:") {
+				// Render AI messages with markdown
+				// Remove "AI: " prefix for markdown rendering
+				content := strings.TrimPrefix(message, "AI: ")
+				rendered := c.renderMarkdown(content)
+				// Add "AI: " prefix back with styling
+				aiPrefix := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
+					Bold(true).
+					Render("AI: ")
+				messageViews = append(messageViews, aiPrefix+"\n"+rendered)
 			} else {
+				// Other messages (system, tool calls, etc.)
 				messageStyle = lipgloss.NewStyle().
 					Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
 					Padding(0, 1)
+				messageViews = append(messageViews,
+					messageStyle.Render(wordwrap.String(message, c.Width)))
 			}
-			messageViews = append(messageViews,
-				messageStyle.Render(wordwrap.String(message, c.Width)))
 		}
 	}
 	content := lipgloss.JoinVertical(lipgloss.Left, messageViews...)
 	c.Viewport.SetContent(content)
-	
+
 	// Only auto-scroll if user hasn't manually scrolled
 	if c.AutoScroll && !c.UserScrolled {
 		c.Viewport.GotoBottom()
 	}
+}
+
+// renderMarkdown renders markdown content with glamour
+func (c *ChatComponent) renderMarkdown(content string) string {
+	if c.markdownRenderer == nil {
+		// Fallback to plain text if renderer is not available
+		return content
+	}
+
+	rendered, err := c.markdownRenderer.Render(content)
+	if err != nil {
+		// Fallback to plain text on error
+		return content
+	}
+
+	return strings.TrimSpace(rendered)
 }
 
 // extractThinkingContent separates thinking content from regular content
@@ -155,25 +195,25 @@ func extractThinkingContent(message string) (thinking, regular string) {
 	// Find thinking tags
 	startTag := "<thinking>"
 	endTag := "</thinking>"
-	
+
 	startIdx := strings.Index(message, startTag)
 	if startIdx == -1 {
 		return "", message
 	}
-	
+
 	endIdx := strings.Index(message, endTag)
 	if endIdx == -1 {
 		return "", message
 	}
-	
+
 	// Extract thinking content
 	thinkingStart := startIdx + len(startTag)
 	thinking = strings.TrimSpace(message[thinkingStart:endIdx])
-	
+
 	// Extract regular content (before and after thinking)
 	before := strings.TrimSpace(message[:startIdx])
 	after := strings.TrimSpace(message[endIdx+len(endTag):])
-	
+
 	if before != "" && after != "" {
 		regular = before + "\n\n" + after
 	} else if before != "" {
@@ -181,7 +221,7 @@ func extractThinkingContent(message string) (thinking, regular string) {
 	} else {
 		regular = after
 	}
-	
+
 	return thinking, regular
 }
 

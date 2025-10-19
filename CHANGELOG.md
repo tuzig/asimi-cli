@@ -15,11 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### To be Implemented
 
-- Add markdown styling to the chat window. e.g, instead of `**bold**` renders `bold` in bold face.
 - support CTRL-Z for sending asimi to work in the background. Print a message telling the user "Asimi will be running in the bcbground now. Use `fg` to restore"
 
 ### Implementing
 ### Done
+- Add markdown styling to the chat window using glamour library. AI messages now render markdown with proper formatting (bold, italic, code blocks, etc.)
 - Bug fix: when the user scrolls the chat window stop autoscrolling
 - Feature: display thinking
 - replace the color scheme with Terminal7's colors:
