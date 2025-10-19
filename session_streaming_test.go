@@ -117,8 +117,8 @@ func TestChatComponent_AppendToLastMessage(t *testing.T) {
 	assert.Contains(t, chat.Messages[0], "Additional text More text")
 
 	// Add a new message and append to it
-	chat.AddMessage("AI: ")
+	chat.AddMessage("Asimi: ")
 	chat.AppendToLastMessage("This is streaming")
 	assert.Equal(t, 2, len(chat.Messages))
-	assert.Equal(t, "AI: This is streaming", chat.Messages[1])
+	assert.Equal(t, "Asimi: This is streaming", chat.Messages[1])
 }

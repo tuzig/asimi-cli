@@ -97,6 +97,18 @@ func (c *ChatComponent) ReplaceLastMessage(message string) {
 	c.UpdateContent()
 }
 
+// TruncateTo keeps only the first count messages and refreshes the viewport
+func (c *ChatComponent) TruncateTo(count int) {
+	if count < 0 {
+		count = 0
+	}
+	if count > len(c.Messages) {
+		count = len(c.Messages)
+	}
+	c.Messages = append([]string(nil), c.Messages[:count]...)
+	c.UpdateContent()
+}
+
 // AppendToLastMessage appends text to the last message (for streaming)
 func (c *ChatComponent) AppendToLastMessage(text string) {
 	if len(c.Messages) == 0 {
@@ -144,17 +156,17 @@ func (c *ChatComponent) UpdateContent() {
 					Padding(0, 1)
 				messageViews = append(messageViews,
 					messageStyle.Render(wordwrap.String(message, c.Width)))
-			} else if strings.HasPrefix(message, "AI:") {
+			} else if strings.HasPrefix(message, "Asimi:") {
 				// Render AI messages with markdown
-				// Remove "AI: " prefix for markdown rendering
-				content := strings.TrimPrefix(message, "AI: ")
+				// Remove "Asimi: " prefix for markdown rendering
+				content := strings.TrimPrefix(message, "Asimi: ")
 				rendered := c.renderMarkdown(content)
-				// Add "AI: " prefix back with styling
-				aiPrefix := lipgloss.NewStyle().
+				// Add "Asimi: " prefix back with styling
+				asimiPrefix := lipgloss.NewStyle().
 					Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
 					Bold(true).
-					Render("AI: ")
-				messageViews = append(messageViews, aiPrefix+"\n"+rendered)
+					Render("Asimi: ")
+				messageViews = append(messageViews, asimiPrefix+"\n"+rendered)
 			} else {
 				// Other messages (system, tool calls, etc.)
 				messageStyle = lipgloss.NewStyle().

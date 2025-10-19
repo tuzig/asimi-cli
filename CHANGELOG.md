@@ -14,27 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gracefully handle HTTP 429 errors from the model
 
 ### To be Implemented
-- Fix a bug with tool activation reporting:
-
-```log
- LLM Error: anthropic: failed to create message: API returned unexpected status code: 400:        
- messages.49: `tool_use` ids were found without `tool_result` blocks immediately after:           
- toolu_01JNAAFov6G9zFwMXkPAtR5m. Each `tool_use` block must have a corresponding `tool_result`    
- block in the next message.                                                                       
- LLM Error: anthropic: failed to create message: API returned unexpected status code: 400:        
- messages.49: `tool_use` ids were found without `tool_result` blocks immediately after:           
- toolu_01JNAAFov6G9zFwMXkPAtR5m. Each `tool_use` block must have a corresponding `tool_result`    
- block in the next message
- ```
-
-- replase "AI:" in the chat window with "Asimi:"
-- Add a waiting seconds count on the status bar to the right of the session age. Should appear when waiting for a models reply for over 3 seconds and count the seconds till the responce arives
-- bug fix: in the chat window, when rendering tool activation the status icon remains `○` and not turns to a full circle when execution completes
-- support arrow keys when prompt editing, allowing to edit old messages and rolling back the conversation
+- *(none)*
 
 ### Implementing
 
 ### Done
+- Fixed arrow key history navigation to only trigger when cursor is on the first line (up arrow) or last line (down arrow), allowing proper multi-line editing in the prompt
+- Fixed tool activation reporting so every `tool_use` is followed by a matching `tool_result`, preventing Anthropic 400 errors and keeping execution logs consistent.
+- Tool activation messages now swap the hollow status icon for a filled indicator on success and show assistant replies with the `Asimi:` prefix in the chat window.
+- Added a status bar wait timer that appears after three seconds of silence and counts how long we have been waiting for the next model response.
+- Arrow keys now browse prompt history, letting you roll back the conversation to earlier prompts, edit them, and resend without losing context.
 - Help command output now shows the active command leader (`:` in vi mode, `/` otherwise) so users always see the correct prefix for commands
 - Vi mode submode indicator now lives in the status bar instead of beneath the prompt, reducing prompt clutter while still showing `-- INSERT --`, `-- NORMAL --`, etc.
 - Vi mode Command-line mode now uses normal (non-vi) editing keybindings, making it behave like when vi mode is disabled. This allows for easier command editing with standard keybindings (arrow keys, backspace, etc.)
