@@ -276,7 +276,7 @@ func (m TUIModel) handleToggleRawMode() (tea.Model, tea.Cmd) {
 // handleViNormalMode handles key presses when in vi normal or visual mode
 func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-
+	
 	// Handle mode switching keys
 	switch key {
 	case "i":
@@ -344,7 +344,7 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleViCommandLineMode handles key presses when in vi command-line mode
 func (m TUIModel) handleViCommandLineMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-
+	
 	switch key {
 	case "enter":
 		// Execute the command and return to insert mode
@@ -409,7 +409,7 @@ func (m TUIModel) handleCtrlZ() (tea.Model, tea.Cmd) {
 // handleEscape handles the escape key
 func (m TUIModel) handleEscape() (tea.Model, tea.Cmd) {
 	// Note: vi insert mode escape is handled earlier in handleKeyMsg
-
+	
 	// Check if streaming is active first - cancel streaming via context
 	if m.streamingActive && m.streamingCancel != nil {
 		slog.Info("escape_during_streaming", "cancelling_context", true)
@@ -921,7 +921,7 @@ func (m *TUIModel) updateCommandCompletions() {
 	// Determine if we're using vi mode colon commands or regular slash commands
 	var prefix string
 	var searchQuery string
-
+	
 	if strings.HasPrefix(inputValue, "/") {
 		prefix = "/"
 		searchQuery = strings.ToLower(inputValue[1:])
@@ -939,7 +939,7 @@ func (m *TUIModel) updateCommandCompletions() {
 	for _, name := range m.commandRegistry.order {
 		// name is stored with "/" prefix, so we need to check against the command part
 		cmdName := strings.TrimPrefix(name, "/")
-
+		
 		// Check if the command starts with the search query
 		if strings.HasPrefix(strings.ToLower(cmdName), searchQuery) {
 			// Format the command with the appropriate prefix for display
@@ -990,10 +990,6 @@ func (m TUIModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "Initializing..."
 	}
-
-	// Update status with current vi mode info before rendering
-	viEnabled, viMode, viPending := m.prompt.ViModeStatus()
-	m.status.SetViMode(viEnabled, viMode, viPending)
 
 	// Render the appropriate view based on current mode
 	var mainContent string

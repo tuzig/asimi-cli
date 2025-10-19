@@ -703,16 +703,3 @@ func TestShowHelpMsgUsesActiveLeader(t *testing.T) {
 	require.Contains(t, slashHelp, "Active command leader: /")
 	require.Contains(t, slashHelp, "/help - Show help information")
 }
-
-func TestViModeIndicatorAppearsInStatusBar(t *testing.T) {
-	model := NewTUIModel(mockConfig())
-	model.prompt.SetViMode(true)
-
-	promptView := model.prompt.View()
-	require.NotContains(t, promptView, "-- INSERT --")
-
-	enabled, mode, pending := model.prompt.ViModeStatus()
-	model.status.SetViMode(enabled, mode, pending)
-	statusView := model.status.View()
-	require.Contains(t, statusView, "-- INSERT --")
-}
