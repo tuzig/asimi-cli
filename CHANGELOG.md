@@ -14,13 +14,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gracefully handle HTTP 429 errors from the model
 
 ### To be Implemented
+- Fix a bug with tool activation reporting:
 
-- support CTRL-Z for sending asimi to work in the background. Print a message telling the user "Asimi will be running in the bcbground now. Use `fg` to restore"
+```log
+ LLM Error: anthropic: failed to create message: API returned unexpected status code: 400:        
+ messages.49: `tool_use` ids were found without `tool_result` blocks immediately after:           
+ toolu_01JNAAFov6G9zFwMXkPAtR5m. Each `tool_use` block must have a corresponding `tool_result`    
+ block in the next message.                                                                       
+ LLM Error: anthropic: failed to create message: API returned unexpected status code: 400:        
+ messages.49: `tool_use` ids were found without `tool_result` blocks immediately after:           
+ toolu_01JNAAFov6G9zFwMXkPAtR5m. Each `tool_use` block must have a corresponding `tool_result`    
+ block in the next message
+ ```
+
+- replase "AI:" in the chat window with "Asimi:"
+- Add a waiting seconds count on the status bar to the right of the session age. Should appear when waiting for a models reply for over 3 seconds and count the seconds till the responce arives
+- bug fix: in the chat window, when rendering tool activation the status icon remains `○` and not turns to a full circle when execution completes
+- support arrow keys when prompt editing, allowing to edit old messages and rolling back the conversation
 
 ### Implementing
+
 ### Done
+- Help command output now shows the active command leader (`:` in vi mode, `/` otherwise) so users always see the correct prefix for commands
+- Vi mode submode indicator now lives in the status bar instead of beneath the prompt, reducing prompt clutter while still showing `-- INSERT --`, `-- NORMAL --`, etc.
+- Vi mode Command-line mode now uses normal (non-vi) editing keybindings, making it behave like when vi mode is disabled. This allows for easier command editing with standard keybindings (arrow keys, backspace, etc.)
+- Fixed command completion dialog to work with both `/` and `:` prefixes. When typing `:` in vi mode, the completion dialog now properly filters and displays commands with the `:` prefix, and updates as you type
+- Pressing `:` in vi normal mode now shows the completion dialog immediately with all available commands
+- Add configuration option `vi_mode` to disable vi mode (default: enabled). Can be set in config file with `vi_mode = false` under `[llm]` section or via environment variable `ASIMI_LLM_VI_MODE=false`
+- Implementing proper modal vi mode with insert and normal modes. Press `Esc` to switch from insert to normal mode, and `i`, `a`, `I`, `A`, `o`, `O` to enter insert mode. Visual indicators show current mode: green border for insert mode (-- INSERT --), yellow border for normal mode (-- NORMAL --). Vi normal mode supports navigation keys (h/j/k/l, w/b, 0/$, gg/G) and editing commands (x, d, D). Commands can be entered with `:` in vi mode
 - Add markdown styling to the chat window using glamour library. AI messages now render markdown with proper formatting (bold, italic, code blocks, etc.)
+- Support CTRL-Z for sending asimi to work in the background. Displays message "Asimi will be running in the background now. Use `fg` to restore"
+- Add `/vi` command for switching line editing to vi mode. When enabled, use `:` instead of `/` to specify commands. Border color changes to yellow to indicate vi mode is active. Vi mode now includes full vi-style keybindings for text editing (h/j/k/l for navigation, w/b for word movement, 0/$ for line start/end, etc.)
 - Bug fix: when the user scrolls the chat window stop autoscrolling
+- bug fix: deleting the current prompt line uses the new textarea cursor metadata instead of the removed `CursorPosition`, avoiding runtime errors
 - Feature: display thinking
 - replace the color scheme with Terminal7's colors:
 

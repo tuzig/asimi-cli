@@ -15,6 +15,10 @@ type StatusComponent struct {
 	Width     int
 	Style     lipgloss.Style
 	Session   *Session // Reference to session for token/time tracking
+	// Vi mode status
+	ViModeEnabled bool
+	ViCurrentMode string
+	ViPendingOp   string
 }
 
 // NewStatusComponent creates a new status component
@@ -37,6 +41,13 @@ func (s *StatusComponent) SetProvider(provider, model string, connected bool) {
 // SetSession sets the session reference for tracking
 func (s *StatusComponent) SetSession(session *Session) {
 	s.Session = session
+}
+
+// SetViMode updates vi mode status for display
+func (s *StatusComponent) SetViMode(enabled bool, mode, pending string) {
+	s.ViModeEnabled = enabled
+	s.ViCurrentMode = mode
+	s.ViPendingOp = pending
 }
 
 // SetAgent sets the current agent (legacy method for compatibility)
@@ -144,14 +155,20 @@ func (s StatusComponent) renderLeftSection() string {
 	}
 
 	// Color branch name: yellow for main, green for others
-	var branchStyle lipgloss.Style
+	var bs lipgloss.Style
 	if branch == "main" || branch == "master" {
-		branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#F4DB53")) // Terminal7 warning/yellow
+		bs = lipgloss.NewStyle().Foreground(lipgloss.Color("#F4DB53")) // Terminal7 warning/yellow
 	} else {
-		branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")) // Green
+		bs = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")) // Green
 	}
 
-	return "🌴 " + branchStyle.Render(branch)
+	var parts []string
+	parts = append(parts, "🌴 " + 
+		bs.Render(branch))
+	if viIndicator := s.renderViModeIndicator(); viIndicator != "" {
+		parts = append(parts, viIndicator)
+	}
+	return strings.Join(parts, " ")
 }
 
 // renderMiddleSection renders the middle section with token usage andsession age
@@ -196,6 +213,39 @@ func (s StatusComponent) renderRightSection() string {
 	providerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#01FAFA")) // Terminal7 text color
 
 	return providerStyle.Render(providerModel) + " " + icon
+}
+
+// renderViModeIndicator renders the vi mode indicator string
+func (s StatusComponent) renderViModeIndicator() string {
+	if !s.ViModeEnabled {
+		return ""
+	}
+
+	var text string
+	var style lipgloss.Style
+
+	switch s.ViCurrentMode {
+	case ViModeInsert:
+		text = "-- INSERT --"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Bold(true)
+	case ViModeNormal:
+		text = "-- NORMAL --"
+		if s.ViPendingOp != "" {
+			text += " (" + s.ViPendingOp + ")"
+		}
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#F4DB53")).Bold(true)
+	case ViModeVisual:
+		text = "-- VISUAL --"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#01FAFA")).Bold(true)
+	case ViModeCommandLine:
+		text = "-- COMMAND --"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#F952F9")).Bold(true)
+	default:
+		text = "-- VI --"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#01FAFA")).Bold(true)
+	}
+
+	return style.Render(text)
 }
 
 // truncateString truncates a string to fit within maxWidth, adding "..." if needed

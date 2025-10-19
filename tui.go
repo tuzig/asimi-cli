@@ -59,6 +59,12 @@ func NewTUIModel(config *Config) *TUIModel {
 	registry := NewCommandRegistry()
 	theme := NewTheme()
 
+	// Create prompt component with vi mode based on config
+	prompt := NewPromptComponent(80, 5)
+	if config.IsViModeEnabled() {
+		prompt.SetViMode(true)
+	}
+
 	model := &TUIModel{
 		config: config,
 		width:  80, // Default width
@@ -67,7 +73,7 @@ func NewTUIModel(config *Config) *TUIModel {
 
 		// Initialize components
 		status:         NewStatusComponent(80),
-		prompt:         NewPromptComponent(80, 5),
+		prompt:         prompt,
 		chat:           NewChatComponent(80, 18),
 		completions:    NewCompletionDialog(),
 		toastManager:   NewToastManager(),
@@ -177,6 +183,11 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// Handle Ctrl+Z for background mode
+	if msg.String() == "ctrl+z" {
+		return m.handleCtrlZ()
+	}
+
 	// Handle modals first (they need to handle their own escape keys)
 	if m.modelSelectionModal != nil {
 		m.modelSelectionModal, cmd = m.modelSelectionModal.Update(msg)
@@ -191,6 +202,27 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Handle escape key for vi mode transitions BEFORE other escape handling
+	// ESC in Insert mode -> Normal mode
+	if msg.String() == "esc" && m.prompt.IsViInsertMode() {
+		m.prompt.EnterViNormalMode()
+		return m, nil
+	}
+	// ESC in Visual mode -> Normal mode
+	if msg.String() == "esc" && m.prompt.IsViVisualMode() {
+		m.prompt.EnterViNormalMode()
+		return m, nil
+	}
+	// ESC in Command-line mode -> Normal mode
+	if msg.String() == "esc" && m.prompt.IsViCommandLineMode() {
+		m.prompt.EnterViNormalMode()
+		// Hide completion dialog
+		m.showCompletionDialog = false
+		m.completions.Hide()
+		m.completionMode = ""
+		return m, nil
+	}
+
 	// Handle escape key after modals have had a chance to process it
 	if msg.String() == "esc" {
 		return m.handleEscape()
@@ -201,6 +233,16 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCompletionDialog(msg)
 	}
 
+	// Handle vi mode key bindings when in normal or visual mode
+	if m.prompt.IsViNormalMode() || m.prompt.IsViVisualMode() {
+		return m.handleViNormalMode(msg)
+	}
+
+	// Handle command-line mode
+	if m.prompt.IsViCommandLineMode() {
+		return m.handleViCommandLineMode(msg)
+	}
+
 	// Handle regular key input
 	switch msg.String() {
 	case "ctrl+o":
@@ -209,6 +251,13 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEnterKey()
 	case "/":
 		return m.handleSlashKey(msg)
+	case ":":
+		// In vi mode, colon acts like slash for commands
+		if m.prompt.ViMode {
+			return m.handleColonKey(msg)
+		}
+		m.prompt, _ = m.prompt.Update(msg)
+		return m, nil
 	case "@":
 		return m.handleAtKey(msg)
 	default:
@@ -224,8 +273,143 @@ func (m TUIModel) handleToggleRawMode() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleViNormalMode handles key presses when in vi normal or visual mode
+func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	// Handle mode switching keys
+	switch key {
+	case "i":
+		// Enter insert mode at cursor
+		m.prompt.EnterViInsertMode()
+		return m, nil
+	case "I":
+		// Enter insert mode at beginning of line
+		m.prompt.TextArea.CursorStart()
+		m.prompt.EnterViInsertMode()
+		return m, nil
+	case "a":
+		// Enter insert mode after cursor (move cursor forward first)
+		// Note: In vi, 'a' appends after the current character
+		m.prompt.EnterViInsertMode()
+		return m, nil
+	case "A":
+		// Enter insert mode at end of line
+		m.prompt.TextArea.CursorEnd()
+		m.prompt.EnterViInsertMode()
+		return m, nil
+	case "o":
+		// Open new line below and enter insert mode
+		m.prompt.TextArea.CursorEnd()
+		m.prompt.TextArea.InsertString("\n")
+		m.prompt.EnterViInsertMode()
+		return m, nil
+	case "O":
+		// Open new line above and enter insert mode
+		m.prompt.TextArea.CursorStart()
+		m.prompt.TextArea.InsertString("\n")
+		m.prompt.TextArea.CursorUp()
+		m.prompt.EnterViInsertMode()
+		return m, nil
+	case "v":
+		// Enter visual mode (character-wise)
+		m.prompt.EnterViVisualMode()
+		return m, nil
+	case "V":
+		// Enter visual line mode (for now, same as visual mode)
+		m.prompt.EnterViVisualMode()
+		return m, nil
+	case ":":
+		// Enter command-line mode
+		m.prompt.EnterViCommandLineMode()
+		m.prompt.SetValue(":")
+		// Show completion dialog with commands (replace / with : in command names)
+		var viCommands []string
+		for _, cmd := range m.commandRegistry.order {
+			// Replace leading / with :
+			viCommands = append(viCommands, ":"+strings.TrimPrefix(cmd, "/"))
+		}
+		m.showCompletionDialog = true
+		m.completionMode = "command"
+		m.completions.SetOptions(viCommands)
+		m.completions.Show()
+		return m, nil
+	default:
+		// Pass other keys to the textarea for navigation
+		m.prompt, _ = m.prompt.Update(msg)
+		return m, nil
+	}
+}
+
+// handleViCommandLineMode handles key presses when in vi command-line mode
+func (m TUIModel) handleViCommandLineMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch key {
+	case "enter":
+		// Execute the command and return to insert mode
+		content := m.prompt.Value()
+		if strings.HasPrefix(content, ":") {
+			// Remove the : prefix and execute as a command
+			normalizedContent := "/" + strings.TrimPrefix(content, ":")
+			parts := strings.Fields(normalizedContent)
+			if len(parts) > 0 {
+				cmdName := parts[0]
+				m.addToRawHistory("COMMAND", content)
+				cmd, exists := m.commandRegistry.GetCommand(cmdName)
+				if exists {
+					command := cmd.Handler(&m, parts[1:])
+					m.prompt.SetValue("")
+					m.prompt.EnterViInsertMode() // Return to insert mode after command
+					// Hide completion dialog
+					m.showCompletionDialog = false
+					m.completions.Hide()
+					m.completionMode = ""
+					return m, command
+				} else {
+					m.toastManager.AddToast(fmt.Sprintf("Unknown command: %s", cmdName), "error", time.Second*3)
+					m.prompt.SetValue("")
+					m.prompt.EnterViInsertMode()
+					// Hide completion dialog
+					m.showCompletionDialog = false
+					m.completions.Hide()
+					m.completionMode = ""
+					return m, nil
+				}
+			}
+		}
+		// If no command, just return to insert mode
+		m.prompt.SetValue("")
+		m.prompt.EnterViInsertMode()
+		// Hide completion dialog
+		m.showCompletionDialog = false
+		m.completions.Hide()
+		m.completionMode = ""
+		return m, nil
+	default:
+		// Pass other keys to the textarea for editing the command
+		m.prompt, _ = m.prompt.Update(msg)
+		// Update completion dialog if it's shown
+		if m.showCompletionDialog && m.completionMode == "command" {
+			m.updateCommandCompletions()
+		}
+		return m, nil
+	}
+}
+
+// handleCtrlZ handles Ctrl+Z to send the application to background
+func (m TUIModel) handleCtrlZ() (tea.Model, tea.Cmd) {
+	// Display message to user
+	m.chat.AddMessage("\n⏸️  Asimi will be running in the background now. Use `fg` to restore.")
+
+	// Send SIGTSTP signal to self to suspend the process
+	return m, tea.Suspend
+}
+
 // handleEscape handles the escape key
 func (m TUIModel) handleEscape() (tea.Model, tea.Cmd) {
+	// Note: vi insert mode escape is handled earlier in handleKeyMsg
+
 	// Check if streaming is active first - cancel streaming via context
 	if m.streamingActive && m.streamingCancel != nil {
 		slog.Info("escape_during_streaming", "cancelling_context", true)
@@ -307,8 +491,14 @@ func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
 				m.prompt.SetValue("@" + selected + " ")
 			}
 		} else if m.completionMode == "command" {
+			// Normalize command name (convert : to / if needed)
+			cmdName := selected
+			if strings.HasPrefix(cmdName, ":") {
+				cmdName = "/" + strings.TrimPrefix(cmdName, ":")
+			}
+
 			// It's a command completion
-			cmd, exists := m.commandRegistry.GetCommand(selected)
+			cmd, exists := m.commandRegistry.GetCommand(cmdName)
 			if exists {
 				// Execute command
 				cmds = append(cmds, cmd.Handler(&m, []string{}))
@@ -330,8 +520,18 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 	if content == "" {
 		return m, nil
 	}
-	if strings.HasPrefix(content, "/") {
-		parts := strings.Fields(content)
+
+	// Check for command prefix (/ or : in vi mode)
+	isCommand := strings.HasPrefix(content, "/") || (m.prompt.ViMode && strings.HasPrefix(content, ":"))
+
+	if isCommand {
+		// Normalize command to use / prefix
+		normalizedContent := content
+		if strings.HasPrefix(content, ":") {
+			normalizedContent = "/" + strings.TrimPrefix(content, ":")
+		}
+
+		parts := strings.Fields(normalizedContent)
 		if len(parts) > 0 {
 			cmdName := parts[0]
 			m.addToRawHistory("COMMAND", content) // Log the full command
@@ -340,6 +540,10 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 				command := cmd.Handler(&m, parts[1:])
 				cmds = append(cmds, command)
 				m.prompt.SetValue("")
+				// In vi mode, return to insert mode after command execution
+				if m.prompt.ViMode {
+					m.prompt.EnterViInsertMode()
+				}
 			} else {
 				m.toastManager.AddToast(fmt.Sprintf("Unknown command: %s", cmdName), "error", time.Second*3)
 			}
@@ -351,6 +555,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		if m.session != nil {
 			m.sessionActive = true
 			m.prompt.SetValue("")
+			// In vi mode, stay in insert mode for continued conversation
 			ctx, cancel := context.WithCancel(context.Background())
 			m.streamingCancel = cancel
 			m.session.AskStream(ctx, content)
@@ -371,6 +576,27 @@ func (m TUIModel) handleSlashKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showCompletionDialog = true
 		m.completionMode = "command"
 		m.completions.SetOptions(append([]string(nil), m.commandRegistry.order...))
+		m.completions.Show()
+	} else {
+		m.prompt, _ = m.prompt.Update(msg)
+	}
+	return m, nil
+}
+
+// handleColonKey handles the colon key for command completion in vi mode
+func (m TUIModel) handleColonKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Only show command completion if we're at the beginning of the input
+	if m.prompt.Value() == "" {
+		m.prompt, _ = m.prompt.Update(msg)
+		// Show completion dialog with commands (replace : with / in command names)
+		var viCommands []string
+		for _, cmd := range m.commandRegistry.order {
+			// Replace leading / with :
+			viCommands = append(viCommands, ":"+strings.TrimPrefix(cmd, "/"))
+		}
+		m.showCompletionDialog = true
+		m.completionMode = "command"
+		m.completions.SetOptions(viCommands)
 		m.completions.Show()
 	} else {
 		m.prompt, _ = m.prompt.Update(msg)
@@ -524,9 +750,19 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamingCancel = nil
 
 	case showHelpMsg:
-		helpText := "Available commands:\n"
+		leader := msg.leader
+		if leader == "" {
+			leader = "/"
+		}
+
+		helpText := fmt.Sprintf("Active command leader: %s\n", leader)
+		helpText += "Available commands:\n"
 		for _, cmd := range m.commandRegistry.GetAllCommands() {
-			helpText += fmt.Sprintf("  %s - %s\n", cmd.Name, cmd.Description)
+			displayName := cmd.Name
+			if leader == ":" && strings.HasPrefix(displayName, "/") {
+				displayName = ":" + strings.TrimPrefix(displayName, "/")
+			}
+			helpText += fmt.Sprintf("  %s - %s\n", displayName, cmd.Description)
 		}
 		m.chat.AddMessage(helpText)
 		m.sessionActive = true
@@ -682,21 +918,36 @@ func (m *TUIModel) updateFileCompletions(files []string) {
 func (m *TUIModel) updateCommandCompletions() {
 	inputValue := m.prompt.Value()
 
-	// Extract the command being typed (everything after the first "/")
-	if !strings.HasPrefix(inputValue, "/") {
+	// Determine if we're using vi mode colon commands or regular slash commands
+	var prefix string
+	var searchQuery string
+
+	if strings.HasPrefix(inputValue, "/") {
+		prefix = "/"
+		searchQuery = strings.ToLower(inputValue[1:])
+	} else if strings.HasPrefix(inputValue, ":") {
+		prefix = ":"
+		searchQuery = strings.ToLower(inputValue[1:])
+	} else {
+		// No command prefix found
 		m.completions.SetOptions([]string{})
 		return
 	}
 
-	// Get the partial command name (without the leading "/")
-	searchQuery := strings.ToLower(inputValue[1:])
-
 	// Get all command names and filter them
 	var filteredCommands []string
 	for _, name := range m.commandRegistry.order {
+		// name is stored with "/" prefix, so we need to check against the command part
+		cmdName := strings.TrimPrefix(name, "/")
+
 		// Check if the command starts with the search query
-		if strings.HasPrefix(strings.ToLower(name[1:]), searchQuery) { // name already includes "/"
-			filteredCommands = append(filteredCommands, name)
+		if strings.HasPrefix(strings.ToLower(cmdName), searchQuery) {
+			// Format the command with the appropriate prefix for display
+			if prefix == ":" {
+				filteredCommands = append(filteredCommands, ":"+cmdName)
+			} else {
+				filteredCommands = append(filteredCommands, name)
+			}
 		}
 	}
 
@@ -716,7 +967,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	chatHeight := m.height - statusHeight - promptHeight - 4
 
 	// Update components
-	m.status.SetWidth(width + 4)
+	m.status.SetWidth(width + 2)
 
 	// Full width layout
 	m.chat.SetWidth(width)
@@ -740,6 +991,10 @@ func (m TUIModel) View() string {
 		return "Initializing..."
 	}
 
+	// Update status with current vi mode info before rendering
+	viEnabled, viMode, viPending := m.prompt.ViModeStatus()
+	m.status.SetViMode(viEnabled, viMode, viPending)
+
 	// Render the appropriate view based on current mode
 	var mainContent string
 	if m.rawMode {
@@ -747,7 +1002,7 @@ func (m TUIModel) View() string {
 		mainContent = m.renderRawSessionView(m.width, m.height-6) // Account for prompt and status
 	} else if !m.sessionActive {
 		// Home view
-		mainContent = renderHomeView(m.width, m.height-6) // Account for prompt and status
+		mainContent = m.renderHomeView(m.width, m.height-6) // Account for prompt and status
 	} else {
 		// Chat view
 		mainContent = m.chat.View()
@@ -807,7 +1062,7 @@ func (m TUIModel) View() string {
 }
 
 // renderHomeView renders the home view when no session is active
-func renderHomeView(width, height int) string {
+func (m TUIModel) renderHomeView(width, height int) string {
 	// Create a stylish welcome message
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -825,12 +1080,28 @@ func renderHomeView(width, height int) string {
 
 	subtitle := subtitleStyle.Render("Your AI-powered coding assistant")
 
-	// Create a list of helpful commands
-	commands := []string{
-		"▶ Type a message and press Enter to chat",
-		"▶ Use / to access commands (e.g., /help, /new)",
-		"▶ Use @ to reference files (e.g., @main.go)",
-		"▶ Press Ctrl+C or Q to quit",
+	// Create a list of helpful commands based on vi mode
+	var commands []string
+	if m.prompt.ViMode {
+		// Vi mode instructions
+		commands = []string{
+			"▶ Vi mode is enabled - You start in INSERT mode",
+			"▶ Press Esc to enter NORMAL mode (for navigation)",
+			"▶ In NORMAL mode, press : to enter COMMAND-LINE mode",
+			"▶ In COMMAND-LINE mode, type commands (e.g., :help, :new) and press Enter",
+			"▶ After executing a command, you return to INSERT mode",
+			"▶ Use @ to reference files (e.g., @main.go)",
+			"▶ Press Ctrl+C to quit",
+		}
+	} else {
+		// Regular input mode instructions
+		commands = []string{
+			"▶ Type a message and press Enter to chat",
+			"▶ Use / to access commands (e.g., /help, /new)",
+			"▶ Use /vi to enable vi mode",
+			"▶ Use @ to reference files (e.g., @main.go)",
+			"▶ Press Ctrl+C to quit",
+		}
 	}
 
 	// Style for commands

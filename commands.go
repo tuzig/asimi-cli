@@ -30,6 +30,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("/login", "Login with OAuth provider selection", handleLoginCommand)
 	registry.RegisterCommand("/models", "Select AI model", handleModelsCommand)
 	registry.RegisterCommand("/context", "Show context usage details", handleContextCommand)
+	registry.RegisterCommand("/vi", "Toggle vi mode (use : for commands)", handleViCommand)
 
 	return registry
 }
@@ -65,12 +66,18 @@ func (cr CommandRegistry) GetAllCommands() []Command {
 
 // Command handlers
 
-type showHelpMsg struct{}
+type showHelpMsg struct {
+	leader string
+}
 type showContextMsg struct{ content string }
 
 func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
-		return showHelpMsg{}
+		leader := "/"
+		if model != nil && model.prompt.ViMode {
+			leader = ":"
+		}
+		return showHelpMsg{leader: leader}
 	}
 }
 
@@ -106,4 +113,19 @@ func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 		info := model.session.GetContextInfo()
 		return showContextMsg{content: renderContextInfo(info)}
 	}
+}
+
+func handleViCommand(model *TUIModel, args []string) tea.Cmd {
+	// Toggle vi mode
+	model.prompt.SetViMode(!model.prompt.ViMode)
+	
+	var message string
+	if model.prompt.ViMode {
+		message = "Vi mode enabled. Press 'i' to insert, 'Esc' to return to normal mode. Use : for commands."
+	} else {
+		message = "Vi mode disabled. Use / for commands."
+	}
+	
+	model.toastManager.AddToast(message, "info", 4000)
+	return nil
 }

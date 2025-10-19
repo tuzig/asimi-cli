@@ -191,6 +191,8 @@ func TestTUIModelKeyboardInteraction(t *testing.T) {
 			name: "Escape key",
 			key:  tea.KeyMsg{Type: tea.KeyEsc},
 			setup: func(model *TUIModel) {
+				// Disable vi mode so escape clears the modal
+				model.prompt.SetViMode(false)
 				model.modal = NewBaseModal("Test", "Test content", 30, 10)
 				model.showCompletionDialog = true
 			},
@@ -576,8 +578,141 @@ func TestTUIModelUpdateFileCompletions(t *testing.T) {
 
 // TestRenderHomeView tests the home view rendering
 func TestRenderHomeView(t *testing.T) {
-	view := renderHomeView(80, 24)
+	model := NewTUIModel(mockConfig())
+	model.width = 80
+	model.height = 24
+	
+	// Test regular input mode (vi mode disabled)
+	model.prompt.SetViMode(false)
+	view := model.renderHomeView(80, 24)
 	require.NotEmpty(t, view)
 	require.Contains(t, view, "Asimi CLI - Interactive Coding Agent")
 	require.Contains(t, view, "Your AI-powered coding assistant")
+	require.Contains(t, view, "Use / to access commands")
+	require.Contains(t, view, "Use /vi to enable vi mode")
+	require.NotContains(t, view, "Vi mode is enabled")
+	
+	// Test vi mode enabled
+	model.prompt.SetViMode(true)
+	view = model.renderHomeView(80, 24)
+	require.NotEmpty(t, view)
+	require.Contains(t, view, "Asimi CLI - Interactive Coding Agent")
+	require.Contains(t, view, "Your AI-powered coding assistant")
+	require.Contains(t, view, "Vi mode is enabled")
+	require.Contains(t, view, "Press Esc to enter NORMAL mode")
+	require.Contains(t, view, "In NORMAL mode, press : to enter COMMAND-LINE mode")
+	require.NotContains(t, view, "Use / to access commands")
+}
+
+// TestColonCommandCompletion tests command completion with colon prefix in vi mode
+func TestColonCommandCompletion(t *testing.T) {
+	model, _ := newTestModel(t)
+	model.prompt.SetViMode(true)
+	
+	// Test initial colon shows all commands with colon prefix
+	model.prompt.SetValue(":")
+	model.completionMode = "command"
+	model.updateCommandCompletions()
+	require.NotEmpty(t, model.completions.Options)
+	// All options should start with ":"
+	for _, opt := range model.completions.Options {
+		require.True(t, strings.HasPrefix(opt, ":"), "Command should start with : but got: %s", opt)
+	}
+	
+	// Test filtering with partial command
+	model.prompt.SetValue(":he")
+	model.updateCommandCompletions()
+	require.NotEmpty(t, model.completions.Options)
+	require.Contains(t, model.completions.Options, ":help")
+	
+	// Test filtering with more specific command
+	model.prompt.SetValue(":new")
+	model.updateCommandCompletions()
+	require.NotEmpty(t, model.completions.Options)
+	require.Contains(t, model.completions.Options, ":new")
+	
+	// Test that slash commands still work
+	model.prompt.SetValue("/he")
+	model.updateCommandCompletions()
+	require.NotEmpty(t, model.completions.Options)
+	require.Contains(t, model.completions.Options, "/help")
+	
+	// Test that slash commands show with slash prefix
+	model.prompt.SetValue("/")
+	model.updateCommandCompletions()
+	require.NotEmpty(t, model.completions.Options)
+	for _, opt := range model.completions.Options {
+		require.True(t, strings.HasPrefix(opt, "/"), "Command should start with / but got: %s", opt)
+	}
+}
+
+// TestColonInNormalModeShowsCompletion tests that pressing : in normal mode shows completion dialog
+func TestColonInNormalModeShowsCompletion(t *testing.T) {
+	model, _ := newTestModel(t)
+	model.prompt.SetViMode(true)
+	
+	// Start in insert mode
+	require.True(t, model.prompt.IsViInsertMode())
+	
+	// Press Esc to enter normal mode
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updatedModel := newModel.(TUIModel)
+	require.True(t, updatedModel.prompt.IsViNormalMode())
+	
+	// Press : to enter command-line mode
+	newModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	updatedModel = newModel.(TUIModel)
+	
+	// Should be in command-line mode
+	require.True(t, updatedModel.prompt.IsViCommandLineMode())
+	
+	// Completion dialog should be shown
+	require.True(t, updatedModel.showCompletionDialog)
+	require.Equal(t, "command", updatedModel.completionMode)
+	require.True(t, updatedModel.completions.Visible)
+	
+	// Completions should have : prefix
+	require.NotEmpty(t, updatedModel.completions.Options)
+	for _, opt := range updatedModel.completions.Options {
+		require.True(t, strings.HasPrefix(opt, ":"), "Command should start with : but got: %s", opt)
+	}
+	
+	// Prompt value should be ":"
+	require.Equal(t, ":", updatedModel.prompt.Value())
+}
+
+func TestShowHelpMsgUsesActiveLeader(t *testing.T) {
+	model := TUIModel{
+		commandRegistry: NewCommandRegistry(),
+		chat:            NewChatComponent(80, 20),
+	}
+
+	withColon, _ := model.handleCustomMessages(showHelpMsg{leader: ":"})
+	colonModel, ok := withColon.(TUIModel)
+	require.True(t, ok)
+	require.NotEmpty(t, colonModel.chat.Messages)
+	colonHelp := colonModel.chat.Messages[len(colonModel.chat.Messages)-1]
+	require.Contains(t, colonHelp, "Active command leader: :")
+	require.Contains(t, colonHelp, ":help - Show help information")
+
+	withSlash, _ := colonModel.handleCustomMessages(showHelpMsg{leader: "/"})
+	slashModel, ok := withSlash.(TUIModel)
+	require.True(t, ok)
+	require.NotEmpty(t, slashModel.chat.Messages)
+	slashHelp := slashModel.chat.Messages[len(slashModel.chat.Messages)-1]
+	require.Contains(t, slashHelp, "Active command leader: /")
+	require.Contains(t, slashHelp, "/help - Show help information")
+}
+
+func TestViModeIndicatorAppearsInStatusBar(t *testing.T) {
+	model := NewTUIModel(mockConfig())
+	model.prompt.SetViMode(true)
+
+	promptView := model.prompt.View()
+	require.NotContains(t, promptView, "-- INSERT --")
+
+	enabled, mode, pending := model.prompt.ViModeStatus()
+	model.status.SetViMode(enabled, mode, pending)
+	statusView := model.status.View()
+	require.Contains(t, statusView, "-- INSERT --")
 }
