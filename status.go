@@ -247,22 +247,22 @@ func (s StatusComponent) renderViModeIndicator() string {
 
 	switch s.ViCurrentMode {
 	case ViModeInsert:
-		text = "-- INSERT --"
+		text = "<INSERT>"
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Bold(true)
 	case ViModeNormal:
-		text = "-- NORMAL --"
+		text = "<NORMAL>"
 		if s.ViPendingOp != "" {
 			text += " (" + s.ViPendingOp + ")"
 		}
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#F4DB53")).Bold(true)
 	case ViModeVisual:
-		text = "-- VISUAL --"
+		text = "<VISUAL>"
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#01FAFA")).Bold(true)
 	case ViModeCommandLine:
-		text = "-- COMMAND --"
+		text = "<COMMAND>"
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#F952F9")).Bold(true)
 	default:
-		text = "-- VI --"
+		text = "<VI>"
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#01FAFA")).Bold(true)
 	}
 

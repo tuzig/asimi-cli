@@ -79,7 +79,7 @@ func (m *BaseModal) Render() string {
 	content := lipgloss.NewStyle().
 		Width(m.Width-2).
 		Height(m.Height-4). // Account for title and borders
-		Align(lipgloss.Center, lipgloss.Center).
+		Align(lipgloss.Left, lipgloss.Center).
 		Render(m.Content)
 
 	// Combine title and content
