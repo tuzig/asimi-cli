@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Implementing
 
 ### Done
+- Restored history configuration defaults (enabled by default, preserving max history settings) and added a bool pointer helper so configuration and TUI tests build again
 - Prompt history now persists across sessions and app activations. History is stored in `~/.local/share/asimi/history.json` (up to 1000 entries). Added `/clear-history` command to clear all saved history. Duplicate consecutive prompts are automatically filtered out
 - Converted the new waiting and history helper functions in `tui.go` into `TUIModel` methods to keep the model API consistent across the codebase
 - Status bar now recomputes the current git branch during render, reflecting branch changes without restarting the TUI

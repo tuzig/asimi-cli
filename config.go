@@ -28,6 +28,7 @@ type Config struct {
 	Database   DatabaseConfig   `koanf:"database"`
 	Logging    LoggingConfig    `koanf:"logging"`
 	LLM        LLMConfig        `koanf:"llm"`
+	History    HistoryConfig    `koanf:"history"`
 	Permission PermissionConfig `koanf:"permission"`
 	Hooks      HooksConfig      `koanf:"hooks"`
 	StatusLine StatusLineConfig `koanf:"statusline"`
@@ -113,6 +114,30 @@ type LLMConfig struct {
 	RefreshToken string `koanf:"refresh_token"`
 }
 
+// HistoryConfig holds persistent session history configuration
+type HistoryConfig struct {
+	Enabled      bool `koanf:"enabled"`
+	MaxSessions  int  `koanf:"max_sessions"`
+	MaxAgeDays   int  `koanf:"max_age_days"`
+	ListLimit    int  `koanf:"list_limit"`
+	AutoSave     bool `koanf:"auto_save"`
+	SaveInterval int  `koanf:"save_interval"`
+}
+
+// defaultConfig returns the configuration populated with sensible defaults.
+func defaultConfig() Config {
+	return Config{
+		History: HistoryConfig{
+			Enabled:      true,
+			MaxSessions:  50,
+			MaxAgeDays:   30,
+			ListLimit:    10,
+			AutoSave:     false,
+			SaveInterval: 300,
+		},
+	}
+}
+
 // PermissionConfig holds permission configuration
 type PermissionConfig struct {
 	Allow                        []string `koanf:"allow"`
@@ -188,7 +213,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Unmarshal the configuration into our struct
-	var config Config
+	config := defaultConfig()
 	if err := k.Unmarshal("", &config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
@@ -653,6 +678,13 @@ func (c *Config) IsViModeEnabled() bool {
 	}
 	return *c.LLM.ViMode
 }
+
+// boolPtr returns a pointer to the provided bool value.
+// It keeps tests and runtime code concise when configuring optional flags.
+func boolPtr(v bool) *bool {
+	return &v
+}
+
 func getOAuthConfig(provider string) (oauthProviderConfig, error) {
 	p := oauthProviderConfig{}
 	switch provider {
