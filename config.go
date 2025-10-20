@@ -203,6 +203,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Set default values for session config if not explicitly configured
+	// Check if session.enabled was explicitly set in config or environment
+	if !k.Exists("session.enabled") {
+		config.Session.Enabled = true // Default to enabled
+	}
+
 	return &config, nil
 }
 

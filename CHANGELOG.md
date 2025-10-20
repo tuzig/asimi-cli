@@ -12,11 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### To be Implemented
 - Adding the "task" internal tool in `tools.go`. See `specs/task_tool.md` for detailed implementation plan
-- Add a `/resume` command that lists last X sessions and let's the user choose which session to resume. See `specs/resume_command.md` for detailed implementation plan
 - Gracefully handle HTTP 429 errors from the model. See `specs/http_429_handling.md` for detailed implementation plan
 
 ### Implementing
 ### Done
+- Feature: `/resume` command that lists last sessions and lets the user choose which session to resume. Session persistence is now enabled by default.
+- Enhancement: added visible "Cancel" option to the resume dialog that can be navigated to and selected with Enter
+- Bug fix: sessions are now automatically saved when quitting (via `/quit` or Ctrl+C) to ensure they can be resumed later
+- Enhancement: store sessions under project-specific directories to enforce per-project limits
+- Bug fix: restoring saved session message parts so resumes rebuild chat history
 - Bug fix: when the user scrolls the chat window stop autoscrolling
 - Feature: display thinking
 - replace the color scheme with Terminal7's colors:

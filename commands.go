@@ -76,25 +76,20 @@ func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
-	// Start a new session
+	model.saveSession()
 	model.sessionActive = true
 	model.chat = NewChatComponent(model.chat.Width, model.chat.Height)
 
-	// Clear raw session history for the new session
 	model.rawSessionHistory = make([]string, 0)
 
-	// Clear tool call tracking
 	model.toolCallMessageIndex = make(map[string]int)
-
-	// If we have an active session, reset its conversation history
-	if model.session != nil {
-		model.session.ClearHistory()
-	}
 
 	return nil
 }
 
 func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
+	// Save the session before quitting
+	model.saveSession()
 	// Quit the application
 	return tea.Quit
 }

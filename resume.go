@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/tmc/langchaingo/llms"
 )
 
 type sessionsLoadedMsg struct {
@@ -56,6 +57,121 @@ func (m *SessionSelectionModal) SetError(err error) {
 	m.loading = false
 }
 
+func sessionTitlePreview(session Session) string {
+	snippet := lastHumanMessage(session.Messages)
+	if snippet == "" {
+		snippet = session.FirstPrompt
+	}
+	snippet = cleanSnippet(snippet)
+	if snippet == "" {
+		return "Recent activity"
+	}
+	return truncateSnippet(snippet, 60)
+}
+
+func lastHumanMessage(messages []llms.MessageContent) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != llms.ChatMessageTypeHuman {
+			continue
+		}
+		for _, part := range messages[i].Parts {
+			if textPart, ok := part.(llms.TextContent); ok {
+				text := strings.TrimSpace(textPart.Text)
+				if text != "" {
+					return text
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func cleanSnippet(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "---") && strings.HasSuffix(trimmed, "---") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "Context from:") {
+			continue
+		}
+		return trimmed
+	}
+
+	return strings.TrimSpace(lines[0])
+}
+
+func truncateSnippet(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+
+	return string(runes[:limit-3]) + "..."
+}
+
+func formatMessageCount(messages []llms.MessageContent) string {
+	count := 0
+	for _, msg := range messages {
+		if msg.Role == llms.ChatMessageTypeHuman || msg.Role == llms.ChatMessageTypeAI {
+			count++
+		}
+	}
+
+	if count == 0 {
+		return ""
+	}
+	if count == 1 {
+		return "1 msg"
+	}
+	return fmt.Sprintf("%d msgs", count)
+}
+
+func shortenModelName(model string) string {
+	if model == "" {
+		return ""
+	}
+
+	parts := strings.Split(model, "-")
+	if len(parts) < 2 {
+		return model
+	}
+
+	last := parts[len(parts)-1]
+	isDateSuffix := len(last) == 8
+	if isDateSuffix {
+		for _, r := range last {
+			if r < '0' || r > '9' {
+				isDateSuffix = false
+				break
+			}
+		}
+	}
+
+	if isDateSuffix {
+		return strings.Join(parts[:len(parts)-1], "-")
+	}
+
+	return model
+}
+
 func (m *SessionSelectionModal) Render() string {
 	var content strings.Builder
 
@@ -81,18 +197,43 @@ func (m *SessionSelectionModal) Render() string {
 	}
 
 	instructionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
-	content.WriteString(instructionStyle.Render("↑/↓: Navigate • 1-9: Quick select • Enter: Load • Esc/Q: Cancel"))
+	content.WriteString(instructionStyle.Render("↑/↓: Navigate • 1-9: Quick select • Enter: Select • Esc/Q: Cancel"))
 	content.WriteString("\n\n")
+
+	// Total items = sessions + cancel option
+	totalItems := len(m.sessions) + 1
 
 	start := m.scrollOffset
 	end := m.scrollOffset + m.maxVisible
-	if end > len(m.sessions) {
-		end = len(m.sessions)
+	if end > totalItems {
+		end = totalItems
 	}
 
 	for i := start; i < end; i++ {
-		session := m.sessions[i]
 		isSelected := i == m.selected
+
+		// Check if this is the cancel option (last item)
+		if i == len(m.sessions) {
+			prefix := "   "
+			if isSelected {
+				prefix = "▶ "
+			}
+
+			var line strings.Builder
+			line.WriteString(prefix)
+			line.WriteString("Cancel")
+
+			lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+			if isSelected {
+				lineStyle = lineStyle.Foreground(lipgloss.Color("62")).Bold(true)
+			}
+
+			content.WriteString("\n")
+			content.WriteString(lineStyle.Render(line.String()))
+			continue
+		}
+
+		session := m.sessions[i]
 
 		prefix := fmt.Sprintf(" %d. ", i+1)
 		if isSelected {
@@ -100,14 +241,19 @@ func (m *SessionSelectionModal) Render() string {
 		}
 
 		timeStr := formatRelativeTime(session.LastUpdated)
-		
-		var line strings.Builder
-		line.WriteString(prefix)
-		line.WriteString(fmt.Sprintf("[%s] %s", timeStr, session.FirstPrompt))
 
-		var details strings.Builder
-		details.WriteString(fmt.Sprintf("    %d messages • %s", len(session.Messages), session.Model))
-		
+		title := sessionTitlePreview(session)
+		messageCount := formatMessageCount(session.Messages)
+		modelName := shortenModelName(session.Model)
+
+		var detailParts []string
+		if messageCount != "" {
+			detailParts = append(detailParts, messageCount)
+		}
+		if modelName != "" {
+			detailParts = append(detailParts, modelName)
+		}
+
 		currentDir, _ := os.Getwd()
 		if session.WorkingDir != "" && session.WorkingDir != currentDir {
 			shortPath := session.WorkingDir
@@ -115,29 +261,37 @@ func (m *SessionSelectionModal) Render() string {
 			if homeDir != "" {
 				shortPath = strings.Replace(shortPath, homeDir, "~", 1)
 			}
-			details.WriteString(fmt.Sprintf(" • %s", shortPath))
+			detailParts = append(detailParts, shortPath)
 		}
+
+		var line strings.Builder
+		line.WriteString(prefix)
+		line.WriteString(fmt.Sprintf("[%s] %s", timeStr, title))
+
+		detailLine := strings.Join(detailParts, " • ")
 
 		lineStyle := lipgloss.NewStyle()
 		detailStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-		
+
 		if isSelected {
 			lineStyle = lineStyle.Foreground(lipgloss.Color("62")).Bold(true)
 			detailStyle = detailStyle.Foreground(lipgloss.Color("62"))
 		}
 
 		content.WriteString(lineStyle.Render(line.String()))
+		if detailLine != "" {
+			content.WriteString("\n")
+			content.WriteString(detailStyle.Render("    " + detailLine))
+		}
 		content.WriteString("\n")
-		content.WriteString(detailStyle.Render(details.String()))
-		content.WriteString("\n")
-		
+
 		if i < end-1 {
 			content.WriteString("\n")
 		}
 	}
 
-	if len(m.sessions) > m.maxVisible {
-		scrollInfo := fmt.Sprintf("\n%d-%d of %d sessions", start+1, end, len(m.sessions))
+	if totalItems > m.maxVisible {
+		scrollInfo := fmt.Sprintf("\n%d-%d of %d items", start+1, end, totalItems)
 		scrollStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
 		content.WriteString(scrollStyle.Render(scrollInfo))
 	}
@@ -156,6 +310,9 @@ func (m *SessionSelectionModal) Update(msg tea.Msg) (*SessionSelectionModal, tea
 		return m, nil
 	}
 
+	// Total items = sessions + cancel option
+	totalItems := len(m.sessions) + 1
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -167,7 +324,7 @@ func (m *SessionSelectionModal) Update(msg tea.Msg) (*SessionSelectionModal, tea
 				}
 			}
 		case "down", "j":
-			if m.selected < len(m.sessions)-1 {
+			if m.selected < totalItems-1 {
 				m.selected++
 				if m.selected >= m.scrollOffset+m.maxVisible {
 					m.scrollOffset = m.selected - m.maxVisible + 1
@@ -180,6 +337,10 @@ func (m *SessionSelectionModal) Update(msg tea.Msg) (*SessionSelectionModal, tea
 				return m, m.loadSelectedSession()
 			}
 		case "enter":
+			// If cancel option is selected (last item)
+			if m.selected == len(m.sessions) {
+				return m, func() tea.Msg { return modalCancelledMsg{} }
+			}
 			return m, m.loadSelectedSession()
 		case "esc", "q":
 			return m, func() tea.Msg { return modalCancelledMsg{} }
@@ -191,7 +352,7 @@ func (m *SessionSelectionModal) Update(msg tea.Msg) (*SessionSelectionModal, tea
 
 func (m *SessionSelectionModal) loadSelectedSession() tea.Cmd {
 	sessionID := m.sessions[m.selected].ID
-	
+
 	return func() tea.Msg {
 		config, err := LoadConfig()
 		if err != nil {

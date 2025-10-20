@@ -171,6 +171,13 @@ func (m *TUIModel) saveSession() {
 	slog.Debug("session auto-save queued")
 }
 
+// shutdown performs graceful shutdown of the TUI, ensuring all pending saves complete
+func (m *TUIModel) shutdown() {
+	if m.sessionStore != nil {
+		m.sessionStore.Close()
+	}
+}
+
 // Init implements bubbletea.Model
 func (m TUIModel) Init() tea.Cmd {
 	// Initialize the TUI
@@ -188,8 +195,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		// Handle chat scrolling first (including touch gestures)
-		if msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown || 
-		   msg.Type == tea.MouseLeft || msg.Type == tea.MouseMotion {
+		if msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown ||
+			msg.Type == tea.MouseLeft || msg.Type == tea.MouseMotion {
 			m.chat, _ = m.chat.Update(msg)
 		}
 		return m.handleMouseMsg(msg)
@@ -208,6 +215,8 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	if msg.String() == "ctrl+c" {
+		m.saveSession()
+		m.shutdown()
 		return m, tea.Quit
 	}
 
