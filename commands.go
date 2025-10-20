@@ -31,6 +31,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("/models", "Select AI model", handleModelsCommand)
 	registry.RegisterCommand("/context", "Show context usage details", handleContextCommand)
 	registry.RegisterCommand("/vi", "Toggle vi mode (use : for commands)", handleViCommand)
+	registry.RegisterCommand("/clear-history", "Clear all prompt history", handleClearHistoryCommand)
 
 	return registry
 }
@@ -92,6 +93,11 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	// Clear tool call tracking
 	model.toolCallMessageIndex = make(map[string]int)
 
+	// Reset prompt history and waiting state
+	model.initHistory()
+	model.cancelStreaming()
+	model.stopStreaming()
+
 	// If we have an active session, reset its conversation history
 	if model.session != nil {
 		model.session.ClearHistory()
@@ -118,14 +124,33 @@ func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 func handleViCommand(model *TUIModel, args []string) tea.Cmd {
 	// Toggle vi mode
 	model.prompt.SetViMode(!model.prompt.ViMode)
-	
+
 	var message string
 	if model.prompt.ViMode {
 		message = "Vi mode enabled. Press 'i' to insert, 'Esc' to return to normal mode. Use : for commands."
 	} else {
 		message = "Vi mode disabled. Use / for commands."
 	}
-	
+
 	model.toastManager.AddToast(message, "info", 4000)
+	return nil
+}
+
+func handleClearHistoryCommand(model *TUIModel, args []string) tea.Cmd {
+	// Clear persistent history
+	if model.historyStore != nil {
+		if err := model.historyStore.Clear(); err != nil {
+			model.toastManager.AddToast("Failed to clear history", "error", 3000)
+			return nil
+		}
+	}
+
+	// Clear in-memory history
+	model.promptHistory = make([]promptHistoryEntry, 0)
+	model.historyCursor = 0
+	model.historySaved = false
+	model.historyPendingPrompt = ""
+
+	model.toastManager.AddToast("Prompt history cleared", "success", 3000)
 	return nil
 }

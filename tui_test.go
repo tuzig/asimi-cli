@@ -67,6 +67,9 @@ func TestTUIModelWindowSizeMsg(t *testing.T) {
 func newTestModel(t *testing.T) (*TUIModel, *fake.LLM) {
 	llm := fake.NewFakeLLM([]string{})
 	model := NewTUIModel(mockConfig())
+	// Disable persistent history to keep tests hermetic.
+	model.historyStore = nil
+	model.initHistory()
 	// Use native session path for tests now that legacy agent is removed.
 	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, func(any) {})
 	require.NoError(t, err)
@@ -581,7 +584,7 @@ func TestRenderHomeView(t *testing.T) {
 	model := NewTUIModel(mockConfig())
 	model.width = 80
 	model.height = 24
-	
+
 	// Test regular input mode (vi mode disabled)
 	model.prompt.SetViMode(false)
 	view := model.renderHomeView(80, 24)
@@ -591,7 +594,7 @@ func TestRenderHomeView(t *testing.T) {
 	require.Contains(t, view, "Use / to access commands")
 	require.Contains(t, view, "Use /vi to enable vi mode")
 	require.NotContains(t, view, "Vi mode is enabled")
-	
+
 	// Test vi mode enabled
 	model.prompt.SetViMode(true)
 	view = model.renderHomeView(80, 24)
@@ -608,7 +611,7 @@ func TestRenderHomeView(t *testing.T) {
 func TestColonCommandCompletion(t *testing.T) {
 	model, _ := newTestModel(t)
 	model.prompt.SetViMode(true)
-	
+
 	// Test initial colon shows all commands with colon prefix
 	model.prompt.SetValue(":")
 	model.completionMode = "command"
@@ -618,25 +621,25 @@ func TestColonCommandCompletion(t *testing.T) {
 	for _, opt := range model.completions.Options {
 		require.True(t, strings.HasPrefix(opt, ":"), "Command should start with : but got: %s", opt)
 	}
-	
+
 	// Test filtering with partial command
 	model.prompt.SetValue(":he")
 	model.updateCommandCompletions()
 	require.NotEmpty(t, model.completions.Options)
 	require.Contains(t, model.completions.Options, ":help")
-	
+
 	// Test filtering with more specific command
 	model.prompt.SetValue(":new")
 	model.updateCommandCompletions()
 	require.NotEmpty(t, model.completions.Options)
 	require.Contains(t, model.completions.Options, ":new")
-	
+
 	// Test that slash commands still work
 	model.prompt.SetValue("/he")
 	model.updateCommandCompletions()
 	require.NotEmpty(t, model.completions.Options)
 	require.Contains(t, model.completions.Options, "/help")
-	
+
 	// Test that slash commands show with slash prefix
 	model.prompt.SetValue("/")
 	model.updateCommandCompletions()
@@ -650,33 +653,33 @@ func TestColonCommandCompletion(t *testing.T) {
 func TestColonInNormalModeShowsCompletion(t *testing.T) {
 	model, _ := newTestModel(t)
 	model.prompt.SetViMode(true)
-	
+
 	// Start in insert mode
 	require.True(t, model.prompt.IsViInsertMode())
-	
+
 	// Press Esc to enter normal mode
 	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	updatedModel := newModel.(TUIModel)
 	require.True(t, updatedModel.prompt.IsViNormalMode())
-	
+
 	// Press : to enter command-line mode
 	newModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
 	updatedModel = newModel.(TUIModel)
-	
+
 	// Should be in command-line mode
 	require.True(t, updatedModel.prompt.IsViCommandLineMode())
-	
+
 	// Completion dialog should be shown
 	require.True(t, updatedModel.showCompletionDialog)
 	require.Equal(t, "command", updatedModel.completionMode)
 	require.True(t, updatedModel.completions.Visible)
-	
+
 	// Completions should have : prefix
 	require.NotEmpty(t, updatedModel.completions.Options)
 	for _, opt := range updatedModel.completions.Options {
 		require.True(t, strings.HasPrefix(opt, ":"), "Command should start with : but got: %s", opt)
 	}
-	
+
 	// Prompt value should be ":"
 	require.Equal(t, ":", updatedModel.prompt.Value())
 }

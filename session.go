@@ -110,14 +110,12 @@ func NewSession(llm llms.Model, cfg *Config, toolNotify NotifyFunc) (*Session, e
 	if cfg != nil {
 		s.config = &cfg.LLM
 		// Set default maxTurns if not configured
-		if s.config.MaxTurns <= 0 {
-			s.config.MaxTurns = 50
-		}
 	} else {
 		// Create default config if none provided
-		s.config = &LLMConfig{
-			MaxTurns: 50,
-		}
+		s.config = &LLMConfig{}
+	}
+	if s.config.MaxTurns <= 0 {
+		s.config.MaxTurns = 999
 	}
 
 	// Build system prompt from the existing template and partials, same as the agent.
@@ -316,8 +314,8 @@ func (s *Session) appendMessages(content string, toolCalls []llms.ToolCall) {
 	}
 }
 
-// executeToolCall executes a single tool call and adds the response to the message
-func (s *Session) executeToolCall(ctx context.Context, tool lctools.Tool, tc llms.ToolCall, argsJSON string, toolResponseMsg *llms.MessageContent) {
+// executeToolCall executes a single tool call and returns the response content
+func (s *Session) executeToolCall(ctx context.Context, tool lctools.Tool, tc llms.ToolCall, argsJSON string) llms.ToolCallResponse {
 	var out string
 	var callErr error
 
@@ -330,23 +328,45 @@ func (s *Session) executeToolCall(ctx context.Context, tool lctools.Tool, tc llm
 	}
 
 	if callErr != nil {
-		toolResponseMsg.Parts = append(toolResponseMsg.Parts, llms.ToolCallResponse{
+		return llms.ToolCallResponse{
 			ToolCallID: tc.ID,
 			Name:       tc.FunctionCall.Name,
 			Content:    fmt.Sprintf("Error: %v", callErr),
-		})
-	} else {
-		toolResponseMsg.Parts = append(toolResponseMsg.Parts, llms.ToolCallResponse{
-			ToolCallID: tc.ID,
-			Name:       tc.FunctionCall.Name,
-			Content:    out,
-		})
+		}
+	}
+
+	return llms.ToolCallResponse{
+		ToolCallID: tc.ID,
+		Name:       tc.FunctionCall.Name,
+		Content:    out,
 	}
 }
 
+// GetMessageSnapshot returns the current size of the message history for rollback purposes
+func (s *Session) GetMessageSnapshot() int {
+	return len(s.messages)
+}
+
+// RollbackTo truncates the message history back to the provided snapshot index
+func (s *Session) RollbackTo(snapshot int) {
+	if snapshot < 1 {
+		snapshot = 1 // always preserve the system prompt
+	}
+	if snapshot > len(s.messages) {
+		snapshot = len(s.messages)
+	}
+	if snapshot < len(s.messages) {
+		s.messages = s.messages[:snapshot]
+	}
+
+	// Reset tool loop detection state when rolling back
+	s.lastToolCallKey = ""
+	s.toolCallRepetitionCount = 0
+}
+
 // processToolCalls handles executing tool calls and building response messages
-func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCall, finalText string) (llms.MessageContent, bool) {
-	toolResponseMsg := llms.MessageContent{Role: llms.ChatMessageTypeTool}
+func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCall) ([]llms.MessageContent, bool) {
+	toolMessages := make([]llms.MessageContent, 0, len(toolCalls))
 
 	for _, tc := range toolCalls {
 		if tc.FunctionCall == nil {
@@ -357,25 +377,40 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCal
 
 		// Check for tool call loops
 		if s.checkToolCallLoop(name, argsJSON) {
-			return toolResponseMsg, true // shouldReturn = true
+			toolMessages = append(toolMessages, llms.MessageContent{
+				Role: llms.ChatMessageTypeTool,
+				Parts: []llms.ContentPart{llms.ToolCallResponse{
+					ToolCallID: tc.ID,
+					Name:       name,
+					Content:    fmt.Sprintf("error: tool call loop detected after %d attempts", s.toolCallRepetitionCount),
+				}},
+			})
+			return toolMessages, true // shouldReturn = true
 		}
 
 		tool, ok := s.toolCatalog[name]
 		if !ok {
 			// If the model requested an unknown tool, feed an error response back.
-			toolResponseMsg.Parts = append(toolResponseMsg.Parts, llms.ToolCallResponse{
-				ToolCallID: tc.ID,
-				Name:       name,
-				Content:    fmt.Sprintf("error: unknown tool %q", name),
+			toolMessages = append(toolMessages, llms.MessageContent{
+				Role: llms.ChatMessageTypeTool,
+				Parts: []llms.ContentPart{llms.ToolCallResponse{
+					ToolCallID: tc.ID,
+					Name:       name,
+					Content:    fmt.Sprintf("error: unknown tool %q", name),
+				}},
 			})
 			continue
 		}
 
 		// Execute tool and add response
-		s.executeToolCall(ctx, tool, tc, argsJSON, &toolResponseMsg)
+		response := s.executeToolCall(ctx, tool, tc, argsJSON)
+		toolMessages = append(toolMessages, llms.MessageContent{
+			Role:  llms.ChatMessageTypeTool,
+			Parts: []llms.ContentPart{response},
+		})
 	}
 
-	return toolResponseMsg, false // shouldReturn = false
+	return toolMessages, false // shouldReturn = false
 }
 
 // Ask sends a user prompt through the native loop. It returns the final assistant text.
@@ -428,15 +463,17 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 		hadAnyToolCall = true
 
 		// Process tool calls and add responses
-		toolResponseMsg, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls, finalText)
+		toolMessages, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls)
+		if len(toolMessages) > 0 {
+			s.messages = append(s.messages, toolMessages...)
+		}
+
 		if shouldReturn {
 			return finalText, nil
 		}
 
-		// Append the aggregated tool responses and continue the loop.
-		if len(toolResponseMsg.Parts) > 0 {
-			s.messages = append(s.messages, toolResponseMsg)
-			// Continue to next iteration to let the model incorporate tool results.
+		// Continue to next iteration to let the model incorporate tool results.
+		if len(toolMessages) > 0 {
 			continue
 		}
 
@@ -557,15 +594,17 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			}
 
 			// Process tool calls and add responses
-			toolResponseMsg, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls, responseContent)
+			toolMessages, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls)
+			if len(toolMessages) > 0 {
+				s.messages = append(s.messages, toolMessages...)
+			}
+
 			if shouldReturn {
 				break
 			}
 
-			// Append the aggregated tool responses and continue the loop.
-			if len(toolResponseMsg.Parts) > 0 {
-				s.messages = append(s.messages, toolResponseMsg)
-				// Continue to next iteration to let the model incorporate tool results.
+			// Continue to next iteration to let the model incorporate tool results.
+			if len(toolMessages) > 0 {
 				continue
 			}
 

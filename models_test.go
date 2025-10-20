@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,10 +10,26 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func newIPv4TestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to create test listener: %v", err)
+	}
+
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	t.Cleanup(server.Close)
+
+	return server
+}
+
 // TestFetchAnthropicModels tests the API client function
 func TestFetchAnthropicModels(t *testing.T) {
 	// Create a mock HTTP server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newIPv4TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify the request
 		if r.Method != "GET" {
 			t.Errorf("Expected GET request, got %s", r.Method)
@@ -46,7 +63,6 @@ func TestFetchAnthropicModels(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
 	}))
-	defer server.Close()
 
 	// Create config with API key and mock server URL
 	config := &Config{
@@ -100,10 +116,9 @@ func TestFetchAnthropicModelsNoAuth(t *testing.T) {
 // TestFetchAnthropicModelsServerError tests error handling for server errors
 func TestFetchAnthropicModelsServerError(t *testing.T) {
 	// Create a mock HTTP server that returns error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newIPv4TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer server.Close()
 
 	config := &Config{
 		LLM: LLMConfig{

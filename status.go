@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -19,6 +20,10 @@ type StatusComponent struct {
 	ViModeEnabled bool
 	ViCurrentMode string
 	ViPendingOp   string
+
+	// Waiting indicator
+	waitingForResponse bool
+	waitingSince       time.Time
 }
 
 // NewStatusComponent creates a new status component
@@ -48,6 +53,17 @@ func (s *StatusComponent) SetViMode(enabled bool, mode, pending string) {
 	s.ViModeEnabled = enabled
 	s.ViCurrentMode = mode
 	s.ViPendingOp = pending
+}
+
+// StartWaiting marks the status component as waiting for a model response
+func (s *StatusComponent) StartWaiting() {
+	s.waitingForResponse = true
+	s.waitingSince = time.Now()
+}
+
+// StopWaiting clears the waiting indicator
+func (s *StatusComponent) StopWaiting() {
+	s.waitingForResponse = false
 }
 
 // SetAgent sets the current agent (legacy method for compatibility)
@@ -163,8 +179,7 @@ func (s StatusComponent) renderLeftSection() string {
 	}
 
 	var parts []string
-	parts = append(parts, "🌴 " + 
-		bs.Render(branch))
+	parts = append(parts, "🌴 "+bs.Render(branch))
 	if viIndicator := s.renderViModeIndicator(); viIndicator != "" {
 		parts = append(parts, viIndicator)
 	}
@@ -198,6 +213,12 @@ func (s StatusComponent) renderMiddleSection() string {
 
 	// Format the output with icons
 	statusStr := fmt.Sprintf("🪣 %.0f%%   %s ⏱", usagePercent, durationStr)
+	if s.waitingForResponse && !s.waitingSince.IsZero() {
+		waitSeconds := int(time.Since(s.waitingSince).Seconds())
+		if waitSeconds >= 3 {
+			statusStr += fmt.Sprintf("  ⏳ %ds", waitSeconds)
+		}
+	}
 
 	// Style with Terminal7 text color
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#01FAFA"))

@@ -156,13 +156,18 @@ func TestRenderContextInfoIncludesSections(t *testing.T) {
 		"Memory files",
 		"Messages",
 		"Free space",
-		"Autocompact buffer",
+		"↓",
 	}
 
 	for _, snippet := range expectedSnippets {
 		if !strings.Contains(output, snippet) {
 			t.Fatalf("expected output to contain %q\n%s", snippet, output)
 		}
+	}
+
+	// Should NOT contain the old "Autocompact buffer" line
+	if strings.Contains(output, "Autocompact buffer") {
+		t.Fatalf("output should not contain 'Autocompact buffer' line\n%s", output)
 	}
 }
 

@@ -236,7 +236,6 @@ func renderContextInfo(info ContextInfo) string {
 	memoryFilesPercent := percentage(info.MemoryFilesTokens, total)
 	messagesPercent := percentage(info.MessagesTokens, total)
 	freePercent := percentage(info.FreeTokens, total)
-	autocompactPercent := percentage(info.AutocompactBuffer, total)
 
 	b.WriteString("  ⎿  Context Usage\n")
 	b.WriteString(fmt.Sprintf("     %s   %s · %s/%s tokens (%.1f%%)\n",
@@ -251,8 +250,7 @@ func renderContextInfo(info ContextInfo) string {
 	b.WriteString(formatContextLine("System tools", info.SystemToolsTokens, total, "⛁", systemToolsPercent))
 	b.WriteString(formatContextLine("Memory files", info.MemoryFilesTokens, total, "⛁", memoryFilesPercent))
 	b.WriteString(formatContextLine("Messages", info.MessagesTokens, total, "⛁", messagesPercent))
-	b.WriteString(formatContextLine("Free space", info.FreeTokens, total, "⛶", freePercent))
-	b.WriteString(formatContextLine("Autocompact buffer", info.AutocompactBuffer, total, "⛝", autocompactPercent))
+	b.WriteString(formatFreeSpaceLine(info, total, freePercent))
 
 	return b.String()
 }
@@ -323,6 +321,17 @@ func formatContextLine(label string, tokens, total int, symbol string, percent f
 	)
 }
 
+// formatFreeSpaceLine builds a formatted line for free space with low water mark indicator.
+func formatFreeSpaceLine(info ContextInfo, total int, percent float64) string {
+	bar := renderFreeSpaceBar(info, total)
+	totalFreeSpace := info.FreeTokens + info.AutocompactBuffer
+	return fmt.Sprintf("     %s   ⛶ Free space: %s tokens (%.1f%%)\n",
+		bar,
+		formatTokenCount(totalFreeSpace),
+		percentage(totalFreeSpace, total),
+	)
+}
+
 // renderCategoryBar returns a bar showing the share of a category.
 func renderCategoryBar(tokens, total int, symbol string) string {
 	percentage := 0.0
@@ -345,6 +354,48 @@ func renderCategoryBar(tokens, total int, symbol string) string {
 	for len(segments) < contextBarWidth {
 		segments = append(segments, "⛶")
 	}
+	return strings.Join(segments, " ")
+}
+
+// renderFreeSpaceBar returns a bar showing free space with low water mark indicator.
+func renderFreeSpaceBar(info ContextInfo, total int) string {
+	// Calculate percentages for positioning
+	freePercentage := 0.0
+	bufferPercentage := 0.0
+	if total > 0 {
+		freePercentage = float64(info.FreeTokens) / float64(total) * 100
+		bufferPercentage = float64(info.AutocompactBuffer) / float64(total) * 100
+	}
+
+	// Calculate segments
+	freeSegments, freePartial := calculateBarSegments(freePercentage)
+	bufferSegments, _ := calculateBarSegments(bufferPercentage)
+
+	segments := make([]string, 0, contextBarWidth)
+
+	// Add free space segments (above low water mark)
+	for i := 0; i < freeSegments && len(segments) < contextBarWidth; i++ {
+		segments = append(segments, "⛶")
+	}
+	if freePartial && len(segments) < contextBarWidth {
+		segments = append(segments, "⛶")
+	}
+
+	// Add the low water mark arrow
+	if len(segments) < contextBarWidth {
+		segments = append(segments, "↓")
+	}
+
+	// Add buffer space segments (below low water mark)
+	for i := 0; i < bufferSegments && len(segments) < contextBarWidth; i++ {
+		segments = append(segments, "⛶")
+	}
+
+	// Fill remaining with empty space
+	for len(segments) < contextBarWidth {
+		segments = append(segments, "⛶")
+	}
+
 	return strings.Join(segments, " ")
 }
 

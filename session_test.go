@@ -401,9 +401,15 @@ func (m *sessionMockLLMMultiTools) GenerateContent(ctx context.Context, messages
 	case llms.ChatMessageTypeTool:
 		// After receiving tool responses, generate final answer
 		var contents []string
-		for _, part := range last.Parts {
-			if tr, ok := part.(llms.ToolCallResponse); ok {
-				contents = append(contents, strings.TrimSpace(tr.Content))
+		for i := len(messages) - 1; i >= 0; i-- {
+			msg := messages[i]
+			if msg.Role != llms.ChatMessageTypeTool {
+				break
+			}
+			for _, part := range msg.Parts {
+				if tr, ok := part.(llms.ToolCallResponse); ok {
+					contents = append([]string{strings.TrimSpace(tr.Content)}, contents...)
+				}
 			}
 		}
 		return &llms.ContentResponse{Choices: []*llms.ContentChoice{{

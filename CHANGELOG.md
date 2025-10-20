@@ -19,8 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Implementing
 
 ### Done
+- Prompt history now persists across sessions and app activations. History is stored in `~/.local/share/asimi/history.json` (up to 1000 entries). Added `/clear-history` command to clear all saved history. Duplicate consecutive prompts are automatically filtered out
+- Converted the new waiting and history helper functions in `tui.go` into `TUIModel` methods to keep the model API consistent across the codebase
+- Status bar now recomputes the current git branch during render, reflecting branch changes without restarting the TUI
+- Added `TUIModel.initHistory()` helper so prompt history resets stay consistent when starting new sessions
+- Cached Git status data for the status bar so the TUI no longer freezes on startup while repeatedly invoking `git`
 - Fixed arrow key history navigation to only trigger when cursor is on the first line (up arrow) or last line (down arrow), allowing proper multi-line editing in the prompt
-- Fixed tool activation reporting so every `tool_use` is followed by a matching `tool_result`, preventing Anthropic 400 errors and keeping execution logs consistent.
+- Fixed tool activation reporting so every `tool_use` is followed by a matching `tool_result`, preventing Anthropic 400 errors and keeping execution logs consistent, and added configurable `max_loop` (default 999) to tune the loop guard without breaking Anthropic conversations.
 - Tool activation messages now swap the hollow status icon for a filled indicator on success and show assistant replies with the `Asimi:` prefix in the chat window.
 - Added a status bar wait timer that appears after three seconds of silence and counts how long we have been waiting for the next model response.
 - Arrow keys now browse prompt history, letting you roll back the conversation to earlier prompts, edit them, and resend without losing context.
