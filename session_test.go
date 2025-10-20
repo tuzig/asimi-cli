@@ -180,7 +180,7 @@ func TestSession_WriteAndReadFile(t *testing.T) {
 	sess, err := NewSession(&sessionMockLLMWriteRead{}, &Config{}, func(any) {})
 	assert.NoError(t, err)
 	// Overwrite the first system message text with the temp path as a simple channel to the mock
-	sess.messages[0].Parts = []llms.ContentPart{llms.TextPart(path)}
+	sess.Messages[0].Parts = []llms.ContentPart{llms.TextPart(path)}
 
 	out, err := sess.Ask(context.Background(), "please write then read")
 	assert.NoError(t, err)

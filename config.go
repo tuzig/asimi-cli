@@ -32,6 +32,7 @@ type Config struct {
 	Permission PermissionConfig `koanf:"permission"`
 	Hooks      HooksConfig      `koanf:"hooks"`
 	StatusLine StatusLineConfig `koanf:"statusline"`
+	Session    SessionConfig    `koanf:"session"`
 }
 
 // ServerConfig holds server configuration
@@ -160,6 +161,16 @@ type StatusLineConfig struct {
 	Template string `koanf:"template"`
 }
 
+// SessionConfig holds session persistence configuration
+type SessionConfig struct {
+	Enabled      bool `koanf:"enabled"`
+	MaxSessions  int  `koanf:"max_sessions"`
+	MaxAgeDays   int  `koanf:"max_age_days"`
+	ListLimit    int  `koanf:"list_limit"`
+	AutoSave     bool `koanf:"auto_save"`
+	SaveInterval int  `koanf:"save_interval"`
+}
+
 // LoadConfig loads configuration from multiple sources
 func LoadConfig() (*Config, error) {
 	// Create a new koanf instance
@@ -216,6 +227,12 @@ func LoadConfig() (*Config, error) {
 	config := defaultConfig()
 	if err := k.Unmarshal("", &config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Set default values for session config if not explicitly configured
+	// Check if session.enabled was explicitly set in config or environment
+	if !k.Exists("session.enabled") {
+		config.Session.Enabled = true // Default to enabled
 	}
 
 	return &config, nil

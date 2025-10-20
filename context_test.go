@@ -64,8 +64,8 @@ func TestGetContextInfo(t *testing.T) {
 			Provider: "anthropic",
 			Model:    "claude-3-5-sonnet-latest",
 		},
-		messages:     []llms.MessageContent{system, user},
-		contextFiles: map[string]string{"file.txt": "abcd"},
+		Messages:     []llms.MessageContent{system, user},
+		ContextFiles: map[string]string{"file.txt": "abcd"},
 	}
 
 	info := session.GetContextInfo()
@@ -111,8 +111,8 @@ func TestGetContextInfoWithOpenAI(t *testing.T) {
 			Provider: "openai",
 			Model:    "gpt-4o",
 		},
-		messages:     []llms.MessageContent{system, user},
-		contextFiles: map[string]string{},
+		Messages:     []llms.MessageContent{system, user},
+		ContextFiles: map[string]string{},
 	}
 
 	info := session.GetContextInfo()
@@ -191,13 +191,13 @@ func TestHandleContextCommand(t *testing.T) {
 				Provider: "anthropic",
 				Model:    "claude-3-5-sonnet-latest",
 			},
-			messages: []llms.MessageContent{
+			Messages: []llms.MessageContent{
 				{
 					Role:  llms.ChatMessageTypeSystem,
 					Parts: []llms.ContentPart{llms.TextPart("abcd")},
 				},
 			},
-			contextFiles: map[string]string{},
+			ContextFiles: map[string]string{},
 		}
 		model := &TUIModel{session: session}
 

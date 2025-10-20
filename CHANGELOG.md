@@ -9,12 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### To be Planned
-- Adding the "task" internal tool in `tools.go`. It's main goal is to keep the context short by using sub agents. supports optional `model` param
-- Add a `/resume` command that lists last X sessions (X set by the conf file) and let's the user choose which session to resume
-- Gracefully handle HTTP 429 errors from the model
 
 ### To be Implemented
-- *(none)*
+- Adding the "task" internal tool in `tools.go`. See `specs/task_tool.md` for detailed implementation plan
+- Gracefully handle HTTP 429 errors from the model. See `specs/http_429_handling.md` for detailed implementation plan
 
 ### Implementing
 
@@ -40,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add markdown styling to the chat window using glamour library. AI messages now render markdown with proper formatting (bold, italic, code blocks, etc.)
 - Support CTRL-Z for sending asimi to work in the background. Displays message "Asimi will be running in the background now. Use `fg` to restore"
 - Add `/vi` command for switching line editing to vi mode. When enabled, use `:` instead of `/` to specify commands. Border color changes to yellow to indicate vi mode is active. Vi mode now includes full vi-style keybindings for text editing (h/j/k/l for navigation, w/b for word movement, 0/$ for line start/end, etc.)
+- Feature: `/resume` command that lists last sessions and lets the user choose which session to resume. Session persistence is now enabled by default.
+- Enhancement: added visible "Cancel" option to the resume dialog that can be navigated to and selected with Enter
+- Bug fix: sessions are now automatically saved when quitting (via `/quit` or Ctrl+C) to ensure they can be resumed later
+- Enhancement: store sessions under project-specific directories to enforce per-project limits
+- Bug fix: restoring saved session message parts so resumes rebuild chat history
 - Bug fix: when the user scrolls the chat window stop autoscrolling
 - bug fix: deleting the current prompt line uses the new textarea cursor metadata instead of the removed `CursorPosition`, avoiding runtime errors
 - Feature: display thinking

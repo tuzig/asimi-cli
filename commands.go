@@ -32,6 +32,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("/context", "Show context usage details", handleContextCommand)
 	registry.RegisterCommand("/vi", "Toggle vi mode (use : for commands)", handleViCommand)
 	registry.RegisterCommand("/clear-history", "Clear all prompt history", handleClearHistoryCommand)
+	registry.RegisterCommand("/resume", "Resume a previous session", handleResumeCommand)
 
 	return registry
 }
@@ -83,14 +84,12 @@ func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
-	// Start a new session
+	model.saveSession()
 	model.sessionActive = true
 	model.chat = NewChatComponent(model.chat.Width, model.chat.Height)
 
-	// Clear raw session history for the new session
 	model.rawSessionHistory = make([]string, 0)
 
-	// Clear tool call tracking
 	model.toolCallMessageIndex = make(map[string]int)
 
 	// Reset prompt history and waiting state
@@ -102,11 +101,12 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	if model.session != nil {
 		model.session.ClearHistory()
 	}
-
 	return nil
 }
 
 func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
+	// Save the session before quitting
+	model.saveSession()
 	// Quit the application
 	return tea.Quit
 }
@@ -153,4 +153,43 @@ func handleClearHistoryCommand(model *TUIModel, args []string) tea.Cmd {
 
 	model.toastManager.AddToast("Prompt history cleared", "success", 3000)
 	return nil
+}
+
+func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
+	return func() tea.Msg {
+		config, err := LoadConfig()
+		if err != nil {
+			return sessionResumeErrorMsg{err: err}
+		}
+
+		if !config.Session.Enabled {
+			return showContextMsg{content: "Session resume is disabled in configuration."}
+		}
+
+		maxSessions := 50
+		maxAgeDays := 30
+		listLimit := 10
+
+		if config.Session.MaxSessions > 0 {
+			maxSessions = config.Session.MaxSessions
+		}
+		if config.Session.MaxAgeDays > 0 {
+			maxAgeDays = config.Session.MaxAgeDays
+		}
+		if config.Session.ListLimit > 0 {
+			listLimit = config.Session.ListLimit
+		}
+
+		store, err := NewSessionStore(maxSessions, maxAgeDays)
+		if err != nil {
+			return sessionResumeErrorMsg{err: err}
+		}
+
+		sessions, err := store.ListSessions(listLimit)
+		if err != nil {
+			return sessionResumeErrorMsg{err: err}
+		}
+
+		return sessionsLoadedMsg{sessions: sessions}
+	}
 }
