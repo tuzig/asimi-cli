@@ -193,19 +193,19 @@ func main() {
 }
 
 // formatToolCall formats a tool call according to the spec: two lines with ⏺ and ⎿ symbols
-func formatToolCall(toolName, input, result string, err error) string {
+func formatToolCall(toolName, icon string, input, result string, err error) string {
 	// Parse input JSON to extract key parameters for the first line
 	var params map[string]interface{}
 	json.Unmarshal([]byte(input), &params)
 
+	f := toolName
 	for _, tool := range availableTools {
 		if tool.Name() == toolName {
-			return tool.Format(input, result, err)
+			f = tool.Format(input, result, err)
 		}
 	}
-
 	// Add a special err message type
-	return fmt.Sprintf("Unknown tool: %s", toolName)
+	return fmt.Sprintf("%s %s", icon, f)
 
 }
 

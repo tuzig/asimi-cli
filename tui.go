@@ -924,26 +924,27 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ToolCallScheduledMsg:
 		m.addToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+
 		// Add a new message and store its index
-		message := fmt.Sprintf("📋 %s scheduled", msg.Call.Tool.Name())
+		message := formatToolCall(msg.Call.Tool.Name(), "📋", msg.Call.Input, "", nil)
 		m.chat.AddMessage(message)
 		m.toolCallMessageIndex[msg.Call.ID] = len(m.chat.Messages) - 1
 
 	case ToolCallExecutingMsg:
 		m.addToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		formatted := formatToolCall(msg.Call.Tool.Name(), "⚙️", msg.Call.Input, "", nil)
 		// Update the existing message if we have its index
 		if idx, exists := m.toolCallMessageIndex[msg.Call.ID]; exists && idx < len(m.chat.Messages) {
-			m.chat.Messages[idx] = fmt.Sprintf("⚙️ %s running", msg.Call.Tool.Name())
+			m.chat.Messages[idx] = formatted
 			m.chat.UpdateContent()
 		} else {
 			// Fallback: add a new message if we don't have the index
-			m.chat.AddMessage(fmt.Sprintf("⚙️ %s running", msg.Call.Tool.Name()))
+			m.chat.AddMessage(formatted)
 		}
 
 	case ToolCallSuccessMsg:
 		m.addToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
-		formatted := formatToolCall(msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result, nil)
-		formatted = strings.Replace(formatted, "○", "●", 1)
+		formatted := formatToolCall(msg.Call.Tool.Name(), "✅", msg.Call.Input, msg.Call.Result, nil)
 		// Update the existing message if we have its index
 		if idx, exists := m.toolCallMessageIndex[msg.Call.ID]; exists && idx < len(m.chat.Messages) {
 			m.chat.Messages[idx] = formatted
@@ -957,8 +958,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ToolCallErrorMsg:
 		m.addToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
-		formatted := formatToolCall(msg.Call.Tool.Name(), msg.Call.Input, "", msg.Call.Error)
-		formatted = strings.Replace(formatted, "○", "✗", 1)
+		formatted := formatToolCall(msg.Call.Tool.Name(), "⁉️", msg.Call.Input, "", msg.Call.Error)
 		// Update the existing message if we have its index
 		if idx, exists := m.toolCallMessageIndex[msg.Call.ID]; exists && idx < len(m.chat.Messages) {
 			m.chat.Messages[idx] = formatted

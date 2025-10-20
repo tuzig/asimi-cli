@@ -93,7 +93,7 @@ func (t ReadFileTool) Format(input, result string, err error) string {
 	}
 
 	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("○ Read File%s", paramStr)
+	firstLine := fmt.Sprintf("Read File%s", paramStr)
 
 	// Second line: result summary
 	var secondLine string
@@ -157,7 +157,7 @@ func (t WriteFileTool) Format(input, result string, err error) string {
 	}
 
 	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("○ Write File%s", paramStr)
+	firstLine := fmt.Sprintf("Write File%s", paramStr)
 
 	// Second line: result summary
 	var secondLine string
@@ -228,7 +228,7 @@ func (t ListDirectoryTool) Format(input, result string, err error) string {
 	}
 
 	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("○ List Files%s", paramStr)
+	firstLine := fmt.Sprintf("List Files%s", paramStr)
 
 	// Second line: result summary
 	var secondLine string
@@ -311,7 +311,7 @@ func (t ReplaceTextTool) Format(input, result string, err error) string {
 	}
 
 	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("○ Replace Text%s", paramStr)
+	firstLine := fmt.Sprintf("Replace Text%s", paramStr)
 
 	// Second line: result summary
 	var secondLine string
@@ -434,7 +434,7 @@ func (t RunShellCommand) Format(input, result string, err error) string {
 	}
 
 	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("○ Run Shell Command%s", paramStr)
+	firstLine := fmt.Sprintf("Run Shell Command%s", paramStr)
 
 	// Second line: result summary
 	var secondLine string
@@ -535,7 +535,7 @@ func (t ReadManyFilesTool) Format(input, result string, err error) string {
 	}
 
 	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("○ Read Many Files%s", paramStr)
+	firstLine := fmt.Sprintf("Read Many Files%s", paramStr)
 
 	// Second line: result summary
 	var secondLine string
