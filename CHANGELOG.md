@@ -9,15 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### To be Planned
+- 
 
-### To be Implemented
+### TBI - To be Implemented
+- Adding a `roles` directory with content files to be included in the system propmt. Start with "orchastrator", "coder", "Planner" and "Reviewer"
+
 - Adding the "task" internal tool in `tools.go`. See `specs/task_tool.md` for detailed implementation plan
 - Gracefully handle HTTP 429 errors from the model. See `specs/http_429_handling.md` for detailed implementation plan
 
 ### Implementing
 
 ### Done
-- Restored history configuration defaults (enabled by default, preserving max history settings) and added a bool pointer helper so configuration and TUI tests build again
+- Clearing toast notifications when starting a new prompt so stale messages from previous operations do not linger
+- Restored history  defaults (enabled by default, preserving max history settings) and added a bool pointer helper so configuration and TUI tests build again
 - Prompt history now persists across sessions and app activations. History is stored in `~/.local/share/asimi/history.json` (up to 1000 entries). Added `/clear-history` command to clear all saved history. Duplicate consecutive prompts are automatically filtered out
 - Converted the new waiting and history helper functions in `tui.go` into `TUIModel` methods to keep the model API consistent across the codebase
 - Status bar now recomputes the current git branch during render, reflecting branch changes without restarting the TUI
