@@ -87,33 +87,37 @@ Top allocators during startup:
 
 ## Usage
 
-### Quick Profiling
+### Quick Profiling (Recommended)
 ```bash
-./profile_startup_auto.sh
-```
-
-### Manual Profiling
-```bash
-./asimi --debug \
-  --cpu-profile=cpu.prof \
-  --mem-profile=mem.prof \
-  --trace=trace.out \
-  --profile-exit-ms=2000
+# Run automated profiling with analysis
+just profile
 ```
 
 ### Interactive Analysis
 ```bash
-# CPU profile (web UI)
-go tool pprof -http=:8080 cpu.prof
+# Open CPU profile in browser
+just profile-cpu
 
-# Memory profile (web UI)
-go tool pprof -http=:8080 mem.prof
+# Open memory profile in browser
+just profile-mem
 
-# Execution trace
-go tool trace trace.out
+# Open execution trace viewer
+just profile-trace
+```
 
-# Generate call graph
-go tool pprof -pdf cpu.prof > cpu_graph.pdf
+### Manual Profiling
+```bash
+# If you need more control
+./asimi --debug \
+  --cpu-profile=profiles/cpu.prof \
+  --mem-profile=profiles/mem.prof \
+  --trace=profiles/trace.out \
+  --profile-exit-ms=2000
+
+# Then analyze with:
+go tool pprof -http=:8080 profiles/cpu.prof
+go tool pprof -http=:8080 profiles/mem.prof
+go tool trace profiles/trace.out
 ```
 
 ## Conclusion

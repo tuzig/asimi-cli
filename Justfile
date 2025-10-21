@@ -25,7 +25,7 @@ profile: build
     @rm -f profiles/*
     @echo "Running with profiling (auto-exits after 2 seconds)..."
     @echo ""
-    ./asimi --debug --cpu-profile=profiles/cpu.prof --mem-profile=profiles/mem.prof --trace=profiles/trace.out --profile-exit-ms=2000 2>&1 | tee profiles/timing.log || true
+    ./asimi --debug --cpu-profile=profiles/cpu.prof --mem-profile=profiles/mem.prof --trace=profiles/trace.out --profile-exit-ms=7000 2>&1 | tee profiles/timing.log || true
     @echo ""
     @echo "=== Timing Analysis ==="
     @echo ""
