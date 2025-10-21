@@ -9,8 +9,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
+	"runtime/trace"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,10 +35,14 @@ type versionCmd struct{}
 var program *tea.Program
 
 var cli struct {
-	Version versionCmd `cmd:"version" help:"Print version information"`
-	Prompt  string     `short:"p" help:"Prompt to send to the agent"`
-	Debug   bool       `help:"Enable debug logging"`
-	Run     runCmd     `cmd:"" default:"1" help:"Run the interactive application"`
+	Version       versionCmd `cmd:"version" help:"Print version information"`
+	Prompt        string     `short:"p" help:"Prompt to send to the agent"`
+	Debug         bool       `help:"Enable debug logging"`
+	CPUProfile    string     `help:"Write CPU profile to file"`
+	MemProfile    string     `help:"Write memory profile to file"`
+	Trace         string     `help:"Write execution trace to file"`
+	ProfileExitMs int        `help:"Exit after N milliseconds (for profiling startup)"`
+	Run           runCmd     `cmd:"" default:"1" help:"Run the interactive application"`
 }
 
 func initLogger() {
@@ -75,16 +83,23 @@ func (v versionCmd) Run() error {
 }
 
 func (r *runCmd) Run() error {
+	startTime := time.Now()
+	
 	// This command will only be run when no prompt is provided.
 	// The logic in main() will handle the non-interactive case.
 
-	// Check if we are running in a terminal
-	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsTerminal(os.Stdin.Fd()) {
+	// Check if we are running in a terminal (skip check if profiling with auto-exit)
+	if cli.ProfileExitMs == 0 && !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsTerminal(os.Stdin.Fd()) {
 		fmt.Println("This program requires a terminal to run.")
 		fmt.Println("Please run it in a terminal emulator.")
 		return nil
 	}
 
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] Terminal check completed in %v\n", time.Since(startTime))
+	}
+
+	configStart := time.Now()
 	config, err := LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Using defaults due to config load failure: %v\n", err)
@@ -113,16 +128,35 @@ func (r *runCmd) Run() error {
 			},
 		}
 	}
+	
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] LoadConfig() completed in %v\n", time.Since(configStart))
+	}
 
 	// Create the TUI model
+	tuiStart := time.Now()
 	tuiModel := NewTUIModel(config)
+	
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] NewTUIModel() completed in %v\n", time.Since(tuiStart))
+	}
 
 	// Create the program but don't start it yet
+	programStart := time.Now()
 	program = tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] tea.NewProgram() completed in %v\n", time.Since(programStart))
+	}
 
 	// Initialize LLM and session asynchronously to avoid blocking startup
 	go func() {
+		llmStart := time.Now()
 		llm, err := getLLMClient(config)
+		if cli.Debug {
+			fmt.Fprintf(os.Stderr, "[TIMING] getLLMClient() completed in %v\n", time.Since(llmStart))
+		}
+		
 		if err != nil {
 			// Log the error but continue without LLM support
 			slog.Warn("Failed to get LLM client, running without AI capabilities", "error", err)
@@ -131,11 +165,16 @@ func (r *runCmd) Run() error {
 				program.Send(llmInitErrorMsg{err: err})
 			}
 		} else {
+			sessStart := time.Now()
 			sess, sessErr := NewSession(llm, config, func(m any) {
 				if program != nil {
 					program.Send(m)
 				}
 			})
+			if cli.Debug {
+				fmt.Fprintf(os.Stderr, "[TIMING] NewSession() completed in %v\n", time.Since(sessStart))
+			}
+			
 			if sessErr != nil {
 				slog.Error("Failed to create session", "error", sessErr)
 				if program != nil {
@@ -150,9 +189,33 @@ func (r *runCmd) Run() error {
 		}
 	}()
 
+	// If profile-exit-ms is set, schedule an exit after that duration
+	if cli.ProfileExitMs > 0 {
+		go func() {
+			time.Sleep(time.Duration(cli.ProfileExitMs) * time.Millisecond)
+			if cli.Debug {
+				fmt.Fprintf(os.Stderr, "[TIMING] Auto-exiting after %dms for profiling\n", cli.ProfileExitMs)
+			}
+			if program != nil {
+				program.Send(tea.Quit())
+			}
+		}()
+	}
+
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] About to start program.Run() at %v from start\n", time.Since(startTime))
+	}
+
+	runStart := time.Now()
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("alas, there's been an error: %w", err)
 	}
+	
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] program.Run() completed in %v\n", time.Since(runStart))
+		fmt.Fprintf(os.Stderr, "[TIMING] Total Run() time: %v\n", time.Since(startTime))
+	}
+	
 	return nil
 }
 
@@ -170,8 +233,50 @@ type llmInitErrorMsg struct {
 }
 
 func main() {
+	startTime := time.Now()
 	ctx := kong.Parse(&cli)
+	
+	// Start profiling if requested
+	if cli.CPUProfile != "" {
+		f, err := os.Create(cli.CPUProfile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not create CPU profile: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not start CPU profile: %v\n", err)
+			os.Exit(1)
+		}
+		defer pprof.StopCPUProfile()
+		fmt.Fprintf(os.Stderr, "CPU profiling enabled, writing to %s\n", cli.CPUProfile)
+	}
+
+	if cli.Trace != "" {
+		f, err := os.Create(cli.Trace)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not create trace file: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		if err := trace.Start(f); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not start trace: %v\n", err)
+			os.Exit(1)
+		}
+		defer trace.Stop()
+		fmt.Fprintf(os.Stderr, "Execution tracing enabled, writing to %s\n", cli.Trace)
+	}
+
+	// Log startup timing
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] main() started at %v\n", startTime)
+	}
+	
 	initLogger()
+	
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] initLogger() completed in %v\n", time.Since(startTime))
+	}
 
 	if cli.Prompt != "" {
 		// Non-interactive mode via native Session path
@@ -212,6 +317,26 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Write memory profile if requested
+	if cli.MemProfile != "" {
+		f, err := os.Create(cli.MemProfile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not create memory profile: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		runtime.GC() // get up-to-date statistics
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not write memory profile: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Memory profile written to %s\n", cli.MemProfile)
+	}
+	
+	if cli.Debug {
+		fmt.Fprintf(os.Stderr, "[TIMING] Total execution time: %v\n", time.Since(startTime))
 	}
 }
 
