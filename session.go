@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tmc/langchaingo/llms"
@@ -831,6 +832,7 @@ type SessionStore struct {
 	maxAgeDays  int
 	saveChan    chan *Session
 	stopChan    chan struct{}
+	closeOnce   sync.Once
 }
 
 func generateSessionID() string {
@@ -906,23 +908,26 @@ func (store *SessionStore) SaveSessionSync(session *Session) error {
 }
 
 func (store *SessionStore) Close() {
-	close(store.stopChan)
+	// Use sync.Once to ensure we only close the channel once
+	store.closeOnce.Do(func() {
+		close(store.stopChan)
 
-	// Wait for worker to finish with timeout
-	// The worker will drain the queue when it receives the stop signal
-	done := make(chan struct{})
-	go func() {
-		// Give the worker time to process remaining items
-		time.Sleep(100 * time.Millisecond)
-		close(done)
-	}()
+		// Wait for worker to finish with timeout
+		// The worker will drain the queue when it receives the stop signal
+		done := make(chan struct{})
+		go func() {
+			// Give the worker time to process remaining items
+			time.Sleep(100 * time.Millisecond)
+			close(done)
+		}()
 
-	select {
-	case <-done:
-		slog.Debug("session store closed gracefully")
-	case <-time.After(2 * time.Second):
-		slog.Warn("session store close timed out, some saves may be lost")
-	}
+		select {
+		case <-done:
+			slog.Debug("session store closed gracefully")
+		case <-time.After(2 * time.Second):
+			slog.Warn("session store close timed out, some saves may be lost")
+		}
+	})
 }
 
 func (store *SessionStore) saveSessionSync(session *Session) error {
