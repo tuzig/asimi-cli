@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Implementing
 
 ### Done
+- Fixed slow startup by initializing LLM client and session asynchronously. The UI now appears immediately and is responsive while the LLM client is being set up in the background
 - Fixed arrow keys not working in vi NORMAL mode - navigation keys (arrow keys, h/j/k/l, w/b, etc.) now properly work for cursor movement in NORMAL mode
 - Clearing toast notifications when starting a new prompt so stale messages from previous operations do not linger
 - Restored history  defaults (enabled by default, preserving max history settings) and added a bool pointer helper so configuration and TUI tests build again

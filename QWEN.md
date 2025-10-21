@@ -5,6 +5,7 @@ Our mission is to have a tool that is safe, fun and produces high quality code
 
 IMPORTANT: Keep the directory tree flat. Try and add your changes to existing files and if that does not makes sense - create as little new files as possible and always get your consent when creating directories and files
 
+- to search: `rg`
 - to test: `just test` 
 - to build:`just build`
 - to update dependecies: `just modules`

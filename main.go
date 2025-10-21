@@ -117,25 +117,38 @@ func (r *runCmd) Run() error {
 	// Create the TUI model
 	tuiModel := NewTUIModel(config)
 
+	// Create the program but don't start it yet
 	program = tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	if err != nil {
-		return fmt.Errorf("failed to create agent: %w", err)
-	}
 
-	llm, err := getLLMClient(config)
-	if err != nil {
-		// Log the error but continue without LLM support
-		slog.Warn("Failed to get LLM client, running without AI capabilities", "error", err)
-		fmt.Fprintf(os.Stderr, "Warning: Running without AI capabilities: %v\n", err)
-	} else {
-		sess, sessErr := NewSession(llm, config, func(m any) {
-			program.Send(m)
-		})
-		if sessErr != nil {
-			return fmt.Errorf("Failed to create a new session: %w", sessErr)
+	// Initialize LLM and session asynchronously to avoid blocking startup
+	go func() {
+		llm, err := getLLMClient(config)
+		if err != nil {
+			// Log the error but continue without LLM support
+			slog.Warn("Failed to get LLM client, running without AI capabilities", "error", err)
+			// Send a message to the TUI to show the warning
+			if program != nil {
+				program.Send(llmInitErrorMsg{err: err})
+			}
+		} else {
+			sess, sessErr := NewSession(llm, config, func(m any) {
+				if program != nil {
+					program.Send(m)
+				}
+			})
+			if sessErr != nil {
+				slog.Error("Failed to create session", "error", sessErr)
+				if program != nil {
+					program.Send(llmInitErrorMsg{err: sessErr})
+				}
+			} else {
+				// Send the session to the TUI
+				if program != nil {
+					program.Send(llmInitSuccessMsg{session: sess})
+				}
+			}
 		}
-		tuiModel.SetSession(sess)
-	}
+	}()
 
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("alas, there's been an error: %w", err)
@@ -145,6 +158,16 @@ func (r *runCmd) Run() error {
 
 type responseMsg string
 type errMsg struct{ err error }
+
+// llmInitSuccessMsg is sent when LLM initialization completes successfully
+type llmInitSuccessMsg struct {
+	session *Session
+}
+
+// llmInitErrorMsg is sent when LLM initialization fails
+type llmInitErrorMsg struct {
+	err error
+}
 
 func main() {
 	ctx := kong.Parse(&cli)

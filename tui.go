@@ -252,7 +252,8 @@ func (m *TUIModel) shutdown() {
 
 // Init implements bubbletea.Model
 func (m TUIModel) Init() tea.Cmd {
-	// Initialize the TUI
+	// Bubbletea will automatically send a WindowSizeMsg after Init
+	// We don't need to do anything special here
 	return nil
 }
 
@@ -1187,6 +1188,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionResumeErrorMsg:
 		m.sessionModal = nil
 		m.toastManager.AddToast(fmt.Sprintf("Failed to resume session: %v", msg.err), "error", 4000)
+
+	case llmInitSuccessMsg:
+		// LLM initialization completed successfully
+		m.SetSession(msg.session)
+		slog.Info("LLM session initialized successfully")
+
+	case llmInitErrorMsg:
+		// LLM initialization failed
+		slog.Warn("LLM initialization failed", "error", msg.err)
+		m.toastManager.AddToast(fmt.Sprintf("Warning: Running without AI capabilities: %v", msg.err), "warning", 5000)
 	}
 
 	m.chat, _ = m.chat.Update(msg)
