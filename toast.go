@@ -57,6 +57,11 @@ func (tm *ToastManager) RemoveToast(id string) {
 	}
 }
 
+// Clear removes all existing toast notifications
+func (tm *ToastManager) Clear() {
+	tm.Toasts = nil
+}
+
 // Update handles updating the toast manager (e.g., removing expired toasts)
 func (tm ToastManager) Update() ToastManager {
 	now := time.Now()

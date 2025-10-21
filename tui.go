@@ -782,6 +782,9 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			}
 		}
 	} else {
+		// Clear any lingering toast notifications before handling a new prompt
+		m.toastManager.Clear()
+
 		// Check if we're submitting a historical prompt (user navigated history)
 		if m.historySaved && m.historyCursor < len(m.promptHistory) {
 			// User is submitting a historical prompt - rollback to that state

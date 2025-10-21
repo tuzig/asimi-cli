@@ -531,6 +531,14 @@ func TestToastManager(t *testing.T) {
 	require.NotEmpty(t, view)
 	require.Contains(t, view, message)
 
+	// Test clearing toasts
+	toastManager.Clear()
+	require.Empty(t, toastManager.Toasts)
+
+	// Re-add toast to verify removal still works
+	toastManager.AddToast(message, tostType, timeout)
+	require.Equal(t, 1, len(toastManager.Toasts))
+
 	// Test removing a toast
 	toastID := toastManager.Toasts[0].ID
 	toastManager.RemoveToast(toastID)
