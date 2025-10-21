@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Implementing
 
 ### Done
+- Fixed arrow keys not working in vi NORMAL mode - navigation keys (arrow keys, h/j/k/l, w/b, etc.) now properly work for cursor movement in NORMAL mode
 - Clearing toast notifications when starting a new prompt so stale messages from previous operations do not linger
 - Restored history  defaults (enabled by default, preserving max history settings) and added a bool pointer helper so configuration and TUI tests build again
 - Prompt history now persists across sessions and app activations. History is stored in `~/.local/share/asimi/history.json` (up to 1000 entries). Added `/clear-history` command to clear all saved history. Duplicate consecutive prompts are automatically filtered out
