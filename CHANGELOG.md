@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clearing toast notifications when starting a new prompt so stale messages from previous operations do not linger
 - Restored history  defaults (enabled by default, preserving max history settings) and added a bool pointer helper so configuration and TUI tests build again
 - Prompt history now persists across sessions and app activations. History is stored in `~/.local/share/asimi/history.json` (up to 1000 entries). Added `/clear-history` command to clear all saved history. Duplicate consecutive prompts are automatically filtered out
+- Status bar left section now shows the condensed git status beside the branch name (e.g. `[$!?⇡]`) so repository state is always visible at a glance
+- Replaced shell git calls with an asynchronous go-git manager, eliminating external git command executions while keeping the status bar responsive
 - Converted the new waiting and history helper functions in `tui.go` into `TUIModel` methods to keep the model API consistent across the codebase
 - Status bar now recomputes the current git branch during render, reflecting branch changes without restarting the TUI
 - Added `TUIModel.initHistory()` helper so prompt history resets stay consistent when starting new sessions

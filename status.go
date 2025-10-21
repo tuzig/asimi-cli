@@ -180,6 +180,9 @@ func (s StatusComponent) renderLeftSection() string {
 
 	var parts []string
 	parts = append(parts, "🌴 "+bs.Render(branch))
+	if gitStatus := getGitStatus(); gitStatus != "" {
+		parts = append(parts, gitStatus)
+	}
 	if viIndicator := s.renderViModeIndicator(); viIndicator != "" {
 		parts = append(parts, viIndicator)
 	}

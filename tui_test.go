@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	gogit "github.com/go-git/go-git/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/tmc/langchaingo/llms/fake"
 )
@@ -476,6 +477,18 @@ func TestCompletionDialogScrolling(t *testing.T) {
 
 // TestStatusComponent tests the status component
 func TestStatusComponent(t *testing.T) {
+	originalManager := defaultGitInfoManager
+	defaultGitInfoManager = newGitInfoManager()
+	defaultGitInfoManager.mu.Lock()
+	defaultGitInfoManager.branch = "main"
+	defaultGitInfoManager.status = "[+]"
+	defaultGitInfoManager.isRepo = true
+	defaultGitInfoManager.lastUpdate = time.Now()
+	defaultGitInfoManager.mu.Unlock()
+	t.Cleanup(func() {
+		defaultGitInfoManager = originalManager
+	})
+
 	status := NewStatusComponent(50)
 
 	// Test setting properties with new API
@@ -485,12 +498,68 @@ func TestStatusComponent(t *testing.T) {
 	status.SetWidth(60)
 	require.Equal(t, 60, status.Width)
 
+	expectedGitStatus := getGitStatus()
+
 	// Test view rendering
 	view := status.View()
 	require.NotEmpty(t, view)
 	// The new status format includes git branch and provider info
 	// Just check that it renders something
 	require.True(t, len(view) > 0)
+	if expectedGitStatus != "" {
+		require.Contains(t, view, expectedGitStatus)
+	}
+}
+
+func TestSummarizeStatus(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   gogit.Status
+		expected string
+	}{
+		{
+			name:     "empty status",
+			status:   gogit.Status{},
+			expected: "",
+		},
+		{
+			name: "mixed indicators",
+			status: gogit.Status{
+				"modified.go": {
+					Staging:  gogit.Modified,
+					Worktree: gogit.Unmodified,
+				},
+				"staged_added.go": {
+					Staging:  gogit.Added,
+					Worktree: gogit.Unmodified,
+				},
+				"deleted.txt": {
+					Staging:  gogit.Deleted,
+					Worktree: gogit.Unmodified,
+				},
+				"renamed.txt": {
+					Staging:  gogit.Renamed,
+					Worktree: gogit.Unmodified,
+				},
+				"untracked.md": {
+					Staging:  gogit.Untracked,
+					Worktree: gogit.Untracked,
+				},
+				"worktree_modified.go": {
+					Staging:  gogit.Unmodified,
+					Worktree: gogit.Modified,
+				},
+			},
+			expected: "[!+-→?]",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expected, summarizeStatus(tc.status))
+		})
+	}
 }
 
 // TestBaseModal tests the base modal component

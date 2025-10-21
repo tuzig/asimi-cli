@@ -3,11 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"time"
+
+	gogit "github.com/go-git/go-git/v5"
 )
 
 var claudeVersionPattern = regexp.MustCompile(`\d+(\.\d+)?`)
@@ -70,82 +73,277 @@ func findProjectRoot(start string) string {
 
 // getCurrentGitBranch returns the current git branch name
 func getCurrentGitBranch() string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(output))
+	return defaultGitInfoManager.CurrentBranch()
 }
 
 // getGitStatus returns a shortened git status string
 func getGitStatus() string {
-	cmd := exec.Command("git", "status", "--porcelain")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return "" // Clean working directory
-	}
-
-	var status strings.Builder
-	status.WriteString("[")
-
-	// Count different types of changes
-	var modified, added, deleted, untracked, renamed int
-	for _, line := range lines {
-		if len(line) < 2 {
-			continue
-		}
-		switch line[0] {
-		case 'M', 'T': // Modified or type changed
-			modified++
-		case 'A': // Added
-			added++
-		case 'D': // Deleted
-			deleted++
-		case 'R': // Renamed
-			renamed++
-		case '?': // Untracked
-			untracked++
-		}
-		switch line[1] {
-		case 'M', 'T': // Modified or type changed in working tree
-			modified++
-		case 'D': // Deleted in working tree
-			deleted++
-		}
-	}
-
-	// Build status string
-	if modified > 0 {
-		status.WriteString("!")
-	}
-	if added > 0 {
-		status.WriteString("+")
-	}
-	if deleted > 0 {
-		status.WriteString("-")
-	}
-	if renamed > 0 {
-		status.WriteString("→")
-	}
-	if untracked > 0 {
-		status.WriteString("?")
-	}
-
-	status.WriteString("]")
-	return status.String()
+	return defaultGitInfoManager.ShortStatus()
 }
 
 // isGitRepository checks if the current directory is a git repository
 func isGitRepository() bool {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	err := cmd.Run()
-	return err == nil
+	return defaultGitInfoManager.IsRepository()
+}
+
+const gitInfoRefreshInterval = 3 * time.Second
+
+var defaultGitInfoManager = newGitInfoManager()
+
+type gitInfoManager struct {
+	mu            sync.RWMutex
+	branch        string
+	status        string
+	repo          *gogit.Repository
+	repoPath      string
+	isRepo        bool
+	lastUpdate    time.Time
+	updateCh      chan struct{}
+	startOnce     sync.Once
+	refreshTicker *time.Ticker
+}
+
+func newGitInfoManager() *gitInfoManager {
+	return &gitInfoManager{
+		updateCh: make(chan struct{}, 1),
+	}
+}
+
+func (m *gitInfoManager) start() {
+	m.startOnce.Do(func() {
+		m.refreshTicker = time.NewTicker(gitInfoRefreshInterval)
+		m.refresh()
+		go m.loop()
+	})
+}
+
+func (m *gitInfoManager) loop() {
+	for {
+		select {
+		case <-m.refreshTicker.C:
+			m.refresh()
+		case <-m.updateCh:
+			m.refresh()
+		}
+	}
+}
+
+func (m *gitInfoManager) refresh() {
+	branch, status, repo, repoPath, err := m.readRepositoryState()
+	now := time.Now()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err != nil {
+		m.branch = ""
+		m.status = ""
+		m.isRepo = false
+		m.repo = nil
+		m.repoPath = ""
+		m.lastUpdate = now
+		return
+	}
+
+	m.branch = branch
+	m.status = status
+	m.isRepo = true
+	m.repo = repo
+	m.repoPath = repoPath
+	m.lastUpdate = now
+}
+
+func (m *gitInfoManager) readRepositoryState() (string, string, *gogit.Repository, string, error) {
+	repo, repoPath, err := m.ensureRepository()
+	if err != nil {
+		return "", "", nil, "", err
+	}
+
+	branch := readCurrentBranch(repo)
+	status := readShortStatus(repo)
+
+	return branch, status, repo, repoPath, nil
+}
+
+func (m *gitInfoManager) ensureRepository() (*gogit.Repository, string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, "", err
+	}
+
+	root := findProjectRoot(cwd)
+
+	m.mu.RLock()
+	repo := m.repo
+	repoPath := m.repoPath
+	m.mu.RUnlock()
+
+	if repo != nil && repoPath == root {
+		return repo, repoPath, nil
+	}
+
+	repo, err = gogit.PlainOpenWithOptions(root, &gogit.PlainOpenOptions{
+		DetectDotGit: true,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	m.mu.Lock()
+	m.repo = repo
+	m.repoPath = root
+	m.mu.Unlock()
+
+	return repo, root, nil
+}
+
+func (m *gitInfoManager) requestRefresh() {
+	select {
+	case m.updateCh <- struct{}{}:
+	default:
+	}
+}
+
+func (m *gitInfoManager) requestRefreshIfStale() {
+	m.mu.RLock()
+	last := m.lastUpdate
+	m.mu.RUnlock()
+
+	if time.Since(last) > gitInfoRefreshInterval {
+		m.requestRefresh()
+	}
+}
+
+func (m *gitInfoManager) refreshIfNeeded(force bool) {
+	m.mu.RLock()
+	last := m.lastUpdate
+	branch := m.branch
+	m.mu.RUnlock()
+
+	if force || branch == "" || time.Since(last) > gitInfoRefreshInterval {
+		m.refresh()
+	}
+}
+
+func (m *gitInfoManager) CurrentBranch() string {
+	m.start()
+	m.refreshIfNeeded(false)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.branch
+}
+
+func (m *gitInfoManager) ShortStatus() string {
+	m.start()
+	m.refreshIfNeeded(true)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.status
+}
+
+func (m *gitInfoManager) IsRepository() bool {
+	m.start()
+	m.refreshIfNeeded(false)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.isRepo
+}
+
+func readCurrentBranch(repo *gogit.Repository) string {
+	if repo == nil {
+		return ""
+	}
+
+	ref, err := repo.Head()
+	if err != nil {
+		return ""
+	}
+
+	if ref.Name().IsBranch() {
+		return ref.Name().Short()
+	}
+
+	return ref.Hash().String()[:7]
+}
+
+func readShortStatus(repo *gogit.Repository) string {
+	if repo == nil {
+		return ""
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return ""
+	}
+
+	status, err := worktree.Status()
+	if err != nil {
+		return ""
+	}
+
+	return summarizeStatus(status)
+}
+
+func summarizeStatus(status gogit.Status) string {
+	if len(status) == 0 {
+		return ""
+	}
+
+	var modified, added, deleted, untracked, renamed int
+	for _, entry := range status {
+		switch entry.Staging {
+		case gogit.Modified, gogit.UpdatedButUnmerged:
+			modified++
+		case gogit.Added, gogit.Copied:
+			added++
+		case gogit.Deleted:
+			deleted++
+		case gogit.Renamed:
+			renamed++
+		case gogit.Untracked:
+			untracked++
+		}
+		switch entry.Worktree {
+		case gogit.Modified, gogit.UpdatedButUnmerged:
+			modified++
+		case gogit.Added, gogit.Copied:
+			added++
+		case gogit.Deleted:
+			deleted++
+		case gogit.Renamed:
+			renamed++
+		case gogit.Untracked:
+			untracked++
+		}
+	}
+
+	var builder strings.Builder
+	builder.WriteString("[")
+	if modified > 0 {
+		builder.WriteString("!")
+	}
+	if added > 0 {
+		builder.WriteString("+")
+	}
+	if deleted > 0 {
+		builder.WriteString("-")
+	}
+	if renamed > 0 {
+		builder.WriteString("→")
+	}
+	if untracked > 0 {
+		builder.WriteString("?")
+	}
+	builder.WriteString("]")
+
+	result := builder.String()
+	if result == "[]" {
+		return ""
+	}
+	return result
 }
 
 // shortenProviderModel shortens provider and model names for display
