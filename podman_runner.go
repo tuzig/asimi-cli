@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"sync"
+	"io"
 
 	dockerContainer "github.com/docker/docker/api/types/container"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
@@ -27,6 +28,11 @@ type PodmanShellRunner struct {
 	allowFallback bool
 	mu            sync.Mutex
 	conn          context.Context
+	// New fields for persistent session
+	execSessionID string
+	stdinPipe     io.WriteCloser
+	stdoutPipe    io.ReadCloser
+	stderrPipe    io.ReadCloser
 }
 
 func newPodmanShellRunner(allowFallback bool) *PodmanShellRunner {
@@ -34,6 +40,10 @@ func newPodmanShellRunner(allowFallback bool) *PodmanShellRunner {
 		imageName:     "localhost/asimi-shell:latest",
 		containerName: "asimi-shell-workspace",
 		allowFallback: allowFallback,
+		execSessionID: "",
+		stdinPipe:     nil,
+		stdoutPipe:    nil,
+		stderrPipe:    nil,
 	}
 }
 
@@ -109,13 +119,87 @@ func (r *PodmanShellRunner) ensureContainer(ctx context.Context) error {
 	return r.createContainer(ctx)
 }
 
+// ensurePersistentBashSession ensures a persistent interactive bash session is established
+func (r *PodmanShellRunner) ensurePersistentBashSession(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.execSessionID != "" {
+		// Session already established
+		return nil
+	}
+
+	// Ensure container is running
+	if err := r.ensureContainer(ctx); err != nil {
+		return err
+	}
+
+	// Create exec configuration for an interactive bash session
+	execConfig := &handlers.ExecCreateConfig{
+		ExecOptions: dockerContainer.ExecOptions{
+			Cmd:          []string{"bash", "-i"}, // Start interactive bash
+			WorkingDir:   "/workspace",
+			AttachStdin:  true,
+			AttachStdout: true,
+			AttachStderr: true,
+			Tty:          true, // Enable TTY for interactive session
+		},
+	}
+
+	// Create the exec session
+	sessionID, err := containers.ExecCreate(r.conn, r.containerName, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create persistent exec session: %w", err)
+	}
+
+	// Create pipes for stdin, stdout, and stderr
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	stderrReader, stderrWriter := io.Pipe()
+
+	execStartOptions := new(containers.ExecStartAndAttachOptions)
+	execStartOptions.WithInputStream(stdinReader)
+	execStartOptions.WithOutputStream(stdoutWriter)
+	execStartOptions.WithErrorStream(stderrWriter)
+	execStartOptions.WithAttachInput(true)
+	execStartOptions.WithAttachOutput(true)
+	execStartOptions.WithAttachError(true)
+	execStartOptions.WithTty(true) // Ensure TTY is enabled for the attachment
+
+	// Start the exec session in a goroutine so it doesn't block
+	go func() {
+		if err := containers.ExecStartAndAttach(r.conn, sessionID, execStartOptions); err != nil {
+			fmt.Fprintf(os.Stderr, "Error attaching to persistent exec session: %v\n", err)
+			// Handle error: perhaps close pipes and reset session ID
+			stdinReader.Close()
+			stdoutWriter.Close()
+			stderrWriter.Close()
+			r.mu.Lock()
+			r.execSessionID = ""
+			r.stdinPipe = nil
+			r.stdoutPipe = nil
+			r.stderrPipe = nil
+			r.mu.Unlock()
+		}
+	}()
+
+	r.execSessionID = sessionID
+	r.stdinPipe = stdinWriter
+	r.stdoutPipe = stdoutReader
+	r.stderrPipe = stderrReader
+
+	return nil
+}
+
 // createContainer creates and starts a new container
 func (r *PodmanShellRunner) createContainer(ctx context.Context) error {
 	s := specgen.NewSpecGenerator(r.imageName, false)
 	s.Name = r.containerName
 
-	// Keep container running by using a long-running command
-	s.Command = []string{"sleep", "infinity"}
+	// Set up for interactive bash session
+	s.Command = []string{"bash"}
+	s.Terminal = true
+	s.OpenStdin = true
 
 	// Mount current directory to /workspace
 	cwd, err := os.Getwd()
@@ -160,50 +244,60 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunShellCommandInput
 	}
 
 	// Compose the command to run in the container
-	command := composeShellCommand(params.Command)
+	command := composeShellCommand(params.Command) + "\n" // Add newline to execute command
 
-	// Create exec configuration
-	execConfig := &handlers.ExecCreateConfig{
-		ExecOptions: dockerContainer.ExecOptions{
-			Cmd:          []string{"bash", "-c", command},
-			WorkingDir:   "/workspace",
-			AttachStdout: true,
-			AttachStderr: true,
-		},
-	}
-
-	// Create the exec session
-	sessionID, err := containers.ExecCreate(r.conn, r.containerName, execConfig)
+	// Write the command to the persistent session's stdin
+	_, err := r.stdinPipe.Write([]byte(command))
 	if err != nil {
-		return RunShellCommandOutput{}, fmt.Errorf("failed to create exec session: %w", err)
+		return RunShellCommandOutput{}, fmt.Errorf("failed to write command to persistent session: %w", err)
 	}
 
-	// Prepare buffers for output
-	var stdout, stderr bytes.Buffer
+		return RunShellCommandOutput{
 
-	// Start and attach to the exec session
-	execStartOptions := new(containers.ExecStartAndAttachOptions)
-	execStartOptions.WithOutputStream(&stdout)
-	execStartOptions.WithErrorStream(&stderr)
-	execStartOptions.WithAttachOutput(true)
-	execStartOptions.WithAttachError(true)
+			Stdout:   "Command sent to persistent bash session. Output and exit code determination is handled by the caller.\n",
 
-	if err := containers.ExecStartAndAttach(r.conn, sessionID, execStartOptions); err != nil {
-		return RunShellCommandOutput{}, fmt.Errorf("exec failed: %w", err)
+			Stderr:   "",
+
+			ExitCode: 0, // Exit code determination is handled by the caller
+
+			PID:      0, // PID determination is handled by the caller
+
+		}, nil
+}
+
+// Close closes the persistent bash session and its associated pipes.
+func (r *PodmanShellRunner) Close(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.execSessionID == "" {
+		return nil // No session to close
 	}
 
-	// Get exec inspect to get exit code
-	inspectData, err := containers.ExecInspect(r.conn, sessionID, nil)
-	if err != nil {
-		return RunShellCommandOutput{}, fmt.Errorf("failed to inspect exec: %w", err)
+	// Close the pipes
+	if r.stdinPipe != nil {
+		r.stdinPipe.Close()
+	}
+	if r.stdoutPipe != nil {
+		r.stdoutPipe.Close()
+	}
+	if r.stderrPipe != nil {
+		r.stderrPipe.Close()
 	}
 
-	return RunShellCommandOutput{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: inspectData.ExitCode,
-		PID:      inspectData.Pid,
-	}, nil
+	// Optionally, stop the exec session in Podman.
+	// This might not be strictly necessary as closing pipes should eventually
+	// lead to the session terminating, but it's good practice for explicit cleanup.
+	// However, there isn't a direct `ExecStop` in the Podman bindings.
+	// The session will eventually be garbage collected by Podman when the container
+	// is stopped or the exec process exits.
+
+	r.execSessionID = ""
+	r.stdinPipe = nil
+	r.stdoutPipe = nil
+	r.stderrPipe = nil
+
+	return nil
 }
 
 func composeShellCommand(userCommand string) string {

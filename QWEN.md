@@ -37,9 +37,9 @@ IMPORTANT: Write idiomatic Go code. Avoid unnecessary abstractions and wrapper f
 
 ## Kanaban
 
-The tasks are spread in 2 places:
-1. in progress work - `git worktree list`
-1. the `Unreleased` section of CHANGELOG.md 
+The tasks are spread across 3 places:
+1. in progress work - use git's library to run "git worktree list" to get it
+1. the TODOs and `Unreleased` section of CHANGELOG.md 
 2. github issues, available using `gh` cli
 
 Our tasks can be in one of 3 bins: To Be Planned aka TBP, To Be Implemented aka TBI and Done. TBI are pretty simple. They start with a git worktree of a new branch and ends when the user approves the change.
