@@ -399,11 +399,41 @@ func shortenProviderModel(provider, model string) string {
 	modelShort := model
 	lowerModel := strings.ToLower(model)
 	if strings.Contains(lowerModel, "claude") {
-		normalized := strings.ReplaceAll(lowerModel, "-", ".")
-		normalized = strings.ReplaceAll(normalized, "_", ".")
-		normalized = strings.ReplaceAll(normalized, " ", ".")
-		if match := claudeVersionPattern.FindString(normalized); match != "" {
-			modelShort = match
+		// Handle models like "Claude-Haiku-4.5", "Claude 3.5 Sonnet", etc.
+		// Extract the meaningful part after "claude"
+		parts := strings.FieldsFunc(lowerModel, func(r rune) bool {
+			return r == '-' || r == ' ' || r == '_'
+		})
+		
+		// Skip "claude" prefix and build the short name
+		if len(parts) > 1 {
+			// For "claude-3-5-haiku-20240307" -> "3.5-Haiku"
+			// For "claude-haiku-4.5" -> "Haiku-4.5"
+			var shortParts []string
+			for i := 1; i < len(parts); i++ {
+				part := parts[i]
+				// Skip date suffixes like "20240307"
+				if len(part) == 8 && strings.ContainsAny(part, "0123456789") {
+					continue
+				}
+				// Skip "latest" suffix
+				if part == "latest" {
+					continue
+				}
+				shortParts = append(shortParts, part)
+			}
+			
+			if len(shortParts) > 0 {
+				// Join parts and capitalize first letter of each word
+				result := strings.Join(shortParts, "-")
+				// Capitalize: "3-5-haiku" -> "3.5-Haiku"
+				result = strings.ReplaceAll(result, "-5-", ".5-")
+				// Capitalize model names
+				result = strings.ReplaceAll(result, "haiku", "Haiku")
+				result = strings.ReplaceAll(result, "sonnet", "Sonnet")
+				result = strings.ReplaceAll(result, "opus", "Opus")
+				modelShort = result
+			}
 		} else if strings.Contains(lowerModel, "instant") {
 			modelShort = "Instant"
 		}
