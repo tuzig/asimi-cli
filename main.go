@@ -45,6 +45,9 @@ var cli struct {
 	Run           runCmd     `cmd:"" default:"1" help:"Run the interactive application"`
 }
 
+// version holds the application version. Overwrite via -ldflags "-X main.version=x.y.z".
+var version = "dev"
+
 func initLogger() {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -78,7 +81,7 @@ func initLogger() {
 }
 
 func (v versionCmd) Run() error {
-	fmt.Println("Asimi CLI v0.1.0")
+	fmt.Printf("Asimi CLI v%s\n", asimiVersion())
 	return nil
 }
 

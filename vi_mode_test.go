@@ -121,3 +121,32 @@ func TestViCommandLineModeUsesNormalKeymap(t *testing.T) {
 	// Verify that insert mode uses vi insert keymap
 	assert.Equal(t, prompt.viInsertKeyMap, prompt.TextArea.KeyMap, "Insert mode should use vi insert keymap")
 }
+
+func TestViModePlaceholderText(t *testing.T) {
+	// Create a new prompt component
+	prompt := NewPromptComponent(80, 5)
+	
+	// Enable vi mode
+	prompt.SetViMode(true)
+	assert.Equal(t, "Type your message here...", prompt.TextArea.Placeholder, "Insert mode should have default placeholder")
+	
+	// Switch to normal mode
+	prompt.EnterViNormalMode()
+	assert.Equal(t, "i for insert mode, : for commands, ↑↓ for history", prompt.TextArea.Placeholder, "Normal mode should have navigation placeholder")
+	
+	// Switch to visual mode
+	prompt.EnterViVisualMode()
+	assert.Equal(t, "Visual mode - select text", prompt.TextArea.Placeholder, "Visual mode should have selection placeholder")
+	
+	// Switch to command-line mode
+	prompt.EnterViCommandLineMode()
+	assert.Equal(t, "Enter command...", prompt.TextArea.Placeholder, "Command-line mode should have command placeholder")
+	
+	// Switch back to insert mode
+	prompt.EnterViInsertMode()
+	assert.Equal(t, "Type your message here...", prompt.TextArea.Placeholder, "Insert mode should have default placeholder")
+	
+	// Disable vi mode
+	prompt.SetViMode(false)
+	assert.Equal(t, "Type your message here...", prompt.TextArea.Placeholder, "Disabled vi mode should have default placeholder")
+}

@@ -160,12 +160,14 @@ func (p *PromptComponent) SetViMode(enabled bool) {
 		p.ViCurrentMode = ViModeInsert
 		p.TextArea.KeyMap = p.viInsertKeyMap
 		p.viPendingOp = ""
+		p.TextArea.Placeholder = "Type your message here..."
 		p.updateViModeStyle()
 	} else {
 		// Return to normal keymap
 		p.ViCurrentMode = ""
 		p.TextArea.KeyMap = p.normalKeyMap
 		p.viPendingOp = ""
+		p.TextArea.Placeholder = "Type your message here..."
 		p.Style = p.Style.BorderForeground(lipgloss.Color("#F952F9")) // Terminal7 prompt border (magenta)
 	}
 }
@@ -178,6 +180,7 @@ func (p *PromptComponent) EnterViNormalMode() {
 	p.ViCurrentMode = ViModeNormal
 	p.viPendingOp = ""
 	p.TextArea.KeyMap = p.viNormalKeyMap
+	p.TextArea.Placeholder = "i for insert mode, : for commands, ↑↓ for history"
 	p.updateViModeStyle()
 }
 
@@ -189,6 +192,7 @@ func (p *PromptComponent) EnterViVisualMode() {
 	p.ViCurrentMode = ViModeVisual
 	p.viPendingOp = ""
 	p.TextArea.KeyMap = p.viNormalKeyMap // Visual mode uses similar navigation
+	p.TextArea.Placeholder = "Visual mode - select text"
 	p.updateViModeStyle()
 }
 
@@ -200,6 +204,7 @@ func (p *PromptComponent) EnterViInsertMode() {
 	p.ViCurrentMode = ViModeInsert
 	p.viPendingOp = ""
 	p.TextArea.KeyMap = p.viInsertKeyMap
+	p.TextArea.Placeholder = "Type your message here..."
 	p.updateViModeStyle()
 }
 
@@ -212,6 +217,7 @@ func (p *PromptComponent) EnterViCommandLineMode() {
 	p.viPendingOp = ""
 	// Use normal keymap for command-line editing (like when vi mode is disabled)
 	p.TextArea.KeyMap = p.normalKeyMap
+	p.TextArea.Placeholder = "Enter command..."
 	p.updateViModeStyle()
 }
 
@@ -484,28 +490,32 @@ func (p PromptComponent) Update(msg interface{}) (PromptComponent, tea.Cmd) {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			keyStr := keyMsg.String()
 
+			// Always allow arrow keys and navigation keys, regardless of mode
+			navigationKeys := map[string]bool{
+				"up": true, "down": true, "left": true, "right": true,
+				"home": true, "end": true,
+				"pgup": true, "pgdown": true,
+			}
+
+			// If it's a navigation key, pass it through immediately
+			if navigationKeys[keyStr] {
+				p.TextArea, cmd = p.TextArea.Update(msg)
+				return p, cmd
+			}
+
 			// Handle vi commands (d, c, dd, dw, cc, cw, etc.)
 			handled, viCmd := p.handleViCommand(keyStr)
 			if handled {
 				return p, viCmd
 			}
 
-			// Define navigation keys that should always be allowed
-			navigationKeys := map[string]bool{
-				// Arrow keys
-				"left": true, "right": true, "up": true, "down": true,
-				// Vi movement keys
+			// Allow only specific navigation and command keys in normal/visual mode
+			allowedKeys := map[string]bool{
+				// Navigation (vi keys)
 				"h": true, "j": true, "k": true, "l": true,
 				"w": true, "b": true, "e": true,
-				// Line navigation
 				"0": true, "^": true, "$": true,
-				"home": true, "end": true,
-				// Document navigation
 				"gg": true, "G": true,
-			}
-
-			// Define action keys that should be allowed
-			actionKeys := map[string]bool{
 				// Deletion (single character)
 				"x": true, "X": true,
 				// Capital commands
@@ -517,21 +527,9 @@ func (p PromptComponent) Update(msg interface{}) (PromptComponent, tea.Cmd) {
 				"v": true, "V": true, // visual mode triggers
 			}
 
-			// Navigation keys should always be passed through to the textarea
-			if navigationKeys[keyStr] {
-				p.TextArea, cmd = p.TextArea.Update(msg)
-				return p, cmd
-			}
-
-			// Action keys should be allowed
-			if actionKeys[keyStr] {
-				p.TextArea, cmd = p.TextArea.Update(msg)
-				return p, cmd
-			}
-
 			// If it's not an allowed key and it's a single character (potential text input),
 			// ignore it to prevent text insertion in normal/visual mode
-			if len(keyStr) == 1 && p.viPendingOp == "" {
+			if !allowedKeys[keyStr] && len(keyStr) == 1 && p.viPendingOp == "" {
 				// Ignore this key in normal/visual mode
 				return p, nil
 			}

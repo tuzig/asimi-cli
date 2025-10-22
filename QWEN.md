@@ -32,6 +32,9 @@ IMPORTANT: Write idiomatic Go code. Avoid unnecessary abstractions and wrapper f
 - We keep a CHANGELOG.md where each version has a section with subsections for all user notable changes broken into: Fixed, Changed & Added
 - We use git tags to sync the code and the changelog
 
+## Coding style
+- Add inline comments only when for non trivial code blocks
+
 ## Kanaban
 
 The tasks are spread in 2 places:

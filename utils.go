@@ -233,6 +233,11 @@ func readCurrentBranch(repo *gogit.Repository) string {
 
 	ref, err := repo.Head()
 	if err != nil {
+		// go-git doesn't fully support worktrees, try reading HEAD directly
+		branch := readBranchFromWorktree()
+		if branch != "" {
+			return branch
+		}
 		return ""
 	}
 
@@ -241,6 +246,62 @@ func readCurrentBranch(repo *gogit.Repository) string {
 	}
 
 	return ref.Hash().String()[:7]
+}
+
+// readBranchFromWorktree reads the branch name directly from a git worktree
+func readBranchFromWorktree() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	gitPath := filepath.Join(cwd, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return ""
+	}
+
+	// If .git is a directory, not a worktree
+	if info.IsDir() {
+		return ""
+	}
+
+	// Read the .git file to get the actual git directory
+	content, err := os.ReadFile(gitPath)
+	if err != nil {
+		return ""
+	}
+
+	// Parse gitdir: path
+	gitdirLine := strings.TrimSpace(string(content))
+	if !strings.HasPrefix(gitdirLine, "gitdir: ") {
+		return ""
+	}
+
+	gitdir := strings.TrimPrefix(gitdirLine, "gitdir: ")
+
+	// Read HEAD from the worktree git directory
+	headPath := filepath.Join(gitdir, "HEAD")
+	headContent, err := os.ReadFile(headPath)
+	if err != nil {
+		return ""
+	}
+
+	// Parse ref: refs/heads/branch
+	headLine := strings.TrimSpace(string(headContent))
+	if strings.HasPrefix(headLine, "ref: ") {
+		ref := strings.TrimPrefix(headLine, "ref: ")
+		if strings.HasPrefix(ref, "refs/heads/") {
+			return strings.TrimPrefix(ref, "refs/heads/")
+		}
+	}
+
+	// If HEAD is detached, return the short hash
+	if len(headLine) >= 7 {
+		return headLine[:7]
+	}
+
+	return ""
 }
 
 func readShortStatus(repo *gogit.Repository) string {

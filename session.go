@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	debug "runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -52,6 +53,27 @@ type Session struct {
 	accumulatedContent      strings.Builder         `json:"-"`
 	config                  *LLMConfig              `json:"-"`
 	startTime               time.Time               `json:"-"`
+}
+
+// formatMetadata returns the metadata header used by export helpers.
+func (s *Session) formatMetadata(exportType ExportType, exportedAt time.Time) string {
+	var b strings.Builder
+	exported := exportedAt.Format("2006-01-02 15:04:05")
+	version := asimiVersion()
+
+	b.WriteString(fmt.Sprintf("**Asimi Version:** %s \n", version))
+	b.WriteString(fmt.Sprintf("**Export Type:** %s\n", exportType))
+	b.WriteString(fmt.Sprintf("**Session ID:** %s | **Working Directory:** %s\n", s.ID, s.WorkingDir))
+	b.WriteString(fmt.Sprintf("**Provider:** %s | **Model:** %s\n", s.Provider, s.Model))
+	b.WriteString(fmt.Sprintf("**Created:** %s | **Last Updated:** %s | **Exported:** %s\n",
+		s.CreatedAt.Format("2006-01-02 15:04:05"),
+		s.LastUpdated.Format("2006-01-02 15:04:05"),
+		exported))
+	if s.ProjectSlug != "" {
+		b.WriteString(fmt.Sprintf("**Project:** %s\n", s.ProjectSlug))
+	}
+
+	return b.String()
 }
 
 // syncMessages keeps the exported and internal message slices referencing the same data.
@@ -680,12 +702,59 @@ func sessBuildEnvBlock() string {
 		shell = "bash"
 	}
 	return fmt.Sprintf(`
- <os>%s</os>
- <paths>
-  <cwd>%s</cwd>
-  <project_root>%s</project_root>
-  <home>%s</home>
- </paths>`, runtime.GOOS, shell, root, home)
+<os>%s</os>
+<paths>
+ <cwd>%s</cwd>
+ <project_root>%s</project_root>
+ <home>%s</home>
+</paths>`, runtime.GOOS, shell, root, home)
+}
+
+func asimiVersion() string {
+	if strings.TrimSpace(version) != "" {
+		return strings.TrimSpace(version)
+	}
+
+	if v := os.Getenv("ASIMI_VERSION"); v != "" {
+		return v
+	}
+
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if normalized := normalizeBuildVersion(info.Main.Version); normalized != "" {
+			return normalized
+		}
+
+		var revision string
+		var modified bool
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				revision = setting.Value
+			case "vcs.modified":
+				modified = setting.Value == "true"
+			}
+		}
+
+		if revision != "" {
+			shortRev := revision
+			if len(shortRev) > 7 {
+				shortRev = shortRev[:7]
+			}
+			if modified {
+				return fmt.Sprintf("dev-%s-dirty", shortRev)
+			}
+			return fmt.Sprintf("dev-%s", shortRev)
+		}
+	}
+
+	return "dev"
+}
+
+func normalizeBuildVersion(v string) string {
+	if v == "" || v == "(devel)" {
+		return ""
+	}
+	return strings.TrimPrefix(v, "v")
 }
 
 // readProjectContext reads the contents of AGENTS.md from the current working directory.
