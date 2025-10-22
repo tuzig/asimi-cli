@@ -12,10 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 
 
 ### TBI - To be Implemented
-- Adding a `roles` directory with content files to be included in the system propmt. Start with "orchastrator", "coder", "Planner" and "Reviewer"
-
-- Adding the "task" internal tool in `tools.go`. See `specs/task_tool.md` for detailed implementation plan
-- Gracefully handle HTTP 429 errors from the model. See `specs/http_429_handling.md` for detailed implementation plan
 
 ### Implementing
 
