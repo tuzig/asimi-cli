@@ -14,6 +14,9 @@ import (
 )
 
 func TestRunShellCommand(t *testing.T) {
+	restore := setShellRunnerForTesting(hostShellRunner{})
+	defer restore()
+
 	tool := RunShellCommand{}
 	input := `{"command": "echo 'hello world'"}`
 
@@ -30,6 +33,9 @@ func TestRunShellCommand(t *testing.T) {
 }
 
 func TestRunShellCommandError(t *testing.T) {
+	restore := setShellRunnerForTesting(hostShellRunner{})
+	defer restore()
+
 	tool := RunShellCommand{}
 	input := `{"command": "exit 1"}`
 
@@ -41,6 +47,32 @@ func TestRunShellCommandError(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, 1, output.ExitCode)
+}
+
+func TestRunShellCommandFallsBackWhenPodmanUnavailable(t *testing.T) {
+	restore := setShellRunnerForTesting(failingPodmanRunner{})
+	defer restore()
+
+	tool := RunShellCommand{}
+	input := `{"command": "echo podman fallback"}`
+
+	result, err := tool.Call(context.Background(), input)
+	assert.NoError(t, err)
+
+	var output RunShellCommandOutput
+	err = json.Unmarshal([]byte(result), &output)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "podman fallback\n", output.Stdout)
+	assert.Contains(t, output.Error, "podman")
+	assert.Equal(t, 0, output.ExitCode)
+}
+
+func TestComposeShellCommand(t *testing.T) {
+	command := composeShellCommand("echo test")
+	require.Contains(t, command, "just bootstrap")
+	require.Contains(t, command, "cd /workspace")
+	require.Contains(t, command, "echo test")
 }
 
 func TestReadFileToolWithOffsetAndLimit(t *testing.T) {
@@ -191,4 +223,10 @@ func cleanGitEnv() []string {
 		filtered = append(filtered, value)
 	}
 	return filtered
+}
+
+type failingPodmanRunner struct{}
+
+func (failingPodmanRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
+	return RunShellCommandOutput{}, PodmanUnavailableError{reason: "podman unavailable"}
 }
