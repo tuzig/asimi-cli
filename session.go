@@ -692,22 +692,39 @@ func parseReActAction(text string) (name string, argsJSON string, ok bool) {
 	return tool, args, true
 }
 
-// sessBuildEnvBlock constructs a minimal <env> XML snippet containing OS and paths.
+// sessBuildEnvBlock constructs a markdown summary of the OS, shell, and key paths.
 func sessBuildEnvBlock() string {
 	cwd, _ := os.Getwd()
+	if cwd == "" {
+		cwd = "(unknown)"
+	}
+
 	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = "(unknown)"
+	}
+
 	root := findProjectRoot(cwd)
+	if root == "" {
+		root = "(unknown)"
+	}
+
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "bash"
 	}
-	return fmt.Sprintf(`
-<os>%s</os>
-<paths>
- <cwd>%s</cwd>
- <project_root>%s</project_root>
- <home>%s</home>
-</paths>`, runtime.GOOS, shell, root, home)
+
+	return fmt.Sprintf(`- **OS:** %s
+- **Shell:** %s
+- **Paths:**
+  - **cwd:** %s
+  - **project root:** %s
+  - **home:** %s`,
+		runtime.GOOS,
+		shell,
+		cwd,
+		root,
+		home)
 }
 
 func asimiVersion() string {
