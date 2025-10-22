@@ -785,6 +785,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 	} else {
 		// Clear any lingering toast notifications before handling a new prompt
 		m.toastManager.Clear()
+		refreshGitInfo()
 
 		// Check if we're submitting a historical prompt (user navigated history)
 		if m.historySaved && m.historyCursor < len(m.promptHistory) {
@@ -925,6 +926,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addToRawHistory("AI_RESPONSE", string(msg))
 		m.stopStreaming()
 		m.chat.AddMessage(fmt.Sprintf("Asimi: %s", string(msg)))
+		refreshGitInfo()
 
 	case ToolCallScheduledMsg:
 		m.addToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
@@ -959,6 +961,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Fallback: add a new message if we don't have the index
 			m.chat.AddMessage(formatted)
 		}
+		refreshGitInfo()
 
 	case ToolCallErrorMsg:
 		m.addToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
@@ -1011,6 +1014,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Debug("streamCompleteMsg", "messages_count", len(m.chat.Messages))
 		m.stopStreaming()
 		m.saveSession()
+		refreshGitInfo()
 
 	case streamInterruptedMsg:
 		// Streaming was interrupted by user
@@ -1018,12 +1022,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.partialContent))
 		m.chat.AddMessage("\nESC")
 		m.stopStreaming()
+		refreshGitInfo()
 
 	case streamErrorMsg:
 		m.addToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.err))
 		slog.Error("streamErrorMsg", "error", msg.err)
 		m.chat.AddMessage(fmt.Sprintf("LLM Error: %v", msg.err))
 		m.stopStreaming()
+		refreshGitInfo()
 
 	case streamMaxTurnsExceededMsg:
 		// Max turns exceeded, mark session as inactive and show warning
@@ -1031,6 +1037,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Warn("streamMaxTurnsExceededMsg", "max_turns", msg.maxTurns)
 		m.chat.AddMessage(fmt.Sprintf("\n⚠️  Conversation ended after reaching maximum turn limit (%d turns)", msg.maxTurns))
 		m.stopStreaming()
+		refreshGitInfo()
 
 	case streamMaxTokensReachedMsg:
 		// Max tokens reached, mark session as inactive and show warning
@@ -1038,6 +1045,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.content))
 		m.chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
 		m.stopStreaming()
+		refreshGitInfo()
 
 	case showHelpMsg:
 		leader := msg.leader

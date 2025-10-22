@@ -52,8 +52,13 @@ func TestGitHelpersReturnRepositoryState(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(trackedFile, []byte("first\nsecond\n"), 0o644))
 
-	// Force the manager to recompute state
-	require.Equal(t, "[!?]", getGitStatus(), "status should reflect modified tracked file and untracked file")
+	// Explicitly refresh git info to pick up the changes
+	refreshGitInfo()
+
+	// Wait for the async refresh to complete
+	require.Eventually(t, func() bool {
+		return getGitStatus() == "[!?]"
+	}, 2*time.Second, 50*time.Millisecond, "status should reflect modified tracked file and untracked file")
 }
 
 func initTempRepo(t *testing.T, dir string) (*gogit.Repository, *gogit.Worktree) {

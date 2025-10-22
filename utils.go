@@ -86,21 +86,20 @@ func isGitRepository() bool {
 	return defaultGitInfoManager.IsRepository()
 }
 
-const gitInfoRefreshInterval = 3 * time.Second
+const gitInfoRefreshInterval = 1 * time.Second
 
 var defaultGitInfoManager = newGitInfoManager()
 
 type gitInfoManager struct {
-	mu            sync.RWMutex
-	branch        string
-	status        string
-	repo          *gogit.Repository
-	repoPath      string
-	isRepo        bool
-	lastUpdate    time.Time
-	updateCh      chan struct{}
-	startOnce     sync.Once
-	refreshTicker *time.Ticker
+	mu         sync.RWMutex
+	branch     string
+	status     string
+	repo       *gogit.Repository
+	repoPath   string
+	isRepo     bool
+	lastUpdate time.Time
+	updateCh   chan struct{}
+	startOnce  sync.Once
 }
 
 func newGitInfoManager() *gitInfoManager {
@@ -111,20 +110,14 @@ func newGitInfoManager() *gitInfoManager {
 
 func (m *gitInfoManager) start() {
 	m.startOnce.Do(func() {
-		m.refreshTicker = time.NewTicker(gitInfoRefreshInterval)
 		m.refresh()
 		go m.loop()
 	})
 }
 
 func (m *gitInfoManager) loop() {
-	for {
-		select {
-		case <-m.refreshTicker.C:
-			m.refresh()
-		case <-m.updateCh:
-			m.refresh()
-		}
+	for range m.updateCh {
+		m.refresh()
 	}
 }
 
@@ -204,30 +197,8 @@ func (m *gitInfoManager) requestRefresh() {
 	}
 }
 
-func (m *gitInfoManager) requestRefreshIfStale() {
-	m.mu.RLock()
-	last := m.lastUpdate
-	m.mu.RUnlock()
-
-	if time.Since(last) > gitInfoRefreshInterval {
-		m.requestRefresh()
-	}
-}
-
-func (m *gitInfoManager) refreshIfNeeded(force bool) {
-	m.mu.RLock()
-	last := m.lastUpdate
-	branch := m.branch
-	m.mu.RUnlock()
-
-	if force || branch == "" || time.Since(last) > gitInfoRefreshInterval {
-		m.refresh()
-	}
-}
-
 func (m *gitInfoManager) CurrentBranch() string {
 	m.start()
-	m.refreshIfNeeded(false)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -236,7 +207,6 @@ func (m *gitInfoManager) CurrentBranch() string {
 
 func (m *gitInfoManager) ShortStatus() string {
 	m.start()
-	m.refreshIfNeeded(true)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -245,11 +215,15 @@ func (m *gitInfoManager) ShortStatus() string {
 
 func (m *gitInfoManager) IsRepository() bool {
 	m.start()
-	m.refreshIfNeeded(false)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.isRepo
+}
+
+func refreshGitInfo() {
+	defaultGitInfoManager.start()
+	defaultGitInfoManager.requestRefresh()
 }
 
 func readCurrentBranch(repo *gogit.Repository) string {

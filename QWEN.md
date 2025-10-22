@@ -11,6 +11,15 @@ IMPORTANT: Keep the directory tree flat. Try and add your changes to existing fi
 - to update dependecies: `just modules`
 - use present progressive in commit messages
 
+## Code Style
+
+IMPORTANT: Write idiomatic Go code. Avoid unnecessary abstractions and wrapper functions. Keep it simple and direct.
+- Name should be short and meaningful
+- Don't create wrapper methods that just call another function
+- Don't use "queueing" patterns unless actually implementing concurrent queues
+- Prefer direct function calls over indirection
+- Keep code flat and readable
+
 ## Libraries
 - bubbletea for the UI
 - koanf for configuration management
