@@ -6,7 +6,7 @@ Our mission is to have a tool that is safe, fun and produces high quality code
 IMPORTANT: Keep the directory tree flat. Try and add your changes to existing files and if that does not makes sense - create as little new files as possible and always get your consent when creating directories and files
 
 - to search: `rg`
-- to test: `just test` 
+- to test: `go test ./...`
 - to build:`just build`
 - to update dependecies: `just modules`
 - use present progressive in commit messages
@@ -25,6 +25,8 @@ IMPORTANT: Write idiomatic Go code. Avoid unnecessary abstractions and wrapper f
 - koanf for configuration management
 - kong for CLI
 - langchaingo for llm communications, tools, chains and more
+- go-git for git commands IMPORTANT: Never run git commands, use go-git instead
+- podman and docker libraries for managing containers - NEVER run them from the shell
 
 ## Release Management
 
