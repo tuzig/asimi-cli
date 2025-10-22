@@ -311,7 +311,7 @@ func (m *SessionSelectionModal) Update(msg tea.Msg) (*SessionSelectionModal, tea
 	}
 
 	// Total items = sessions + cancel option
-	totalItems := len(m.sessions) + 1
+	totalItems := len(m.sessions) + 1 //nolint:typecheck // Used in switch statement below
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:

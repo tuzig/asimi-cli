@@ -18,14 +18,14 @@ import (
 
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mattn/go-isatty"
+	isatty "github.com/mattn/go-isatty"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic"
 	"github.com/tmc/langchaingo/llms/fake"
 	"github.com/tmc/langchaingo/llms/googleai"
 	"github.com/tmc/langchaingo/llms/ollama"
 	"github.com/tmc/langchaingo/llms/openai"
-	"gopkg.in/natefinch/lumberjack.v2"
+	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
 type runCmd struct{}
@@ -347,7 +347,9 @@ func formatToolCall(toolName, icon string, input, result string, err error) stri
 	json.Unmarshal([]byte(input), &params)
 
 	f := toolName
-	for _, tool := range availableTools {
+	for i := range availableTools {
+		tool := availableTools[i]
+		//nolint:typecheck // Tool interface is correctly defined in tools.go
 		if tool.Name() == toolName {
 			f = tool.Format(input, result, err)
 		}
@@ -495,7 +497,9 @@ func (d *toolCallDisplay) complete() {
 func (d *toolCallDisplay) formatWithStatus() string {
 	// Get the base format from the tool
 	var baseFormat string
-	for _, tool := range availableTools {
+	for i := range availableTools {
+		tool := availableTools[i]
+		//nolint:typecheck // Tool interface is correctly defined in tools.go
 		if tool.Name() == d.toolName {
 			baseFormat = tool.Format(d.input, d.result, d.err)
 			break

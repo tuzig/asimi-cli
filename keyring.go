@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zalando/go-keyring"
+	gokeyring "github.com/zalando/go-keyring"
 )
 
 const (
@@ -36,7 +36,7 @@ func SaveTokenToKeyring(provider, accessToken, refreshToken string, expiry time.
 	}
 
 	key := keyringPrefix + provider
-	err = keyring.Set(keyringService, key, string(jsonData))
+	err = gokeyring.Set(keyringService, key, string(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to store token in keyring: %w", err)
 	}
@@ -47,9 +47,9 @@ func SaveTokenToKeyring(provider, accessToken, refreshToken string, expiry time.
 // GetTokenFromKeyring retrieves OAuth tokens from the OS keyring
 func GetTokenFromKeyring(provider string) (*TokenData, error) {
 	key := keyringPrefix + provider
-	jsonData, err := keyring.Get(keyringService, key)
+	jsonData, err := gokeyring.Get(keyringService, key)
 	if err != nil {
-		if err == keyring.ErrNotFound {
+		if err == gokeyring.ErrNotFound {
 			return nil, nil // Token not found is not an error
 		}
 		return nil, fmt.Errorf("failed to retrieve token from keyring: %w", err)
@@ -67,8 +67,8 @@ func GetTokenFromKeyring(provider string) (*TokenData, error) {
 // DeleteTokenFromKeyring removes OAuth tokens from the OS keyring
 func DeleteTokenFromKeyring(provider string) error {
 	key := keyringPrefix + provider
-	err := keyring.Delete(keyringService, key)
-	if err != nil && err != keyring.ErrNotFound {
+	err := gokeyring.Delete(keyringService, key)
+	if err != nil && err != gokeyring.ErrNotFound {
 		return fmt.Errorf("failed to delete token from keyring: %w", err)
 	}
 	return nil
@@ -77,7 +77,7 @@ func DeleteTokenFromKeyring(provider string) error {
 // SaveAPIKeyToKeyring securely stores API keys in the OS keyring
 func SaveAPIKeyToKeyring(provider, apiKey string) error {
 	key := "apikey_" + provider
-	err := keyring.Set(keyringService, key, apiKey)
+	err := gokeyring.Set(keyringService, key, apiKey)
 	if err != nil {
 		return fmt.Errorf("failed to store API key in keyring: %w", err)
 	}
@@ -87,9 +87,9 @@ func SaveAPIKeyToKeyring(provider, apiKey string) error {
 // GetAPIKeyFromKeyring retrieves API keys from the OS keyring
 func GetAPIKeyFromKeyring(provider string) (string, error) {
 	key := "apikey_" + provider
-	apiKey, err := keyring.Get(keyringService, key)
+	apiKey, err := gokeyring.Get(keyringService, key)
 	if err != nil {
-		if err == keyring.ErrNotFound {
+		if err == gokeyring.ErrNotFound {
 			return "", nil // API key not found is not an error
 		}
 		return "", fmt.Errorf("failed to retrieve API key from keyring: %w", err)
@@ -100,8 +100,8 @@ func GetAPIKeyFromKeyring(provider string) (string, error) {
 // DeleteAPIKeyFromKeyring removes API keys from the OS keyring
 func DeleteAPIKeyFromKeyring(provider string) error {
 	key := "apikey_" + provider
-	err := keyring.Delete(keyringService, key)
-	if err != nil && err != keyring.ErrNotFound {
+	err := gokeyring.Delete(keyringService, key)
+	if err != nil && err != gokeyring.ErrNotFound {
 		return fmt.Errorf("failed to delete API key from keyring: %w", err)
 	}
 	return nil

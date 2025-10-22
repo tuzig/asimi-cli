@@ -8,6 +8,16 @@ modules:
 test: modules
     go test -v ./...
 
+# install development tools
+bootstrap:
+    @echo "Installing golangci-lint..."
+    @curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+    @echo "golangci-lint installed successfully"
+
+# run linters
+lint:
+    golangci-lint run ./...
+
 build: modules
     go build -o asimi .
 

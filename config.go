@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/knadh/koanf/parsers/toml/v2"
-	"github.com/knadh/koanf/providers/env/v2"
+	koanftoml "github.com/knadh/koanf/parsers/toml/v2"
+	koanfenv "github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/file"
-	"github.com/knadh/koanf/v2"
+	koanf "github.com/knadh/koanf/v2"
 )
 
 type oauthProviderConfig struct {
@@ -181,14 +181,14 @@ func LoadConfig() (*Config, error) {
 		log.Printf("Failed to get user home directory: %v", err)
 	} else {
 		userConfigPath := filepath.Join(homeDir, ".config", "asimi", "conf.toml")
-		if err := k.Load(file.Provider(userConfigPath), toml.Parser()); err != nil {
+		if err := k.Load(file.Provider(userConfigPath), koanftoml.Parser()); err != nil {
 			log.Printf("Failed to load user config from %s: %v", userConfigPath, err)
 		}
 	}
 
 	projectConfigPath := filepath.Join(".asimi", "conf.toml")
 	if _, err := os.Stat(projectConfigPath); err == nil {
-		if err := k.Load(file.Provider(projectConfigPath), toml.Parser()); err != nil {
+		if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
 			log.Printf("Failed to load project config from %s: %v", projectConfigPath, err)
 		}
 	} else if !os.IsNotExist(err) {
@@ -198,7 +198,7 @@ func LoadConfig() (*Config, error) {
 	// 3. Load environment variables
 	// Environment variables with prefix "ASIMI_" will override config values
 	// e.g., ASIMI_SERVER_PORT=8080 will override the server port
-	k.Load(env.Provider(".", env.Opt{
+	if err := k.Load(koanfenv.Provider(".", koanfenv.Opt{
 		Prefix: "ASIMI_",
 		TransformFunc: func(key, value string) (string, any) {
 			// Transform environment variable names to match config keys
@@ -206,20 +206,26 @@ func LoadConfig() (*Config, error) {
 			key = strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, "ASIMI_")), "_", ".")
 			return key, value
 		},
-	}), nil)
+	}), nil); err != nil {
+		log.Printf("Failed to load environment variables: %v", err)
+	}
 
 	// Special handling for API keys from standard environment variables
 	// Check for OPENAI_API_KEY if using OpenAI
 	if k.String("llm.provider") == "openai" && k.String("llm.api_key") == "" {
 		if openaiKey := os.Getenv("OPENAI_API_KEY"); openaiKey != "" {
-			k.Set("llm.api_key", openaiKey)
+			if err := k.Set("llm.api_key", openaiKey); err != nil {
+				log.Printf("Failed to set OpenAI API key from environment: %v", err)
+			}
 		}
 	}
 
 	// Check for ANTHROPIC_API_KEY if using Anthropic
 	if k.String("llm.provider") == "anthropic" && k.String("llm.api_key") == "" {
 		if anthropicKey := os.Getenv("ANTHROPIC_API_KEY"); anthropicKey != "" {
-			k.Set("llm.api_key", anthropicKey)
+			if err := k.Set("llm.api_key", anthropicKey); err != nil {
+				log.Printf("Failed to set Anthropic API key from environment: %v", err)
+			}
 		}
 	}
 
@@ -250,16 +256,18 @@ func SaveConfig(config *Config) error {
 	// Create koanf instance and load current project config if it exists
 	k := koanf.New(".")
 	if _, err := os.Stat(projectConfigPath); err == nil {
-		if err := k.Load(file.Provider(projectConfigPath), toml.Parser()); err != nil {
+		if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
 			return fmt.Errorf("failed to load existing project config: %w", err)
 		}
 	}
 
 	// Update the model setting
-	k.Set("llm.model", config.LLM.Model)
+	if err := k.Set("llm.model", config.LLM.Model); err != nil {
+		return fmt.Errorf("failed to update model in config: %w", err)
+	}
 
 	// Save to file
-	data, err := k.Marshal(toml.Parser())
+	data, err := k.Marshal(koanftoml.Parser())
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}

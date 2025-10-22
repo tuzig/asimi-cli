@@ -525,27 +525,27 @@ func TestSummarizeStatus(t *testing.T) {
 		{
 			name: "mixed indicators",
 			status: gogit.Status{
-				"modified.go": {
+				"modified.go": &gogit.FileStatus{
 					Staging:  gogit.Modified,
 					Worktree: gogit.Unmodified,
 				},
-				"staged_added.go": {
+				"staged_added.go": &gogit.FileStatus{
 					Staging:  gogit.Added,
 					Worktree: gogit.Unmodified,
 				},
-				"deleted.txt": {
+				"deleted.txt": &gogit.FileStatus{
 					Staging:  gogit.Deleted,
 					Worktree: gogit.Unmodified,
 				},
-				"renamed.txt": {
+				"renamed.txt": &gogit.FileStatus{
 					Staging:  gogit.Renamed,
 					Worktree: gogit.Unmodified,
 				},
-				"untracked.md": {
+				"untracked.md": &gogit.FileStatus{
 					Staging:  gogit.Untracked,
 					Worktree: gogit.Untracked,
 				},
-				"worktree_modified.go": {
+				"worktree_modified.go": &gogit.FileStatus{
 					Staging:  gogit.Unmodified,
 					Worktree: gogit.Modified,
 				},

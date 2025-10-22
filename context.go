@@ -246,10 +246,10 @@ func renderContextInfo(info ContextInfo) string {
 		usedPercent,
 	))
 
-	b.WriteString(formatContextLine("System prompt", info.SystemPromptTokens, total, "⛁", systemPromptPercent))
-	b.WriteString(formatContextLine("System tools", info.SystemToolsTokens, total, "⛁", systemToolsPercent))
-	b.WriteString(formatContextLine("Memory files", info.MemoryFilesTokens, total, "⛁", memoryFilesPercent))
-	b.WriteString(formatContextLine("Messages", info.MessagesTokens, total, "⛁", messagesPercent))
+	b.WriteString(formatContextLine("System prompt", info.SystemPromptTokens, total, systemPromptPercent))
+	b.WriteString(formatContextLine("System tools", info.SystemToolsTokens, total, systemToolsPercent))
+	b.WriteString(formatContextLine("Memory files", info.MemoryFilesTokens, total, memoryFilesPercent))
+	b.WriteString(formatContextLine("Messages", info.MessagesTokens, total, messagesPercent))
 	b.WriteString(formatFreeSpaceLine(info, total, freePercent))
 
 	return b.String()
@@ -309,12 +309,18 @@ func renderContextBar(info ContextInfo) string {
 	return strings.Join(segments, " ")
 }
 
+const (
+	contextCategorySymbol        = "⛁"
+	contextCategoryPartialSymbol = "⛀"
+	contextFreeSymbol            = "⛶"
+)
+
 // formatContextLine builds a formatted line for a specific category.
-func formatContextLine(label string, tokens, total int, symbol string, percent float64) string {
-	bar := renderCategoryBar(tokens, total, symbol)
+func formatContextLine(label string, tokens, total int, percent float64) string {
+	bar := renderCategoryBar(tokens, total)
 	return fmt.Sprintf("     %s   %s %s: %s tokens (%.1f%%)\n",
 		bar,
-		symbol,
+		contextCategorySymbol,
 		label,
 		formatTokenCount(tokens),
 		percent,
@@ -333,7 +339,7 @@ func formatFreeSpaceLine(info ContextInfo, total int, percent float64) string {
 }
 
 // renderCategoryBar returns a bar showing the share of a category.
-func renderCategoryBar(tokens, total int, symbol string) string {
+func renderCategoryBar(tokens, total int) string {
 	percentage := 0.0
 	if total > 0 {
 		percentage = float64(tokens) / float64(total) * 100
@@ -342,17 +348,13 @@ func renderCategoryBar(tokens, total int, symbol string) string {
 
 	segments := make([]string, 0, contextBarWidth)
 	for i := 0; i < fullSegments && len(segments) < contextBarWidth; i++ {
-		segments = append(segments, symbol)
+		segments = append(segments, contextCategorySymbol)
 	}
 	if partialSegment && len(segments) < contextBarWidth {
-		if symbol == "⛁" {
-			segments = append(segments, "⛀")
-		} else {
-			segments = append(segments, symbol)
-		}
+		segments = append(segments, contextCategoryPartialSymbol)
 	}
 	for len(segments) < contextBarWidth {
-		segments = append(segments, "⛶")
+		segments = append(segments, contextFreeSymbol)
 	}
 	return strings.Join(segments, " ")
 }

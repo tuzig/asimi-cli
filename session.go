@@ -706,8 +706,10 @@ func readProjectContext() string {
 func buildLLMTools() ([]llms.Tool, map[string]lctools.Tool) {
 	// Map our concrete tools by name for execution.
 	execCatalog := map[string]lctools.Tool{}
-	for _, t := range availableTools {
-		execCatalog[t.Name()] = t
+	for i := range availableTools {
+		tool := availableTools[i]
+		//nolint:typecheck // Tool interface is correctly defined in tools.go
+		execCatalog[tool.Name()] = tool
 	}
 
 	// Helper to produce a basic JSON schema for function parameters.

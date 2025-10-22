@@ -268,11 +268,13 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		// Handle chat scrolling first (including touch gestures)
+		var chatCmd tea.Cmd
 		if msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown ||
 			msg.Type == tea.MouseLeft || msg.Type == tea.MouseMotion {
-			m.chat, _ = m.chat.Update(msg)
+			m.chat, chatCmd = m.chat.Update(msg)
 		}
-		return m.handleMouseMsg(msg)
+		model, cmd := m.handleMouseMsg(msg)
+		return model, tea.Batch(chatCmd, cmd)
 
 	case tea.WindowSizeMsg:
 		return m.handleWindowSizeMsg(msg)
@@ -1208,9 +1210,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toastManager.AddToast(fmt.Sprintf("Warning: Running without AI capabilities: %v", msg.err), "warning", 5000)
 	}
 
-	m.chat, _ = m.chat.Update(msg)
-
-	return m, nil
+	var chatCmd tea.Cmd
+	m.chat, chatCmd = m.chat.Update(msg)
+	return m, chatCmd
 }
 
 func (m *TUIModel) updateFileCompletions(files []string) {

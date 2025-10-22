@@ -238,16 +238,16 @@ func extractThinkingContent(message string) (thinking, regular string) {
 }
 
 // Update handles messages for the chat component
-func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
-	var cmd interface{}
+func (c ChatComponent) Update(msg tea.Msg) (ChatComponent, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		switch msg.Type {
 		case tea.MouseWheelUp:
-			c.Viewport.LineUp(1)
+			c.Viewport.ScrollUp(1)
 			c.UserScrolled = true // User manually scrolled
 		case tea.MouseWheelDown:
-			c.Viewport.LineDown(1)
+			c.Viewport.ScrollDown(1)
 			c.UserScrolled = true // User manually scrolled
 		case tea.MouseLeft:
 			// Start of touch/drag gesture
@@ -267,13 +267,13 @@ func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
 					if scrollLines > 0 {
 						// Scroll down
 						for i := 0; i < scrollLines; i++ {
-							c.Viewport.LineDown(1)
+							c.Viewport.ScrollDown(1)
 						}
 						c.UserScrolled = true
 					} else if scrollLines < 0 {
 						// Scroll up
 						for i := 0; i < -scrollLines; i++ {
-							c.Viewport.LineUp(1)
+							c.Viewport.ScrollUp(1)
 						}
 						c.UserScrolled = true
 					}
@@ -286,16 +286,16 @@ func (c ChatComponent) Update(msg interface{}) (ChatComponent, interface{}) {
 		// Track keyboard scrolling as well
 		switch msg.String() {
 		case "up", "k":
-			c.Viewport.LineUp(1)
+			c.Viewport.ScrollUp(1)
 			c.UserScrolled = true
 		case "down", "j":
-			c.Viewport.LineDown(1)
+			c.Viewport.ScrollDown(1)
 			c.UserScrolled = true
 		case "pgup":
-			c.Viewport.HalfViewUp()
+			c.Viewport.HalfPageUp()
 			c.UserScrolled = true
 		case "pgdown":
-			c.Viewport.HalfViewDown()
+			c.Viewport.HalfPageDown()
 			c.UserScrolled = true
 		case "home":
 			c.Viewport.GotoTop()
