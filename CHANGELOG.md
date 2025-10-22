@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Implementing
 
 ### Done
+- Updated chat to display user messages without the `You:` label and indent them for a cleaner conversation view
 - Prevented keystroke lag in the TUI by refreshing go-git status only when prompts are sent or responses complete, instead of recalculating on every render
 - Fixed slow startup by initializing LLM client and session asynchronously. The UI now appears immediately and is responsive while the LLM client is being set up in the background
 - Fixed arrow keys not working in vi NORMAL mode - navigation keys (arrow keys, h/j/k/l, w/b, etc.) now properly work for cursor movement in NORMAL mode
