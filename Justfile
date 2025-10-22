@@ -6,13 +6,33 @@ modules:
 
 # run the tests
 test: modules
-    go test -v ./...
+	go test -v ./...
 
 # install development tools
 bootstrap:
     @echo "Installing golangci-lint..."
     @curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
     @echo "golangci-lint installed successfully"
+    @if [ "$(uname)" = "Darwin" ]; then \
+        echo ""; \
+        echo "Setting up podman on macOS..."; \
+        if ! command -v podman >/dev/null 2>&1; then \
+            echo "Podman not found. Please install it with: brew install podman"; \
+            exit 1; \
+        fi; \
+        echo "Podman found: $(podman --version)"; \
+        if ! podman machine list | grep -q "Currently running"; then \
+            echo "Starting podman machine..."; \
+            if ! podman machine list | grep -q "podman-machine-default"; then \
+                echo "Initializing podman machine..."; \
+                podman machine init; \
+            fi; \
+            podman machine start; \
+            echo "Podman machine started successfully"; \
+        else \
+            echo "Podman machine is already running"; \
+        fi; \
+    fi
 
 # run linters
 lint:

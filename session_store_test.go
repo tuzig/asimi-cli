@@ -11,7 +11,9 @@ import (
 
 func TestSessionStore_SaveAndLoad(t *testing.T) {
 	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
 
 	store, err := NewSessionStore(50, 30)
 	if err != nil {
@@ -125,7 +127,12 @@ func TestSessionStore_SaveAndLoad(t *testing.T) {
 		t.Fatalf("Expected indexed project slug %q, got %q", expectedSlug, sessions[0].ProjectSlug)
 	}
 
-	sessionPath := filepath.Join(store.storageDir, expectedSlug, "session-"+sessions[0].ID)
+	expectedDir := filepath.Join(tempDir, ".local", "share", "asimi", "repo", filepath.FromSlash(expectedSlug), "sessions")
+	if store.storageDir != expectedDir {
+		t.Fatalf("Expected storage directory %s, got %s", expectedDir, store.storageDir)
+	}
+
+	sessionPath := filepath.Join(store.storageDir, "session-"+sessions[0].ID)
 	if _, err := os.Stat(sessionPath); err != nil {
 		t.Fatalf("Expected session directory %s to exist: %v", sessionPath, err)
 	}
@@ -133,7 +140,9 @@ func TestSessionStore_SaveAndLoad(t *testing.T) {
 
 func TestSessionStore_EmptySession(t *testing.T) {
 	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
 
 	store, err := NewSessionStore(50, 30)
 	if err != nil {
@@ -173,7 +182,9 @@ func TestSessionStore_EmptySession(t *testing.T) {
 
 func TestSessionStore_Cleanup(t *testing.T) {
 	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
 
 	store, err := NewSessionStore(2, 30)
 	if err != nil {
@@ -283,14 +294,21 @@ func TestFormatRelativeTime(t *testing.T) {
 
 func TestSessionStore_DirectoryCreation(t *testing.T) {
 	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
 
 	store, err := NewSessionStore(50, 30)
 	if err != nil {
 		t.Fatalf("Failed to create session store: %v", err)
 	}
 
-	expectedDir := filepath.Join(tempDir, ".local", "share", "asimi", "sessions")
+	cwd, _ := os.Getwd()
+	expectedSlug := projectSlug(findProjectRoot(cwd))
+	if expectedSlug == "" {
+		expectedSlug = defaultProjectSlug
+	}
+	expectedDir := filepath.Join(tempDir, ".local", "share", "asimi", "repo", filepath.FromSlash(expectedSlug), "sessions")
 	if _, err := os.Stat(expectedDir); os.IsNotExist(err) {
 		t.Fatalf("Session directory was not created: %s", expectedDir)
 	}

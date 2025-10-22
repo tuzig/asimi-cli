@@ -152,10 +152,28 @@ func (c *ChatComponent) UpdateContent() {
 			// Regular message styling
 			if strings.HasPrefix(message, "You:") {
 				messageStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#F952F9")). // Terminal7 prompt border
-					Padding(0, 1)
+					Foreground(lipgloss.Color("#F952F9")) // Terminal7 prompt border
+
+				userContent := strings.TrimSpace(strings.TrimPrefix(message, "You:"))
+
+				wrapWidth := c.Width
+				const indentSpaces = 8
+				if wrapWidth > indentSpaces {
+					wrapWidth -= indentSpaces
+				}
+				if wrapWidth < 1 {
+					wrapWidth = 1
+				}
+
+				wrapped := wordwrap.String(userContent, wrapWidth)
+				indent := strings.Repeat(" ", indentSpaces)
+				lines := strings.Split(wrapped, "\n")
+				for i := range lines {
+					lines[i] = indent + lines[i]
+				}
+
 				messageViews = append(messageViews,
-					messageStyle.Render(wordwrap.String(message, c.Width)))
+					messageStyle.Render(strings.Join(lines, "\n")))
 			} else if strings.HasPrefix(message, "Asimi:") {
 				// Render AI messages with markdown
 				// Remove "Asimi: " prefix for markdown rendering

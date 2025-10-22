@@ -6,25 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+
 ## [Unreleased]
 
-### To be Planned
-- 
-
-### TBI - To be Implemented
-- Adding a `roles` directory with content files to be included in the system propmt. Start with "orchastrator", "coder", "Planner" and "Reviewer"
-
-- Adding the "task" internal tool in `tools.go`. See `specs/task_tool.md` for detailed implementation plan
-- Gracefully handle HTTP 429 errors from the model. See `specs/http_429_handling.md` for detailed implementation plan
-
-### Implementing
-
-### Done
+- Reorganized persistent data under `~/.local/share/asimi/repo/<slug>/` so each repository has isolated history and session storage with automatic migration from the legacy layout
+- Moved the shell tool into a Podman-managed container that mounts the worktree, runs `just bootstrap`, and captures output safely with a host fallback when Podman is unavailable
+- Added a `merge` tool that reviews changes in lazygit, squashes the feature branch onto main, and cleans up the worktree automatically
+- Reformatted the system prompt environment details into a markdown section so tooling context is clearer to read
+- Updated chat to display user messages without the `You:` label and indent them for a cleaner conversation view
 - Prevented keystroke lag in the TUI by refreshing go-git status only when prompts are sent or responses complete, instead of recalculating on every render
 - Fixed slow startup by initializing LLM client and session asynchronously. The UI now appears immediately and is responsive while the LLM client is being set up in the background
 - Fixed arrow keys not working in vi NORMAL mode - navigation keys (arrow keys, h/j/k/l, w/b, etc.) now properly work for cursor movement in NORMAL mode
+- Restored history  defaults (enabled by default, preserving max history settings) and added a bool pointer helper so configuration and TUI tests build again
+- Fixed arrow keys not working in vi NORMAL mode - navigation keys (arrow keys, h/j/k/l, w/b, etc.) now properly work for cursor movement in NORMAL mode
 - Clearing toast notifications when starting a new prompt so stale messages from previous operations do not linger
 - Restored history  defaults (enabled by default, preserving max history settings) and added a bool pointer helper so configuration and TUI tests build again
+- Added `/export` command with support for two export types: `/export conversation` (default) provides a slimmer output with just user/assistant exchanges; `/export full` includes system prompt, context files, and full conversation with tool calls
 - Prompt history now persists across sessions and app activations. History is stored in `~/.local/share/asimi/history.json` (up to 1000 entries). Added `/clear-history` command to clear all saved history. Duplicate consecutive prompts are automatically filtered out
 - Status bar left section now shows the condensed git status beside the branch name (e.g. `[$!?⇡]`) so repository state is always visible at a glance
 - Replaced shell git calls with an asynchronous go-git manager, eliminating external git command executions while keeping the status bar responsive

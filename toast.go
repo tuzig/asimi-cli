@@ -90,6 +90,12 @@ func (tm ToastManager) View() string {
 
 	// Apply different styles based on toast type
 	style := tm.Style
+	contentWidth := lipgloss.Width(toast.Message)
+	frameWidth, _ := style.GetFrameSize()
+	maxWidth := style.GetMaxWidth()
+	if maxWidth > 0 && contentWidth+frameWidth > maxWidth {
+		style = style.Copy().MaxWidth(contentWidth + frameWidth)
+	}
 	switch toast.Type {
 	case "success":
 		style = style.Background(lipgloss.Color("76")) // Green

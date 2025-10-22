@@ -87,6 +87,7 @@ type LLMConfig struct {
 	BashMaxTimeoutMs              int               `koanf:"bash_max_timeout_ms"`
 	BashMaxOutputLength           int               `koanf:"bash_max_output_length"`
 	BashMaintainProjectWorkingDir bool              `koanf:"bash_maintain_project_working_dir"`
+	PodmanAllowHostFallback       bool              `koanf:"sheel_command_fallback_to_host"`
 	ApiKeyHelperTtlMs             int               `koanf:"api_key_helper_ttl_ms"`
 	SkipAutoInstall               bool              `koanf:"skip_auto_install"`
 	MaxOutputTokens               int               `koanf:"max_output_tokens"`

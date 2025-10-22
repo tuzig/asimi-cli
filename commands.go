@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -33,6 +35,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("/vi", "Toggle vi mode (use : for commands)", handleViCommand)
 	registry.RegisterCommand("/clear-history", "Clear all prompt history", handleClearHistoryCommand)
 	registry.RegisterCommand("/resume", "Resume a previous session", handleResumeCommand)
+	registry.RegisterCommand("/export", "Export conversation to file and open in $EDITOR (usage: /export [full|conversation])", handleExportCommand)
 
 	return registry
 }
@@ -192,4 +195,44 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 
 		return sessionsLoadedMsg{sessions: sessions}
 	}
+}
+
+func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
+	if model.session == nil {
+		return func() tea.Msg {
+			return showContextMsg{content: "No active session to export. Start a conversation first."}
+		}
+	}
+
+	// Determine export type from args, default to conversation
+	exportType := ExportTypeConversation
+	if len(args) > 0 {
+		switch args[0] {
+		case "full":
+			exportType = ExportTypeFull
+		case "conversation":
+			exportType = ExportTypeConversation
+		default:
+			model.toastManager.AddToast(fmt.Sprintf("Unknown export type '%s'. Use 'full' or 'conversation'", args[0]), "error", 3000)
+			return nil
+		}
+	}
+
+	// Export the session to a file
+	filepath, err := exportSession(model.session, exportType)
+	if err != nil {
+		return func() tea.Msg {
+			return showContextMsg{content: fmt.Sprintf("Export failed: %v", err)}
+		}
+	}
+
+	// Open the file in the editor using ExecProcess
+	cmd := openInEditor(filepath)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return showContextMsg{content: fmt.Sprintf("Editor exited with error: %v", err)}
+		}
+		model.toastManager.AddToast(fmt.Sprintf("Conversation exported successfully (%s).", exportType), "success", 3000)
+		return nil
+	})
 }

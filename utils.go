@@ -233,6 +233,11 @@ func readCurrentBranch(repo *gogit.Repository) string {
 
 	ref, err := repo.Head()
 	if err != nil {
+		// go-git doesn't fully support worktrees, try reading HEAD directly
+		branch := readBranchFromWorktree()
+		if branch != "" {
+			return branch
+		}
 		return ""
 	}
 
@@ -241,6 +246,62 @@ func readCurrentBranch(repo *gogit.Repository) string {
 	}
 
 	return ref.Hash().String()[:7]
+}
+
+// readBranchFromWorktree reads the branch name directly from a git worktree
+func readBranchFromWorktree() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	gitPath := filepath.Join(cwd, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return ""
+	}
+
+	// If .git is a directory, not a worktree
+	if info.IsDir() {
+		return ""
+	}
+
+	// Read the .git file to get the actual git directory
+	content, err := os.ReadFile(gitPath)
+	if err != nil {
+		return ""
+	}
+
+	// Parse gitdir: path
+	gitdirLine := strings.TrimSpace(string(content))
+	if !strings.HasPrefix(gitdirLine, "gitdir: ") {
+		return ""
+	}
+
+	gitdir := strings.TrimPrefix(gitdirLine, "gitdir: ")
+
+	// Read HEAD from the worktree git directory
+	headPath := filepath.Join(gitdir, "HEAD")
+	headContent, err := os.ReadFile(headPath)
+	if err != nil {
+		return ""
+	}
+
+	// Parse ref: refs/heads/branch
+	headLine := strings.TrimSpace(string(headContent))
+	if strings.HasPrefix(headLine, "ref: ") {
+		ref := strings.TrimPrefix(headLine, "ref: ")
+		if strings.HasPrefix(ref, "refs/heads/") {
+			return strings.TrimPrefix(ref, "refs/heads/")
+		}
+	}
+
+	// If HEAD is detached, return the short hash
+	if len(headLine) >= 7 {
+		return headLine[:7]
+	}
+
+	return ""
 }
 
 func readShortStatus(repo *gogit.Repository) string {
@@ -338,11 +399,41 @@ func shortenProviderModel(provider, model string) string {
 	modelShort := model
 	lowerModel := strings.ToLower(model)
 	if strings.Contains(lowerModel, "claude") {
-		normalized := strings.ReplaceAll(lowerModel, "-", ".")
-		normalized = strings.ReplaceAll(normalized, "_", ".")
-		normalized = strings.ReplaceAll(normalized, " ", ".")
-		if match := claudeVersionPattern.FindString(normalized); match != "" {
-			modelShort = match
+		// Handle models like "Claude-Haiku-4.5", "Claude 3.5 Sonnet", etc.
+		// Extract the meaningful part after "claude"
+		parts := strings.FieldsFunc(lowerModel, func(r rune) bool {
+			return r == '-' || r == ' ' || r == '_'
+		})
+		
+		// Skip "claude" prefix and build the short name
+		if len(parts) > 1 {
+			// For "claude-3-5-haiku-20240307" -> "3.5-Haiku"
+			// For "claude-haiku-4.5" -> "Haiku-4.5"
+			var shortParts []string
+			for i := 1; i < len(parts); i++ {
+				part := parts[i]
+				// Skip date suffixes like "20240307"
+				if len(part) == 8 && strings.ContainsAny(part, "0123456789") {
+					continue
+				}
+				// Skip "latest" suffix
+				if part == "latest" {
+					continue
+				}
+				shortParts = append(shortParts, part)
+			}
+			
+			if len(shortParts) > 0 {
+				// Join parts and capitalize first letter of each word
+				result := strings.Join(shortParts, "-")
+				// Capitalize: "3-5-haiku" -> "3.5-Haiku"
+				result = strings.ReplaceAll(result, "-5-", ".5-")
+				// Capitalize model names
+				result = strings.ReplaceAll(result, "haiku", "Haiku")
+				result = strings.ReplaceAll(result, "sonnet", "Sonnet")
+				result = strings.ReplaceAll(result, "opus", "Opus")
+				modelShort = result
+			}
 		} else if strings.Contains(lowerModel, "instant") {
 			modelShort = "Instant"
 		}

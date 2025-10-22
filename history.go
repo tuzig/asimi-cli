@@ -29,16 +29,41 @@ func NewHistoryStore() (*HistoryStore, error) {
 		return nil, fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
-	// Store history in ~/.local/share/asimi/history.json
-	dataDir := filepath.Join(homeDir, ".local", "share", "asimi")
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+	projectRoot := findProjectRoot(cwd)
+	slug := projectSlug(projectRoot)
+	if slug == "" {
+		slug = defaultProjectSlug
+	}
+
+	repoBase := filepath.Join(homeDir, ".local", "share", "asimi", "repo")
+	projectDir := filepath.Join(repoBase, filepath.FromSlash(slug))
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	return &HistoryStore{
-		filePath: filepath.Join(dataDir, "history.json"),
+	store := &HistoryStore{
+		filePath: filepath.Join(projectDir, "history.json"),
 		maxSize:  1000, // Keep last 1000 prompts
-	}, nil
+	}
+	store.migrateLegacyHistory(filepath.Join(homeDir, ".local", "share", "asimi", "history.json"))
+	return store, nil
+}
+
+func (h *HistoryStore) migrateLegacyHistory(legacyPath string) {
+	if _, err := os.Stat(h.filePath); err == nil {
+		return
+	}
+
+	data, err := os.ReadFile(legacyPath)
+	if err != nil {
+		return
+	}
+
+	_ = os.WriteFile(h.filePath, data, 0o644)
 }
 
 // Load reads the history from disk

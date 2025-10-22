@@ -6,7 +6,7 @@ Our mission is to have a tool that is safe, fun and produces high quality code
 IMPORTANT: Keep the directory tree flat. Try and add your changes to existing files and if that does not makes sense - create as little new files as possible and always get your consent when creating directories and files
 
 - to search: `rg`
-- to test: `just test` 
+- to test: `go test ./...`
 - to build:`just build`
 - to update dependecies: `just modules`
 - use present progressive in commit messages
@@ -25,6 +25,8 @@ IMPORTANT: Write idiomatic Go code. Avoid unnecessary abstractions and wrapper f
 - koanf for configuration management
 - kong for CLI
 - langchaingo for llm communications, tools, chains and more
+- go-git for git commands IMPORTANT: Never run git commands, use go-git instead
+- podman and docker libraries for managing containers - NEVER run them from the shell
 
 ## Release Management
 
@@ -32,11 +34,14 @@ IMPORTANT: Write idiomatic Go code. Avoid unnecessary abstractions and wrapper f
 - We keep a CHANGELOG.md where each version has a section with subsections for all user notable changes broken into: Fixed, Changed & Added
 - We use git tags to sync the code and the changelog
 
+## Coding style
+- Add inline comments only when for non trivial code blocks
+
 ## Kanaban
 
-The tasks are spread in 2 places:
-1. in progress work - `git worktree list`
-1. the `Unreleased` section of CHANGELOG.md 
+The tasks are spread across 3 places:
+1. in progress work - use git's library to run "git worktree list" to get it
+1. the TODOs and `Unreleased` section of CHANGELOG.md 
 2. github issues, available using `gh` cli
 
 Our tasks can be in one of 3 bins: To Be Planned aka TBP, To Be Implemented aka TBI and Done. TBI are pretty simple. They start with a git worktree of a new branch and ends when the user approves the change.

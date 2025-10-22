@@ -4,12 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunShellCommand(t *testing.T) {
+	restore := setShellRunnerForTesting(hostShellRunner{})
+	defer restore()
+
 	tool := RunShellCommand{}
 	input := `{"command": "echo 'hello world'"}`
 
@@ -26,6 +33,9 @@ func TestRunShellCommand(t *testing.T) {
 }
 
 func TestRunShellCommandError(t *testing.T) {
+	restore := setShellRunnerForTesting(hostShellRunner{})
+	defer restore()
+
 	tool := RunShellCommand{}
 	input := `{"command": "exit 1"}`
 
@@ -37,6 +47,25 @@ func TestRunShellCommandError(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, 1, output.ExitCode)
+}
+
+func TestRunShellCommandFailsWhenPodmanUnavailable(t *testing.T) {
+	restore := setShellRunnerForTesting(failingPodmanRunner{})
+	defer restore()
+
+	tool := RunShellCommand{}
+	input := `{"command": "echo test"}`
+
+	_, err := tool.Call(context.Background(), input)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "podman unavailable")
+}
+
+func TestComposeShellCommand(t *testing.T) {
+	command := composeShellCommand("echo test")
+	require.Contains(t, command, "just bootstrap")
+	require.Contains(t, command, "cd /workspace")
+	require.Contains(t, command, "echo test")
 }
 
 func TestReadFileToolWithOffsetAndLimit(t *testing.T) {
@@ -95,4 +124,102 @@ func TestReadFileToolWithOffsetAndLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMergeToolAutoApprove(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required for this test")
+	}
+
+	repoDir := t.TempDir()
+
+	runGit(t, repoDir, "init", "-b", "main")
+	runGit(t, repoDir, "config", "user.name", "Asimi Tester")
+	runGit(t, repoDir, "config", "user.email", "tester@example.com")
+
+	repoReadme := filepath.Join(repoDir, "README.md")
+	require.NoError(t, os.WriteFile(repoReadme, []byte("hello\n"), 0o644))
+	runGit(t, repoDir, "add", "README.md")
+	runGit(t, repoDir, "commit", "-m", "initial commit")
+
+	worktreeDir := filepath.Join(repoDir, "worktrees", "feature")
+	runGit(t, repoDir, "worktree", "add", worktreeDir, "-b", "feature")
+
+	worktreeReadme := filepath.Join(worktreeDir, "README.md")
+	require.NoError(t, os.WriteFile(worktreeReadme, []byte("hello\nfeature-1\n"), 0o644))
+	runGit(t, worktreeDir, "add", "README.md")
+	runGit(t, worktreeDir, "commit", "-m", "add feature 1")
+
+	require.NoError(t, os.WriteFile(worktreeReadme, []byte("hello\nfeature-1\nfeature-2\n"), 0o644))
+	runGit(t, worktreeDir, "add", "README.md")
+	runGit(t, worktreeDir, "commit", "-m", "add feature 2")
+
+	payload, err := json.Marshal(MergeToolInput{
+		WorktreePath:  worktreeDir,
+		Branch:        "feature",
+		MainBranch:    "main",
+		CommitMessage: "feature squash",
+		AutoApprove:   true,
+		SkipReview:    true,
+	})
+	require.NoError(t, err)
+
+	tool := MergeTool{}
+	result, err := tool.Call(context.Background(), string(payload))
+	require.NoError(t, err)
+	require.Contains(t, result, "Merge completed successfully")
+
+	branchList := strings.TrimSpace(runGitOutput(t, repoDir, "branch", "--list", "feature"))
+	require.Equal(t, "", branchList)
+
+	_, statErr := os.Stat(worktreeDir)
+	require.True(t, os.IsNotExist(statErr))
+
+	topCommit := strings.TrimSpace(runGitOutput(t, repoDir, "log", "-1", "--pretty=%s"))
+	require.Equal(t, "feature squash", topCommit)
+
+	content, err := os.ReadFile(repoReadme)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "feature-2")
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = cleanGitEnv()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+}
+
+func runGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = cleanGitEnv()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return string(output)
+}
+
+func cleanGitEnv() []string {
+	env := os.Environ()
+	filtered := make([]string, 0, len(env))
+	for _, value := range env {
+		if strings.HasPrefix(value, "GIT_") {
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	return filtered
+}
+
+type failingPodmanRunner struct{}
+
+func (failingPodmanRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
+	return RunShellCommandOutput{}, PodmanUnavailableError{reason: "podman unavailable"}
 }

@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/tmc/langchaingo/tools"
@@ -351,6 +356,50 @@ type RunShellCommandOutput struct {
 	BackgroundPids []int  `json:"backgroundPids,omitempty"`
 }
 
+type shellRunner interface {
+	Run(context.Context, RunShellCommandInput) (RunShellCommandOutput, error)
+}
+
+var (
+	shellRunnerMu      sync.RWMutex
+	currentShellRunner shellRunner
+	shellRunnerOnce    sync.Once
+)
+
+func setShellRunnerForTesting(r shellRunner) func() {
+	shellRunnerMu.Lock()
+	prev := currentShellRunner
+	currentShellRunner = r
+	shellRunnerMu.Unlock()
+	return func() {
+		shellRunnerMu.Lock()
+		currentShellRunner = prev
+		shellRunnerMu.Unlock()
+	}
+}
+
+func initShellRunner(config *Config) {
+	shellRunnerMu.Lock()
+	defer shellRunnerMu.Unlock()
+
+	// Initialize podman shell runner with config
+	currentShellRunner = newPodmanShellRunner(config.LLM.PodmanAllowHostFallback)
+}
+
+func getShellRunner() shellRunner {
+	shellRunnerOnce.Do(func() {
+		shellRunnerMu.Lock()
+		if currentShellRunner == nil {
+			// Default to podman runner with fallback disabled
+			currentShellRunner = newPodmanShellRunner(false)
+		}
+		shellRunnerMu.Unlock()
+	})
+	shellRunnerMu.RLock()
+	defer shellRunnerMu.RUnlock()
+	return currentShellRunner
+}
+
 func (t RunShellCommand) Name() string {
 	return "run_shell_command"
 }
@@ -366,47 +415,10 @@ func (t RunShellCommand) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	output := RunShellCommandOutput{}
-
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd.exe", "/c", params.Command)
-	} else {
-		cmd = exec.CommandContext(ctx, "bash", "-c", params.Command)
-	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	cmd.Dir = params.Path
-
-	runErr := cmd.Run()
-
-	output.Stdout = stdout.String()
-	output.Stderr = stderr.String()
-
-	if cmd.Process != nil {
-		output.PID = cmd.Process.Pid
-	}
-
+	runner := getShellRunner()
+	output, runErr := runner.Run(ctx, params)
 	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			output.ExitCode = exitErr.ExitCode()
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-				if status.Signaled() {
-					output.Signal = int(status.Signal())
-				}
-			}
-		} else {
-			output.Error = runErr.Error()
-			output.ExitCode = -1
-		}
-	} else {
-		if cmd.ProcessState != nil {
-			output.ExitCode = cmd.ProcessState.ExitCode()
-		} else {
-			output.ExitCode = 0
-		}
+		return "", runErr
 	}
 
 	outputBytes, err := json.Marshal(output)
@@ -459,6 +471,63 @@ func (t RunShellCommand) Format(input, result string, err error) string {
 	}
 
 	return firstLine + "\n" + secondLine
+}
+
+type hostShellRunner struct{}
+
+func (hostShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
+	var output RunShellCommandOutput
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd.exe", "/c", params.Command)
+	} else {
+		cmd = exec.CommandContext(ctx, "bash", "-c", params.Command)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Dir = params.Path
+
+	runErr := cmd.Run()
+
+	output.Stdout = stdout.String()
+	output.Stderr = stderr.String()
+
+	if cmd.Process != nil {
+		output.PID = cmd.Process.Pid
+	}
+
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			output.ExitCode = exitErr.ExitCode()
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				if status.Signaled() {
+					output.Signal = int(status.Signal())
+				}
+			}
+		} else {
+			output.Error = runErr.Error()
+			output.ExitCode = -1
+		}
+	} else {
+		if cmd.ProcessState != nil {
+			output.ExitCode = cmd.ProcessState.ExitCode()
+		} else {
+			output.ExitCode = 0
+		}
+	}
+
+	return output, nil
+}
+
+type PodmanUnavailableError struct {
+	reason string
+}
+
+func (e PodmanUnavailableError) Error() string {
+	return e.reason
 }
 
 // ReadManyFilesInput is the input for the ReadManyFilesTool.
@@ -550,6 +619,267 @@ func (t ReadManyFilesTool) Format(input, result string, err error) string {
 	return firstLine + "\n" + secondLine
 }
 
+// MergeToolInput defines the parameters expected by the merge tool.
+type MergeToolInput struct {
+	WorktreePath  string `json:"worktree_path"`
+	Branch        string `json:"branch"`
+	MainBranch    string `json:"main_branch"`
+	Push          bool   `json:"push,omitempty"`
+	AutoApprove   bool   `json:"auto_approve,omitempty"`
+	CommitMessage string `json:"commit_message,omitempty"`
+	SkipReview    bool   `json:"skip_review,omitempty"`
+}
+
+// MergeTool orchestrates squashing and merging a worktree-backed branch.
+type MergeTool struct{}
+
+func (t MergeTool) Name() string {
+	return "merge"
+}
+
+func (t MergeTool) Description() string {
+	return "Squashes the commits from a worktree-backed branch onto the main branch after a review in lazygit, then removes the worktree and deletes the branch."
+}
+
+func (t MergeTool) Call(ctx context.Context, input string) (string, error) {
+	var params MergeToolInput
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+
+	worktreePath := strings.TrimSpace(params.WorktreePath)
+	if worktreePath == "" {
+		return "", errors.New("worktree_path is required")
+	}
+	absWorktree, err := filepath.Abs(worktreePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve worktree path: %w", err)
+	}
+
+	branch := strings.TrimSpace(params.Branch)
+	if branch == "" {
+		return "", errors.New("branch is required")
+	}
+
+	mainBranch := strings.TrimSpace(params.MainBranch)
+	if mainBranch == "" {
+		mainBranch = "main"
+	}
+
+	commitMsg := strings.TrimSpace(params.CommitMessage)
+
+	if _, err := os.Stat(absWorktree); err != nil {
+		return "", fmt.Errorf("invalid worktree_path: %w", err)
+	}
+
+	if !params.SkipReview {
+		lazygitCmd := strings.TrimSpace(os.Getenv("ASIMI_LAZYGIT_CMD"))
+		if lazygitCmd == "" {
+			lazygitCmd = "lazygit"
+		}
+		if _, err := exec.LookPath(lazygitCmd); err != nil {
+			return "", fmt.Errorf("unable to locate lazygit command: %w", err)
+		}
+
+		cmd := exec.CommandContext(ctx, lazygitCmd)
+		cmd.Dir = absWorktree
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("lazygit exited with an error: %w", err)
+		}
+	}
+
+	readerNeeded := (!params.AutoApprove) || commitMsg == ""
+	var reader *bufio.Reader
+	if readerNeeded {
+		reader = bufio.NewReader(os.Stdin)
+	}
+
+	approved := params.AutoApprove
+	if !approved {
+		fmt.Printf("Proceed with squash merge of %s onto %s? (y/N): ", branch, mainBranch)
+		ans, err := readYesNo(reader)
+		if err != nil {
+			return "", fmt.Errorf("failed to read approval: %w", err)
+		}
+		approved = ans
+	}
+
+	if !approved {
+		return "Merge cancelled by user", nil
+	}
+
+	if commitMsg == "" {
+		if params.AutoApprove {
+			return "", errors.New("commit_message is required when auto_approve is true")
+		}
+		fmt.Print("Enter squash commit message: ")
+		line, err := readLine(reader)
+		if err != nil {
+			return "", fmt.Errorf("failed to read commit message: %w", err)
+		}
+		if line == "" {
+			return "", errors.New("commit message cannot be empty")
+		}
+		commitMsg = line
+	}
+
+	var log bytes.Buffer
+	log.WriteString("Starting merge process...\n")
+
+	baseRef := fmt.Sprintf("origin/%s", mainBranch)
+	if err := runGitCommand(ctx, absWorktree, &log, "fetch", "origin", mainBranch); err != nil {
+		log.WriteString(fmt.Sprintf("git fetch origin %s failed: %v\n", mainBranch, err))
+		baseRef = mainBranch
+	}
+
+	if err := runGitCommand(ctx, absWorktree, &log, "rebase", baseRef); err != nil {
+		runGitCommand(ctx, absWorktree, &log, "rebase", "--abort")
+		return "", fmt.Errorf("git rebase failed: %w\n%s", err, log.String())
+	}
+
+	if err := runGitCommand(ctx, absWorktree, &log, "reset", "--soft", baseRef); err != nil {
+		return "", fmt.Errorf("git reset failed: %w\n%s", err, log.String())
+	}
+
+	if err := runGitCommand(ctx, absWorktree, &log, "add", "-A"); err != nil {
+		return "", fmt.Errorf("git add failed: %w\n%s", err, log.String())
+	}
+
+	if err := runGitCommand(ctx, absWorktree, &log, "commit", "-m", commitMsg); err != nil {
+		return "", fmt.Errorf("git commit failed: %w\n%s", err, log.String())
+	}
+
+	repoRoot, err := resolveRepoRoot(ctx, absWorktree)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve repository root: %w", err)
+	}
+
+	if err := runGitCommand(ctx, repoRoot, &log, "checkout", mainBranch); err != nil {
+		return "", fmt.Errorf("git checkout %s failed: %w\n%s", mainBranch, err, log.String())
+	}
+
+	if err := runGitCommand(ctx, repoRoot, &log, "pull", "--ff-only", "origin", mainBranch); err != nil {
+		log.WriteString(fmt.Sprintf("git pull origin %s failed: %v (continuing without remote update)\n", mainBranch, err))
+	}
+
+	if err := runGitCommand(ctx, repoRoot, &log, "merge", "--ff-only", branch); err != nil {
+		return "", fmt.Errorf("git merge failed: %w\n%s", err, log.String())
+	}
+
+	if params.Push {
+		if err := runGitCommand(ctx, repoRoot, &log, "push", "origin", mainBranch); err != nil {
+			return "", fmt.Errorf("git push failed: %w\n%s", err, log.String())
+		}
+	}
+
+	if err := runGitCommand(ctx, repoRoot, &log, "worktree", "remove", "--force", absWorktree); err != nil {
+		return "", fmt.Errorf("git worktree remove failed: %w\n%s", err, log.String())
+	}
+
+	if err := runGitCommand(ctx, repoRoot, &log, "branch", "-D", branch); err != nil {
+		return "", fmt.Errorf("git branch -D failed: %w\n%s", err, log.String())
+	}
+
+	log.WriteString("Merge completed successfully.\n")
+	return log.String(), nil
+}
+
+func (t MergeTool) Format(input, result string, err error) string {
+	var params MergeToolInput
+	_ = json.Unmarshal([]byte(input), &params)
+
+	branch := params.Branch
+	if branch == "" {
+		branch = "(unknown)"
+	}
+	mainBranch := params.MainBranch
+	if mainBranch == "" {
+		mainBranch = "main"
+	}
+
+	firstLine := fmt.Sprintf("Merge (%s -> %s)", branch, mainBranch)
+	var secondLine string
+	if err != nil {
+		secondLine = fmt.Sprintf("  ⎿  Error: %v", err)
+	} else {
+		secondLine = "  ⎿  Merge completed"
+	}
+
+	return firstLine + "\n" + secondLine
+}
+
+func runGitCommand(ctx context.Context, dir string, log *bytes.Buffer, args ...string) error {
+	if log != nil {
+		log.WriteString(fmt.Sprintf("$ git %s\n", strings.Join(args, " ")))
+	}
+
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Env = gitCommandEnv()
+	if log != nil {
+		cmd.Stdout = log
+		cmd.Stderr = log
+	}
+
+	return cmd.Run()
+}
+
+func resolveRepoRoot(ctx context.Context, worktreePath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rev-parse", "--git-common-dir")
+	cmd.Env = gitCommandEnv()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git rev-parse --git-common-dir failed: %w (%s)", err, out.String())
+	}
+
+	commonDir := strings.TrimSpace(out.String())
+	if commonDir == "" {
+		return "", errors.New("git common dir not found")
+	}
+
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(worktreePath, commonDir)
+	}
+
+	return filepath.Dir(commonDir), nil
+}
+
+func readYesNo(reader *bufio.Reader) (bool, error) {
+	response, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes", nil
+}
+
+func readLine(reader *bufio.Reader) (string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+func gitCommandEnv() []string {
+	env := os.Environ()
+	filtered := make([]string, 0, len(env))
+	for _, value := range env {
+		if strings.HasPrefix(value, "GIT_") {
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	return filtered
+}
+
 type Tool interface {
 	tools.Tool
 	Format(input, result string, err error) string
@@ -562,4 +892,5 @@ var availableTools = []Tool{
 	ReplaceTextTool{},
 	RunShellCommand{},
 	ReadManyFilesTool{},
+	MergeTool{},
 }
