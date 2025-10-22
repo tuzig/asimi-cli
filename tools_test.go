@@ -49,23 +49,16 @@ func TestRunShellCommandError(t *testing.T) {
 	assert.Equal(t, 1, output.ExitCode)
 }
 
-func TestRunShellCommandFallsBackWhenPodmanUnavailable(t *testing.T) {
+func TestRunShellCommandFailsWhenPodmanUnavailable(t *testing.T) {
 	restore := setShellRunnerForTesting(failingPodmanRunner{})
 	defer restore()
 
 	tool := RunShellCommand{}
-	input := `{"command": "echo podman fallback"}`
+	input := `{"command": "echo test"}`
 
-	result, err := tool.Call(context.Background(), input)
-	assert.NoError(t, err)
-
-	var output RunShellCommandOutput
-	err = json.Unmarshal([]byte(result), &output)
-	assert.NoError(t, err)
-
-	assert.Equal(t, "podman fallback\n", output.Stdout)
-	assert.Contains(t, output.Error, "podman")
-	assert.Equal(t, 0, output.ExitCode)
+	_, err := tool.Call(context.Background(), input)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "podman unavailable")
 }
 
 func TestComposeShellCommand(t *testing.T) {

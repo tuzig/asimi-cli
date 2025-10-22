@@ -136,6 +136,9 @@ func (r *runCmd) Run() error {
 		fmt.Fprintf(os.Stderr, "[TIMING] LoadConfig() completed in %v\n", time.Since(configStart))
 	}
 
+	// Initialize shell runner with config
+	initShellRunner(config)
+
 	// Create the TUI model
 	tuiStart := time.Now()
 	tuiModel := NewTUIModel(config)
@@ -288,6 +291,9 @@ func main() {
 			fmt.Printf("Error loading configuration: %v\n", err)
 			os.Exit(1)
 		}
+
+		// Initialize shell runner with config
+		initShellRunner(config)
 
 		llm, err := getLLMClient(config)
 		if err != nil {

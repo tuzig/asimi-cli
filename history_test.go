@@ -10,11 +10,24 @@ import (
 )
 
 func TestHistoryStore_NewHistoryStore(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
 	store, err := NewHistoryStore()
 	require.NoError(t, err)
 	require.NotNil(t, store)
 	require.NotEmpty(t, store.filePath)
 	require.Equal(t, 1000, store.maxSize)
+
+	cwd, _ := os.Getwd()
+	expectedSlug := projectSlug(findProjectRoot(cwd))
+	if expectedSlug == "" {
+		expectedSlug = defaultProjectSlug
+	}
+	expectedPath := filepath.Join(tempDir, ".local", "share", "asimi", "repo", filepath.FromSlash(expectedSlug), "history.json")
+	require.Equal(t, expectedPath, store.filePath)
 }
 
 func TestHistoryStore_LoadEmpty(t *testing.T) {

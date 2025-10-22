@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Implementing
 
 ### Done
+- Reorganized persistent data under `~/.local/share/asimi/repo/<slug>/` so each repository has isolated history and session storage with automatic migration from the legacy layout
 - Moved the shell tool into a Podman-managed container that mounts the worktree, runs `just bootstrap`, and captures output safely with a host fallback when Podman is unavailable
 - Added a `merge` tool that reviews changes in lazygit, squashes the feature branch onto main, and cleans up the worktree automatically
 - Reformatted the system prompt environment details into a markdown section so tooling context is clearer to read

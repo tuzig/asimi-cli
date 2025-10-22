@@ -10,21 +10,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/bindings/containers"
-	"github.com/containers/podman/v5/pkg/bindings/images"
-	podmanTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
-	"github.com/containers/podman/v5/pkg/specgen"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/tmc/langchaingo/tools"
 	"github.com/yargevad/filepathx"
 )
@@ -371,8 +362,8 @@ type shellRunner interface {
 
 var (
 	shellRunnerMu      sync.RWMutex
-	currentShellRunner shellRunner = newPodmanShellRunner()
-	hostFallbackRunner             = hostShellRunner{}
+	currentShellRunner shellRunner
+	shellRunnerOnce    sync.Once
 )
 
 func setShellRunnerForTesting(r shellRunner) func() {
@@ -387,7 +378,23 @@ func setShellRunnerForTesting(r shellRunner) func() {
 	}
 }
 
+func initShellRunner(config *Config) {
+	shellRunnerMu.Lock()
+	defer shellRunnerMu.Unlock()
+
+	// Initialize podman shell runner with config
+	currentShellRunner = newPodmanShellRunner(config.LLM.PodmanAllowHostFallback)
+}
+
 func getShellRunner() shellRunner {
+	shellRunnerOnce.Do(func() {
+		shellRunnerMu.Lock()
+		if currentShellRunner == nil {
+			// Default to podman runner with fallback disabled
+			currentShellRunner = newPodmanShellRunner(false)
+		}
+		shellRunnerMu.Unlock()
+	})
 	shellRunnerMu.RLock()
 	defer shellRunnerMu.RUnlock()
 	return currentShellRunner
@@ -411,17 +418,7 @@ func (t RunShellCommand) Call(ctx context.Context, input string) (string, error)
 	runner := getShellRunner()
 	output, runErr := runner.Run(ctx, params)
 	if runErr != nil {
-		// fall back to host execution if podman runner failed before starting command
-		var podmanErr PodmanUnavailableError
-		if errors.As(runErr, &podmanErr) {
-			output, err = hostFallbackRunner.Run(ctx, params)
-			if err != nil {
-				return "", err
-			}
-			output.Error = podmanErr.Error()
-		} else {
-			return "", runErr
-		}
+		return "", runErr
 	}
 
 	outputBytes, err := json.Marshal(output)
@@ -531,214 +528,6 @@ type PodmanUnavailableError struct {
 
 func (e PodmanUnavailableError) Error() string {
 	return e.reason
-}
-
-type PodmanShellRunner struct {
-	imageName string
-
-	mu             sync.Mutex
-	dockerfilePath string
-	buildOnce      sync.Once
-	buildErr       error
-}
-
-func newPodmanShellRunner() *PodmanShellRunner {
-	return &PodmanShellRunner{
-		imageName: "localhost/asimi-shell:latest",
-	}
-}
-
-func (r *PodmanShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
-	var output RunShellCommandOutput
-
-	workdir := params.Path
-	if workdir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return output, fmt.Errorf("unable to resolve current working directory: %w", err)
-		}
-		workdir = cwd
-	}
-
-	absWorkdir, err := filepath.Abs(workdir)
-	if err != nil {
-		return output, fmt.Errorf("unable to resolve workdir: %w", err)
-	}
-
-	stat, err := os.Stat(absWorkdir)
-	if err != nil {
-		return output, fmt.Errorf("workdir is invalid: %w", err)
-	}
-	if !stat.IsDir() {
-		return output, fmt.Errorf("workdir must be a directory: %s", absWorkdir)
-	}
-
-	root := findProjectRoot(absWorkdir)
-	if root == "" {
-		root = absWorkdir
-	}
-
-	dockerfile := filepath.Join(root, ".asimi", "Dockerfile")
-	if _, err := os.Stat(dockerfile); err != nil {
-		return output, PodmanUnavailableError{reason: fmt.Sprintf("podman dockerfile not found at %s", dockerfile)}
-	}
-
-	connCtx, err := connectToPodman(ctx)
-	if err != nil {
-		return output, PodmanUnavailableError{reason: err.Error()}
-	}
-
-	if err := r.ensureImage(connCtx, dockerfile); err != nil {
-		return output, err
-	}
-
-	containerName := fmt.Sprintf("asimi-shell-%d", time.Now().UnixNano())
-	containerSpec := specgen.NewSpecGenerator(r.imageName, false)
-	containerSpec.Name = containerName
-	containerSpec.WorkDir = "/workspace"
-	command := composeShellCommand(params.Command)
-	containerSpec.Command = []string{"bash", "-lc", command}
-	containerSpec.Env = map[string]string{
-		"HOME": "/workspace",
-	}
-	remove := true
-	containerSpec.Remove = &remove
-	containerSpec.Mounts = append(containerSpec.Mounts, specs.Mount{
-		Type:        "bind",
-		Source:      absWorkdir,
-		Destination: "/workspace",
-		Options:     []string{"rw"},
-	})
-
-	createResp, err := containers.CreateWithSpec(connCtx, containerSpec, nil)
-	if err != nil {
-		return output, fmt.Errorf("podman container create failed: %w", err)
-	}
-	containerID := createResp.ID
-
-	startErr := containers.Start(connCtx, containerID, nil)
-	if startErr != nil {
-		return output, fmt.Errorf("podman container start failed: %w", startErr)
-	}
-
-	exitCode, waitErr := containers.Wait(connCtx, containerID, nil)
-	if waitErr != nil {
-		return output, fmt.Errorf("podman container wait failed: %w", waitErr)
-	}
-
-	stdoutBuf := &strings.Builder{}
-	stderrBuf := &strings.Builder{}
-	stdoutChan := make(chan string, 16)
-	stderrChan := make(chan string, 16)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for chunk := range stdoutChan {
-			stdoutBuf.WriteString(chunk)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for chunk := range stderrChan {
-			stderrBuf.WriteString(chunk)
-		}
-	}()
-
-	logOpts := new(containers.LogOptions).WithStdout(true).WithStderr(true)
-	logErr := containers.Logs(connCtx, containerID, logOpts, stdoutChan, stderrChan)
-	close(stdoutChan)
-	close(stderrChan)
-	wg.Wait()
-	if logErr != nil {
-		return output, fmt.Errorf("podman logs retrieval failed: %w", logErr)
-	}
-
-	output.Stdout = stdoutBuf.String()
-	output.Stderr = stderrBuf.String()
-	output.ExitCode = int(exitCode)
-
-	return output, nil
-}
-
-func (r *PodmanShellRunner) ensureImage(ctx context.Context, dockerfilePath string) error {
-	r.mu.Lock()
-	if r.dockerfilePath == "" {
-		r.dockerfilePath = dockerfilePath
-	}
-	r.mu.Unlock()
-
-	r.buildOnce.Do(func() {
-		exists, err := images.Exists(ctx, r.imageName, nil)
-		if err != nil {
-			r.buildErr = fmt.Errorf("failed checking podman image: %w", err)
-			return
-		}
-		if exists {
-			return
-		}
-
-		contextDir := filepath.Dir(r.dockerfilePath)
-		containerFile := filepath.Base(r.dockerfilePath)
-		if rel, err := filepath.Rel(contextDir, r.dockerfilePath); err == nil {
-			containerFile = rel
-		}
-		opts := podmanTypes.BuildOptions{}
-		opts.ContextDirectory = contextDir
-		opts.Output = r.imageName
-		opts.Quiet = true
-		opts.ContainerFiles = []string{containerFile}
-
-		if _, err := images.Build(ctx, opts.ContainerFiles, opts); err != nil {
-			r.buildErr = fmt.Errorf("podman image build failed: %w", err)
-			return
-		}
-	})
-	return r.buildErr
-}
-
-func composeShellCommand(userCommand string) string {
-	var builder strings.Builder
-	builder.WriteString("set -euo pipefail; cd /workspace; ")
-	builder.WriteString("if command -v just >/dev/null 2>&1; then ")
-	builder.WriteString("if [ -f Justfile ] || [ -f justfile ] || [ -f justfile.toml ] || [ -f Justfile.toml ]; then ")
-	builder.WriteString("just bootstrap; ")
-	builder.WriteString("fi; fi; ")
-	builder.WriteString(userCommand)
-	return builder.String()
-}
-
-func connectToPodman(ctx context.Context) (context.Context, error) {
-	if uri := os.Getenv("ASIMI_PODMAN_SOCKET"); uri != "" {
-		return bindings.NewConnection(ctx, uri)
-	}
-	if uri := os.Getenv("CONTAINER_HOST"); uri != "" {
-		return bindings.NewConnection(ctx, uri)
-	}
-
-	var candidates []string
-	if runtime.GOOS != "windows" {
-		if usr, err := user.Current(); err == nil {
-			if uid, err := strconv.Atoi(usr.Uid); err == nil {
-				candidates = append(candidates, fmt.Sprintf("unix:///run/user/%d/podman/podman.sock", uid))
-			}
-		}
-		candidates = append(candidates, "unix:///var/run/podman/podman.sock")
-	}
-
-	var lastErr error
-	for _, candidate := range candidates {
-		connCtx, err := bindings.NewConnection(ctx, candidate)
-		if err == nil {
-			return connCtx, nil
-		}
-		lastErr = err
-	}
-
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, fmt.Errorf("no podman socket candidates available")
 }
 
 // ReadManyFilesInput is the input for the ReadManyFilesTool.

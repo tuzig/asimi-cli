@@ -12,6 +12,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20250829135019-44e44e21330d
 	github.com/containers/podman/v5 v5.6.2
+	github.com/docker/docker v28.3.3+incompatible
 	github.com/go-git/go-git/v5 v5.13.0
 	github.com/google/uuid v1.6.0
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.0
@@ -89,7 +90,6 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
-	github.com/docker/docker v28.3.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
