@@ -811,6 +811,7 @@ func buildLLMTools() ([]llms.Tool, map[string]lctools.Tool) {
 	}
 
 	str := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
+	boolean := func(desc string) map[string]any { return map[string]any{"type": "boolean", "description": desc} }
 
 	defs := []llms.Tool{
 		{
@@ -883,6 +884,22 @@ func buildLLMTools() ([]llms.Tool, map[string]lctools.Tool) {
 						},
 					},
 				}, []string{"paths"}),
+			},
+		},
+		{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        "merge",
+				Description: "Squashes a worktree-backed branch onto the main branch after user approval, then cleans up the worktree.",
+				Parameters: obj(map[string]any{
+					"worktree_path":  str("Absolute path to the worktree directory"),
+					"branch":         str("Name of the branch associated with the worktree"),
+					"main_branch":    str("Name of the trunk branch to merge into (defaults to main)"),
+					"commit_message": str("Optional squash commit message to use"),
+					"auto_approve":   boolean("Set to true to skip interactive approval (requires commit_message)"),
+					"skip_review":    boolean("Set to true to skip launching lazygit"),
+					"push":           boolean("Push the updated main branch to origin after merging"),
+				}, []string{"worktree_path", "branch"}),
 			},
 		},
 	}
