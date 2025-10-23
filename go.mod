@@ -1,8 +1,6 @@
 module github.com/daonb/asimi-cli
 
-go 1.23.8
-
-toolchain go1.24.6
+go 1.24.6
 
 require (
 	github.com/alecthomas/kong v1.12.1
