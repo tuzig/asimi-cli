@@ -404,7 +404,7 @@ func shortenProviderModel(provider, model string) string {
 		parts := strings.FieldsFunc(lowerModel, func(r rune) bool {
 			return r == '-' || r == ' ' || r == '_'
 		})
-		
+
 		// Skip "claude" prefix and build the short name
 		if len(parts) > 1 {
 			// For "claude-3-5-haiku-20240307" -> "3.5-Haiku"
@@ -422,7 +422,7 @@ func shortenProviderModel(provider, model string) string {
 				}
 				shortParts = append(shortParts, part)
 			}
-			
+
 			if len(shortParts) > 0 {
 				// Join parts and capitalize first letter of each word
 				result := strings.Join(shortParts, "-")

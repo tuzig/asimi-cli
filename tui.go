@@ -412,6 +412,30 @@ func (m TUIModel) handleToggleRawMode() (tea.Model, tea.Cmd) {
 func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	// Handle history navigation with arrow keys first
+	switch key {
+	case "up", "k":
+		// Only handle history navigation if we're on the first line
+		if m.prompt.TextArea.Line() == 0 {
+			if handled, historyCmd := m.handleHistoryNavigation(-1); handled {
+				return m, historyCmd
+			}
+		}
+		// If not handled by history, pass to textarea for navigation
+		m.prompt, _ = m.prompt.Update(msg)
+		return m, nil
+	case "down", "j":
+		// Only handle history navigation if we're on the last line
+		if m.prompt.TextArea.Line() == m.prompt.TextArea.LineCount()-1 {
+			if handled, historyCmd := m.handleHistoryNavigation(1); handled {
+				return m, historyCmd
+			}
+		}
+		// If not handled by history, pass to textarea for navigation
+		m.prompt, _ = m.prompt.Update(msg)
+		return m, nil
+	}
+
 	// Handle mode switching keys
 	switch key {
 	case "i":

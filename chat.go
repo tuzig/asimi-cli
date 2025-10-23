@@ -43,7 +43,7 @@ func NewChatComponent(width, height int) ChatComponent {
 		UserScrolled:     false, // User hasn't scrolled yet
 		TouchStartY:      0,     // Initialize touch tracking
 		TouchDragging:    false,
-		TouchScrollSpeed: 3, // Lines to scroll per touch movement unit
+		TouchScrollSpeed: 3,   // Lines to scroll per touch movement unit
 		markdownRenderer: nil, // Will be initialized asynchronously via message
 		Style: lipgloss.NewStyle().
 			Background(lipgloss.Color("#11051E")). // Terminal7 chat background

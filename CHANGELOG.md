@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Arrow keys now cycle through prompt history in vi normal mode, making history navigation consistent across all modes
 - Removing Podman build tag so the shell runner always uses the host shell fallback, simplifying the build process
 
 ### Changed

@@ -213,12 +213,12 @@ func TestGetOAuthConfig(t *testing.T) {
 func TestLoadConfig(t *testing.T) {
 	// Create a temporary directory for test configs
 	tempDir := t.TempDir()
-	
+
 	// Save current directory and change to temp
 	originalDir, err := os.Getwd()
 	require.NoError(t, err)
 	defer os.Chdir(originalDir)
-	
+
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
@@ -234,7 +234,7 @@ func TestLoadConfig(t *testing.T) {
 		// Create .asimi directory and config
 		err := os.MkdirAll(".asimi", 0755)
 		require.NoError(t, err)
-		
+
 		configContent := `[llm]
 provider = "openai"
 model = "gpt-4"
@@ -267,7 +267,7 @@ max_sessions = 100
 		err := os.MkdirAll(".asimi", 0755)
 		require.NoError(t, err)
 		defer os.RemoveAll(".asimi")
-		
+
 		configContent := `[llm]
 provider = "openai"
 model = "gpt-4"
@@ -290,7 +290,7 @@ model = "gpt-4"
 		err := os.MkdirAll(".asimi", 0755)
 		require.NoError(t, err)
 		defer os.RemoveAll(".asimi")
-		
+
 		configContent := `[llm]
 provider = "openai"
 model = "gpt-4"
@@ -311,7 +311,7 @@ model = "gpt-4"
 		err := os.MkdirAll(".asimi", 0755)
 		require.NoError(t, err)
 		defer os.RemoveAll(".asimi")
-		
+
 		configContent := `[llm]
 provider = "anthropic"
 model = "claude-3-opus"
@@ -328,12 +328,12 @@ model = "claude-3-opus"
 func TestSaveConfig(t *testing.T) {
 	// Create a temporary directory for test
 	tempDir := t.TempDir()
-	
+
 	// Save current directory and change to temp
 	originalDir, err := os.Getwd()
 	require.NoError(t, err)
 	defer os.Chdir(originalDir)
-	
+
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
@@ -361,7 +361,7 @@ func TestSaveConfig(t *testing.T) {
 		err := os.MkdirAll(".asimi", 0755)
 		require.NoError(t, err)
 		defer os.RemoveAll(".asimi")
-		
+
 		initialContent := `[llm]
 provider = "openai"
 model = "gpt-3.5-turbo"
@@ -390,7 +390,7 @@ model = "gpt-3.5-turbo"
 		err := os.MkdirAll(".asimi", 0755)
 		require.NoError(t, err)
 		defer os.RemoveAll(".asimi")
-		
+
 		initialContent := `[llm]
 provider = "openai"
 model = "gpt-3.5-turbo"
@@ -434,7 +434,7 @@ func TestUpdateUserLLMAuthIntegration(t *testing.T) {
 	}
 
 	t.Log("⚠️  WARNING: This test will trigger system keyring dialogs!")
-	
+
 	t.Run("creates config file if not exists", func(t *testing.T) {
 		// Create a temporary home directory
 		tempHome := t.TempDir()
