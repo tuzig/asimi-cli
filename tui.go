@@ -1413,11 +1413,15 @@ func (m TUIModel) View() string {
 		mainContent = m.chat.View()
 	}
 
+	// Build the vi mode + toast line
+	viModeToastLine := m.renderViModeAndToast()
+
 	// Build the full view
 	view := lipgloss.JoinVertical(
 		lipgloss.Left,
 		mainContent,
 		m.prompt.View(),
+		viModeToastLine,
 		m.status.View(),
 	)
 
@@ -1462,14 +1466,43 @@ func (m TUIModel) View() string {
 		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
 	}
 
-	// Add toast notifications
+	return view
+}
+
+// renderViModeAndToast renders the vi mode indicator and toast on the same line
+func (m TUIModel) renderViModeAndToast() string {
+	viIndicator := m.status.RenderViModeIndicator()
 	toastView := m.toastManager.View()
-	if toastView != "" {
-		// In a real implementation, you would position the toast appropriately
-		view = lipgloss.JoinVertical(lipgloss.Left, view, toastView)
+
+	// If neither is present, return empty string
+	if viIndicator == "" && toastView == "" {
+		return ""
 	}
 
-	return view
+	// If only toast is present, align it to the right
+	if viIndicator == "" {
+		toastStyle := lipgloss.NewStyle().Width(m.width).Align(lipgloss.Right)
+		return toastStyle.Render(toastView)
+	}
+
+	// If only vi indicator is present, align it to the left
+	if toastView == "" {
+		return viIndicator
+	}
+
+	// Both are present - vi indicator on left, toast on right
+	// Calculate the spacing needed between them
+	viWidth := lipgloss.Width(viIndicator)
+	toastWidth := lipgloss.Width(toastView)
+	spacingWidth := m.width - viWidth - toastWidth
+	
+	// Ensure we don't have negative spacing
+	if spacingWidth < 0 {
+		spacingWidth = 1
+	}
+	
+	spacing := strings.Repeat(" ", spacingWidth)
+	return viIndicator + spacing + toastView
 }
 
 // renderHomeView renders the home view when no session is active

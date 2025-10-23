@@ -183,9 +183,6 @@ func (s StatusComponent) renderLeftSection() string {
 	if gitStatus := getGitStatus(); gitStatus != "" {
 		parts = append(parts, gitStatus)
 	}
-	if viIndicator := s.renderViModeIndicator(); viIndicator != "" {
-		parts = append(parts, viIndicator)
-	}
 	return strings.Join(parts, " ")
 }
 
@@ -239,8 +236,8 @@ func (s StatusComponent) renderRightSection() string {
 	return providerStyle.Render(providerModel) + " " + icon
 }
 
-// renderViModeIndicator renders the vi mode indicator string
-func (s StatusComponent) renderViModeIndicator() string {
+// RenderViModeIndicator renders the vi mode indicator string
+func (s StatusComponent) RenderViModeIndicator() string {
 	if !s.ViModeEnabled {
 		return ""
 	}
