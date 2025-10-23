@@ -44,7 +44,7 @@ func NewChatComponent(width, height int) ChatComponent {
 		TouchStartY:      0,     // Initialize touch tracking
 		TouchDragging:    false,
 		TouchScrollSpeed: 3, // Lines to scroll per touch movement unit
-		markdownRenderer: nil, // Will be initialized asynchronously
+		markdownRenderer: nil, // Will be initialized asynchronously via message
 		Style: lipgloss.NewStyle().
 			Background(lipgloss.Color("#11051E")). // Terminal7 chat background
 			Width(width).
@@ -58,15 +58,9 @@ func (c *ChatComponent) SetWidth(width int) {
 	c.Style = c.Style.Width(width)
 	c.Viewport.Width = width
 
-	// Update markdown renderer width if it exists
-	// Don't recreate it synchronously - let it update asynchronously
-	if c.markdownRenderer != nil {
-		c.markdownRenderer, _ = glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(width-4),
-		)
-	}
-
+	// Don't recreate the renderer synchronously on resize - it's expensive
+	// The renderer will be recreated asynchronously via handleWindowSizeMsg
+	// For now, just update the content with current renderer
 	c.UpdateContent()
 }
 

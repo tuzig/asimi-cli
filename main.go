@@ -88,7 +88,7 @@ func (v versionCmd) Run() error {
 
 func (r *runCmd) Run() error {
 	startTime := time.Now()
-	
+
 	// This command will only be run when no prompt is provided.
 	// The logic in main() will handle the non-interactive case.
 
@@ -132,7 +132,7 @@ func (r *runCmd) Run() error {
 			},
 		}
 	}
-	
+
 	if cli.Debug {
 		fmt.Fprintf(os.Stderr, "[TIMING] LoadConfig() completed in %v\n", time.Since(configStart))
 	}
@@ -143,7 +143,7 @@ func (r *runCmd) Run() error {
 	// Create the TUI model
 	tuiStart := time.Now()
 	tuiModel := NewTUIModel(config)
-	
+
 	if cli.Debug {
 		fmt.Fprintf(os.Stderr, "[TIMING] NewTUIModel() completed in %v\n", time.Since(tuiStart))
 	}
@@ -151,7 +151,7 @@ func (r *runCmd) Run() error {
 	// Create the program but don't start it yet
 	programStart := time.Now()
 	program = tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	
+
 	if cli.Debug {
 		fmt.Fprintf(os.Stderr, "[TIMING] tea.NewProgram() completed in %v\n", time.Since(programStart))
 	}
@@ -163,7 +163,7 @@ func (r *runCmd) Run() error {
 		if cli.Debug {
 			fmt.Fprintf(os.Stderr, "[TIMING] getLLMClient() completed in %v\n", time.Since(llmStart))
 		}
-		
+
 		if err != nil {
 			// Log the error but continue without LLM support
 			slog.Warn("Failed to get LLM client, running without AI capabilities", "error", err)
@@ -181,7 +181,7 @@ func (r *runCmd) Run() error {
 			if cli.Debug {
 				fmt.Fprintf(os.Stderr, "[TIMING] NewSession() completed in %v\n", time.Since(sessStart))
 			}
-			
+
 			if sessErr != nil {
 				slog.Error("Failed to create session", "error", sessErr)
 				if program != nil {
@@ -204,20 +204,25 @@ func (r *runCmd) Run() error {
 		if width == 0 {
 			width = 80 // Default width
 		}
-		
-		// Initialize the renderer
-		_, _ = glamour.NewTermRenderer(
+
+		// Create the renderer (this is the expensive operation, done async)
+		renderer, err := glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),
 			glamour.WithWordWrap(width-4),
 		)
-		
+
 		if cli.Debug {
 			fmt.Fprintf(os.Stderr, "[TIMING] Markdown renderer initialized in %v\n", time.Since(rendererStart))
 		}
-		
-		// Send message to TUI that renderer is ready
+
+		if err != nil {
+			slog.Error("Failed to initialize markdown renderer", "error", err)
+			return
+		}
+
+		// Send the created renderer to TUI
 		if program != nil {
-			program.Send(markdownRendererReadyMsg{width: width})
+			program.Send(markdownRendererReadyMsg{renderer: renderer})
 		}
 	}()
 
@@ -242,12 +247,12 @@ func (r *runCmd) Run() error {
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("alas, there's been an error: %w", err)
 	}
-	
+
 	if cli.Debug {
 		fmt.Fprintf(os.Stderr, "[TIMING] program.Run() completed in %v\n", time.Since(runStart))
 		fmt.Fprintf(os.Stderr, "[TIMING] Total Run() time: %v\n", time.Since(startTime))
 	}
-	
+
 	return nil
 }
 
@@ -266,13 +271,13 @@ type llmInitErrorMsg struct {
 
 // markdownRendererReadyMsg is sent when the markdown renderer is ready
 type markdownRendererReadyMsg struct {
-	width int
+	renderer *glamour.TermRenderer
 }
 
 func main() {
 	startTime := time.Now()
 	ctx := kong.Parse(&cli)
-	
+
 	// Start profiling if requested
 	if cli.CPUProfile != "" {
 		f, err := os.Create(cli.CPUProfile)
@@ -308,9 +313,9 @@ func main() {
 	if cli.Debug {
 		fmt.Fprintf(os.Stderr, "[TIMING] main() started at %v\n", startTime)
 	}
-	
+
 	initLogger()
-	
+
 	if cli.Debug {
 		fmt.Fprintf(os.Stderr, "[TIMING] initLogger() completed in %v\n", time.Since(startTime))
 	}
@@ -374,7 +379,7 @@ func main() {
 		}
 		fmt.Fprintf(os.Stderr, "Memory profile written to %s\n", cli.MemProfile)
 	}
-	
+
 	if cli.Debug {
 		fmt.Fprintf(os.Stderr, "[TIMING] Total execution time: %v\n", time.Since(startTime))
 	}
