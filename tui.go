@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tmc/langchaingo/llms"
 )
@@ -1208,6 +1209,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// LLM initialization failed
 		slog.Warn("LLM initialization failed", "error", msg.err)
 		m.toastManager.AddToast(fmt.Sprintf("Warning: Running without AI capabilities: %v", msg.err), "warning", 5000)
+
+	case markdownRendererReadyMsg:
+		// Markdown renderer is ready - initialize it in the chat component
+		slog.Debug("Markdown renderer ready", "width", msg.width)
+		renderer, _ := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(msg.width-4),
+		)
+		m.chat.markdownRenderer = renderer
+		m.chat.UpdateContent()
 	}
 
 	var chatCmd tea.Cmd

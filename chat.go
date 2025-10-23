@@ -34,11 +34,6 @@ func NewChatComponent(width, height int) ChatComponent {
 	vp := viewport.New(width, height)
 	vp.SetContent("Welcome to Asimi CLI! Send a message to start chatting.")
 
-	renderer, _ := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(width-4),
-	)
-
 	return ChatComponent{
 		Viewport:         vp,
 		Messages:         []string{"Welcome to Asimi CLI! Send a message to start chatting."},
@@ -49,7 +44,7 @@ func NewChatComponent(width, height int) ChatComponent {
 		TouchStartY:      0,     // Initialize touch tracking
 		TouchDragging:    false,
 		TouchScrollSpeed: 3, // Lines to scroll per touch movement unit
-		markdownRenderer: renderer,
+		markdownRenderer: nil, // Will be initialized asynchronously
 		Style: lipgloss.NewStyle().
 			Background(lipgloss.Color("#11051E")). // Terminal7 chat background
 			Width(width).
@@ -63,7 +58,8 @@ func (c *ChatComponent) SetWidth(width int) {
 	c.Style = c.Style.Width(width)
 	c.Viewport.Width = width
 
-	// Update markdown renderer width
+	// Update markdown renderer width if it exists
+	// Don't recreate it synchronously - let it update asynchronously
 	if c.markdownRenderer != nil {
 		c.markdownRenderer, _ = glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),

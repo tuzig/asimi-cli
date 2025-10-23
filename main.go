@@ -18,6 +18,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	isatty "github.com/mattn/go-isatty"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic"
@@ -195,6 +196,31 @@ func (r *runCmd) Run() error {
 		}
 	}()
 
+	// Initialize markdown renderer asynchronously to avoid blocking startup
+	go func() {
+		rendererStart := time.Now()
+		// Get the initial width from the TUI model
+		width := tuiModel.width
+		if width == 0 {
+			width = 80 // Default width
+		}
+		
+		// Initialize the renderer
+		_, _ = glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(width-4),
+		)
+		
+		if cli.Debug {
+			fmt.Fprintf(os.Stderr, "[TIMING] Markdown renderer initialized in %v\n", time.Since(rendererStart))
+		}
+		
+		// Send message to TUI that renderer is ready
+		if program != nil {
+			program.Send(markdownRendererReadyMsg{width: width})
+		}
+	}()
+
 	// If profile-exit-ms is set, schedule an exit after that duration
 	if cli.ProfileExitMs > 0 {
 		go func() {
@@ -236,6 +262,11 @@ type llmInitSuccessMsg struct {
 // llmInitErrorMsg is sent when LLM initialization fails
 type llmInitErrorMsg struct {
 	err error
+}
+
+// markdownRendererReadyMsg is sent when the markdown renderer is ready
+type markdownRendererReadyMsg struct {
+	width int
 }
 
 func main() {
