@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/tmc/langchaingo/tools"
 	"github.com/yargevad/filepathx"
@@ -335,29 +334,23 @@ func (t ReplaceTextTool) Format(input, result string, err error) string {
 	return firstLine + "\n" + secondLine
 }
 
-// RunShellCommand is a tool for running shell commands
-type RunShellCommand struct{}
+// RunInShell is a tool for running shell commands in a persistent shell
+type RunInShell struct{}
 
-// RunShellCommandInput is the input for the RunShellCommand tool
-type RunShellCommandInput struct {
+// RunInShellInput is the input for the RunInShell tool
+type RunInShellInput struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
-	Path        string `json:"path"`
 }
 
-// RunShellCommandOutput is the output of the RunShellCommand tool
-type RunShellCommandOutput struct {
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
-	ExitCode       int    `json:"exitCode"`
-	Signal         int    `json:"signal,omitempty"`
-	Error          string `json:"error,omitempty"`
-	PID            int    `json:"pid,omitempty"`
-	BackgroundPids []int  `json:"backgroundPids,omitempty"`
+// RunInShellOutput is the output of the RunInShell tool
+type RunInShellOutput struct {
+	Output   string `json:"output"`
+	ExitCode int    `json:"exitCode"`
 }
 
 type shellRunner interface {
-	Run(context.Context, RunShellCommandInput) (RunShellCommandOutput, error)
+	Run(context.Context, RunInShellInput) (RunInShellOutput, error)
 }
 
 var (
@@ -400,16 +393,16 @@ func getShellRunner() shellRunner {
 	return currentShellRunner
 }
 
-func (t RunShellCommand) Name() string {
-	return "run_shell_command"
+func (t RunInShell) Name() string {
+	return "run_in_shell"
 }
 
-func (t RunShellCommand) Description() string {
-	return "Executes a shell command. The input should be a JSON object with 'command', 'description', and 'directory' fields."
+func (t RunInShell) Description() string {
+	return "Executes a shell command in a persistent shell session. The input should be a JSON object with 'command' and optional 'description' fields."
 }
 
-func (t RunShellCommand) Call(ctx context.Context, input string) (string, error) {
-	var params RunShellCommandInput
+func (t RunInShell) Call(ctx context.Context, input string) (string, error) {
+	var params RunInShellInput
 	err := json.Unmarshal([]byte(input), &params)
 	if err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -429,10 +422,10 @@ func (t RunShellCommand) Call(ctx context.Context, input string) (string, error)
 	return string(outputBytes), nil
 }
 
-// String formats a run_shell_command tool call for display
-func (t RunShellCommand) Format(input, result string, err error) string {
+// String formats a run_in_shell tool call for display
+func (t RunInShell) Format(input, result string, err error) string {
 	// Parse input JSON to extract command
-	var params RunShellCommandInput
+	var params RunInShellInput
 	json.Unmarshal([]byte(input), &params)
 
 	paramStr := ""
@@ -446,7 +439,7 @@ func (t RunShellCommand) Format(input, result string, err error) string {
 	}
 
 	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("Run Shell Command%s", paramStr)
+	firstLine := fmt.Sprintf("Run In Shell%s", paramStr)
 
 	// Second line: result summary
 	var secondLine string
@@ -475,8 +468,8 @@ func (t RunShellCommand) Format(input, result string, err error) string {
 
 type hostShellRunner struct{}
 
-func (hostShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
-	var output RunShellCommandOutput
+func (hostShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
+	var output RunInShellOutput
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -488,27 +481,22 @@ func (hostShellRunner) Run(ctx context.Context, params RunShellCommandInput) (Ru
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Dir = params.Path
 
 	runErr := cmd.Run()
 
-	output.Stdout = stdout.String()
-	output.Stderr = stderr.String()
-
-	if cmd.Process != nil {
-		output.PID = cmd.Process.Pid
+	// Combine stdout and stderr into a single output field
+	output.Output = stdout.String()
+	if stderr.Len() > 0 {
+		if output.Output != "" {
+			output.Output += "\n"
+		}
+		output.Output += stderr.String()
 	}
 
 	if runErr != nil {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			output.ExitCode = exitErr.ExitCode()
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-				if status.Signaled() {
-					output.Signal = int(status.Signal())
-				}
-			}
 		} else {
-			output.Error = runErr.Error()
 			output.ExitCode = -1
 		}
 	} else {
@@ -890,7 +878,7 @@ var availableTools = []Tool{
 	WriteFileTool{},
 	ListDirectoryTool{},
 	ReplaceTextTool{},
-	RunShellCommand{},
+	RunInShell{},
 	ReadManyFilesTool{},
 	MergeTool{},
 }

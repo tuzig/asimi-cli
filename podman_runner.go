@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
-	"io"
 
 	dockerContainer "github.com/docker/docker/api/types/container"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
@@ -233,14 +235,22 @@ func (r *PodmanShellRunner) createContainer(ctx context.Context) error {
 	return nil
 }
 
-func (r *PodmanShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
+func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
 	// Ensure container is running
 	if err := r.ensureContainer(ctx); err != nil {
 		// If podman is not available, fall back to host shell only if allowed
 		if r.allowFallback {
 			return hostShellRunner{}.Run(ctx, params)
 		}
-		return RunShellCommandOutput{}, fmt.Errorf("podman unavailable and fallback to host shell is disabled: %w", err)
+		return RunInShellOutput{}, fmt.Errorf("podman unavailable and fallback to host shell is disabled: %w", err)
+	}
+
+	// Ensure persistent bash session is established
+	if err := r.ensurePersistentBashSession(ctx); err != nil {
+		if r.allowFallback {
+			return hostShellRunner{}.Run(ctx, params)
+		}
+		return RunInShellOutput{}, fmt.Errorf("failed to establish persistent session: %w", err)
 	}
 
 	// Compose the command to run in the container
@@ -249,20 +259,40 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunShellCommandInput
 	// Write the command to the persistent session's stdin
 	_, err := r.stdinPipe.Write([]byte(command))
 	if err != nil {
-		return RunShellCommandOutput{}, fmt.Errorf("failed to write command to persistent session: %w", err)
+		return RunInShellOutput{}, fmt.Errorf("failed to write command to persistent session: %w", err)
 	}
 
-		return RunShellCommandOutput{
+	// Read output from stdout and stderr
+	output := RunInShellOutput{}
+	
+	// Read from stdout with a timeout or until we get the exit code marker
+	outputBytes := make([]byte, 4096)
+	n, err := r.stdoutPipe.Read(outputBytes)
+	if err != nil && err != io.EOF {
+		return RunInShellOutput{}, fmt.Errorf("failed to read from stdout: %w", err)
+	}
+	
+	output.Output = string(outputBytes[:n])
+	
+	// Parse exit code from the output (it's appended by composeShellCommand)
+	// The format is "**Exit Code**: <number>"
+	lines := strings.Split(output.Output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], "**Exit Code**:") {
+			parts := strings.Split(lines[i], ":")
+			if len(parts) >= 2 {
+				exitCodeStr := strings.TrimSpace(parts[len(parts)-1])
+				if code, err := strconv.Atoi(exitCodeStr); err == nil {
+					output.ExitCode = code
+					// Remove the exit code line from output
+					output.Output = strings.Join(lines[:i], "\n")
+					break
+				}
+			}
+		}
+	}
 
-			Stdout:   "Command sent to persistent bash session. Output and exit code determination is handled by the caller.\n",
-
-			Stderr:   "",
-
-			ExitCode: 0, // Exit code determination is handled by the caller
-
-			PID:      0, // PID determination is handled by the caller
-
-		}, nil
+	return output, nil
 }
 
 // Close closes the persistent bash session and its associated pipes.

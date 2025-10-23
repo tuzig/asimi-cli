@@ -13,47 +13,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunShellCommand(t *testing.T) {
+func TestRunInShell(t *testing.T) {
 	restore := setShellRunnerForTesting(hostShellRunner{})
 	defer restore()
 
-	tool := RunShellCommand{}
+	tool := RunInShell{}
 	input := `{"command": "echo 'hello world'"}`
 
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunShellCommandOutput
+	var output RunInShellOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
-	assert.Equal(t, "hello world\n", output.Stdout)
-	assert.Equal(t, "", output.Stderr)
+	assert.Contains(t, output.Output, "hello world")
 	assert.Equal(t, 0, output.ExitCode)
 }
 
-func TestRunShellCommandError(t *testing.T) {
+func TestRunInShellError(t *testing.T) {
 	restore := setShellRunnerForTesting(hostShellRunner{})
 	defer restore()
 
-	tool := RunShellCommand{}
+	tool := RunInShell{}
 	input := `{"command": "exit 1"}`
 
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunShellCommandOutput
+	var output RunInShellOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 1, output.ExitCode)
 }
 
-func TestRunShellCommandFailsWhenPodmanUnavailable(t *testing.T) {
+func TestRunInShellFailsWhenPodmanUnavailable(t *testing.T) {
 	restore := setShellRunnerForTesting(failingPodmanRunner{})
 	defer restore()
 
-	tool := RunShellCommand{}
+	tool := RunInShell{}
 	input := `{"command": "echo test"}`
 
 	_, err := tool.Call(context.Background(), input)
@@ -220,6 +219,6 @@ func cleanGitEnv() []string {
 
 type failingPodmanRunner struct{}
 
-func (failingPodmanRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
-	return RunShellCommandOutput{}, PodmanUnavailableError{reason: "podman unavailable"}
+func (failingPodmanRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
+	return RunInShellOutput{}, PodmanUnavailableError{reason: "podman unavailable"}
 }

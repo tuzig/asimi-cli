@@ -122,7 +122,7 @@ var sessPromptPartials = map[string]any{
 	"Grep":          "grep",
 	"Glob":          "glob",
 	"Edit":          "replace_text",
-	"Shell":         "run_shell_command",
+	"Shell":         "run_in_shell",
 	"ReadManyFiles": "read_many_files",
 	"Memory":        "",
 	"LS":            "list_files",
@@ -862,12 +862,11 @@ func buildLLMTools() ([]llms.Tool, map[string]lctools.Tool) {
 		{
 			Type: "function",
 			Function: &llms.FunctionDefinition{
-				Name:        "run_shell_command",
-				Description: "Executes a shell command in an optional directory.",
+				Name:        "run_in_shell",
+				Description: "Executes a shell command in a persistent shell session.",
 				Parameters: obj(map[string]any{
 					"command":     str("Shell command to run"),
 					"description": str("Short description of the command"),
-					"path":        str("Working directory for the command"),
 				}, []string{"command"}),
 			},
 		},

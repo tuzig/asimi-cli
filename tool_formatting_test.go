@@ -47,20 +47,20 @@ func TestFormatToolCall(t *testing.T) {
 			expected: "- List Files(.)\n  ⎿  Found 3 items",
 		},
 		{
-			name:     "run_shell_command success",
-			toolName: "run_shell_command",
+			name:     "run_in_shell success",
+			toolName: "run_in_shell",
 			input:    `{"command": "echo hello", "description": "test"}`,
-			result:   `{"stdout":"hello\n","stderr":"","exitCode":0}`,
+			result:   `{"output":"hello\n","exitCode":0}`,
 			err:      nil,
-			expected: "- Run Shell Command(echo hello)\n  ⎿  Command completed successfully",
+			expected: "- Run In Shell(echo hello)\n  ⎿  Command completed successfully",
 		},
 		{
-			name:     "run_shell_command failure",
-			toolName: "run_shell_command",
+			name:     "run_in_shell failure",
+			toolName: "run_in_shell",
 			input:    `{"command": "false", "description": "test"}`,
-			result:   `{"stdout":"","stderr":"","exitCode":1}`,
+			result:   `{"output":"","exitCode":1}`,
 			err:      nil,
-			expected: "- Run Shell Command(false)\n  ⎿  Command failed (exit code 1)",
+			expected: "- Run In Shell(false)\n  ⎿  Command failed (exit code 1)",
 		},
 		{
 			name:     "read_many_files success",
@@ -93,7 +93,7 @@ func TestFormatToolCall(t *testing.T) {
 func TestFormatToolCallLongCommand(t *testing.T) {
 	longCommand := "this is a very long command that should be truncated because it exceeds the limit"
 	input := `{"command": "` + longCommand + `", "description": "test"}`
-	result := formatToolCall("run_shell_command", "-", input, `{"exitCode":0}`, nil)
+	result := formatToolCall("run_in_shell", "-", input, `{"exitCode":0}`, nil)
 
 	lines := strings.Split(result, "\n")
 	if len(lines) != 2 {

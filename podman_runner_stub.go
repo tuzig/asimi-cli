@@ -20,7 +20,7 @@ func newPodmanShellRunner(allowFallback bool) *PodmanShellRunner {
 	}
 }
 
-func (r *PodmanShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
+func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
 	// In non-podman build, always fall back to host shell
 	return hostShellRunner{}.Run(ctx, params)
 }
