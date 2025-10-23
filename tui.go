@@ -1391,82 +1391,107 @@ func (m *TUIModel) updateComponentDimensions() {
 
 // View implements bubbletea.Model
 func (m TUIModel) View() string {
-	// If we don't have dimensions yet, return empty
 	if m.width == 0 || m.height == 0 {
 		return "Initializing..."
 	}
 
-	// Update status component with current vi mode state
 	viEnabled, viMode, viPending := m.prompt.ViModeStatus()
 	m.status.SetViMode(viEnabled, viMode, viPending)
 
-	// Render the appropriate view based on current mode
-	var mainContent string
-	if m.rawMode {
-		// Raw session history view
-		mainContent = m.renderRawSessionView(m.width, m.height-6) // Account for prompt and status
-	} else if !m.sessionActive {
-		// Home view
-		mainContent = m.renderHomeView(m.width, m.height-6) // Account for prompt and status
-	} else {
-		// Chat view
-		mainContent = m.chat.View()
-	}
-
-	// Build the vi mode + toast line
+	mainContent := m.renderMainContent()
+	promptView := m.prompt.View()
 	viModeToastLine := m.renderViModeAndToast()
 
-	// Build the full view
-	view := lipgloss.JoinVertical(
+	view := m.composeBaseView(mainContent, promptView, viModeToastLine)
+
+	if m.showCompletionDialog {
+		view = m.overlayCompletionDialog(view, promptView, viModeToastLine)
+	}
+
+	return m.applyModalOverlays(view)
+}
+
+func (m TUIModel) renderMainContent() string {
+	contentHeight := m.height - 6 // Account for prompt and status
+
+	switch {
+	case m.rawMode:
+		return m.renderRawSessionView(m.width, contentHeight)
+	case !m.sessionActive:
+		return m.renderHomeView(m.width, contentHeight)
+	default:
+		return m.chat.View()
+	}
+}
+
+func (m TUIModel) composeBaseView(mainContent, promptView, viModeToastLine string) string {
+	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		mainContent,
-		m.prompt.View(),
+		promptView,
 		viModeToastLine,
 		m.status.View(),
 	)
+}
 
-	// Add completion dialog if visible
-	if m.showCompletionDialog {
-		// Position the completion dialog above the prompt
-		// In a real implementation, you would calculate the exact position
-		dialog := m.completions.View()
-		if dialog != "" {
-			view = lipgloss.JoinVertical(lipgloss.Left, view, dialog)
+func (m TUIModel) overlayCompletionDialog(baseView, promptView, viModeToastLine string) string {
+	dialog := m.completions.View()
+	if dialog == "" {
+		return baseView
+	}
+
+	promptHeight := lipgloss.Height(promptView)
+	viModeToastHeight := 0
+	if viModeToastLine != "" {
+		viModeToastHeight = 1
+	}
+	statusHeight := 1
+	bottomOffset := promptHeight + viModeToastHeight + statusHeight
+
+	dialogHeight := lipgloss.Height(dialog)
+	yPos := m.height - bottomOffset - dialogHeight
+
+	dialogOverlay := lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, baseView)
+	dialogPositioned := lipgloss.Place(m.width, dialogHeight, lipgloss.Left, lipgloss.Top, dialog)
+
+	lines := strings.Split(dialogOverlay, "\n")
+	dialogLines := strings.Split(dialogPositioned, "\n")
+
+	if yPos >= 0 && yPos < len(lines) {
+		for i, dialogLine := range dialogLines {
+			if yPos+i < len(lines) {
+				lines[yPos+i] = dialogLine
+			}
 		}
 	}
 
-	// Add modal if active
+	return strings.Join(lines, "\n")
+}
+
+func (m TUIModel) applyModalOverlays(view string) string {
+	result := view
+
 	if m.modal != nil {
-		modalView := m.modal.Render()
-		// In a real implementation, you would overlay the modal on top of the main view
-		view = lipgloss.JoinVertical(lipgloss.Left, view, modalView)
+		result = lipgloss.JoinVertical(lipgloss.Left, result, m.modal.Render())
 	}
 
-	// Add provider modal if active (show modal over existing view)
 	if m.providerModal != nil {
-		modalView := m.providerModal.Render()
-		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.providerModal.Render())
 	}
 
-	// Add code input modal if active (takes priority over provider modal)
 	if m.codeInputModal != nil {
-		modalView := m.codeInputModal.Render()
-		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.codeInputModal.Render())
 	}
 
-	// Add model selection modal if active (takes priority over other modals)
 	if m.modelSelectionModal != nil {
-		modalView := m.modelSelectionModal.Render()
-		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.modelSelectionModal.Render())
 	}
 
-	// Add session selection modal if active (takes priority over other modals)
 	if m.sessionModal != nil {
-		modalView := m.sessionModal.Render()
-		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView)
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.sessionModal.Render())
 	}
 
-	return view
+	return result
 }
 
 // renderViModeAndToast renders the vi mode indicator and toast on the same line
@@ -1495,12 +1520,12 @@ func (m TUIModel) renderViModeAndToast() string {
 	viWidth := lipgloss.Width(viIndicator)
 	toastWidth := lipgloss.Width(toastView)
 	spacingWidth := m.width - viWidth - toastWidth
-	
+
 	// Ensure we don't have negative spacing
 	if spacingWidth < 0 {
 		spacingWidth = 1
 	}
-	
+
 	spacing := strings.Repeat(" ", spacingWidth)
 	return viIndicator + spacing + toastView
 }
