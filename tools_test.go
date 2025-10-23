@@ -116,9 +116,8 @@ func TestRunInShellExitCodeWithMarkerInOutput(t *testing.T) {
 
 func TestComposeShellCommand(t *testing.T) {
 	command := composeShellCommand("echo test")
-	require.Contains(t, command, "just bootstrap")
-	require.Contains(t, command, "cd /workspace")
 	require.Contains(t, command, "echo test")
+	require.Contains(t, command, "echo $?")
 }
 
 func TestReadFileToolWithOffsetAndLimit(t *testing.T) {

@@ -19,6 +19,7 @@ IMPORTANT: Write idiomatic Go code. Avoid unnecessary abstractions and wrapper f
 - Don't use "queueing" patterns unless actually implementing concurrent queues
 - Prefer direct function calls over indirection
 - Keep code flat and readable
+- Do not add build tags
 
 ## Libraries
 - bubbletea for the UI
