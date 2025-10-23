@@ -346,7 +346,7 @@ type RunInShellInput struct {
 // RunInShellOutput is the output of the RunInShell tool
 type RunInShellOutput struct {
 	Output   string `json:"output"`
-	ExitCode int    `json:"exitCode"`
+	ExitCode string `json:"exitCode"`
 }
 
 type shellRunner interface {
@@ -495,15 +495,15 @@ func (hostShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInSh
 
 	if runErr != nil {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			output.ExitCode = exitErr.ExitCode()
+			output.ExitCode = fmt.Sprintf("%d", exitErr.ExitCode())
 		} else {
-			output.ExitCode = -1
+			output.ExitCode = "-1"
 		}
 	} else {
 		if cmd.ProcessState != nil {
-			output.ExitCode = cmd.ProcessState.ExitCode()
+			output.ExitCode = fmt.Sprintf("%d", cmd.ProcessState.ExitCode())
 		} else {
-			output.ExitCode = 0
+			output.ExitCode = "0"
 		}
 	}
 

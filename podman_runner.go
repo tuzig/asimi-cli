@@ -264,34 +264,30 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (Ru
 
 	// Read output from stdout and stderr
 	output := RunInShellOutput{}
-	
+
 	// Read from stdout with a timeout or until we get the exit code marker
 	outputBytes := make([]byte, 4096)
 	n, err := r.stdoutPipe.Read(outputBytes)
 	if err != nil && err != io.EOF {
 		return RunInShellOutput{}, fmt.Errorf("failed to read from stdout: %w", err)
 	}
-	
+
 	output.Output = string(outputBytes[:n])
-	
+
 	// Parse exit code from the output (it's appended by composeShellCommand)
 	// The format is "**Exit Code**: <number>"
 	lines := strings.Split(output.Output, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.Contains(lines[i], "**Exit Code**:") {
-			parts := strings.Split(lines[i], ":")
-			if len(parts) >= 2 {
-				exitCodeStr := strings.TrimSpace(parts[len(parts)-1])
-				if code, err := strconv.Atoi(exitCodeStr); err == nil {
-					output.ExitCode = code
-					// Remove the exit code line from output
-					output.Output = strings.Join(lines[:i], "\n")
-					break
-				}
-			}
-		}
+	l := len[lines] - 1
+	output.ExitCode = last_line := lines[l]
+	# Clearing the last line to help the GC
+	lines[l] = ""
+	lines = lines[:l]
+	if code, err := strconv.Atoi(last_line); err == nil {
+		output.ExitCode = code
+	} else {
+		return output, err
 	}
-
+	output.Output = strings.Join(lines, "\n")
 	return output, nil
 }
 
@@ -331,5 +327,5 @@ func (r *PodmanShellRunner) Close(ctx context.Context) error {
 }
 
 func composeShellCommand(userCommand string) string {
-	return "cd /workspace && just bootstrap && " + userCommand
+	return userCommand + "; echo $?"
 }

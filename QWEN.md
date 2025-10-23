@@ -49,4 +49,4 @@ Commits are then squashed and if it's a notable change the changelog is updated:
 
 IMPORTANT: Keep the changelog top notch accurately and succinctly covering all user notable changes
 
-When a task is in progress it should have a git worktree with all the changes. When working on a branch we are liberal in our commits as they will be squashed after approval.
+When a task is in progress it should have a git worktree with all the changes. When working on a branch we are liberal in our commits as they will be squashed after approval but DON'T MERGE yourself - ask the user.
