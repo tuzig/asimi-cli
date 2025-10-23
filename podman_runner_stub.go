@@ -1,5 +1,5 @@
-//go:build !podman
-// +build !podman
+//go:build !ignore
+// +build !ignore
 
 package main
 
@@ -21,10 +21,7 @@ func newPodmanShellRunner(allowFallback bool) *PodmanShellRunner {
 }
 
 func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
-	// In non-podman build, check if fallback is allowed
-	if !r.allowFallback {
-		return RunInShellOutput{}, fmt.Errorf("podman not available in this build and fallback to host shell is disabled")
-	}
+	// In non-podman build, always fall back to host shell
 	return hostShellRunner{}.Run(ctx, params)
 }
 

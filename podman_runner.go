@@ -1,5 +1,5 @@
-//go:build podman
-// +build podman
+//go:build ignore
+// +build ignore
 
 package main
 

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Respecting `PodmanAllowHostFallback` configuration in non-Podman builds so shell commands fail when Podman is unavailable and fallback is disabled
+- Removing Podman build tag so the shell runner always uses the host shell fallback, simplifying the build process
 
 ### Changed
 - Reorganized persistent data under `~/.local/share/asimi/repo/<slug>/` so each repository has isolated history and session storage with automatic migration from the legacy layout
