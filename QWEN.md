@@ -69,4 +69,6 @@ just infrabuild   # Build dev container (asimi-shell:latest)
 just infraclean   # Clean container resources
 ```
 
-Container runs commands in isolated bash shell with project mounted at same path.
+- Logs: ./asimi.log
+- Config: `~/.config/asimi/conf.toml` or `.asimi/conf.toml`
+- long term Asimi memory is stored in sqlite with the schema at `storage/schema.go`
