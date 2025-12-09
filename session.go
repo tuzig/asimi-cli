@@ -463,12 +463,28 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 	if err != nil {
 		// Check if this is an OAuth token expiration error
 		if isOAuthTokenExpiredError(err) {
-			slog.Info("OAuth token expired, attempting to refresh and retry", "error", err)
-			cfg := &Config{LLM: *s.config}
-			if !refreshOAuthToken(cfg) {
-				return nil, fmt.Errorf("OAuth token expired and refresh failed (original error: %v)", err)
+			slog.Info("OAuth token expired, attempting to force refresh and retry", "error", err)
+
+			// Force refresh the token (ignoring local expiry time since server rejected it)
+			newToken, refreshErr := forceRefreshOAuthToken(s.config.Provider)
+			if refreshErr != nil {
+				slog.Error("Failed to force refresh OAuth token", "error", refreshErr)
+				return nil, fmt.Errorf("OAuth token expired and refresh failed: %w (original error: %v)", refreshErr, err)
 			}
-			// Retry the request with the new token
+
+			// Update the session config with the new token
+			s.config.AuthToken = newToken
+
+			// Recreate the LLM client with the new token
+			fullConfig := &Config{LLM: *s.config}
+			newLLM, clientErr := getModelClient(fullConfig)
+			if clientErr != nil {
+				slog.Error("Failed to recreate LLM client after token refresh", "error", clientErr)
+				return nil, fmt.Errorf("failed to recreate LLM client after token refresh: %w", clientErr)
+			}
+			s.llm = newLLM
+
+			// Retry the request with the new client
 			slog.Info("Retrying request with refreshed OAuth token")
 			resp, err = s.llm.GenerateContent(ctx, s.Messages, callOptsWithChoice...)
 			if err != nil {

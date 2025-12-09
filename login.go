@@ -538,6 +538,47 @@ func refreshOAuthToken(config *Config) bool {
 	return false
 }
 
+// forceRefreshOAuthToken forces a refresh of the Anthropic OAuth token,
+// regardless of whether the local expiry time has passed.
+// This is used when the API returns a 401 error, indicating the server
+// has invalidated the token even if it hasn't locally expired.
+// Returns the new access token and an error if refresh fails.
+func forceRefreshOAuthToken(provider string) (string, error) {
+	if provider != "anthropic" {
+		return "", fmt.Errorf("force refresh only supported for anthropic provider")
+	}
+
+	tokenData, err := GetOauthToken("anthropic")
+	if err != nil {
+		return "", fmt.Errorf("failed to get token from keyring: %w", err)
+	}
+	if tokenData == nil {
+		return "", fmt.Errorf("no stored credentials found")
+	}
+
+	if tokenData.RefreshToken == "" {
+		return "", fmt.Errorf("no refresh token available")
+	}
+
+	// Force refresh the token using the refresh token
+	auth := &AuthAnthropic{}
+	refreshedTokens, err := auth.refreshToken(tokenData.RefreshToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to refresh token: %w", err)
+	}
+
+	// Calculate new expiry
+	expiry := time.Now().Add(time.Duration(refreshedTokens.ExpiresIn) * time.Second)
+
+	// Save the new tokens to keyring
+	if err := SaveTokenToKeyring("anthropic", refreshedTokens.AccessToken, refreshedTokens.RefreshToken, expiry); err != nil {
+		return "", fmt.Errorf("failed to save refreshed tokens: %w", err)
+	}
+
+	slog.Info("Force refreshed OAuth token successfully")
+	return refreshedTokens.AccessToken, nil
+}
+
 // performOAuthLogin performs OAuth login for non-Anthropic providers
 func (m *TUIModel) performOAuthLogin(provider string) tea.Cmd {
 	return func() tea.Msg {
