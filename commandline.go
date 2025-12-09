@@ -138,6 +138,11 @@ func (cl *CommandLineComponent) IsInCommandMode() bool {
 	return cl.mode == CommandLineCommand
 }
 
+// Blur removes focus from the command line
+func (cl *CommandLineComponent) Blur() {
+	cl.showCursor = false
+}
+
 // EnterYesNoMode enters yes/no prompt mode with a question
 func (cl *CommandLineComponent) EnterYesNoMode(question string) tea.Cmd {
 	cl.mode = CommandLineYesNo

@@ -1682,6 +1682,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Mode = newMode
 		m.status.SetMode(newMode)
 
+		if newMode != "command" && newMode != "yesno" {
+			m.commandLine.Blur()
+		}
+
 		// Handle scroll lock state changes
 		if oldMode == "scroll" && newMode != "scroll" {
 			m.content.Chat.SetScrollLock(false)
@@ -1711,8 +1715,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "command":
 			m.prompt.EnterViCommandLineMode()
 		case "yesno":
-			// Yes/No mode - blur prompt so cursor doesn't appear there
-			m.prompt.Blur()
 			m.prompt.Style = m.prompt.Style.BorderForeground(globalTheme.PromptOffBorder)
 		case "learning":
 			m.prompt.EnterViLearningMode()
