@@ -137,7 +137,6 @@ Asimi is just starting out. It's been used to develop itself since version 0.1.0
 | [#56 - MCP Support](https://github.com/afittestide/asimi-cli/issues/56) | Model Context Protocol integration |
 | [#24 - Sub-agents & Roles](https://github.com/afittestide/asimi-cli/issues/24) | Task delegation with orchestrator role |
 | [#8 - Git Integration](https://github.com/afittestide/asimi-cli/issues/8) | `:branch` command and tighter git workflows |
-| [#68 - Shell Firewall](https://github.com/afittestide/asimi-cli/issues/68) | Required approval to run commands on host |
 | A few directories | While flat is better than nested, there comes a time for dirs|
 > 💡 Have a feature request? [Open an issue](https://github.com/afittestide/asimi-cli/issues/new)!
 
