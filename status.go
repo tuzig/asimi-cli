@@ -330,24 +330,21 @@ func (s StatusComponent) renderLeftSection() string {
 
 // renderShellRunnerIndicator renders the shell runner status indicator
 func (s StatusComponent) renderShellRunnerIndicator() string {
-	if s.shellRunnerInfo == nil {
-		// No info yet, show warning
-		warningStyle := lipgloss.NewStyle().Foreground(globalTheme.Warning)
-		return warningStyle.Render("⚠ host (run :init)")
-	}
+	ret := "🏖️ "
+	warnStyle := lipgloss.NewStyle().Foreground(globalTheme.Warning)
 
-	if s.shellRunnerInfo.Type == "podman" {
+	if s.shellRunnerInfo != nil && s.shellRunnerInfo.Type == "podman" {
 		// Show container indicator with container ID
-		containerID := s.shellRunnerInfo.ContainerID
-		if containerID == "" {
-			containerID = "starting..."
+		id := s.shellRunnerInfo.ContainerID
+		if id == "" {
+			ret += "..."
+		} else {
+			ret += id
 		}
-		return fmt.Sprintf("📦 %s", containerID)
+		return ret
 	}
 
-	// Host shell runner - show warning
-	warningStyle := lipgloss.NewStyle().Foreground(globalTheme.Warning)
-	return warningStyle.Render("⚠ host (run :init)")
+	return ret + warnStyle.Render("⚠ host")
 }
 
 // renderMiddleSection renders the middle section with token usage andsession age

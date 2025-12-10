@@ -62,8 +62,17 @@ func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
 func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStatus func() string) *ChatComponent {
 	vp := viewport.New(width, height)
 
-	title := systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST")
-	vp.SetContent(title)
+	// Display sandbox type
+	info := getShellRunnerInfo()
+	ms := systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST")
+	ms += "\n"
+	if info.Type == "host" {
+		ms += treeMidPrefix + "please run `just build-sandbox` or `:init` if missing\n"
+		ms += treeFinalPrefix + "shell is running on the host"
+	} else {
+		ms += treeFinalPrefix + "shell runs in a sandbox"
+	}
+	vp.SetContent(ms)
 
 	var renderer *glamour.TermRenderer
 	if markdownEnabled {
@@ -79,7 +88,7 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 
 	ret := ChatComponent{
 		Viewport:             vp,
-		Messages:             []string{title},
+		Messages:             []string{ms},
 		Width:                width,
 		Height:               height,
 		AutoScroll:           true,  // Enable auto-scroll by default
