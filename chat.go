@@ -80,7 +80,7 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 		var err error
 		renderer, err = glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(width-4),
+			glamour.WithWordWrap(0), // 0 disables glamour's word wrapping
 		)
 
 		slog.Debug("[TIMING] Markdown renderer initialized", "load time", time.Since(rendererStart), "err", err)
@@ -114,18 +114,15 @@ func (c *ChatComponent) SetSize(width, height int) {
 	c.Style = c.Style.Width(width)
 	c.Viewport.Width = width
 
-	// Only create renderer if it doesn't exist yet and markdown is enabled
-	// Glamour renderer creation is expensive (~5s on first WindowSizeMsg)
-	// so we reuse the existing renderer and just update the content
-	//
-	// Note: The markdown renderer's word wrap width cannot be updated after creation
-	// because glamour.TermRenderer.ansiOptions is a private field with no public API.
-	// This means markdown content won't re-wrap on terminal resize, but this is an
-	// acceptable limitation given the performance cost of recreating the renderer.
+	// Create renderer if it doesn't exist yet and markdown is enabled.
+	// The renderer is created with WordWrap(0) to disable glamour's wrapping,
+	// and we use wordwrap.String() in renderMarkdown() to wrap to the current
+	// viewport width. This allows proper re-wrapping on resize without
+	// recreating the expensive glamour renderer.
 	if c.markdownEnabled && c.markdownRenderer == nil {
 		renderer, err := glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(width-4),
+			glamour.WithWordWrap(0), // Disable glamour wrapping; we wrap after
 		)
 		if err != nil {
 			slog.Warn("Failed to initialize renderer", "error", err)
@@ -139,7 +136,6 @@ func (c *ChatComponent) SetSize(width, height int) {
 	c.Height = height
 	c.Style = c.Style.Height(c.Height)
 	c.Viewport.Height = c.Height
-	// TODO: Do we need this? the content didn't change
 	c.UpdateContent()
 }
 
@@ -496,7 +492,14 @@ func (c *ChatComponent) renderMarkdown(content string) string {
 		return c.renderPlainText(content)
 	}
 
-	return strings.TrimSpace(rendered)
+	// Apply word wrapping to the rendered output.
+	// Glamour is configured with WordWrap(0) to disable its internal wrapping,
+	// so we wrap here using the current viewport width.
+	// wordwrap.String() preserves ANSI escape sequences, allowing proper
+	// re-wrapping on terminal resize without recreating the renderer.
+	wrapped := wordwrap.String(rendered, c.Width-2)
+
+	return strings.TrimSpace(wrapped)
 }
 
 func (c *ChatComponent) renderPlainText(content string) string {

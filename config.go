@@ -98,7 +98,7 @@ func defaultConfig() Config {
 			SaveInterval: 300,
 		},
 		UI: UIConfig{
-			MarkdownEnabled: false,
+			MarkdownEnabled: true,
 		},
 		Session: SessionConfig{
 			Enabled:      true,

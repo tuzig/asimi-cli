@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Markdown renderer is on by defaul
+- When no sandbox, use host as fallback
+- Command approval now prints the command
+
 ### Fixed
 
 - OAuth token refresh now works when server rejects token with 401 error before local expiry time
-  - Added force refresh that ignores local expiry when API returns 401
-  - LLM client is now recreated with fresh token after refresh
 - Command line prompt now properly dismissed when switching modes
 
 ## [0.2.1] - 2025-01-15
