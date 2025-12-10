@@ -384,25 +384,31 @@ func (s *SessionStore) CleanupOldSessions() error {
 	return s.store.CleanupOldSessions()
 }
 
-// Close closes the session store gracefully
+// Close closes the session store gracefully, waiting for pending saves to complete
 func (s *SessionStore) Close() {
 	s.closeOnce.Do(func() {
 		close(s.stopChan)
-
-		// Wait for worker to finish with timeout
-		done := make(chan struct{})
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			close(done)
-		}()
-
-		select {
-		case <-done:
+		if waitWithTimeout(&s.wg, 2*time.Second) {
 			slog.Debug("session store closed gracefully")
-		case <-time.After(2 * time.Second):
+		} else {
 			slog.Warn("session store close timed out, some saves may be lost")
 		}
 	})
+}
+
+// waitWithTimeout waits for a WaitGroup with a timeout, returning true if completed
+func waitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // Flush waits for all pending saves to complete

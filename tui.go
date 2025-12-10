@@ -256,6 +256,9 @@ func (m *TUIModel) saveSession() {
 
 // shutdown performs graceful shutdown of the TUI, ensuring all pending saves complete
 func (m *TUIModel) shutdown() {
+	// Save the current session before closing
+	m.saveSession()
+
 	if m.sessionStore != nil {
 		m.sessionStore.Close()
 	}
@@ -362,7 +365,6 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Double CTRL-C to exit - second press must be within window but after debounce time
 		if !m.ctrlCPressedTime.IsZero() && timeSinceFirst >= ctrlCDebounceTime && timeSinceFirst < ctrlCWindowTime {
 			// Second CTRL-C - actually quit
-			m.saveSession()
 			m.shutdown()
 			return m, tea.Quit
 		}

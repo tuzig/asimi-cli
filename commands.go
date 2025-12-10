@@ -191,8 +191,8 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
-	// Save the session before quitting the application
-	model.saveSession()
+	// Shutdown handles saving the session and waiting for completion
+	model.shutdown()
 	// Quit the application
 	return tea.Quit
 }
