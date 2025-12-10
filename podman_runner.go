@@ -616,3 +616,17 @@ func (r *PodmanShellRunner) Close(ctx context.Context) error {
 func (r *PodmanShellRunner) AllowFallback(allow bool) {
 	r.allowFallback = allow
 }
+
+func (r *PodmanShellRunner) RunnerType() string {
+	return "podman"
+}
+
+// ContainerID returns the container name if the container has been started
+func (r *PodmanShellRunner) ContainerID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.containerStarted {
+		return r.containerName
+	}
+	return ""
+}

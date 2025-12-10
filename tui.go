@@ -113,6 +113,10 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 	status := NewStatusComponent(80)
 	status.SetRepoInfo(repoInfo)
 
+	// Initialize shell runner info for status display
+	shellInfo := getShellRunnerInfo()
+	status.SetShellRunnerInfo(&shellInfo)
+
 	markdownEnabled := false
 	if config != nil {
 		markdownEnabled = config.UI.MarkdownEnabled
@@ -2042,6 +2046,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case containerLaunchMsg:
 		// Container launch notification
 		m.commandLine.AddToast(msg.message, "info", 3*time.Second)
+		// Update shell runner info in status bar
+		info := getShellRunnerInfo()
+		m.status.SetShellRunnerInfo(&info)
 		return m, nil
 
 	case shellCommandResultMsg:

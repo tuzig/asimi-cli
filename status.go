@@ -24,6 +24,9 @@ type StatusComponent struct {
 	// Waiting indicator
 	waitingForResponse bool
 	waitingSince       time.Time
+
+	// Shell runner info
+	shellRunnerInfo *ShellRunnerInfo
 }
 
 // NewStatusComponent creates a new status component
@@ -34,6 +37,11 @@ func NewStatusComponent(width int) StatusComponent {
 			Foreground(globalTheme.TextColor),
 		mode: "INSERT", // start in insert mode
 	}
+}
+
+// SetShellRunnerInfo sets the shell runner information for display
+func (s *StatusComponent) SetShellRunnerInfo(info *ShellRunnerInfo) {
+	s.shellRunnerInfo = info
 }
 
 // SetProvider sets the current provider and model
@@ -313,7 +321,33 @@ func (s StatusComponent) renderLeftSection() string {
 			parts = append(parts, "← "+strings.Join(diffParts, " "))
 		}
 	}
+
+	// Add shell runner indicator
+	parts = append(parts, s.renderShellRunnerIndicator())
+
 	return strings.Join(parts, " ")
+}
+
+// renderShellRunnerIndicator renders the shell runner status indicator
+func (s StatusComponent) renderShellRunnerIndicator() string {
+	if s.shellRunnerInfo == nil {
+		// No info yet, show warning
+		warningStyle := lipgloss.NewStyle().Foreground(globalTheme.Warning)
+		return warningStyle.Render("⚠ host (run :init)")
+	}
+
+	if s.shellRunnerInfo.Type == "podman" {
+		// Show container indicator with container ID
+		containerID := s.shellRunnerInfo.ContainerID
+		if containerID == "" {
+			containerID = "starting..."
+		}
+		return fmt.Sprintf("📦 %s", containerID)
+	}
+
+	// Host shell runner - show warning
+	warningStyle := lipgloss.NewStyle().Foreground(globalTheme.Warning)
+	return warningStyle.Render("⚠ host (run :init)")
 }
 
 // renderMiddleSection renders the middle section with token usage andsession age

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tmc/langchaingo/tools"
 	"github.com/yargevad/filepathx"
@@ -534,6 +535,65 @@ type shellRunner interface {
 	Restart(context.Context) error
 	Close(context.Context) error
 	AllowFallback(bool)
+	RunnerType() string // Returns "podman" or "host"
+}
+
+// HostShellRunner runs commands directly on the host system
+type HostShellRunner struct {
+	config *Config
+}
+
+func newHostShellRunner(config *Config) *HostShellRunner {
+	return &HostShellRunner{config: config}
+}
+
+func (r *HostShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
+	return hostRun(ctx, params)
+}
+
+func (r *HostShellRunner) Restart(ctx context.Context) error {
+	// No-op for host shell runner
+	return nil
+}
+
+func (r *HostShellRunner) Close(ctx context.Context) error {
+	// No-op for host shell runner
+	return nil
+}
+
+func (r *HostShellRunner) AllowFallback(allow bool) {
+	// No-op for host shell runner
+}
+
+func (r *HostShellRunner) RunnerType() string {
+	return "host"
+}
+
+// ShellRunnerInfo contains information about the current shell runner
+type ShellRunnerInfo struct {
+	Type        string // "podman" or "host"
+	ContainerID string // Container ID if using podman, empty otherwise
+}
+
+// getShellRunnerInfo returns information about the current shell runner
+func getShellRunnerInfo() ShellRunnerInfo {
+	shellRunnerMu.RLock()
+	defer shellRunnerMu.RUnlock()
+
+	if currentShellRunner == nil {
+		return ShellRunnerInfo{Type: "host", ContainerID: ""}
+	}
+
+	info := ShellRunnerInfo{
+		Type: currentShellRunner.RunnerType(),
+	}
+
+	// If it's a podman runner, try to get the container ID
+	if podmanRunner, ok := currentShellRunner.(*PodmanShellRunner); ok {
+		info.ContainerID = podmanRunner.ContainerID()
+	}
+
+	return info
 }
 
 var (
@@ -554,13 +614,45 @@ func setShellRunnerForTesting(r shellRunner) func() {
 	}
 }
 
+// isPodmanAvailable checks if podman daemon is running AND the sandbox image exists
+func isPodmanAvailable(config *Config, repoInfo RepoInfo) bool {
+	// Try to run a simple podman command to check if daemon is available
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Determine the image name
+	imageName := fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
+	if config != nil && config.RunInShell.ImageName != "" {
+		imageName = config.RunInShell.ImageName
+	}
+
+	// Check if podman is available and the image exists using podman CLI
+	// This is simpler and more reliable than using the bindings for a quick check
+	cmd := exec.CommandContext(ctx, "podman", "image", "exists", imageName)
+	err := cmd.Run()
+	if err != nil {
+		slog.Debug("podman not available or image missing", "image", imageName, "error", err)
+		return false
+	}
+
+	slog.Debug("podman available with image", "image", imageName)
+	return true
+}
+
 func initShellRunner(config *Config) {
 	shellRunnerMu.Lock()
 	defer shellRunnerMu.Unlock()
 
-	// Initialize podman shell runner with config
 	repoInfo := GetRepoInfo()
-	currentShellRunner = newPodmanShellRunner(config.RunInShell.AllowHostFallback, config, repoInfo)
+
+	// Auto-detect and assign shell runner
+	if isPodmanAvailable(config, repoInfo) {
+		slog.Info("using podman shell runner")
+		currentShellRunner = newPodmanShellRunner(config.RunInShell.AllowHostFallback, config, repoInfo)
+	} else {
+		slog.Info("using host shell runner (podman not available or image missing)")
+		currentShellRunner = newHostShellRunner(config)
+	}
 }
 
 func getShellRunner() shellRunner {

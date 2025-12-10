@@ -127,7 +127,12 @@ type ShellRunnerParams struct {
 // ProvideShellRunner creates and returns a shell runner with proper lifecycle management
 func ProvideShellRunner(params ShellRunnerParams) shellRunner {
 	params.Logger.Info("initializing shell runner")
-	runner := newPodmanShellRunner(params.Config.RunInShell.AllowHostFallback, params.Config, params.RepoInfo)
+
+	// Use auto-detection to select the appropriate shell runner
+	initShellRunner(params.Config)
+	runner := getShellRunner()
+
+	params.Logger.Info("shell runner initialized", "type", runner.RunnerType())
 
 	// Register cleanup hook to close the shell runner when app stops
 	params.Lifecycle.Append(fx.Hook{

@@ -71,6 +71,10 @@ func (h *TestShellRunner) AllowFallback(allow bool) {
 	return
 }
 
+func (h *TestShellRunner) RunnerType() string {
+	return "test"
+}
+
 func TestRunInShell(t *testing.T) {
 	restore := setShellRunnerForTesting(NewTestShellRunner())
 	defer restore()
@@ -310,6 +314,10 @@ func (failingPodmanRunner) Close(ctx context.Context) error {
 func (failingPodmanRunner) AllowFallback(allow bool) {
 	return
 }
+func (failingPodmanRunner) RunnerType() string {
+	return "host"
+}
+
 func TestValidatePathWithinProject(t *testing.T) {
 	// Create a temporary directory to act as project root
 	tempDir := t.TempDir()
