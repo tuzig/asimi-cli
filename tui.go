@@ -1543,7 +1543,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hostCommandApprovalMsg:
 		// Store the pending approval request
 		m.pendingHostApproval = &msg.request
-		return m, m.commandLine.EnterYesNoMode("Allow this command?")
+		// Truncate command for display if too long
+		displayCmd := msg.request.Command
+		maxLen := 50
+		if len(displayCmd) > maxLen {
+			displayCmd = displayCmd[:maxLen] + "..."
+		}
+		return m, m.commandLine.EnterYesNoMode(fmt.Sprintf("Allow `%s` to run?", displayCmd))
 
 	case updateCompleteMsg:
 		if msg.err != nil {
