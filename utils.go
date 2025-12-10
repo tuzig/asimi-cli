@@ -383,6 +383,12 @@ func isGitRepository() bool {
 	return defaultGitInfoManager.IsRepository()
 }
 
+// hasUncommittedChanges checks if there are uncommitted changes in the git repository
+// Returns true if there are staged or unstaged changes (excluding untracked files)
+func hasUncommittedChanges() bool {
+	return defaultGitInfoManager.HasUncommittedChanges()
+}
+
 var defaultGitInfoManager = newGitInfoManager()
 
 type gitInfoManager struct {
@@ -514,6 +520,44 @@ func (m *gitInfoManager) IsRepository() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.isRepo
+}
+
+// HasUncommittedChanges checks if there are uncommitted changes (staged or unstaged)
+// excluding untracked files
+func (m *gitInfoManager) HasUncommittedChanges() bool {
+	m.start()
+
+	m.mu.RLock()
+	repo := m.repo
+	m.mu.RUnlock()
+
+	if repo == nil {
+		return false
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return false
+	}
+
+	status, err := worktree.Status()
+	if err != nil {
+		return false
+	}
+
+	// Check for any staged or unstaged changes (excluding untracked)
+	for _, entry := range status {
+		// Check staging area
+		if entry.Staging != gogit.Unmodified && entry.Staging != gogit.Untracked {
+			return true
+		}
+		// Check worktree (unstaged changes)
+		if entry.Worktree != gogit.Unmodified && entry.Worktree != gogit.Untracked {
+			return true
+		}
+	}
+
+	return false
 }
 
 func refreshGitInfo() {

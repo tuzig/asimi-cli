@@ -319,6 +319,11 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 	}
 
 	return func() tea.Msg {
+		// Check for uncommitted changes before proceeding
+		if hasUncommittedChanges() {
+			return showContextMsg{content: "FAILED: Please commit or stash your changes and run again"}
+		}
+
 		// Collect messages to display after clearing history
 		var initialMessages []string
 
