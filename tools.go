@@ -19,6 +19,12 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
+var (
+	shellRunnerMu      sync.RWMutex
+	currentShellRunner shellRunner
+	shellRunnerOnce    sync.Once
+)
+
 // validatePathWithinProject checks if a file path is within the current working directory.
 // It prevents path traversal attacks and ensures files are only modified within the current directory tree.
 func validatePathWithinProject(path string) error {
@@ -596,12 +602,6 @@ func getShellRunnerInfo() ShellRunnerInfo {
 	return info
 }
 
-var (
-	shellRunnerMu      sync.RWMutex
-	currentShellRunner shellRunner
-	shellRunnerOnce    sync.Once
-)
-
 func setShellRunnerForTesting(r shellRunner) func() {
 	shellRunnerMu.Lock()
 	prev := currentShellRunner
@@ -673,7 +673,30 @@ func getShellRunner() shellRunner {
 // shouldRunOnHost checks if a command matches any of the run_on_host patterns
 // and whether it requires user approval (i.e., not in safe_run_on_host patterns).
 func (t RunInShell) shouldRunOnHost(command string) (runOnHost, requiresApproval bool) {
-	if t.config == nil || len(t.config.RunInShell.RunOnHost) == 0 {
+	runOnHost = false
+	requiresApproval = true
+	if t.config == nil {
+		return
+	}
+
+	// If the current runner is already HostShellRunner, all commands run on host
+	// and no approval is needed (user already chose to run on host)
+	runner := getShellRunner()
+	if runner != nil && runner.RunnerType() == "podman" {
+		// Check if command matches any run_on_host pattern
+		for _, pattern := range t.config.RunInShell.RunOnHost {
+			matched, _ := regexp.MatchString(pattern, command)
+			if matched {
+				goto onHost
+			}
+		}
+		requiresApproval = false
+		return
+	}
+onHost:
+	runOnHost = true
+
+	if len(t.config.RunInShell.SafeRunOnHost) == 0 {
 		return
 	}
 	// First check if command matches any safe_run_on_host pattern (no approval needed)
@@ -684,24 +707,10 @@ func (t RunInShell) shouldRunOnHost(command string) (runOnHost, requiresApproval
 			continue
 		}
 		if matched {
-			runOnHost = true
 			requiresApproval = false
-			return
 		}
 	}
 
-	// Check if command matches any run_on_host pattern
-	for _, pattern := range t.config.RunInShell.RunOnHost {
-		matched, _ := regexp.MatchString(pattern, command)
-		if matched {
-			runOnHost = true
-			requiresApproval = true
-			return
-		}
-	}
-
-	runOnHost = false
-	requiresApproval = false
 	return
 }
 
@@ -796,7 +805,6 @@ func (t RunInShell) Format(input, result string, err error) string {
 		if err == nil {
 			ec = output["exitCode"].(string)
 			if ec != "0" {
-				// TODO: Format with warning color
 				line3 = fmt.Sprintf("%s%s\n", treeFinalPrefix, ec)
 			}
 		} else {

@@ -337,7 +337,7 @@ func (s StatusComponent) renderShellRunnerIndicator() string {
 		// Show container indicator with container ID
 		id := s.shellRunnerInfo.ContainerID
 		if id == "" {
-			ret += "..."
+			ret += "TBD"
 		} else {
 			ret += id
 		}

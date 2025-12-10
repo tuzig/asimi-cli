@@ -72,7 +72,7 @@ func (h *TestShellRunner) AllowFallback(allow bool) {
 }
 
 func (h *TestShellRunner) RunnerType() string {
-	return "test"
+	return "podman"
 }
 
 func TestRunInShell(t *testing.T) {
@@ -315,7 +315,7 @@ func (failingPodmanRunner) AllowFallback(allow bool) {
 	return
 }
 func (failingPodmanRunner) RunnerType() string {
-	return "host"
+	return "podman"
 }
 
 func TestValidatePathWithinProject(t *testing.T) {
@@ -644,7 +644,7 @@ func TestShouldRunOnHost(t *testing.T) {
 			config:            nil,
 			command:           "gh issue view 1",
 			wantRunOnHost:     false,
-			wantNeedsApproval: false,
+			wantNeedsApproval: true,
 		},
 		{
 			name: "command matches run_on_host and safe_run_on_host",
@@ -696,6 +696,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		},
 	}
 
+	currentShellRunner = NewTestShellRunner()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tool := RunInShell{config: tt.config}

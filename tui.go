@@ -1460,7 +1460,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Streaming was interrupted by user
 		m.content.Chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.partialContent))
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.partialContent))
-		m.content.Chat.AddMessage("You: ESC")
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on interrupt
 		refreshGitInfo()
