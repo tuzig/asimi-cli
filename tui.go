@@ -2403,7 +2403,7 @@ func (m TUIModel) renderHomeView(width, height int) string {
 		"▶ Press `ESC` to switch modes",
 		"▶ Press `!` in COMMAND to run in the sandbox's shell",
 		"▶ Type `:model` to setup the model",
-		"▶ Type `:init` to init th project",
+		"▶ Type `:init` to generate project's infrastructure file",
 		"     e.g, ⌨️ ESC:!uname -aENTER⌨️",
 	}
 
@@ -2432,7 +2432,8 @@ func (m TUIModel) renderHomeView(width, height int) string {
 			Width(width)
 		contentParts = append(contentParts, "",
 			updateStyle.Render("🚀 Update available! Run :update to install the latest version"))
-	} else if m.configCreated {
+	}
+	if m.configCreated {
 		configStyle := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#00BFFF")). // Deep sky blue for visibility
