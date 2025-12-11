@@ -1601,25 +1601,34 @@ func TestYesNoMode(t *testing.T) {
 	require.True(t, ok, "Expected ChangeModeMsg")
 	assert.Equal(t, "yesno", modeMsg.NewMode, "Mode mismatch")
 
-	// Test 'y' key
+	// Test 'y' key - should set answer but not exit mode
 	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
-	cmd, handled := cl.HandleKey(keyMsg)
+	_, handled := cl.HandleKey(keyMsg)
 	assert.True(t, handled, "Expected 'y' key to be handled")
-	assert.False(t, cl.IsInYesNoMode(), "Expected to exit yes/no mode after 'y'")
+	assert.True(t, cl.IsInYesNoMode(), "Expected to remain in yes/no mode after 'y' (need Enter)")
+	assert.Equal(t, "y", cl.input, "Expected input to be 'y'")
 
-	// Verify response message
+	// Test Enter key to confirm 'y'
+	keyMsg = tea.KeyMsg{Type: tea.KeyEnter}
+	cmd, handled = cl.HandleKey(keyMsg)
+	assert.True(t, handled, "Expected 'enter' key to be handled")
+	assert.False(t, cl.IsInYesNoMode(), "Expected to exit yes/no mode after Enter")
 	require.NotNil(t, cmd, "Expected batch command")
-	// The batch command returns multiple messages, we need to check for yesNoResponseMsg
-	// For simplicity, we'll just verify the mode was exited
 
-	// Test entering again and pressing 'n'
+	// Test entering again and pressing 'n' then Enter
 	cl.EnterYesNoMode("Delete everything?")
 	keyMsg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}
-	cmd, handled = cl.HandleKey(keyMsg)
+	_, handled = cl.HandleKey(keyMsg)
 	assert.True(t, handled, "Expected 'n' key to be handled")
-	assert.False(t, cl.IsInYesNoMode(), "Expected to exit yes/no mode after 'n'")
+	assert.True(t, cl.IsInYesNoMode(), "Expected to remain in yes/no mode after 'n' (need Enter)")
+	assert.Equal(t, "n", cl.input, "Expected input to be 'n'")
 
-	// Test entering again and pressing 'esc'
+	keyMsg = tea.KeyMsg{Type: tea.KeyEnter}
+	cmd, handled = cl.HandleKey(keyMsg)
+	assert.True(t, handled, "Expected 'enter' key to be handled")
+	assert.False(t, cl.IsInYesNoMode(), "Expected to exit yes/no mode after Enter")
+
+	// Test entering again and pressing 'esc' (should exit immediately)
 	cl.EnterYesNoMode("Continue?")
 	keyMsg = tea.KeyMsg{Type: tea.KeyEsc}
 	cmd, handled = cl.HandleKey(keyMsg)
@@ -1632,6 +1641,19 @@ func TestYesNoMode(t *testing.T) {
 	cmd, handled = cl.HandleKey(keyMsg)
 	assert.True(t, handled, "Expected key to be handled (ignored) in yes/no mode")
 	assert.True(t, cl.IsInYesNoMode(), "Expected to remain in yes/no mode after invalid key")
+
+	// Test backspace clears the answer
+	cl.input = "y"
+	keyMsg = tea.KeyMsg{Type: tea.KeyBackspace}
+	_, handled = cl.HandleKey(keyMsg)
+	assert.True(t, handled, "Expected backspace to be handled")
+	assert.Equal(t, "", cl.input, "Expected input to be cleared after backspace")
+
+	// Test Enter without answer does nothing
+	keyMsg = tea.KeyMsg{Type: tea.KeyEnter}
+	_, handled = cl.HandleKey(keyMsg)
+	assert.True(t, handled, "Expected enter to be handled")
+	assert.True(t, cl.IsInYesNoMode(), "Expected to remain in yes/no mode when Enter pressed without answer")
 }
 
 func TestYesNoModeView(t *testing.T) {
