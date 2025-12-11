@@ -191,28 +191,39 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 	return &ret
 }
 
+// Clear resets the chat component to its initial state without recreating the markdown renderer.
+// This is much faster than creating a new ChatComponent when you just need to clear the chat.
+func (c *ChatComponent) Clear() {
+	// Display sandbox type
+	info := getShellRunnerInfo()
+	ms := systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST")
+	ms += "\n"
+	if info.Type == "host" {
+		ms += treeMidPrefix + "please run `just build-sandbox` or `:init` if missing\n"
+		ms += treeFinalPrefix + "shell is running on the host"
+	} else {
+		ms += treeFinalPrefix + "shell runs in a sandbox"
+	}
+
+	c.Messages = []string{ms}
+	c.AutoScroll = true
+	c.UserScrolled = false
+	c.ScrollLocked = false
+	c.TouchStartY = 0
+	c.TouchDragging = false
+	c.rawSessionHistory = make([]string, 0)
+	c.toolCallMessageIndex = make(map[string]int)
+
+	c.Viewport.SetContent(ms)
+	c.Viewport.GotoTop()
+}
+
 // SetSize updates the width & height of the chat component
 func (c *ChatComponent) SetSize(width, height int) {
 	c.Width = width
 	c.Style = c.Style.Width(width)
 	c.Viewport.Width = width
 
-	// Create renderer if it doesn't exist yet and markdown is enabled.
-	// The renderer is created with WordWrap(0) to disable glamour's wrapping,
-	// and we use wordwrap.String() in renderMarkdown() to wrap to the current
-	// viewport width. This allows proper re-wrapping on resize without
-	// recreating the expensive glamour renderer.
-	if c.markdownEnabled && c.markdownRenderer == nil {
-		renderer, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(0), // Disable glamour wrapping; we wrap after
-		)
-		if err != nil {
-			slog.Warn("Failed to initialize renderer", "error", err)
-		} else {
-			c.markdownRenderer = renderer
-		}
-	}
 	if height < 0 {
 		height = 0
 	}

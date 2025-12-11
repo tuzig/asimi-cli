@@ -1864,12 +1864,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				slog.Warn("Resumed session without active LLM - some features may be limited")
 			}
 
-			// Rebuild chat UI from messages
-			markdownEnabled := false
-			if m.config != nil {
-				markdownEnabled = m.config.UI.MarkdownEnabled
-			}
-			m.content.Chat = NewChatComponentWithStatus(m.content.Chat.Width, m.content.Chat.Height, markdownEnabled, func() string { return m.Mode })
+			// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
+			m.content.Chat.Clear()
 			for _, msgContent := range m.session.Messages {
 				// Skip system messages
 				if msgContent.Role == llms.ChatMessageTypeSystem {
@@ -1950,16 +1946,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		chat := m.content.Chat
 		// Clear history if requested
 		if msg.clearHistory {
 			m.sessionActive = true
-			markdownEnabled := false
-			if m.config != nil {
-				markdownEnabled = m.config.UI.MarkdownEnabled
-			}
-			// TODO: We're calling NewChatComponent too many times. be better to add Chat.clear()
-			m.content.Chat = NewChatComponent(chat.Width, chat.Height, markdownEnabled)
+			// Clear the chat instead of creating a new component to avoid re-initializing the markdown renderer
+			m.content.Chat.Clear()
 
 			// Reset prompt history and waiting state
 			m.initHistory()

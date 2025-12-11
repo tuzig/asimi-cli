@@ -179,12 +179,8 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 
 	model.sessionActive = true
 
-	markdownEnabled := false
-	if model != nil && model.config != nil {
-		markdownEnabled = model.config.UI.MarkdownEnabled
-	}
-	chat := model.content.Chat
-	model.content.Chat = NewChatComponent(chat.Width, chat.Height, markdownEnabled)
+	// Clear the chat instead of creating a new component to avoid re-initializing the markdown renderer
+	model.content.Chat.Clear()
 
 	// Use the generic startConversationMsg to reset the session
 	return func() tea.Msg {
