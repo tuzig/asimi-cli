@@ -1,6 +1,6 @@
 # Asimi CLI
 
-[![Tests](https://img.shields.io/github/actions/workflow/status/afittestide/asimi-cli/ci.yml?branch=dev&label=tests)](https://github.com/afittestide/asimi-cli/actions/workflows/ci.yml?query=branch%3Adev)
+[![Tests](https://img.shields.io/github/actions/workflow/status/afittestide/asimi-cli/ci.yml?branch=main&label=tests)](https://github.com/afittestide/asimi-cli/actions/workflows/ci.yml?query=branch%3Amain)
 
 > A safe, opinionated coding agent
 
