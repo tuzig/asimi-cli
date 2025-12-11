@@ -57,6 +57,10 @@ func normalizeCommandName(name string) string {
 	return name
 }
 
+func showSystemMsg(msg string) tea.Msg {
+	return showContextMsg{content: systemPrefix + msg}
+}
+
 // NewCommandRegistry creates a new command registry
 func NewCommandRegistry() CommandRegistry {
 	registry := CommandRegistry{
@@ -200,7 +204,7 @@ func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
 func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
 		if model.session == nil {
-			return showContextMsg{content: "No active session. Use :models to configure a model and start chatting."}
+			return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
 		}
 		info := model.session.GetContextInfo()
 		return showContextMsg{content: renderContextInfo(info)}
@@ -219,7 +223,7 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 
 		if !model.config.Session.Enabled {
-			return showContextMsg{content: "Session resume is disabled in configuration."}
+			return showSystemMsg("Session resume is disabled in configuration.")
 		}
 
 		repoInfo := GetRepoInfo()
@@ -274,7 +278,7 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	if model.session == nil {
 		return func() tea.Msg {
-			return showContextMsg{content: "No active session to export. Start a conversation first."}
+			return showSystemMsg("No active session to export. Start a conversation first.")
 		}
 	}
 
@@ -296,7 +300,7 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	filepath, err := exportSession(model.session, exportType)
 	if err != nil {
 		return func() tea.Msg {
-			return showContextMsg{content: fmt.Sprintf("Export failed: %v", err)}
+			return showSystemMsg(fmt.Sprintf("Export failed: %v", err))
 		}
 	}
 
@@ -304,7 +308,7 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	cmd := openInEditor(filepath)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
-			return showContextMsg{content: fmt.Sprintf("Editor exited with error: %v", err)}
+			return showSystemMsg(fmt.Sprintf("Editor exited with error: %v", err))
 		}
 		model.commandLine.AddToast(fmt.Sprintf("Conversation exported successfully (%s).", exportType), "success", 3000)
 		return nil
@@ -314,14 +318,14 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 	if model.session == nil {
 		return func() tea.Msg {
-			return showContextMsg{content: "No model connection. Use :models to configure a model and start chatting."}
+			return showSystemMsg("No model connection. Use :models to configure a model and start chatting.")
 		}
 	}
 
 	return func() tea.Msg {
 		// Check for uncommitted changes before proceeding
 		if hasUncommittedChanges() {
-			return showContextMsg{content: "FAILED: Please commit or stash your changes and run again"}
+			return showSystemMsg("init failed: Please commit or stash your changes and run again")
 		}
 
 		// Collect messages to display after clearing history
@@ -332,7 +336,7 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 
 		// Ensure .agents directory exists
 		if err := os.MkdirAll(".agents/sandbox", 0o755); err != nil {
-			return showContextMsg{content: fmt.Sprintf("Error creating .agents directory: %v", err)}
+			return showSystemMsg(fmt.Sprintf("Error creating .agents directory: %v", err))
 		}
 
 		// In clear mode, remove all infrastructure files first
@@ -355,7 +359,7 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 		projectConfigPath := ".agents/asimi.conf"
 		if _, err := os.Stat(projectConfigPath); os.IsNotExist(err) || clearMode {
 			if err := os.WriteFile(projectConfigPath, []byte(defaultConfContent), 0o644); err != nil {
-				return showContextMsg{content: fmt.Sprintf("Error writing project config file %s: %v", projectConfigPath, err)}
+				return showSystemMsg(fmt.Sprintf("Error writing project config file %s: %v", projectConfigPath, err))
 			}
 			if !clearMode {
 				initialMessages = append(initialMessages, fmt.Sprintf("Initialized %s from embedded default\n", projectConfigPath))
@@ -365,7 +369,7 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 		bashrcPath := ".agents/sandbox/bashrc"
 		if _, err := os.Stat(bashrcPath); os.IsNotExist(err) || clearMode {
 			if err := os.WriteFile(bashrcPath, []byte(sandboxBashrc), 0o644); err != nil {
-				return showContextMsg{content: fmt.Sprintf("Error writing bashrc file %s: %v", bashrcPath, err)}
+				return showSystemMsg(fmt.Sprintf("Error writing bashrc file %s: %v", bashrcPath, err))
 			}
 			if !clearMode {
 				initialMessages = append(initialMessages, fmt.Sprintf("Initialized %s from embedded default\n", bashrcPath))
@@ -388,25 +392,28 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 		missingFiles := checkMissingInfraFiles(agentsFile)
 
 		if len(missingFiles) == 0 && !clearMode {
-			return showContextMsg{content: strings.Join([]string{treeMidPrefix + "All Asimi's files already exist:",
-				fmt.Sprintf(treeMidPrefix+"✓ %s", agentsFile),
-				treeMidPrefix + "✓ Justfile",
-				treeMidPrefix + "✓ .agents/sandbox/Dockerfile",
-				treeMidPrefix + "✓ .agents/sandbox/bashrc",
-				treeMidPrefix + "✓ .agents/asimi.conf",
-				treeMidPrefix,
-				treeFinalPrefix + "Use `:init clear` to remove and regenerate them."}, "\n")}
+			msg := NewChatMsgBuilder(systemPrefix)
+			msg.WriteLn("All Asimi's files already exist:")
+			msg.WriteLnf("✓ %s", agentsFile)
+			msg.WriteLn("✓ Justfile")
+			msg.WriteLn("✓ .agents/sandbox/Dockerfile")
+			msg.WriteLn("✓ .agents/sandbox/bashrc")
+			msg.WriteLn("✓ .agents/asimi.conf")
+			msg.WriteLn()
+			msg.WriteLn("Use `:init clear` to remove and regenerate them.")
+			return showContextMsg{content: msg.String()}
 		}
 
 		// Show missing files message (if not in clear mode)
 		if len(missingFiles) > 0 && !clearMode {
-			var message strings.Builder
-			message.WriteString("Missing infrastructure files detected:\n")
+			msg := NewChatMsgBuilder(systemPrefix)
+			msg.WriteLn("Missing infrastructure files detected:")
 			for _, file := range missingFiles {
-				message.WriteString(fmt.Sprintf("✗ %s\n", file))
+				msg.WriteLnf("✗ %s", file)
 			}
-			message.WriteString("\nStarting initialization process. Embrace yourself for much approvals as there's no sandbox yet.\n")
-			initialMessages = append(initialMessages, message.String())
+			msg.WriteLn()
+			msg.WriteLn("Starting initialization process. Brace yourself for many approvals as there's no sandbox yet.")
+			initialMessages = append(initialMessages, msg.String())
 		}
 
 		// Get the project slug from RepoInfo
@@ -431,12 +438,12 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 		// Parse and execute the template
 		tmpl, err := template.New("init").Parse(initializePrompt)
 		if err != nil {
-			return showContextMsg{content: fmt.Sprintf("Error parsing initialization template: %v", err)}
+			return showSystemMsg(fmt.Sprintf("Error parsing initialization template: %v", err))
 		}
 
 		var initPrompt bytes.Buffer
 		if err := tmpl.Execute(&initPrompt, templateData); err != nil {
-			return showContextMsg{content: fmt.Sprintf("Error executing initialization template: %v", err)}
+			return showSystemMsg(fmt.Sprintf("Error executing initialization template: %v", err))
 		}
 
 		// Capture the original shell runner before switching to host mode
@@ -593,12 +600,12 @@ func verifyInitWithRetry(model *TUIModel, containerRunner shellRunner, retryCoun
 		}
 
 		if program != nil {
-			m := []string{
-				treeMidPrefix + checkPrefix + "Verified!",
-				treeMidPrefix + strings.Join(filesToStage, ", ") + " staged",
-				treeFinalPrefix + "Start fresh with `:new` and review project's recipes with `:!just -l`"}
+			msg := NewChatMsgBuilder(systemPrefix)
+			msg.WriteString(checkPrefix).WriteLn(" Verified!")
+			msg.WriteLn(strings.Join(filesToStage, ", ") + " staged")
+			msg.WriteLn("Start fresh with `:new` and review project's recipes with `:!just -l`")
 
-			program.Send(showContextMsg{content: strings.Join(m, "\n")})
+			program.Send(showContextMsg{content: msg.String()})
 		}
 		return nil
 	}
@@ -707,14 +714,14 @@ func handleVerificationFailure(model *TUIModel, containerRunner shellRunner, ret
 	// Check if we've exceeded the maximum retry count
 	if retryCount >= maxRetries {
 		slog.Debug("Max retries exceeded, giving up", "retryCount", retryCount, "maxRetries", maxRetries)
-		var failureMsg strings.Builder
-		failureMsg.WriteString(fmt.Sprintf("\n%s❌ Initialization failed after %d attempts.\n", systemPrefix, maxRetries+1))
-		failureMsg.WriteString(treeMidPrefix + "The following issues could not be resolved:\n")
+		msg := NewChatMsgBuilder(systemPrefix)
+		msg.WriteLnf("❌ Initialization failed after %d attempts.", maxRetries+1)
+		msg.WriteLn("The following issues could not be resolved:")
 		for _, result := range results {
-			failureMsg.WriteString(treeMidPrefix + result + "\n")
+			msg.WriteLn(result)
 		}
-		failureMsg.WriteString(treeFinalPrefix + "For help check out the humans in Asimi's github discussions")
-		return showContextMsg{content: failureMsg.String()}
+		msg.WriteLn("For help check out the humans in Asimi's github discussions")
+		return showContextMsg{content: msg.String()}
 	}
 
 	// Stop and remove the container so the next attempt will rebuild with fixes
@@ -774,19 +781,22 @@ func checkMissingInfraFiles(agentsFile string) []string {
 func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
 	if model.session == nil {
 		return func() tea.Msg {
-			return showContextMsg{content: "No active session to compact. Start a conversation first."}
+			return showSystemMsg("No active session to compact. Start a conversation first.")
 		}
 	}
 
 	return func() tea.Msg {
 		// Check if there's enough conversation to compact
 		if len(model.session.Messages) <= 2 {
-			return showContextMsg{content: "Not enough conversation history to compact. Continue chatting first."}
+			return showSystemMsg("Not enough conversation history to compact. Continue chatting first.")
 		}
 
 		// Show compacting message
 		if program != nil {
-			program.Send(showContextMsg{content: systemPrefix + "Compacting conversation history...\n" + treeFinalPrefix + "This may take a moment as we summarize the conversation."})
+			msg := NewChatMsgBuilder(systemPrefix)
+			msg.WriteLn("Compacting conversation history...")
+			msg.WriteLn("This may take a moment as we summarize the conversation.")
+			program.Send(showContextMsg{content: msg.String()})
 		}
 
 		// Send the compact request
@@ -817,7 +827,7 @@ func handleUpdateCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
 		// Show checking message
 		if program != nil {
-			program.Send(showContextMsg{content: systemPrefix + "Checking for updates..."})
+			program.Send(showSystemMsg("Checking for updates..."))
 		}
 
 		// Check for updates
@@ -839,7 +849,10 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 	return func() tea.Msg {
 		// Show updating message
 		if program != nil {
-			program.Send(showContextMsg{content: systemPrefix + "Downloading and installing update...\n" + treeFinalPrefix + "This may take a moment."})
+			msg := NewChatMsgBuilder(systemPrefix)
+			msg.WriteLn("Downloading and installing update...")
+			msg.WriteLn("This may take a moment.")
+			program.Send(showContextMsg{content: msg.String()})
 		}
 
 		// Perform update

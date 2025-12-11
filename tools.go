@@ -197,31 +197,26 @@ func (t ReadFileTool) ParameterSchema() map[string]any {
 
 // String formats a read_file tool call for display
 func (t ReadFileTool) Format(input, result string, err error) string {
-	// Parse input JSON to extract path
 	var params ReadFileInput
 	json.Unmarshal([]byte(input), &params)
 
-	paramStr := ""
+	msg := NewChatMsgBuilder("Read File")
 	if params.Path != "" {
-		paramStr = fmt.Sprintf(" %s", params.Path)
+		msg.Writef(" %s", params.Path)
 	}
+	msg.WriteLn()
 
-	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("Read File%s", paramStr)
-
-	// Second line: result summary
-	var secondLine string
 	if err != nil {
-		secondLine = fmt.Sprintf("%sError: %v", treeFinalPrefix, err)
+		msg.Writef("Error: %v", err)
 	} else {
 		lines := strings.Count(result, "\n") + 1
 		if result == "" {
 			lines = 0
 		}
-		secondLine = fmt.Sprintf("%sRead %d lines", treeFinalPrefix, lines)
+		msg.Writef("Read %d lines", lines)
 	}
 
-	return firstLine + "\n" + secondLine + "\n"
+	return msg.String() + "\n"
 }
 
 // WriteFileInput is the input for the WriteFileTool
@@ -291,27 +286,22 @@ func (t WriteFileTool) ParameterSchema() map[string]any {
 
 // String formats a write_file tool call for display
 func (t WriteFileTool) Format(input, result string, err error) string {
-	// Parse input JSON to extract path
 	var params WriteFileInput
 	json.Unmarshal([]byte(input), &params)
 
-	paramStr := ""
+	msg := NewChatMsgBuilder("Write File")
 	if params.Path != "" {
-		paramStr = fmt.Sprintf(" %s", params.Path)
+		msg.Writef(" %s", params.Path)
 	}
+	msg.WriteLn()
 
-	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("Write File%s", paramStr)
-
-	// Second line: result summary
-	var secondLine string
 	if err != nil {
-		secondLine = fmt.Sprintf("%sError: %v", treeFinalPrefix, err)
+		msg.Writef("Error: %v", err)
 	} else {
-		secondLine = fmt.Sprintf("%sFile written successfully", treeFinalPrefix)
+		msg.WriteString("File written successfully")
 	}
 
-	return firstLine + "\n" + secondLine + "\n"
+	return msg.String() + "\n"
 }
 
 // ListDirectoryInput is the input for the ListDirectoryTool
@@ -376,32 +366,28 @@ func (t ListDirectoryTool) ParameterSchema() map[string]any {
 
 // String formats a list_files tool call for display
 func (t ListDirectoryTool) Format(input, result string, err error) string {
-	// Parse input JSON to extract path
 	var params ListDirectoryInput
 	json.Unmarshal([]byte(input), &params)
 
-	paramStr := ""
-	if params.Path != "" {
-		paramStr = params.Path
-	} else {
-		paramStr = "."
+	path := params.Path
+	if path == "" {
+		path = "."
 	}
 
-	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("List Files %s", paramStr)
+	msg := NewChatMsgBuilder("List Files ")
+	msg.WriteLn(path)
 
-	// Second line: result summary
-	secondLine := treeFinalPrefix
 	if err != nil {
-		secondLine += fmt.Sprintf("Error: %v", err)
+		msg.Writef("Error: %v", err)
 	} else {
 		files := strings.Split(strings.TrimSpace(result), "\n")
 		if result == "" {
 			files = []string{}
 		}
-		secondLine += fmt.Sprintf("Found %d items", len(files))
+		msg.Writef("Found %d items", len(files))
 	}
-	return firstLine + "\n" + secondLine + "\n"
+
+	return msg.String() + "\n"
 }
 
 // ReplaceTextInput is the input for the ReplaceTextTool
@@ -486,33 +472,26 @@ func (t ReplaceTextTool) ParameterSchema() map[string]any {
 
 // String formats a replace_text tool call for display
 func (t ReplaceTextTool) Format(input, result string, err error) string {
-	// Parse input JSON to extract path
 	var params ReplaceTextInput
 	json.Unmarshal([]byte(input), &params)
 
-	paramStr := ""
+	msg := NewChatMsgBuilder("Replace Text")
 	if params.Path != "" {
-		paramStr = fmt.Sprintf(" %s", params.Path)
+		msg.Writef(" %s", params.Path)
 	}
+	msg.WriteLn()
 
-	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("Replace Text %s", paramStr)
-
-	// Second line: result summary
-	secondLine := treeFinalPrefix
 	if err != nil {
-		secondLine += fmt.Sprintf("Error: %v", err)
+		msg.Writef("Error: %v", err)
+	} else if strings.Contains(result, "No occurrences") {
+		msg.WriteString("No matches found")
+	} else if strings.Contains(result, "No changes") {
+		msg.WriteString("No changes needed")
 	} else {
-		if strings.Contains(result, "No occurrences") {
-			secondLine += "No matches found"
-		} else if strings.Contains(result, "No changes") {
-			secondLine += "No changes needed"
-		} else {
-			secondLine += "Text replaced successfully"
-		}
+		msg.WriteString("Text replaced successfully")
 	}
 
-	return firstLine + "\n" + secondLine
+	return msg.String()
 }
 
 // RunInShell is a tool for running shell commands in a persistent shell
@@ -794,33 +773,29 @@ func (t RunInShell) ParameterSchema() map[string]any {
 // String formats a run_in_shell tool call for display
 func (t RunInShell) Format(input, result string, err error) string {
 	var params RunInShellInput
-	var ec string
 	json.Unmarshal([]byte(input), &params)
-	line3 := ""
+
+	msg := NewChatMsgBuilder("")
+	msg.WriteLn(params.Description)
+	msg.Writef("$ %s", params.Command)
+
 	if err != nil {
-		line3 = fmt.Sprintf("%sERROR: %v\n", treeFinalPrefix, err)
+		msg.WriteLn()
+		msg.Writef("ERROR: %v", err)
 	} else if result != "" {
 		var output map[string]interface{}
-		err := json.Unmarshal([]byte(result), &output)
-		if err == nil {
-			ec = output["exitCode"].(string)
-			if ec != "0" {
-				line3 = fmt.Sprintf("%s%s\n", treeFinalPrefix, ec)
+		if json.Unmarshal([]byte(result), &output) == nil {
+			if ec, ok := output["exitCode"].(string); ok && ec != "0" {
+				msg.WriteLn()
+				msg.WriteString(ec)
 			}
 		} else {
-			line3 = fmt.Sprintf("%sERROR: %s\n", treeFinalPrefix, err)
+			msg.WriteLn()
+			msg.Writef("ERROR: %v", err)
 		}
 	}
 
-	var ret strings.Builder
-	ret.WriteString(params.Description + "\n")
-	if line3 == "" {
-		ret.WriteString(fmt.Sprintf("%s$ %s\n", treeFinalPrefix, params.Command))
-	} else {
-		ret.WriteString(fmt.Sprintf("%s$ %s\n", treeMidPrefix, params.Command))
-	}
-	ret.WriteString(line3)
-	return ret.String()
+	return msg.String() + "\n"
 }
 
 func hostRun(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
@@ -1013,31 +988,26 @@ func (t ReadManyFilesTool) ParameterSchema() map[string]any {
 
 // String formats a read_many_files tool call for display
 func (t ReadManyFilesTool) Format(input, result string, err error) string {
-	// Parse input JSON to extract paths
 	var params ReadManyFilesInput
 	json.Unmarshal([]byte(input), &params)
 
-	paramStr := ""
+	msg := NewChatMsgBuilder("Read Many Files")
 	if len(params.Paths) == 1 {
-		paramStr = fmt.Sprintf("(%v)", params.Paths[0])
+		msg.Writef("(%v)", params.Paths[0])
 	} else if len(params.Paths) > 1 {
-		paramStr = fmt.Sprintf("(%d files)", len(params.Paths))
+		msg.Writef("(%d files)", len(params.Paths))
 	}
+	msg.WriteLn()
 
-	// First line: tool name and parameters
-	firstLine := fmt.Sprintf("Read Many Files%s", paramStr)
-
-	// Second line: result summary
-	secondLine := treeFinalPrefix
 	if err != nil {
-		secondLine += fmt.Sprintf("Error: %v", err)
+		msg.Writef("Error: %v", err)
 	} else {
 		// Count files by counting "---\t" markers
 		fileCount := strings.Count(result, "---\t")
-		secondLine += fmt.Sprintf("Read %d files", fileCount)
+		msg.Writef("Read %d files", fileCount)
 	}
 
-	return firstLine + "\n" + secondLine + "\n"
+	return msg.String() + "\n"
 }
 
 type Tool interface {
