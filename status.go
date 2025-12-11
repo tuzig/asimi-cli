@@ -246,13 +246,28 @@ func (s StatusComponent) View() string {
 	// Create the final status line
 	var statusLine string
 	if middleSection != "" {
-		// Calculate spacing to center middle section
-		totalContentWidth = leftWidth + middleWidth + rightWidth
-		if totalContentWidth < availableSpace {
-			leftSpacing := (availableSpace - totalContentWidth) / 2
-			rightSpacing := availableSpace - totalContentWidth - leftSpacing
+		// Center the middle section relative to the entire screen width
+		// The middle section's center should be at availableSpace/2
+		middleStart := (availableSpace - middleWidth) / 2
+
+		// Calculate spacing after left section and before right section
+		leftSpacing := middleStart - leftWidth
+		rightSpacing := availableSpace - middleStart - middleWidth - rightWidth
+
+		// Ensure minimum spacing
+		if leftSpacing < 1 {
+			leftSpacing = 1
+		}
+		if rightSpacing < 1 {
+			rightSpacing = 1
+		}
+
+		// Check if everything fits
+		totalNeeded := leftWidth + leftSpacing + middleWidth + rightSpacing + rightWidth
+		if totalNeeded <= availableSpace {
 			statusLine = leftSection + strings.Repeat(" ", leftSpacing) + middleSection + strings.Repeat(" ", rightSpacing) + rightSection
 		} else {
+			// Fall back to simple spacing if centering doesn't fit
 			statusLine = leftSection + " " + middleSection + " " + rightSection
 		}
 	} else {
