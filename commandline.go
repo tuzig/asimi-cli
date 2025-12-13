@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/storage"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -48,11 +49,10 @@ const (
 type CommandLineComponent struct {
 	mode       CommandLineMode
 	toasts     []Toast
-	input      string // User input - used for both commands and yes/no answers
-	cursorPos  int    // Cursor position in input string
+	textInput  textinput.Model // Text input for command mode
+	yesNoInput string          // Simple input for yes/no mode (just y/n)
 	width      int
-	style      lipgloss.Style
-	showCursor bool
+	toastStyle lipgloss.Style
 
 	// History support
 	history        []string // Command history
@@ -66,16 +66,19 @@ type CommandLineComponent struct {
 
 // NewCommandLineComponent creates a new command line component
 func NewCommandLineComponent() *CommandLineComponent {
+	ti := textinput.New()
+	ti.Prompt = ":"
+	ti.Focus()
+
 	return &CommandLineComponent{
 		mode:           CommandLineIdle,
 		toasts:         make([]Toast, 0),
-		cursorPos:      0,
-		showCursor:     true,
+		textInput:      ti,
 		history:        make([]string, 0),
 		historyCursor:  0,
 		historySaved:   false,
 		historyPending: "",
-		style: lipgloss.NewStyle().
+		toastStyle: lipgloss.NewStyle().
 			Background(lipgloss.Color("62")).
 			Foreground(lipgloss.Color("230")).
 			Padding(0, 1).
@@ -113,9 +116,9 @@ func (cl *CommandLineComponent) ClearToasts() {
 // EnterCommandMode enters command mode with optional initial text
 func (cl *CommandLineComponent) EnterCommandMode(initialText string) tea.Cmd {
 	cl.mode = CommandLineCommand
-	cl.input = initialText
-	cl.cursorPos = len(initialText)
-	cl.showCursor = true
+	cl.textInput.SetValue(initialText)
+	cl.textInput.CursorEnd()
+	cl.textInput.Focus()
 	return func() tea.Msg {
 		return ChangeModeMsg{NewMode: "command"}
 	}
@@ -124,8 +127,8 @@ func (cl *CommandLineComponent) EnterCommandMode(initialText string) tea.Cmd {
 // ExitCommandMode exits command mode and returns to idle
 func (cl *CommandLineComponent) ExitCommandMode() tea.Cmd {
 	cl.mode = CommandLineIdle
-	cl.input = ""
-	cl.cursorPos = 0
+	cl.textInput.SetValue("")
+	cl.textInput.Blur()
 	cl.historySaved = false
 	cl.historyPending = ""
 	return func() tea.Msg {
@@ -140,16 +143,14 @@ func (cl *CommandLineComponent) IsInCommandMode() bool {
 
 // Blur removes focus from the command line
 func (cl *CommandLineComponent) Blur() {
-	cl.showCursor = false
+	cl.textInput.Blur()
 }
 
 // EnterYesNoMode enters yes/no prompt mode with a question
 func (cl *CommandLineComponent) EnterYesNoMode(question string) tea.Cmd {
 	cl.mode = CommandLineYesNo
 	cl.yesNoQuestion = question
-	cl.input = ""
-	cl.cursorPos = 0
-	cl.showCursor = true
+	cl.yesNoInput = ""
 	return func() tea.Msg {
 		return ChangeModeMsg{NewMode: "yesno"}
 	}
@@ -159,8 +160,7 @@ func (cl *CommandLineComponent) EnterYesNoMode(question string) tea.Cmd {
 func (cl *CommandLineComponent) ExitYesNoMode() tea.Cmd {
 	cl.mode = CommandLineIdle
 	cl.yesNoQuestion = ""
-	cl.input = ""
-	cl.cursorPos = 0
+	cl.yesNoInput = ""
 	return func() tea.Msg {
 		return ChangeModeMsg{NewMode: "insert"}
 	}
@@ -173,8 +173,8 @@ func (cl *CommandLineComponent) IsInYesNoMode() bool {
 
 // SetCommand sets the current command being entered
 func (cl *CommandLineComponent) SetCommand(cmd string) {
-	cl.input = cmd
-	cl.cursorPos = len(cmd)
+	cl.textInput.SetValue(cmd)
+	cl.textInput.CursorEnd()
 	if cmd != "" {
 		cl.mode = CommandLineCommand
 	} else {
@@ -182,76 +182,21 @@ func (cl *CommandLineComponent) SetCommand(cmd string) {
 	}
 }
 
-// InsertRune inserts a character at cursor position
-func (cl *CommandLineComponent) InsertRune(r rune) {
-	if cl.mode != CommandLineCommand {
-		return
-	}
-	before := cl.input[:cl.cursorPos]
-	after := cl.input[cl.cursorPos:]
-	cl.input = before + string(r) + after
-	cl.cursorPos++
-}
-
-// DeleteCharBackward deletes character before cursor (backspace)
-func (cl *CommandLineComponent) DeleteCharBackward() {
-	if cl.mode != CommandLineCommand || cl.cursorPos == 0 {
-		return
-	}
-	before := cl.input[:cl.cursorPos-1]
-	after := cl.input[cl.cursorPos:]
-	cl.input = before + after
-	cl.cursorPos--
-}
-
-// DeleteCharForward deletes character at cursor (delete key)
-func (cl *CommandLineComponent) DeleteCharForward() {
-	if cl.mode != CommandLineCommand || cl.cursorPos >= len(cl.input) {
-		return
-	}
-	before := cl.input[:cl.cursorPos]
-	after := cl.input[cl.cursorPos+1:]
-	cl.input = before + after
-}
-
-// MoveCursorLeft moves cursor one position left
-func (cl *CommandLineComponent) MoveCursorLeft() {
-	if cl.cursorPos > 0 {
-		cl.cursorPos--
-	}
-}
-
-// MoveCursorRight moves cursor one position right
-func (cl *CommandLineComponent) MoveCursorRight() {
-	if cl.cursorPos < len(cl.input) {
-		cl.cursorPos++
-	}
-}
-
-// MoveCursorHome moves cursor to start
-func (cl *CommandLineComponent) MoveCursorHome() {
-	cl.cursorPos = 0
-}
-
-// MoveCursorEnd moves cursor to end
-func (cl *CommandLineComponent) MoveCursorEnd() {
-	cl.cursorPos = len(cl.input)
-}
-
 // GetCommand returns the current command
 func (cl *CommandLineComponent) GetCommand() string {
-	return cl.input
+	return cl.textInput.Value()
 }
 
 // ClearCommand clears the current command
 func (cl *CommandLineComponent) ClearCommand() {
-	cl.input = ""
+	cl.textInput.SetValue("")
 	cl.mode = CommandLineIdle
 }
 
 // SetWidth sets the width for rendering
 func (cl *CommandLineComponent) SetWidth(width int) {
 	cl.width = width
+	cl.textInput.Width = width - 1 // Account for the ":" prompt
 }
 
 // Update handles updating the command line (e.g., removing expired toasts)
@@ -272,14 +217,9 @@ func (cl *CommandLineComponent) Update() {
 func (cl *CommandLineComponent) View() string {
 	// Priority 1: Show yes/no prompt if in yes/no mode
 	if cl.mode == CommandLineYesNo {
-		promptText := cl.yesNoQuestion + " (y/n) " + cl.input
-		var displayText string
-		if cl.showCursor {
-			cursorStyle := lipgloss.NewStyle().Reverse(true)
-			displayText = promptText + cursorStyle.Render(" ")
-		} else {
-			displayText = promptText
-		}
+		promptText := cl.yesNoQuestion + " (y/n) " + cl.yesNoInput
+		cursorStyle := lipgloss.NewStyle().Reverse(true)
+		displayText := promptText + cursorStyle.Render(" ")
 		promptStyle := lipgloss.NewStyle().
 			Foreground(globalTheme.Warning).
 			Width(cl.width)
@@ -288,39 +228,16 @@ func (cl *CommandLineComponent) View() string {
 
 	// Priority 2: Show command if in command mode
 	if cl.mode == CommandLineCommand {
-		// Build command text with cursor
-		cmdText := ":" + cl.input
-
-		// Insert cursor at position (account for leading ":")
-		displayPos := cl.cursorPos + 1
-		var displayText string
-		if cl.showCursor {
-			if displayPos < len(cmdText) {
-				// Cursor in middle of text
-				before := cmdText[:displayPos]
-				cursorChar := string(cmdText[displayPos])
-				after := cmdText[displayPos+1:]
-				cursorStyle := lipgloss.NewStyle().Reverse(true)
-				displayText = before + cursorStyle.Render(cursorChar) + after
-			} else {
-				// Cursor at end
-				cursorStyle := lipgloss.NewStyle().Reverse(true)
-				displayText = cmdText + cursorStyle.Render(" ")
-			}
-		} else {
-			displayText = cmdText
-		}
-
 		cmdStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("15")).
 			Width(cl.width)
-		return cmdStyle.Render(displayText)
+		return cmdStyle.Render(cl.textInput.View())
 	}
 
 	// Priority 3: Show toast if active
 	if len(cl.toasts) > 0 {
 		toast := cl.toasts[len(cl.toasts)-1]
-		style := cl.style
+		style := cl.toastStyle
 
 		contentWidth := lipgloss.Width(toast.Message)
 		frameWidth, _ := style.GetFrameSize()
@@ -377,11 +294,13 @@ func (cl *CommandLineComponent) NavigateHistory(direction int) bool {
 		return false
 	}
 
+	currentValue := cl.textInput.Value()
+
 	switch {
 	case direction < 0:
 		// Navigate backwards (older commands)
 		if !cl.historySaved {
-			cl.historyPending = cl.input
+			cl.historyPending = currentValue
 			cl.historySaved = true
 		}
 		if cl.historyCursor == len(cl.history) {
@@ -390,8 +309,8 @@ func (cl *CommandLineComponent) NavigateHistory(direction int) bool {
 			cl.historyCursor--
 		}
 		if cl.historyCursor >= 0 && cl.historyCursor < len(cl.history) {
-			cl.input = cl.history[cl.historyCursor]
-			cl.cursorPos = len(cl.input)
+			cl.textInput.SetValue(cl.history[cl.historyCursor])
+			cl.textInput.CursorEnd()
 			return true
 		}
 	case direction > 0:
@@ -401,14 +320,14 @@ func (cl *CommandLineComponent) NavigateHistory(direction int) bool {
 		}
 		if cl.historyCursor < len(cl.history)-1 {
 			cl.historyCursor++
-			cl.input = cl.history[cl.historyCursor]
-			cl.cursorPos = len(cl.input)
+			cl.textInput.SetValue(cl.history[cl.historyCursor])
+			cl.textInput.CursorEnd()
 			return true
 		}
 		// Reached the end, restore pending command
 		cl.historyCursor = len(cl.history)
-		cl.input = cl.historyPending
-		cl.cursorPos = len(cl.input)
+		cl.textInput.SetValue(cl.historyPending)
+		cl.textInput.CursorEnd()
 		cl.historySaved = false
 		return true
 	}
@@ -423,19 +342,19 @@ func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		keyStr := msg.String()
 		switch keyStr {
 		case "y", "Y":
-			cl.input = "y"
+			cl.yesNoInput = "y"
 			return nil, true
 		case "n", "N":
-			cl.input = "n"
+			cl.yesNoInput = "n"
 			return nil, true
 		case "enter":
-			if cl.input == "y" {
+			if cl.yesNoInput == "y" {
 				exitCmd := cl.ExitYesNoMode()
 				return tea.Batch(
 					exitCmd,
 					func() tea.Msg { return yesNoResponseMsg{answer: true} },
 				), true
-			} else if cl.input == "n" {
+			} else if cl.yesNoInput == "n" {
 				exitCmd := cl.ExitYesNoMode()
 				return tea.Batch(
 					exitCmd,
@@ -445,7 +364,7 @@ func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			// No answer typed yet, ignore enter
 			return nil, true
 		case "backspace", "ctrl+h":
-			cl.input = ""
+			cl.yesNoInput = ""
 			return nil, true
 		case "esc":
 			exitCmd := cl.ExitYesNoMode()
@@ -464,6 +383,7 @@ func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 	keyStr := msg.String()
 
+	// Handle special keys before passing to textinput
 	switch keyStr {
 	case "esc":
 		// Cancel command mode
@@ -490,54 +410,33 @@ func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		), true
 
 	case "backspace", "ctrl+h":
-		if cl.cursorPos == 0 {
+		// Exit command mode if input is empty
+		if cl.textInput.Value() == "" {
 			exitCmd := cl.ExitCommandMode()
 			return tea.Batch(
 				exitCmd,
 				func() tea.Msg { return commandCancelledMsg{} },
 			), true
 		}
-		cl.DeleteCharBackward()
-		return func() tea.Msg { return commandTextChangedMsg{} }, true
-
-	case "delete":
-		cl.DeleteCharForward()
-		return func() tea.Msg { return commandTextChangedMsg{} }, true
-
-	case "left":
-		cl.MoveCursorLeft()
-		return nil, true
-
-	case "right":
-		cl.MoveCursorRight()
-		return nil, true
-
-	case "home", "ctrl+a":
-		cl.MoveCursorHome()
-		return nil, true
-
-	case "end", "ctrl+e":
-		cl.MoveCursorEnd()
-		return nil, true
+		// Let textinput handle the backspace
+		var cmd tea.Cmd
+		cl.textInput, cmd = cl.textInput.Update(msg)
+		return tea.Batch(cmd, func() tea.Msg { return commandTextChangedMsg{} }), true
 
 	case "up":
-		// Navigate history or completion (TUI decides based on completion state)
+		// Navigate history
 		direction := -1
 		if cl.NavigateHistory(direction) {
-			// History was navigated, signal text change
 			return func() tea.Msg { return commandTextChangedMsg{} }, true
 		}
-		// No history or at beginning, send to TUI for completion
 		return func() tea.Msg { return navigateHistoryMsg{direction: direction} }, true
 
 	case "down":
-		// Navigate history or completion (TUI decides based on completion state)
+		// Navigate history
 		direction := 1
 		if cl.NavigateHistory(direction) {
-			// History was navigated, signal text change
 			return func() tea.Msg { return commandTextChangedMsg{} }, true
 		}
-		// No history or at end, send to TUI for completion
 		return func() tea.Msg { return navigateHistoryMsg{direction: direction} }, true
 
 	case "tab":
@@ -552,18 +451,16 @@ func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		// Navigate completion up
 		return func() tea.Msg { return navigateCompletionMsg{direction: -1} }, true
 
-	case "space", " ":
-		cl.InsertRune(' ')
-		return func() tea.Msg { return commandTextChangedMsg{} }, true
-
 	default:
-		// Insert character if it's a printable rune
-		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-			for _, r := range msg.Runes {
-				cl.InsertRune(r)
-			}
-			return func() tea.Msg { return commandTextChangedMsg{} }, true
+		// Let textinput handle all other keys (including cursor movement, deletion, etc.)
+		prevValue := cl.textInput.Value()
+		var cmd tea.Cmd
+		cl.textInput, cmd = cl.textInput.Update(msg)
+
+		// Signal text change if value changed
+		if cl.textInput.Value() != prevValue {
+			return tea.Batch(cmd, func() tea.Msg { return commandTextChangedMsg{} }), true
 		}
-		return nil, false
+		return cmd, true
 	}
 }
