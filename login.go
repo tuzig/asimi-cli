@@ -812,3 +812,60 @@ func randomString(n int) string {
 	}
 	return base64.RawURLEncoding.EncodeToString(b)[:n]
 }
+
+// handleLogoutCommand handles the :logout command
+func handleLogoutCommand(model *TUIModel, args []string) tea.Cmd {
+	return func() tea.Msg {
+		provider := model.config.LLM.Provider
+		if provider == "" {
+			return showSystemMsg("No provider configured. Nothing to logout from.")
+		}
+
+		var errors []string
+
+		// Delete OAuth tokens from keyring
+		if err := DeleteTokenFromKeyring(provider); err != nil {
+			slog.Warn("Failed to delete OAuth token from keyring", "provider", provider, "error", err)
+			errors = append(errors, fmt.Sprintf("OAuth token: %v", err))
+		} else {
+			slog.Debug("Deleted OAuth token from keyring", "provider", provider)
+		}
+
+		// Delete API key from keyring
+		if err := DeleteAPIKeyFromKeyring(provider); err != nil {
+			slog.Warn("Failed to delete API key from keyring", "provider", provider, "error", err)
+			errors = append(errors, fmt.Sprintf("API key: %v", err))
+		} else {
+			slog.Debug("Deleted API key from keyring", "provider", provider)
+		}
+
+		// Clear in-memory credentials
+		model.config.LLM.AuthToken = ""
+		model.config.LLM.RefreshToken = ""
+		model.config.LLM.APIKey = ""
+
+		// Clear the session
+		model.session = nil
+		model.sessionActive = false
+
+		// Update status line
+		model.status.SetAgent("not configured")
+
+		// Build result message
+		msg := NewChatMsgBuilder(systemPrefix)
+		msg.WriteLnf("Logged out from %s", provider)
+
+		if len(errors) > 0 {
+			msg.WriteLn("")
+			msg.WriteLn("Some credentials could not be removed:")
+			for _, e := range errors {
+				msg.WriteLnf("  • %s", e)
+			}
+		}
+
+		msg.WriteLn("")
+		msg.WriteLn("Use :models to authenticate with a new provider.")
+
+		return showContextMsg{content: msg.String()}
+	}
+}
