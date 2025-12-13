@@ -79,6 +79,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("compact", "Compact conversation history to reduce context usage", handleCompactCommand)
 	registry.RegisterCommand("1", "Jump to the beginning of the chat history", handleScrollTopCommand)
 	registry.RegisterCommand("update", "Check for and install updates", handleUpdateCommand)
+	registry.RegisterCommand("logout", "Logout from current provider and clear credentials", handleLogoutCommand)
 
 	return registry
 }
