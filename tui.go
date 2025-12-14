@@ -13,7 +13,6 @@ import (
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tmc/langchaingo/llms"
 )
 
 const (
@@ -1850,67 +1849,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sessionSelectedMsg:
-		if msg.session != nil {
-			if m.session != nil {
-				// Copy all persisted fields from loaded session to existing session
-				m.session.ID = msg.session.ID
-				m.session.CreatedAt = msg.session.CreatedAt
-				m.session.LastUpdated = msg.session.LastUpdated
-				m.session.FirstPrompt = msg.session.FirstPrompt
-				m.session.Provider = msg.session.Provider
-				m.session.Model = msg.session.Model
-				m.session.WorkingDir = msg.session.WorkingDir
-				m.session.ProjectSlug = msg.session.ProjectSlug
-				m.session.ContextFiles = msg.session.ContextFiles
-
-				// Copy messages - need to make a proper copy
-				m.session.Messages = make([]llms.MessageContent, len(msg.session.Messages))
-				copy(m.session.Messages, msg.session.Messages)
-			} else {
-				// No active session - set the loaded session directly
-				m.session = msg.session
-				slog.Warn("Resumed session without active LLM - some features may be limited")
-			}
-
-			// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
-			m.content.Chat.Clear()
-			for _, msgContent := range m.session.Messages {
-				// Skip system messages
-				if msgContent.Role == llms.ChatMessageTypeSystem {
-					continue
-				}
-
-				if msgContent.Role == llms.ChatMessageTypeHuman || msgContent.Role == llms.ChatMessageTypeAI {
-					for _, part := range msgContent.Parts {
-						if textPart, ok := part.(llms.TextContent); ok {
-							prefix := "You: "
-							if msgContent.Role == llms.ChatMessageTypeAI {
-								prefix = "Asimi: "
-							}
-							m.content.Chat.AddMessage(prefix + textPart.Text)
-						}
-					}
-				}
-			}
-			if m.session != nil {
-				m.session.updateTokenCounts()
-			}
-			m.sessionActive = true
-
-			// Reset in-session prompt history state to prevent rollback issues
-			// when the user enters a new prompt after resuming.
-			// We keep the persistent history (loaded from disk) but clear the
-			// session-specific rollback state.
-			m.sessionPromptHistory = make([]promptHistoryEntry, 0)
-			m.historyCursor = 0
-			m.historySaved = false
-			m.historyPendingPrompt = ""
-			m.historyPresentSessionSnapshot = 0
-			m.historyPresentChatSnapshot = 0
-
-			timeStr := formatRelativeTime(msg.session.LastUpdated)
-			m.commandLine.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
-		}
+		m.handleSessionSelected(msg.session)
 		return m, nil
 
 	case sessionResumeErrorMsg:

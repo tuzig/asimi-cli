@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -276,4 +277,112 @@ func formatRelativeTime(t time.Time) string {
 
 	// Older - show full date
 	return t.Format("Jan 2, 2006")
+}
+
+// handleSessionSelected processes a resumed session and updates the TUI model.
+// It copies session data, rebuilds the chat UI from messages, and resets prompt history state.
+func (m *TUIModel) handleSessionSelected(session *Session) {
+	if session == nil {
+		return
+	}
+
+	if m.session != nil {
+		// Copy all persisted fields from loaded session to existing session
+		m.session.ID = session.ID
+		m.session.CreatedAt = session.CreatedAt
+		m.session.LastUpdated = session.LastUpdated
+		m.session.FirstPrompt = session.FirstPrompt
+		m.session.Provider = session.Provider
+		m.session.Model = session.Model
+		m.session.WorkingDir = session.WorkingDir
+		m.session.ProjectSlug = session.ProjectSlug
+		m.session.ContextFiles = session.ContextFiles
+
+		// Copy messages - need to make a proper copy
+		m.session.Messages = make([]llms.MessageContent, len(session.Messages))
+		copy(m.session.Messages, session.Messages)
+	} else {
+		// No active session - set the loaded session directly
+		m.session = session
+		slog.Warn("Resumed session without active LLM - some features may be limited")
+	}
+
+	// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
+	m.content.Chat.Clear()
+
+	// Build a map of tool call IDs to their responses for matching
+	toolResults := make(map[string]llms.ToolCallResponse)
+	for _, msgContent := range m.session.Messages {
+		if msgContent.Role == llms.ChatMessageTypeTool {
+			for _, part := range msgContent.Parts {
+				if resp, ok := part.(llms.ToolCallResponse); ok {
+					toolResults[resp.ToolCallID] = resp
+				}
+			}
+		}
+	}
+
+	for _, msgContent := range m.session.Messages {
+		// Skip system messages
+		if msgContent.Role == llms.ChatMessageTypeSystem {
+			continue
+		}
+
+		switch msgContent.Role {
+		case llms.ChatMessageTypeHuman:
+			for _, part := range msgContent.Parts {
+				if textPart, ok := part.(llms.TextContent); ok {
+					m.content.Chat.AddMessage("You: " + textPart.Text)
+				}
+			}
+
+		case llms.ChatMessageTypeAI:
+			// First add any text content
+			for _, part := range msgContent.Parts {
+				if textPart, ok := part.(llms.TextContent); ok {
+					m.content.Chat.AddMessage("Asimi: " + textPart.Text)
+				}
+			}
+			// Then add tool calls with their results
+			for _, part := range msgContent.Parts {
+				if tc, ok := part.(llms.ToolCall); ok && tc.FunctionCall != nil {
+					// Find the corresponding result
+					var result string
+					var toolErr error
+					if resp, exists := toolResults[tc.ID]; exists {
+						if strings.HasPrefix(resp.Content, "Error:") || strings.HasPrefix(resp.Content, "error:") {
+							toolErr = fmt.Errorf("%s", resp.Content)
+						} else {
+							result = resp.Content
+						}
+					}
+					// Format the tool call with its result
+					formatted := formatToolCall(tc.FunctionCall.Name, checkPrefix, tc.FunctionCall.Arguments, result, toolErr)
+					m.content.Chat.AddMessage(formatted)
+				}
+			}
+
+		// Skip tool messages as they're already incorporated into tool call display
+		case llms.ChatMessageTypeTool:
+			continue
+		}
+	}
+	if m.session != nil {
+		m.session.updateTokenCounts()
+	}
+	m.sessionActive = true
+
+	// Reset in-session prompt history state to prevent rollback issues
+	// when the user enters a new prompt after resuming.
+	// We keep the persistent history (loaded from disk) but clear the
+	// session-specific rollback state.
+	m.sessionPromptHistory = make([]promptHistoryEntry, 0)
+	m.historyCursor = 0
+	m.historySaved = false
+	m.historyPendingPrompt = ""
+	m.historyPresentSessionSnapshot = 0
+	m.historyPresentChatSnapshot = 0
+
+	timeStr := formatRelativeTime(session.LastUpdated)
+	m.commandLine.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
 }
