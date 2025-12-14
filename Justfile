@@ -58,10 +58,10 @@ build-sandbox:
 clean-sandbox:
     podman rmi localhost/asimi-sandbox-{{PROJECT_NAME}}:latest
 
-# Measure run_in_shell tool performance
+# Measure run_shell_command tool performance
 measure:
-    @echo "=== Measuring run_in_shell Tool Performance ==="
+    @echo "=== Measuring run_shell_command Tool Performance ==="
     @echo ""
     @echo "Sending performance test prompt to asimi..."
     @echo ""
-    go run . -p 'Performance test: measure the run_in_shell tool overhead by executiing exactly 12 run_in_shell commands in a SINGLE function_calls block (all at once, not sequentially): 1. First command: date +%s%N, 2-11. Ten commands: : (colon command, does nothing), 12. Last command: date +%s%N. After receiving both the timestamps, calculates the per call overhead'
+    go run . -p 'Performance test: measure the run_shell_command tool overhead by executiing exactly 12 run_shell_command commands in a SINGLE function_calls block (all at once, not sequentially): 1. First command: date +%s%N, 2-11. Ten commands: : (colon command, does nothing), 12. Last command: date +%s%N. After receiving both the timestamps, calculates the per call overhead'

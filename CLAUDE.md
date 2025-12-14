@@ -64,7 +64,7 @@ Asimi is a vi-inspired, terminal-based AI coding agent with containerized shell 
 - Container lifecycle: initialize → run commands → cleanup (unless --no-cleanup)
 
 **Tool System** (`tools.go`, `scheduler.go`)
-- Tools: ReadFileTool, WriteFileTool, EditFileTool, RunInShellTool, etc.
+- Tools: ReadFileTool, WriteFileTool, EditFileTool, RunShellCommandTool, etc.
 - CoreToolScheduler: Parallel tool execution with semaphore-based rate limiting
 - Path validation prevents access outside project directory
 - Shell commands run in container by default (configurable via run_on_host regex)
@@ -109,7 +109,7 @@ Asimi is a vi-inspired, terminal-based AI coding agent with containerized shell 
 - **Config**: `~/.config/asimi/asimi.toml` (user) or `.agents/asimi.toml` (project)
 - **Database**: `~/.local/share/asimi/asimi.sqlite` (see `storage/schema.go`)
 - **Project files**: All Asimi-specific files live under `.agents/` directory
-- **Container image**: Configured in `.agents/asimi.conf` under `[run_in_shell]` section as `image_name`
+- **Container image**: Configured in `.agents/asimi.conf` under `[run_shell_command]` section as `image_name`
 
 ## Release Workflow
 
@@ -127,4 +127,4 @@ Asimi is a vi-inspired, terminal-based AI coding agent with containerized shell 
 - ALWAYS run tests after changes: `just test`
 - ALWAYS update CHANGELOG.md when changes are complete and tests pass
 - Use `slog` for logging (avoid fmt.Println except for user-facing output)
-- Container commands run in sandbox by default (see `run_in_shell.run_on_host` config to override)
+- Container commands run in sandbox by default (see `run_shell_command.run_on_host` config to override)

@@ -366,7 +366,7 @@ func (s StatusComponent) renderRightSection() string {
 		style.Foreground(globalTheme.Warning)
 	}
 
-	return style.Render(providerModel + " " + s.getStatusIcon())
+	return style.Render(s.getStatusIcon() + " " + providerModel)
 }
 
 // truncateString truncates a string to fit within maxWidth, adding "..." if needed

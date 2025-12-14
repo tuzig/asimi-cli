@@ -1,6 +1,6 @@
-# Binaries
+# Binary
 asimi
-
+.gocache/
 # Test coverage
 coverage.txt
 coverage.out

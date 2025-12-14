@@ -11,6 +11,7 @@ __asimi_run() {
   printf "__ASIMI_STDOUT_END:%s:%s\n" "$id" "$exit_code"
   return $exit_code
 }
+# TODO: add a shim for git to prevent running `git add -A` forcing the model to list the files to add
 alias ll="ls -l"
 alias grep="rg"
 export TERM="dumb"

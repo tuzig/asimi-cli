@@ -583,7 +583,7 @@ func verifyInitWithRetry(model *TUIModel, containerRunner shellRunner, retryCoun
 		defer cancel2()
 
 		for _, file := range filesToStage {
-			result, err := hostRun(ctx2, RunInShellInput{
+			result, err := hostRun(ctx2, RunShellCommandInput{
 				Command:     fmt.Sprintf("git add %s", file),
 				Description: fmt.Sprintf("Staging %s", file),
 			})
@@ -621,7 +621,7 @@ func checkFileExists(filename, successMsg string, report func(string)) bool {
 // runBuildSandbox runs the build-sandbox command on the host
 func runBuildSandbox(ctx context.Context, report func(string), results *[]string) bool {
 	report("$ just build-sandbox # on host")
-	result, err := hostRun(ctx, RunInShellInput{
+	result, err := hostRun(ctx, RunShellCommandInput{
 		Command:     "just build-sandbox",
 		Description: "Building infrastructure files",
 	})
@@ -648,7 +648,7 @@ func runSmokeTest(ctx context.Context, containerRunner shellRunner, report func(
 	}
 
 	slog.Debug("Calling containerRunner.Run for smoke test")
-	result, err := containerRunner.Run(ctx, RunInShellInput{
+	result, err := containerRunner.Run(ctx, RunShellCommandInput{
 		Command:     "uname",
 		Description: "Running smoke test in container",
 	})
@@ -667,7 +667,7 @@ func runSmokeTest(ctx context.Context, containerRunner shellRunner, report func(
 // runHostTests runs the test suite on the host
 func runHostTests(ctx context.Context, report func(string), results *[]string) bool {
 	report("$ just test # on host")
-	result, err := hostRun(ctx, RunInShellInput{
+	result, err := hostRun(ctx, RunShellCommandInput{
 		Command:     "just test",
 		Description: "Running tests on host",
 	})
@@ -687,7 +687,7 @@ func runHostTests(ctx context.Context, report func(string), results *[]string) b
 // runContainerTests runs the test suite in the container
 func runContainerTests(ctx context.Context, containerRunner shellRunner, report func(string), results *[]string) bool {
 	report("$ just test # in container")
-	result, err := containerRunner.Run(ctx, RunInShellInput{
+	result, err := containerRunner.Run(ctx, RunShellCommandInput{
 		Command:     "just test",
 		Description: "Running tests in container",
 	})

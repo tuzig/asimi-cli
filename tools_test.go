@@ -25,8 +25,8 @@ func NewTestShellRunner() *TestShellRunner {
 }
 
 // Run executes a command directly on the host machine
-func (h *TestShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
-	var output RunInShellOutput
+func (h *TestShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
+	var output RunShellCommandOutput
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -75,17 +75,17 @@ func (h *TestShellRunner) RunnerType() string {
 	return "podman"
 }
 
-func TestRunInShell(t *testing.T) {
+func TestRunShellCommand(t *testing.T) {
 	restore := setShellRunnerForTesting(NewTestShellRunner())
 	defer restore()
 
-	tool := RunInShell{}
+	tool := RunShellCommand{}
 	input := `{"command": "echo 'hello world'"}`
 
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunInShellOutput
+	var output RunShellCommandOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
@@ -93,28 +93,28 @@ func TestRunInShell(t *testing.T) {
 	assert.Equal(t, "0", output.ExitCode)
 }
 
-func TestRunInShellError(t *testing.T) {
+func TestRunShellCommandError(t *testing.T) {
 	restore := setShellRunnerForTesting(NewTestShellRunner())
 	defer restore()
 
-	tool := RunInShell{}
+	tool := RunShellCommand{}
 	input := `{"command": "exit 1"}`
 
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunInShellOutput
+	var output RunShellCommandOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
 	assert.Equal(t, "1", output.ExitCode)
 }
 
-func TestRunInShellFailsWhenPodmanUnavailable(t *testing.T) {
+func TestRunShellCommandFailsWhenPodmanUnavailable(t *testing.T) {
 	restore := setShellRunnerForTesting(failingPodmanRunner{})
 	defer restore()
 
-	tool := RunInShell{}
+	tool := RunShellCommand{}
 	input := `{"command": "echo test"}`
 
 	_, err := tool.Call(context.Background(), input)
@@ -122,15 +122,15 @@ func TestRunInShellFailsWhenPodmanUnavailable(t *testing.T) {
 	assert.Contains(t, err.Error(), "podman unavailable")
 }
 
-// TestRunInShellLargeOutput tests that large outputs (>4096 bytes) are fully captured
+// TestRunShellCommandLargeOutput tests that large outputs (>4096 bytes) are fully captured
 // This test demonstrates the issue with the podman runner's fixed 4096-byte buffer
 // The HostShellRunner passes this test, but podman runner would truncate output
 // See: https://github.com/afittestide/asimi-cli/issues/20
-func TestRunInShellLargeOutput(t *testing.T) {
+func TestRunShellCommandLargeOutput(t *testing.T) {
 	restore := setShellRunnerForTesting(NewTestShellRunner())
 	defer restore()
 
-	tool := RunInShell{}
+	tool := RunShellCommand{}
 
 	// Generate output larger than 4096 bytes
 	// The actual test would need to be run with podman runner to see the truncation issue
@@ -141,22 +141,22 @@ func TestRunInShellLargeOutput(t *testing.T) {
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunInShellOutput
+	var output RunShellCommandOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
 	assert.Equal(t, "0", output.ExitCode)
 }
 
-// TestRunInShellExitCodeWithMarkerInOutput tests that exit code parsing works correctly
+// TestRunShellCommandExitCodeWithMarkerInOutput tests that exit code parsing works correctly
 // when the output contains the exit code marker string
 // This test demonstrates the fragile exit code parsing in podman runner
 // See: https://github.com/afittestide/asimi-cli/issues/20
-func TestRunInShellExitCodeWithMarkerInOutput(t *testing.T) {
+func TestRunShellCommandExitCodeWithMarkerInOutput(t *testing.T) {
 	restore := setShellRunnerForTesting(NewTestShellRunner())
 	defer restore()
 
-	tool := RunInShell{}
+	tool := RunShellCommand{}
 
 	// Command output contains the exit code marker string
 	// This would confuse the podman runner's string-based exit code parsing
@@ -165,7 +165,7 @@ func TestRunInShellExitCodeWithMarkerInOutput(t *testing.T) {
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunInShellOutput
+	var output RunShellCommandOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
@@ -242,7 +242,7 @@ func TestPodmanShellRunner(t *testing.T) {
 	runner := newPodmanShellRunner(true, nil, repoInfo) // allowFallback=true so test works without podman
 	assert.NotNil(t, runner)
 
-	output, err := runner.Run(context.Background(), RunInShellInput{
+	output, err := runner.Run(context.Background(), RunShellCommandInput{
 		Command: "echo hello",
 	})
 	require.NoError(t, err)
@@ -266,7 +266,7 @@ func TestPodmanShellRunnerMultipleCommands(t *testing.T) {
 	assert.NotNil(t, runner)
 
 	// First command
-	output1, err := runner.Run(context.Background(), RunInShellInput{
+	output1, err := runner.Run(context.Background(), RunShellCommandInput{
 		Command: "echo first",
 	})
 	require.NoError(t, err)
@@ -274,7 +274,7 @@ func TestPodmanShellRunnerMultipleCommands(t *testing.T) {
 	assert.Equal(t, "0", output1.ExitCode)
 
 	// Second command in the same session
-	output2, err := runner.Run(context.Background(), RunInShellInput{
+	output2, err := runner.Run(context.Background(), RunShellCommandInput{
 		Command: "echo second",
 	})
 	require.NoError(t, err)
@@ -287,7 +287,7 @@ func TestPodmanShellRunnerWithStderr(t *testing.T) {
 	runner := newPodmanShellRunner(true, nil, repoInfo) // allowFallback=true so test works without podman
 	assert.NotNil(t, runner)
 
-	output, err := runner.Run(context.Background(), RunInShellInput{
+	output, err := runner.Run(context.Background(), RunShellCommandInput{
 		Command: "echo 'stdout msg' && echo 'stderr msg' >&2",
 	})
 
@@ -299,8 +299,8 @@ func TestPodmanShellRunnerWithStderr(t *testing.T) {
 
 type failingPodmanRunner struct{}
 
-func (failingPodmanRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
-	return RunInShellOutput{}, PodmanUnavailableError{reason: "podman unavailable"}
+func (failingPodmanRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
+	return RunShellCommandOutput{}, PodmanUnavailableError{reason: "podman unavailable"}
 }
 
 func (failingPodmanRunner) Restart(ctx context.Context) error {
@@ -605,7 +605,7 @@ func TestReadFileWithStringNumbers(t *testing.T) {
 func TestTestShellRunner_Run(t *testing.T) {
 	runner := NewTestShellRunner()
 
-	params := RunInShellInput{
+	params := RunShellCommandInput{
 		Command:     "echo hello",
 		Description: "Test echo",
 	}
@@ -620,7 +620,7 @@ func TestTestShellRunner_Run(t *testing.T) {
 func TestTestShellRunner_RunError(t *testing.T) {
 	runner := NewTestShellRunner()
 
-	params := RunInShellInput{
+	params := RunShellCommandInput{
 		Command:     "exit 42",
 		Description: "Test exit code",
 	}
@@ -649,7 +649,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		{
 			name: "command matches run_on_host and safe_run_on_host",
 			config: &Config{
-				RunInShell: RunInShellConfig{
+				RunShellCommand: RunShellCommandConfig{
 					RunOnHost:     []string{`^gh\s.*`},
 					SafeRunOnHost: []string{`^gh\s+(issue|pr)\s+(view|list)\s.*`},
 				},
@@ -661,7 +661,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		{
 			name: "command matches run_on_host but not safe_run_on_host",
 			config: &Config{
-				RunInShell: RunInShellConfig{
+				RunShellCommand: RunShellCommandConfig{
 					RunOnHost:     []string{`^gh\s.*`},
 					SafeRunOnHost: []string{`^gh\s+(issue|pr)\s+(view|list)\s.*`},
 				},
@@ -673,7 +673,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		{
 			name: "command does not match run_on_host",
 			config: &Config{
-				RunInShell: RunInShellConfig{
+				RunShellCommand: RunShellCommandConfig{
 					RunOnHost:     []string{`^gh\s.*`},
 					SafeRunOnHost: []string{`^gh\s+(issue|pr)\s+(view|list)\s.*`},
 				},
@@ -685,7 +685,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		{
 			name: "podman command requires approval",
 			config: &Config{
-				RunInShell: RunInShellConfig{
+				RunShellCommand: RunShellCommandConfig{
 					RunOnHost:     []string{`^podman\s.*`},
 					SafeRunOnHost: []string{},
 				},
@@ -699,7 +699,7 @@ func TestShouldRunOnHost(t *testing.T) {
 	currentShellRunner = NewTestShellRunner()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tool := RunInShell{config: tt.config}
+			tool := RunShellCommand{config: tt.config}
 			runOnHost, requiresApproval := tool.shouldRunOnHost(tt.command)
 
 			assert.Equal(t, tt.wantRunOnHost, runOnHost, "runOnHost mismatch")

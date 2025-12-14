@@ -210,8 +210,8 @@ func formatToolCallWithResult(b *strings.Builder, toolCall llms.ToolCall, toolRe
 func formatToolOutput(b *strings.Builder, toolResp llms.ToolCallResponse, fullMode bool) {
 	b.WriteString("**Output:**")
 
-	// For run_in_shell, parse the JSON output and format accordingly
-	if toolResp.Name == "run_in_shell" {
+	// For run_shell_command, parse the JSON output and format accordingly
+	if toolResp.Name == "run_shell_command" {
 		var output map[string]interface{}
 		if err := json.Unmarshal([]byte(toolResp.Content), &output); err == nil {
 			// Successfully parsed as JSON - format the shell output

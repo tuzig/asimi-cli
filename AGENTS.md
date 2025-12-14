@@ -39,4 +39,4 @@ just fmt              # Format with go fmt + goimports
 - Present progressive tense in commits: "adding feature" not "added feature"
 
 ## Container
-Configure sandbox image in `.agents/asimi.conf` under `[run_in_shell]` section.
+Configure sandbox image in `.agents/asimi.conf` under `[run_shell_command]` section.

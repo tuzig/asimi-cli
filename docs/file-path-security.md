@@ -128,7 +128,7 @@ go test -v -run TestWriteFileToolPathValidation
 
 This change is **breaking** for any workflows that relied on writing files outside the project directory. However, this is intentional for security reasons. Users who need to write files outside the project should:
 
-1. Use the `run_in_shell` tool to execute commands that write files
+1. Use the `run_shell_command` tool to execute commands that write files
 2. Manually copy files after AI operations complete
 3. Adjust their project structure to include necessary files
 
