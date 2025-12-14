@@ -30,6 +30,11 @@ func mockConfig() *Config {
 			APIKey:   "",
 			BaseURL:  "",
 		},
+		UI: UIConfig{
+			MarkdownEnabled:   true,
+			CtrlCDebounceTime: 100 * time.Millisecond,
+			CtrlCWindowTime:   2000 * time.Millisecond,
+		},
 	}
 }
 
@@ -154,7 +159,7 @@ func TestDoubleCtrlCToQuit(t *testing.T) {
 	require.False(t, tuiModel.ctrlCPressedTime.IsZero())
 
 	// Second CTRL-C should quit (wait slightly longer than debounce time)
-	time.Sleep(ctrlCDebounceTime + 10*time.Millisecond)
+	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
 	newModel, cmd = tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	require.NotNil(t, cmd)
 	result := cmd()
@@ -1499,7 +1504,7 @@ func TestFileCompletion(t *testing.T) {
 
 	// Quit the application (requires double CTRL-C)
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	time.Sleep(ctrlCDebounceTime + 10*time.Millisecond)
+	time.Sleep(110 * time.Millisecond) // Wait longer than CtrlCDebounceTime (100ms)
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	// Get the final model
@@ -1555,7 +1560,7 @@ func TestColonCommandCompletionE2E(t *testing.T) {
 
 	// Quit the application (requires double CTRL-C)
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	time.Sleep(ctrlCDebounceTime + 10*time.Millisecond)
+	time.Sleep(110 * time.Millisecond) // Wait longer than CtrlCDebounceTime (100ms)
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	// Get the final model
