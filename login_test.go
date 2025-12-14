@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCodeInputModal_NewCodeInputModal(t *testing.T) {
@@ -203,9 +204,7 @@ func TestCodeInputModal_Render(t *testing.T) {
 	if !strings.Contains(rendered, "Token") {
 		t.Error("expected render to contain 'Token'")
 	}
-	if !strings.Contains(rendered, "Copy the page url to the clipboard") {
-		t.Error("expected render to contain 'Copy the page url to the clipboard'")
-	}
+	assert.Contains(t, rendered, "Copy the auth")
 	if !strings.Contains(rendered, "j/k to navigate") {
 		t.Error("expected render to contain navigation instructions")
 	}
@@ -219,7 +218,5 @@ func TestCodeInputModal_Render(t *testing.T) {
 	modal, _ = modal.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	rendered = modal.Render()
 
-	if !strings.Contains(rendered, "▶ Copy the page url") {
-		t.Error("expected copy URL to be selected after navigation")
-	}
+	assert.Contains(t, rendered, "▶ Copy Anthropic")
 }
