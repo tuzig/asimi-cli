@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-12-14
+
 ### Added
 - Alt+Enter (Option+Enter on Mac) now inserts a newline in the prompt instead of submitting (#101)
+- `:logout` command to sign out from the current provider
 
 ### Fixed
 - Login URL can now be copied
