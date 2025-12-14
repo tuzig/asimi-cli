@@ -77,7 +77,9 @@ type HistoryConfig struct {
 
 // UIConfig holds UI-specific configuration
 type UIConfig struct {
-	MarkdownEnabled bool `koanf:"markdown_enabled"`
+	MarkdownEnabled   bool          `koanf:"markdown_enabled"`
+	CtrlCDebounceTime time.Duration `koanf:"ctrl_c_debounce_time"`
+	CtrlCWindowTime   time.Duration `koanf:"ctrl_c_window_time"`
 }
 
 // defaultConfig returns the configuration populated with sensible defaults.
@@ -98,7 +100,9 @@ func defaultConfig() Config {
 			SaveInterval: 300,
 		},
 		UI: UIConfig{
-			MarkdownEnabled: true,
+			MarkdownEnabled:   true,
+			CtrlCDebounceTime: 100 * time.Millisecond,
+			CtrlCWindowTime:   2000 * time.Millisecond,
 		},
 		Session: SessionConfig{
 			Enabled:      true,

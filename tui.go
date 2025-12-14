@@ -15,11 +15,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const (
-	ctrlCDebounceTime = 200 * time.Millisecond  // Debounce duplicate ctrl-c events
-	ctrlCWindowTime   = 2000 * time.Millisecond // Window for double ctrl-c to quit
-)
-
 // TUIModel represents the bubbletea model for the TUI
 type TUIModel struct {
 	config        *Config
@@ -360,13 +355,13 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		slog.Debug("Got CTRL-C", "ctrlCPressed", !m.ctrlCPressedTime.IsZero(), "timeSinceFirst", timeSinceFirst)
 
 		// Ignore duplicate ctrl-c events within debounce window (likely from terminal/system)
-		if !m.ctrlCPressedTime.IsZero() && timeSinceFirst < ctrlCDebounceTime {
+		if !m.ctrlCPressedTime.IsZero() && timeSinceFirst < m.config.UI.CtrlCDebounceTime {
 			slog.Debug("Ignoring duplicate CTRL-C within debounce time")
 			return m, nil
 		}
 
 		// Double CTRL-C to exit - second press must be within window but after debounce time
-		if !m.ctrlCPressedTime.IsZero() && timeSinceFirst >= ctrlCDebounceTime && timeSinceFirst < ctrlCWindowTime {
+		if !m.ctrlCPressedTime.IsZero() && timeSinceFirst >= m.config.UI.CtrlCDebounceTime && timeSinceFirst < m.config.UI.CtrlCWindowTime {
 			// Second CTRL-C - actually quit
 			m.shutdown()
 			return m, tea.Quit
@@ -376,7 +371,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.content.Chat.AddMessage("You: CTRL-C")
 		m.handleEscape()
-		m.commandLine.AddToast("Press CTRL-C in less than 2s to exit", "info", 3*time.Second)
+		m.commandLine.AddToast(fmt.Sprintf("Press CTRL-C in under %.1fs to exit", m.config.UI.CtrlCWindowTime.Seconds()), "info", 3*time.Second)
 		return m, nil
 	}
 
