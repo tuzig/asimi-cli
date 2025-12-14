@@ -1626,6 +1626,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.codeInputModal = nil
 		return m, m.completeAnthropicOAuth(msg.code, msg.verifier)
 
+	case urlCopiedToClipboardMsg:
+		if msg.err != nil {
+			m.commandLine.AddToast("Failed to copy URL to clipboard: "+msg.err.Error(), "error", 3000)
+		} else {
+			m.commandLine.AddToast("URL copied to clipboard", "success", 3000)
+		}
+		return m, m.codeInputModal.textInput.Focus()
+
 	case modelSelectedMsg:
 		if msg.onSelect != nil {
 			return m, msg.onSelect
@@ -2263,8 +2271,21 @@ func (m TUIModel) View() string {
 	if m.showCompletionDialog {
 		view = m.overlayCompletionDialog(view, promptView, commandLineView)
 	}
-	result := m.applyModalOverlays(view)
-	return result
+
+	// Note: m.modal (BaseModal) is now rendered in composeBaseView above the prompt
+	// Only apply centered overlays for OAuth modals here
+
+	if m.providerModal != nil {
+		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.providerModal.Render())
+	}
+
+	if m.codeInputModal != nil {
+		// Place the modal centered, leaving room for commandLineView at the bottom
+		modalView := lipgloss.Place(m.width, m.height-1, lipgloss.Center, lipgloss.Center, m.codeInputModal.Render())
+		view = lipgloss.JoinVertical(lipgloss.Left, modalView, commandLineView)
+	}
+
+	return view
 }
 
 func (m TUIModel) renderMainContent(modalHeight int) string {
@@ -2356,23 +2377,6 @@ func (m TUIModel) overlayCompletionDialog(baseView, promptView, commandLineView 
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-func (m TUIModel) applyModalOverlays(view string) string {
-	result := view
-
-	// Note: m.modal (BaseModal) is now rendered in composeBaseView above the prompt
-	// Only apply centered overlays for OAuth modals here
-
-	if m.providerModal != nil {
-		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.providerModal.Render())
-	}
-
-	if m.codeInputModal != nil {
-		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.codeInputModal.Render())
-	}
-
-	return result
 }
 
 // renderHomeView renders the home view when no session is active

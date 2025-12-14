@@ -655,7 +655,6 @@ func TestCommandLineBackspaceAtLineStartExitsCommandMode(t *testing.T) {
 	require.NotNil(t, cmd)
 	require.False(t, commandLine.IsInCommandMode())
 	require.Equal(t, "", commandLine.GetCommand())
-	require.Equal(t, 0, commandLine.cursorPos)
 }
 
 // TestTUIModelUpdateFileCompletions tests the file completion functionality with multiple files
@@ -1606,7 +1605,7 @@ func TestYesNoMode(t *testing.T) {
 	_, handled := cl.HandleKey(keyMsg)
 	assert.True(t, handled, "Expected 'y' key to be handled")
 	assert.True(t, cl.IsInYesNoMode(), "Expected to remain in yes/no mode after 'y' (need Enter)")
-	assert.Equal(t, "y", cl.input, "Expected input to be 'y'")
+	assert.Equal(t, "y", cl.yesNoInput, "Expected yesNoInput to be 'y'")
 
 	// Test Enter key to confirm 'y'
 	keyMsg = tea.KeyMsg{Type: tea.KeyEnter}
@@ -1621,7 +1620,7 @@ func TestYesNoMode(t *testing.T) {
 	_, handled = cl.HandleKey(keyMsg)
 	assert.True(t, handled, "Expected 'n' key to be handled")
 	assert.True(t, cl.IsInYesNoMode(), "Expected to remain in yes/no mode after 'n' (need Enter)")
-	assert.Equal(t, "n", cl.input, "Expected input to be 'n'")
+	assert.Equal(t, "n", cl.yesNoInput, "Expected yesNoInput to be 'n'")
 
 	keyMsg = tea.KeyMsg{Type: tea.KeyEnter}
 	cmd, handled = cl.HandleKey(keyMsg)
@@ -1643,11 +1642,11 @@ func TestYesNoMode(t *testing.T) {
 	assert.True(t, cl.IsInYesNoMode(), "Expected to remain in yes/no mode after invalid key")
 
 	// Test backspace clears the answer
-	cl.input = "y"
+	cl.yesNoInput = "y"
 	keyMsg = tea.KeyMsg{Type: tea.KeyBackspace}
 	_, handled = cl.HandleKey(keyMsg)
 	assert.True(t, handled, "Expected backspace to be handled")
-	assert.Equal(t, "", cl.input, "Expected input to be cleared after backspace")
+	assert.Equal(t, "", cl.yesNoInput, "Expected yesNoInput to be cleared after backspace")
 
 	// Test Enter without answer does nothing
 	keyMsg = tea.KeyMsg{Type: tea.KeyEnter}

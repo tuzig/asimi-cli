@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -33,6 +35,11 @@ type showOauthFailed struct{ err string }
 type authCodeEnteredMsg struct {
 	code     string
 	verifier string
+}
+
+type urlCopiedToClipboardMsg struct {
+	url string
+	err error
 }
 
 // Provider represents an authentication provider
@@ -172,14 +179,22 @@ func (m *ProviderSelectionModal) Update(msg tea.Msg) (*ProviderSelectionModal, t
 	return m, nil
 }
 
+// OAuthItemType represents the type of item in the OAuth window
+type OAuthItemType int
+
+const (
+	OAuthItemToken OAuthItemType = iota
+	OAuthItemCopyURL
+)
+
 // CodeInputModal represents a modal for inputting authorization codes
 type CodeInputModal struct {
 	*BaseModal
-	input     string
-	cursor    int
-	authURL   string
-	verifier  string
-	confirmed bool
+	textInput    textinput.Model
+	authURL      string
+	verifier     string
+	confirmed    bool
+	selectedItem OAuthItemType // Which item is currently selected (token input or copy URL)
 }
 
 // NewCodeInputModal creates a new code input modal
@@ -189,43 +204,47 @@ func NewCodeInputModal(authURL, verifier string) *CodeInputModal {
 	// Log the authorization URL for easy copying (especially useful for remote sessions)
 	slog.Debug("Anthropic OAuth Authorization URL", "url", authURL)
 
+	// Create text input using bubbles textinput
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.Placeholder = "Paste authorization code here..."
+	ti.Focus()
+	ti.CharLimit = 500
+	ti.Width = 60
+
 	return &CodeInputModal{
-		BaseModal: baseModal,
-		input:     "",
-		cursor:    0,
-		authURL:   authURL,
-		verifier:  verifier,
-		confirmed: false,
+		BaseModal:    baseModal,
+		textInput:    ti,
+		authURL:      authURL,
+		verifier:     verifier,
+		confirmed:    false,
+		selectedItem: OAuthItemToken, // Start with token input selected
 	}
 }
 
 // Render renders the code input modal
 func (m *CodeInputModal) Render() string {
 	content := "Browser opened for Anthropic OAuth.\n\n"
-	content += "If browser didn't open, visit this URL:\n"
-	content += m.authURL + "\n\n"
 	content += "1. Authorize in the browser\n"
 	content += "2. Copy the authorization code shown after redirect\n"
-	content += "3. Paste it below (format: CODE#STATE)\n\n"
+	content += "3. Paste it below\n\n"
 
-	// Show input field with cursor
-	inputStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		Padding(0, 1).
-		Width(60)
-
-	displayInput := m.input
-	if m.cursor <= len(displayInput) {
-		// Add cursor
-		if m.cursor == len(displayInput) {
-			displayInput += "│"
-		} else {
-			displayInput = displayInput[:m.cursor] + "│" + displayInput[m.cursor:]
-		}
+	// Token input field
+	tokenPrefix := "  "
+	if m.selectedItem == OAuthItemToken {
+		tokenPrefix = "▶ "
 	}
 
-	content += inputStyle.Render(displayInput) + "\n\n"
-	content += "Press Enter to submit, Esc to cancel"
+	content += fmt.Sprintf("%sToken: %s", tokenPrefix, m.textInput.View()) + "\n"
+
+	// Copy URL option
+	copyPrefix := "  "
+	if m.selectedItem == OAuthItemCopyURL {
+		copyPrefix = "▶ "
+	}
+	content += copyPrefix + "Copy Anthropic's url to the clipboard\n\n"
+
+	content += "j/k to navigate | Enter to select/submit | Esc to cancel"
 
 	m.BaseModal.Content = content
 	return m.BaseModal.Render()
@@ -235,70 +254,54 @@ func (m *CodeInputModal) Render() string {
 func (m *CodeInputModal) Update(msg tea.Msg) (*CodeInputModal, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "left", "ctrl+b":
-			if m.cursor > 0 {
-				m.cursor--
+		keyStr := msg.String()
+
+		// Handle navigation between items (j/k or up/down)
+		switch keyStr {
+		case "j", "down":
+			if m.selectedItem == OAuthItemToken {
+				m.selectedItem = OAuthItemCopyURL
+				m.textInput.Blur()
 			}
-		case "right", "ctrl+f":
-			if m.cursor < len(m.input) {
-				m.cursor++
+			return m, nil
+		case "k", "up":
+			if m.selectedItem == OAuthItemCopyURL {
+				m.selectedItem = OAuthItemToken
+				m.textInput.Focus()
 			}
-		case "home", "ctrl+a":
-			m.cursor = 0
-		case "end", "ctrl+e":
-			m.cursor = len(m.input)
-		case "backspace", "ctrl+h":
-			if m.cursor > 0 {
-				m.input = m.input[:m.cursor-1] + m.input[m.cursor:]
-				m.cursor--
-			}
-		case "delete", "ctrl+d":
-			if m.cursor < len(m.input) {
-				m.input = m.input[:m.cursor] + m.input[m.cursor+1:]
-			}
-		case "ctrl+u":
-			// Clear line from beginning to cursor
-			m.input = m.input[m.cursor:]
-			m.cursor = 0
-		case "ctrl+k":
-			// Clear line from cursor to end
-			m.input = m.input[:m.cursor]
+			return m, nil
+		case "esc", "ctrl+c":
+			return m, func() tea.Msg { return modalCancelledMsg{} }
 		case "enter", "ctrl+m":
-			if strings.TrimSpace(m.input) != "" {
+			// Handle enter based on selected item
+			if m.selectedItem == OAuthItemCopyURL {
+				m.selectedItem = OAuthItemToken
+				// Copy URL to clipboard - the actual copy happens in the command
+				url := m.authURL
+				return m, func() tea.Msg {
+					err := clipboard.WriteAll(url)
+					return urlCopiedToClipboardMsg{url: url, err: err}
+				}
+			}
+			// Token input - submit if not empty
+			if strings.TrimSpace(m.textInput.Value()) != "" {
 				m.confirmed = true
 				return m, func() tea.Msg {
 					return authCodeEnteredMsg{
-						code:     strings.TrimSpace(m.input),
+						code:     strings.TrimSpace(m.textInput.Value()),
 						verifier: m.verifier,
 					}
 				}
 			}
-		case "esc", "ctrl+c":
-			return m, func() tea.Msg { return modalCancelledMsg{} }
-		case "ctrl+v":
-			fallthrough
-		default:
-			// Handle typed/pasted text
-			// When pasting, the terminal sends the entire string at once
-			str := msg.String()
+			return m, nil
+		}
 
-			// Remove bracketed paste markers if present
-			// Terminals send \x1b[200~ before and \x1b[201~ after pasted text
-			// But sometimes they appear as just [ and ]
-			if strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]") && len(str) > 2 {
-				// This looks like bracketed paste - strip the brackets
-				str = str[1 : len(str)-1]
-			}
-
-			// Filter out control sequences but allow normal text including multi-char pastes
-			if str != "" && !strings.HasPrefix(str, "ctrl+") && !strings.HasPrefix(str, "alt+") &&
-				!strings.HasPrefix(str, "shift+") && str != "up" && str != "down" &&
-				str != "[" && str != "]" {
-				// This handles both single characters and pasted strings
-				m.input = m.input[:m.cursor] + str + m.input[m.cursor:]
-				m.cursor += len(str)
-			}
+		// Only handle text input keys when token input is selected
+		if m.selectedItem == OAuthItemToken {
+			// Let textinput handle all text editing
+			var cmd tea.Cmd
+			m.textInput, cmd = m.textInput.Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
