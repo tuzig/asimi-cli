@@ -359,17 +359,14 @@ func (s StatusComponent) renderRightSection() string {
 	providerModel := shortenProviderModel(s.Provider, s.Model)
 
 	// Color based on connection status: yellow on startup, green connected, red disconnected/error
-	var color lipgloss.Color
+	style := s.Style.Copy()
 	if s.HasError {
-		color = globalTheme.Error
-	} else if s.Connected {
-		color = lipgloss.Color("#00FF00") // Green for connected
-	} else {
-		color = globalTheme.Warning // Yellow for startup/disconnected
+		style.Foreground(globalTheme.Error)
+	} else if !s.Connected {
+		style.Foreground(globalTheme.Warning)
 	}
 
-	providerStyle := lipgloss.NewStyle().Foreground(color)
-	return providerStyle.Render(s.getStatusIcon() + " " + providerModel)
+	return style.Render(providerModel + " " + s.getStatusIcon())
 }
 
 // truncateString truncates a string to fit within maxWidth, adding "..." if needed
