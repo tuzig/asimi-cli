@@ -381,6 +381,11 @@ Editing commands work in NORMAL mode.
   o        - Open new line below and insert
   O        - Open new line above and insert
 
+## Multi-line Input
+
+  Alt+Enter (Option+Enter on Mac) - Insert newline without submitting
+  Enter    - Submit prompt
+
 ## Deletion
 
   x        - Delete character under cursor
@@ -899,6 +904,11 @@ const helpQuickRef = `# Quick Reference
   dw dd D  - Delete word/line/to-end
   p        - Paste
   u Ctrl+r - Undo/redo
+
+## Input (INSERT mode)
+
+  Enter        - Submit prompt
+  Alt+Enter    - Insert newline (Option+Enter on Mac)
 
 ## Commands (type : then command)
 

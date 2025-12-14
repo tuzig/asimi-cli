@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Alt+Enter (Option+Enter on Mac) now inserts a newline in the prompt instead of submitting (#101)
+
 ### Fixed
 - Login URL can now be copied
 
