@@ -533,7 +533,7 @@ func TestStatusComponent(t *testing.T) {
 	// The new status format includes git branch and provider info
 	require.Contains(t, view, "main")       // Should contain branch name
 	require.Contains(t, view, "test-model") // Should contain provider-model
-	require.Contains(t, view, "✅")          // Should contain connected icon
+	// Connected status is now indicated by green color, not an emoji
 }
 
 func TestSummarizeStatus(t *testing.T) {

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Login URL can now be copied
+- Status line now fills the entire terminal width when sandbox is showing (#100)
+- Resumed sessions now display tool calls exactly as they appeared during the original session (#102)
 
 ## [0.3.0] - 2025-01-27
 
