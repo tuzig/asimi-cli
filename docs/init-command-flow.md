@@ -107,7 +107,7 @@ The AI agent (via the template prompt) is instructed to:
    - Note about container configuration
 
    **.agents/asimi.conf:**
-   - `[run_in_shell]` section at top
+   - `[run_shell_command]` section at top
    - `image_name = "localhost/asimi-sandbox-{{.ProjectName}}:latest"`
    - Ensures project-specific container is used
 
@@ -246,7 +246,7 @@ After init completes, the project has:
 
 **Local Configuration** (`.agents/asimi.conf`):
 ```toml
-[run_in_shell]
+[run_shell_command]
 image_name = "localhost/asimi-sandbox-{project-name}:latest"
 ```
 

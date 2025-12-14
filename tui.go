@@ -1210,7 +1210,7 @@ func (m TUIModel) handleAtKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleShellCommand executes a shell command using the run_in_shell tool
+// handleShellCommand executes a shell command using the run_shell_command tool
 func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 	// Extract the shell command (everything after !)
 	shellCmd := strings.TrimSpace(strings.TrimPrefix(command, "!"))
@@ -1228,10 +1228,10 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 	// Display the command in chat similar to a shell prompt
 	m.content.Chat.AddShellCommandInput(shellCmd)
 
-	// Execute the shell command using the run_in_shell tool
+	// Execute the shell command using the run_shell_command tool
 	return m, func() tea.Msg {
 		ctx := context.Background()
-		tool := RunInShell{config: m.config}
+		tool := RunShellCommand{config: m.config}
 
 		// Create the input JSON
 		inputJSON := fmt.Sprintf(`{"command": %s, "description": "User shell command"}`,
@@ -1249,7 +1249,7 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 		}
 
 		// Parse the JSON result
-		var output RunInShellOutput
+		var output RunShellCommandOutput
 		if parseErr := json.Unmarshal([]byte(result), &output); parseErr != nil {
 			return shellCommandResultMsg{
 				command:  shellCmd,

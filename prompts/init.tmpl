@@ -47,7 +47,7 @@ clean-sandbox:
    - Note about configuring the container image name in .agents/asimi.conf
 
 3. **.agents/asimi.conf** - Project-specific configuration:
-   - Start with the [run_in_shell] section. Add at the top of the section:
+   - Start with the [run_shell_command] section. Add at the top of the section:
      ```toml
      # Container image name to use for sandboxed shell execution
      image_name = "localhost/asimi-sandbox-{{.ProjectName}}:latest"

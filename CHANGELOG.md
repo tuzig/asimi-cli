@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Accepts raw access token format
   - Accepts full JSON format with refresh token and expiry
   - Accepts base64-encoded JSON (useful when copying from macOS Keychain)
-- Configuration option `run_in_shell.timeout_minutes` to set shell command timeout (default: 10 minutes)
+- Configuration option `run_shell_command.timeout_minutes` to set shell command timeout (default: 10 minutes)
 - `:!` command prefix to run shell commands in the container (e.g., `:!uname -a`)
 - `:resume` command to resume previous sessions
 - `:init` command to analyze project and generate infrastructure files (AGENTS.md, Justfile, .agents/asimi.conf, Dockerfile)

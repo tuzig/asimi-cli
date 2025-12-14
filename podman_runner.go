@@ -53,11 +53,11 @@ func newPodmanShellRunner(allowFallback bool, config *Config, repoInfo RepoInfo)
 	imageName := fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
 
 	if config != nil {
-		if config.RunInShell.NoCleanup {
+		if config.RunShellCommand.NoCleanup {
 			noCleanup = true
 		}
-		if config.RunInShell.ImageName != "" {
-			imageName = config.RunInShell.ImageName
+		if config.RunShellCommand.ImageName != "" {
+			imageName = config.RunShellCommand.ImageName
 		}
 	} else {
 		slog.Debug("Config is nil, using image: ", "name", imageName)
@@ -422,7 +422,7 @@ func (r *PodmanShellRunner) createContainer(ctx context.Context) error {
 	return nil
 }
 
-func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
+func (r *PodmanShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
 	slog.Debug("Run called", "command", params.Command)
 
 	// Initialize if needed (connection, container, bash session)
@@ -435,7 +435,7 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (Ru
 		}
 		// TODO: return a more general error for errors not matching:
 		// "failed to create container: no such image: localhost/asimi-shell:latest: image not known"
-		return RunInShellOutput{}, fmt.Errorf("Sandbox container image is missing. Did you run `:init` ?")
+		return RunShellCommandOutput{}, fmt.Errorf("Sandbox container image is missing. Did you run `:init` ?")
 	}
 
 	// Get next command ID
@@ -468,15 +468,15 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (Ru
 		r.outputsMu.Lock()
 		delete(r.outputs, id)
 		r.outputsMu.Unlock()
-		return RunInShellOutput{}, fmt.Errorf("failed to write command to persistent session: %w", err)
+		return RunShellCommandOutput{}, fmt.Errorf("failed to write command to persistent session: %w", err)
 	}
 	slog.Debug("command written to stdin successfully")
 
 	// Get timeout from config or use default of 2 minutes
 	// TODO: move the default to config.go
 	timeoutMinutes := 2
-	if r.config != nil && r.config.RunInShell.TimeoutMinutes > 0 {
-		timeoutMinutes = r.config.RunInShell.TimeoutMinutes
+	if r.config != nil && r.config.RunShellCommand.TimeoutMinutes > 0 {
+		timeoutMinutes = r.config.RunShellCommand.TimeoutMinutes
 	}
 	timeout := time.Duration(timeoutMinutes) * time.Minute
 	slog.Debug("using timeout", "timeout", timeout)
@@ -494,7 +494,7 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (Ru
 
 		// Return timeout as command output, not as a harness error
 		// This allows the LLM to see the timeout and handle it appropriately
-		return RunInShellOutput{
+		return RunShellCommandOutput{
 			Output:   fmt.Sprintf("Command timed out after %v", timeout),
 			ExitCode: "124", // Standard timeout exit code
 		}, nil
@@ -502,7 +502,7 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunInShellInput) (Ru
 
 	// Retrieve output from map
 	r.outputsMu.Lock()
-	output := RunInShellOutput{
+	output := RunShellCommandOutput{
 		Output:   cmd.output,
 		ExitCode: cmd.exitCode,
 	}

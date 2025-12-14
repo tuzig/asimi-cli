@@ -30,14 +30,14 @@ type oauthProviderConfig struct {
 
 // Config represents the application configuration structure
 type Config struct {
-	Storage    StorageConfig    `koanf:"storage"`
-	Logging    LoggingConfig    `koanf:"logging"`
-	UI         UIConfig         `koanf:"ui"`
-	LLM        LLMConfig        `koanf:"llm"`
-	History    HistoryConfig    `koanf:"history"`
-	Session    SessionConfig    `koanf:"session"`
-	Container  ContainerConfig  `koanf:"container"`
-	RunInShell RunInShellConfig `koanf:"run_in_shell"`
+	Storage         StorageConfig         `koanf:"storage"`
+	Logging         LoggingConfig         `koanf:"logging"`
+	UI              UIConfig              `koanf:"ui"`
+	LLM             LLMConfig             `koanf:"llm"`
+	History         HistoryConfig         `koanf:"history"`
+	Session         SessionConfig         `koanf:"session"`
+	Container       ContainerConfig       `koanf:"container"`
+	RunShellCommand RunShellCommandConfig `koanf:"run_shell_command"`
 }
 
 // StorageConfig holds storage configuration
@@ -108,7 +108,7 @@ func defaultConfig() Config {
 			AutoSave:     true,
 			SaveInterval: 300,
 		},
-		RunInShell: RunInShellConfig{
+		RunShellCommand: RunShellCommandConfig{
 			RunOnHost:     []string{`^gh\s`, `^podman\s`},
 			SafeRunOnHost: []string{`^gh\s+(issue|pr)\s+(view|list)`},
 		},
@@ -137,8 +137,8 @@ type ContainerConfig struct {
 	AdditionalMounts []ContainerMount `koanf:"additional_mounts"`
 }
 
-// RunInShellConfig holds configuration for the run_in_shell tool
-type RunInShellConfig struct {
+// RunShellCommandConfig holds configuration for the run_shell_command tool
+type RunShellCommandConfig struct {
 	// RunOnHost is a list of regex patterns for commands that should run on the host
 	// instead of in the container. These commands require user approval before execution.
 	RunOnHost []string `koanf:"run_on_host"`

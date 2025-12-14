@@ -494,13 +494,13 @@ func (t ReplaceTextTool) Format(input, result string, err error) string {
 	return msg.String()
 }
 
-// RunInShell is a tool for running shell commands in a persistent shell
-type RunInShell struct {
+// RunShellCommand is a tool for running shell commands in a persistent shell
+type RunShellCommand struct {
 	config *Config
 }
 
-// RunInShellInput is the input for the RunInShell tool
-type RunInShellInput struct {
+// RunShellCommandInput is the input for the RunShellCommand tool
+type RunShellCommandInput struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
 	// RequestApproval is an internal field (not included in JSON schema) that indicates
@@ -509,14 +509,14 @@ type RunInShellInput struct {
 	RequestApproval bool `json:"-"`
 }
 
-// RunInShellOutput is the output of the RunInShell tool
-type RunInShellOutput struct {
+// RunShellCommandOutput is the output of the RunShellCommand tool
+type RunShellCommandOutput struct {
 	Output   string `json:"stdout"`
 	ExitCode string `json:"exitCode"`
 }
 
 type shellRunner interface {
-	Run(context.Context, RunInShellInput) (RunInShellOutput, error)
+	Run(context.Context, RunShellCommandInput) (RunShellCommandOutput, error)
 	Restart(context.Context) error
 	Close(context.Context) error
 	AllowFallback(bool)
@@ -532,7 +532,7 @@ func newHostShellRunner(config *Config) *HostShellRunner {
 	return &HostShellRunner{config: config}
 }
 
-func (r *HostShellRunner) Run(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
+func (r *HostShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
 	return hostRun(ctx, params)
 }
 
@@ -601,8 +601,8 @@ func isPodmanAvailable(config *Config, repoInfo RepoInfo) bool {
 
 	// Determine the image name
 	imageName := fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
-	if config != nil && config.RunInShell.ImageName != "" {
-		imageName = config.RunInShell.ImageName
+	if config != nil && config.RunShellCommand.ImageName != "" {
+		imageName = config.RunShellCommand.ImageName
 	}
 
 	// Check if podman is available and the image exists using podman CLI
@@ -627,7 +627,7 @@ func initShellRunner(config *Config) {
 	// Auto-detect and assign shell runner
 	if isPodmanAvailable(config, repoInfo) {
 		slog.Info("using podman shell runner")
-		currentShellRunner = newPodmanShellRunner(config.RunInShell.AllowHostFallback, config, repoInfo)
+		currentShellRunner = newPodmanShellRunner(config.RunShellCommand.AllowHostFallback, config, repoInfo)
 	} else {
 		slog.Info("using host shell runner (podman not available or image missing)")
 		currentShellRunner = newHostShellRunner(config)
@@ -651,7 +651,7 @@ func getShellRunner() shellRunner {
 
 // shouldRunOnHost checks if a command matches any of the run_on_host patterns
 // and whether it requires user approval (i.e., not in safe_run_on_host patterns).
-func (t RunInShell) shouldRunOnHost(command string) (runOnHost, requiresApproval bool) {
+func (t RunShellCommand) shouldRunOnHost(command string) (runOnHost, requiresApproval bool) {
 	runOnHost = false
 	requiresApproval = true
 	if t.config == nil {
@@ -663,7 +663,7 @@ func (t RunInShell) shouldRunOnHost(command string) (runOnHost, requiresApproval
 	runner := getShellRunner()
 	if runner != nil && runner.RunnerType() == "podman" {
 		// Check if command matches any run_on_host pattern
-		for _, pattern := range t.config.RunInShell.RunOnHost {
+		for _, pattern := range t.config.RunShellCommand.RunOnHost {
 			matched, _ := regexp.MatchString(pattern, command)
 			if matched {
 				goto onHost
@@ -675,11 +675,11 @@ func (t RunInShell) shouldRunOnHost(command string) (runOnHost, requiresApproval
 onHost:
 	runOnHost = true
 
-	if len(t.config.RunInShell.SafeRunOnHost) == 0 {
+	if len(t.config.RunShellCommand.SafeRunOnHost) == 0 {
 		return
 	}
 	// First check if command matches any safe_run_on_host pattern (no approval needed)
-	for _, pattern := range t.config.RunInShell.SafeRunOnHost {
+	for _, pattern := range t.config.RunShellCommand.SafeRunOnHost {
 		matched, err := regexp.MatchString(pattern, command)
 		if err != nil {
 			// Log warning but continue checking other patterns
@@ -693,22 +693,22 @@ onHost:
 	return
 }
 
-func (t RunInShell) Name() string {
-	return "run_in_shell"
+func (t RunShellCommand) Name() string {
+	return "run_shell_command"
 }
 
-func (t RunInShell) Description() string {
+func (t RunShellCommand) Description() string {
 	return "Executes a shell command in a persistent shell session inside a container. The project root is mounted at `/workspace`, and when in a worktree, the shell automatically navigates to the worktree directory. Current working directory is maintained between commands. The input should be a JSON object with 'command' and optional 'description' fields.\n\nIMPORTANT: Each command runs in an isolated subshell for stability and predictability. This means:\n- Environment variables set with 'export' do NOT persist between commands\n- Directory changes with 'cd' do NOT persist between commands\n- Each command starts fresh in the project/worktree root directory\n- To perform multi-step operations, combine them in a single command using && or ; (e.g., 'cd dir && make && cd ..')\n- Redirects and heredocs work correctly within each command"
 }
 
-func (t RunInShell) Call(ctx context.Context, input string) (string, error) {
-	var params RunInShellInput
+func (t RunShellCommand) Call(ctx context.Context, input string) (string, error) {
+	var params RunShellCommandInput
 	err := json.Unmarshal([]byte(input), &params)
 	if err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	var output RunInShellOutput
+	var output RunShellCommandOutput
 	var runErr error
 
 	// Check if command should run on host based on config patterns
@@ -753,7 +753,7 @@ func (t RunInShell) Call(ctx context.Context, input string) (string, error) {
 	return string(outputBytes), nil
 }
 
-func (t RunInShell) ParameterSchema() map[string]any {
+func (t RunShellCommand) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -770,9 +770,9 @@ func (t RunInShell) ParameterSchema() map[string]any {
 	}
 }
 
-// String formats a run_in_shell tool call for display
-func (t RunInShell) Format(input, result string, err error) string {
-	var params RunInShellInput
+// String formats a run_shell_command tool call for display
+func (t RunShellCommand) Format(input, result string, err error) string {
+	var params RunShellCommandInput
 	json.Unmarshal([]byte(input), &params)
 
 	msg := NewChatMsgBuilder("")
@@ -798,8 +798,8 @@ func (t RunInShell) Format(input, result string, err error) string {
 	return msg.String() + "\n"
 }
 
-func hostRun(ctx context.Context, params RunInShellInput) (RunInShellOutput, error) {
-	var output RunInShellOutput
+func hostRun(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
+	var output RunShellCommandOutput
 
 	// Check if approval is required
 	if params.RequestApproval {
@@ -1023,7 +1023,7 @@ func getAvailableTools(config *Config) []Tool {
 		WriteFileTool{},
 		ListDirectoryTool{},
 		ReplaceTextTool{},
-		RunInShell{config: config},
+		RunShellCommand{config: config},
 		ReadManyFilesTool{},
 	}
 }

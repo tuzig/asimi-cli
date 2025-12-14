@@ -39,7 +39,7 @@ func TestExportShowsToolCalls(t *testing.T) {
 						ID:   "call_123",
 						Type: "function",
 						FunctionCall: &llms.FunctionCall{
-							Name:      "run_in_shell",
+							Name:      "run_shell_command",
 							Arguments: `{"command":"echo 'test output'","description":"Test command"}`,
 						},
 					},
@@ -51,7 +51,7 @@ func TestExportShowsToolCalls(t *testing.T) {
 				Parts: []llms.ContentPart{
 					llms.ToolCallResponse{
 						ToolCallID: "call_123",
-						Name:       "run_in_shell",
+						Name:       "run_shell_command",
 						Content:    `{"stdout":"test output\n","stderr":"","exitCode":"0"}`,
 					},
 				},
@@ -64,7 +64,7 @@ func TestExportShowsToolCalls(t *testing.T) {
 		content := generateFullExportContent(session)
 
 		// Check that tool call is present
-		if !strings.Contains(content, "**Tool Call:** run_in_shell") {
+		if !strings.Contains(content, "**Tool Call:** run_shell_command") {
 			t.Error("Full export should contain tool call")
 		}
 
@@ -93,7 +93,7 @@ func TestExportShowsToolCalls(t *testing.T) {
 		content := generateConversationExportContent(session)
 
 		// Check that tool call is present
-		if !strings.Contains(content, "**Tool Call:** run_in_shell") {
+		if !strings.Contains(content, "**Tool Call:** run_shell_command") {
 			t.Error("Conversation export should contain tool call")
 		}
 
@@ -154,7 +154,7 @@ func TestFormatMessagesNumberingSkipsToolMessages(t *testing.T) {
 					ID:   "call_123",
 					Type: "function",
 					FunctionCall: &llms.FunctionCall{
-						Name:      "run_in_shell",
+						Name:      "run_shell_command",
 						Arguments: `{"command":"echo test"}`,
 					},
 				},
@@ -165,7 +165,7 @@ func TestFormatMessagesNumberingSkipsToolMessages(t *testing.T) {
 			Parts: []llms.ContentPart{
 				llms.ToolCallResponse{
 					ToolCallID: "call_123",
-					Name:       "run_in_shell",
+					Name:       "run_shell_command",
 					Content:    `{"stdout":"test","stderr":"","exitCode":"0"}`,
 				},
 			},
@@ -215,7 +215,7 @@ func TestExportToolResultWithStderr(t *testing.T) {
 						ID:   "call_456",
 						Type: "function",
 						FunctionCall: &llms.FunctionCall{
-							Name:      "run_in_shell",
+							Name:      "run_shell_command",
 							Arguments: `{"command":"ls /nonexistent","description":"Test error"}`,
 						},
 					},
@@ -227,7 +227,7 @@ func TestExportToolResultWithStderr(t *testing.T) {
 				Parts: []llms.ContentPart{
 					llms.ToolCallResponse{
 						ToolCallID: "call_456",
-						Name:       "run_in_shell",
+						Name:       "run_shell_command",
 						Content:    `{"stdout":"","stderr":"ls: cannot access '/nonexistent': No such file or directory\n","exitCode":"2"}`,
 					},
 				},
@@ -352,7 +352,7 @@ func TestFormatToolOutput(t *testing.T) {
 	t.Run("Shell command with stdout in full mode", func(t *testing.T) {
 		var b strings.Builder
 		toolResp := llms.ToolCallResponse{
-			Name:    "run_in_shell",
+			Name:    "run_shell_command",
 			Content: `{"stdout":"output line 1\noutput line 2","stderr":"","exitCode":"0"}`,
 		}
 
@@ -372,7 +372,7 @@ func TestFormatToolOutput(t *testing.T) {
 		// Create output longer than 128 characters
 		longOutput := strings.Repeat("x", 150)
 		toolResp := llms.ToolCallResponse{
-			Name:    "run_in_shell",
+			Name:    "run_shell_command",
 			Content: fmt.Sprintf(`{"stdout":"%s","stderr":"","exitCode":"0"}`, longOutput),
 		}
 
@@ -393,7 +393,7 @@ func TestFormatToolOutput(t *testing.T) {
 	t.Run("Shell command with short output in conversation mode", func(t *testing.T) {
 		var b strings.Builder
 		toolResp := llms.ToolCallResponse{
-			Name:    "run_in_shell",
+			Name:    "run_shell_command",
 			Content: `{"stdout":"short","stderr":"","exitCode":"0"}`,
 		}
 
@@ -411,7 +411,7 @@ func TestFormatToolOutput(t *testing.T) {
 	t.Run("Shell command with stderr", func(t *testing.T) {
 		var b strings.Builder
 		toolResp := llms.ToolCallResponse{
-			Name:    "run_in_shell",
+			Name:    "run_shell_command",
 			Content: `{"stdout":"","stderr":"error message","exitCode":"1"}`,
 		}
 
@@ -452,7 +452,7 @@ func TestFormatToolCallWithResult(t *testing.T) {
 			ID:   "call_123",
 			Type: "function",
 			FunctionCall: &llms.FunctionCall{
-				Name:      "run_in_shell",
+				Name:      "run_shell_command",
 				Arguments: `{"command":"echo test","description":"Test"}`,
 			},
 		}
@@ -461,7 +461,7 @@ func TestFormatToolCallWithResult(t *testing.T) {
 		formatToolCallWithResult(&b, toolCall, toolResults, true)
 		result := b.String()
 
-		if !strings.Contains(result, "**Tool Call:** run_in_shell") {
+		if !strings.Contains(result, "**Tool Call:** run_shell_command") {
 			t.Error("Should contain tool name")
 		}
 		if !strings.Contains(result, "**Input:**") {

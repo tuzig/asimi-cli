@@ -80,7 +80,7 @@ The sandbox can be configured in `.agents/asimi.conf` (project-level) or `~/.con
 
 
 ```toml
-[run_in_shell]
+[run_shell_command]
 # Regex patterns for commands to run on the host (requires user approval)
 run_on_host = ['^gh\s', '^podman\s']
 # Regex patterns for commands to run on the host WITHOUT approval (safe, read-only)

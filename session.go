@@ -117,7 +117,7 @@ var sessPromptPartials = map[string]any{
 	"Grep":          "grep",
 	"Glob":          "glob",
 	"Edit":          "replace_text",
-	"Shell":         "run_in_shell",
+	"Shell":         "run_shell_command",
 	"ReadManyFiles": "read_many_files",
 	"Memory":        "",
 	"LS":            "list_files",
