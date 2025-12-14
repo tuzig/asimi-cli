@@ -204,84 +204,52 @@ func (s *StatusComponent) SetWidth(width int) {
 
 // View renders the status component
 func (s StatusComponent) View() string {
-	// Left section: 🪾<branch_name>
+	// Left section: mode + branch info
 	leftSection := s.renderLeftSection()
 
-	// Middle section: <git status>
+	// Middle section: token usage + wait time
 	middleSection := s.renderMiddleSection()
 
-	// Right section: <provider status icon><provider-model>
+	// Right section: provider/model with status color
 	rightSection := s.renderRightSection()
 
-	// Calculate available space
+	// Calculate visual widths using lipgloss (handles ANSI codes and unicode)
 	leftWidth := lipgloss.Width(leftSection)
-	rightWidth := lipgloss.Width(rightSection)
 	middleWidth := lipgloss.Width(middleSection)
+	rightWidth := lipgloss.Width(rightSection)
 
 	// Calculate spacing
-	// The style has Width() set, so lipgloss will handle padding internally
-	// We need to account for the horizontal padding (1 left + 1 right = 2 chars)
+	// Layout: [left] ... [middle] ... [right]
 	totalContentWidth := leftWidth + middleWidth + rightWidth
-	availableSpace := s.Width
+	totalSpacing := s.Width - totalContentWidth
 
-	if totalContentWidth > availableSpace {
-		// Truncate if content is too long
-		if leftWidth+rightWidth > availableSpace {
-			// Truncate right section first
-			maxRightWidth := availableSpace - leftWidth - 3 // Leave space for "..."
-			if maxRightWidth > 0 {
-				rightSection = s.truncateString(rightSection, maxRightWidth)
-			} else {
-				rightSection = ""
-			}
-		}
-		middleSection = "" // Remove middle section if still too long
+	if totalSpacing < 2 {
+		// Not enough space - just concatenate with single spaces
+		return s.Style.Render(leftSection + " " + middleSection + " " + rightSection)
 	}
 
-	// Recalculate after potential truncation
-	leftWidth = lipgloss.Width(leftSection)
-	rightWidth = lipgloss.Width(rightSection)
-	middleWidth = lipgloss.Width(middleSection)
+	// Distribute spacing: try to center the middle section
+	// Ideal middle position is at (s.Width / 2) - (middleWidth / 2)
+	idealMiddleStart := (s.Width - middleWidth) / 2
 
-	// Create the final status line
-	var statusLine string
-	if middleSection != "" {
-		// Center the middle section relative to the entire screen width
-		// The middle section's center should be at availableSpace/2
-		middleStart := (availableSpace - middleWidth) / 2
-
-		// Calculate spacing after left section and before right section
-		leftSpacing := middleStart - leftWidth
-		rightSpacing := availableSpace - middleStart - middleWidth - rightWidth
-
-		// Ensure minimum spacing
-		if leftSpacing < 1 {
-			leftSpacing = 1
-		}
-		if rightSpacing < 1 {
-			rightSpacing = 1
-		}
-
-		// Check if everything fits
-		totalNeeded := leftWidth + leftSpacing + middleWidth + rightSpacing + rightWidth
-		if totalNeeded <= availableSpace {
-			statusLine = leftSection + strings.Repeat(" ", leftSpacing) + middleSection + strings.Repeat(" ", rightSpacing) + rightSection
-		} else {
-			// Fall back to simple spacing if centering doesn't fit
-			statusLine = leftSection + " " + middleSection + " " + rightSection
-		}
-	} else {
-		// Just left and right sections
-		spacing := availableSpace - leftWidth - rightWidth
-		if spacing < 0 {
-			spacing = 0
-		}
-		statusLine = leftSection + strings.Repeat(" ", spacing) + rightSection
+	// Left padding (space between left section and middle)
+	leftPadding := idealMiddleStart - leftWidth
+	if leftPadding < 1 {
+		leftPadding = 1
 	}
 
-	return s.Style.
-		Width(s.Width).
-		Render(statusLine)
+	// Right padding (space between middle and right section)
+	rightPadding := s.Width - leftWidth - leftPadding - middleWidth - rightWidth
+	if rightPadding < 1 {
+		rightPadding = 1
+	}
+
+	// Build the final string
+	result := leftSection + strings.Repeat(" ", leftPadding) +
+		middleSection + strings.Repeat(" ", rightPadding) +
+		rightSection
+
+	return s.Style.Render(result)
 }
 
 func (s *StatusComponent) SetMode(mode string) {
@@ -388,12 +356,20 @@ func (s StatusComponent) renderMiddleSection() string {
 
 // renderRightSection renders the right section with provider info
 func (s StatusComponent) renderRightSection() string {
-
 	providerModel := shortenProviderModel(s.Provider, s.Model)
 
-	providerStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
+	// Color based on connection status: yellow on startup, green connected, red disconnected/error
+	var color lipgloss.Color
+	if s.HasError {
+		color = globalTheme.Error
+	} else if s.Connected {
+		color = lipgloss.Color("#00FF00") // Green for connected
+	} else {
+		color = globalTheme.Warning // Yellow for startup/disconnected
+	}
 
-	return fmt.Sprintf("%s %s ", providerStyle.Render(providerModel), s.getStatusIcon())
+	providerStyle := lipgloss.NewStyle().Foreground(color)
+	return providerStyle.Render(s.getStatusIcon() + " " + providerModel)
 }
 
 // truncateString truncates a string to fit within maxWidth, adding "..." if needed
