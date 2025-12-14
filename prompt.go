@@ -517,6 +517,11 @@ func (p PromptComponent) Update(msg interface{}) (PromptComponent, tea.Cmd) {
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		if p.IsViInsertMode() || p.IsViNormalMode() {
+			// Shift+Enter inserts a newline instead of submitting
+			if keyMsg.Type == tea.KeyEnter && keyMsg.Alt {
+				p.TextArea.InsertString("\n")
+				return p, nil
+			}
 			if keyMsg.Type == tea.KeyEnter && !keyMsg.Alt {
 				promptContent := strings.TrimSpace(p.TextArea.Value())
 				if promptContent != "" {
