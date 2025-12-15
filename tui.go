@@ -1459,9 +1459,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refreshGitInfo()
 
 	case streamErrorMsg:
+		fullError := fmt.Sprintf("Model Error: %v", msg.err)
 		m.content.Chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.err))
 		slog.Error("streamErrorMsg", "error", msg.err)
-		m.commandLine.AddToast(fmt.Sprintf("Model Error: %v", msg.err), "error", time.Second*5)
+		// Add full error message to chat for visibility
+		m.content.Chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
+		// Toast will be automatically truncated by commandline component if needed
+		m.commandLine.AddToast(fullError, "error", time.Second*5)
 		m.status.SetError() // Update status icon to show error
 		m.stopStreaming()
 		refreshGitInfo()
