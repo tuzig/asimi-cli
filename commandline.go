@@ -239,7 +239,15 @@ func (cl *CommandLineComponent) View() string {
 		toast := cl.toasts[len(cl.toasts)-1]
 		style := cl.toastStyle
 
-		contentWidth := lipgloss.Width(toast.Message)
+		// Truncate message if it's too long for the available width
+		// Account for padding (2 chars) when calculating available width
+		message := toast.Message
+		availableWidth := cl.width - 2
+		if availableWidth > 0 && len([]rune(message)) > availableWidth {
+			message = TruncateMiddle(message, availableWidth)
+		}
+
+		contentWidth := lipgloss.Width(message)
 		frameWidth, _ := style.GetFrameSize()
 		maxWidth := style.GetMaxWidth()
 		if maxWidth > 0 && contentWidth+frameWidth > maxWidth {
@@ -257,7 +265,7 @@ func (cl *CommandLineComponent) View() string {
 			style = style.Background(globalTheme.Error)
 		}
 
-		return style.Render(toast.Message)
+		return style.Render(message)
 	}
 
 	// Default: Show blank line
