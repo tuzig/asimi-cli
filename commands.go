@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
-	"text/template"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -313,154 +311,8 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.session == nil {
-		return func() tea.Msg {
-			return showSystemMsg("No model connection. Use :models to configure a model and start chatting.")
-		}
-	}
-
-	return func() tea.Msg {
-		// Check for uncommitted changes before proceeding
-		if hasUncommittedChanges() {
-			return showSystemMsg("init failed: Please commit or stash your changes and run again")
-		}
-
-		// Collect messages to display after clearing history
-		var initialMessages []string
-
-		// Check if user wants to clear and regenerate everything
-		clearMode := len(args) > 0 && args[0] == "clear"
-
-		// Ensure .agents directory exists
-		if err := os.MkdirAll(".agents/sandbox", 0o755); err != nil {
-			return showSystemMsg(fmt.Sprintf("Error creating .agents directory: %v", err))
-		}
-
-		// In clear mode, remove all infrastructure files first
-		if clearMode {
-			filesToRemove := []string{
-				"AGENTS.md",
-				"Justfile",
-				".agents/asimi.conf",
-				".agents/sandbox/bashrc",
-				".agents/sandbox/Dockerfile",
-			}
-			for _, file := range filesToRemove {
-				os.Remove(file) // Ignore errors - file might not exist
-			}
-			initialMessages = append(initialMessages, "Cleared existing infrastructure files. Starting fresh initialization...\n")
-		}
-
-		// Always write embedded files (asimi.conf and bashrc)
-		// These are simple files we can provide directly
-		projectConfigPath := ".agents/asimi.conf"
-		if _, err := os.Stat(projectConfigPath); os.IsNotExist(err) || clearMode {
-			if err := os.WriteFile(projectConfigPath, []byte(defaultConfContent), 0o644); err != nil {
-				return showSystemMsg(fmt.Sprintf("Error writing project config file %s: %v", projectConfigPath, err))
-			}
-			if !clearMode {
-				initialMessages = append(initialMessages, fmt.Sprintf("Initialized %s from embedded default\n", projectConfigPath))
-			}
-		}
-
-		bashrcPath := ".agents/sandbox/bashrc"
-		if _, err := os.Stat(bashrcPath); os.IsNotExist(err) || clearMode {
-			if err := os.WriteFile(bashrcPath, []byte(sandboxBashrc), 0o644); err != nil {
-				return showSystemMsg(fmt.Sprintf("Error writing bashrc file %s: %v", bashrcPath, err))
-			}
-			if !clearMode {
-				initialMessages = append(initialMessages, fmt.Sprintf("Initialized %s from embedded default\n", bashrcPath))
-			}
-		}
-
-		// Determine the agents file name - use CLAUDE.md if it exists, otherwise AGENTS.md
-		agentsFile := "AGENTS.md"
-		if _, err := os.Stat("CLAUDE.md"); err == nil {
-			agentsFile = "CLAUDE.md"
-			// Update the config file to set agents_file
-			if err := SetProjectConfig("session", "agents_file", agentsFile); err != nil {
-				initialMessages = append(initialMessages, fmt.Sprintf("Warning: Could not update config with agents_file: %v\n", err))
-			} else {
-				initialMessages = append(initialMessages, fmt.Sprintf("Detected %s, configured as agents file\n", agentsFile))
-			}
-		}
-
-		// Check for missing infrastructure files (agents file, Justfile, Dockerfile)
-		missingFiles := checkMissingInfraFiles(agentsFile)
-
-		if len(missingFiles) == 0 && !clearMode {
-			msg := NewChatMsgBuilder(systemPrefix)
-			msg.WriteLn("All Asimi's files already exist:")
-			msg.WriteLnf("✓ %s", agentsFile)
-			msg.WriteLn("✓ Justfile")
-			msg.WriteLn("✓ .agents/sandbox/Dockerfile")
-			msg.WriteLn("✓ .agents/sandbox/bashrc")
-			msg.WriteLn("✓ .agents/asimi.conf")
-			msg.WriteLn()
-			msg.WriteLn("Use `:init clear` to remove and regenerate them.")
-			return showContextMsg{content: msg.String()}
-		}
-
-		// Show missing files message (if not in clear mode)
-		if len(missingFiles) > 0 && !clearMode {
-			msg := NewChatMsgBuilder(systemPrefix)
-			msg.WriteLn("Missing infrastructure files detected:")
-			for _, file := range missingFiles {
-				msg.WriteLnf("✗ %s", file)
-			}
-			msg.WriteLn()
-			msg.WriteLn("Starting initialization process. Brace yourself for many approvals as there's no sandbox yet.")
-			initialMessages = append(initialMessages, msg.String())
-		}
-
-		// Get the project slug from RepoInfo
-		slug := GetRepoInfo().Slug
-
-		// Extract just the project name from the slug (last part after /)
-		// For "owner/repo" or "host/owner/repo", we want just "repo"
-		projectName := slug
-		if idx := strings.LastIndex(slug, "/"); idx >= 0 {
-			projectName = slug[idx+1:]
-		}
-
-		// Prepare template data
-		templateData := InitTemplateData{
-			ProjectName:  projectName,
-			ProjectSlug:  slug,
-			MissingFiles: missingFiles,
-			ClearMode:    clearMode,
-			AgentsFile:   agentsFile,
-		}
-
-		// Parse and execute the template
-		tmpl, err := template.New("init").Parse(initializePrompt)
-		if err != nil {
-			return showSystemMsg(fmt.Sprintf("Error parsing initialization template: %v", err))
-		}
-
-		var initPrompt bytes.Buffer
-		if err := tmpl.Execute(&initPrompt, templateData); err != nil {
-			return showSystemMsg(fmt.Sprintf("Error executing initialization template: %v", err))
-		}
-
-		// Capture the original shell runner before switching to host mode
-		// This will be the container runner that we'll use for running tests
-		shellRunnerMu.RLock()
-		originalRunner := currentShellRunner
-		shellRunnerMu.RUnlock()
-
-		// Send the initialization prompt to the session with guardrails
-		// Use host shell runner for init to avoid container issues
-		return startConversationMsg{
-			prompt:          initPrompt.String(),
-			clearHistory:    true,
-			initialMessages: initialMessages,
-			onStreamComplete: func(model *TUIModel) tea.Cmd {
-				return verifyInit(model, originalRunner)
-			},
-			RunOnHost: true,
-		}
-	}
+	// Use the new workflow-based implementation
+	return handleInitCommandWithWorkflow(model, args)
 }
 
 // startConversationMsg is sent to start a new conversation with optional guardrails

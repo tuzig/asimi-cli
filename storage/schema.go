@@ -7,7 +7,7 @@ import (
 )
 
 // Schema version for migrations
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // SessionConfig holds session persistence configuration
 type SessionConfig struct {
@@ -183,11 +183,85 @@ CREATE TABLE IF NOT EXISTS command_history (
 
 CREATE INDEX IF NOT EXISTS idx_command_history_branch ON command_history(branch_id, timestamp DESC);
 
+-- Workflows table (added in schema version 2)
+CREATE TABLE IF NOT EXISTS workflows (
+    id TEXT PRIMARY KEY,
+    branch_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    current_step INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'pending',
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflows_branch ON workflows(branch_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflows_state ON workflows(state);
+
+-- Workflow steps table (added in schema version 2)
+CREATE TABLE IF NOT EXISTS workflow_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workflow_id TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT '',
+    prompt_template TEXT NOT NULL DEFAULT '',
+    prepare_data TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(workflow_id, step_index),
+    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_steps_workflow ON workflow_steps(workflow_id, step_index);
+
 -- Schema version table
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at INTEGER NOT NULL
 );
 
-INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (1, unixepoch());
+INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (2, unixepoch());
+`
+
+// Migration1to2 contains the SQL to migrate from schema version 1 to 2
+const Migration1to2 = `
+-- Add workflows table
+CREATE TABLE IF NOT EXISTS workflows (
+    id TEXT PRIMARY KEY,
+    branch_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    current_step INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'pending',
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflows_branch ON workflows(branch_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflows_state ON workflows(state);
+
+-- Add workflow steps table
+CREATE TABLE IF NOT EXISTS workflow_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workflow_id TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT '',
+    prompt_template TEXT NOT NULL DEFAULT '',
+    prepare_data TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(workflow_id, step_index),
+    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_steps_workflow ON workflow_steps(workflow_id, step_index);
+
+-- Update schema version
+INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (2, unixepoch());
 `

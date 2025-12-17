@@ -165,24 +165,11 @@ func TestHandleInitCommand(t *testing.T) {
 		cmd := handleInitCommand(mockTUI, []string{})
 		msg := cmd()
 
-		// Check that the message is a startConversationMsg
-		initMsg, ok := msg.(startConversationMsg)
-		require.True(t, ok, "Expected startConversationMsg")
-		require.NotEmpty(t, initMsg.prompt)
-		require.True(t, initMsg.clearHistory)
-		require.NotNil(t, initMsg.onStreamComplete)
-		// initialMessages should contain the status messages
-		require.NotEmpty(t, initMsg.initialMessages, "Expected initialMessages to contain status messages")
-
-		// Check that .agents/asimi.conf was created
-		projectConfigPath := ".agents/asimi.conf"
-		_, err := os.Stat(projectConfigPath)
-		require.NoError(t, err, "Project config file should be created")
-
-		// Check that the content matches the embedded default
-		content, err := os.ReadFile(projectConfigPath)
-		require.NoError(t, err)
-		require.Equal(t, defaultConfContent, string(content))
+		// Check that the message is a startInitWorkflowMsg (new workflow-based implementation)
+		initMsg, ok := msg.(startInitWorkflowMsg)
+		require.True(t, ok, "Expected startInitWorkflowMsg, got %T", msg)
+		require.Equal(t, "AGENTS.md", initMsg.agentsFile)
+		require.False(t, initMsg.clearMode)
 
 		// Clean up for the next test
 		err = os.RemoveAll(".agents")
@@ -197,17 +184,11 @@ func TestHandleInitCommand(t *testing.T) {
 		cmd := handleInitCommand(mockTUI, []string{})
 		msg := cmd()
 
-		// Check that the message is a startConversationMsg
-		initMsg, ok := msg.(startConversationMsg)
-		require.True(t, ok, "Expected startConversationMsg")
-		require.NotEmpty(t, initMsg.prompt)
-		require.True(t, initMsg.clearHistory)
-		require.NotNil(t, initMsg.onStreamComplete)
-
-		// Check that .agents/asimi.conf was created
-		projectConfigPath := ".agents/asimi.conf"
-		_, err = os.Stat(projectConfigPath)
-		require.NoError(t, err, "Project config file should be created")
+		// Check that the message is a startInitWorkflowMsg
+		initMsg, ok := msg.(startInitWorkflowMsg)
+		require.True(t, ok, "Expected startInitWorkflowMsg, got %T", msg)
+		require.Equal(t, "AGENTS.md", initMsg.agentsFile)
+		require.False(t, initMsg.clearMode)
 
 		// Clean up for the next test
 		err = os.Remove("Justfile")
@@ -237,7 +218,7 @@ func TestHandleInitCommand(t *testing.T) {
 
 		// Check that the message is a showContextMsg
 		contextMsg, ok := msg.(showContextMsg)
-		require.True(t, ok, "Expected showContextMsg")
+		require.True(t, ok, "Expected showContextMsg, got %T", msg)
 		require.Contains(t, contextMsg.content, "files already exist")
 
 		// Clean up for the next test
@@ -269,31 +250,18 @@ func TestHandleInitCommand(t *testing.T) {
 		cmd := handleInitCommand(mockTUI, []string{"clear"})
 		msg := cmd()
 
-		// Check that the message is a startConversationMsg
-		initMsg, ok := msg.(startConversationMsg)
-		require.True(t, ok, "Expected startConversationMsg")
-		require.Contains(t, initMsg.prompt, "Clear mode enabled")
-
-		// Check that files were removed and then recreated (embedded ones)
-		// .agents/asimi.conf should be recreated with embedded content
-		projectConfigPath := ".agents/asimi.conf"
-		content, err := os.ReadFile(projectConfigPath)
-		require.NoError(t, err)
-		require.Equal(t, defaultConfContent, string(content))
-
-		// bashrc should be recreated with embedded content
-		bashrcPath := ".agents/sandbox/bashrc"
-		bashrcContent, err := os.ReadFile(bashrcPath)
-		require.NoError(t, err)
-		require.Equal(t, sandboxBashrc, string(bashrcContent))
-
-		// Other files should be removed (AGENTS.md, Justfile, Dockerfile)
-		_, err = os.Stat("AGENTS.md")
-		require.True(t, os.IsNotExist(err), "AGENTS.md should be removed in clear mode")
+		// Check that the message is a startInitWorkflowMsg with clearMode=true
+		initMsg, ok := msg.(startInitWorkflowMsg)
+		require.True(t, ok, "Expected startInitWorkflowMsg, got %T", msg)
+		require.True(t, initMsg.clearMode, "Expected clearMode to be true")
+		require.Equal(t, "AGENTS.md", initMsg.agentsFile)
 
 		// Clean up
 		err = os.RemoveAll(".agents")
 		require.NoError(t, err)
+		for _, file := range files {
+			os.Remove(file) // Ignore errors
+		}
 	})
 }
 

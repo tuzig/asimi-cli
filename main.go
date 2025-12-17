@@ -31,7 +31,7 @@ import (
 )
 
 // Update the version as part of the version release process
-var version = "0.3.2"
+var version = "0.4.0-beta2"
 
 var program *tea.Program
 

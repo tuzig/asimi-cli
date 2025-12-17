@@ -2003,6 +2003,33 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prompt.Focus()
 		return m, nil
 
+	// Init workflow messages
+	case startInitWorkflowMsg:
+		// Start the init workflow asynchronously
+		m.sessionActive = true
+		return m, runInitWorkflowAsync(&m, msg.clearMode, msg.agentsFile)
+
+	case initWorkflowProgressMsg:
+		// Update UI with workflow progress
+		m.content.Chat.AddMessage(msg.message)
+		return m, nil
+
+	case initWorkflowCompleteMsg:
+		// Workflow completed
+		if msg.success {
+			m.content.Chat.AddMessage(msg.message)
+			m.commandLine.AddToast("Initialization complete!", "success", 3*time.Second)
+		}
+		refreshGitInfo()
+		return m, nil
+
+	case initWorkflowErrorMsg:
+		// Workflow failed
+		slog.Error("Init workflow failed", "error", msg.err)
+		m.content.Chat.AddMessage(fmt.Sprintf("%s❌ Initialization failed: %v", systemPrefix, msg.err))
+		m.commandLine.AddToast("Initialization failed", "error", 5*time.Second)
+		return m, nil
+
 	}
 
 	// Restore focus to prompt if no modals are active and view is chat
