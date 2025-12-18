@@ -142,20 +142,24 @@ func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
 }
 
 // NewChatComponentWithStatus creates a new chat component with a status callback
+// newSessionMessage builds the initial "New session at" message with sandbox status
+func newSessionMessage() string {
+	info := getShellRunnerInfo()
+	msg := NewChatMsgBuilder(systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST"))
+	msg.WriteLn()
+
+	if info.Type == "host" {
+		msg.WriteLn("please run `just build-sandbox` or `:init` and start a new session")
+		msg.WriteLn("shell is running on the host")
+	} else {
+		msg.WriteLn("shell runs in a sandbox")
+	}
+
+	return msg.String()
+}
+
 func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStatus func() string) *ChatComponent {
 	vp := viewport.New(width, height)
-
-	// Display sandbox type
-	info := getShellRunnerInfo()
-	ms := systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST")
-	ms += "\n"
-	if info.Type == "host" {
-		ms += treeMidPrefix + "please run `just build-sandbox` or `:init` if missing\n"
-		ms += treeFinalPrefix + "shell is running on the host"
-	} else {
-		ms += treeFinalPrefix + "shell runs in a sandbox"
-	}
-	vp.SetContent(ms)
 
 	var renderer *glamour.TermRenderer
 	if markdownEnabled {
@@ -169,9 +173,8 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 		slog.Debug("[TIMING] Markdown renderer initialized", "load time", time.Since(rendererStart), "err", err)
 	}
 
-	ret := ChatComponent{
+	ret := &ChatComponent{
 		Viewport:             vp,
-		Messages:             []string{ms},
 		Width:                width,
 		Height:               height,
 		AutoScroll:           true,  // Enable auto-scroll by default
@@ -188,22 +191,17 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 			Width(width).
 			Height(height),
 	}
-	return &ret
+
+	// Initialize with the new session message
+	ret.Clear()
+
+	return ret
 }
 
 // Clear resets the chat component to its initial state without recreating the markdown renderer.
 // This is much faster than creating a new ChatComponent when you just need to clear the chat.
 func (c *ChatComponent) Clear() {
-	// Display sandbox type
-	info := getShellRunnerInfo()
-	ms := systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST")
-	ms += "\n"
-	if info.Type == "host" {
-		ms += treeMidPrefix + "please run `just build-sandbox` or `:init` if missing\n"
-		ms += treeFinalPrefix + "shell is running on the host"
-	} else {
-		ms += treeFinalPrefix + "shell runs in a sandbox"
-	}
+	ms := newSessionMessage()
 
 	c.Messages = []string{ms}
 	c.AutoScroll = true

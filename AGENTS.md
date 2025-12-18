@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Language
-Go 1.25+
+The project is written in Go 1.25+
 
 ## Build Commands
 ```bash
