@@ -412,15 +412,15 @@ func (s *Session) prepareUserMessage(prompt string) {
 	s.updateTokenCounts()
 }
 
-// isOAuthTokenExpiredError checks if an error is due to an expired OAuth token
+// isOAuthTokenExpiredError checks if an error is due to an expired or revoked OAuth token
 func isOAuthTokenExpiredError(err error) bool {
 	if err == nil {
 		return false
 	}
 	errStr := strings.ToLower(err.Error())
-	// Check for OAuth-related expiration errors
-	return (strings.Contains(errStr, "oauth") || strings.Contains(errStr, "401")) &&
-		strings.Contains(errStr, "expire")
+	// Check for OAuth-related expiration or revocation errors
+	return (strings.Contains(errStr, "oauth") || strings.Contains(errStr, "401") || strings.Contains(errStr, "403")) &&
+		(strings.Contains(errStr, "expire") || strings.Contains(errStr, "revoke"))
 }
 
 func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ctx context.Context, chunk []byte) error) (*llms.ContentChoice, error) {
