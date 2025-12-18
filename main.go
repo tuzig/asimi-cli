@@ -9,12 +9,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -131,11 +133,37 @@ func runInteractiveMode() error {
 	app := fx.New(fxOptions...)
 
 	// Start the fx app (runs OnStart hooks for async initialization)
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	if err := app.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start fx app: %w", err)
 	}
-	defer app.Stop(ctx)
+
+	// Set up signal handling for graceful shutdown
+	// This ensures containers are cleaned up even if the process is killed
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		slog.Info("received signal, initiating graceful shutdown", "signal", sig)
+		// Cancel context to signal shutdown
+		cancel()
+		// Stop the fx app to trigger cleanup hooks (including container removal)
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stopCancel()
+		if err := app.Stop(stopCtx); err != nil {
+			slog.Error("error during graceful shutdown", "error", err)
+		}
+		// Send quit to TUI if it's running
+		if program != nil {
+			program.Send(tea.Quit())
+		}
+	}()
+	defer func() {
+		signal.Stop(sigChan)
+		app.Stop(ctx)
+	}()
 
 	slog.Debug("[TIMING] fx app initialized", "duration", time.Since(startTime))
 
