@@ -1880,7 +1880,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case startConversationMsg:
 		// Handle starting a new conversation (used by init, new, and other commands)
-		slog.Debug("got startConversationMsg", "RunOnHost", msg.RunOnHost)
+		slog.Debug("got startConversationMsg", "RunOnHost", msg.RunOnHost, "tryUpgradeToSandbox", msg.tryUpgradeToSandbox)
 
 		if m.session == nil {
 			m.commandLine.AddToast("No LLM session available", "error", 4000)
@@ -1928,6 +1928,15 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Store the callback for later use
 		m.streamCompleteCallback = msg.onStreamComplete
 
+		// Try to upgrade from host to sandbox if requested (async)
+		var upgradeCmd tea.Cmd
+		if msg.tryUpgradeToSandbox {
+			upgradeCmd = func() tea.Msg {
+				upgraded := tryUpgradeToSandbox(m.config)
+				return sandboxUpgradeMsg{upgraded: upgraded}
+			}
+		}
+
 		// Add initialization message if this is an init command (has a prompt and callback)
 		// If there's a prompt, send it to the AI
 		if msg.prompt != "" {
@@ -1939,7 +1948,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				go func() {
 					m.session.AskStream(ctx, msg.prompt)
 				}()
-				return m, waitCmd
+				return m, tea.Batch(waitCmd, upgradeCmd)
 			} else {
 				go func() {
 					m.session.AskStream(ctx, msg.prompt)
@@ -1952,6 +1961,22 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if upgradeCmd != nil {
+			return m, upgradeCmd
+		}
+		return m, nil
+
+	case sandboxUpgradeMsg:
+		// Handle sandbox upgrade result
+		if msg.upgraded {
+			slog.Info("successfully upgraded from host to sandbox runner")
+			m.commandLine.AddToast("🐳 Sandbox now available", "info", 3000)
+			// Refresh the first message to show the updated sandbox status
+			if len(m.content.Chat.Messages) > 0 {
+				m.content.Chat.Messages[0] = newSessionMessage()
+				m.content.Chat.UpdateContent()
+			}
+		}
 		return m, nil
 
 	case compactConversationMsg:
