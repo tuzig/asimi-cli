@@ -246,6 +246,26 @@ Navigation and command mode. Use this to move around and execute commands.
     - Enter INSERT mode with i, a, o, etc.
     - Show quick help with ?
 
+## SCROLL Mode
+
+Scroll through chat history without affecting the prompt.
+
+  Status: -- SCROLL --
+  Border: Cyan
+
+  Enter SCROLL mode:
+    Ctrl+b       - From INSERT or NORMAL mode
+    Mouse wheel  - Scrolling up automatically enters SCROLL mode
+
+  In SCROLL mode:
+    j/k or ↓/↑   - Scroll line by line
+    Ctrl+d       - Scroll down half page
+    Ctrl+u       - Scroll up half page
+    Ctrl+f       - Scroll down full page
+    Ctrl+b       - Scroll up full page
+    G            - Go to bottom
+    ESC or i     - Exit SCROLL mode, return to INSERT
+
 ## COMMAND-LINE Mode
 
 Execute commands at the bottom of the screen.
@@ -351,10 +371,20 @@ Navigation commands work in NORMAL mode.
   k        - Previous prompt (in NORMAL mode, when on first line)
   j        - Next prompt (in NORMAL mode, when on last line)
 
-## Chat Scrolling
+## Chat Scrolling (SCROLL Mode)
 
-  Mouse wheel      - Scroll chat history
-  Touch gestures   - Scroll on touch devices
+  Ctrl+b       - Enter SCROLL mode (from INSERT/NORMAL)
+  Mouse wheel  - Scroll chat history (auto-enters SCROLL mode)
+  Touch gestures - Scroll on touch devices
+
+  In SCROLL mode:
+    j/k or ↓/↑   - Scroll line by line
+    Ctrl+d       - Scroll down half page
+    Ctrl+u       - Scroll up half page
+    Ctrl+f       - Scroll down full page
+    Ctrl+b       - Scroll up full page
+    G            - Go to bottom
+    ESC or i     - Exit SCROLL mode, return to INSERT
 
 ## Help Navigation
 

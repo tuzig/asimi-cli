@@ -182,9 +182,12 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	model.content.Chat.Clear()
 
 	// Use the generic startConversationMsg to reset the session
+	// The tryUpgradeToSandbox flag tells the handler to attempt upgrading
+	// from host to sandbox runner asynchronously
 	return func() tea.Msg {
 		return startConversationMsg{
-			clearHistory: true,
+			clearHistory:        true,
+			tryUpgradeToSandbox: true,
 		}
 	}
 }
@@ -317,11 +320,17 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 
 // startConversationMsg is sent to start a new conversation with optional guardrails
 type startConversationMsg struct {
-	prompt           string
-	clearHistory     bool
-	initialMessages  []string                // Messages to display after clearing history (before streaming starts)
-	onStreamComplete func(*TUIModel) tea.Cmd // Optional guardrail function to run after stream completes
-	RunOnHost        bool                    // When true, use host shell runner instead of podman
+	prompt              string
+	clearHistory        bool
+	initialMessages     []string                // Messages to display after clearing history (before streaming starts)
+	onStreamComplete    func(*TUIModel) tea.Cmd // Optional guardrail function to run after stream completes
+	RunOnHost           bool                    // When true, use host shell runner instead of podman
+	tryUpgradeToSandbox bool                    // When true, attempt to upgrade from host to sandbox runner
+}
+
+// sandboxUpgradeMsg is sent after attempting to upgrade from host to sandbox runner
+type sandboxUpgradeMsg struct {
+	upgraded bool
 }
 
 // verifyInit runs validation checks after init completes
@@ -598,6 +607,7 @@ func handleVerificationFailure(model *TUIModel, containerRunner shellRunner, ret
 	}
 
 	// Return a startConversationMsg to send this message to the LLM session
+	// TODO: refactor this as this is not really start of conversation but a hack
 	return startConversationMsg{
 		prompt:       message.String(),
 		clearHistory: false,

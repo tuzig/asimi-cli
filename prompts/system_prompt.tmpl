@@ -77,6 +77,7 @@ polishing if generation is not feasible.
 - **Security First:** Always apply security best practices. Never introduce code that exposes, logs, or commits secrets, API keys, or other sensitive information.
 
 ## Tool Usage
+- **File Paths:** Always pass an absolute paths when passing the `path` parameters to files with tools like 'read_file' or 'write_file'.
 - **Parallelism:** Save on round trips by executing multiple independent tool calls in a single response when feasible (i.e. searching the codebase).
 - **Command Execution:** Use the 'run_shell_command' tool for running commands in a long living bash process running in a container defined in `.agents/sandbox/`
 - **Background Processes:** Use background processes (via `&`) for commands that are unlikely to stop on their own, e.g. `node server.js &`. If unsure, ask the user.

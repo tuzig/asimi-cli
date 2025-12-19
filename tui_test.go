@@ -379,6 +379,144 @@ func TestChatComponentScrollLock(t *testing.T) {
 	require.False(t, chat.UserScrolled, "unlock at bottom should mark user as not scrolled")
 }
 
+// TestMouseWheelScrollEntersScrollMode tests that scrolling with mouse wheel
+// switches to SCROLL mode (issue #103)
+func TestMouseWheelScrollEntersScrollMode(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil)
+
+	// Set up window size so we have a proper viewport
+	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Add enough messages to make the chat scrollable
+	updatedModel.sessionActive = true
+	for i := 0; i < 50; i++ {
+		updatedModel.content.Chat.AddMessage("Asimi: This is a test message to fill the chat")
+	}
+
+	// Verify we start in insert mode
+	require.Equal(t, "insert", updatedModel.Mode)
+
+	// Scroll to bottom first to ensure we're not at top
+	updatedModel.content.Chat.ScrollToBottom()
+	require.True(t, updatedModel.content.Chat.Viewport.AtBottom())
+
+	// Simulate mouse wheel up scroll
+	mouseMsg := tea.MouseMsg{
+		Type: tea.MouseWheelUp,
+	}
+
+	newModel, cmd := updatedModel.Update(mouseMsg)
+	_, ok = newModel.(TUIModel)
+	require.True(t, ok)
+
+	// The command should contain a ChangeModeMsg to switch to scroll mode
+	require.NotNil(t, cmd, "Expected a command to be returned for mode change")
+
+	// Execute the batch command to get the mode change message
+	// The batch contains both the content update and the mode change
+	foundScrollMode := false
+	if cmd != nil {
+		msgs := cmd()
+		// Check if we got a batch of messages
+		if batchMsgs, ok := msgs.(tea.BatchMsg); ok {
+			for _, batchCmd := range batchMsgs {
+				if batchCmd != nil {
+					msg := batchCmd()
+					if modeMsg, ok := msg.(ChangeModeMsg); ok {
+						if modeMsg.NewMode == "scroll" {
+							foundScrollMode = true
+						}
+					}
+				}
+			}
+		} else if modeMsg, ok := msgs.(ChangeModeMsg); ok {
+			if modeMsg.NewMode == "scroll" {
+				foundScrollMode = true
+			}
+		}
+	}
+	require.True(t, foundScrollMode, "Expected mode to change to scroll")
+}
+
+// TestMouseWheelScrollDoesNotEnterScrollModeWhenAtTop tests that scrolling up
+// when already at the top does not switch to scroll mode
+func TestMouseWheelScrollDoesNotEnterScrollModeWhenAtTop(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil)
+
+	// Set up window size
+	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Verify we start in insert mode
+	require.Equal(t, "insert", updatedModel.Mode)
+
+	// Ensure we're at the top (default state with minimal content)
+	updatedModel.content.Chat.ScrollToTop()
+	require.True(t, updatedModel.content.Chat.Viewport.AtTop())
+
+	// Simulate mouse wheel up scroll when at top
+	mouseMsg := tea.MouseMsg{
+		Type: tea.MouseWheelUp,
+	}
+
+	newModel, cmd := updatedModel.Update(mouseMsg)
+	_, ok = newModel.(TUIModel)
+	require.True(t, ok)
+
+	// When at top, we should not get a mode change command
+	// The command should just be the content update, not a batch with mode change
+	if cmd != nil {
+		msgs := cmd()
+		if modeMsg, ok := msgs.(ChangeModeMsg); ok {
+			t.Errorf("Should not change mode when at top, but got: %v", modeMsg)
+		}
+	}
+}
+
+// TestMouseWheelScrollDoesNotEnterScrollModeWhenAlreadyInScrollMode tests that
+// scrolling when already in scroll mode doesn't re-enter scroll mode
+func TestMouseWheelScrollDoesNotEnterScrollModeWhenAlreadyInScrollMode(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil)
+
+	// Set up window size
+	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Add enough messages to make scrollable
+	updatedModel.sessionActive = true
+	for i := 0; i < 50; i++ {
+		updatedModel.content.Chat.AddMessage("Asimi: Test message")
+	}
+
+	// Set mode to scroll
+	updatedModel.Mode = "scroll"
+	updatedModel.content.Chat.ScrollToBottom()
+
+	// Simulate mouse wheel up scroll
+	mouseMsg := tea.MouseMsg{
+		Type: tea.MouseWheelUp,
+	}
+
+	newModel, cmd := updatedModel.Update(mouseMsg)
+	finalModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Should still be in scroll mode, no mode change command
+	require.Equal(t, "scroll", finalModel.Mode)
+
+	// Verify no mode change message in the command
+	if cmd != nil {
+		msgs := cmd()
+		if modeMsg, ok := msgs.(ChangeModeMsg); ok {
+			t.Errorf("Should not send mode change when already in scroll mode, but got: %v", modeMsg)
+		}
+	}
+}
+
 // TestCompletionDialog tests the completion dialog
 func TestCompletionDialog(t *testing.T) {
 	dialog := NewCompletionDialog()

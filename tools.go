@@ -634,6 +634,32 @@ func initShellRunner(config *Config) {
 	}
 }
 
+// tryUpgradeToSandbox checks if we're currently on the host runner and a sandbox
+// image has become available. If so, it upgrades to the podman runner.
+// Returns true if an upgrade occurred.
+func tryUpgradeToSandbox(config *Config) bool {
+	shellRunnerMu.Lock()
+	defer shellRunnerMu.Unlock()
+
+	// Only try to upgrade if we're currently on the host runner
+	if currentShellRunner == nil || currentShellRunner.RunnerType() != "host" {
+		slog.Debug("not upgrading shell runner", "reason", "already using podman or no runner")
+		return false
+	}
+
+	repoInfo := GetRepoInfo()
+
+	// Check if sandbox is now available
+	if isPodmanAvailable(config, repoInfo) {
+		slog.Info("sandbox image now available, upgrading from host to podman shell runner")
+		currentShellRunner = newPodmanShellRunner(config.RunShellCommand.AllowHostFallback, config, repoInfo)
+		return true
+	}
+
+	slog.Debug("sandbox image still not available, staying on host runner")
+	return false
+}
+
 func getShellRunner() shellRunner {
 	shellRunnerOnce.Do(func() {
 		repoInfo := GetRepoInfo()
