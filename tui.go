@@ -1416,7 +1416,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		chat := m.content.Chat
-		if len(chat.Messages) == 0 || !strings.HasPrefix(chat.Messages[len(chat.Messages)-1], "Asimi:") {
+		if len(chat.Messages) == 0 || !strings.HasPrefix(chat.Messages[len(chat.Messages)-1].Content, "Asimi:") {
 			chat.AddMessage(fmt.Sprintf("Asimi: %s", string(msg)))
 			slog.Debug("added_new_message", "total_messages", len(m.content.Chat.Messages))
 		} else {
@@ -1431,7 +1431,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Display reasoning in a special format
 		reasoningText := string(msg)
-		if len(m.content.Chat.Messages) == 0 || !strings.HasPrefix(m.content.Chat.Messages[len(m.content.Chat.Messages)-1], "💭 Thinking:") {
+		if len(m.content.Chat.Messages) == 0 || !strings.HasPrefix(m.content.Chat.Messages[len(m.content.Chat.Messages)-1].Content, "💭 Thinking:") {
 			// Start a new thinking message
 			m.content.Chat.AddMessage(fmt.Sprintf("💭 Thinking: %s", reasoningText))
 		} else {
@@ -1973,7 +1973,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandLine.AddToast("🐳 Sandbox now available", "info", 3000)
 			// Refresh the first message to show the updated sandbox status
 			if len(m.content.Chat.Messages) > 0 {
-				m.content.Chat.Messages[0] = newSessionMessage()
+				m.content.Chat.Messages[0] = ChatMessage{Content: newSessionMessage(), Indent: 0}
 				m.content.Chat.UpdateContent()
 			}
 		}
@@ -2045,7 +2045,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case startInitWorkflowMsg:
 		// Start the init workflow asynchronously
 		m.sessionActive = true
-		return m, runInitWorkflowAsync(&m, msg.clearMode, msg.agentsFile)
+		return m, runInitWorkflowAsync(&m, msg.ClearMode, msg.AgentsFile)
 
 	case initWorkflowProgressMsg:
 		// Update UI with workflow progress

@@ -37,14 +37,14 @@ The `StepResult` controls workflow navigation using either step names or relativ
 
 #### Using Step Names (Recommended)
 
-Use `GoTo(stepName, message)` for explicit, maintainable navigation:
+Use `w.GoTo(stepName, message)` for explicit, maintainable navigation:
 
 ```go
 // Jump to a specific step by name
-return GoTo("build-step", "Prerequisites met, starting build")
+return w.GoTo("build-step", "Prerequisites met, starting build")
 
 // This works for forward jumps, backward jumps, or retrying the same step
-return GoTo("validation", "Going back to re-validate")
+return w.GoTo("validation", "Going back to re-validate")
 ```
 
 #### Using Relative Offsets (Legacy)
@@ -61,26 +61,26 @@ The `NextOffset` field provides relative navigation:
 
 ### StepResult Helpers
 
-Instead of manually constructing `StepResult`, use these helper functions:
+All StepResult helpers are methods on `*Workflow`. They automatically call `ReportProgress()` to notify the user of progress updates:
 
 ```go
 // Proceed to next step
-return Next("✓ Analysis complete")
+return w.Next("✓ Analysis complete")
 
 // Retry current step
-return Retry("No response, retrying")
+return w.Retry("No response, retrying")
 
 // Jump to a specific step by name (recommended for non-sequential flow)
-return GoTo("build-step", "Skipping to build")
+return w.GoTo("build-step", "Skipping to build")
+
+// Skip forward n steps
+return w.Skip(2, "Skipping optional steps")
 
 // Go back one step (deprecated: use GoTo for clarity)
-return Back("Dependency not met, going back")
-
-// Skip forward n steps (deprecated: use GoTo for clarity)
-return Skip(2, "Skipping optional step")
+return w.Back("Dependency not met, going back")
 
 // Go back n steps (deprecated: use GoTo for clarity)
-return BackN(2, "Going back two steps")
+return w.BackN(2, "Going back two steps")
 ```
 
 ### Workflow Data
@@ -113,12 +113,12 @@ w.Add(Step{
         // ... do work ...
         w.ReportProgress("Processing files...")
         // ... do more work ...
-        return Next("✓ Done")
+        return w.Next("✓ Done")
     },
 })
 ```
 
-The messages are sent via the `onProgress` callback with a non-empty message parameter.
+The messages are sent via the `onProgress` callback with a non-empty message parameter. Note that all StepResult helpers (`Next`, `Retry`, `GoTo`, etc.) also call `ReportProgress()` automatically.
 
 ## Creating a Workflow
 
@@ -136,7 +136,7 @@ func NewMyWorkflow(db *storage.DB, repoInfo RepoInfo) *Workflow {
                 return nil, nil
             },
             Verify: func(w *Workflow, response string) StepResult {
-                return Next("✓ Prerequisites met")
+                return w.Next("✓ Prerequisites met")
             },
         }).
         Add(Step{
@@ -154,10 +154,10 @@ func NewMyWorkflow(db *storage.DB, repoInfo RepoInfo) *Workflow {
 Suggest improvements.`,
             Verify: func(w *Workflow, response string) StepResult {
                 if response == "" {
-                    return Retry("No response, retrying")
+                    return w.Retry("No response, retrying")
                 }
                 w.Set("analysis", response)
-                return Next("✓ Analysis complete")
+                return w.Next("✓ Analysis complete")
             },
         })
 }
@@ -200,8 +200,12 @@ w.sendPrompt = func(ctx context.Context, prompt string) <-chan string {
 }
 
 // Set up progress callback
-w.onProgress = func(stepIndex int, state StepState) {
-    fmt.Printf("Step %d (%s): %s\n", stepIndex, state.Name, state.Status)
+w.onProgress = func(stepIndex int, state StepState, message string) {
+    if message != "" {
+        fmt.Println("Progress:", message)
+    } else {
+        fmt.Printf("Step %d (%s): %s\n", stepIndex, state.Name, state.Status)
+    }
 }
 
 // Run
@@ -301,9 +305,9 @@ Adds a step with only a verify function (for custom verification logic):
 ```go
 w.AddCheck("verify-build", func(w *Workflow) StepResult {
     if _, err := os.Stat("dist/app"); os.IsNotExist(err) {
-        return Retry("Build artifact not found")
+        return w.Retry("Build artifact not found")
     }
-    return Next("✓ Build verified")
+    return w.Next("✓ Build verified")
 })
 ```
 
@@ -328,9 +332,9 @@ w.Add(Step{
         if err != nil {
             states := w.GetStepStates()
             retries := states[w.CurrentStep].RetryCount
-            return Retry(fmt.Sprintf("Failed (attempt %d): %v", retries+1, err))
+            return w.Retry(fmt.Sprintf("Failed (attempt %d): %v", retries+1, err))
         }
-        return Next("Success")
+        return w.Next("Success")
     },
 })
 ```
@@ -343,9 +347,9 @@ w.Add(Step{
     Verify: func(w *Workflow, response string) StepResult {
         if !checkDependency() {
             // Use GoTo for explicit navigation to a named step
-            return GoTo("setup-dependency", "Dependency not met, going back to setup")
+            return w.GoTo("setup-dependency", "Dependency not met, going back to setup")
         }
-        return Next("Done")
+        return w.Next("Done")
     },
 })
 ```
@@ -430,14 +434,14 @@ Prepare: func(w *Workflow) (map[string]interface{}, error) {
 
 ### Verify Failures
 
-Use `Retry()` to retry, or return an error message:
+Use `w.Retry()` to retry, or return an error message:
 
 ```go
 Verify: func(w *Workflow, response string) StepResult {
     if failed {
-        return Retry("❌ Step failed: " + reason)
+        return w.Retry("❌ Step failed: " + reason)
     }
-    return Next("✓ Success")
+    return w.Next("✓ Success")
 }
 ```
 
@@ -449,7 +453,7 @@ Verify: func(w *Workflow, response string) StepResult {
     if criticalFailure {
         w.Abort()
     }
-    return Next("")
+    return w.Next("")
 }
 
 // From outside
@@ -493,9 +497,9 @@ Error: {{.Message}}
 Read the file, understand the context, and fix the error.`,
             Verify: func(w *Workflow, response string) StepResult {
                 if stillHasError(err.File, err.Line) {
-                    return Retry("Error not fixed")
+                    return w.Retry("Error not fixed")
                 }
-                return Next("✓ Fixed")
+                return w.Next("✓ Fixed")
             },
         })
     }

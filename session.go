@@ -753,6 +753,141 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 	return fmt.Sprintf("%s\n\nEnded after %d interation", finalText, maxTurns), nil
 }
 
+// AskWithStreaming sends a user prompt and streams the response to the UI while blocking.
+// Unlike Ask, it streams chunks to the UI via the notify callback.
+// Unlike AskStream, it blocks until completion and returns the final response.
+// This is useful for workflows that need to show progress but also wait for completion.
+func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, error) {
+	// Build prompt with context if available and add to messages
+	s.prepareUserMessage(prompt)
+	// Clear context after building the prompt
+	defer s.ClearContext()
+
+	// Notify UI that streaming has started
+	if s.notify != nil {
+		s.notify(streamStartMsg{})
+	}
+
+	// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
+	var finalText string
+	var lastAssistant string
+	var hadAnyToolCall bool
+	var i int
+	maxTurns := s.config.MaxTurns
+	for i = 0; i < maxTurns; i++ {
+		s.resetStreamBuffer()
+
+		// Check for cancellation
+		select {
+		case <-ctx.Done():
+			accumulatedText := s.getStreamBuffer(false)
+			if s.notify != nil {
+				s.notify(streamInterruptedMsg{partialContent: accumulatedText})
+			}
+			return accumulatedText, ctx.Err()
+		default:
+		}
+
+		// Create streaming function that accumulates content and notifies UI
+		streamingFunc := func(ctx context.Context, chunk []byte) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			chunkStr := string(chunk)
+			s.accumulatedContent.WriteString(chunkStr)
+			if s.notify != nil {
+				s.notify(streamChunkMsg(chunkStr))
+			}
+			return nil
+		}
+
+		choice, err := s.generateLLMResponse(ctx, streamingFunc)
+		if err != nil {
+			if ctx.Err() != nil {
+				accumulatedText := s.getStreamBuffer(false)
+				if s.notify != nil {
+					s.notify(streamInterruptedMsg{partialContent: accumulatedText})
+				}
+				return accumulatedText, ctx.Err()
+			}
+			if s.notify != nil {
+				s.notify(streamErrorMsg{err: err})
+			}
+			return "", err
+		}
+
+		// Use accumulated content as the response
+		responseContent := s.getStreamBuffer(false)
+
+		// Check if response was truncated due to max tokens
+		if choice.StopReason == "max_tokens" {
+			if s.notify != nil {
+				s.notify(streamMaxTokensReachedMsg{content: responseContent})
+			}
+			s.appendMessages(responseContent, choice.ToolCalls)
+			return responseContent + "\n\n[Response truncated due to length limit]", nil
+		}
+
+		// Add reasoning content if available
+		if choice.ReasoningContent != "" && s.notify != nil {
+			s.notify(streamChunkMsg("\n\n<thinking>\n" + choice.ReasoningContent + "\n</thinking>\n\n"))
+		}
+
+		// Record assistant response in message history
+		if strings.TrimSpace(responseContent) != "" {
+			finalText = responseContent
+		}
+		s.appendMessages(responseContent, choice.ToolCalls)
+
+		// Handle tool calls, if any.
+		if len(choice.ToolCalls) == 0 {
+			if hadAnyToolCall || strings.TrimSpace(responseContent) == strings.TrimSpace(lastAssistant) {
+				break
+			}
+			lastAssistant = responseContent
+			continue
+		}
+		hadAnyToolCall = true
+
+		// Process tool calls and add responses
+		toolMessages, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls)
+		if len(toolMessages) > 0 {
+			s.Messages = append(s.Messages, toolMessages...)
+			s.updateTokenCounts()
+		}
+
+		if shouldReturn {
+			if s.notify != nil {
+				s.notify(streamCompleteMsg{})
+			}
+			return finalText, nil
+		}
+
+		if len(toolMessages) > 0 {
+			continue
+		}
+
+		break
+	}
+
+	// Notify completion
+	if s.notify != nil {
+		if i >= maxTurns {
+			s.notify(streamMaxTurnsExceededMsg{maxTurns: maxTurns})
+		} else {
+			s.notify(streamCompleteMsg{})
+		}
+	}
+
+	if i < maxTurns {
+		return finalText, nil
+	}
+	return fmt.Sprintf("%s\n\nEnded after %d iterations", finalText, maxTurns), nil
+}
+
 // AskStream sends a user prompt through the native loop with streaming support.
 // It launches the streaming process in a goroutine and returns immediately.
 // Uses the notify callback to send streaming chunks as they arrive.

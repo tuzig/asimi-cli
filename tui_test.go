@@ -39,9 +39,9 @@ func mockConfig() *Config {
 }
 
 // containsMessage checks if any message in the slice contains the given substring
-func containsMessage(messages []string, substring string) bool {
+func containsMessage(messages []ChatMessage, substring string) bool {
 	for _, msg := range messages {
-		if strings.Contains(msg, substring) {
+		if strings.Contains(msg.Content, substring) {
 			return true
 		}
 	}
@@ -344,13 +344,13 @@ func TestChatComponent(t *testing.T) {
 
 	// Should have initial title message
 	require.Equal(t, 1, len(chat.Messages))
-	require.Contains(t, chat.Messages[0], "New session")
+	require.Contains(t, chat.Messages[0].Content, "New session")
 
 	// Test adding a message
 	testMessage := "Test message"
 	chat.AddMessage(testMessage)
 	require.Equal(t, 2, len(chat.Messages))
-	require.Equal(t, testMessage, chat.Messages[1])
+	require.Equal(t, testMessage, chat.Messages[1].Content)
 
 	// Test dimensions
 	chat.SetSize(60, 15)
@@ -1151,7 +1151,7 @@ func TestHistoryRollback_OnSubmit(t *testing.T) {
 	chat := model.content.Chat
 
 	// Clear the welcome message for cleaner testing
-	chat.Messages = []string{}
+	chat.Messages = []ChatMessage{}
 	chat.UpdateContent()
 
 	// Simulate a conversation
@@ -1264,8 +1264,8 @@ func TestStartConversationMsg_InitialMessages(t *testing.T) {
 	// Verify that the chat was cleared and initialMessages were added
 	// The chat should have: Welcome message + 2 initial messages
 	require.Len(t, updatedModelValue.content.Chat.Messages, 3)
-	require.Contains(t, updatedModelValue.content.Chat.Messages[1], "Initial message 1")
-	require.Contains(t, updatedModelValue.content.Chat.Messages[2], "Initial message 2")
+	require.Contains(t, updatedModelValue.content.Chat.Messages[1].Content, "Initial message 1")
+	require.Contains(t, updatedModelValue.content.Chat.Messages[2].Content, "Initial message 2")
 }
 
 // TestHistoryNavigation_WithArrowKeys tests arrow key handling

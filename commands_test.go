@@ -168,8 +168,8 @@ func TestHandleInitCommand(t *testing.T) {
 		// Check that the message is a startInitWorkflowMsg (new workflow-based implementation)
 		initMsg, ok := msg.(startInitWorkflowMsg)
 		require.True(t, ok, "Expected startInitWorkflowMsg, got %T", msg)
-		require.Equal(t, "AGENTS.md", initMsg.agentsFile)
-		require.False(t, initMsg.clearMode)
+		require.Equal(t, "AGENTS.md", initMsg.AgentsFile)
+		require.False(t, initMsg.ClearMode)
 
 		// Clean up for the next test
 		err = os.RemoveAll(".agents")
@@ -187,8 +187,8 @@ func TestHandleInitCommand(t *testing.T) {
 		// Check that the message is a startInitWorkflowMsg
 		initMsg, ok := msg.(startInitWorkflowMsg)
 		require.True(t, ok, "Expected startInitWorkflowMsg, got %T", msg)
-		require.Equal(t, "AGENTS.md", initMsg.agentsFile)
-		require.False(t, initMsg.clearMode)
+		require.Equal(t, "AGENTS.md", initMsg.AgentsFile)
+		require.False(t, initMsg.ClearMode)
 
 		// Clean up for the next test
 		err = os.Remove("Justfile")
@@ -253,8 +253,8 @@ func TestHandleInitCommand(t *testing.T) {
 		// Check that the message is a startInitWorkflowMsg with clearMode=true
 		initMsg, ok := msg.(startInitWorkflowMsg)
 		require.True(t, ok, "Expected startInitWorkflowMsg, got %T", msg)
-		require.True(t, initMsg.clearMode, "Expected clearMode to be true")
-		require.Equal(t, "AGENTS.md", initMsg.agentsFile)
+		require.True(t, initMsg.ClearMode, "Expected clearMode to be true")
+		require.Equal(t, "AGENTS.md", initMsg.AgentsFile)
 
 		// Clean up
 		err = os.RemoveAll(".agents")
@@ -327,4 +327,24 @@ func TestRunInitGuardrails(t *testing.T) {
 		os.Remove("AGENTS.md")
 		os.Remove("Justfile")
 	})
+}
+
+func TestTruncateOutput(t *testing.T) {
+	tests := []struct {
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{"short", 10, "short"},
+		{"exactly10!", 10, "exactly10!"},
+		{"this is longer than ten", 10, "this is lo..."},
+		{"", 5, ""},
+	}
+
+	for _, tt := range tests {
+		result := truncateOutput(tt.input, tt.maxLen)
+		if result != tt.expected {
+			t.Errorf("truncateOutput(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
+		}
+	}
 }

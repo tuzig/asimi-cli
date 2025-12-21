@@ -13,10 +13,16 @@ import (
 	"github.com/muesli/reflow/wordwrap"
 )
 
+// ChatMessage represents a single message with its indent level
+type ChatMessage struct {
+	Content string
+	Indent  int
+}
+
 // ChatComponent represents the chat view
 type ChatComponent struct {
 	Viewport     viewport.Model
-	Messages     []string
+	Messages     []ChatMessage
 	Width        int
 	Height       int
 	Style        lipgloss.Style
@@ -39,6 +45,9 @@ type ChatComponent struct {
 
 	// Tool call tracking - maps tool call ID to chat message index
 	toolCallMessageIndex map[string]int
+
+	// Indentation for nested workflow output
+	Indent int
 }
 
 const (
@@ -203,7 +212,7 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 func (c *ChatComponent) Clear() {
 	ms := newSessionMessage()
 
-	c.Messages = []string{ms}
+	c.Messages = []ChatMessage{{Content: ms, Indent: 0}}
 	c.AutoScroll = true
 	c.UserScrolled = false
 	c.ScrollLocked = false
@@ -233,21 +242,9 @@ func (c *ChatComponent) SetSize(width, height int) {
 
 // AddMessage adds a new message to the chat component
 func (c *ChatComponent) AddMessage(message string) {
-	c.Messages = append(c.Messages, message)
+	c.Messages = append(c.Messages, ChatMessage{Content: message, Indent: c.Indent})
 	c.UpdateContent()
 	// Reset auto-scroll when new message is added
-	if !c.ScrollLocked {
-		c.AutoScroll = true
-		c.UserScrolled = false
-	}
-}
-
-// AddMessages adds multiple messages to the chat component in batch
-// This is much faster than calling AddMessage repeatedly since it only calls UpdateContent once
-func (c *ChatComponent) AddMessages(messages []string) {
-	c.Messages = append(c.Messages, messages...)
-	c.UpdateContent()
-	// Reset auto-scroll when new messages are added
 	if !c.ScrollLocked {
 		c.AutoScroll = true
 		c.UserScrolled = false
@@ -407,12 +404,6 @@ func renderShellLines(lines []string) string {
 	return builder.String()
 }
 
-// Replace last message
-func (c *ChatComponent) ReplaceLastMessage(message string) {
-	c.Messages[len(c.Messages)-1] = message
-	c.UpdateContent()
-}
-
 // TruncateTo keeps only the first count messages and refreshes the viewport
 func (c *ChatComponent) TruncateTo(count int) {
 	if count < 0 {
@@ -421,7 +412,7 @@ func (c *ChatComponent) TruncateTo(count int) {
 	if count > len(c.Messages) {
 		count = len(c.Messages)
 	}
-	c.Messages = append([]string(nil), c.Messages[:count]...)
+	c.Messages = append([]ChatMessage(nil), c.Messages[:count]...)
 	c.UpdateContent()
 }
 
@@ -431,7 +422,7 @@ func (c *ChatComponent) AppendToLastMessage(text string) {
 		c.AddMessage(text)
 		return
 	}
-	c.Messages[len(c.Messages)-1] += text
+	c.Messages[len(c.Messages)-1].Content += text
 	c.UpdateContent()
 }
 
@@ -443,12 +434,12 @@ func (c *ChatComponent) FinalizeLastAIMessage() bool {
 		return false
 	}
 
-	lastMsg := c.Messages[len(c.Messages)-1]
-	if !strings.HasPrefix(lastMsg, "Asimi:") {
+	lastMsg := &c.Messages[len(c.Messages)-1]
+	if !strings.HasPrefix(lastMsg.Content, "Asimi:") {
 		return false
 	}
 
-	content := strings.TrimPrefix(lastMsg, "Asimi: ")
+	content := strings.TrimPrefix(lastMsg.Content, "Asimi: ")
 	isFailure := strings.HasPrefix(content, failureToken)
 
 	if isFailure {
@@ -456,10 +447,10 @@ func (c *ChatComponent) FinalizeLastAIMessage() bool {
 		content = strings.TrimPrefix(content, failureToken)
 		content = strings.TrimSpace(content)
 		// Mark as failure by using a special prefix
-		c.Messages[len(c.Messages)-1] = "Asimi:FAILURE: " + content
+		lastMsg.Content = "Asimi:FAILURE: " + content
 	} else {
 		// Mark as success by using a special prefix
-		c.Messages[len(c.Messages)-1] = "Asimi:SUCCESS: " + content
+		lastMsg.Content = "Asimi:SUCCESS: " + content
 	}
 
 	c.UpdateContent()
@@ -469,21 +460,22 @@ func (c *ChatComponent) FinalizeLastAIMessage() bool {
 // UpdateContent updates the viewport content based on the messages
 func (c *ChatComponent) UpdateContent() {
 	var messageViews []string
-	for _, message := range c.Messages {
-		var messageStyle lipgloss.Style
+	for msgIdx, msg := range c.Messages {
+		var rendered string
+		message := msg.Content
 
 		// Check if this is a thinking message
 		if strings.HasPrefix(message, shellUserPrefix) {
-			messageStyle = lipgloss.NewStyle().
+			messageStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#F952F9"))
 
 			userContent := strings.TrimSpace(strings.TrimPrefix(message, shellUserPrefix))
-			messageViews = append(messageViews,
-				messageStyle.Render(fmt.Sprintf("$ %s", userContent)))
+			rendered = messageStyle.Render(fmt.Sprintf("$ %s", userContent))
 		} else if strings.Contains(message, "<thinking>") && strings.Contains(message, "</thinking>") {
 			// Extract thinking content and regular content
 			thinkingContent, regularContent := extractThinkingContent(message)
 
+			var parts []string
 			// Style thinking content differently
 			if thinkingContent != "" {
 				thinkingStyle := lipgloss.NewStyle().
@@ -494,74 +486,102 @@ func (c *ChatComponent) UpdateContent() {
 					BorderForeground(lipgloss.Color("#373702")) // Terminal7 dark border
 
 				wrappedThinking := wordwrap.String("💭 Thinking: "+thinkingContent, c.Width-4)
-				messageViews = append(messageViews, thinkingStyle.Render(wrappedThinking))
+				parts = append(parts, thinkingStyle.Render(wrappedThinking))
 			}
 
 			// Style regular content normally if present
 			if regularContent != "" {
-				// Render AI messages with markdown
-				messageViews = append(messageViews, c.renderMarkdown(regularContent))
+				parts = append(parts, c.renderMarkdown(regularContent))
 			}
-		} else {
-			// Regular message styling
-			if strings.HasPrefix(message, "You:") {
-				messageStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#F952F9")) // Terminal7 prompt border
+			rendered = strings.Join(parts, "\n")
+		} else if strings.HasPrefix(message, "You:") {
+			// User message styling
+			messageStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#F952F9")) // Terminal7 prompt border
 
-				userContent := strings.TrimSpace(strings.TrimPrefix(message, "You:"))
+			userContent := strings.TrimSpace(strings.TrimPrefix(message, "You:"))
 
-				wrapWidth := c.Width
-				const indentSpaces = 8
-				if wrapWidth > indentSpaces {
-					wrapWidth -= indentSpaces
-				}
-				if wrapWidth < 1 {
-					wrapWidth = 1
-				}
+			wrapWidth := c.Width
+			const indentSpaces = 8
+			if wrapWidth > indentSpaces {
+				wrapWidth -= indentSpaces
+			}
+			if wrapWidth < 1 {
+				wrapWidth = 1
+			}
 
-				wrapped := wordwrap.String(userContent, wrapWidth)
-				indent := strings.Repeat(" ", indentSpaces)
-				lines := strings.Split(wrapped, "\n")
-				for i := range lines {
-					lines[i] = indent + lines[i]
-				}
+			wrapped := wordwrap.String(userContent, wrapWidth)
+			userIndent := strings.Repeat(" ", indentSpaces)
+			lines := strings.Split(wrapped, "\n")
+			for i := range lines {
+				lines[i] = userIndent + lines[i]
+			}
 
-				messageViews = append(messageViews,
-					messageStyle.Render(strings.Join(lines, "\n")))
-			} else if strings.HasPrefix(message, "Asimi:") {
-				// Render AI messages with markdown
-				// Check for success/failure markers and determine prefix
-				var content string
-				var prefix string
+			rendered = messageStyle.Render(strings.Join(lines, "\n"))
+		} else if strings.HasPrefix(message, "Asimi:") {
+			// Render AI messages with markdown
+			// Check for success/failure markers and determine prefix
+			var content string
+			var prefix string
 
-				if strings.HasPrefix(message, "Asimi:SUCCESS: ") {
-					content = strings.TrimPrefix(message, "Asimi:SUCCESS: ")
-					prefix = lipgloss.NewStyle().
-						Bold(true).
-						Render(completeSuccessPrefix)
-				} else if strings.HasPrefix(message, "Asimi:FAILURE: ") {
-					content = strings.TrimPrefix(message, "Asimi:FAILURE: ")
-					prefix = lipgloss.NewStyle().
-						Bold(true).
-						Render(completeFailurePrefix)
-				} else {
-					content = strings.TrimPrefix(message, "Asimi: ")
-					prefix = lipgloss.NewStyle().
-						Bold(true).
-						Render(asimiPrefix)
-				}
-
-				rendered := c.renderMarkdown(content)
-				messageViews = append(messageViews, prefix+rendered)
+			if strings.HasPrefix(message, "Asimi:SUCCESS: ") {
+				content = strings.TrimPrefix(message, "Asimi:SUCCESS: ")
+				prefix = lipgloss.NewStyle().
+					Bold(true).
+					Render(completeSuccessPrefix)
+			} else if strings.HasPrefix(message, "Asimi:FAILURE: ") {
+				content = strings.TrimPrefix(message, "Asimi:FAILURE: ")
+				prefix = lipgloss.NewStyle().
+					Bold(true).
+					Render(completeFailurePrefix)
 			} else {
-				// Other messages (system, tool calls, etc.)
-				messageStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
-					Padding(0, 1)
-				messageViews = append(messageViews,
-					messageStyle.Render(wordwrap.String(message, c.Width)))
+				content = strings.TrimPrefix(message, "Asimi: ")
+				prefix = lipgloss.NewStyle().
+					Bold(true).
+					Render(asimiPrefix)
 			}
+
+			rendered = prefix + c.renderMarkdown(content)
+		} else {
+			// Other messages (system, tool calls, etc.)
+			messageStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#01FAFA")) // Terminal7 text color
+			rendered = messageStyle.Render(wordwrap.String(message, c.Width))
 		}
+
+		// Apply indentation if needed
+		if msg.Indent > 0 {
+			// Check if this is the last message at this indent level
+			isLastAtIndent := msgIdx == len(c.Messages)-1 || c.Messages[msgIdx+1].Indent < msg.Indent
+
+			indent := strings.Repeat(treeMidPrefix, msg.Indent)
+			lines := strings.Split(rendered, "\n")
+
+			// Filter out empty lines to reduce blank line clutter
+			var nonEmptyLines []string
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					nonEmptyLines = append(nonEmptyLines, line)
+				}
+			}
+			lines = nonEmptyLines
+
+			for lineIdx, line := range lines {
+				if line != "" {
+					// Use final prefix for the last line if this is the last message at this indent
+					if isLastAtIndent && lineIdx == len(lines)-1 {
+						// Replace the last treeMidPrefix with treeFinalPrefix
+						finalIndent := strings.Repeat(treeMidPrefix, msg.Indent-1) + treeFinalPrefix
+						lines[lineIdx] = finalIndent + line
+					} else {
+						lines[lineIdx] = indent + line
+					}
+				}
+			}
+			rendered = strings.Join(lines, "\n")
+		}
+
+		messageViews = append(messageViews, rendered)
 	}
 	content := lipgloss.JoinVertical(lipgloss.Left, messageViews...)
 	c.Viewport.SetContent(content)
@@ -813,7 +833,7 @@ func (c *ChatComponent) HandleToolCallExecuting(msg ToolCallExecutingMsg) {
 	formatted := formatToolCall(msg.Call.Tool.Name(), "⚙️", msg.Call.Input, "", nil)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
-		c.Messages[idx] = formatted
+		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 	} else {
 		// Fallback: add a new message if we don't have the index
@@ -826,7 +846,7 @@ func (c *ChatComponent) HandleToolCallSuccess(msg ToolCallSuccessMsg) {
 	formatted := formatToolCall(msg.Call.Tool.Name(), checkPrefix, msg.Call.Input, msg.Call.Result, nil)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
-		c.Messages[idx] = formatted
+		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 		// Clean up the index mapping
 		c.DeleteToolCallMessageIndex(msg.Call.ID)
@@ -841,7 +861,7 @@ func (c *ChatComponent) HandleToolCallError(msg ToolCallErrorMsg) {
 	formatted := formatToolCall(msg.Call.Tool.Name(), "⁉️", msg.Call.Input, "", msg.Call.Error)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
-		c.Messages[idx] = formatted
+		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 		// Clean up the index mapping
 		c.DeleteToolCallMessageIndex(msg.Call.ID)

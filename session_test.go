@@ -1321,18 +1321,18 @@ func TestChatComponent_AppendToLastMessage(t *testing.T) {
 	// Chat starts with a welcome message, so append to it first
 	chat.AppendToLastMessage(" Additional text")
 	assert.Equal(t, 1, len(chat.Messages))
-	assert.Contains(t, chat.Messages[0], "Additional text")
+	assert.Contains(t, chat.Messages[0].Content, "Additional text")
 
 	// Test appending more to existing message
 	chat.AppendToLastMessage(" More text")
 	assert.Equal(t, 1, len(chat.Messages))
-	assert.Contains(t, chat.Messages[0], "Additional text More text")
+	assert.Contains(t, chat.Messages[0].Content, "Additional text More text")
 
 	// Add a new message and append to it
 	chat.AddMessage("Asimi: ")
 	chat.AppendToLastMessage("This is streaming")
 	assert.Equal(t, 2, len(chat.Messages))
-	assert.Equal(t, "Asimi: This is streaming", chat.Messages[1])
+	assert.Equal(t, "Asimi: This is streaming", chat.Messages[1].Content)
 }
 
 func TestChatComponent_FinalizeLastAIMessage(t *testing.T) {
@@ -1343,7 +1343,7 @@ func TestChatComponent_FinalizeLastAIMessage(t *testing.T) {
 		isFailure := chat.FinalizeLastAIMessage()
 
 		assert.False(t, isFailure)
-		assert.Equal(t, "Asimi:SUCCESS: This is a successful response", chat.Messages[len(chat.Messages)-1])
+		assert.Equal(t, "Asimi:SUCCESS: This is a successful response", chat.Messages[len(chat.Messages)-1].Content)
 	})
 
 	t.Run("failure message", func(t *testing.T) {
@@ -1353,7 +1353,7 @@ func TestChatComponent_FinalizeLastAIMessage(t *testing.T) {
 		isFailure := chat.FinalizeLastAIMessage()
 
 		assert.True(t, isFailure)
-		assert.Equal(t, "Asimi:FAILURE: I cannot do that because of reasons", chat.Messages[len(chat.Messages)-1])
+		assert.Equal(t, "Asimi:FAILURE: I cannot do that because of reasons", chat.Messages[len(chat.Messages)-1].Content)
 	})
 
 	t.Run("non-AI message", func(t *testing.T) {
@@ -1364,12 +1364,12 @@ func TestChatComponent_FinalizeLastAIMessage(t *testing.T) {
 
 		assert.False(t, isFailure)
 		// Message should remain unchanged
-		assert.Equal(t, "You: Hello", chat.Messages[len(chat.Messages)-1])
+		assert.Equal(t, "You: Hello", chat.Messages[len(chat.Messages)-1].Content)
 	})
 
 	t.Run("empty messages", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		chat.Messages = []string{} // Clear all messages
+		chat.Messages = []ChatMessage{} // Clear all messages
 
 		isFailure := chat.FinalizeLastAIMessage()
 
