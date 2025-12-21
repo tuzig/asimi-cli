@@ -149,10 +149,10 @@ func newSessionMessage() string {
 	msg.WriteLn()
 
 	if info.Type == "host" {
+		msg.WriteLn("⚠️ no sandbox, many approvals ahead")
 		msg.WriteLn("please run `just build-sandbox` or `:init` and start a new session")
-		msg.WriteLn("shell is running on the host")
 	} else {
-		msg.WriteLn("shell runs in a sandbox")
+		msg.WriteLn("sandbox is ready")
 	}
 
 	return msg.String()
