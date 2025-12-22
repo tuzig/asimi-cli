@@ -1236,16 +1236,21 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 	// Display the command in chat similar to a shell prompt
 	m.content.Chat.AddShellCommandInput(shellCmd)
 
-	// Execute the shell command using the run_shell_command tool
+	// Execute the shell command using the current shell runner (sandbox or host)
 	return m, func() tea.Msg {
 		ctx := context.Background()
-		tool := RunShellCommand{config: m.config}
 
-		// Create the input JSON
-		inputJSON := fmt.Sprintf(`{"command": %s, "description": "User shell command"}`,
-			jsonEscape(shellCmd))
+		// Get the current shell runner (podman sandbox or host)
+		runner := getShellRunner()
 
-		result, err := tool.Call(ctx, inputJSON)
+		// User-initiated commands never need approval
+		params := RunShellCommandInput{
+			Command:         shellCmd,
+			Description:     "User shell command",
+			RequestApproval: false, // User explicitly requested this command
+		}
+
+		output, err := runner.Run(ctx, params)
 
 		if err != nil {
 			return shellCommandResultMsg{
@@ -1253,17 +1258,6 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 				output:   "",
 				exitCode: "-1",
 				err:      err,
-			}
-		}
-
-		// Parse the JSON result
-		var output RunShellCommandOutput
-		if parseErr := json.Unmarshal([]byte(result), &output); parseErr != nil {
-			return shellCommandResultMsg{
-				command:  shellCmd,
-				output:   result,
-				exitCode: "0",
-				err:      nil,
 			}
 		}
 
@@ -1537,9 +1531,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Send the response back to the waiting goroutine
 			m.pendingHostApproval.ResponseChan <- msg.answer
 			if msg.answer {
-				m.content.Chat.AddMessage(fmt.Sprintf("✓ Approved host command: %s", m.pendingHostApproval.Command))
+				// User approved - update the emoji to ⚙️ (executing)
+				m.content.Chat.UpdateLastToolCallEmoji(m.pendingHostApproval.Command, "⚙️")
 			} else {
-				m.content.Chat.AddMessage(fmt.Sprintf("✗ Denied host command: %s", m.pendingHostApproval.Command))
+				// User denied - update the emoji to ⛔︎
+				m.content.Chat.UpdateLastToolCallEmoji(m.pendingHostApproval.Command, "⛔︎")
 			}
 			m.pendingHostApproval = nil
 			return m, nil
@@ -1560,6 +1556,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hostCommandApprovalMsg:
 		// Store the pending approval request
 		m.pendingHostApproval = &msg.request
+		m.content.Chat.UpdateLastToolCallEmoji(msg.request.Command, approvalPrefix)
 		// Truncate command for display if too long
 		displayCmd := msg.request.Command
 		maxLen := 50
