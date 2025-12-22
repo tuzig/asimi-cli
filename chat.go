@@ -51,6 +51,7 @@ type ChatComponent struct {
 }
 
 const (
+	approvalPrefix        = "🙋"
 	asimiPrefix           = "🎏  "
 	completeSuccessPrefix = "🐉  "
 	completeFailurePrefix = "🦐  "
@@ -869,4 +870,30 @@ func (c *ChatComponent) HandleToolCallError(msg ToolCallErrorMsg) {
 		// Fallback: add a new message if we don't have the index
 		c.AddMessage(formatted)
 	}
+}
+
+// UpdateLastToolCallEmoji finds the last tool call message containing the given command
+// and updates its emoji. Returns true if a message was found and updated.
+func (c *ChatComponent) UpdateLastToolCallEmoji(command string, newEmoji string) bool {
+	// Search from the end of messages to find the most recent matching tool call
+	searchPattern := "$ " + command
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		msg := c.Messages[i]
+		// Check if this message contains the command (tool call messages have "$ <command>")
+		if strings.Contains(msg, searchPattern) {
+			// Update the emoji at the start of the message
+			// Tool call messages start with an emoji followed by space
+			if len(msg) > 0 {
+				// Find the first space to locate the emoji
+				spaceIdx := strings.Index(msg, " ")
+				if spaceIdx > 0 {
+					// Replace the emoji (everything before the first space)
+					c.Messages[i] = newEmoji + msg[spaceIdx:]
+					c.UpdateContent()
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
