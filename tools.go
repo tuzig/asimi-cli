@@ -839,7 +839,7 @@ func hostRun(ctx context.Context, params RunShellCommandInput) (RunShellCommandO
 		if !approved {
 			output.Output = "Command execution denied by user"
 			output.ExitCode = "1"
-			return output, fmt.Errorf("command denied by user: %s", params.Command)
+			return output, nil
 		}
 	}
 

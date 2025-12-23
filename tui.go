@@ -1410,6 +1410,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		chat := m.content.Chat
+		// Remove thinking message when content starts streaming
+		if len(chat.Messages) > 0 && strings.HasPrefix(chat.Messages[len(chat.Messages)-1].Content, "💭") {
+			chat.Messages = chat.Messages[:len(chat.Messages)-1]
+			chat.UpdateContent()
+		}
 		if len(chat.Messages) == 0 || !strings.HasPrefix(chat.Messages[len(chat.Messages)-1].Content, "Asimi:") {
 			chat.AddMessage(fmt.Sprintf("Asimi: %s", string(msg)))
 			slog.Debug("added_new_message", "total_messages", len(m.content.Chat.Messages))

@@ -33,7 +33,7 @@ require (
 )
 
 // IMPORTANT: We have some changes pending for langchaingo, go to keep this
-replace github.com/tmc/langchaingo => github.com/afittestide/langchaingo v0.1.14-pre.4.asimi2
+replace github.com/tmc/langchaingo => github.com/afittestide/langchaingo v0.1.14-pre.4.asimi3
 
 require (
 	cloud.google.com/go v0.120.0 // indirect

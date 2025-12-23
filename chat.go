@@ -878,7 +878,7 @@ func (c *ChatComponent) UpdateLastToolCallEmoji(command string, newEmoji string)
 	// Search from the end of messages to find the most recent matching tool call
 	searchPattern := "$ " + command
 	for i := len(c.Messages) - 1; i >= 0; i-- {
-		msg := c.Messages[i]
+		msg := c.Messages[i].Content
 		// Check if this message contains the command (tool call messages have "$ <command>")
 		if strings.Contains(msg, searchPattern) {
 			// Update the emoji at the start of the message
@@ -888,7 +888,7 @@ func (c *ChatComponent) UpdateLastToolCallEmoji(command string, newEmoji string)
 				spaceIdx := strings.Index(msg, " ")
 				if spaceIdx > 0 {
 					// Replace the emoji (everything before the first space)
-					c.Messages[i] = newEmoji + msg[spaceIdx:]
+					c.Messages[i].Content = newEmoji + msg[spaceIdx:]
 					c.UpdateContent()
 					return true
 				}

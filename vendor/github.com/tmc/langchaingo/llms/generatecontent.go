@@ -118,6 +118,31 @@ type ToolCallResponse struct {
 
 func (ToolCallResponse) isPart() {}
 
+// ThinkingContent represents thinking/reasoning content from models that support extended thinking.
+// This is used to preserve thinking blocks in conversation history for models like Claude 3.7+.
+type ThinkingContent struct {
+	// Thinking is the thinking/reasoning text content.
+	Thinking string `json:"thinking"`
+	// Signature is an optional signature for the thinking block (used by some providers).
+	Signature string `json:"signature,omitempty"`
+}
+
+func (tc ThinkingContent) String() string {
+	return tc.Thinking
+}
+
+func (ThinkingContent) isPart() {}
+
+// ThinkingPart creates ThinkingContent from a given thinking string.
+func ThinkingPart(thinking string) ThinkingContent {
+	return ThinkingContent{Thinking: thinking}
+}
+
+// ThinkingPartWithSignature creates ThinkingContent with a signature.
+func ThinkingPartWithSignature(thinking, signature string) ThinkingContent {
+	return ThinkingContent{Thinking: thinking, Signature: signature}
+}
+
 // ContentResponse is the response returned by a GenerateContent call.
 // It can potentially return multiple content choices.
 type ContentResponse struct {
@@ -179,6 +204,8 @@ func ShowMessageContents(w io.Writer, msgs []MessageContent) {
 				fmt.Fprintf(w, "ToolCall ID=%v, Type=%v, Func=%v(%v)\n", pp.ID, pp.Type, pp.FunctionCall.Name, pp.FunctionCall.Arguments)
 			case ToolCallResponse:
 				fmt.Fprintf(w, "ToolCallResponse ID=%v, Name=%v, Content=%v\n", pp.ToolCallID, pp.Name, pp.Content)
+			case ThinkingContent:
+				fmt.Fprintf(w, "ThinkingContent Thinking=%q, Signature=%q\n", pp.Thinking, pp.Signature)
 			default:
 				fmt.Fprintf(w, "unknown type %T\n", pp)
 			}

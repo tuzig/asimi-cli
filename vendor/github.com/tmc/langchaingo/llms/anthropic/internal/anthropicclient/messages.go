@@ -47,7 +47,7 @@ type messagePayload struct {
 	// Extended thinking parameters (Claude 3.7+)
 	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 
-	StreamingFunc          func(ctx context.Context, chunk []byte) error                      `json:"-"`
+	StreamingFunc          func(ctx context.Context, chunk []byte) error                 `json:"-"`
 	StreamingReasoningFunc func(ctx context.Context, reasoningChunk, chunk []byte) error `json:"-"`
 }
 
@@ -129,7 +129,7 @@ func (trc ToolResultContent) GetType() string {
 type ThinkingContent struct {
 	Type      string `json:"type"`
 	Thinking  string `json:"thinking"`
-	Signature string `json:"signature,omitempty"`
+	Signature string `json:"signature"`
 }
 
 func (tc ThinkingContent) GetType() string {
@@ -442,6 +442,8 @@ func handleContentBlockDeltaEvent(ctx context.Context, event map[string]interfac
 		return handleJSONDelta(delta, response, index)
 	case "thinking_delta":
 		return handleThinkingDelta(ctx, delta, response, payload, index)
+	case "signature_delta":
+		return handleSignatureDelta(delta, response, index)
 	}
 
 	return response, nil
@@ -506,6 +508,21 @@ func handleThinkingDelta(ctx context.Context, delta map[string]interface{}, resp
 			return response, fmt.Errorf("streaming reasoning func returned an error: %w", err)
 		}
 	}
+
+	return response, nil
+}
+
+// handleSignatureDelta processes signature delta events for thinking content blocks.
+func handleSignatureDelta(delta map[string]interface{}, response MessageResponsePayload, index int) (MessageResponsePayload, error) {
+	signature, ok := delta["signature"].(string)
+	if !ok {
+		return response, fmt.Errorf("invalid signature field type in signature_delta")
+	}
+	thinkingContent, ok := response.Content[index].(*ThinkingContent)
+	if !ok {
+		return response, fmt.Errorf("failed to cast to ThinkingContent at index %d for signature", index)
+	}
+	thinkingContent.Signature += signature
 
 	return response, nil
 }

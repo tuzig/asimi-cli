@@ -385,6 +385,13 @@ func handleAIMessage(msg llms.MessageContent) (anthropicclient.ChatMessage, erro
 	// Process all parts in the message, supporting mixed content
 	for _, part := range msg.Parts {
 		switch p := part.(type) {
+		case llms.ThinkingContent:
+			// Handle thinking content - must come before tool_use blocks
+			contents = append(contents, &anthropicclient.ThinkingContent{
+				Type:      "thinking",
+				Thinking:  p.Thinking,
+				Signature: p.Signature,
+			})
 		case llms.TextContent:
 			if strings.TrimSpace(p.Text) != "" { // Only add non-empty text
 				contents = append(contents, &anthropicclient.TextContent{

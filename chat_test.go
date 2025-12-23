@@ -15,9 +15,9 @@ func TestChatComponent_UpdateLastToolCallEmoji(t *testing.T) {
 		updated := chat.UpdateLastToolCallEmoji("echo hello", "🙋")
 
 		assert.True(t, updated)
-		assert.Contains(t, chat.Messages[len(chat.Messages)-1], "🙋")
-		assert.Contains(t, chat.Messages[len(chat.Messages)-1], "$ echo hello")
-		assert.NotContains(t, chat.Messages[len(chat.Messages)-1], "⚙️")
+		assert.Contains(t, chat.Messages[len(chat.Messages)-1].Content, "🙋")
+		assert.Contains(t, chat.Messages[len(chat.Messages)-1].Content, "$ echo hello")
+		assert.NotContains(t, chat.Messages[len(chat.Messages)-1].Content, "⚙️")
 	})
 
 	t.Run("update emoji for last matching command when multiple exist", func(t *testing.T) {
@@ -30,9 +30,9 @@ func TestChatComponent_UpdateLastToolCallEmoji(t *testing.T) {
 
 		assert.True(t, updated)
 		// First message should be unchanged
-		assert.Contains(t, chat.Messages[1], "✓")
+		assert.Contains(t, chat.Messages[1].Content, "✓")
 		// Last message should be updated
-		assert.Contains(t, chat.Messages[2], "🙋")
+		assert.Contains(t, chat.Messages[2].Content, "🙋")
 	})
 
 	t.Run("no update when command not found", func(t *testing.T) {
@@ -43,12 +43,12 @@ func TestChatComponent_UpdateLastToolCallEmoji(t *testing.T) {
 
 		assert.False(t, updated)
 		// Original message should be unchanged
-		assert.Contains(t, chat.Messages[len(chat.Messages)-1], "⚙️")
+		assert.Contains(t, chat.Messages[len(chat.Messages)-1].Content, "⚙️")
 	})
 
 	t.Run("no update when messages are empty", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		chat.Messages = []string{} // Clear all messages
+		chat.Messages = []ChatMessage{} // Clear all messages
 
 		updated := chat.UpdateLastToolCallEmoji("echo hello", "🙋")
 
@@ -62,7 +62,7 @@ func TestChatComponent_UpdateLastToolCallEmoji(t *testing.T) {
 		updated := chat.UpdateLastToolCallEmoji("rm -rf /", "⛔︎")
 
 		assert.True(t, updated)
-		assert.Contains(t, chat.Messages[len(chat.Messages)-1], "⛔︎")
-		assert.NotContains(t, chat.Messages[len(chat.Messages)-1], "🙋")
+		assert.Contains(t, chat.Messages[len(chat.Messages)-1].Content, "⛔︎")
+		assert.NotContains(t, chat.Messages[len(chat.Messages)-1].Content, "🙋")
 	})
 }
