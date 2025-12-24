@@ -839,7 +839,7 @@ func hostRun(ctx context.Context, params RunShellCommandInput) (RunShellCommandO
 		if !approved {
 			output.Output = "Command execution denied by user"
 			output.ExitCode = "1"
-			return output, nil
+			return output, CommandDeniedError{Command: params.Command}
 		}
 	}
 
@@ -920,6 +920,15 @@ func requestHostCommandApproval(ctx context.Context, command string) (bool, erro
 	case <-ctx.Done():
 		return false, ctx.Err()
 	}
+}
+
+// CommandDeniedError is returned when a user denies a host command approval request
+type CommandDeniedError struct {
+	Command string
+}
+
+func (e CommandDeniedError) Error() string {
+	return fmt.Sprintf("command denied by user: `%s`", e.Command)
 }
 
 type PodmanUnavailableError struct {

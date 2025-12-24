@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -859,7 +860,12 @@ func (c *ChatComponent) HandleToolCallSuccess(msg ToolCallSuccessMsg) {
 
 // HandleToolCallError handles a failed tool call message
 func (c *ChatComponent) HandleToolCallError(msg ToolCallErrorMsg) {
-	formatted := formatToolCall(msg.Call.Tool.Name(), "⁉️", msg.Call.Input, "", msg.Call.Error)
+	icon := "⁉️"
+	var deniedErr CommandDeniedError
+	if errors.As(msg.Call.Error, &deniedErr) {
+		icon = "⛔︎"
+	}
+	formatted := formatToolCall(msg.Call.Tool.Name(), icon, msg.Call.Input, "", msg.Call.Error)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
