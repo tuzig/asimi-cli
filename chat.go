@@ -476,24 +476,34 @@ func (c *ChatComponent) UpdateContent() {
 		} else if strings.Contains(message, "<thinking>") && strings.Contains(message, "</thinking>") {
 			// Extract thinking content and regular content
 			thinkingContent, regularContent := extractThinkingContent(message)
-
 			var parts []string
-			// Style thinking content differently
+
+			// Style thinking content using ChatMsgBuilder
 			if thinkingContent != "" {
 				thinkingStyle := lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#004444")). // Terminal7 text-error color
-					Italic(true).
-					Padding(0, 1).
-					Border(lipgloss.RoundedBorder()).
-					BorderForeground(lipgloss.Color("#373702")) // Terminal7 dark border
-
-				wrappedThinking := wordwrap.String("💭 Thinking: "+thinkingContent, c.Width-4)
-				parts = append(parts, thinkingStyle.Render(wrappedThinking))
+					Foreground(lipgloss.Color("#6A9955")) // Muted green for thoughts
+				msg := NewChatMsgBuilder("💭 ")
+				// Word wrap and split into lines
+				wrapped := wordwrap.String(thinkingContent, c.Width-6)
+				lines := strings.Split(wrapped, "\n")
+				for i, line := range lines {
+					if i < len(lines)-1 {
+						msg.WriteLn(line)
+					} else {
+						msg.WriteString(line)
+					}
+				}
+				parts = append(parts, thinkingStyle.Render(msg.String()))
 			}
 
 			// Style regular content normally if present
 			if regularContent != "" {
 				parts = append(parts, c.renderMarkdown(regularContent))
+			}
+
+			// Skip rendering if both thinking and regular content are empty
+			if len(parts) == 0 {
+				continue
 			}
 			rendered = strings.Join(parts, "\n")
 		} else if strings.HasPrefix(message, "You:") {
@@ -526,6 +536,7 @@ func (c *ChatComponent) UpdateContent() {
 			var content string
 			var prefix string
 
+			// TODO: allow for white spaces before "Asimi"
 			if strings.HasPrefix(message, "Asimi:SUCCESS: ") {
 				content = strings.TrimPrefix(message, "Asimi:SUCCESS: ")
 				prefix = lipgloss.NewStyle().

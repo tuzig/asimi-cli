@@ -163,10 +163,12 @@ case ChangeModeMsg:
 - `scroll` - Dedicated chat-navigation mode entered with `Ctrl-B`. It locks the viewport in place (no auto-scroll), minimizes the prompt to 2 lines to maximize content visibility, and provides vi-style paging:
   - `Ctrl-F` / `Ctrl-B` - Page down/up
   - `Ctrl-D` / `Ctrl-U` - Half page down/up
-  - `j` / `k` / `↓` / `↑` - Half page down/up (vi-style)
+  - `j` / `k` / `↓` / `↑` - Scroll one line down/up
   - `G` - Jump to bottom
   - `:` - Enter command mode without snapping back
   - `Esc` / `i` - Return to insert mode
+  
+  The placeholder text in scroll mode shows: "j/k to scroll | CTRL-f/b & d/u as in vi | i/:/ESC to exit"
 
 - `select` - Unified list selection mode used for both models and resume views. Provides consistent navigation:
   - `j` / `k` / `↓` / `↑` - Navigate up/down
@@ -806,6 +808,50 @@ return m, nil
 // After
 return m, m.content.ShowHelp(msg.topic)  // Returns ChangeModeMsg
 ```
+
+---
+
+### Pattern 5: Streaming AI Responses
+
+The TUI handles streaming responses from the AI through specialized message types. This includes both regular content and "extended thinking" (reasoning) content.
+
+**Message Types:**
+
+- `streamChunkMsg` - Regular AI response content chunks
+- `streamReasoningChunkMsg` - Thinking/reasoning content (from models with extended thinking)
+- `streamCompleteMsg` - Marks the end of a streaming response
+
+**Message Flow:**
+
+```
+AI starts response
+       ↓
+   streamReasoningChunkMsg (if thinking enabled)
+       ↓
+   <thinking> tags wrap reasoning content
+       ↓
+   streamChunkMsg (regular response content)
+       ↓
+   "Asimi: " prefix added to message
+       ↓
+   streamCompleteMsg
+       ↓
+   FinalizeLastAIMessage() - adds SUCCESS/FAILURE prefix
+```
+
+**Optimizations:**
+
+1. **Empty Reasoning Skip**: Empty reasoning chunks (whitespace only) are skipped to avoid unnecessary message creation and rendering.
+
+2. **Empty Content Skip**: When rendering messages with `<thinking>` tags, if both the thinking content and regular content are empty, the message is skipped entirely.
+
+**Rendering:**
+
+The `ChatComponent.UpdateContent()` method handles rendering of thinking blocks:
+
+- Content wrapped in `<thinking>...</thinking>` tags is extracted and rendered with a special "thinking" style
+- Regular content following thinking tags is rendered normally with markdown
+- Messages with the `Asimi:` prefix receive appropriate styling (success/failure/normal)
 
 ---
 

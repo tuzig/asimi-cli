@@ -264,6 +264,7 @@ Scroll through chat history without affecting the prompt.
     Ctrl+f       - Scroll down full page
     Ctrl+b       - Scroll up full page
     G            - Go to bottom
+    :            - Enter COMMAND-LINE mode (stays in history)
     ESC or i     - Exit SCROLL mode, return to INSERT
 
 ## COMMAND-LINE Mode
@@ -384,6 +385,7 @@ Navigation commands work in NORMAL mode.
     Ctrl+f       - Scroll down full page
     Ctrl+b       - Scroll up full page
     G            - Go to bottom
+    :            - Enter COMMAND-LINE mode (stays in history)
     ESC or i     - Exit SCROLL mode, return to INSERT
 
 ## Help Navigation

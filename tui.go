@@ -1395,11 +1395,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		chat := m.content.Chat
-		// Remove thinking message when content starts streaming
-		if len(chat.Messages) > 0 && strings.HasPrefix(chat.Messages[len(chat.Messages)-1].Content, "💭") {
-			chat.Messages = chat.Messages[:len(chat.Messages)-1]
-			chat.UpdateContent()
-		}
+		// Find or create the Asimi message to append to
 		if len(chat.Messages) == 0 || !strings.HasPrefix(chat.Messages[len(chat.Messages)-1].Content, "Asimi:") {
 			chat.AddMessage(fmt.Sprintf("Asimi: %s", string(msg)))
 			slog.Debug("added_new_message", "total_messages", len(m.content.Chat.Messages))
@@ -1414,13 +1410,21 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Debug("streamReasoningChunkMsg", "chunk_length", len(msg))
 
 		// Display reasoning in a special format
+		// Store raw text with <thinking> tags - formatting happens in UpdateContent()
 		reasoningText := string(msg)
-		if len(m.content.Chat.Messages) == 0 || !strings.HasPrefix(m.content.Chat.Messages[len(m.content.Chat.Messages)-1].Content, "💭 Thinking:") {
+		if strings.TrimSpace(reasoningText) == "" {
+			// Skip empty reasoning chunks
+			break
+		}
+		if len(m.content.Chat.Messages) == 0 || !strings.HasPrefix(m.content.Chat.Messages[len(m.content.Chat.Messages)-1].Content, "<thinking>") {
 			// Start a new thinking message
-			m.content.Chat.AddMessage(fmt.Sprintf("💭 Thinking: %s", reasoningText))
+			m.content.Chat.AddMessage("<thinking>" + reasoningText + "</thinking>")
 		} else {
-			// Append to existing thinking message
-			m.content.Chat.AppendToLastMessage(reasoningText)
+			// Append to existing thinking message - insert before closing tag
+			lastIdx := len(m.content.Chat.Messages) - 1
+			lastMsg := m.content.Chat.Messages[lastIdx].Content
+			lastMsg = strings.TrimSuffix(lastMsg, "</thinking>")
+			m.content.Chat.Messages[lastIdx].Content = lastMsg + reasoningText + "</thinking>"
 		}
 
 	case streamCompleteMsg:

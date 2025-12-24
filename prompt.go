@@ -309,7 +309,7 @@ func (p *PromptComponent) EnterViScrollMode() {
 	p.viPendingOp = ""
 	// Use normal keymap for scroll mode (no text editing)
 	p.TextArea.KeyMap = p.viNormalKeyMap
-	p.TextArea.Placeholder = "j/k to scroll | Ctrl+d/u for half-page | i/Esc to exit"
+	p.TextArea.Placeholder = "j/k to scroll | CTRL-f/b & d/u as in vi | i/:/ESC to exit"
 	p.updateViModeStyle()
 }
 

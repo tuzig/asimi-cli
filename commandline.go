@@ -357,15 +357,13 @@ func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			return nil, true
 		case "enter":
 			if cl.yesNoInput == "y" {
-				exitCmd := cl.ExitYesNoMode()
 				return tea.Batch(
-					exitCmd,
+					cl.ExitYesNoMode(),
 					func() tea.Msg { return yesNoResponseMsg{answer: true} },
 				), true
-			} else if cl.yesNoInput == "n" {
-				exitCmd := cl.ExitYesNoMode()
+			} else if cl.yesNoInput != "" {
 				return tea.Batch(
-					exitCmd,
+					cl.ExitYesNoMode(),
 					func() tea.Msg { return yesNoResponseMsg{answer: false} },
 				), true
 			}
