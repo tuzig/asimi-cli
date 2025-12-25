@@ -77,9 +77,10 @@ type HistoryConfig struct {
 
 // UIConfig holds UI-specific configuration
 type UIConfig struct {
-	MarkdownEnabled   bool          `koanf:"markdown_enabled"`
-	CtrlCDebounceTime time.Duration `koanf:"ctrl_c_debounce_time"`
-	CtrlCWindowTime   time.Duration `koanf:"ctrl_c_window_time"`
+	MarkdownEnabled      bool          `koanf:"markdown_enabled"`
+	CtrlCDebounceTime    time.Duration `koanf:"ctrl_c_debounce_time"`
+	CtrlCWindowTime      time.Duration `koanf:"ctrl_c_window_time"`
+	PromptExpandedHeight int           `koanf:"prompt_expanded_height"` // Height prompt grows to when multiline (default: 10)
 }
 
 // defaultConfig returns the configuration populated with sensible defaults.
@@ -100,9 +101,10 @@ func defaultConfig() Config {
 			SaveInterval: 300,
 		},
 		UI: UIConfig{
-			MarkdownEnabled:   true,
-			CtrlCDebounceTime: 100 * time.Millisecond,
-			CtrlCWindowTime:   2000 * time.Millisecond,
+			MarkdownEnabled:      true,
+			CtrlCDebounceTime:    100 * time.Millisecond,
+			CtrlCWindowTime:      2000 * time.Millisecond,
+			PromptExpandedHeight: 10,
 		},
 		Session: SessionConfig{
 			Enabled:      true,

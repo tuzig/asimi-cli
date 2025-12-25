@@ -6,6 +6,138 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// TestPromptHeightGrowsTo10LinesForMultilineInput tests that prompt grows to 10 lines
+// when user input is more than one line (issue #31)
+func TestPromptHeightGrowsTo10LinesForMultilineInput(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetScreenHeight(40) // Set screen height so MaxHeight = 20
+
+	tests := []struct {
+		name           string
+		value          string
+		mode           string
+		expectedHeight int
+	}{
+		{
+			name:           "empty prompt returns 2 lines",
+			value:          "",
+			mode:           ViModeInsert,
+			expectedHeight: 2,
+		},
+		{
+			name:           "single line content returns 2 lines",
+			value:          "Hello World",
+			mode:           ViModeInsert,
+			expectedHeight: 2,
+		},
+		{
+			name:           "two lines of content grows to 10 lines",
+			value:          "Line 1\nLine 2",
+			mode:           ViModeInsert,
+			expectedHeight: 10,
+		},
+		{
+			name:           "multiple lines of content grows to 10 lines",
+			value:          "Line 1\nLine 2\nLine 3\nLine 4",
+			mode:           ViModeInsert,
+			expectedHeight: 10,
+		},
+		{
+			name:           "scroll mode returns 2 lines regardless of content",
+			value:          "Line 1\nLine 2\nLine 3",
+			mode:           ViModeScroll,
+			expectedHeight: 2,
+		},
+		{
+			name:           "scroll mode with empty content returns 2 lines",
+			value:          "",
+			mode:           ViModeScroll,
+			expectedHeight: 2,
+		},
+		{
+			name:           "normal mode with multiline grows to 10 lines",
+			value:          "Line 1\nLine 2",
+			mode:           ViModeNormal,
+			expectedHeight: 10,
+		},
+		{
+			name:           "long text that wraps grows to 10 lines",
+			value:          "This is a very long line of text that should wrap to multiple lines because it exceeds the width of the prompt component which is set to 80 characters",
+			mode:           ViModeInsert,
+			expectedHeight: 10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prompt.SetValue(tt.value)
+			prompt.ViCurrentMode = tt.mode
+
+			height := prompt.CalculateDesiredHeight()
+			if height != tt.expectedHeight {
+				t.Errorf("CalculateDesiredHeight() = %d, want %d", height, tt.expectedHeight)
+			}
+		})
+	}
+}
+
+// TestPromptHeightRespectsMaxHeight tests that the 10-line expansion respects MaxHeight
+func TestPromptHeightRespectsMaxHeight(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	// Set a small screen height so MaxHeight = 4 (50% of 8)
+	prompt.SetScreenHeight(8)
+
+	// Multi-line content should be capped at MaxHeight
+	prompt.SetValue("Line 1\nLine 2\nLine 3")
+	prompt.ViCurrentMode = ViModeInsert
+
+	height := prompt.CalculateDesiredHeight()
+	if height != 4 {
+		t.Errorf("CalculateDesiredHeight() = %d, want %d (MaxHeight)", height, 4)
+	}
+}
+
+// TestPromptHeightConfigurableExpandedHeight tests that ExpandedHeight can be configured
+func TestPromptHeightConfigurableExpandedHeight(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetScreenHeight(40) // MaxHeight = 20
+
+	// Set custom expanded height
+	prompt.SetExpandedHeight(15)
+
+	// Multi-line content should grow to configured expanded height
+	prompt.SetValue("Line 1\nLine 2")
+	prompt.ViCurrentMode = ViModeInsert
+
+	height := prompt.CalculateDesiredHeight()
+	if height != 15 {
+		t.Errorf("CalculateDesiredHeight() = %d, want %d (custom ExpandedHeight)", height, 15)
+	}
+}
+
+// TestPromptHeightClearedReturnsToMinimum tests that clearing the prompt returns height to 2
+func TestPromptHeightClearedReturnsToMinimum(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetScreenHeight(40)
+
+	// Start with multiline content
+	prompt.SetValue("Line 1\nLine 2\nLine 3")
+	prompt.ViCurrentMode = ViModeInsert
+
+	height := prompt.CalculateDesiredHeight()
+	if height != 10 {
+		t.Errorf("CalculateDesiredHeight() with multiline = %d, want 10", height)
+	}
+
+	// Clear the prompt
+	prompt.SetValue("")
+
+	height = prompt.CalculateDesiredHeight()
+	if height != 2 {
+		t.Errorf("CalculateDesiredHeight() after clear = %d, want 2", height)
+	}
+}
+
 // TestArrowKeysInViNormalMode tests that arrow keys work in vi normal mode
 func TestArrowKeysInViNormalMode(t *testing.T) {
 	prompt := NewPromptComponent(80, 5)

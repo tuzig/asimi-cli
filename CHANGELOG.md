@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Prompt now grows to `ui.prompt_expanded_height` (default:10) lines when user input is more than one line (including wrapped long text), and returns to 2-line height when in scroll mode or cleared (#31)
+
 ### Fixed
 - Starting a new session with `:new` now picks up newly built sandbox images without requiring program restart
 - Renewing OAuth token on 403 errors

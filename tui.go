@@ -114,6 +114,10 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 	markdownEnabled := false
 	if config != nil {
 		markdownEnabled = config.UI.MarkdownEnabled
+		// Set prompt expanded height from config
+		if config.UI.PromptExpandedHeight > 0 {
+			prompt.SetExpandedHeight(config.UI.PromptExpandedHeight)
+		}
 	}
 
 	model := &TUIModel{
@@ -2265,6 +2269,22 @@ func (m TUIModel) View() string {
 		return "Initializing..."
 	}
 
+	// Update prompt dimensions based on content before rendering
+	// This ensures the prompt grows to 10 lines when multiline (#31)
+	m.prompt.SetScreenHeight(m.height)
+	promptHeight := m.prompt.CalculateDesiredHeight()
+	m.prompt.SetHeight(promptHeight)
+
+	// Recalculate content height based on new prompt height
+	commandLineHeight := 1
+	statusHeight := 1
+	promptWithBorder := promptHeight + 2
+	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1
+	if contentHeight < 0 {
+		contentHeight = 0
+	}
+	m.content.SetSize(m.width-2, contentHeight)
+
 	modalHeight := 0
 	if m.modal != nil {
 		modalHeight = lipgloss.Height(m.modal.Render())
@@ -2294,8 +2314,11 @@ func (m TUIModel) View() string {
 }
 
 func (m TUIModel) renderMainContent(modalHeight int) string {
-	// Account for prompt, status, vi mode/toast line, and modal if present
-	contentHeight := m.height - 6 - modalHeight
+	// Account for prompt, status, vi mode/toast line, and command line dynamically
+	commandLineHeight := 1
+	statusHeight := 1
+	promptWithBorder := m.prompt.Height + 2
+	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1 - modalHeight
 	if contentHeight < 0 {
 		contentHeight = 0
 	}

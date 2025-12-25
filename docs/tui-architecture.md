@@ -10,8 +10,9 @@ This document describes the architecture of the Terminal User Interface (TUI) fo
    - [SELECT Mode Unification](#select-mode-unification)
 4. [Command Line Component](#command-line-component)
 5. [Mouse Event Handling](#mouse-event-handling)
-6. [Message Flow Patterns](#message-flow-patterns)
-7. [Future Improvements](#future-improvements)
+6. [Dynamic Prompt Height](#dynamic-prompt-height)
+7. [Message Flow Patterns](#message-flow-patterns)
+8. [Future Improvements](#future-improvements)
 
 ---
 
@@ -25,19 +26,28 @@ This document describes the architecture of the Terminal User Interface (TUI) fo
 │         CONTENT AREA                    │  ← Mouse wheel works here
 │         (Chat/Help/Models/Resume)       │
 │                                         │
-│         Y = 0 to contentHeight          │
+│         Height = screen - prompt - 4    │  ← Dynamic based on prompt height
 │                                         │
-├─────────────────────────────────────────┤  ← contentHeight boundary
+├─────────────────────────────────────────┤
 │         EMPTY LINE                      │
 ├─────────────────────────────────────────┤
 │  ┌───────────────────────────────────┐  │
 │  │    PROMPT AREA                    │  │  ← Mouse wheel ignored here
+│  │    (2-N lines, configurable)      │  │  ← Grows when multiline
 │  └───────────────────────────────────┘  │
 ├─────────────────────────────────────────┤
 │  STATUS LINE                            │
 ├─────────────────────────────────────────┤
 │  COMMAND LINE                           │
 └─────────────────────────────────────────┘
+```
+
+**Dynamic Content Height Calculation:**
+```go
+commandLineHeight := 1
+statusHeight := 1
+promptWithBorder := m.prompt.Height + 2
+contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1 - modalHeight
 ```
 
 The TUI follows the [Bubbletea](https://github.com/charmbracelet/bubbletea) architecture pattern:
@@ -150,7 +160,7 @@ case ChangeModeMsg:
 
 **Special Modes:**
 
-- `scroll` - Dedicated chat-navigation mode entered with `Ctrl-B`. It locks the viewport in place (no auto-scroll) and provides vi-style paging:
+- `scroll` - Dedicated chat-navigation mode entered with `Ctrl-B`. It locks the viewport in place (no auto-scroll), minimizes the prompt to 2 lines to maximize content visibility, and provides vi-style paging:
   - `Ctrl-F` / `Ctrl-B` - Page down/up
   - `Ctrl-D` / `Ctrl-U` - Half page down/up
   - `j` / `k` / `↓` / `↑` - Half page down/up (vi-style)
@@ -584,6 +594,155 @@ Result: ✓ Works correctly (handled by chat component)
 
 ---
 
+## Dynamic Prompt Height
+
+### Problem
+
+The prompt input area had a fixed height, which wasted vertical space for single-line inputs and didn't provide enough room for multiline inputs. Users composing longer messages or code snippets couldn't see their full input without scrolling within the prompt.
+
+### Solution: Dynamic Height Based on Content
+
+The prompt now dynamically adjusts its height based on content:
+
+- **Minimum (2 lines)**: Empty prompt or single-line content
+- **Expanded (PromptExpandedHeight, default 10)**: When content spans multiple lines (including wrapped text)
+- **Maximum (50% of screen)**: Hard cap to ensure content area remains usable
+
+### Height Calculation Logic
+
+```go
+func (p *PromptComponent) CalculateDesiredHeight() int {
+    value := p.TextArea.Value()
+
+    // Return to minimum height when:
+    // 1. Prompt is cleared (empty)
+    // 2. In scroll mode (maximize content visibility)
+    if value == "" || p.ViCurrentMode == ViModeScroll {
+        return 2
+    }
+
+    // Calculate visual lines (accounting for word wrap)
+    textWidth := p.Width - 4 // Account for borders and cursor
+    visualLines := 0
+    for _, line := range strings.Split(value, "\n") {
+        if len(line) == 0 {
+            visualLines++
+        } else {
+            visualLines += (len(line) + textWidth - 1) / textWidth
+        }
+    }
+
+    // Single visual line: minimum height
+    if visualLines <= 1 {
+        return 2
+    }
+
+    // Multiline: expand to configured height (capped at MaxHeight)
+    expandedHeight := p.ExpandedHeight
+    if p.MaxHeight > 0 && expandedHeight > p.MaxHeight {
+        return p.MaxHeight
+    }
+    return expandedHeight
+}
+```
+
+### Configuration
+
+The expanded height can be customized via configuration:
+
+```go
+type UIConfig struct {
+    MarkdownEnabled      bool          `koanf:"markdown_enabled"`
+    CtrlCDebounceTime    time.Duration `koanf:"ctrl_c_debounce_time"`
+    CtrlCWindowTime      time.Duration `koanf:"ctrl_c_window_time"`
+    PromptExpandedHeight int           `koanf:"prompt_expanded_height"` // Default: 10
+}
+```
+
+**Usage in config file:**
+```yaml
+ui:
+  prompt_expanded_height: 15  # Grow to 15 lines instead of default 10
+```
+
+### Integration with View()
+
+The `View()` method recalculates prompt height before each render:
+
+```go
+func (m TUIModel) View() string {
+    // Update prompt dimensions based on content
+    m.prompt.SetScreenHeight(m.height)
+    promptHeight := m.prompt.CalculateDesiredHeight()
+    m.prompt.SetHeight(promptHeight)
+
+    // Recalculate content height based on new prompt height
+    commandLineHeight := 1
+    statusHeight := 1
+    promptWithBorder := promptHeight + 2
+    contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1
+    m.content.SetSize(m.width-2, contentHeight)
+    
+    // ... rest of rendering
+}
+```
+
+### Scroll Mode Optimization
+
+When entering scroll mode (`Ctrl-B`), the prompt automatically shrinks to 2 lines to maximize the content viewing area. This is particularly useful when reviewing long chat histories:
+
+```go
+if p.ViCurrentMode == ViModeScroll {
+    return 2  // Minimize prompt in scroll mode
+}
+```
+
+### Height Transitions
+
+| Content State | Visual Lines | Resulting Height |
+|--------------|--------------|------------------|
+| Empty | 0 | 2 lines |
+| Single line "hello" | 1 | 2 lines |
+| "line1\nline2" | 2 | PromptExpandedHeight |
+| Long wrapped text | 2+ | PromptExpandedHeight |
+| Any content in scroll mode | N/A | 2 lines |
+| Multiline (small screen) | 2+ | MaxHeight (50% of screen) |
+
+### Benefits
+
+✅ **Space Efficiency** - Minimal height for simple inputs  
+✅ **Multiline Editing** - Comfortable editing for longer inputs  
+✅ **Word Wrap Awareness** - Accounts for wrapped lines, not just explicit newlines  
+✅ **Scroll Mode Integration** - Maximizes content area when browsing  
+✅ **Configurable** - Users can customize expanded height  
+✅ **Screen-Aware** - Respects maximum height constraints  
+✅ **Dynamic Content Area** - Content area automatically adjusts  
+
+### Testing
+
+```go
+func TestPromptHeightGrowsTo10LinesForMultilineInput(t *testing.T) {
+    prompt := NewPromptComponent(80, 5)
+    prompt.SetScreenHeight(40)
+
+    tests := []struct {
+        name           string
+        value          string
+        mode           string
+        expectedHeight int
+    }{
+        {"empty prompt returns 2 lines", "", ViModeInsert, 2},
+        {"single line returns 2 lines", "Hello", ViModeInsert, 2},
+        {"two lines grows to 10", "Line 1\nLine 2", ViModeInsert, 10},
+        {"scroll mode returns 2 lines", "Line 1\nLine 2", ViModeScroll, 2},
+        {"wrapped text grows to 10", "Very long line...", ViModeInsert, 10},
+    }
+    // ...
+}
+```
+
+---
+
 ## Message Flow Patterns
 
 ### Pattern 1: Component State Change
@@ -664,6 +823,11 @@ return m, m.content.ShowHelp(msg.topic)  // Returns ChangeModeMsg
 - Make history navigation a reusable component
 - Add more unit tests for `CommandLineComponent.HandleKey()`
 
+### Prompt Component
+- Animate height transitions for smoother UX
+- Add user preference for "always expanded" mode
+- Consider different expanded heights for different content types
+
 ### General Architecture
 - Consider extracting more components (e.g., StatusComponent could handle its own updates)
 - Add component lifecycle hooks (Init, Cleanup)
@@ -678,10 +842,30 @@ return m, m.content.ShowHelp(msg.topic)  // Returns ChangeModeMsg
 - `tui.go` - Main TUI model and coordination logic
 - `commandline.go` - Command line component
 - `content.go` - Content view component (chat/help/models/resume)
-- `prompt.go` - User input prompt component
+- `prompt.go` - User input prompt component (with dynamic height)
 - `status.go` - Status bar component
+- `config.go` - Configuration including `UIConfig.PromptExpandedHeight`
 
 ### Key Changes Made
+
+**prompt.go**:
+- Added `ExpandedHeight` field (configurable, default 10)
+- Added `SetExpandedHeight()` method
+- Updated `CalculateDesiredHeight()` for dynamic sizing:
+  - Returns 2 for empty/single-line/scroll-mode
+  - Returns `ExpandedHeight` for multiline (capped at `MaxHeight`)
+  - Accounts for word-wrapped lines
+
+**config.go**:
+- Added `PromptExpandedHeight int` to `UIConfig`
+- Default value: 10 (configurable via `PromptExpandedHeight`)
+
+**tui.go**:
+- Added `Mode` field to `TUIModel`
+- Added centralized `ChangeModeMsg` handler
+- Updated `View()` to recalculate prompt height dynamically
+- Updated `renderMainContent()` for dynamic content height
+- Applies config `PromptExpandedHeight` on initialization
 
 **commandline.go**:
 - Added message types (`ChangeModeMsg`, `commandReadyMsg`, etc.)
@@ -692,14 +876,6 @@ return m, m.content.ShowHelp(msg.topic)  // Returns ChangeModeMsg
 - Updated `ShowChat()`, `ShowHelp()`, `ShowModels()`, `ShowResume()` to return `ChangeModeMsg`
 - Updated exit handlers to return commands
 - Updated selection handlers to batch commands
-
-**tui.go**:
-- Added `Mode` field to `TUIModel`
-- Added centralized `ChangeModeMsg` handler
-- Removed mode polling logic from `View()`
-- Updated all vi mode changes to send `ChangeModeMsg`
-- Updated all component call sites to use returned commands
-- Removed 266 lines of command line input handling
 
 ---
 
@@ -713,6 +889,9 @@ All refactorings maintain backward compatibility:
 ✅ Completion dialog works in command line mode  
 ✅ History navigation works correctly  
 ✅ Vim-style partial command matching integrated  
+✅ Prompt height grows to PromptExpandedHeight for multiline input  
+✅ Prompt shrinks when cleared or in scroll mode  
+✅ Dynamic content height adjusts with prompt size  
 
 ---
 
@@ -725,6 +904,7 @@ These refactorings established a clean, maintainable architecture:
 3. **Component Boundaries**: Each component handles its own input and state
 4. **Message Passing**: Clean communication via bubbletea messages
 5. **No Polling**: View() just renders, no logic
-6. **Testability**: Components can be tested in isolation
+6. **Dynamic Prompt Height**: Prompt grows for multiline input, shrinks in scroll mode
+7. **Testability**: Components can be tested in isolation
 
 The result is a more maintainable, extensible, and testable codebase that follows bubbletea best practices.

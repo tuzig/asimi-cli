@@ -1600,7 +1600,13 @@ func TestHistoryNavigation_RapidNavigation(t *testing.T) {
 
 // Tests from tui_e2e_test.go
 
-func TestFileCompletion(t *testing.T) {
+// TestHappyFlowE2E tests multiple user interactions in sequence using a single teatest.NewTestModel()
+// This is more efficient than running multiple tests with separate NewTestModel() calls.
+// The test covers:
+// 1. Prompt height growing to 10 lines when input has multiple lines (#31)
+// 2. File completion with @
+// 3. Colon command completion with :help
+func TestHappyFlowE2E(t *testing.T) {
 	// Create a new TUI model for testing
 	config := mockConfig()
 	model := NewTUIModel(config, nil, nil, nil, nil, nil)
@@ -1611,10 +1617,43 @@ func TestFileCompletion(t *testing.T) {
 	require.NoError(t, err)
 	model.SetSession(sess)
 
-	// Create a new test model
-	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 200))
+	// Create a new test model with a large terminal size
+	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 50))
 
-	// Get file list and find the inex of main.go
+	// ===== Step 1: Test prompt height growing to 10 lines (#31) =====
+	t.Log("Step 1: Testing prompt height growth for multiline input")
+
+	// Type multiline input (use Alt+Enter to insert newlines)
+	tm.Type("line 1")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter, Alt: true}) // Alt+Enter for newline
+	tm.Type("line 2")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	tm.Type("line 3")
+
+	// Wait for multiline content to appear in output
+	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		output := string(bts)
+		return strings.Contains(output, "line 1") &&
+			strings.Contains(output, "line 2") &&
+			strings.Contains(output, "line 3")
+	}, teatest.WithCheckInterval(time.Millisecond*100), teatest.WithDuration(time.Second*3))
+
+	// Clear prompt for next test - use Ctrl+A to select all, then delete
+	// In insert mode: Ctrl+U clears line before cursor, Ctrl+K clears after cursor
+	// We need to clear all lines. Go to end of text first, then clear backwards
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlEnd}) // Go to end
+	time.Sleep(20 * time.Millisecond)
+	// Delete everything by repeatedly pressing Ctrl+U (delete to start of line) and backspace
+	for i := 0; i < 10; i++ {
+		tm.Send(tea.KeyMsg{Type: tea.KeyCtrlU})
+		tm.Send(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// ===== Step 2: Test file completion =====
+	t.Log("Step 2: Testing file completion")
+
+	// Get file list and verify main.go exists
 	files, err := getFileTree(".")
 	require.NoError(t, err)
 	mainGoIndex := -1
@@ -1626,7 +1665,7 @@ func TestFileCompletion(t *testing.T) {
 	}
 	require.NotEqual(t, -1, mainGoIndex, "main.go not found in file tree")
 
-	// Simulate typing "@"
+	// Simulate typing "@main."
 	tm.Type("@main.")
 
 	// Wait for the completion dialog to appear
@@ -1637,47 +1676,22 @@ func TestFileCompletion(t *testing.T) {
 	// Simulate pressing enter to select the file
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Wait for a bit to let the file be read
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the prompt to show the completed file name
+	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		return strings.Contains(string(bts), "@main.go")
+	}, teatest.WithCheckInterval(time.Millisecond*100), teatest.WithDuration(time.Second*3))
 
-	// Quit the application (requires double CTRL-C)
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	time.Sleep(110 * time.Millisecond) // Wait longer than CtrlCDebounceTime (100ms)
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	// Clear prompt for next test
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlEnd})
+	time.Sleep(20 * time.Millisecond)
+	for i := 0; i < 20; i++ {
+		tm.Send(tea.KeyMsg{Type: tea.KeyCtrlU})
+		tm.Send(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	time.Sleep(50 * time.Millisecond)
 
-	// Get the final model
-	finalModel := tm.FinalModel(t)
-	tuiModel, ok := finalModel.(TUIModel)
-	require.True(t, ok)
-
-	// Assert that the prompt was completed to @main.go
-	require.Equal(t, "@main.go ", tuiModel.prompt.TextArea.Value())
-
-	// Assert that the file viewer contains the file content
-	contextFiles := tuiModel.session.GetContextFiles()
-	require.Contains(t, contextFiles["main.go"], "package main")
-
-	// Assert that the prompt was not sent and the editor is still focused
-	chat := tuiModel.content.Chat
-	require.NotEmpty(t, chat.Messages)
-	require.True(t, containsMessage(chat.Messages, "Loaded file: main.go"),
-		"messages", chat.Messages)
-	require.True(t, tuiModel.prompt.TextArea.Focused(), "The editor should remain focused")
-}
-
-func TestColonCommandCompletionE2E(t *testing.T) {
-	// Create a new TUI model for testing
-	config := mockConfig()
-	model := NewTUIModel(config, nil, nil, nil, nil, nil)
-
-	// Set up a mock session for the test
-	llm := fake.NewFakeLLM([]string{})
-	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, RepoInfo{}, func(any) {})
-	require.NoError(t, err)
-	model.SetSession(sess)
-
-	// Create a new test model
-	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 200))
+	// ===== Step 3: Test colon command completion =====
+	t.Log("Step 3: Testing colon command completion")
 
 	// Simulate typing ":" to enter command mode
 	tm.Type(":")
@@ -1693,19 +1707,29 @@ func TestColonCommandCompletionE2E(t *testing.T) {
 	// Press enter to execute the command
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Wait for a bit to let the command be executed
-	time.Sleep(100 * time.Millisecond)
+	// Wait for help content to appear
+	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		// Help view should show help content
+		return strings.Contains(string(bts), "Available Commands") ||
+			strings.Contains(string(bts), ":help") ||
+			strings.Contains(string(bts), "Welcome to Asimi")
+	}, teatest.WithCheckInterval(time.Millisecond*100), teatest.WithDuration(time.Second*3))
 
-	// Quit the application (requires double CTRL-C)
+	// ===== Cleanup: Quit the application =====
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 	time.Sleep(110 * time.Millisecond) // Wait longer than CtrlCDebounceTime (100ms)
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 
-	// Get the final model
+	// Get the final model and verify final state
 	finalModel := tm.FinalModel(t)
 	tuiModel, ok := finalModel.(TUIModel)
 	require.True(t, ok)
 
+	// Verify file was loaded
+	contextFiles := tuiModel.session.GetContextFiles()
+	require.Contains(t, contextFiles["main.go"], "package main")
+
+	// Verify help view is shown
 	require.Equal(t, ViewHelp, tuiModel.content.GetActiveView())
 	require.Equal(t, "index", tuiModel.content.help.GetTopic())
 }

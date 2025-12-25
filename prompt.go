@@ -33,6 +33,7 @@ type PromptComponent struct {
 	Width          int
 	MaxHeight      int // Maximum height (50% of screen height)
 	ScreenHeight   int // Total screen height
+	ExpandedHeight int // Height to grow to when multiline (default: 10)
 	Style          lipgloss.Style
 	ViCurrentMode  string // Current vi mode: insert, normal, or command
 	viPendingOp    string // Track pending operation (e.g., "d" or "c")
@@ -122,6 +123,7 @@ func NewPromptComponent(width, height int) PromptComponent {
 		TextArea:       ta,
 		Height:         height,
 		Width:          width,
+		ExpandedHeight: 10,           // Default expanded height, can be overridden by config
 		ViCurrentMode:  ViModeInsert, // Start in insert mode
 		viPendingOp:    "",           // No pending operation
 		viNormalKeyMap: viNormalKeyMap,
@@ -169,22 +171,58 @@ func (p *PromptComponent) SetScreenHeight(screenHeight int) {
 	}
 }
 
+// SetExpandedHeight sets the height the prompt grows to when content is multiline
+func (p *PromptComponent) SetExpandedHeight(height int) {
+	p.ExpandedHeight = height
+}
+
 // CalculateDesiredHeight returns the desired height based on content
+// When user input is more than one line (including wrapped lines), grows to ExpandedHeight lines (if screen allows)
+// Goes back to 2-line height when in scroll mode or when prompt is cleared
 func (p *PromptComponent) CalculateDesiredHeight() int {
 	value := p.TextArea.Value()
-	lines := strings.Count(value, "\n") + 1
 
-	// Minimum height of 2 lines
-	if lines < 2 {
-		lines = 2
+	// Return to minimum height (2 lines) when:
+	// 1. Prompt is cleared (empty)
+	// 2. In scroll mode
+	if value == "" || p.ViCurrentMode == ViModeScroll {
+		return 2
 	}
 
-	// Apply max height constraint
-	if p.MaxHeight > 0 && lines > p.MaxHeight {
+	// Calculate the number of visual lines (accounting for word wrap)
+	// The textarea width minus some padding for the cursor
+	textWidth := p.Width - 4 // Account for borders and cursor
+	if textWidth <= 0 {
+		textWidth = 1
+	}
+
+	visualLines := 0
+	for _, line := range strings.Split(value, "\n") {
+		if len(line) == 0 {
+			visualLines++
+		} else {
+			// Calculate how many visual rows this line takes
+			visualLines += (len(line) + textWidth - 1) / textWidth
+		}
+	}
+
+	// Return to minimum height (2 lines) when content fits in a single line
+	if visualLines <= 1 {
+		return 2
+	}
+
+	// When content is more than one line, grow to ExpandedHeight
+	expandedHeight := p.ExpandedHeight
+	if expandedHeight <= 0 {
+		expandedHeight = 10 // Fallback default
+	}
+
+	// Apply max height constraint (50% of screen height)
+	if p.MaxHeight > 0 && expandedHeight > p.MaxHeight {
 		return p.MaxHeight
 	}
 
-	return lines
+	return expandedHeight
 }
 
 // SetValue sets the text value of the prompt
