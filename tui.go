@@ -530,6 +530,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle regular key input (when in insert mode)
+	// Arrow keys only move cursor within the prompt (no history navigation in insert mode)
 	switch keyStr {
 	case "ctrl+o":
 		m.rawMode = !m.rawMode
@@ -545,26 +546,6 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case "@":
 		return m.handleAtKey(msg)
-	case "up":
-		// Only handle history navigation if we're on the first line
-		if m.prompt.TextArea.Line() == 0 {
-			if handled := m.handleHistoryNavigation(-1); handled {
-				return m, nil
-			}
-		}
-		var cmd tea.Cmd
-		m.prompt, cmd = m.prompt.Update(msg)
-		return m, cmd
-	case "down":
-		// Only handle history navigation if we're on the last line
-		if m.prompt.TextArea.Line() == m.prompt.TextArea.LineCount()-1 {
-			if handled := m.handleHistoryNavigation(1); handled {
-				return m, nil
-			}
-		}
-		var cmd tea.Cmd
-		m.prompt, cmd = m.prompt.Update(msg)
-		return m, cmd
 	default:
 		var cmd tea.Cmd
 		m.prompt, cmd = m.prompt.Update(msg)

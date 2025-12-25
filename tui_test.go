@@ -1269,6 +1269,8 @@ func TestStartConversationMsg_InitialMessages(t *testing.T) {
 }
 
 // TestHistoryNavigation_WithArrowKeys tests arrow key handling
+// In insert mode, arrow keys only move cursor within the prompt (no history navigation)
+// History navigation with arrow keys is available in normal mode (tested in TestViModeHistoryNavigation)
 func TestHistoryNavigation_WithArrowKeys(t *testing.T) {
 	model := newTestModel(t)
 
@@ -1280,23 +1282,30 @@ func TestHistoryNavigation_WithArrowKeys(t *testing.T) {
 	model.historyCursor = 2
 	model.prompt.SetValue("current")
 
-	// Simulate up arrow on first line (cursor at start)
+	// Ensure we're in insert mode
+	model.prompt.EnterViInsertMode()
+	model.Mode = ViModeInsert
+
+	// In insert mode, up arrow should NOT navigate history, just move cursor
 	model.prompt.TextArea.CursorStart()
-	newModel, cmd := model.handleKeyMsg(tea.KeyMsg{Type: tea.KeyUp})
+	newModel, _ := model.handleKeyMsg(tea.KeyMsg{Type: tea.KeyUp})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
-	require.Nil(t, cmd)
-	require.Equal(t, 1, updatedModel.historyCursor)
-	require.Equal(t, "second", updatedModel.prompt.Value())
+	// History cursor should remain unchanged (no navigation)
+	require.Equal(t, 2, updatedModel.historyCursor, "Insert mode should not navigate history with arrow keys")
+	require.Equal(t, "current", updatedModel.prompt.Value(), "Prompt value should remain unchanged")
 
-	// Simulate down arrow on last line (cursor at end)
-	updatedModel.prompt.TextArea.CursorEnd()
-	newModel, cmd = updatedModel.handleKeyMsg(tea.KeyMsg{Type: tea.KeyDown})
+	// Switch to normal mode - now arrow keys should navigate history
+	updatedModel.prompt.EnterViNormalMode()
+	updatedModel.Mode = ViModeNormal
+	updatedModel.prompt.TextArea.CursorStart()
+
+	// Use handleViNormalMode for normal mode keys
+	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyUp})
 	updatedModel, ok = newModel.(TUIModel)
 	require.True(t, ok)
-	require.Nil(t, cmd)
-	require.Equal(t, 2, updatedModel.historyCursor)
-	require.Equal(t, "current", updatedModel.prompt.Value())
+	require.Equal(t, 1, updatedModel.historyCursor, "Normal mode should navigate history with arrow keys")
+	require.Equal(t, "second", updatedModel.prompt.Value())
 }
 
 // TestCancelActiveStreaming tests the streaming cancellation helper
