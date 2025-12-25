@@ -2468,7 +2468,6 @@ func (m TUIModel) renderHomeView(width, height int) string {
 	container := lipgloss.NewStyle().
 		Width(width).
 		Height(height).
-		Background(lipgloss.Color("#000000")). // Terminal7 pane background
 		Align(lipgloss.Center, lipgloss.Center).
 		Render(content)
 
@@ -2490,7 +2489,6 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 		container := lipgloss.NewStyle().
 			Width(width).
 			Height(height).
-			Background(lipgloss.Color("#000000")). // Terminal7 pane background
 			Align(lipgloss.Center, lipgloss.Center).
 			Render(emptyContent)
 
@@ -2549,7 +2547,6 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 	container := lipgloss.NewStyle().
 		Width(width).
 		Height(height).
-		Background(lipgloss.Color("#000000")). // Terminal7 pane background
 		Render(content)
 
 	return container
