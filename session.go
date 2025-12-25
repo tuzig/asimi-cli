@@ -505,29 +505,38 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 	return resp.Choices[0], nil
 }
 
-// appendMessages adds LLM response content and tool calls to the message history
-func (s *Session) appendMessages(content string, toolCalls []llms.ToolCall) {
-	s.appendMessagesWithThinking(content, "", "", toolCalls)
-}
+// appendMessage adds LLM response content, thinking content, and tool calls to the message history.
+// When thinking is enabled, the thinking content must be included to satisfy Anthropic's API requirement
+// that assistant messages start with a thinking block before any tool_use blocks.
+func (s *Session) appendMessage(choice *llms.ContentChoice) {
+	if choice == nil {
+		return
+	}
 
-// appendMessagesWithThinking adds LLM response content, thinking content, and tool calls to the message history
-func (s *Session) appendMessagesWithThinking(content, thinkingContent, thinkingSignature string, toolCalls []llms.ToolCall) {
+	// Extract thinking signature from generation info
+	var thinkingSignature string
+	if choice.GenerationInfo != nil {
+		if sig, ok := choice.GenerationInfo["ThinkingSignature"].(string); ok {
+			thinkingSignature = sig
+		}
+	}
+
 	// Build the assistant message parts
 	var parts []llms.ContentPart
 
-	slog.Debug("appending messages", "signature", thinkingSignature)
+	slog.Debug("appending message", "signature", thinkingSignature)
 	// Add thinking content first if present (must come before tool_use blocks per Anthropic API)
-	if strings.TrimSpace(thinkingContent) != "" {
-		parts = append(parts, llms.ThinkingPartWithSignature(thinkingContent, thinkingSignature))
+	if strings.TrimSpace(choice.ReasoningContent) != "" {
+		parts = append(parts, llms.ThinkingPartWithSignature(choice.ReasoningContent, thinkingSignature))
 	}
 
 	// Add text content if present
-	if strings.TrimSpace(content) != "" {
-		parts = append(parts, llms.TextPart(content))
+	if strings.TrimSpace(choice.Content) != "" {
+		parts = append(parts, llms.TextPart(choice.Content))
 	}
 
 	// Add tool calls if present
-	for _, toolCall := range toolCalls {
+	for _, toolCall := range choice.ToolCalls {
 		parts = append(parts, llms.ToolCall{
 			ID:           toolCall.ID,
 			Type:         toolCall.Type,
@@ -728,16 +737,8 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 			finalText = responseText
 		}
 
-		// Extract thinking signature from generation info if available
-		var thinkingSignature string
-		if choice.GenerationInfo != nil {
-			if sig, ok := choice.GenerationInfo["ThinkingSignature"].(string); ok {
-				thinkingSignature = sig
-			}
-		}
-
 		// Store thinking content properly for API compatibility
-		s.appendMessagesWithThinking(choice.Content, choice.ReasoningContent, thinkingSignature, choice.ToolCalls)
+		s.appendMessage(choice)
 
 		// Handle tool calls, if any.
 		if len(choice.ToolCalls) == 0 {
@@ -851,20 +852,20 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, 
 			if s.notify != nil {
 				s.notify(streamMaxTokensReachedMsg{content: responseContent})
 			}
-			s.appendMessages(responseContent, choice.ToolCalls)
+			s.appendMessage(choice)
 			return responseContent + "\n\n[Response truncated due to length limit]", nil
 		}
 
-		// Add reasoning content if available
+		// Add reasoning content if available (for UI display)
 		if choice.ReasoningContent != "" && s.notify != nil {
 			s.notify(streamChunkMsg("\n\n<thinking>\n" + choice.ReasoningContent + "\n</thinking>\n\n"))
 		}
 
-		// Record assistant response in message history
+		// Record assistant response in message history with thinking content for API compatibility
 		if strings.TrimSpace(responseContent) != "" {
 			finalText = responseContent
 		}
-		s.appendMessages(responseContent, choice.ToolCalls)
+		s.appendMessage(choice)
 
 		// Handle tool calls, if any.
 		if len(choice.ToolCalls) == 0 {
@@ -945,7 +946,7 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 				// Streaming was cancelled - add any accumulated content to message history
 				accumulatedText := s.getStreamBuffer(false)
 				if strings.TrimSpace(accumulatedText) != "" {
-					s.appendMessages(accumulatedText, nil)
+					s.appendMessage(&llms.ContentChoice{Content: accumulatedText})
 				}
 				if s.notify != nil {
 					s.notify(streamInterruptedMsg{partialContent: accumulatedText})
@@ -978,7 +979,7 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 				if ctx.Err() != nil {
 					accumulatedText := s.getStreamBuffer(false)
 					if strings.TrimSpace(accumulatedText) != "" {
-						s.appendMessages(accumulatedText, nil)
+						s.appendMessage(&llms.ContentChoice{Content: accumulatedText})
 					}
 					if s.notify != nil {
 						s.notify(streamInterruptedMsg{partialContent: accumulatedText})
@@ -1001,28 +1002,12 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 				if s.notify != nil {
 					s.notify(streamMaxTokensReachedMsg{content: responseContent})
 				}
-				// Extract thinking signature from generation info if available
-				var thinkingSignature string
-				if choice.GenerationInfo != nil {
-					if sig, ok := choice.GenerationInfo["ThinkingSignature"].(string); ok {
-						thinkingSignature = sig
-					}
-				}
-				s.appendMessagesWithThinking(responseContent, choice.ReasoningContent, thinkingSignature, choice.ToolCalls)
+				s.appendMessage(choice)
 				break
 			}
 
-			// Extract thinking signature from generation info if available
-			var thinkingSignature string
-			slog.Debug("got something", "choice", choice)
-			if choice.GenerationInfo != nil {
-				if sig, ok := choice.GenerationInfo["ThinkingSignature"].(string); ok {
-					thinkingSignature = sig
-				}
-			}
-
 			// Add the assistant message with content, thinking, and tool calls to message history
-			s.appendMessagesWithThinking(responseContent, choice.ReasoningContent, thinkingSignature, choice.ToolCalls)
+			s.appendMessage(choice)
 
 			// Handle tool calls, if any.
 			if len(choice.ToolCalls) == 0 {
