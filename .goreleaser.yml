@@ -78,6 +78,11 @@ release:
     
     ### Installation
     
+    #### One-liner (Recommended)
+    ```bash
+    curl -fsSL https://asimi.dev/installer | bash
+    ```
+    
     #### Homebrew (macOS/Linux)
     ```bash
     brew install afittestide/tap/asimi

@@ -28,6 +28,21 @@ First, there are two great tools required on your system:
 
 Then, choose your installer flavor:
 
+### One-liner (Recommended)
+
+```bash
+curl -fsSL https://asimi.dev/installer | bash
+```
+
+Or with wget:
+```bash
+wget -qO- https://asimi.dev/installer | bash
+```
+
+**Options:**
+- `ASIMI_INSTALL_DIR=/path/to/dir` - Custom installation directory
+- `ASIMI_VERSION=v0.1.0` - Install a specific version
+
 ### brew
 
 ```bash

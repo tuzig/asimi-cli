@@ -75,6 +75,15 @@ This triggers the GitHub Actions release workflow which:
 
 ## Post-Release
 
+### Verify the Installer
+
+Test the one-liner installer:
+```bash
+curl -fsSL https://asimi.dev/installer | bash
+# or
+curl -fsSL https://raw.githubusercontent.com/afittestide/asimi-cli/main/scripts/install.sh | bash
+```
+
 ### Verify the Release
 
 1. Check [GitHub Releases](https://github.com/afittestide/asimi-cli/releases)
@@ -103,6 +112,43 @@ git tag -a v0.2.1 -m "Release 0.2.1"
 git push origin main --tags
 ```
 
+
+## One-Liner Installer
+
+The one-liner installer (`scripts/install.sh`) is available for direct installation of Asimi.
+
+### Hosting
+
+The installer should be accessible at `https://asimi.dev/installer`. There are several options:
+
+1. **GitHub Raw URL (Fallback)**: The script is always available at:
+   ```
+   https://raw.githubusercontent.com/afittestide/asimi-cli/main/scripts/install.sh
+   ```
+
+2. **Domain Redirect**: Configure `asimi.dev/installer` to redirect to the GitHub raw URL.
+
+3. **Static Hosting**: Host the script on a CDN or static site (Netlify, Vercel, GitHub Pages).
+
+### Updating the Installer
+
+When making changes to the installer:
+1. Edit `scripts/install.sh`
+2. Test locally: `bash scripts/install.sh`
+3. Commit and push to main
+4. The GitHub raw URL updates automatically
+
+### Installer Options
+
+Users can customize installation via environment variables:
+- `ASIMI_INSTALL_DIR` - Custom installation directory
+- `ASIMI_VERSION` - Install a specific version (e.g., `v0.2.0`)
+- `ASIMI_NO_MODIFY_PATH` - Skip automatic PATH modification
+
+Example:
+```bash
+ASIMI_VERSION=v0.2.0 ASIMI_INSTALL_DIR=~/bin curl -fsSL https://asimi.dev/installer | bash
+```
 
 ## See Also
 
