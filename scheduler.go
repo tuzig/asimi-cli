@@ -20,6 +20,7 @@ const (
 	StatusSuccess            ToolCallStatus = "success"
 	StatusError              ToolCallStatus = "error"
 	StatusCancelled          ToolCallStatus = "cancelled"
+	StatusAborted            ToolCallStatus = "aborted"
 )
 
 // ToolCall represents a single tool call task
@@ -56,6 +57,14 @@ func NewCoreToolScheduler(toolNotify func(any)) *CoreToolScheduler {
 		resultChans: make(map[string]chan ToolCallResult),
 		notify:      toolNotify,
 	}
+}
+
+// SetNotify sets the notification function for tool call status updates.
+// This allows the scheduler to be created before the notification target is ready.
+func (s *CoreToolScheduler) SetNotify(notify func(any)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notify = notify
 }
 
 // Schedule adds a new tool call to the scheduler and returns a channel for the result
@@ -141,9 +150,59 @@ func (s *CoreToolScheduler) processQueue() {
 	}()
 }
 
+// SandboxRestartedError is returned when a tool call is aborted due to sandbox restart
+type SandboxRestartedError struct{}
+
+func (e SandboxRestartedError) Error() string {
+	return "sandbox restarted - tool call aborted"
+}
+
+// ClearQueue aborts all pending tool calls in the queue. This should be called
+// when the sandbox needs to be reinitialized (e.g., after a timeout).
+// It returns an error for all pending operations and notifies the UI.
+func (s *CoreToolScheduler) ClearQueue() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	abortedCount := len(s.queue)
+	if abortedCount == 0 {
+		slog.Debug("scheduler.clear_queue", "aborted", 0)
+		return 0
+	}
+
+	slog.Info("scheduler.clear_queue", "aborting", abortedCount)
+
+	abortErr := SandboxRestartedError{}
+
+	// Abort all queued tool calls
+	for _, call := range s.queue {
+		call.Status = StatusAborted
+		call.Error = abortErr
+
+		// Notify the UI about the aborted call
+		if s.notify != nil {
+			s.notify(ToolCallAbortedMsg{Call: call})
+		}
+
+		// Send error to the result channel
+		if resultChan, exists := s.resultChans[call.ID]; exists {
+			resultChan <- ToolCallResult{Error: abortErr}
+			close(resultChan)
+			delete(s.resultChans, call.ID)
+		}
+	}
+
+	// Clear the queue
+	s.queue = make([]*ToolCall, 0)
+
+	slog.Info("scheduler.queue_cleared", "aborted_count", abortedCount)
+	return abortedCount
+}
+
 // Messages for bubbletea
 type ToolCallScheduledMsg struct{ Call *ToolCall }
 type ToolCallExecutingMsg struct{ Call *ToolCall }
 type ToolCallWaitingForApprovalMsg struct{ Call *ToolCall }
 type ToolCallSuccessMsg struct{ Call *ToolCall }
 type ToolCallErrorMsg struct{ Call *ToolCall }
+type ToolCallAbortedMsg struct{ Call *ToolCall }

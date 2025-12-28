@@ -51,6 +51,7 @@ type TUIModel struct {
 	session      *Session
 	sessionStore *SessionStore
 	db           *storage.DB
+	scheduler    *CoreToolScheduler
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -96,7 +97,7 @@ type hostCommandApprovalMsg struct {
 
 // NewTUIModel creates a new TUI model
 // NewTUIModelWithStores creates a new TUI model with provided stores (for fx injection)
-func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB) *TUIModel {
+func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *CoreToolScheduler) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
@@ -151,6 +152,7 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 		session:                  nil,
 		sessionStore:             sessionStore,
 		db:                       db,
+		scheduler:                scheduler,
 		waitingForResponse:       false,
 		persistentPromptHistory:  promptHistory,
 		persistentCommandHistory: commandHistory,
@@ -229,7 +231,7 @@ func (m *TUIModel) reinitializeSession() error {
 
 	// Create a new session with the LLM
 	repoInfo := GetRepoInfo()
-	sess, err := NewSession(llm, m.config, repoInfo, func(msg any) {
+	sess, err := NewSession(llm, m.config, repoInfo, m.scheduler, func(msg any) {
 		if program != nil {
 			program.Send(msg)
 		}
@@ -1367,6 +1369,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ToolCallErrorMsg:
 		m.content.Chat.AddToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
 		m.content.Chat.HandleToolCallError(msg)
+
+	case ToolCallAbortedMsg:
+		m.content.Chat.AddToRawHistory("TOOL_ABORTED", fmt.Sprintf("%s\nInput: %s\nReason: sandbox restarted", msg.Call.Tool.Name(), msg.Call.Input))
+		m.content.Chat.HandleToolCallAborted(msg)
 
 	case errMsg:
 		m.content.Chat.AddToRawHistory("ERROR", fmt.Sprintf("%v", msg.err))

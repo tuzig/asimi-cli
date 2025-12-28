@@ -115,12 +115,18 @@ func ProvideRepoInfo(config *Config, logger *slog.Logger) RepoInfo {
 	return repoInfo
 }
 
+// ProvideScheduler creates the tool scheduler for dependency injection
+func ProvideScheduler() *CoreToolScheduler {
+	return NewCoreToolScheduler(nil)
+}
+
 // ShellRunnerParams holds parameters for shell runner initialization
 type ShellRunnerParams struct {
 	fx.In
 	Lifecycle fx.Lifecycle
 	Config    *Config
 	RepoInfo  RepoInfo
+	Scheduler *CoreToolScheduler
 	Logger    *slog.Logger
 }
 
@@ -129,7 +135,7 @@ func ProvideShellRunner(params ShellRunnerParams) shellRunner {
 	params.Logger.Info("initializing shell runner")
 
 	// Use auto-detection to select the appropriate shell runner
-	initShellRunner(params.Config)
+	initShellRunner(params.Config, params.Scheduler)
 	runner := getShellRunner()
 
 	params.Logger.Info("shell runner initialized", "type", runner.RunnerType())
@@ -151,6 +157,7 @@ type ModelClientParams struct {
 	Lifecycle fx.Lifecycle
 	Config    *Config
 	RepoInfo  RepoInfo
+	Scheduler *CoreToolScheduler
 	Logger    *slog.Logger
 }
 
@@ -175,7 +182,7 @@ func ProvideModelClient(params ModelClientParams) {
 				} else {
 					params.Logger.Info("LLM client connected")
 					params.Logger.Info("creating session")
-					sess, sessErr := NewSession(llm, params.Config, params.RepoInfo, func(m any) {
+					sess, sessErr := NewSession(llm, params.Config, params.RepoInfo, params.Scheduler, func(m any) {
 						if program != nil {
 							program.Send(m)
 						}
@@ -268,12 +275,13 @@ type TUIModelParams struct {
 	CommandHistory *CommandHistory `name:"command"`
 	SessionStore   *SessionStore
 	DB             *storage.DB
+	Scheduler      *CoreToolScheduler
 	Logger         *slog.Logger
 }
 
 // ProvideTUIModel creates and returns the TUI model
 func ProvideTUIModel(params TUIModelParams) *TUIModel {
-	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB)
+	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler)
 }
 
 // TUIProgramParams holds parameters for TUI program initialization

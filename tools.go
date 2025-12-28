@@ -23,6 +23,9 @@ var (
 	shellRunnerMu      sync.RWMutex
 	currentShellRunner shellRunner
 	shellRunnerOnce    sync.Once
+	// toolScheduler holds the scheduler for clearing the queue on restart
+	// This is set via fx dependency injection
+	toolScheduler *CoreToolScheduler
 )
 
 // validatePathWithinProject checks if a file path is within the current working directory.
@@ -618,9 +621,12 @@ func isPodmanAvailable(config *Config, repoInfo RepoInfo) bool {
 	return true
 }
 
-func initShellRunner(config *Config) {
+func initShellRunner(config *Config, scheduler *CoreToolScheduler) {
 	shellRunnerMu.Lock()
 	defer shellRunnerMu.Unlock()
+
+	// Store the scheduler for use by the shell runner
+	toolScheduler = scheduler
 
 	repoInfo := GetRepoInfo()
 
@@ -632,6 +638,17 @@ func initShellRunner(config *Config) {
 		slog.Info("using host shell runner (podman not available or image missing)")
 		currentShellRunner = newHostShellRunner(config)
 	}
+}
+
+// ClearSchedulerQueue clears all pending tool calls from the scheduler queue.
+// This is called when the sandbox needs to be restarted (e.g., after a timeout).
+// Returns the number of tool calls that were aborted.
+func ClearSchedulerQueue() int {
+	if toolScheduler == nil {
+		slog.Debug("ClearSchedulerQueue called but no scheduler is set")
+		return 0
+	}
+	return toolScheduler.ClearQueue()
 }
 
 // tryUpgradeToSandbox checks if we're currently on the host runner and a sandbox

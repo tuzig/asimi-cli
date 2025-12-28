@@ -128,7 +128,7 @@ var sessPromptPartials = map[string]any{
 var sessSystemPromptTemplate string
 
 // NewSession creates a new Session instance with a system prompt and tools.
-func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, toolNotify NotifyFunc) (*Session, error) {
+func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, scheduler *CoreToolScheduler, toolNotify NotifyFunc) (*Session, error) {
 	now := time.Now()
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -212,7 +212,13 @@ func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, toolNotify Notif
 
 	// Build tool schema for the model and execution catalog for the scheduler.
 	s.toolDefs, s.toolCatalog = buildLLMTools(cfg)
-	s.scheduler = NewCoreToolScheduler(s.notify)
+	// Use provided scheduler or create a new one for non-interactive mode
+	if scheduler != nil {
+		s.scheduler = scheduler
+		s.scheduler.SetNotify(s.notify)
+	} else {
+		s.scheduler = NewCoreToolScheduler(s.notify)
+	}
 	s.ContextFiles = make(map[string]string)
 	s.startTime = time.Now()
 	s.updateTokenCounts()

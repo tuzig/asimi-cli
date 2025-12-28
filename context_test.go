@@ -66,7 +66,7 @@ func TestGetContextInfo(t *testing.T) {
 			Model:    "claude-3-5-sonnet-latest",
 		},
 	}
-	session, err := NewSession(&sessionMockLLMContext{}, cfg, RepoInfo{}, func(any) {})
+	session, err := NewSession(&sessionMockLLMContext{}, cfg, RepoInfo{}, nil, func(any) {})
 	if err != nil {
 		t.Fatalf("creating session: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestGetContextInfoWithOpenAI(t *testing.T) {
 			Model:    "gpt-4o",
 		},
 	}
-	session, err := NewSession(&sessionMockLLMContext{}, cfg, RepoInfo{}, func(any) {})
+	session, err := NewSession(&sessionMockLLMContext{}, cfg, RepoInfo{}, nil, func(any) {})
 	if err != nil {
 		t.Fatalf("creating session: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestHandleContextCommand(t *testing.T) {
 // TestAGENTSmdInSystemPrompt verifies that AGENTS.md content is included in the system prompt
 func TestAGENTSmdInSystemPrompt(t *testing.T) {
 	llm := &sessionMockLLMContext{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	info := sess.GetContextInfo()

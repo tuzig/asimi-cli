@@ -405,7 +405,7 @@ func verifyInitWithRetry(model *TUIModel, containerRunner shellRunner, retryCoun
 		// After build-sandbox succeeds, reinitialize the shell runner to get a fresh container
 		// This is necessary because the previous container was closed and the image was rebuilt
 		slog.Debug("Reinitializing shell runner after build-sandbox")
-		initShellRunner(model.config)
+		initShellRunner(model.config, model.scheduler)
 		containerRunner = getShellRunner()
 		slog.Debug("Shell runner reinitialized", "containerRunner", containerRunner)
 

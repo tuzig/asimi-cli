@@ -96,3 +96,76 @@ func TestCoreToolScheduler(t *testing.T) {
 	_, ok = model.messages[2].(ToolCallSuccessMsg)
 	assert.True(t, ok)
 }
+
+func TestCoreToolScheduler_ClearQueue(t *testing.T) {
+	var abortedCalls []ToolCallAbortedMsg
+
+	scheduler := NewCoreToolScheduler(func(msg any) {
+		if aborted, ok := msg.(ToolCallAbortedMsg); ok {
+			abortedCalls = append(abortedCalls, aborted)
+		}
+	})
+
+	// Create a slow tool that will block the scheduler
+	slowTool := &mockTool{
+		name:        "slow-tool",
+		description: "A slow tool",
+		callFunc: func(ctx context.Context, input string) (string, error) {
+			time.Sleep(500 * time.Millisecond)
+			return "done", nil
+		},
+	}
+
+	fastTool := &mockTool{
+		name:        "fast-tool",
+		description: "A fast tool",
+		callFunc: func(ctx context.Context, input string) (string, error) {
+			return "fast", nil
+		},
+	}
+
+	// Schedule the slow tool first (it will start executing)
+	slowResult := scheduler.Schedule(slowTool, "slow-input")
+
+	// Give it a moment to start executing
+	time.Sleep(10 * time.Millisecond)
+
+	// Schedule multiple fast tools (they will be queued)
+	fastResult1 := scheduler.Schedule(fastTool, "fast-input-1")
+	fastResult2 := scheduler.Schedule(fastTool, "fast-input-2")
+	fastResult3 := scheduler.Schedule(fastTool, "fast-input-3")
+
+	// Clear the queue - this should abort the queued tool calls but not the executing one
+	abortedCount := scheduler.ClearQueue()
+
+	// Verify that 3 calls were aborted (the queued ones)
+	assert.Equal(t, 3, abortedCount, "should have aborted 3 queued tool calls")
+
+	// Check that aborted calls received the SandboxRestartedError
+	for _, result := range []<-chan ToolCallResult{fastResult1, fastResult2, fastResult3} {
+		res := <-result
+		assert.Error(t, res.Error)
+		_, ok := res.Error.(SandboxRestartedError)
+		assert.True(t, ok, "error should be SandboxRestartedError")
+	}
+
+	// Verify notifications were sent for each aborted call
+	assert.Equal(t, 3, len(abortedCalls), "should have received 3 aborted notifications")
+	for _, aborted := range abortedCalls {
+		assert.Equal(t, "fast-tool", aborted.Call.Tool.Name())
+		assert.Equal(t, StatusAborted, aborted.Call.Status)
+	}
+
+	// The slow tool should still complete normally
+	slowRes := <-slowResult
+	assert.NoError(t, slowRes.Error)
+	assert.Equal(t, "done", slowRes.Output)
+}
+
+func TestCoreToolScheduler_ClearQueue_EmptyQueue(t *testing.T) {
+	scheduler := NewCoreToolScheduler(nil)
+
+	// Clear an empty queue - should return 0 and not panic
+	abortedCount := scheduler.ClearQueue()
+	assert.Equal(t, 0, abortedCount, "clearing empty queue should return 0")
+}

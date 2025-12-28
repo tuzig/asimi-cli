@@ -168,7 +168,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				if cfg, err := LoadConfig(); err != nil {
 					slog.Warn("Failed to reload config after ai-analysis", "error", err)
 				} else {
-					initShellRunner(cfg)
+					initShellRunner(cfg, model.scheduler)
 				}
 				return w.Next(checkPrefix + " AI analysis completed")
 			},
@@ -205,7 +205,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				slog.Warn("Failed to reload config after build-sandbox", "error", err)
 			} else {
 				slog.Debug("Reinitializing shell runner after build-sandbox", "image_name", cfg.RunShellCommand.ImageName)
-				initShellRunner(cfg)
+				initShellRunner(cfg, model.scheduler)
 			}
 			return w.Next(checkPrefix + " Sandbox built successfully")
 		}).

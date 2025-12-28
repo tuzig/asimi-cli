@@ -121,7 +121,7 @@ func TestSession_ToolRoundTrip(t *testing.T) {
 
 	// Set up a native session with the mock LLM and real tools/scheduler.
 	llm := &sessionMockLLM{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	out, err := sess.Ask(context.Background(), "please read the file")
@@ -143,7 +143,7 @@ func TestSession_NoTools(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLMNoTools{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	out, err := sess.Ask(context.Background(), "say hi")
@@ -162,7 +162,7 @@ func TestNewSessionSystemMessageSinglePart(t *testing.T) {
 		},
 	}
 
-	sess, err := NewSession(llm, cfg, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, cfg, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	if assert.NotEmpty(t, sess.Messages) {
@@ -240,7 +240,7 @@ func TestSession_WriteAndReadFile(t *testing.T) {
 	// We encode the path into the system message content via the template; to avoid
 	// changing the template, we pass it through the first system message text part.
 	// The mock reads that value back.
-	sess, err := NewSession(&sessionMockLLMWriteRead{}, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(&sessionMockLLMWriteRead{}, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 	// Overwrite the first system message text with the temp path as a simple channel to the mock
 	sess.Messages[0].Parts = []llms.ContentPart{llms.TextPart(path)}
@@ -293,7 +293,7 @@ func TestSession_ChatHistoryPersistence(t *testing.T) {
 
 	// Create session with history-preserving mock
 	llm := &historyPreservingMockLLM{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	// First message
@@ -321,7 +321,7 @@ func TestSession_ContextFiles(t *testing.T) {
 	assert.NoError(t, err)
 
 	llm := &sessionMockLLMContext{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	// Test HasContextFiles - should be false initially (AGENTS.md is in system prompt, not ContextFiles)
@@ -422,7 +422,7 @@ func TestSession_MultipleToolCalls(t *testing.T) {
 	defer os.Chdir(oldWd)
 
 	llm := &sessionMockLLMMultiTools{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	out, err := sess.Ask(context.Background(), "read two files")
@@ -488,7 +488,7 @@ func TestSession_GetMessageSnapshot(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLMNoTools{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	// Initial snapshot should be 1 (system message)
@@ -517,7 +517,7 @@ func TestSession_RollbackTo(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLMNoTools{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	// Add some messages
@@ -547,7 +547,7 @@ func TestSession_RollbackToZero(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLMNoTools{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	_, err = sess.Ask(context.Background(), "test message")
@@ -567,7 +567,7 @@ func TestSession_RollbackBeyondLength(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLMNoTools{}
-	sess, err := NewSession(llm, &Config{}, RepoInfo{}, func(any) {})
+	sess, err := NewSession(llm, &Config{}, RepoInfo{}, nil, func(any) {})
 	assert.NoError(t, err)
 
 	_, err = sess.Ask(context.Background(), "test message")
@@ -585,7 +585,7 @@ func TestSession_RollbackResetsToolLoopDetection(t *testing.T) {
 
 	llm := &mockLLMNoTools{}
 	repoInfo := RepoInfo{}
-	sess, err := NewSession(llm, &Config{}, repoInfo, func(any) {})
+	sess, err := NewSession(llm, &Config{}, repoInfo, nil, func(any) {})
 	assert.NoError(t, err)
 
 	// Simulate tool loop detection state
@@ -643,7 +643,7 @@ func TestSession_RollbackWithToolCalls(t *testing.T) {
 
 	llm := &mockLLMToolMessages{}
 	repoInfo := RepoInfo{}
-	sess, err := NewSession(llm, &Config{}, repoInfo, func(any) {})
+	sess, err := NewSession(llm, &Config{}, repoInfo, nil, func(any) {})
 	assert.NoError(t, err)
 
 	snapshot1 := sess.GetMessageSnapshot()
@@ -671,7 +671,7 @@ func TestSession_MultipleToolMessagesPerCall(t *testing.T) {
 
 	llm := &sessionMockLLMMultiTools{}
 	repoInfo := RepoInfo{}
-	sess, err := NewSession(llm, &Config{}, repoInfo, func(any) {})
+	sess, err := NewSession(llm, &Config{}, repoInfo, nil, func(any) {})
 	assert.NoError(t, err)
 
 	initialLen := len(sess.Messages)
@@ -702,7 +702,7 @@ func TestSession_RollbackPreservesSystemPrompt(t *testing.T) {
 
 	llm := &mockLLMNoTools{}
 	repoInfo := RepoInfo{}
-	sess, err := NewSession(llm, &Config{}, repoInfo, func(any) {})
+	sess, err := NewSession(llm, &Config{}, repoInfo, nil, func(any) {})
 	assert.NoError(t, err)
 
 	// Get the system message
@@ -1287,7 +1287,7 @@ func TestSession_AskStream(t *testing.T) {
 
 	// Create session
 	repoInfo := RepoInfo{}
-	session, err := NewSession(mockLLM, nil, repoInfo, notify)
+	session, err := NewSession(mockLLM, nil, repoInfo, nil, notify)
 	require.NoError(t, err)
 
 	// Test streaming

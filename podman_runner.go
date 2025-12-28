@@ -517,6 +517,7 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunShellCommandInput
 // Restart resets the container attachment to recover from connection errors.
 // The container keeps running, we just close and clear the pipes so they'll be
 // re-established on the next command.
+// Also clears the scheduler queue to abort any pending tool calls.
 func (r *PodmanShellRunner) Restart(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -546,6 +547,11 @@ func (r *PodmanShellRunner) Restart(ctx context.Context) error {
 		slog.Debug("cleared pending command during restart", "id", id)
 	}
 	r.outputsMu.Unlock()
+
+	abortedCount := ClearSchedulerQueue()
+	if abortedCount > 0 {
+		slog.Info("aborted pending tool calls during restart", "count", abortedCount)
+	}
 
 	slog.Info("container attachment restarted - will reconnect on next command")
 	return nil

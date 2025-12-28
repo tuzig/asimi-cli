@@ -31,7 +31,7 @@ import (
 )
 
 // Update the version as part of the version release process
-var version = "0.3.2"
+var version = "0.4.0-rc.2"
 
 var program *tea.Program
 
@@ -114,6 +114,7 @@ func runInteractiveMode() error {
 			ProvideConfig,
 			ProvideStorage,
 			ProvideRepoInfo,
+			ProvideScheduler,
 			ProvideShellRunner,
 			ProvidePromptHistory,
 			ProvideCommandHistory,
@@ -281,8 +282,8 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Initialize shell runner with config
-		initShellRunner(config)
+		// Initialize shell runner with config (no scheduler registry for non-interactive mode)
+		initShellRunner(config, nil)
 
 		llm, err := getModelClient(config)
 		if err != nil {
@@ -296,7 +297,7 @@ func main() {
 		var mu sync.Mutex
 
 		repoInfo := GetRepoInfo()
-		sess, err := NewSession(llm, config, repoInfo, consoleStreamingNotify(done, &finalResponse, &mu))
+		sess, err := NewSession(llm, config, repoInfo, nil, consoleStreamingNotify(done, &finalResponse, &mu))
 		if err != nil {
 			fmt.Printf("Error creating session: %v\n", err)
 			os.Exit(1)

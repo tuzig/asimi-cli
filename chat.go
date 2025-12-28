@@ -889,6 +889,23 @@ func (c *ChatComponent) HandleToolCallError(msg ToolCallErrorMsg) {
 	}
 }
 
+// HandleToolCallAborted handles an aborted tool call message (e.g., due to sandbox restart)
+func (c *ChatComponent) HandleToolCallAborted(msg ToolCallAbortedMsg) {
+	// Use a distinctive icon to clearly mark aborted tool calls
+	icon := "🚫"
+	formatted := formatToolCall(msg.Call.Tool.Name(), icon, msg.Call.Input, "", msg.Call.Error)
+	// Update the existing message if we have its index
+	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+		c.Messages[idx].Content = formatted
+		c.UpdateContent()
+		// Clean up the index mapping
+		c.DeleteToolCallMessageIndex(msg.Call.ID)
+	} else {
+		// Fallback: add a new message if we don't have the index
+		c.AddMessage(formatted)
+	}
+}
+
 // UpdateLastToolCallEmoji finds the last tool call message containing the given command
 // and updates its emoji. Returns true if a message was found and updated.
 func (c *ChatComponent) UpdateLastToolCallEmoji(command string, newEmoji string) bool {

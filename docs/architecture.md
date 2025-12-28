@@ -20,7 +20,7 @@ Asimi has a vision - a vision of a Holistic Development Environment
 +---------------------+---------------------------------------+
 | 3. Harness          |                                       |
 |    & Toolchest      |  custom tools, go-git, podman go,     |
-|                     |  Kanban                               |
+|                     |                                       |
 +---------------------+---------------------------------------+
 | 2. Core             |                                       |
 |                     |  Host OS, Container mgmt, Kanaban     | 
