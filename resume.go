@@ -332,16 +332,38 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 		case llms.ChatMessageTypeHuman:
 			for _, part := range msgContent.Parts {
 				if textPart, ok := part.(llms.TextContent); ok {
-					m.content.Chat.AddMessage("You: " + textPart.Text)
+					m.content.Chat.AddUserMessage(textPart.Text)
 				}
 			}
 
 		case llms.ChatMessageTypeAI:
-			// First add any text content
+			// First check for thinking/reasoning content
+			for _, part := range msgContent.Parts {
+				if thinkingPart, ok := part.(llms.ThinkingContent); ok {
+					text := strings.TrimSpace(thinkingPart.Thinking)
+					if text != "" {
+						m.content.Chat.AddThinkingChunk(text)
+					}
+				}
+			}
+
+			// Then collect all text content and add as a single message
+			var textContent strings.Builder
 			for _, part := range msgContent.Parts {
 				if textPart, ok := part.(llms.TextContent); ok {
-					m.content.Chat.AddMessage("Asimi: " + textPart.Text)
+					text := strings.TrimSpace(textPart.Text)
+					if text != "" {
+						if textContent.Len() > 0 {
+							textContent.WriteString("\n")
+						}
+						textContent.WriteString(text)
+					}
 				}
+			}
+			// Add as a single AI message if there's any non-empty text content
+			if textContent.Len() > 0 {
+				m.content.Chat.AddAIChunk(textContent.String())
+				m.content.Chat.FinalizeLastAIMessage()
 			}
 			// Then add tool calls with their results
 			for _, part := range msgContent.Parts {

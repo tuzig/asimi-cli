@@ -1328,43 +1328,47 @@ func TestChatComponent_AppendToLastMessage(t *testing.T) {
 	assert.Equal(t, 1, len(chat.Messages))
 	assert.Contains(t, chat.Messages[0].Content, "Additional text More text")
 
-	// Add a new message and append to it
-	chat.AddMessage("Asimi: ")
-	chat.AppendToLastMessage("This is streaming")
+	// Use AddAIChunk for AI streaming (new approach)
+	chat.AddAIChunk("This is ")
+	chat.AddAIChunk("streaming")
 	assert.Equal(t, 2, len(chat.Messages))
-	assert.Equal(t, "Asimi: This is streaming", chat.Messages[1].Content)
+	assert.Equal(t, "This is streaming", chat.Messages[1].Content)
+	assert.Equal(t, MessageTypeAI, chat.Messages[1].Type)
 }
 
 func TestChatComponent_FinalizeLastAIMessage(t *testing.T) {
-	t.Run("success message", func(t *testing.T) {
+	t.Run("success message with new AddAIChunk", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		chat.AddMessage("Asimi: This is a successful response")
+		chat.AddAIChunk("This is a successful response")
 
 		isFailure := chat.FinalizeLastAIMessage()
 
 		assert.False(t, isFailure)
-		assert.Equal(t, "Asimi:SUCCESS: This is a successful response", chat.Messages[len(chat.Messages)-1].Content)
+		assert.Equal(t, "This is a successful response", chat.Messages[len(chat.Messages)-1].Content)
+		assert.Equal(t, MessageTypeAISuccess, chat.Messages[len(chat.Messages)-1].Type)
 	})
 
-	t.Run("failure message", func(t *testing.T) {
+	t.Run("failure message with new AddAIChunk", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		chat.AddMessage("Asimi: [[FAILURE]] I cannot do that because of reasons")
+		chat.AddAIChunk("[[FAILURE]] I cannot do that because of reasons")
 
 		isFailure := chat.FinalizeLastAIMessage()
 
 		assert.True(t, isFailure)
-		assert.Equal(t, "Asimi:FAILURE: I cannot do that because of reasons", chat.Messages[len(chat.Messages)-1].Content)
+		assert.Equal(t, "I cannot do that because of reasons", chat.Messages[len(chat.Messages)-1].Content)
+		assert.Equal(t, MessageTypeAIFailure, chat.Messages[len(chat.Messages)-1].Type)
 	})
 
 	t.Run("non-AI message", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		chat.AddMessage("You: Hello")
+		chat.AddUserMessage("Hello")
 
 		isFailure := chat.FinalizeLastAIMessage()
 
 		assert.False(t, isFailure)
 		// Message should remain unchanged
-		assert.Equal(t, "You: Hello", chat.Messages[len(chat.Messages)-1].Content)
+		assert.Equal(t, "Hello", chat.Messages[len(chat.Messages)-1].Content)
+		assert.Equal(t, MessageTypeUser, chat.Messages[len(chat.Messages)-1].Type)
 	})
 
 	t.Run("empty messages", func(t *testing.T) {
@@ -1374,6 +1378,179 @@ func TestChatComponent_FinalizeLastAIMessage(t *testing.T) {
 		isFailure := chat.FinalizeLastAIMessage()
 
 		assert.False(t, isFailure)
+	})
+}
+
+func TestChatComponent_AddUserMessage(t *testing.T) {
+	t.Run("adds user message with correct type", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		initialCount := len(chat.Messages)
+
+		chat.AddUserMessage("Hello, world!")
+
+		assert.Equal(t, initialCount+1, len(chat.Messages))
+		lastMsg := chat.Messages[len(chat.Messages)-1]
+		assert.Equal(t, "Hello, world!", lastMsg.Content)
+		assert.Equal(t, MessageTypeUser, lastMsg.Type)
+	})
+
+	t.Run("multiple user messages", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		initialCount := len(chat.Messages)
+
+		chat.AddUserMessage("First message")
+		chat.AddUserMessage("Second message")
+
+		assert.Equal(t, initialCount+2, len(chat.Messages))
+		assert.Equal(t, "First message", chat.Messages[len(chat.Messages)-2].Content)
+		assert.Equal(t, "Second message", chat.Messages[len(chat.Messages)-1].Content)
+		assert.Equal(t, MessageTypeUser, chat.Messages[len(chat.Messages)-2].Type)
+		assert.Equal(t, MessageTypeUser, chat.Messages[len(chat.Messages)-1].Type)
+	})
+
+	t.Run("resets auto-scroll on new message", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		chat.UserScrolled = true
+		chat.AutoScroll = false
+
+		chat.AddUserMessage("Test")
+
+		assert.True(t, chat.AutoScroll)
+		assert.False(t, chat.UserScrolled)
+	})
+}
+
+func TestChatComponent_AddAIChunk(t *testing.T) {
+	t.Run("creates new AI message on first chunk", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		initialCount := len(chat.Messages)
+
+		chat.AddAIChunk("Hello")
+
+		assert.Equal(t, initialCount+1, len(chat.Messages))
+		lastMsg := chat.Messages[len(chat.Messages)-1]
+		assert.Equal(t, "Hello", lastMsg.Content)
+		assert.Equal(t, MessageTypeAI, lastMsg.Type)
+	})
+
+	t.Run("appends to existing AI message", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		initialCount := len(chat.Messages)
+
+		chat.AddAIChunk("Hello, ")
+		chat.AddAIChunk("world!")
+
+		assert.Equal(t, initialCount+1, len(chat.Messages), "Should still be one AI message")
+		lastMsg := chat.Messages[len(chat.Messages)-1]
+		assert.Equal(t, "Hello, world!", lastMsg.Content)
+		assert.Equal(t, MessageTypeAI, lastMsg.Type)
+	})
+
+	t.Run("creates new AI message after user message", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+
+		chat.AddAIChunk("First response")
+		chat.AddUserMessage("User input")
+		chat.AddAIChunk("Second response")
+
+		// Should have 3 new messages (plus initial welcome)
+		assert.Equal(t, "First response", chat.Messages[len(chat.Messages)-3].Content)
+		assert.Equal(t, MessageTypeAI, chat.Messages[len(chat.Messages)-3].Type)
+		assert.Equal(t, "User input", chat.Messages[len(chat.Messages)-2].Content)
+		assert.Equal(t, MessageTypeUser, chat.Messages[len(chat.Messages)-2].Type)
+		assert.Equal(t, "Second response", chat.Messages[len(chat.Messages)-1].Content)
+		assert.Equal(t, MessageTypeAI, chat.Messages[len(chat.Messages)-1].Type)
+	})
+
+	t.Run("creates new AI message after system message", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+
+		chat.AddAIChunk("AI response")
+		chat.AddMessage("System notification")
+		chat.AddAIChunk("New AI response")
+
+		assert.Equal(t, MessageTypeAI, chat.Messages[len(chat.Messages)-3].Type)
+		assert.Equal(t, MessageTypeSystem, chat.Messages[len(chat.Messages)-2].Type)
+		assert.Equal(t, MessageTypeAI, chat.Messages[len(chat.Messages)-1].Type)
+		assert.Equal(t, "New AI response", chat.Messages[len(chat.Messages)-1].Content)
+	})
+}
+
+func TestChatComponent_AddThinkingChunk(t *testing.T) {
+	t.Run("creates new thinking message on first chunk", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		initialCount := len(chat.Messages)
+
+		chat.AddThinkingChunk("Let me think...")
+
+		assert.Equal(t, initialCount+1, len(chat.Messages))
+		lastMsg := chat.Messages[len(chat.Messages)-1]
+		assert.Equal(t, "Let me think...", lastMsg.Content)
+		assert.Equal(t, MessageTypeThinking, lastMsg.Type)
+	})
+
+	t.Run("appends to existing thinking message", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		initialCount := len(chat.Messages)
+
+		chat.AddThinkingChunk("First thought. ")
+		chat.AddThinkingChunk("Second thought.")
+
+		assert.Equal(t, initialCount+1, len(chat.Messages), "Should still be one thinking message")
+		lastMsg := chat.Messages[len(chat.Messages)-1]
+		assert.Equal(t, "First thought. Second thought.", lastMsg.Content)
+		assert.Equal(t, MessageTypeThinking, lastMsg.Type)
+	})
+
+	t.Run("skips empty chunks", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		initialCount := len(chat.Messages)
+
+		chat.AddThinkingChunk("")
+		chat.AddThinkingChunk("   ")
+		chat.AddThinkingChunk("\t\n")
+
+		assert.Equal(t, initialCount, len(chat.Messages), "Should not add empty thinking chunks")
+	})
+
+	t.Run("creates new thinking message after AI message", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+
+		chat.AddAIChunk("AI response")
+		chat.AddThinkingChunk("Thinking...")
+
+		assert.Equal(t, MessageTypeAI, chat.Messages[len(chat.Messages)-2].Type)
+		assert.Equal(t, MessageTypeThinking, chat.Messages[len(chat.Messages)-1].Type)
+	})
+}
+
+func TestChatComponent_AddShellCommandInput(t *testing.T) {
+	t.Run("adds shell command with correct type", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+		initialCount := len(chat.Messages)
+
+		chat.AddShellCommandInput("ls -la")
+
+		assert.Equal(t, initialCount+1, len(chat.Messages))
+		lastMsg := chat.Messages[len(chat.Messages)-1]
+		assert.Equal(t, "ls -la", lastMsg.Content)
+		assert.Equal(t, MessageTypeShell, lastMsg.Type)
+	})
+}
+
+func TestChatComponent_GutterRendering(t *testing.T) {
+	t.Run("gutter appears in view output", func(t *testing.T) {
+		chat := NewChatComponent(80, 20, false)
+
+		// Add enough messages to enable scrolling
+		for i := 0; i < 50; i++ {
+			chat.AddMessage("Test message line")
+		}
+
+		view := chat.View()
+
+		// View should contain content (gutter is rendered)
+		assert.NotEmpty(t, view)
 	})
 }
 

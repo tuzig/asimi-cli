@@ -366,7 +366,8 @@ func TestChatComponentScrollLock(t *testing.T) {
 	require.True(t, chat.UserScrolled)
 	require.False(t, chat.AutoScroll)
 
-	chat.AddMessage("Asimi: hello")
+	chat.AddAIChunk("hello")
+	chat.FinalizeLastAIMessage()
 	require.True(t, chat.UserScrolled, "user should remain scrolled when locked")
 	require.False(t, chat.AutoScroll, "auto-scroll should stay disabled when locked")
 
@@ -392,7 +393,8 @@ func TestMouseWheelScrollEntersScrollMode(t *testing.T) {
 	// Add enough messages to make the chat scrollable
 	updatedModel.sessionActive = true
 	for i := 0; i < 50; i++ {
-		updatedModel.content.Chat.AddMessage("Asimi: This is a test message to fill the chat")
+		updatedModel.content.Chat.AddAIChunk("This is a test message to fill the chat")
+		updatedModel.content.Chat.FinalizeLastAIMessage()
 	}
 
 	// Verify we start in insert mode
@@ -489,7 +491,8 @@ func TestMouseWheelScrollDoesNotEnterScrollModeWhenAlreadyInScrollMode(t *testin
 	// Add enough messages to make scrollable
 	updatedModel.sessionActive = true
 	for i := 0; i < 50; i++ {
-		updatedModel.content.Chat.AddMessage("Asimi: Test message")
+		updatedModel.content.Chat.AddAIChunk("Test message")
+		updatedModel.content.Chat.FinalizeLastAIMessage()
 	}
 
 	// Set mode to scroll
@@ -1155,16 +1158,18 @@ func TestHistoryRollback_OnSubmit(t *testing.T) {
 	chat.UpdateContent()
 
 	// Simulate a conversation
-	chat.AddMessage("You: first")
-	chat.AddMessage("Asimi: response1")
+	chat.AddUserMessage("first")
+	chat.AddAIChunk("response1")
+	chat.FinalizeLastAIMessage()
 	model.sessionPromptHistory = append(model.sessionPromptHistory, promptHistoryEntry{
 		Prompt:          "first",
 		SessionSnapshot: 1,
 		ChatSnapshot:    0, // Before adding messages
 	})
 
-	chat.AddMessage("You: second")
-	chat.AddMessage("Asimi: response2")
+	chat.AddUserMessage("second")
+	chat.AddAIChunk("response2")
+	chat.FinalizeLastAIMessage()
 	model.sessionPromptHistory = append(model.sessionPromptHistory, promptHistoryEntry{
 		Prompt:          "second",
 		SessionSnapshot: 1, // Session hasn't changed (no actual LLM calls)
@@ -1572,8 +1577,8 @@ func TestSessionResume_ResetsHistoryState(t *testing.T) {
 
 	// Verify chat was rebuilt with resumed messages
 	chat := updatedModel.content.Chat
-	require.True(t, containsMessage(chat.Messages, "You: hello"), "Chat should contain resumed human message")
-	require.True(t, containsMessage(chat.Messages, "Asimi: hi there"), "Chat should contain resumed AI message")
+	require.True(t, containsMessage(chat.Messages, "hello"), "Chat should contain resumed human message")
+	require.True(t, containsMessage(chat.Messages, "hi there"), "Chat should contain resumed AI message")
 }
 
 // TestHistoryNavigation_RapidNavigation tests rapid navigation through history

@@ -14,10 +14,24 @@ import (
 	"github.com/muesli/reflow/wordwrap"
 )
 
+// MessageType indicates the type/source of a chat message
+type MessageType int
+
+const (
+	MessageTypeSystem    MessageType = iota // System messages (tool calls, status, etc.)
+	MessageTypeUser                         // User input
+	MessageTypeAI                           // AI response (streaming, not finalized)
+	MessageTypeAISuccess                    // AI response completed successfully
+	MessageTypeAIFailure                    // AI response completed with failure
+	MessageTypeThinking                     // AI thinking/reasoning content
+	MessageTypeShell                        // Shell command input/output
+)
+
 // ChatMessage represents a single message with its indent level
 type ChatMessage struct {
 	Content string
 	Indent  int
+	Type    MessageType // Type of message for proper rendering
 }
 
 // ChatComponent represents the chat view
@@ -61,7 +75,6 @@ const (
 	checkPrefix           = "✓"
 	treeFinalPrefix       = " ╰ "
 	treeMidPrefix         = " │ "
-	shellUserPrefix       = "You:$"
 )
 
 // ChatMsgBuilder builds multi-line messages with tree prefixes.
@@ -170,7 +183,8 @@ func newSessionMessage() string {
 }
 
 func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStatus func() string) *ChatComponent {
-	vp := viewport.New(width, height)
+	// Viewport is 1 column narrower to leave room for the gutter
+	vp := viewport.New(width-1, height)
 
 	var renderer *glamour.TermRenderer
 	if markdownEnabled {
@@ -231,7 +245,8 @@ func (c *ChatComponent) Clear() {
 func (c *ChatComponent) SetSize(width, height int) {
 	c.Width = width
 	c.Style = c.Style.Width(width)
-	c.Viewport.Width = width
+	// Viewport is 1 column narrower to leave room for the gutter
+	c.Viewport.Width = width - 1
 
 	if height < 0 {
 		height = 0
@@ -244,9 +259,66 @@ func (c *ChatComponent) SetSize(width, height int) {
 
 // AddMessage adds a new message to the chat component
 func (c *ChatComponent) AddMessage(message string) {
-	c.Messages = append(c.Messages, ChatMessage{Content: message, Indent: c.Indent})
+	c.Messages = append(c.Messages, ChatMessage{Content: message, Indent: c.Indent, Type: MessageTypeSystem})
 	c.UpdateContent()
 	// Reset auto-scroll when new message is added
+	if !c.ScrollLocked {
+		c.AutoScroll = true
+		c.UserScrolled = false
+	}
+}
+
+// AddAIChunk adds or appends to an AI response message (used during streaming)
+func (c *ChatComponent) AddAIChunk(chunk string) {
+	// Check if last message is an AI message we can append to
+	if len(c.Messages) > 0 && c.Messages[len(c.Messages)-1].Type == MessageTypeAI {
+		c.Messages[len(c.Messages)-1].Content += chunk
+	} else {
+		// Start a new AI message
+		c.Messages = append(c.Messages, ChatMessage{
+			Content: chunk,
+			Indent:  c.Indent,
+			Type:    MessageTypeAI,
+		})
+	}
+	c.UpdateContent()
+	if !c.ScrollLocked {
+		c.AutoScroll = true
+		c.UserScrolled = false
+	}
+}
+
+// AddUserMessage adds a user message to the chat component
+func (c *ChatComponent) AddUserMessage(text string) {
+	c.Messages = append(c.Messages, ChatMessage{
+		Content: text,
+		Indent:  c.Indent,
+		Type:    MessageTypeUser,
+	})
+	c.UpdateContent()
+	if !c.ScrollLocked {
+		c.AutoScroll = true
+		c.UserScrolled = false
+	}
+}
+
+// AddThinkingChunk adds or appends to a thinking/reasoning message (used during streaming)
+func (c *ChatComponent) AddThinkingChunk(chunk string) {
+	if strings.TrimSpace(chunk) == "" {
+		return // Skip empty thinking chunks
+	}
+	// Check if last message is a thinking message we can append to
+	if len(c.Messages) > 0 && c.Messages[len(c.Messages)-1].Type == MessageTypeThinking {
+		c.Messages[len(c.Messages)-1].Content += chunk
+	} else {
+		// Start a new thinking message
+		c.Messages = append(c.Messages, ChatMessage{
+			Content: chunk,
+			Indent:  c.Indent,
+			Type:    MessageTypeThinking,
+		})
+	}
+	c.UpdateContent()
 	if !c.ScrollLocked {
 		c.AutoScroll = true
 		c.UserScrolled = false
@@ -346,7 +418,18 @@ func (c *ChatComponent) ScrollDownOneLine() {
 
 // AddShellCommandInput adds the entered shell command at column 0
 func (c *ChatComponent) AddShellCommandInput(command string) {
-	c.AddMessage(fmt.Sprintf("%s %s", shellUserPrefix, command))
+	c.Messages = append(c.Messages, ChatMessage{
+		Content: command,
+		Indent:  c.Indent,
+		Type:    MessageTypeShell,
+	})
+	c.UpdateContent()
+	/*
+		if !c.ScrollLocked {
+			c.AutoScroll = true
+			c.UserScrolled = false
+		}
+	*/
 }
 
 // AddShellCommandResult formats and displays the result of an inline shell command
@@ -437,24 +520,18 @@ func (c *ChatComponent) FinalizeLastAIMessage() bool {
 	}
 
 	lastMsg := &c.Messages[len(c.Messages)-1]
-	if !strings.HasPrefix(lastMsg.Content, "Asimi:") {
+	if lastMsg.Type != MessageTypeAI {
 		return false
 	}
 
-	content := strings.TrimPrefix(lastMsg.Content, "Asimi: ")
-	isFailure := strings.HasPrefix(content, failureToken)
-
+	isFailure := strings.HasPrefix(lastMsg.Content, failureToken)
 	if isFailure {
-		// Remove the [[FAILURE]] token from the content
-		content = strings.TrimPrefix(content, failureToken)
-		content = strings.TrimSpace(content)
-		// Mark as failure by using a special prefix
-		lastMsg.Content = "Asimi:FAILURE: " + content
+		lastMsg.Content = strings.TrimPrefix(lastMsg.Content, failureToken)
+		lastMsg.Content = strings.TrimSpace(lastMsg.Content)
+		lastMsg.Type = MessageTypeAIFailure
 	} else {
-		// Mark as success by using a special prefix
-		lastMsg.Content = "Asimi:SUCCESS: " + content
+		lastMsg.Type = MessageTypeAISuccess
 	}
-
 	c.UpdateContent()
 	return isFailure
 }
@@ -466,54 +543,37 @@ func (c *ChatComponent) UpdateContent() {
 		var rendered string
 		message := msg.Content
 
-		// Check if this is a thinking message
-		if strings.HasPrefix(message, shellUserPrefix) {
+		// Route rendering based on message type
+		switch msg.Type {
+		case MessageTypeShell:
+			// Shell command input styling
 			messageStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#F952F9"))
+			rendered = messageStyle.Render(fmt.Sprintf("$ %s", message))
 
-			userContent := strings.TrimSpace(strings.TrimPrefix(message, shellUserPrefix))
-			rendered = messageStyle.Render(fmt.Sprintf("$ %s", userContent))
-		} else if strings.Contains(message, "<thinking>") && strings.Contains(message, "</thinking>") {
-			// Extract thinking content and regular content
-			thinkingContent, regularContent := extractThinkingContent(message)
-			var parts []string
-
-			// Style thinking content using ChatMsgBuilder
-			if thinkingContent != "" {
-				thinkingStyle := lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#6A9955")) // Muted green for thoughts
-				msg := NewChatMsgBuilder("💭 ")
-				// Word wrap and split into lines
-				wrapped := wordwrap.String(thinkingContent, c.Width-6)
-				lines := strings.Split(wrapped, "\n")
-				for i, line := range lines {
-					if i < len(lines)-1 {
-						msg.WriteLn(line)
-					} else {
-						msg.WriteString(line)
-					}
+		case MessageTypeThinking:
+			// Thinking/reasoning content styling
+			thinkingStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#6A9955")) // Muted green for thoughts
+			builder := NewChatMsgBuilder("💭 ")
+			// Word wrap and split into lines (c.Width-1 for gutter, -6 for prefix)
+			wrapped := wordwrap.String(message, c.Width-7)
+			lines := strings.Split(wrapped, "\n")
+			for i, line := range lines {
+				if i < len(lines)-1 {
+					builder.WriteLn(line)
+				} else {
+					builder.WriteString(line)
 				}
-				parts = append(parts, thinkingStyle.Render(msg.String()))
 			}
+			rendered = thinkingStyle.Render(builder.String())
 
-			// Style regular content normally if present
-			if regularContent != "" {
-				parts = append(parts, c.renderMarkdown(regularContent))
-			}
-
-			// Skip rendering if both thinking and regular content are empty
-			if len(parts) == 0 {
-				continue
-			}
-			rendered = strings.Join(parts, "\n")
-		} else if strings.HasPrefix(message, "You:") {
+		case MessageTypeUser:
 			// User message styling
 			messageStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#F952F9")) // Terminal7 prompt border
 
-			userContent := strings.TrimSpace(strings.TrimPrefix(message, "You:"))
-
-			wrapWidth := c.Width
+			wrapWidth := c.Width - 1 // -1 for gutter
 			const indentSpaces = 8
 			if wrapWidth > indentSpaces {
 				wrapWidth -= indentSpaces
@@ -522,7 +582,7 @@ func (c *ChatComponent) UpdateContent() {
 				wrapWidth = 1
 			}
 
-			wrapped := wordwrap.String(userContent, wrapWidth)
+			wrapped := wordwrap.String(message, wrapWidth)
 			userIndent := strings.Repeat(" ", indentSpaces)
 			lines := strings.Split(wrapped, "\n")
 			for i := range lines {
@@ -530,36 +590,25 @@ func (c *ChatComponent) UpdateContent() {
 			}
 
 			rendered = messageStyle.Render(strings.Join(lines, "\n"))
-		} else if strings.HasPrefix(message, "Asimi:") {
-			// Render AI messages with markdown
-			// Check for success/failure markers and determine prefix
-			var content string
+
+		case MessageTypeAI, MessageTypeAISuccess, MessageTypeAIFailure:
+			// Render AI messages with markdown using Type field
 			var prefix string
-
-			// TODO: allow for white spaces before "Asimi"
-			if strings.HasPrefix(message, "Asimi:SUCCESS: ") {
-				content = strings.TrimPrefix(message, "Asimi:SUCCESS: ")
-				prefix = lipgloss.NewStyle().
-					Bold(true).
-					Render(completeSuccessPrefix)
-			} else if strings.HasPrefix(message, "Asimi:FAILURE: ") {
-				content = strings.TrimPrefix(message, "Asimi:FAILURE: ")
-				prefix = lipgloss.NewStyle().
-					Bold(true).
-					Render(completeFailurePrefix)
-			} else {
-				content = strings.TrimPrefix(message, "Asimi: ")
-				prefix = lipgloss.NewStyle().
-					Bold(true).
-					Render(asimiPrefix)
+			switch msg.Type {
+			case MessageTypeAISuccess:
+				prefix = lipgloss.NewStyle().Bold(true).Render(completeSuccessPrefix)
+			case MessageTypeAIFailure:
+				prefix = lipgloss.NewStyle().Bold(true).Render(completeFailurePrefix)
+			default: // MessageTypeAI (streaming, not finalized)
+				prefix = lipgloss.NewStyle().Bold(true).Render(asimiPrefix)
 			}
+			rendered = prefix + c.renderMarkdown(message)
 
-			rendered = prefix + c.renderMarkdown(content)
-		} else {
+		default:
 			// Other messages (system, tool calls, etc.)
 			messageStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#01FAFA")) // Terminal7 text color
-			rendered = messageStyle.Render(wordwrap.String(message, c.Width))
+			rendered = messageStyle.Render(wordwrap.String(message, c.Width-1)) // -1 for gutter
 		}
 
 		// Apply indentation if needed
@@ -622,52 +671,18 @@ func (c *ChatComponent) renderMarkdown(content string) string {
 	// so we wrap here using the current viewport width.
 	// wordwrap.String() preserves ANSI escape sequences, allowing proper
 	// re-wrapping on terminal resize without recreating the renderer.
-	wrapped := wordwrap.String(rendered, c.Width-2)
+	// c.Width-1 for gutter, -2 for padding
+	wrapped := wordwrap.String(rendered, c.Width-3)
 
 	return strings.TrimSpace(wrapped)
 }
 
 func (c *ChatComponent) renderPlainText(content string) string {
-	width := c.Width - 2
+	width := c.Width - 3 // -1 for gutter, -2 for padding
 	if width < 1 {
 		width = 1
 	}
 	return strings.TrimSpace(wordwrap.String(content, width))
-}
-
-// extractThinkingContent separates thinking content from regular content
-func extractThinkingContent(message string) (thinking, regular string) {
-	// Find thinking tags
-	startTag := "<thinking>"
-	endTag := "</thinking>"
-
-	startIdx := strings.Index(message, startTag)
-	if startIdx == -1 {
-		return "", message
-	}
-
-	endIdx := strings.Index(message, endTag)
-	if endIdx == -1 {
-		return "", message
-	}
-
-	// Extract thinking content
-	thinkingStart := startIdx + len(startTag)
-	thinking = strings.TrimSpace(message[thinkingStart:endIdx])
-
-	// Extract regular content (before and after thinking)
-	before := strings.TrimSpace(message[:startIdx])
-	after := strings.TrimSpace(message[endIdx+len(endTag):])
-
-	if before != "" && after != "" {
-		regular = before + "\n\n" + after
-	} else if before != "" {
-		regular = before
-	} else {
-		regular = after
-	}
-
-	return thinking, regular
 }
 
 // Update handles messages for the chat component
@@ -787,7 +802,28 @@ func (c ChatComponent) View() string {
 	c.Style = c.Style.Height(c.Height)
 	c.Viewport.Height = c.Height
 
-	return c.Style.Render(viewportContent)
+	// Add gutter column
+	lines := strings.Split(viewportContent, "\n")
+	hasScrollback := c.Viewport.YOffset > 0
+	hasMoreBelow := !c.Viewport.AtBottom()
+
+	gutterStyle := lipgloss.NewStyle().Foreground(globalTheme.Warning)
+
+	for i := range lines {
+		var gutterChar string
+		if i == 0 && hasScrollback {
+			gutterChar = "⇡"
+		} else if i == len(lines)-1 && hasMoreBelow {
+			gutterChar = "⇣"
+		} else {
+			gutterChar = " "
+		}
+		lines[i] = gutterStyle.Render(gutterChar) + lines[i]
+	}
+
+	contentWithGutter := strings.Join(lines, "\n")
+
+	return c.Style.Render(contentWithGutter)
 }
 
 // ===== Raw History Management =====

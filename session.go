@@ -862,11 +862,6 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, 
 			return responseContent + "\n\n[Response truncated due to length limit]", nil
 		}
 
-		// Add reasoning content if available (for UI display)
-		if choice.ReasoningContent != "" && s.notify != nil {
-			s.notify(streamChunkMsg("\n\n<thinking>\n" + choice.ReasoningContent + "\n</thinking>\n\n"))
-		}
-
 		// Record assistant response in message history with thinking content for API compatibility
 		if strings.TrimSpace(responseContent) != "" {
 			finalText = responseContent

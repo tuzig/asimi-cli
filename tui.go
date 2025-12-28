@@ -388,7 +388,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.ctrlCPressedTime = now
 
-		m.content.Chat.AddMessage("You: CTRL-C")
+		m.content.Chat.AddUserMessage("CTRL-C")
 		m.handleEscape()
 		m.commandLine.AddToast(fmt.Sprintf("Press CTRL-C in under %.1fs to exit", m.config.UI.CtrlCWindowTime.Seconds()), "info", 3*time.Second)
 		return m, nil
@@ -1096,7 +1096,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		if m.historyCursor < len(m.sessionPromptHistory) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
-		m.content.Chat.AddMessage(fmt.Sprintf("You: %s", content))
+		m.content.Chat.AddUserMessage(content)
 		if m.session != nil {
 			// Check if we need to auto-compact before sending the prompt (#54)
 			info := m.session.GetContextInfo()
@@ -1298,7 +1298,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.historyCursor < len(m.sessionPromptHistory) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
-		m.content.Chat.AddMessage(fmt.Sprintf("You: %s", content))
+		m.content.Chat.AddUserMessage(content)
 		if m.session != nil {
 			info := m.session.GetContextInfo()
 			autoCompactThreshold := float64(info.TotalTokens) * 0.10
@@ -1350,7 +1350,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case responseMsg:
 		m.content.Chat.AddToRawHistory("AI_RESPONSE", string(msg))
 		m.stopStreaming()
-		m.content.Chat.AddMessage(fmt.Sprintf("Asimi: %s", string(msg)))
+		// Use AddAIChunk for non-streaming AI responses
+		m.content.Chat.AddAIChunk(string(msg))
+		m.content.Chat.FinalizeLastAIMessage()
 		refreshGitInfo()
 
 	case ToolCallScheduledMsg:
@@ -1401,37 +1403,17 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		chat := m.content.Chat
-		// Find or create the Asimi message to append to
-		if len(chat.Messages) == 0 || !strings.HasPrefix(chat.Messages[len(chat.Messages)-1].Content, "Asimi:") {
-			chat.AddMessage(fmt.Sprintf("Asimi: %s", string(msg)))
-			slog.Debug("added_new_message", "total_messages", len(m.content.Chat.Messages))
-		} else {
-			chat.AppendToLastMessage(string(msg))
-			slog.Debug("appended_to_last_message", "total_messages", len(m.content.Chat.Messages))
-		}
+		// Use unified AddAIChunk method for streaming AI responses
+		chat.AddAIChunk(string(msg))
+		slog.Debug("added_ai_chunk", "total_messages", len(m.content.Chat.Messages))
 
 	case streamReasoningChunkMsg:
 		// Handle reasoning/thinking chunks from models like Claude with extended thinking (#38)
 		m.content.Chat.AddToRawHistory("STREAM_REASONING_CHUNK", string(msg))
 		slog.Debug("streamReasoningChunkMsg", "chunk_length", len(msg))
 
-		// Display reasoning in a special format
-		// Store raw text with <thinking> tags - formatting happens in UpdateContent()
-		reasoningText := string(msg)
-		if strings.TrimSpace(reasoningText) == "" {
-			// Skip empty reasoning chunks
-			break
-		}
-		if len(m.content.Chat.Messages) == 0 || !strings.HasPrefix(m.content.Chat.Messages[len(m.content.Chat.Messages)-1].Content, "<thinking>") {
-			// Start a new thinking message
-			m.content.Chat.AddMessage("<thinking>" + reasoningText + "</thinking>")
-		} else {
-			// Append to existing thinking message - insert before closing tag
-			lastIdx := len(m.content.Chat.Messages) - 1
-			lastMsg := m.content.Chat.Messages[lastIdx].Content
-			lastMsg = strings.TrimSuffix(lastMsg, "</thinking>")
-			m.content.Chat.Messages[lastIdx].Content = lastMsg + reasoningText + "</thinking>"
-		}
+		// Use AddThinkingChunk which handles empty checks and appending internally
+		m.content.Chat.AddThinkingChunk(string(msg))
 
 	case streamCompleteMsg:
 		m.content.Chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
