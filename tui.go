@@ -2036,6 +2036,24 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.success {
 			m.content.Chat.AddMessage(msg.message)
 			m.commandLine.AddToast("Initialization complete!", "success", 3*time.Second)
+
+			// Start a fresh session without clearing the screen
+			m.saveSession()
+			m.sessionActive = true
+			m.content.Chat.Indent = 0
+			m.initHistory()
+			m.cancelStreaming()
+			m.stopStreaming()
+			if m.session != nil {
+				m.session.ClearHistory()
+			}
+
+			// Try to upgrade to sandbox (async) in case it wasn't already done
+			refreshGitInfo()
+			return m, func() tea.Msg {
+				upgraded := tryUpgradeToSandbox(m.config)
+				return sandboxUpgradeMsg{upgraded: upgraded}
+			}
 		}
 		refreshGitInfo()
 		return m, nil

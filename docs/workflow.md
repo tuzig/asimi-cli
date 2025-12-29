@@ -213,6 +213,17 @@ ctx := context.Background()
 err := w.Run(ctx)
 ```
 
+### Workflow Completion
+
+When a workflow completes successfully, the TUI automatically:
+
+1. **Preserves the screen** - All workflow output remains visible
+2. **Starts a fresh session** - The LLM conversation history is cleared
+3. **Resets UI state** - Chat indentation and prompt history are reset
+4. **Upgrades to sandbox** - Attempts to use any newly-built container
+
+This ensures the user can immediately continue working with a clean context while still seeing the workflow results. The behavior mirrors `:new` but without clearing the screen.
+
 ## Common Step Helpers
 
 ### Add

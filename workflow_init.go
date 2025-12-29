@@ -108,7 +108,8 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 		}).
 		AddRun("remove-image", func(w *Workflow) error {
 			clearMode := w.Get("clearMode") == "true"
-			if !clearMode {
+			slug := w.Get("projectSlug")
+			if !clearMode || slug == "" {
 				return nil
 			}
 
@@ -456,7 +457,7 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 		msg := NewChatMsgBuilder(systemPrefix)
 		msg.WriteString(checkPrefix).WriteLn(" Initialization complete!")
 		msg.WriteLn(stagedFiles + " staged")
-		msg.WriteLn("Start fresh with `:new` and review project's recipes with `:!just -l`")
+		msg.WriteLn("New session started. Review project's recipes with `:!just -l`")
 
 		return initWorkflowCompleteMsg{
 			success: true,
