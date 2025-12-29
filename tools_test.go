@@ -243,7 +243,8 @@ func TestPodmanShellRunner(t *testing.T) {
 	assert.NotNil(t, runner)
 
 	output, err := runner.Run(context.Background(), RunShellCommandInput{
-		Command: "echo hello",
+		Command:        "echo hello",
+		BypassApproval: true, // Test-initiated command, no approval needed
 	})
 	require.NoError(t, err)
 	assert.Contains(t, output.Output, "hello")
@@ -288,7 +289,8 @@ func TestPodmanShellRunnerWithStderr(t *testing.T) {
 	assert.NotNil(t, runner)
 
 	output, err := runner.Run(context.Background(), RunShellCommandInput{
-		Command: "echo 'stdout msg' && echo 'stderr msg' >&2",
+		Command:        "echo 'stdout msg' && echo 'stderr msg' >&2",
+		BypassApproval: true, // Test-initiated command, no approval needed
 	})
 
 	require.NoError(t, err)

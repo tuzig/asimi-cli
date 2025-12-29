@@ -1232,9 +1232,9 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 
 		// User-initiated commands never need approval
 		params := RunShellCommandInput{
-			Command:         shellCmd,
-			Description:     "User shell command",
-			RequestApproval: false, // User explicitly requested this command
+			Command:        shellCmd,
+			Description:    "User shell command",
+			BypassApproval: true, // User explicitly requested this command
 		}
 
 		output, err := runner.Run(ctx, params)

@@ -506,10 +506,10 @@ type RunShellCommand struct {
 type RunShellCommandInput struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
-	// RequestApproval is an internal field (not included in JSON schema) that indicates
-	// whether this command requires user approval before execution on the host.
-	// This is set by the tool based on config patterns, not by the LLM.
-	RequestApproval bool `json:"-"`
+	// BypassApproval is an internal field (not included in JSON schema) that indicates
+	// whether this command should skip user approval before execution on the host.
+	// Default (false) means approval is required. Set to true only for user-initiated commands.
+	BypassApproval bool `json:"-"`
 }
 
 // RunShellCommandOutput is the output of the RunShellCommand tool
@@ -760,7 +760,7 @@ func (t RunShellCommand) Call(ctx context.Context, input string) (string, error)
 		slog.Info("Executing safe command on HOST", "needs approval", requiresApproval, "command", params.Command)
 
 		// Set the approval flag based on config patterns
-		params.RequestApproval = requiresApproval
+		params.BypassApproval = !requiresApproval
 
 		// Run directly on host using hostRun (which handles approval internally)
 		output, runErr = hostRun(ctx, params)
@@ -845,7 +845,7 @@ func hostRun(ctx context.Context, params RunShellCommandInput) (RunShellCommandO
 	var output RunShellCommandOutput
 
 	// Check if approval is required
-	if params.RequestApproval {
+	if !params.BypassApproval {
 		approved, err := requestHostCommandApproval(ctx, params.Command)
 		if err != nil {
 			output.Output = fmt.Sprintf("Error requesting approval: %v", err)
