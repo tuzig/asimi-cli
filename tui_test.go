@@ -371,13 +371,11 @@ func TestChatComponentScrollLock(t *testing.T) {
 	require.True(t, chat.UserScrolled, "user should remain scrolled when locked")
 	require.False(t, chat.AutoScroll, "auto-scroll should stay disabled when locked")
 
+	// Explicit scroll to bottom (e.g., pressing 'G') should enable autoscroll
+	// even when scroll-locked - this is an intentional user action
 	chat.ScrollToBottom()
-	require.False(t, chat.AutoScroll, "still locked, auto-scroll stays disabled even at bottom")
-
-	chat.SetScrollLock(false)
-	require.False(t, chat.IsScrollLocked())
-	require.True(t, chat.AutoScroll, "auto-scroll should resume when unlock at bottom")
-	require.False(t, chat.UserScrolled, "unlock at bottom should mark user as not scrolled")
+	require.True(t, chat.AutoScroll, "explicit scroll to bottom enables auto-scroll")
+	require.False(t, chat.UserScrolled, "scroll to bottom clears user scrolled flag")
 }
 
 // TestMouseWheelScrollEntersScrollMode tests that scrolling with mouse wheel
