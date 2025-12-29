@@ -118,8 +118,9 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 			defer cancel()
 
 			result, err := hostRun(ctx, RunShellCommandInput{
-				Command:     fmt.Sprintf("podman rmi %s 2>/dev/null || true", imageName),
-				Description: "Removing container image",
+				Command:        fmt.Sprintf("podman rmi %s 2>/dev/null || true", imageName),
+				Description:    "Removing container image",
+				BypassApproval: true,
 			})
 			if err != nil {
 				slog.Warn("Failed to remove image", "image", imageName, "error", err)
@@ -158,12 +159,23 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 					return w.Next(checkPrefix + " Skipped - all files exist")
 				}
 				agentsFile := w.Get("agentsFile")
+
+				// Check which files are still missing
+				var missingFiles []string
 				if _, err := os.Stat(agentsFile); os.IsNotExist(err) {
-					return w.Retry(fmt.Sprintf("❌ %s not created", agentsFile))
+					missingFiles = append(missingFiles, agentsFile)
 				}
 				if _, err := os.Stat("Justfile"); os.IsNotExist(err) {
-					return w.Retry("❌ Justfile not created")
+					missingFiles = append(missingFiles, "Justfile")
 				}
+				if _, err := os.Stat(".agents/sandbox/Dockerfile"); os.IsNotExist(err) {
+					missingFiles = append(missingFiles, ".agents/sandbox/Dockerfile")
+				}
+
+				if len(missingFiles) > 0 {
+					return w.Retry(fmt.Sprintf("❌ Files not created: %s. Please create them.", strings.Join(missingFiles, ", ")))
+				}
+
 				// Reload config - AI may have modified .agents/asimi.conf
 				if cfg, err := LoadConfig(); err != nil {
 					slog.Warn("Failed to reload config after ai-analysis", "error", err)
@@ -173,20 +185,46 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				return w.Next(checkPrefix + " AI analysis completed")
 			},
 		}).
-		// Host tests - has Prompt and custom Verify with hostRun
-		Add(Step{
-			Name:   "host-tests",
-			Prompt: "Run `just test` on the host to verify the project builds and tests pass. If there are errors, fix them.",
-			Verify: func(w *Workflow, response string) StepResult {
-				w.ReportProgress("$ just test # on host")
-				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-				defer cancel()
+		// Host tests - run tests and fix if they fail
+		AddCheck("host-tests", func(w *Workflow) StepResult {
+			w.ReportProgress("$ just test # on host")
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
 
-				result, err := hostRun(ctx, RunShellCommandInput{Command: "just test", Description: "Running tests on host"})
-				if err != nil || result.ExitCode != "0" {
-					return w.Retry(fmt.Sprintf("❌ just test failed (exit code: %s): %s", result.ExitCode, truncateOutput(result.Output, 500)))
+			result, err := hostRun(ctx, RunShellCommandInput{
+				Command:        "just test",
+				Description:    "Running tests on host",
+				BypassApproval: true,
+			})
+			if err != nil || result.ExitCode != "0" {
+				w.Set("hostTestError", truncateOutput(result.Output, 2000))
+				return w.GoTo("fix-host-tests", fmt.Sprintf("❌ just test failed (exit code: %s)", result.ExitCode))
+			}
+			// Skip fix step and proceed to build-sandbox
+			return w.GoTo("build-sandbox", checkPrefix+" Host tests passed")
+		}).
+		Add(Step{
+			Name: "fix-host-tests",
+			Prepare: func(w *Workflow) (map[string]interface{}, error) {
+				return map[string]interface{}{
+					"TestError": w.Get("hostTestError"),
+				}, nil
+			},
+			Prompt: `The host tests failed with the following error:
+
+{{.TestError}}
+
+Please analyze the error and fix the issue. This could be:
+- Missing dependencies in the Justfile
+- Code errors that need to be fixed
+- Configuration issues
+
+Read the relevant files, understand the error, and make the necessary corrections.`,
+			Verify: func(w *Workflow, response string) StepResult {
+				if response == "" {
+					return w.Retry("No response from AI, retrying")
 				}
-				return w.Next(checkPrefix + " Host tests passed")
+				return w.GoTo("host-tests", "Code updated, re-running tests")
 			},
 		}).
 		// Build sandbox - has Prompt, custom Verify, and side effect
@@ -195,9 +233,14 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 			defer cancel()
 
-			result, err := hostRun(ctx, RunShellCommandInput{Command: "just build-sandbox", Description: "Building sandbox container"})
+			result, err := hostRun(ctx, RunShellCommandInput{
+				Command:        "just build-sandbox",
+				Description:    "Building sandbox container",
+				BypassApproval: true})
 			if err != nil || result.ExitCode != "0" {
-				return w.Retry(fmt.Sprintf("❌ just build-sandbox failed (exit code: %s): %s", result.ExitCode, truncateOutput(result.Output, 500)))
+				// Store the error for the fix-dockerfile step
+				w.Set("buildError", truncateOutput(result.Output, 2000))
+				return w.GoTo("fix-dockerfile", fmt.Sprintf("❌ just build-sandbox failed (exit code: %s)", result.ExitCode))
 			}
 
 			// Reload config to pick up any changes from the build (e.g., image_name in Justfile)
@@ -207,7 +250,30 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				slog.Debug("Reinitializing shell runner after build-sandbox", "image_name", cfg.RunShellCommand.ImageName)
 				initShellRunner(cfg, model.scheduler)
 			}
-			return w.Next(checkPrefix + " Sandbox built successfully")
+			// Skip fix-dockerfile and go directly to smoke-test
+			return w.GoTo("smoke-test", checkPrefix+" Sandbox built successfully")
+		}).
+		Add(Step{
+			Name: "fix-dockerfile",
+			Prepare: func(w *Workflow) (map[string]interface{}, error) {
+				return map[string]interface{}{
+					"BuildError": w.Get("buildError"),
+				}, nil
+			},
+			Prompt: `The sandbox container build failed with the following error:
+
+{{.BuildError}}
+
+Please fix the Dockerfile at .agents/sandbox/Dockerfile to resolve this build error.
+Read the current Dockerfile, understand the error, and make the necessary corrections.
+Common issues include missing packages, incorrect base images, or syntax errors.`,
+			Verify: func(w *Workflow, response string) StepResult {
+				if response == "" {
+					return w.Retry("No response from AI, retrying")
+				}
+				// Go back to build-sandbox to try the build again
+				return w.GoTo("build-sandbox", "Dockerfile updated, retrying build")
+			},
 		}).
 		AddCheck("smoke-test", func(w *Workflow) StepResult {
 			w.ReportProgress("Running smoke test in container...")
@@ -219,31 +285,68 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				return w.Retry("❌ Container runner not available")
 			}
 
-			result, err := runner.Run(ctx, RunShellCommandInput{Command: "uname", Description: "Running smoke test in container"})
+			result, err := runner.Run(ctx, RunShellCommandInput{
+				Command:        "uname",
+				Description:    "Running smoke test in container",
+				BypassApproval: true,
+			})
 			if err != nil || result.ExitCode != "0" || !strings.Contains(result.Output, "Linux") {
-				return w.Retry(fmt.Sprintf("❌ Smoke test failed (exit code: %s): %s", result.ExitCode, result.Output))
+				// Smoke test failure likely means container/Dockerfile issue
+				w.Set("buildError", fmt.Sprintf("Container smoke test failed - uname returned: %s (exit code: %s)", result.Output, result.ExitCode))
+				return w.GoTo("fix-dockerfile", fmt.Sprintf("❌ Smoke test failed (exit code: %s)", result.ExitCode))
 			}
 			return w.Next(checkPrefix + " Smoke test passed")
 		}).
-		// Container tests - has Prompt and custom Verify with container runner
+		// Container tests - run tests in container and fix if they fail
+		AddCheck("container-tests", func(w *Workflow) StepResult {
+			w.ReportProgress("$ just test # in container")
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+
+			runner := getShellRunner()
+			if runner == nil {
+				return w.Retry("❌ Container runner not available")
+			}
+
+			result, err := runner.Run(ctx, RunShellCommandInput{
+				Command:        "just test",
+				Description:    "Running tests in container",
+				BypassApproval: true,
+			})
+			if err != nil || result.ExitCode != "0" {
+				w.Set("containerTestError", truncateOutput(result.Output, 2000))
+				return w.GoTo("fix-container-tests", fmt.Sprintf("❌ Container tests failed (exit code: %s)", result.ExitCode))
+			}
+			// Skip fix step and proceed to git-stage
+			return w.GoTo("git-stage", checkPrefix+" Container tests passed")
+		}).
 		Add(Step{
-			Name:   "container-tests",
-			Prompt: "Run `just test` in the container to verify the project works in the sandbox environment. If there are errors, fix them.",
+			Name: "fix-container-tests",
+			Prepare: func(w *Workflow) (map[string]interface{}, error) {
+				return map[string]interface{}{
+					"TestError": w.Get("containerTestError"),
+				}, nil
+			},
+			Prompt: `The container tests failed with the following error:
+
+{{.TestError}}
+
+The tests pass on the host but fail in the container. This is usually caused by:
+- Missing packages in the Dockerfile
+- Different environment variables or paths
+- Missing tools or dependencies in the container
+
+Please fix the issue. You may need to update:
+- .agents/sandbox/Dockerfile (to add missing packages)
+- .agents/sandbox/bashrc (to set environment variables)
+- Justfile (if paths need adjustment)`,
 			Verify: func(w *Workflow, response string) StepResult {
-				w.ReportProgress("$ just test # in container")
-				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-				defer cancel()
-
-				runner := getShellRunner()
-				if runner == nil {
-					return w.Retry("❌ Container runner not available")
+				if response == "" {
+					return w.Retry("No response from AI, retrying")
 				}
-
-				result, err := runner.Run(ctx, RunShellCommandInput{Command: "just test", Description: "Running tests in container"})
-				if err != nil || result.ExitCode != "0" {
-					return w.Retry(fmt.Sprintf("❌ Container tests failed (exit code: %s): %s", result.ExitCode, truncateOutput(result.Output, 500)))
-				}
-				return w.Next(checkPrefix + " Container tests passed")
+				// Check if Dockerfile was modified - if so, rebuild
+				// For now, just re-run tests (AI might have fixed bashrc or Justfile)
+				return w.GoTo("container-tests", "Container environment updated, re-running tests")
 			},
 		}).
 		AddRun("git-stage", func(w *Workflow) error {
