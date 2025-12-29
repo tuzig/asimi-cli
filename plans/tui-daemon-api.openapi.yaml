@@ -1,0 +1,990 @@
+openapi: 3.0.3
+info:
+  title: Asimi Daemon API
+  version: v1
+  description: >
+    Local API between the Asimi TUI (client) and daemon (server).
+    Transport is HTTP/1.1 over a Unix domain socket (UDS); OpenAPI servers are placeholders.
+servers:
+  - url: http://localhost
+    description: HTTP over UDS (host ignored)
+tags:
+  - name: status
+  - name: config
+  - name: models
+  - name: sessions
+  - name: turns
+  - name: approvals
+  - name: export
+paths:
+  /v1/status:
+    get:
+      tags: [status]
+      summary: Status (ping, health, version)
+      operationId: getStatus
+      responses:
+        "200":
+          description: Daemon status
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/config:
+    get:
+      tags: [config]
+      summary: Get effective config (redacted)
+      operationId: getConfig
+      responses:
+        "200":
+          description: Effective config
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/config:reload:
+    post:
+      tags: [config]
+      summary: Reload project + user config
+      operationId: reloadConfig
+      responses:
+        "200":
+          description: Reloaded
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/models:
+    get:
+      tags: [models]
+      summary: List available models
+      operationId: listModels
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          description: When 1, the daemon may call provider APIs to refresh model lists.
+          schema:
+            type: integer
+            enum: [0, 1]
+      responses:
+        "200":
+          description: Model list
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/llm/selection:
+    put:
+      tags: [models]
+      summary: Set default LLM selection for new sessions
+      operationId: setDefaultLlmSelection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LLMSelectionRequest"
+      responses:
+        "200":
+          description: Updated
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sessions:
+    post:
+      tags: [sessions]
+      summary: Create a session
+      operationId: createSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [sessions]
+      summary: List sessions
+      operationId: listSessions
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [branch, repo, all]
+            default: branch
+      responses:
+        "200":
+          description: Sessions
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSessionsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sessions/{session_id}:
+    get:
+      tags: [sessions]
+      summary: Get session (optionally with messages)
+      operationId: getSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [summary, messages, all]
+            default: summary
+      responses:
+        "200":
+          description: Session
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetSessionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [sessions]
+      summary: Update session-scoped settings
+      operationId: patchSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchSessionRequest"
+      responses:
+        "200":
+          description: Updated
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sessions/{session_id}:reset:
+    post:
+      tags: [sessions]
+      summary: Reset conversation history
+      operationId: resetSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Reset
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sessions/{session_id}:compact:
+    post:
+      tags: [sessions]
+      summary: Compact conversation history
+      operationId: compactSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Compacted
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompactResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sessions/{session_id}/context:
+    get:
+      tags: [sessions]
+      summary: Get context usage breakdown
+      operationId: getSessionContext
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Context info
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextInfo"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sessions/{session_id}/context-files:
+    post:
+      tags: [sessions]
+      summary: Add or replace a context file (next turn only)
+      operationId: addContextFile
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextFile"
+      responses:
+        "200":
+          description: Added
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [sessions]
+      summary: Clear all context files
+      operationId: clearContextFiles
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Cleared
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sessions/{session_id}/turns:stream:
+    post:
+      tags: [turns]
+      summary: Start a streaming turn (SSE)
+      operationId: streamTurn
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnStreamRequest"
+      responses:
+        "200":
+          description: >
+            Server-Sent Events stream (text/event-stream).
+            Events include stream.start, stream.cont, stream.end and tool.*.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                minimal:
+                  summary: Minimal SSE sequence
+                  value: |
+                    event: stream.start
+                    data: {"request_id":"req_...","session_id":"sess_...","turn_id":"turn_...","ts":"2025-12-13T13:35:11.000Z","provider":"anthropic","model":"claude-3-5-sonnet-latest"}
+
+                    event: stream.cont
+                    data: {"request_id":"req_...","session_id":"sess_...","turn_id":"turn_...","ts":"2025-12-13T13:35:11.123Z","delta":"partial text"}
+
+                    event: stream.end
+                    data: {"request_id":"req_...","session_id":"sess_...","turn_id":"turn_...","ts":"2025-12-13T13:35:12.000Z","status":"success"}
+          x-sse-events:
+            - event: ping
+              dataSchema:
+                type: object
+                additionalProperties: false
+            - event: stream.start
+              dataSchema:
+                $ref: "#/components/schemas/StreamStartEvent"
+            - event: stream.cont
+              dataSchema:
+                $ref: "#/components/schemas/StreamContEvent"
+            - event: stream.end
+              dataSchema:
+                $ref: "#/components/schemas/StreamEndEvent"
+            - event: tool.scheduled
+              dataSchema:
+                $ref: "#/components/schemas/ToolEvent"
+            - event: tool.executing
+              dataSchema:
+                $ref: "#/components/schemas/ToolEvent"
+            - event: tool.waiting_for_approval
+              dataSchema:
+                $ref: "#/components/schemas/ToolEvent"
+            - event: tool.success
+              dataSchema:
+                $ref: "#/components/schemas/ToolEvent"
+            - event: tool.error
+              dataSchema:
+                $ref: "#/components/schemas/ToolEvent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/approvals/{approval_id}:
+    post:
+      tags: [approvals]
+      summary: Respond to a host-command approval request
+      operationId: respondApproval
+      parameters:
+        - $ref: "#/components/parameters/ApprovalId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecision"
+      responses:
+        "200":
+          description: Recorded
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sessions/{session_id}/export:
+    post:
+      tags: [export]
+      summary: Export a session to markdown
+      operationId: exportSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportRequest"
+      responses:
+        "200":
+          description: Markdown export
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ApprovalId:
+      name: approval_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - invalid_request
+        - not_found
+        - conflict
+        - timeout
+        - cancelled
+        - approval_required
+        - internal
+
+    ErrorObject:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      required: [request_id, error]
+      properties:
+        request_id:
+          type: string
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    OkResponse:
+      type: object
+      required: [status]
+      properties:
+        request_id:
+          type: string
+        status:
+          type: string
+          enum: [ok]
+
+    ShellRunnerInfo:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [podman, host]
+        container_id:
+          type: string
+
+    StatusResponse:
+      type: object
+      required: [api_version, daemon_version, min_client_version, daemon_pid, started_at, socket_path, shell_runner]
+      properties:
+        request_id:
+          type: string
+        api_version:
+          type: string
+          enum: [v1]
+        daemon_version:
+          type: string
+        min_client_version:
+          type: string
+        daemon_pid:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        socket_path:
+          type: string
+        shell_runner:
+          $ref: "#/components/schemas/ShellRunnerInfo"
+
+    ConfigResponse:
+      type: object
+      properties:
+        request_id:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+
+    ModelStatus:
+      type: string
+      enum: [active, ready, login_required, error]
+
+    Model:
+      type: object
+      required: [id, provider, status]
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        provider:
+          type: string
+          description: Provider key (e.g. anthropic, openai, googleai, ollama)
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/ModelStatus"
+
+    ModelListResponse:
+      type: object
+      required: [models]
+      properties:
+        request_id:
+          type: string
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/Model"
+
+    LLMSelectionRequest:
+      type: object
+      required: [provider, model]
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+
+    SessionSummary:
+      type: object
+      required:
+        - id
+        - created_at
+        - last_updated
+        - first_prompt
+        - provider
+        - model
+        - working_dir
+        - project_slug
+        - message_count
+      properties:
+        id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_updated:
+          type: string
+          format: date-time
+        first_prompt:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        working_dir:
+          type: string
+        project_slug:
+          type: string
+        message_count:
+          type: integer
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        working_dir:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+
+    CreateSessionResponse:
+      type: object
+      required: [session]
+      properties:
+        request_id:
+          type: string
+        session:
+          $ref: "#/components/schemas/SessionSummary"
+
+    ListSessionsResponse:
+      type: object
+      required: [sessions]
+      properties:
+        request_id:
+          type: string
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionSummary"
+
+    MessagePartText:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+
+    MessagePartToolCall:
+      type: object
+      required: [type, tool_call_id, name, arguments_json]
+      properties:
+        type:
+          type: string
+          enum: [tool_call]
+        tool_call_id:
+          type: string
+        name:
+          type: string
+        arguments_json:
+          type: string
+
+    MessagePartToolResult:
+      type: object
+      required: [type, tool_call_id, name, output, is_error]
+      properties:
+        type:
+          type: string
+          enum: [tool_result]
+        tool_call_id:
+          type: string
+        name:
+          type: string
+        output:
+          type: string
+        is_error:
+          type: boolean
+
+    MessagePart:
+      oneOf:
+        - $ref: "#/components/schemas/MessagePartText"
+        - $ref: "#/components/schemas/MessagePartToolCall"
+        - $ref: "#/components/schemas/MessagePartToolResult"
+      discriminator:
+        propertyName: type
+        mapping:
+          text: "#/components/schemas/MessagePartText"
+          tool_call: "#/components/schemas/MessagePartToolCall"
+          tool_result: "#/components/schemas/MessagePartToolResult"
+
+    Message:
+      type: object
+      required: [role, parts]
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system, tool]
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagePart"
+
+    GetSessionResponse:
+      type: object
+      required: [session]
+      properties:
+        request_id:
+          type: string
+        session:
+          $ref: "#/components/schemas/SessionSummary"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+
+    PatchSessionRequest:
+      type: object
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        force_reset:
+          type: boolean
+          default: false
+
+    CompactResponse:
+      type: object
+      required: [summary]
+      properties:
+        request_id:
+          type: string
+        summary:
+          type: string
+
+    ContextInfo:
+      type: object
+      required:
+        - model
+        - total_tokens
+        - used_tokens
+        - system_prompt_tokens
+        - system_tools_tokens
+        - memory_files_tokens
+        - messages_tokens
+        - free_tokens
+        - autocompact_buffer
+      properties:
+        request_id:
+          type: string
+        model:
+          type: string
+        total_tokens:
+          type: integer
+        used_tokens:
+          type: integer
+        system_prompt_tokens:
+          type: integer
+        system_tools_tokens:
+          type: integer
+        memory_files_tokens:
+          type: integer
+        messages_tokens:
+          type: integer
+        free_tokens:
+          type: integer
+        autocompact_buffer:
+          type: integer
+
+    ContextFile:
+      type: object
+      required: [path, content]
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+
+    TurnStreamRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+        max_turns:
+          type: integer
+          minimum: 1
+          default: 999
+
+    StreamEventBase:
+      type: object
+      required: [request_id, session_id, turn_id, ts]
+      properties:
+        request_id:
+          type: string
+        session_id:
+          type: string
+        turn_id:
+          type: string
+        ts:
+          type: string
+          format: date-time
+
+    StreamStartEvent:
+      allOf:
+        - $ref: "#/components/schemas/StreamEventBase"
+        - type: object
+          required: [provider, model]
+          properties:
+            provider:
+              type: string
+            model:
+              type: string
+
+    StreamContEvent:
+      allOf:
+        - $ref: "#/components/schemas/StreamEventBase"
+        - type: object
+          required: [delta]
+          properties:
+            delta:
+              type: string
+
+    StreamEndStatus:
+      type: string
+      enum: [success, error, cancelled, max_tokens, max_turns]
+
+    StreamEndEvent:
+      allOf:
+        - $ref: "#/components/schemas/StreamEventBase"
+        - type: object
+          required: [status]
+          properties:
+            status:
+              $ref: "#/components/schemas/StreamEndStatus"
+            error:
+              $ref: "#/components/schemas/ErrorObject"
+
+    ToolEventStatus:
+      type: string
+      enum: [scheduled, executing, awaiting_approval, success, error]
+
+    ToolEvent:
+      allOf:
+        - $ref: "#/components/schemas/StreamEventBase"
+        - type: object
+          required: [tool_call_id, tool_name, status, input]
+          properties:
+            tool_call_id:
+              type: string
+            tool_name:
+              type: string
+            status:
+              $ref: "#/components/schemas/ToolEventStatus"
+            input:
+              type: string
+              description: Tool input JSON as string
+            output:
+              type: string
+              description: Tool output JSON/text as string
+            error:
+              type: string
+            approval_id:
+              type: string
+            command:
+              type: string
+
+    ApprovalDecision:
+      type: object
+      required: [approved]
+      properties:
+        approved:
+          type: boolean
+
+    ExportRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [conversation, full]
+
+    ExportResponse:
+      type: object
+      required: [filename, markdown]
+      properties:
+        request_id:
+          type: string
+        filename:
+          type: string
+        markdown:
+          type: string
