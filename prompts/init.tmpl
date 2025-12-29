@@ -15,7 +15,7 @@ Your goal is to analyze the project structure and ensure these files exist and a
 1. **Justfile** - A task runner file with common development tasks:
    - Start with a PROJECT_NAME variable set to "{{.ProjectName}}"
    - install: Install dependencies
-   - test: Run tests
+   - test: Run tests, if there are no tests, run the linter
    - run: Start the application
    - lint: Run linting/formatting
    - build: Build the project

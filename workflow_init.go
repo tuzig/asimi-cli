@@ -88,7 +88,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				}
 			}
 
-			// Write asimi.conf
+			// Write asimi.conf with full default content (including comments)
 			if _, err := os.Stat(".agents/asimi.conf"); os.IsNotExist(err) || clearMode {
 				if err := os.WriteFile(".agents/asimi.conf", []byte(defaultConfContent), 0o644); err != nil {
 					return fmt.Errorf("error writing .agents/asimi.conf: %v", err)
@@ -102,6 +102,20 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 					return fmt.Errorf("error writing .agents/sandbox/bashrc: %v", err)
 				}
 				w.ReportProgress("Added default .agents/sandbox/bashrc")
+			}
+
+			return nil
+		}).
+		AddRun("configure-project", func(w *Workflow) error {
+			agentsFile := w.Get("agentsFile")
+
+			// If using CLAUDE.md, update the config to use it
+			if agentsFile == "CLAUDE.md" {
+				if err := SetProjectConfig("session", "agents_file", agentsFile); err != nil {
+					slog.Warn("Could not update config with agents_file", "error", err)
+				} else {
+					w.ReportProgress("Configured agents_file = CLAUDE.md")
+				}
 			}
 
 			return nil
@@ -487,10 +501,6 @@ func handleInitCommandWithWorkflow(model *TUIModel, args []string) tea.Cmd {
 		agentsFile := "AGENTS.md"
 		if _, err := os.Stat("CLAUDE.md"); err == nil {
 			agentsFile = "CLAUDE.md"
-			// Update the config file to set agents_file
-			if err := SetProjectConfig("session", "agents_file", agentsFile); err != nil {
-				slog.Warn("Could not update config with agents_file", "error", err)
-			}
 		}
 
 		// Check for missing infrastructure files

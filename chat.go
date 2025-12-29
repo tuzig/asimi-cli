@@ -392,9 +392,9 @@ func (c *ChatComponent) ScrollToTop() {
 func (c *ChatComponent) ScrollToBottom() {
 	c.Viewport.GotoBottom()
 	c.UserScrolled = false
-	if !c.ScrollLocked {
-		c.AutoScroll = true
-	}
+	// Always enable autoscroll when user explicitly goes to bottom (e.g., pressing 'G')
+	// This is an intentional action meaning "follow new content"
+	c.AutoScroll = true
 }
 
 // ScrollUpOneLine scrolls up by one line
@@ -782,11 +782,9 @@ func (c ChatComponent) Update(msg tea.Msg) (ChatComponent, tea.Cmd) {
 			c.UserScrolled = true
 		case "end":
 			c.Viewport.GotoBottom()
-			// If user scrolls to bottom, re-enable auto-scroll
+			// Always enable auto-scroll when user explicitly goes to bottom
 			c.UserScrolled = false
-			if !c.ScrollLocked {
-				c.AutoScroll = true
-			}
+			c.AutoScroll = true
 		}
 	}
 	c.Viewport, cmd = c.Viewport.Update(msg)
