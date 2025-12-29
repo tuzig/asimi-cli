@@ -50,8 +50,8 @@ bootstrap:
 
 # Build the sandbox container
 build-sandbox:
-    @podman machine init --disk-size 30 >/dev/null 2>&1 || true
-    @podman machine start >/dev/null 2>&1 || true
+    podman machine init --disk-size 30 >/dev/null 2>&1 || true
+    podman machine start >/dev/null 2>&1 || true
     podman build -t localhost/asimi-sandbox-{{PROJECT_NAME}}:latest -f .agents/sandbox/Dockerfile .
 
 # Clean up the sandbox container

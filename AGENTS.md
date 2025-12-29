@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to a coding agent when working with code in this repository.
 
 ## Language & Philosophy
 
@@ -110,6 +110,8 @@ Asimi is a vi-inspired, terminal-based AI coding agent with containerized shell 
 - **Database**: `~/.local/share/asimi/asimi.sqlite` (see `storage/schema.go`)
 - **Project files**: All Asimi-specific files live under `.agents/` directory
 - **Container image**: Configured in `.agents/asimi.conf` under `[run_shell_command]` section as `image_name`
+  - Build image: `just build-sandbox`
+  - Image name pattern: `localhost/asimi-sandbox-{PROJECT_NAME}:latest`
 
 ## Release Workflow
 
