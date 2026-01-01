@@ -698,10 +698,7 @@ func (c ChatComponent) Update(msg tea.Msg) (ChatComponent, tea.Cmd) {
 			c.Viewport.ScrollDown(1)
 			// Check if we're at the bottom after scrolling down
 			if c.Viewport.AtBottom() {
-				c.UserScrolled = false // Re-enable autoscroll when at bottom
-				if !c.ScrollLocked {
-					c.AutoScroll = true
-				}
+				c.UserScrolled = false
 			} else {
 				c.UserScrolled = true
 			}
@@ -728,9 +725,6 @@ func (c ChatComponent) Update(msg tea.Msg) (ChatComponent, tea.Cmd) {
 						// Check if we're at the bottom after scrolling down
 						if c.Viewport.AtBottom() {
 							c.UserScrolled = false
-							if !c.ScrollLocked {
-								c.AutoScroll = true
-							}
 						} else {
 							c.UserScrolled = true
 						}
@@ -757,9 +751,6 @@ func (c ChatComponent) Update(msg tea.Msg) (ChatComponent, tea.Cmd) {
 			// Check if we're at the bottom after scrolling down
 			if c.Viewport.AtBottom() {
 				c.UserScrolled = false
-				if !c.ScrollLocked {
-					c.AutoScroll = true
-				}
 			} else {
 				c.UserScrolled = true
 			}
@@ -771,9 +762,6 @@ func (c ChatComponent) Update(msg tea.Msg) (ChatComponent, tea.Cmd) {
 			// Check if we're at the bottom after page down
 			if c.Viewport.AtBottom() {
 				c.UserScrolled = false
-				if !c.ScrollLocked {
-					c.AutoScroll = true
-				}
 			} else {
 				c.UserScrolled = true
 			}
@@ -784,8 +772,10 @@ func (c ChatComponent) Update(msg tea.Msg) (ChatComponent, tea.Cmd) {
 			c.Viewport.GotoBottom()
 			// Always enable auto-scroll when user explicitly goes to bottom
 			c.UserScrolled = false
-			c.AutoScroll = true
 		}
+	}
+	if c.Viewport.AtBottom() && !c.ScrollLocked {
+		c.AutoScroll = true
 	}
 	c.Viewport, cmd = c.Viewport.Update(msg)
 	return c, cmd
