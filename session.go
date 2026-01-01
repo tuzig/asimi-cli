@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -41,6 +42,9 @@ type Session struct {
 	Messages     []llms.MessageContent `json:"messages"`
 	ContextFiles map[string]string     `json:"context_files"`
 	MessageCount int                   `json:"message_count,omitempty"` // For list views, avoids loading full messages
+
+	// Track files read during session for write protection
+	filesRead map[string]bool `json:"-"`
 
 	llm                     llms.Model              `json:"-"`
 	toolCatalog             map[string]lctools.Tool `json:"-"`
@@ -143,6 +147,7 @@ func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, scheduler *CoreT
 		llm:         llm,
 		toolCatalog: map[string]lctools.Tool{},
 		notify:      toolNotify,
+		filesRead:   make(map[string]bool),
 	}
 	if cfg != nil {
 		s.config = &cfg.LLM
@@ -237,6 +242,56 @@ func (s *Session) ClearContext() {
 	s.ContextFiles = make(map[string]string)
 	// Invalidate context cache since context files changed
 	s.updateTokenCounts()
+}
+
+// MarkFileAsRead records that a file has been read during this session
+func (s *Session) MarkFileAsRead(path string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		// If we can't get absolute path, use the path as-is
+		absPath = path
+	}
+	s.filesRead[absPath] = true
+	slog.Debug("file marked as read", "path", absPath)
+}
+
+// HasFileBeenRead checks if a file has been read during this session
+func (s *Session) HasFileBeenRead(path string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	return s.filesRead[absPath]
+}
+
+// CanWriteFile checks if a file can be written based on session rules:
+// - File does not exist (new file)
+// - OR file was read earlier in this session
+func (s *Session) CanWriteFile(path string) (bool, string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false, fmt.Sprintf("cannot resolve path: %v", err)
+	}
+
+	// Check if file exists
+	_, err = os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist - allowed to write
+			slog.Debug("Files does not exist write file allowed", "path", absPath)
+			return true, ""
+		}
+		// Some other error - be conservative and deny
+		return false, fmt.Sprintf("cannot check file status: %v", err)
+	}
+
+	// File exists - check if it was read in this session
+	if s.HasFileBeenRead(absPath) {
+		return true, ""
+	}
+
+	// File exists but wasn't read - deny write
+	return false, fmt.Sprintf("file '%s' already exists and was not read in this session. Use read_file first to review the existing content", filepath.Base(path))
 }
 
 // ClearHistory clears the conversation history but keeps the system message
@@ -566,6 +621,21 @@ func (s *Session) executeToolCall(ctx context.Context, tool lctools.Tool, tc llm
 	var out string
 	var callErr error
 
+	switch tc.FunctionCall.Name {
+	case "read_file", "read_many_files":
+		s.trackFileReads(tc.FunctionCall.Name, argsJSON)
+	case "write_file":
+		allowed, reason := s.checkWritePermission(argsJSON)
+		if !allowed {
+			slog.Debug("write_file was rejected", "reason", reason)
+			return llms.ToolCallResponse{
+				ToolCallID: tc.ID,
+				Name:       tc.FunctionCall.Name,
+				Content:    fmt.Sprintf("Error: %s", reason),
+			}
+		}
+	}
+
 	if s.scheduler != nil {
 		ch := s.scheduler.Schedule(tool, argsJSON)
 		res := <-ch
@@ -587,6 +657,34 @@ func (s *Session) executeToolCall(ctx context.Context, tool lctools.Tool, tc llm
 		Name:       tc.FunctionCall.Name,
 		Content:    out,
 	}
+}
+
+// trackFileReads extracts file paths from read tool calls and marks them as read
+func (s *Session) trackFileReads(toolName string, argsJSON string) {
+	switch toolName {
+	case "read_file":
+		var params ReadFileInput
+		if err := json.Unmarshal([]byte(argsJSON), &params); err == nil {
+			s.MarkFileAsRead(params.Path)
+		}
+	case "read_many_files":
+		var params ReadManyFilesInput
+		if err := json.Unmarshal([]byte(argsJSON), &params); err == nil {
+			for _, path := range params.Paths {
+				s.MarkFileAsRead(path)
+			}
+		}
+	}
+}
+
+// checkWritePermission validates if a write_file operation is allowed
+func (s *Session) checkWritePermission(argsJSON string) (bool, string) {
+	var params WriteFileInput
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
+		return false, fmt.Sprintf("invalid write_file parameters: %v", err)
+	}
+
+	return s.CanWriteFile(params.Path)
 }
 
 // GetMessageSnapshot returns the current size of the message history for rollback purposes
