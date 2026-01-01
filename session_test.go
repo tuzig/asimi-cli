@@ -1727,3 +1727,180 @@ func TestSession_OAuthTokenRefreshOnError(t *testing.T) {
 		assert.Equal(t, "network timeout", err.Error())
 	})
 }
+
+// TestSession_MarkFileAsRead verifies file read tracking
+func TestSession_MarkFileAsRead(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+
+	err := os.WriteFile(testFile, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	sess, err := NewSession(&mockLLMNoTools{}, &Config{}, RepoInfo{}, nil, func(any) {})
+	require.NoError(t, err)
+
+	assert.False(t, sess.HasFileBeenRead(testFile))
+	sess.MarkFileAsRead(testFile)
+	assert.True(t, sess.HasFileBeenRead(testFile))
+}
+
+// TestSession_CanWriteFile_NewFile allows writing new files
+func TestSession_CanWriteFile_NewFile(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	newFile := filepath.Join(tmpDir, "new.txt")
+
+	sess, err := NewSession(&mockLLMNoTools{}, &Config{}, RepoInfo{}, nil, func(any) {})
+	require.NoError(t, err)
+
+	allowed, reason := sess.CanWriteFile(newFile)
+	assert.True(t, allowed)
+	assert.Empty(t, reason)
+}
+
+// TestSession_CanWriteFile_ExistingNotRead denies writing existing files not read
+func TestSession_CanWriteFile_ExistingNotRead(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	existingFile := filepath.Join(tmpDir, "existing.txt")
+
+	err := os.WriteFile(existingFile, []byte("original"), 0644)
+	require.NoError(t, err)
+
+	sess, err := NewSession(&mockLLMNoTools{}, &Config{}, RepoInfo{}, nil, func(any) {})
+	require.NoError(t, err)
+
+	allowed, reason := sess.CanWriteFile(existingFile)
+	assert.False(t, allowed)
+	assert.Contains(t, reason, "already exists and was not read")
+	assert.Contains(t, reason, "existing.txt")
+}
+
+// TestSession_CanWriteFile_ReadThenWrite allows writing after reading
+func TestSession_CanWriteFile_ReadThenWrite(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	existingFile := filepath.Join(tmpDir, "existing.txt")
+
+	err := os.WriteFile(existingFile, []byte("original"), 0644)
+	require.NoError(t, err)
+
+	sess, err := NewSession(&mockLLMNoTools{}, &Config{}, RepoInfo{}, nil, func(any) {})
+	require.NoError(t, err)
+
+	sess.MarkFileAsRead(existingFile)
+	allowed, reason := sess.CanWriteFile(existingFile)
+	assert.True(t, allowed)
+	assert.Empty(t, reason)
+}
+
+// TestSession_TrackFileReads tracks single file reads
+func TestSession_TrackFileReads(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+
+	err := os.WriteFile(testFile, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	sess, err := NewSession(&mockLLMNoTools{}, &Config{}, RepoInfo{}, nil, func(any) {})
+	require.NoError(t, err)
+
+	args := `{"path":"` + testFile + `"}`
+	sess.trackFileReads("read_file", args)
+	assert.True(t, sess.HasFileBeenRead(testFile))
+}
+
+// TestSession_TrackFileReads_Multiple tracks multiple file reads
+func TestSession_TrackFileReads_Multiple(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	file1 := filepath.Join(tmpDir, "file1.txt")
+	file2 := filepath.Join(tmpDir, "file2.txt")
+
+	err := os.WriteFile(file1, []byte("content1"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(file2, []byte("content2"), 0644)
+	require.NoError(t, err)
+
+	sess, err := NewSession(&mockLLMNoTools{}, &Config{}, RepoInfo{}, nil, func(any) {})
+	require.NoError(t, err)
+
+	args := `{"paths":["` + file1 + `","` + file2 + `"]}`
+	sess.trackFileReads("read_many_files", args)
+	assert.True(t, sess.HasFileBeenRead(file1))
+	assert.True(t, sess.HasFileBeenRead(file2))
+}
+
+// TestSession_CheckWritePermission validates permission checks
+func TestSession_CheckWritePermission(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	existingFile := filepath.Join(tmpDir, "existing.txt")
+	newFile := filepath.Join(tmpDir, "new.txt")
+
+	err := os.WriteFile(existingFile, []byte("original"), 0644)
+	require.NoError(t, err)
+
+	sess, err := NewSession(&mockLLMNoTools{}, &Config{}, RepoInfo{}, nil, func(any) {})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		path        string
+		markAsRead  bool
+		wantAllowed bool
+	}{
+		{"new file", newFile, false, true},
+		{"existing unread", existingFile, false, false},
+		{"existing read", existingFile, true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sess.filesRead = make(map[string]bool)
+			if tt.markAsRead {
+				sess.MarkFileAsRead(tt.path)
+			}
+			args := `{"path":"` + tt.path + `","content":"new"}`
+			allowed, reason := sess.checkWritePermission(args)
+			assert.Equal(t, tt.wantAllowed, allowed)
+			if !tt.wantAllowed {
+				assert.Contains(t, reason, "already exists")
+			}
+		})
+	}
+}
+
+// TestSession_WriteProtection_SessionPersistance verifies read state persists
+func TestSession_WriteProtection_SessionPersistance(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	file1 := filepath.Join(tmpDir, "file1.txt")
+	file2 := filepath.Join(tmpDir, "file2.txt")
+
+	err := os.WriteFile(file1, []byte("content1"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(file2, []byte("content2"), 0644)
+	require.NoError(t, err)
+
+	sess, err := NewSession(&mockLLMNoTools{}, &Config{}, RepoInfo{}, nil, func(any) {})
+	require.NoError(t, err)
+
+	sess.trackFileReads("read_file", `{"path":"`+file1+`"}`)
+	sess.trackFileReads("read_file", `{"path":"`+file2+`"}`)
+
+	allowed1, _ := sess.CanWriteFile(file1)
+	allowed2, _ := sess.CanWriteFile(file2)
+	assert.True(t, allowed1)
+	assert.True(t, allowed2)
+}
