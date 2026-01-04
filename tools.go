@@ -679,11 +679,12 @@ func tryUpgradeToSandbox(config *Config) bool {
 
 func getShellRunner() shellRunner {
 	shellRunnerOnce.Do(func() {
-		repoInfo := GetRepoInfo()
+		// Only initialize if not already set - don't call GetRepoInfo() here
+		// as it executes git commands and can hang tests
 		shellRunnerMu.Lock()
 		if currentShellRunner == nil {
-			// Default to podman runner with fallback disabled and nil config
-			currentShellRunner = newPodmanShellRunner(false, nil, repoInfo)
+			// Default to a simple host runner for fallback
+			currentShellRunner = &HostShellRunner{}
 		}
 		shellRunnerMu.Unlock()
 	})
