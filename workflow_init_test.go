@@ -8,16 +8,6 @@ import (
 	"github.com/afittestide/asimi/storage"
 )
 
-// getStepByName finds a step by name in the workflow
-func getStepByName(w *Workflow, name string) *Step {
-	for i := range w.Steps {
-		if w.Steps[i].Name == name {
-			return &w.Steps[i]
-		}
-	}
-	return nil
-}
-
 func TestInitWorkflowRetryBehavior(t *testing.T) {
 	// Setup a temporary directory for the test
 	tmpDir := t.TempDir()
@@ -33,6 +23,15 @@ func TestInitWorkflowRetryBehavior(t *testing.T) {
 		os.Chdir(originalWd)
 	}()
 
+	// Use a custom sendPrompt function that returns empty responses
+	// so steps with prompts don't hang waiting for AI responses
+	emptySendPrompt := func(ctx context.Context, prompt string) <-chan string {
+		ch := make(chan string, 1)
+		ch <- ""
+		close(ch)
+		return ch
+	}
+
 	t.Run("Workflow retries failed steps up to MaxRetries", func(t *testing.T) {
 		repoCtx := RepoContext{
 			Host:    "github.com",
@@ -41,11 +40,14 @@ func TestInitWorkflowRetryBehavior(t *testing.T) {
 			Branch:  "main",
 		}
 
-		w := New("test-retry", nil, repoCtx, WithMaxRetries(3))
+		w := New("test-retry", nil, repoCtx,
+			WithMaxRetries(3),
+			WithSendPrompt(emptySendPrompt))
 
 		attemptCount := 0
 		w.Add(Step{
-			Name: "always-fail",
+			Name:   "always-fail",
+			Prompt: "test prompt", // Use a prompt so Retry doesn't go backwards
 			Verify: func(w *Workflow, response string) StepResult {
 				attemptCount++
 				return w.Retry("always fails")
@@ -79,11 +81,14 @@ func TestInitWorkflowRetryBehavior(t *testing.T) {
 			Branch:  "main",
 		}
 
-		w := New("test-retry-success", nil, repoCtx, WithMaxRetries(3))
+		w := New("test-retry-success", nil, repoCtx,
+			WithMaxRetries(3),
+			WithSendPrompt(emptySendPrompt))
 
 		attemptCount := 0
 		w.Add(Step{
-			Name: "fail-then-succeed",
+			Name:   "fail-then-succeed",
+			Prompt: "test prompt", // Add a prompt so Retry doesn't go backwards
 			Verify: func(w *Workflow, response string) StepResult {
 				attemptCount++
 				if attemptCount < 2 {
@@ -113,18 +118,4 @@ func TestInitWorkflowRetryBehavior(t *testing.T) {
 			t.Errorf("Expected state Completed, got %s", w.State)
 		}
 	})
-}
-
-// Helper function to check if string contains any of the substrings
-func containsAny(s string, substrings []string) bool {
-	for _, sub := range substrings {
-		if len(s) >= len(sub) {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

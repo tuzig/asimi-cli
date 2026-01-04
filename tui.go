@@ -309,7 +309,6 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		// Handle mouse wheel scrolling - switch to SCROLL mode when scrolling up
-		// This implements issue #103: switch to SCROLL mode when using the mouse wheel
 		if msg.Type == tea.MouseWheelUp && m.Mode != "scroll" && m.content.GetActiveView() == ViewChat {
 			// Only enter scroll mode if we're not already at the top
 			if !m.content.Chat.Viewport.AtTop() {
