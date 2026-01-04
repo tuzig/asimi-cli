@@ -65,8 +65,9 @@ clean-sandbox:
 ```
 COPY Justfile .
 RUN just bootstrap
+RUN just install
 COPY .agents/sandbox/bashrc /root/.bashrc
-CMD ["just install && /bin/bash"]
+CMD bash
 ```
 
 

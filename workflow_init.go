@@ -155,7 +155,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 
 				if len(missingFiles) == 0 && !clearMode {
 					w.Set("skipAIAnalysis", true)
-					w.ReportProgress("All infrastructure files exist, skipping AI analysis")
+					w.ReportProgress("All infrastructure files exist, skipping model analysis")
 					return map[string]interface{}{"skipAIAnalysis": true}, nil
 				}
 
@@ -197,7 +197,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				} else {
 					initShellRunner(cfg, model.scheduler)
 				}
-				return w.Next(checkPrefix + " AI analysis completed")
+				return w.Next(checkPrefix + " model analysis completed")
 			},
 		}).
 		// Host tests - run tests and fix if they fail
@@ -237,7 +237,7 @@ Please analyze the error and fix the issue. This could be:
 Read the relevant files, understand the error, and make the necessary corrections.`,
 			Verify: func(w *Workflow, response string) StepResult {
 				if response == "" {
-					return w.Retry("No response from AI, retrying")
+					return w.Retry("No response from the model, retrying")
 				}
 				return w.GoTo("host-tests", "Code updated, re-running tests")
 			},
@@ -284,7 +284,7 @@ Read the current Dockerfile, understand the error, and make the necessary correc
 Common issues include missing packages, incorrect base images, or syntax errors.`,
 			Verify: func(w *Workflow, response string) StepResult {
 				if response == "" {
-					return w.Retry("No response from AI, retrying")
+					return w.Retry("No response from the model, retrying")
 				}
 				// Go back to build-sandbox to try the build again
 				return w.GoTo("build-sandbox", "Dockerfile updated, retrying build")
@@ -294,10 +294,12 @@ Common issues include missing packages, incorrect base images, or syntax errors.
 			w.ReportProgress("Running smoke test in container...")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-
 			runner := getShellRunner()
 			if runner == nil {
 				return w.Retry("❌ Container runner not available")
+			}
+			if runner.RunnerType() != "podman" {
+				return w.Retry("❌ failed to bring the container up up")
 			}
 
 			result, err := runner.Run(ctx, RunShellCommandInput{
@@ -357,7 +359,7 @@ Please fix the issue. You may need to update:
 - Justfile (if paths need adjustment)`,
 			Verify: func(w *Workflow, response string) StepResult {
 				if response == "" {
-					return w.Retry("No response from AI, retrying")
+					return w.Retry("No response from the model, retrying")
 				}
 				// Check if Dockerfile was modified - if so, rebuild
 				// For now, just re-run tests (AI might have fixed bashrc or Justfile)

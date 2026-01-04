@@ -357,6 +357,18 @@ func (w *Workflow) ReportProgress(message string) {
 
 // Retry retries the current step with the given message and notifies the user
 func (w *Workflow) Retry(message string) StepResult {
+
+	// Check if CurrentStep is out of bounds
+	if w.CurrentStep >= len(w.Steps) {
+		w.Abort()
+		return StepResult{NextOffset: 0, Message: "Workflow aborted: invalid step index"}
+	}
+
+	// If current step has no prompt (e.g., check steps, command steps),
+	// retrying is unlikely to succeed, so go back instead
+	if w.Steps[w.CurrentStep].Prompt == "" {
+		return w.Back(message)
+	}
 	w.ReportProgress(message)
 	return StepResult{NextOffset: 0, Message: message}
 }
