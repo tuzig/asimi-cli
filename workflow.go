@@ -355,20 +355,16 @@ func (w *Workflow) ReportProgress(message string) {
 	w.onProgress(w.CurrentStep, w.StepStates[w.CurrentStep], message)
 }
 
-// Retry retries the current step with the given message and notifies the user
+// Retry retries the current step with the given message and notifies the user.
+// For prompt steps, this re-sends the prompt. For non-prompt steps (gates, checks),
+// this re-executes the verify function.
 func (w *Workflow) Retry(message string) StepResult {
-
 	// Check if CurrentStep is out of bounds
 	if w.CurrentStep >= len(w.Steps) {
 		w.Abort()
 		return StepResult{NextOffset: 0, Message: "Workflow aborted: invalid step index"}
 	}
 
-	// If current step has no prompt (e.g., check steps, command steps),
-	// retrying is unlikely to succeed, so go back instead
-	if w.Steps[w.CurrentStep].Prompt == "" {
-		return w.Back(message)
-	}
 	w.ReportProgress(message)
 	return StepResult{NextOffset: 0, Message: message}
 }
@@ -573,11 +569,15 @@ func (w *Workflow) Run(ctx context.Context) error {
 			// Stay on current step for retry
 		case nextOffset < 0:
 			// Go back
-			w.StepStates[w.CurrentStep].Status = storage.StepStatusPending
 			newStep := w.CurrentStep + nextOffset
 			if newStep < 0 {
-				newStep = 0
+				w.StepStates[w.CurrentStep].Status = storage.StepStatusFailed
+				w.State = storage.WorkflowStateFailed
+				w.mu.Unlock()
+				w.Save()
+				return fmt.Errorf("step %q: cannot go back %d steps from step %d", step.Name, -nextOffset, w.CurrentStep)
 			}
+			w.StepStates[w.CurrentStep].Status = storage.StepStatusPending
 			w.CurrentStep = newStep
 		}
 		w.mu.Unlock()

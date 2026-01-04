@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWorkflowBasicExecution(t *testing.T) {
@@ -41,9 +43,7 @@ func TestWorkflowBasicExecution(t *testing.T) {
 		Prepare: func(w *Workflow) (map[string]interface{}, error) {
 			executedSteps = append(executedSteps, "step-2-prepare")
 			// Verify data from step 1 is available
-			if w.Get("key1") != "value1" {
-				t.Error("Expected key1 to be value1")
-			}
+			assert.Equal(t, "value1", w.Get("key1"), "Expected key1 to be value1")
 			return nil, nil
 		},
 		Verify: func(w *Workflow, response string) StepResult {
@@ -55,9 +55,7 @@ func TestWorkflowBasicExecution(t *testing.T) {
 	// Run workflow
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
 	// Verify all steps executed
 	expectedSteps := []string{
@@ -65,20 +63,16 @@ func TestWorkflowBasicExecution(t *testing.T) {
 		"step-2-prepare", "step-2-verify",
 	}
 
-	if len(executedSteps) != len(expectedSteps) {
-		t.Errorf("Expected %d steps, got %d", len(expectedSteps), len(executedSteps))
-	}
+	assert.Equal(t, len(expectedSteps), len(executedSteps), "Step count mismatch")
 
 	for i, step := range expectedSteps {
-		if i >= len(executedSteps) || executedSteps[i] != step {
-			t.Errorf("Step %d: expected %s, got %s", i, step, executedSteps[i])
+		if i < len(executedSteps) {
+			assert.Equal(t, step, executedSteps[i], "Step %d mismatch", i)
 		}
 	}
 
 	// Verify workflow state
-	if w.State != storage.WorkflowStateCompleted {
-		t.Errorf("Expected workflow state to be completed, got %s", w.State)
-	}
+	assert.Equal(t, storage.WorkflowStateCompleted, w.State, "Expected workflow state to be completed")
 }
 
 func TestWorkflowRetry(t *testing.T) {
@@ -106,23 +100,14 @@ func TestWorkflowRetry(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
-	if retryCount != 3 {
-		t.Errorf("Expected 3 retries, got %d", retryCount)
-	}
+	assert.Equal(t, 3, retryCount, "Expected 3 retries")
 
 	// Check step state
 	states := w.GetStepStates()
-	if len(states) != 1 {
-		t.Fatalf("Expected 1 step state, got %d", len(states))
-	}
-
-	if states[0].RetryCount != 2 { // 2 retries before success
-		t.Errorf("Expected retry count 2, got %d", states[0].RetryCount)
-	}
+	require.Len(t, states, 1, "Expected 1 step state")
+	assert.Equal(t, 2, states[0].RetryCount, "Expected retry count 2") // 2 retries before success
 }
 
 func TestWorkflowMaxRetriesExceeded(t *testing.T) {
@@ -145,13 +130,8 @@ func TestWorkflowMaxRetriesExceeded(t *testing.T) {
 	ctx := context.Background()
 	err := w.Run(ctx)
 
-	if err == nil {
-		t.Error("Expected workflow to fail due to max retries")
-	}
-
-	if w.State != storage.WorkflowStateFailed {
-		t.Errorf("Expected workflow state to be failed, got %s", w.State)
-	}
+	assert.Error(t, err, "Expected workflow to fail due to max retries")
+	assert.Equal(t, storage.WorkflowStateFailed, w.State, "Expected workflow state to be failed")
 }
 
 func TestWorkflowSkipSteps(t *testing.T) {
@@ -192,18 +172,12 @@ func TestWorkflowSkipSteps(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
 	// Step 2 should be skipped
-	if len(executedSteps) != 2 {
-		t.Errorf("Expected 2 steps executed, got %d: %v", len(executedSteps), executedSteps)
-	}
-
-	if executedSteps[0] != "step-1" || executedSteps[1] != "step-3" {
-		t.Errorf("Unexpected step execution order: %v", executedSteps)
-	}
+	assert.Len(t, executedSteps, 2, "Expected 2 steps executed")
+	assert.Equal(t, "step-1", executedSteps[0])
+	assert.Equal(t, "step-3", executedSteps[1])
 }
 
 func TestWorkflowGoBack(t *testing.T) {
@@ -238,14 +212,10 @@ func TestWorkflowGoBack(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
 	// Step 2 should have run twice (once before going back, once after)
-	if step2Runs != 2 {
-		t.Errorf("Expected step 2 to run 2 times, got %d", step2Runs)
-	}
+	assert.Equal(t, 2, step2Runs, "Expected step 2 to run 2 times")
 }
 
 func TestWorkflowAbort(t *testing.T) {
@@ -277,13 +247,8 @@ func TestWorkflowAbort(t *testing.T) {
 	ctx := context.Background()
 	err := w.Run(ctx)
 
-	if err == nil {
-		t.Error("Expected workflow to return error on abort")
-	}
-
-	if w.State != storage.WorkflowStateAborted {
-		t.Errorf("Expected workflow state to be aborted, got %s", w.State)
-	}
+	assert.Error(t, err, "Expected workflow to return error on abort")
+	assert.Equal(t, storage.WorkflowStateAborted, w.State, "Expected workflow state to be aborted")
 }
 
 func TestWorkflowContextCancellation(t *testing.T) {
@@ -326,13 +291,8 @@ func TestWorkflowContextCancellation(t *testing.T) {
 
 	err := w.Run(ctx)
 
-	if err == nil {
-		t.Error("Expected workflow to return error on cancellation")
-	}
-
-	if w.State != storage.WorkflowStateAborted {
-		t.Errorf("Expected workflow state to be aborted, got %s", w.State)
-	}
+	assert.Error(t, err, "Expected workflow to return error on cancellation")
+	assert.Equal(t, storage.WorkflowStateAborted, w.State, "Expected workflow state to be aborted")
 }
 
 func TestWorkflowDataPersistence(t *testing.T) {
@@ -361,21 +321,15 @@ func TestWorkflowDataPersistence(t *testing.T) {
 	w.AddStep(Step{
 		Name: "check-data",
 		Verify: func(w *Workflow, response string) StepResult {
-			if w.Get("manual-key") != "manual-value" {
-				t.Error("manual-key not persisted")
-			}
-			if w.Get("prepare-key") != "prepare-value" {
-				t.Error("prepare-key not persisted")
-			}
+			assert.Equal(t, "manual-value", w.Get("manual-key"), "manual-key not persisted")
+			assert.Equal(t, "prepare-value", w.Get("prepare-key"), "prepare-key not persisted")
 			return StepResult{NextOffset: 1, Message: "done"}
 		},
 	})
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 }
 
 func TestWorkflowProgress(t *testing.T) {
@@ -417,14 +371,10 @@ func TestWorkflowProgress(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
 	// Should have progress updates for each step (running + completed)
-	if len(progressUpdates) < 2 {
-		t.Errorf("Expected at least 2 progress updates, got %d", len(progressUpdates))
-	}
+	assert.GreaterOrEqual(t, len(progressUpdates), 2, "Expected at least 2 progress updates")
 }
 
 func TestWorkflowGetProgress(t *testing.T) {
@@ -447,20 +397,14 @@ func TestWorkflowGetProgress(t *testing.T) {
 	}
 
 	// Initial progress should be 0
-	if w.GetProgress() != 0 {
-		t.Errorf("Expected initial progress 0, got %f", w.GetProgress())
-	}
+	assert.Equal(t, float64(0), w.GetProgress(), "Expected initial progress 0")
 
 	// Manually advance and check progress
 	w.CurrentStep = 2
-	if w.GetProgress() != 0.5 {
-		t.Errorf("Expected progress 0.5, got %f", w.GetProgress())
-	}
+	assert.Equal(t, 0.5, w.GetProgress(), "Expected progress 0.5")
 
 	w.CurrentStep = 4
-	if w.GetProgress() != 1.0 {
-		t.Errorf("Expected progress 1.0, got %f", w.GetProgress())
-	}
+	assert.Equal(t, 1.0, w.GetProgress(), "Expected progress 1.0")
 }
 
 // Tests for StepResult helper functions
@@ -474,8 +418,11 @@ func TestStepResultHelpers(t *testing.T) {
 		Branch:  "main",
 	}
 	w := New("test-helpers", nil, repoCtx)
-	// Add a dummy step so ReportProgress doesn't panic
-	w.Add(Step{Name: "dummy", Verify: func(w *Workflow, response string) StepResult { return w.Next("ok") }})
+	// Add two steps so Back/BackN can work from CurrentStep=1
+	w.Add(Step{Name: "step1", Prompt: "test prompt", Verify: func(w *Workflow, response string) StepResult { return w.Next("ok") }})
+	w.Add(Step{Name: "step2", Prompt: "test prompt", Verify: func(w *Workflow, response string) StepResult { return w.Next("ok") }})
+	// Move to step 1 so Back/BackN tests work
+	w.CurrentStep = 1
 
 	tests := []struct {
 		name     string
@@ -496,17 +443,66 @@ func TestStepResultHelpers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.result.NextOffset != tt.wantOff {
-				t.Errorf("NextOffset = %d, want %d", tt.result.NextOffset, tt.wantOff)
-			}
-			if tt.result.NextStep != tt.wantStep {
-				t.Errorf("NextStep = %q, want %q", tt.result.NextStep, tt.wantStep)
-			}
-			if tt.result.Message != tt.wantMsg {
-				t.Errorf("Message = %q, want %q", tt.result.Message, tt.wantMsg)
-			}
+			assert.Equal(t, tt.wantOff, tt.result.NextOffset, "NextOffset mismatch")
+			assert.Equal(t, tt.wantStep, tt.result.NextStep, "NextStep mismatch")
+			assert.Equal(t, tt.wantMsg, tt.result.Message, "Message mismatch")
 		})
 	}
+}
+
+// TestBackNAtStep0 tests that workflow fails when trying to go back from step 0
+func TestBackNAtStep0(t *testing.T) {
+	repoCtx := RepoContext{
+		Host:    "github.com",
+		Org:     "test",
+		Project: "project",
+		Branch:  "main",
+	}
+	w := New("test-back-from-zero", nil, repoCtx)
+	w.Add(Step{
+		Name: "step1",
+		Verify: func(w *Workflow, response string) StepResult {
+			return w.BackN(2, "trying to go back")
+		},
+	})
+
+	ctx := context.Background()
+	err := w.Run(ctx)
+
+	assert.Error(t, err, "Expected workflow to fail when going back from step 0")
+	assert.Contains(t, err.Error(), "cannot go back")
+	assert.Equal(t, storage.WorkflowStateFailed, w.State)
+}
+
+// TestRetryAtStep0WithNoPrompt tests that Retry works correctly for steps without prompts
+func TestRetryAtStep0WithNoPrompt(t *testing.T) {
+	repoCtx := RepoContext{
+		Host:    "github.com",
+		Org:     "test",
+		Project: "project",
+		Branch:  "main",
+	}
+	w := New("test-retry-at-zero", nil, repoCtx, WithMaxRetries(3))
+
+	retryCount := 0
+	w.Add(Step{
+		Name:   "step1",
+		Prompt: "",
+		Verify: func(w *Workflow, response string) StepResult {
+			retryCount++
+			if retryCount < 3 {
+				return w.Retry("retrying")
+			}
+			return w.Next("done")
+		},
+	})
+
+	ctx := context.Background()
+	err := w.Run(ctx)
+
+	require.NoError(t, err, "Workflow should complete after retries")
+	assert.Equal(t, 3, retryCount, "Expected 3 attempts")
+	assert.Equal(t, storage.WorkflowStateCompleted, w.State)
 }
 
 // Tests for common step helpers
@@ -534,17 +530,10 @@ func TestAddPrompt(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
-	if promptSent != "Analyze the code" {
-		t.Errorf("Expected prompt 'Analyze the code', got %q", promptSent)
-	}
-
-	if w.State != storage.WorkflowStateCompleted {
-		t.Errorf("Expected completed state, got %s", w.State)
-	}
+	assert.Equal(t, "Analyze the code", promptSent, "Expected prompt 'Analyze the code'")
+	assert.Equal(t, storage.WorkflowStateCompleted, w.State, "Expected completed state")
 }
 
 func TestAddCmd(t *testing.T) {
@@ -576,13 +565,9 @@ func TestAddGate(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
-	if checkCount != 3 {
-		t.Errorf("Expected 3 checks, got %d", checkCount)
-	}
+	assert.Equal(t, 3, checkCount, "Expected 3 checks")
 }
 
 func TestAddConfirm(t *testing.T) {
@@ -608,14 +593,10 @@ func TestAddConfirm(t *testing.T) {
 
 		ctx := context.Background()
 		err := w.Run(ctx)
-		if err != nil {
-			t.Fatalf("Workflow failed: %v", err)
-		}
+		require.NoError(t, err, "Workflow failed")
 
 		states := w.GetStepStates()
-		if states[0].Message != "✓ Approved" {
-			t.Errorf("Expected '✓ Approved', got %q", states[0].Message)
-		}
+		assert.Equal(t, "✓ Approved", states[0].Message)
 	})
 
 	// Test approval denied
@@ -633,14 +614,10 @@ func TestAddConfirm(t *testing.T) {
 
 		ctx := context.Background()
 		err := w.Run(ctx)
-		if err != nil {
-			t.Fatalf("Workflow failed: %v", err)
-		}
+		require.NoError(t, err, "Workflow failed")
 
 		states := w.GetStepStates()
-		if states[0].Message != "⊘ Skipped by user" {
-			t.Errorf("Expected '⊘ Skipped by user', got %q", states[0].Message)
-		}
+		assert.Equal(t, "⊘ Skipped by user", states[0].Message)
 	})
 }
 
@@ -670,13 +647,9 @@ func TestAddIf(t *testing.T) {
 
 		ctx := context.Background()
 		err := w.Run(ctx)
-		if err != nil {
-			t.Fatalf("Workflow failed: %v", err)
-		}
+		require.NoError(t, err, "Workflow failed")
 
-		if !executed {
-			t.Error("Expected step to execute when condition is true")
-		}
+		assert.True(t, executed, "Expected step to execute when condition is true")
 	})
 
 	// Test condition false - step skipped
@@ -697,18 +670,12 @@ func TestAddIf(t *testing.T) {
 
 		ctx := context.Background()
 		err := w.Run(ctx)
-		if err != nil {
-			t.Fatalf("Workflow failed: %v", err)
-		}
+		require.NoError(t, err, "Workflow failed")
 
-		if executed {
-			t.Error("Expected step to be skipped when condition is false")
-		}
+		assert.False(t, executed, "Expected step to be skipped when condition is false")
 
 		states := w.GetStepStates()
-		if states[0].Message != "⊘ Skipped (condition not met)" {
-			t.Errorf("Expected skip message, got %q", states[0].Message)
-		}
+		assert.Equal(t, "⊘ Skipped (condition not met)", states[0].Message, "Expected skip message")
 	})
 }
 
@@ -744,13 +711,9 @@ func TestStepHelpersWithWorkflowData(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
-	if w.Get("testsRan") != "yes" {
-		t.Error("Expected testsRan to be 'yes'")
-	}
+	assert.Equal(t, "yes", w.Get("testsRan"), "Expected testsRan to be 'yes'")
 }
 
 func TestMethodChaining(t *testing.T) {
@@ -785,19 +748,13 @@ func TestMethodChaining(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
-	if len(executedSteps) != 3 {
-		t.Errorf("Expected 3 steps executed, got %d: %v", len(executedSteps), executedSteps)
-	}
+	assert.Len(t, executedSteps, 3, "Expected 3 steps executed")
 
 	expected := []string{"step1", "step2", "gate"}
 	for i, step := range expected {
-		if executedSteps[i] != step {
-			t.Errorf("Step %d: expected %s, got %s", i, step, executedSteps[i])
-		}
+		assert.Equal(t, step, executedSteps[i], "Step %d mismatch", i)
 	}
 }
 
@@ -821,17 +778,10 @@ func TestAddRun(t *testing.T) {
 
 		ctx := context.Background()
 		err := w.Run(ctx)
-		if err != nil {
-			t.Fatalf("Workflow failed: %v", err)
-		}
+		require.NoError(t, err, "Workflow failed")
 
-		if !executed {
-			t.Error("Expected function to be executed")
-		}
-
-		if w.Get("result") != "done" {
-			t.Errorf("Expected result 'done', got %q", w.Get("result"))
-		}
+		assert.True(t, executed, "Expected function to be executed")
+		assert.Equal(t, "done", w.Get("result"), "Expected result 'done'")
 	})
 
 	t.Run("failure", func(t *testing.T) {
@@ -844,13 +794,8 @@ func TestAddRun(t *testing.T) {
 		ctx := context.Background()
 		err := w.Run(ctx)
 
-		if err == nil {
-			t.Error("Expected workflow to fail")
-		}
-
-		if w.State != storage.WorkflowStateFailed {
-			t.Errorf("Expected failed state, got %s", w.State)
-		}
+		assert.Error(t, err, "Expected workflow to fail")
+		assert.Equal(t, storage.WorkflowStateFailed, w.State, "Expected failed state")
 	})
 }
 
@@ -868,20 +813,18 @@ func TestAddCheck(t *testing.T) {
 	w.AddCheck("verify-something", func(w *Workflow) StepResult {
 		checkCount++
 		if checkCount < 2 {
-			return w.Retry("not ready yet")
+			// For polling checks, return NextOffset=0 directly instead of Retry()
+			// (Retry() requires a prompt or previous step to go back to)
+			return StepResult{NextOffset: 0, Message: "not ready yet"}
 		}
 		return w.Next("ready!")
 	})
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
-	if checkCount != 2 {
-		t.Errorf("Expected 2 checks, got %d", checkCount)
-	}
+	assert.Equal(t, 2, checkCount, "Expected 2 checks")
 }
 
 // Tests for GoTo (named step navigation)
@@ -924,20 +867,11 @@ func TestGoToSkipForward(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
 	// step-2 should be skipped
 	expected := []string{"step-1", "step-3"}
-	if len(executedSteps) != len(expected) {
-		t.Errorf("Expected %d steps, got %d: %v", len(expected), len(executedSteps), executedSteps)
-	}
-	for i, step := range expected {
-		if i >= len(executedSteps) || executedSteps[i] != step {
-			t.Errorf("Step %d: expected %s, got %v", i, step, executedSteps)
-		}
-	}
+	assert.Equal(t, expected, executedSteps, "Step execution order mismatch")
 }
 
 func TestGoToGoBack(t *testing.T) {
@@ -972,14 +906,10 @@ func TestGoToGoBack(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
 	// step-2 should have run twice
-	if step2Runs != 2 {
-		t.Errorf("Expected step-2 to run 2 times, got %d", step2Runs)
-	}
+	assert.Equal(t, 2, step2Runs, "Expected step-2 to run 2 times")
 }
 
 func TestGoToUnknownStep(t *testing.T) {
@@ -1002,13 +932,8 @@ func TestGoToUnknownStep(t *testing.T) {
 	ctx := context.Background()
 	err := w.Run(ctx)
 
-	if err == nil {
-		t.Error("Expected workflow to fail when GoTo references unknown step")
-	}
-
-	if w.State != storage.WorkflowStateFailed {
-		t.Errorf("Expected failed state, got %s", w.State)
-	}
+	assert.Error(t, err, "Expected workflow to fail when GoTo references unknown step")
+	assert.Equal(t, storage.WorkflowStateFailed, w.State, "Expected failed state")
 }
 
 func TestGoToSameStep(t *testing.T) {
@@ -1037,13 +962,9 @@ func TestGoToSameStep(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
-	if runCount != 3 {
-		t.Errorf("Expected 3 runs, got %d", runCount)
-	}
+	assert.Equal(t, 3, runCount, "Expected 3 runs")
 }
 
 func TestGoToHelper(t *testing.T) {
@@ -1057,15 +978,9 @@ func TestGoToHelper(t *testing.T) {
 	w.Add(Step{Name: "dummy", Verify: func(w *Workflow, response string) StepResult { return w.Next("ok") }})
 
 	result := w.GoTo("target-step", "jumping to target")
-	if result.NextStep != "target-step" {
-		t.Errorf("NextStep = %q, want %q", result.NextStep, "target-step")
-	}
-	if result.Message != "jumping to target" {
-		t.Errorf("Message = %q, want %q", result.Message, "jumping to target")
-	}
-	if result.NextOffset != 0 {
-		t.Errorf("NextOffset = %d, want 0", result.NextOffset)
-	}
+	assert.Equal(t, "target-step", result.NextStep, "NextStep mismatch")
+	assert.Equal(t, "jumping to target", result.Message, "Message mismatch")
+	assert.Equal(t, 0, result.NextOffset, "NextOffset should be 0")
 }
 
 func TestWorkflowGoToForward(t *testing.T) {
@@ -1106,20 +1021,11 @@ func TestWorkflowGoToForward(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
 	// Step 2 should be skipped
 	expected := []string{"step-1", "step-3"}
-	if len(executedSteps) != len(expected) {
-		t.Errorf("Expected %d steps, got %d: %v", len(expected), len(executedSteps), executedSteps)
-	}
-	for i, step := range expected {
-		if i >= len(executedSteps) || executedSteps[i] != step {
-			t.Errorf("Step %d: expected %s, got %s", i, step, executedSteps[i])
-		}
-	}
+	assert.Equal(t, expected, executedSteps, "Step execution order mismatch")
 }
 
 func TestWorkflowGoToBackward(t *testing.T) {
@@ -1154,14 +1060,10 @@ func TestWorkflowGoToBackward(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
 	// Step 2 should have run twice
-	if step2Runs != 2 {
-		t.Errorf("Expected step 2 to run 2 times, got %d", step2Runs)
-	}
+	assert.Equal(t, 2, step2Runs, "Expected step 2 to run 2 times")
 }
 
 func TestWorkflowGoToUnknownStep(t *testing.T) {
@@ -1184,13 +1086,8 @@ func TestWorkflowGoToUnknownStep(t *testing.T) {
 	ctx := context.Background()
 	err := w.Run(ctx)
 
-	if err == nil {
-		t.Error("Expected workflow to fail when GoTo targets unknown step")
-	}
-
-	if w.State != storage.WorkflowStateFailed {
-		t.Errorf("Expected failed state, got %s", w.State)
-	}
+	assert.Error(t, err, "Expected workflow to fail when GoTo targets unknown step")
+	assert.Equal(t, storage.WorkflowStateFailed, w.State, "Expected failed state")
 }
 
 func TestWorkflowGoToSameStep(t *testing.T) {
@@ -1218,11 +1115,7 @@ func TestWorkflowGoToSameStep(t *testing.T) {
 
 	ctx := context.Background()
 	err := w.Run(ctx)
-	if err != nil {
-		t.Fatalf("Workflow failed: %v", err)
-	}
+	require.NoError(t, err, "Workflow failed")
 
-	if runCount != 3 {
-		t.Errorf("Expected 3 runs, got %d", runCount)
-	}
+	assert.Equal(t, 3, runCount, "Expected 3 runs")
 }
