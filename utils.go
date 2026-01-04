@@ -306,7 +306,8 @@ func getFileTree(root string) ([]string, error) {
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			// Skip files/directories we can't access
+			return nil
 		}
 
 		if info.IsDir() {
