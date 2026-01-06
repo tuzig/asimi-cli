@@ -104,6 +104,25 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				w.ReportProgress("Added default .agents/sandbox/bashrc")
 			}
 
+			// Write Justfile from embedded template if it does not exist
+			if _, err := os.Stat("Justfile"); os.IsNotExist(err) || clearMode {
+				// Process the Justfile template with project data
+				tmpl, err := template.New("justfile").Parse(defaultJustfile)
+				if err != nil {
+					return fmt.Errorf("error parsing Justfile template: %v", err)
+				}
+				var justfileContent bytes.Buffer
+				if err := tmpl.Execute(&justfileContent, map[string]string{
+					"ProjectSlug": w.Get("projectSlug"),
+				}); err != nil {
+					return fmt.Errorf("error executing Justfile template: %v", err)
+				}
+				if err := os.WriteFile("Justfile", justfileContent.Bytes(), 0o644); err != nil {
+					return fmt.Errorf("error writing Justfile: %v", err)
+				}
+				w.ReportProgress("Added Justfile")
+			}
+
 			return nil
 		}).
 		AddRun("configure-project", func(w *Workflow) error {
