@@ -1,0 +1,42 @@
+PROJECT_NAME := "{{.ProjectSlug}}"
+
+list: 
+    @just --list
+
+# Build the sandbox container
+build-sandbox:
+    podman machine init --disk-size 30 >/dev/null 2>&1 || true
+    podman machine start >/dev/null 2>&1 || true
+    podman build -t localhost/asimi-sandbox-{{`{{PROJECT_NAME}}`}}:latest -f .agents/sandbox/Dockerfile .
+
+# Clean up the sandbox container
+clean-sandbox:
+    podman rmi localhost/asimi-sandbox-{{`{{PROJECT_NAME}}`}}:latest
+
+# install project dependencies
+install:
+    # TBD - add installation commands
+
+# Run linter & formatter
+lint:
+    # TBD - add linting commands
+
+# Run the tests
+test:
+    # TBD - add test commands, if there are no tests, run the linter
+
+# start the program or server
+run:
+    # TBD - add run commands
+
+# build the project
+build: install
+    # TBD - add build command
+
+# clean build artifacts and caches
+clean:
+    # TBD - add clean commands
+
+# install system dependencies
+bootstrap:
+    # TBD - add multi-os system dependencies install commands
