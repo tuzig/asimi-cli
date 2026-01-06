@@ -7,11 +7,59 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/tmc/langchaingo/llms"
 )
+
+// toolCallPattern matches tool call text that some providers embed in content/reasoning streams.
+// Format: functions.NAME:INDEX{JSON} (e.g., "functions.read_file:0{"path":"..."}")
+// This pattern can appear when providers serialize tool calls as text rather than structured data.
+var toolCallPattern = regexp.MustCompile(`functions\.([a-zA-Z_][a-zA-Z0-9_]*):(\d+)(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})`)
+
+// parseToolCallsFromText extracts tool calls from text and returns the cleaned text plus parsed tool calls.
+// Some providers embed tool calls as text in content/reasoning streams rather than using
+// the proper tool_calls structure. This function parses them into proper ToolCall structs.
+func parseToolCallsFromText(text string) (cleanText string, toolCalls []ToolCall) {
+	matches := toolCallPattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return text, nil
+	}
+
+	slog.Debug("Found tool call in thoughts")
+	// Extract tool calls from matches
+	for _, match := range matches {
+		if len(match) >= 8 {
+			name := text[match[2]:match[3]]
+			indexStr := text[match[4]:match[5]]
+			args := text[match[6]:match[7]]
+
+			var index int
+			fmt.Sscanf(indexStr, "%d", &index)
+
+			toolCalls = append(toolCalls, ToolCall{
+				Type:  ToolTypeFunction,
+				Index: index,
+				Function: ToolFunction{
+					Name:      name,
+					Arguments: args,
+				},
+			})
+		}
+	}
+
+	// Return text before the first match (the clean reasoning/content text)
+	if len(matches) > 0 {
+		cleanText = text[:matches[0][0]]
+	} else {
+		cleanText = text
+	}
+
+	return cleanText, toolCalls
+}
 
 const (
 	defaultChatModel = "gpt-3.5-turbo"
@@ -227,8 +275,11 @@ type ChatMessage struct { //nolint:musttag
 	// Only present in tool messages.
 	ToolCallID string `json:"tool_call_id,omitempty"`
 
-	// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
+	// This field is used with reasoning models and represents the reasoning contents of the assistant message before the final answer.
+	// DeepSeek uses "reasoning_content" while OpenAI (and OpenRouter) use "reasoning"
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// For OpenAI/OpenRouter format, which uses "reasoning" instead of "reasoning_content"
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 func (m ChatMessage) MarshalJSON() ([]byte, error) {
@@ -254,8 +305,11 @@ func (m ChatMessage) MarshalJSON() ([]byte, error) {
 			// Only present in tool messages.
 			ToolCallID string `json:"tool_call_id,omitempty"`
 
-			// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
+			// This field is used with reasoning models and represents the reasoning contents of the assistant message before the final answer.
+			// DeepSeek uses "reasoning_content" while OpenAI (and OpenRouter) use "reasoning"
 			ReasoningContent string `json:"reasoning_content,omitempty"`
+			// For OpenAI/OpenRouter format, which uses "reasoning" instead of "reasoning_content"
+			Reasoning string `json:"reasoning,omitempty"`
 		}(m)
 		return json.Marshal(msg)
 	}
@@ -272,8 +326,10 @@ func (m ChatMessage) MarshalJSON() ([]byte, error) {
 		// Only present in tool messages.
 		ToolCallID string `json:"tool_call_id,omitempty"`
 
-		// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
+		// This field is used with reasoning models and represents the reasoning contents of the assistant message before the final answer.
 		ReasoningContent string `json:"reasoning_content,omitempty"`
+		// For OpenAI/OpenRouter format, which uses "reasoning" instead of "reasoning_content"
+		Reasoning string `json:"reasoning,omitempty"`
 	}(m)
 	return json.Marshal(msg)
 }
@@ -287,6 +343,7 @@ func isSingleTextContent(parts []llms.ContentPart) (string, bool) {
 }
 
 func (m *ChatMessage) UnmarshalJSON(data []byte) error {
+	// Use an anonymous struct with proper json tags to match the MarshalJSON format
 	msg := struct {
 		Role         string             `json:"role"`
 		Content      string             `json:"content"`
@@ -300,14 +357,35 @@ func (m *ChatMessage) UnmarshalJSON(data []byte) error {
 		// Only present in tool messages.
 		ToolCallID string `json:"tool_call_id,omitempty"`
 
-		// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
+		// This field is used with reasoning models and represents the reasoning contents of the assistant message before the final answer.
+		// DeepSeek uses "reasoning_content" while OpenAI (and OpenRouter) use "reasoning"
 		ReasoningContent string `json:"reasoning_content,omitempty"`
+		// For OpenAI/OpenRouter format, which uses "reasoning" instead of "reasoning_content"
+		Reasoning string `json:"reasoning,omitempty"`
 	}{}
 	err := json.Unmarshal(data, &msg)
 	if err != nil {
 		return err
 	}
-	*m = ChatMessage(msg)
+
+	*m = ChatMessage{
+		Role:             msg.Role,
+		Content:          msg.Content,
+		MultiContent:     msg.MultiContent,
+		Name:             msg.Name,
+		ToolCalls:        msg.ToolCalls,
+		FunctionCall:     msg.FunctionCall,
+		ToolCallID:       msg.ToolCallID,
+		ReasoningContent: msg.ReasoningContent,
+		Reasoning:        msg.Reasoning,
+	}
+
+	// If ReasoningContent is empty but Reasoning is set (OpenAI/OpenRouter format),
+	// copy Reasoning to ReasoningContent for consistent access
+	if m.ReasoningContent == "" && m.Reasoning != "" {
+		m.ReasoningContent = m.Reasoning
+	}
+
 	return nil
 }
 
@@ -403,6 +481,13 @@ type Usage struct {
 	} `json:"completion_tokens_details"`
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // StreamedChatResponsePayload is a chunk from the stream.
 type StreamedChatResponsePayload struct {
 	ID      string  `json:"id,omitempty"`
@@ -417,8 +502,11 @@ type StreamedChatResponsePayload struct {
 			FunctionCall *FunctionCall `json:"function_call,omitempty"`
 			// ToolCalls is a list of tools that were called in the message.
 			ToolCalls []*ToolCall `json:"tool_calls,omitempty"`
-			// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
+			// This field is used with reasoning models and represents the reasoning contents of the assistant message before the final answer.
+			// DeepSeek uses "reasoning_content" while OpenAI (and OpenRouter) use "reasoning"
 			ReasoningContent string `json:"reasoning_content,omitempty"`
+			// For OpenAI/OpenRouter format, which uses "reasoning" instead of "reasoning_content"
+			Reasoning string `json:"reasoning,omitempty"`
 		} `json:"delta,omitempty"`
 		FinishReason FinishReason `json:"finish_reason,omitempty"`
 	} `json:"choices,omitempty"`
@@ -575,6 +663,10 @@ func parseStreamingChatResponse(ctx context.Context, r *http.Response, payload *
 			if data == "[DONE]" {
 				return
 			}
+
+			// Debug log raw SSE data - this shows exactly what the API returns
+			slog.Debug("SSE raw", "data", data)
+
 			var streamPayload StreamedChatResponsePayload
 			err := json.NewDecoder(bytes.NewReader([]byte(data))).Decode(&streamPayload)
 			if err != nil {
@@ -635,11 +727,52 @@ func combineStreamingChatResponse(
 			continue
 		}
 		choice := streamResponse.Choices[0]
-		contentChunk := []byte(choice.Delta.Content)
-		reasoningChunk := []byte(choice.Delta.ReasoningContent)
-		response.Choices[0].Message.Content += choice.Delta.Content
+
+		// Debug: log what's in each field of the parsed delta
+		slog.Debug("Parsed delta",
+			"content", choice.Delta.Content,
+			"reasoning", choice.Delta.Reasoning,
+			"reasoning_content", choice.Delta.ReasoningContent,
+			"tool_calls_count", len(choice.Delta.ToolCalls),
+		)
+
+		// Parse and extract tool calls from content before streaming
+		// Some providers embed tool calls as text (e.g., "functions.read_file:0{...}")
+		contentText, contentToolCalls := parseToolCallsFromText(choice.Delta.Content)
+		contentChunk := []byte(contentText)
+		response.Choices[0].Message.Content += contentText // Only keep clean content
 		response.Choices[0].FinishReason = choice.FinishReason
-		response.Choices[0].Message.ReasoningContent += choice.Delta.ReasoningContent
+
+		// Add any tool calls parsed from content to the response
+		if len(contentToolCalls) > 0 {
+			for _, tc := range contentToolCalls {
+				response.Choices[0].Message.ToolCalls = updateToolCalls(
+					response.Choices[0].Message.ToolCalls, []*ToolCall{&tc})
+			}
+		}
+
+		// Handle both reasoning formats: DeepSeek uses "reasoning_content", OpenAI/Claude uses "reasoning"
+		// Accumulate from both fields to ensure compatibility with all providers
+		reasoningDelta := ""
+		if choice.Delta.ReasoningContent != "" {
+			reasoningDelta += choice.Delta.ReasoningContent
+		}
+		if choice.Delta.Reasoning != "" {
+			reasoningDelta += choice.Delta.Reasoning
+		}
+
+		// Parse and extract tool calls from reasoning before streaming to user
+		reasoningForStream, reasoningToolCalls := parseToolCallsFromText(reasoningDelta)
+		reasoningChunk := []byte(reasoningForStream)
+		response.Choices[0].Message.ReasoningContent += reasoningForStream // Only keep clean reasoning
+
+		// Add any tool calls parsed from reasoning to the response
+		if len(reasoningToolCalls) > 0 {
+			for _, tc := range reasoningToolCalls {
+				response.Choices[0].Message.ToolCalls = updateToolCalls(
+					response.Choices[0].Message.ToolCalls, []*ToolCall{&tc})
+			}
+		}
 
 		// Update function calls and tool calls, but don't pass them to StreamingFunc
 		// Tool calls are handled separately through the response.Choices[0].Message.ToolCalls field
@@ -647,20 +780,32 @@ func combineStreamingChatResponse(
 			updateFunctionCall(response.Choices[0].Message, choice.Delta.FunctionCall)
 		}
 
-		if len(choice.Delta.ToolCalls) > 0 {
+		// Track if this delta contains tool calls - if so, don't stream content
+		// as it may contain tool call data that shouldn't be displayed
+		hasToolCalls := len(choice.Delta.ToolCalls) > 0
+
+		if hasToolCalls {
 			response.Choices[0].Message.ToolCalls = updateToolCalls(response.Choices[0].Message.ToolCalls,
 				choice.Delta.ToolCalls)
+			// Clear content chunk to prevent tool call data from being streamed
+			// Some providers include tool call info in both tool_calls and content fields
+			contentChunk = []byte{}
 		}
 
-		// Only call StreamingFunc for actual content deltas, not for tool calls
-		// This prevents JSON-marshaled tool call data from being displayed in the chat
+		// Only call StreamingFunc for actual content deltas, not when there are tool calls
+		// This prevents tool call data from being displayed in the chat
 		if payload.StreamingFunc != nil && len(contentChunk) > 0 {
+			slog.Debug("Streaming content", "chunk", string(contentChunk))
 			err := payload.StreamingFunc(ctx, contentChunk)
 			if err != nil {
 				return nil, fmt.Errorf("streaming func returned an error: %w", err)
 			}
 		}
-		if payload.StreamingReasoningFunc != nil && (len(reasoningChunk) > 0 || len(contentChunk) > 0) {
+		// Only call StreamingReasoningFunc when there's actual reasoning content
+		// Don't call it for regular content chunks - that's what StreamingFunc is for
+		// Also don't pass contentChunk when there are tool calls
+		if payload.StreamingReasoningFunc != nil && len(reasoningChunk) > 0 {
+			slog.Debug("Streaming reasoning", "reasoning", string(reasoningChunk), "content", string(contentChunk))
 			err := payload.StreamingReasoningFunc(ctx, reasoningChunk, contentChunk)
 			if err != nil {
 				return nil, fmt.Errorf("streaming reasoning func returned an error: %w", err)
