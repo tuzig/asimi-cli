@@ -18,10 +18,11 @@ The instructions below use 0.2.1 as the version, please replace with the current
 
 ### 1. Prepare CHANGELOG.md
 
-Move items from `[Unreleased]` to a new version section:
+Review the git log since the last version and ensure all user notable changes are 
+under the Unreleased section of the changle log.
+Then, rename the section to 0.2.1 and add the date:
 
 ```markdown
-## [Unreleased]
 
 ## [0.2.1] - 2025-01-15
 

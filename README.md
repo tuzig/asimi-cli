@@ -150,7 +150,7 @@ Asimi is just starting out. It's been used to develop itself since version 0.1.0
 | Feature | Description |
 |---------|-------------|
 | [#56 - MCP Support](https://github.com/afittestide/asimi-cli/issues/56) | Model Context Protocol integration |
-| [#103 - New Feature](https://github.com/afittestide/asimi-cli/issues/103) | Description of the new feature |
+| [#110 - Streaming Improvements](https://github.com/afittestide/asimi-cli/issues/110) | Better streaming response handling |
 | [#24 - Sub-agents & Roles](https://github.com/afittestide/asimi-cli/issues/24) | Task delegation with orchestrator role |
 | [#8 - Git Integration](https://github.com/afittestide/asimi-cli/issues/8) | `:branch` command and tighter git workflows |
 | A few directories | While flat is better than nested, there comes a time for dirs|
