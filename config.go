@@ -3,7 +3,6 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -198,7 +197,7 @@ func EnsureUserConfigExists() (bool, error) {
 		return false, fmt.Errorf("failed to create config file: %w", err)
 	}
 
-	log.Printf("Created user config file at %s", cfgPath)
+	slog.Info("Created user config file", "path", cfgPath)
 	return true, nil
 }
 
@@ -213,17 +212,17 @@ func LoadConfig() (*Config, error) {
 	} else {
 		userConfigPath := filepath.Join(homeDir, ".config", "asimi", "asimi.conf")
 		if err := k.Load(file.Provider(userConfigPath), koanftoml.Parser()); err != nil {
-			log.Printf("Failed to load user config from %s: %v", userConfigPath, err)
+			slog.Warn("Failed to load user config", "path", userConfigPath, "error", err)
 		}
 	}
 
 	projectConfigPath := filepath.Join(".agents", "asimi.conf")
 	if _, err := os.Stat(projectConfigPath); err == nil {
 		if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
-			log.Printf("Failed to load project config from %s: %v", projectConfigPath, err)
+			slog.Warn("Failed to load project config", "path", projectConfigPath, "error", err)
 		}
 	} else if !os.IsNotExist(err) {
-		log.Printf("Unable to stat project config at %s: %v", projectConfigPath, err)
+		slog.Warn("Unable to stat project config", "path", projectConfigPath, "error", err)
 	}
 
 	// 3. Load environment variables
@@ -238,7 +237,7 @@ func LoadConfig() (*Config, error) {
 			return key, value
 		},
 	}), nil); err != nil {
-		log.Printf("Failed to load environment variables: %v", err)
+		slog.Warn("Failed to load environment variables", "error", err)
 	}
 
 	// Special handling for API keys from standard environment variables
@@ -246,7 +245,7 @@ func LoadConfig() (*Config, error) {
 	if k.String("llm.provider") == "openai" && k.String("llm.api_key") == "" {
 		if openaiKey := os.Getenv("OPENAI_API_KEY"); openaiKey != "" {
 			if err := k.Set("llm.api_key", openaiKey); err != nil {
-				log.Printf("Failed to set OpenAI API key from environment: %v", err)
+				slog.Warn("Failed to set OpenAI API key from environment", "error", err)
 			}
 		}
 	}
@@ -255,7 +254,7 @@ func LoadConfig() (*Config, error) {
 	if k.String("llm.provider") == "anthropic" && k.String("llm.api_key") == "" {
 		if anthropicKey := os.Getenv("ANTHROPIC_API_KEY"); anthropicKey != "" {
 			if err := k.Set("llm.api_key", anthropicKey); err != nil {
-				log.Printf("Failed to set Anthropic API key from environment: %v", err)
+				slog.Warn("Failed to set Anthropic API key from environment", "error", err)
 			}
 		}
 	}
@@ -279,22 +278,22 @@ func LoadConfig() (*Config, error) {
 			config.LLM.Provider = "anthropic"
 			config.LLM.Model = "claude-sonnet-4-20250514"
 			config.LLM.APIKey = anthropicKey
-			log.Printf("Auto-configured provider: anthropic (from ANTHROPIC_API_KEY)")
+			slog.Info("Auto-configured provider", "provider", "anthropic", "source", "ANTHROPIC_API_KEY")
 		} else if openaiKey := os.Getenv("OPENAI_API_KEY"); openaiKey != "" {
 			config.LLM.Provider = "openai"
 			config.LLM.Model = "gpt-4o"
 			config.LLM.APIKey = openaiKey
-			log.Printf("Auto-configured provider: openai (from OPENAI_API_KEY)")
+			slog.Info("Auto-configured provider", "provider", "openai", "source", "OPENAI_API_KEY")
 		} else if geminiKey := os.Getenv("GEMINI_API_KEY"); geminiKey != "" {
 			config.LLM.Provider = "googleai"
 			config.LLM.Model = "gemini-2.5-flash"
 			config.LLM.APIKey = geminiKey
-			log.Printf("Auto-configured provider: googleai (from GEMINI_API_KEY)")
+			slog.Info("Auto-configured provider", "provider", "googleai", "source", "GEMINI_API_KEY")
 		} else if googleKey := os.Getenv("GOOGLE_API_KEY"); googleKey != "" {
 			config.LLM.Provider = "googleai"
 			config.LLM.Model = "gemini-2.5-flash"
 			config.LLM.APIKey = googleKey
-			log.Printf("Auto-configured provider: googleai (from GOOGLE_API_KEY)")
+			slog.Info("Auto-configured provider", "provider", "googleai", "source", "GOOGLE_API_KEY")
 		}
 	}
 
@@ -414,7 +413,7 @@ func UpdateUserLLMAuth(provider, apiKey, model string) error {
 	// Save API key securely in keyring
 	if err := SaveAPIKeyToKeyring(provider, apiKey); err != nil {
 		// Fall back to file storage with warning
-		log.Printf("Warning: Failed to save API key to keyring, falling back to file storage: %v", err)
+		slog.Warn("Failed to save API key to keyring, falling back to file storage", "error", err)
 		return updateAPIKeyInFile(provider, apiKey, model)
 	}
 
@@ -663,7 +662,7 @@ func UpdateUserOAuthTokens(provider, accessToken, refreshToken string, expiry ti
 	// Save tokens securely in keyring
 	if err := SaveTokenToKeyring(provider, accessToken, refreshToken, expiry); err != nil {
 		// Fall back to file storage with warning
-		log.Printf("Warning: Failed to save tokens to keyring, falling back to file storage: %v", err)
+		slog.Warn("Failed to save tokens to keyring, falling back to file storage", "error", err)
 		return updateOAuthTokensInFile(provider, accessToken, refreshToken)
 	}
 
