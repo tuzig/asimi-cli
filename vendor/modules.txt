@@ -1022,7 +1022,7 @@ github.com/tchap/go-patricia/v2/patricia
 # github.com/tcnksm/go-gitconfig v0.1.2
 ## explicit
 github.com/tcnksm/go-gitconfig
-# github.com/tmc/langchaingo v0.1.13 => github.com/afittestide/langchaingo v0.1.14-pre.4.asimi3
+# github.com/tmc/langchaingo v0.1.13 => github.com/afittestide/langchaingo v0.1.14-pre.4.asimi4
 ## explicit; go 1.24.4
 github.com/tmc/langchaingo/callbacks
 github.com/tmc/langchaingo/httputil
@@ -1474,4 +1474,4 @@ sigs.k8s.io/yaml
 # tags.cncf.io/container-device-interface v1.0.1
 ## explicit; go 1.20
 tags.cncf.io/container-device-interface/pkg/parser
-# github.com/tmc/langchaingo => github.com/afittestide/langchaingo v0.1.14-pre.4.asimi3
+# github.com/tmc/langchaingo => github.com/afittestide/langchaingo v0.1.14-pre.4.asimi4
