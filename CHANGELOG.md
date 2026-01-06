@@ -5,6 +5,22 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-01-06
+
+### Fixed
+
+- Simplifying Justfile creation on init
+- Using the latest langchaingo for OpenAI thoughts
+- Retrying in workflow and error handling improvements
+- Improving shell runner initialization
+- Skipping inaccessible dirs instead of erroring
+- Turning on live scroll at bottom
+- Preventing file overwrite (#93)
+
+### Changed
+
+- Shortening sandbox id on the status line
+
 ## [0.4.1] - 2025-12-29
 
 ### Fixed
