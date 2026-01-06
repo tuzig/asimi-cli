@@ -69,11 +69,28 @@ type TUIModel struct {
 	// Waiting indicator state
 	waitingForResponse bool
 	waitingStart       time.Time
-	ctrlCPressedTime   time.Time
+
+	// CTRL-C state machine for handling duplicate events from iOS/terminal
+	// See: https://github.com/anthropics/asimi/issues/115
+	ctrlCState          ctrlCState // Current state in the CTRL-C state machine
+	ctrlCLastEvent      time.Time  // Time of the last CTRL-C event received
+	ctrlCBurstSeq       int        // Sequence number to identify which burst a timeout belongs to
+	ctrlCFirstPressTime time.Time  // When the first press was completed (for window calculation)
 
 	// Host command approval state
 	pendingHostApproval *HostCommandApprovalRequest
 }
+
+// ctrlCState represents the state machine for CTRL-C handling
+// This handles the "quiet period" detection to distinguish duplicate
+// CTRL-C events (from iOS/terminal) from intentional double-presses
+type ctrlCState int
+
+const (
+	ctrlCIdle         ctrlCState = iota // No pending CTRL-C
+	ctrlCInBurst                        // Receiving CTRL-C events, waiting for quiet period
+	ctrlCWaitingSecond                  // First press completed, waiting for second press
+)
 
 type promptHistoryEntry struct {
 	Prompt          string
@@ -82,6 +99,14 @@ type promptHistoryEntry struct {
 }
 
 type waitingTickMsg struct{}
+
+// ctrlCBurstTimeoutMsg is sent after the quiet period to check if a burst has ended
+type ctrlCBurstTimeoutMsg struct {
+	seq int // Sequence number to match against current burst
+}
+
+// ctrlCWindowExpiredMsg is sent when the window for the second press expires
+type ctrlCWindowExpiredMsg struct{}
 
 type shellCommandResultMsg struct {
 	command  string
@@ -367,34 +392,12 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	if keyStr == "ctrl+c" {
-		// Double CTRL-C to exit
-		now := time.Now()
-		timeSinceFirst := now.Sub(m.ctrlCPressedTime)
-		slog.Debug("Got CTRL-C", "ctrlCPressed", !m.ctrlCPressedTime.IsZero(), "timeSinceFirst", timeSinceFirst)
-
-		// Ignore duplicate ctrl-c events within debounce window (likely from terminal/system)
-		if !m.ctrlCPressedTime.IsZero() && timeSinceFirst < m.config.UI.CtrlCDebounceTime {
-			slog.Debug("Ignoring duplicate CTRL-C within debounce time")
-			return m, nil
-		}
-
-		// Double CTRL-C to exit - second press must be within window but after debounce time
-		if !m.ctrlCPressedTime.IsZero() && timeSinceFirst >= m.config.UI.CtrlCDebounceTime && timeSinceFirst < m.config.UI.CtrlCWindowTime {
-			// Second CTRL-C - actually quit
-			m.shutdown()
-			return m, tea.Quit
-		}
-
-		m.ctrlCPressedTime = now
-
-		m.content.Chat.AddUserMessage("CTRL-C")
-		m.handleEscape()
-		m.commandLine.AddToast(fmt.Sprintf("Press CTRL-C in under %.1fs to exit", m.config.UI.CtrlCWindowTime.Seconds()), "info", 3*time.Second)
-		return m, nil
+		return m.handleCtrlC()
 	}
 
-	if !m.ctrlCPressedTime.IsZero() {
-		m.ctrlCPressedTime = time.Time{} // Reset to zero value
+	// Any other key resets the CTRL-C state machine
+	if m.ctrlCState != ctrlCIdle {
+		m.resetCtrlCState()
 	}
 
 	// Handle Ctrl+Z for background mode
@@ -800,6 +803,159 @@ func (m TUIModel) handleCtrlZ() (tea.Model, tea.Cmd) {
 		tea.Println("⏸️  Asimi is now in the background. Use `fg` to restore."),
 		tea.Suspend,
 	)
+}
+
+// handleCtrlC implements the "quiet period" detection for CTRL-C handling.
+// iOS and some terminals send multiple CTRL-C events for a single keypress.
+// This state machine waits for a quiet period to determine when a "burst" of
+// events represents a single intentional press.
+//
+// State machine:
+//
+//	Idle -> InBurst: First CTRL-C received, start quiet period timer
+//	InBurst -> InBurst: More CTRL-C events, reset quiet period timer
+//	InBurst -> WaitingSecond: Quiet period elapsed, first press completed
+//	WaitingSecond -> InBurst: Second burst started
+//	InBurst (from WaitingSecond) -> Quit: Second press completed
+//	WaitingSecond -> Idle: Window expired without second press
+func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
+	now := time.Now()
+	quietPeriod := m.config.UI.CtrlCDebounceTime // Reuse existing config field as quiet period
+	windowTime := m.config.UI.CtrlCWindowTime
+
+	slog.Debug("Got CTRL-C",
+		"state", m.ctrlCState,
+		"timeSinceLast", now.Sub(m.ctrlCLastEvent),
+		"burstSeq", m.ctrlCBurstSeq)
+
+	switch m.ctrlCState {
+	case ctrlCIdle:
+		// Start first burst
+		m.ctrlCState = ctrlCInBurst
+		m.ctrlCLastEvent = now
+		m.ctrlCBurstSeq++
+		seq := m.ctrlCBurstSeq
+
+		// Perform immediate actions on first CTRL-C of first burst
+		m.content.Chat.AddUserMessage("CTRL-C")
+		m.handleEscape()
+
+		slog.Debug("CTRL-C: Started first burst", "seq", seq)
+		return m, tea.Tick(quietPeriod, func(time.Time) tea.Msg {
+			return ctrlCBurstTimeoutMsg{seq: seq}
+		})
+
+	case ctrlCInBurst:
+		// Continue current burst - just update timestamp and reset timer
+		m.ctrlCLastEvent = now
+		m.ctrlCBurstSeq++
+		seq := m.ctrlCBurstSeq
+
+		slog.Debug("CTRL-C: Continuing burst", "seq", seq)
+		return m, tea.Tick(quietPeriod, func(time.Time) tea.Msg {
+			return ctrlCBurstTimeoutMsg{seq: seq}
+		})
+
+	case ctrlCWaitingSecond:
+		// Check if still within window
+		if now.Sub(m.ctrlCFirstPressTime) > windowTime {
+			// Window expired, treat as new first press
+			slog.Debug("CTRL-C: Window expired, starting new first burst")
+			m.ctrlCState = ctrlCInBurst
+			m.ctrlCLastEvent = now
+			m.ctrlCBurstSeq++
+			seq := m.ctrlCBurstSeq
+
+			m.content.Chat.AddUserMessage("CTRL-C")
+			m.handleEscape()
+
+			return m, tea.Tick(quietPeriod, func(time.Time) tea.Msg {
+				return ctrlCBurstTimeoutMsg{seq: seq}
+			})
+		}
+
+		// Start second burst (within window)
+		slog.Debug("CTRL-C: Starting second burst (within window)")
+		m.ctrlCState = ctrlCInBurst
+		m.ctrlCLastEvent = now
+		m.ctrlCBurstSeq++
+		seq := m.ctrlCBurstSeq
+
+		return m, tea.Tick(quietPeriod, func(time.Time) tea.Msg {
+			return ctrlCBurstTimeoutMsg{seq: seq}
+		})
+	}
+
+	return m, nil
+}
+
+// handleCtrlCBurstTimeout is called when the quiet period timer fires.
+// It checks if the burst has actually ended (no new events) and transitions
+// the state machine accordingly.
+func (m TUIModel) handleCtrlCBurstTimeout(msg ctrlCBurstTimeoutMsg) (tea.Model, tea.Cmd) {
+	// Ignore stale timeouts from previous bursts
+	if msg.seq != m.ctrlCBurstSeq {
+		slog.Debug("CTRL-C: Ignoring stale burst timeout", "msgSeq", msg.seq, "currentSeq", m.ctrlCBurstSeq)
+		return m, nil
+	}
+
+	// Only process if we're in a burst
+	if m.ctrlCState != ctrlCInBurst {
+		slog.Debug("CTRL-C: Burst timeout but not in burst state", "state", m.ctrlCState)
+		return m, nil
+	}
+
+	now := time.Now()
+	quietPeriod := m.config.UI.CtrlCDebounceTime
+
+	// Check if burst has actually ended (quiet period passed since last event)
+	if now.Sub(m.ctrlCLastEvent) < quietPeriod {
+		// Burst still active (more events came in), ignore this timeout
+		slog.Debug("CTRL-C: Burst still active", "timeSinceLast", now.Sub(m.ctrlCLastEvent))
+		return m, nil
+	}
+
+	// Burst has ended - determine if this was first or second press
+	if m.ctrlCFirstPressTime.IsZero() {
+		// This was the first press completing
+		m.ctrlCState = ctrlCWaitingSecond
+		m.ctrlCFirstPressTime = now
+		windowTime := m.config.UI.CtrlCWindowTime
+
+		slog.Debug("CTRL-C: First press completed, waiting for second")
+		m.commandLine.AddToast(
+			fmt.Sprintf("Press CTRL-C again within %.1fs to exit", windowTime.Seconds()),
+			"info",
+			windowTime,
+		)
+
+		// Schedule window expiry
+		return m, tea.Tick(windowTime, func(time.Time) tea.Msg {
+			return ctrlCWindowExpiredMsg{}
+		})
+	}
+
+	// This was the second press completing - quit!
+	slog.Info("CTRL-C: Second press completed, quitting")
+	m.shutdown()
+	return m, tea.Quit
+}
+
+// handleCtrlCWindowExpired is called when the window for the second press expires.
+func (m TUIModel) handleCtrlCWindowExpired() (tea.Model, tea.Cmd) {
+	if m.ctrlCState == ctrlCWaitingSecond {
+		slog.Debug("CTRL-C: Window expired, resetting state")
+		m.resetCtrlCState()
+	}
+	return m, nil
+}
+
+// resetCtrlCState resets the CTRL-C state machine to idle.
+func (m *TUIModel) resetCtrlCState() {
+	m.ctrlCState = ctrlCIdle
+	m.ctrlCLastEvent = time.Time{}
+	m.ctrlCFirstPressTime = time.Time{}
+	// Don't reset ctrlCBurstSeq - it's used to invalidate pending timeouts
 }
 
 // handleEscape handles the escape key and the first ctrl-c
@@ -1566,6 +1722,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return waitingTickMsg{} })
 		}
 		return m, nil
+
+	case ctrlCBurstTimeoutMsg:
+		return m.handleCtrlCBurstTimeout(msg)
+
+	case ctrlCWindowExpiredMsg:
+		return m.handleCtrlCWindowExpired()
 
 	case providerSelectedMsg:
 		m.providerModal = nil

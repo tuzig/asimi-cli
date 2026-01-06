@@ -32,7 +32,7 @@ func mockConfig() *Config {
 		},
 		UI: UIConfig{
 			MarkdownEnabled:   true,
-			CtrlCDebounceTime: 100 * time.Millisecond,
+			CtrlCDebounceTime: 150 * time.Millisecond,
 			CtrlCWindowTime:   2000 * time.Millisecond,
 		},
 	}
@@ -112,7 +112,7 @@ func TestTUIModelKeyMsg(t *testing.T) {
 			name:          "First 'ctrl+c' does not quit",
 			key:           tea.KeyMsg{Type: tea.KeyCtrlC},
 			expectQuit:    false,
-			expectCommand: false,
+			expectCommand: true, // Returns tick command for quiet period detection
 		},
 	}
 
@@ -151,20 +151,106 @@ func TestTUIModelKeyMsg(t *testing.T) {
 func TestDoubleCtrlCToQuit(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
 
-	// First CTRL-C should not quit
+	// First CTRL-C starts first burst
 	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	require.Nil(t, cmd)
+	require.NotNil(t, cmd, "First CTRL-C should return tick command")
 	tuiModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
-	require.False(t, tuiModel.ctrlCPressedTime.IsZero())
+	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "Should be in burst state")
+	require.Equal(t, 1, tuiModel.ctrlCBurstSeq, "Burst sequence should be 1")
 
-	// Second CTRL-C should quit (wait slightly longer than debounce time)
+	// Wait for quiet period to pass, then process burst timeout
 	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
+	newModel, cmd = tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: 1})
+	tuiModel, ok = newModel.(TUIModel)
+	require.True(t, ok)
+	require.Equal(t, ctrlCWaitingSecond, tuiModel.ctrlCState, "Should be waiting for second press")
+	require.NotNil(t, cmd, "Should return window expiry tick")
+
+	// Second CTRL-C starts second burst
 	newModel, cmd = tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	require.NotNil(t, cmd)
+	require.NotNil(t, cmd, "Second CTRL-C should return tick command")
+	tuiModel, ok = newModel.(TUIModel)
+	require.True(t, ok)
+	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "Should be in burst state again")
+	require.Equal(t, 2, tuiModel.ctrlCBurstSeq, "Burst sequence should be 2")
+
+	// Wait for quiet period to pass, then process second burst timeout - should quit
+	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
+	newModel, cmd = tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: 2})
+	require.NotNil(t, cmd, "Second burst timeout should return quit command")
 	result := cmd()
 	_, ok = result.(tea.QuitMsg)
-	require.True(t, ok)
+	require.True(t, ok, "Should be a quit message")
+}
+
+func TestCtrlCDuplicateEventsIgnored(t *testing.T) {
+	// Test that rapid duplicate CTRL-C events (like from iOS) are treated as one press
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+
+	// Simulate rapid CTRL-C events (like iOS sends)
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tuiModel, _ := newModel.(TUIModel)
+	seq1 := tuiModel.ctrlCBurstSeq
+
+	// Second rapid CTRL-C (within quiet period) should increment seq
+	newModel, _ = tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tuiModel, _ = newModel.(TUIModel)
+	require.Equal(t, seq1+1, tuiModel.ctrlCBurstSeq, "Burst sequence should increment")
+	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "Should still be in same burst")
+
+	// Third rapid CTRL-C
+	newModel, _ = tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tuiModel, _ = newModel.(TUIModel)
+	require.Equal(t, seq1+2, tuiModel.ctrlCBurstSeq, "Burst sequence should increment again")
+	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "Should still be in same burst")
+
+	// Old timeout messages should be ignored
+	newModel, cmd := tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: seq1})
+	tuiModel, _ = newModel.(TUIModel)
+	require.Nil(t, cmd, "Stale timeout should be ignored")
+	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "State should not change from stale timeout")
+
+	// Wait for quiet period, then latest timeout should work
+	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
+	newModel, cmd = tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: tuiModel.ctrlCBurstSeq})
+	tuiModel, _ = newModel.(TUIModel)
+	require.NotNil(t, cmd, "Current timeout should work")
+	require.Equal(t, ctrlCWaitingSecond, tuiModel.ctrlCState, "Should transition to waiting for second")
+}
+
+func TestCtrlCWindowExpiry(t *testing.T) {
+	// Test that window expiry resets state
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+
+	// First CTRL-C and complete first burst
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tuiModel, _ := newModel.(TUIModel)
+
+	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
+	newModel, _ = tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: tuiModel.ctrlCBurstSeq})
+	tuiModel, _ = newModel.(TUIModel)
+	require.Equal(t, ctrlCWaitingSecond, tuiModel.ctrlCState)
+
+	// Window expires
+	newModel, _ = tuiModel.handleCtrlCWindowExpired()
+	tuiModel, _ = newModel.(TUIModel)
+	require.Equal(t, ctrlCIdle, tuiModel.ctrlCState, "Should reset to idle after window expires")
+}
+
+func TestCtrlCOtherKeyResets(t *testing.T) {
+	// Test that any other key resets CTRL-C state
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+
+	// First CTRL-C
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tuiModel, _ := newModel.(TUIModel)
+	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState)
+
+	// Press another key
+	newModel, _ = tuiModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	tuiModel, _ = newModel.(TUIModel)
+	require.Equal(t, ctrlCIdle, tuiModel.ctrlCState, "Other key should reset CTRL-C state")
 }
 
 func TestTUIModelSubmit(t *testing.T) {
@@ -1729,7 +1815,7 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// ===== Cleanup: Quit the application =====
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	time.Sleep(110 * time.Millisecond) // Wait longer than CtrlCDebounceTime (100ms)
+	time.Sleep(160 * time.Millisecond) // Wait longer than CtrlCDebounceTime (150ms)
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	// Get the final model and verify final state

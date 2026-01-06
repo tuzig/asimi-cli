@@ -77,8 +77,8 @@ type HistoryConfig struct {
 // UIConfig holds UI-specific configuration
 type UIConfig struct {
 	MarkdownEnabled      bool          `koanf:"markdown_enabled"`
-	CtrlCDebounceTime    time.Duration `koanf:"ctrl_c_debounce_time"`
-	CtrlCWindowTime      time.Duration `koanf:"ctrl_c_window_time"`
+	CtrlCDebounceTime    time.Duration `koanf:"ctrl_c_debounce_time"`   // Quiet period for CTRL-C burst detection (handles iOS duplicate events)
+	CtrlCWindowTime      time.Duration `koanf:"ctrl_c_window_time"`     // Window for second CTRL-C press to quit
 	PromptExpandedHeight int           `koanf:"prompt_expanded_height"` // Height prompt grows to when multiline (default: 10)
 }
 
@@ -101,7 +101,7 @@ func defaultConfig() Config {
 		},
 		UI: UIConfig{
 			MarkdownEnabled:      true,
-			CtrlCDebounceTime:    100 * time.Millisecond,
+			CtrlCDebounceTime:    120 * time.Millisecond, // Increased from 100ms for iOS compatibility
 			CtrlCWindowTime:      2000 * time.Millisecond,
 			PromptExpandedHeight: 10,
 		},
