@@ -524,7 +524,7 @@ func (m *gitInfoManager) IsRepository() bool {
 }
 
 // HasUncommittedChanges checks if there are uncommitted changes (staged or unstaged)
-// excluding untracked files
+// excluding untracked files, submodules, and gitlinks
 func (m *gitInfoManager) HasUncommittedChanges() bool {
 	m.start()
 
@@ -541,19 +541,51 @@ func (m *gitInfoManager) HasUncommittedChanges() bool {
 		return false
 	}
 
+	// Collect paths to skip: submodules and gitlinks
+	skipPaths := make(map[string]bool)
+
+	// Get submodule paths from .gitmodules
+	if submodules, err := worktree.Submodules(); err == nil {
+		for _, sub := range submodules {
+			path := sub.Config().Path
+			skipPaths[path] = true
+			slog.Debug("Skipping submodule", "path", path)
+		}
+	}
+
+	// Also check index for gitlinks and symlinks - go-git often reports these incorrectly
+	if idx, err := repo.Storer.Index(); err == nil {
+		for _, entry := range idx.Entries {
+			switch entry.Mode {
+			case 0o160000: // gitlink/submodule
+				skipPaths[entry.Name] = true
+				slog.Debug("Skipping gitlink", "path", entry.Name)
+			case 0o120000: // symlink
+				skipPaths[entry.Name] = true
+				slog.Debug("Skipping symlink", "path", entry.Name)
+			}
+		}
+	}
+
 	status, err := worktree.Status()
 	if err != nil {
 		return false
 	}
 
-	// Check for any staged or unstaged changes (excluding untracked)
-	for _, entry := range status {
+	// Check for any staged or unstaged changes (excluding untracked, submodules, gitlinks)
+	for path, entry := range status {
+		// Skip submodules and gitlinks - go-git often reports them incorrectly
+		if skipPaths[path] {
+			continue
+		}
 		// Check staging area
 		if entry.Staging != gogit.Unmodified && entry.Staging != gogit.Untracked {
+			slog.Debug("Found uncommitted staged changes", "path", path, "staging", string(entry.Staging), "worktree", string(entry.Worktree))
 			return true
 		}
 		// Check worktree (unstaged changes)
 		if entry.Worktree != gogit.Unmodified && entry.Worktree != gogit.Untracked {
+			slog.Debug("Found uncommitted changes", "path", path, "staging", string(entry.Staging), "worktree", string(entry.Worktree))
 			return true
 		}
 	}
