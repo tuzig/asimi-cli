@@ -456,8 +456,8 @@ func (w *Workflow) Save() error {
 		State:       w.State,
 		MaxRetries:  w.MaxRetries,
 		Data:        string(dataJSON),
-		CreatedAt:   w.CreatedAt,
-		UpdatedAt:   time.Now(),
+		CreatedAt:   w.CreatedAt.Unix(),
+		UpdatedAt:   time.Now().Unix(),
 	}
 
 	if err := w.store.SaveWorkflow(workflowData, w.host, w.org, w.project, w.branch); err != nil {
@@ -729,8 +729,8 @@ func Load(db *storage.DB, workflowID string) (*Workflow, error) {
 		MaxRetries:  workflowData.MaxRetries,
 		Data:        data,
 		BranchID:    workflowData.BranchID,
-		CreatedAt:   workflowData.CreatedAt,
-		UpdatedAt:   workflowData.UpdatedAt,
+		CreatedAt:   time.Unix(workflowData.CreatedAt, 0),
+		UpdatedAt:   time.Unix(workflowData.UpdatedAt, 0),
 		db:          db,
 		store:       store,
 	}

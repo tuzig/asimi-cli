@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tmc/langchaingo/llms"
+	"gorm.io/gorm"
 )
 
 // SessionStore handles session persistence
@@ -28,223 +28,167 @@ func NewSessionStore(db *DB, cfg *SessionConfig) *SessionStore {
 
 // SaveSession saves or updates a session with all its messages
 func (s *SessionStore) SaveSession(session *SessionData, host, org, project, branch string) error {
-	// Start transaction
-	tx, err := s.db.conn.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Get or create repository
-	repoID, err := s.getOrCreateRepositoryTx(tx, host, org, project)
-	if err != nil {
-		return err
-	}
-
-	// Get or create branch
-	branchID, err := s.getOrCreateBranchTx(tx, repoID, branch)
-	if err != nil {
-		return err
-	}
-
-	// Update last updated timestamp
-	session.LastUpdated = time.Now()
-
-	// Insert or replace session metadata
-	_, err = tx.Exec(`
-		INSERT OR REPLACE INTO sessions
-		(id, branch_id, created_at, last_updated, first_prompt, provider, model, working_dir)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID,
-		branchID,
-		session.CreatedAt.Unix(),
-		session.LastUpdated.Unix(),
-		session.FirstPrompt,
-		session.Provider,
-		session.Model,
-		session.WorkingDir,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to save session: %w", err)
-	}
-
-	// Delete existing messages for this session
-	_, err = tx.Exec("DELETE FROM messages WHERE session_id = ?", session.ID)
-	if err != nil {
-		return fmt.Errorf("failed to delete old messages: %w", err)
-	}
-
-	// Insert messages
-	for i, msg := range session.Messages {
-		// Serialize entire message to JSON (not just Parts, to preserve type info)
-		contentJSON, err := json.Marshal(msg)
+	return s.db.conn.Transaction(func(tx *gorm.DB) error {
+		// Get or create repository
+		repoID, err := s.getOrCreateRepositoryTx(tx, host, org, project)
 		if err != nil {
-			return fmt.Errorf("failed to marshal message content: %w", err)
+			return err
 		}
 
-		_, err = tx.Exec(`
-			INSERT INTO messages (session_id, sequence, role, content, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			session.ID,
-			i,
-			string(msg.Role),
-			string(contentJSON),
-			time.Now().Unix(),
-		)
+		// Get or create branch
+		branchID, err := s.getOrCreateBranchTx(tx, repoID, branch)
 		if err != nil {
-			return fmt.Errorf("failed to insert message %d: %w", i, err)
+			return err
 		}
-	}
 
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
+		// Update last updated timestamp
+		session.LastUpdated = time.Now()
 
-	slog.Debug("Session saved", "id", session.ID, "messages", len(session.Messages))
-	return nil
+		// Create or update session
+		dbSession := DBSession{
+			ID:          session.ID,
+			BranchID:    branchID,
+			CreatedAt:   session.CreatedAt.Unix(),
+			LastUpdated: session.LastUpdated.Unix(),
+			FirstPrompt: session.FirstPrompt,
+			Provider:    session.Provider,
+			Model:       session.Model,
+			WorkingDir:  session.WorkingDir,
+		}
+
+		// Use Save to insert or update
+		if err := tx.Save(&dbSession).Error; err != nil {
+			return fmt.Errorf("failed to save session: %w", err)
+		}
+
+		// Delete existing messages for this session
+		if err := tx.Where("session_id = ?", session.ID).Delete(&Message{}).Error; err != nil {
+			return fmt.Errorf("failed to delete old messages: %w", err)
+		}
+
+		// Insert messages
+		for i, msg := range session.Messages {
+			contentJSON, err := json.Marshal(msg)
+			if err != nil {
+				return fmt.Errorf("failed to marshal message content: %w", err)
+			}
+
+			message := Message{
+				SessionID: session.ID,
+				Sequence:  i,
+				Role:      string(msg.Role),
+				Content:   string(contentJSON),
+				CreatedAt: time.Now().Unix(),
+			}
+
+			if err := tx.Create(&message).Error; err != nil {
+				return fmt.Errorf("failed to insert message %d: %w", i, err)
+			}
+		}
+
+		slog.Debug("Session saved", "id", session.ID, "messages", len(session.Messages))
+		return nil
+	})
 }
 
 // LoadSession loads a session by ID with all its messages
-// Returns: (session, host, org, project, branch, error)
 func (s *SessionStore) LoadSession(sessionID string) (*SessionData, string, string, string, string, error) {
-	// Query session metadata with repository and branch info
-	var session SessionData
-	var host, org, project, branch string
-	var createdAt, lastUpdated int64
+	var dbSession DBSession
 
-	err := s.db.conn.QueryRow(`
-		SELECT s.id, s.created_at, s.last_updated, s.first_prompt,
-		       s.provider, s.model, s.working_dir,
-		       r.host, r.org, r.project, b.name
-		FROM sessions s
-		JOIN branches b ON s.branch_id = b.id
-		JOIN repositories r ON b.repository_id = r.id
-		WHERE s.id = ?`,
-		sessionID,
-	).Scan(
-		&session.ID,
-		&createdAt,
-		&lastUpdated,
-		&session.FirstPrompt,
-		&session.Provider,
-		&session.Model,
-		&session.WorkingDir,
-		&host,
-		&org,
-		&project,
-		&branch,
-	)
+	// Query session with preloaded Branch and Repository
+	result := s.db.conn.
+		Preload("Branch.Repository").
+		Where("id = ?", sessionID).
+		First(&dbSession)
 
-	if err == sql.ErrNoRows {
+	if result.Error == gorm.ErrRecordNotFound {
 		return nil, "", "", "", "", fmt.Errorf("session not found: %s", sessionID)
 	}
-	if err != nil {
-		return nil, "", "", "", "", fmt.Errorf("failed to load session: %w", err)
+	if result.Error != nil {
+		return nil, "", "", "", "", fmt.Errorf("failed to load session: %w", result.Error)
 	}
 
-	// Convert Unix timestamps to time.Time
-	session.CreatedAt = time.Unix(createdAt, 0)
-	session.LastUpdated = time.Unix(lastUpdated, 0)
-	session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
-	session.Messages = []llms.MessageContent{}     // Initialize empty slice
-	session.ContextFiles = make(map[string]string) // Initialize empty map
+	// Extract repository and branch info from preloaded relations
+	host := dbSession.Branch.Repository.Host
+	org := dbSession.Branch.Repository.Org
+	project := dbSession.Branch.Repository.Project
+	branch := dbSession.Branch.Name
 
 	// Load messages
-	rows, err := s.db.conn.Query(`
-		SELECT role, content
-		FROM messages
-		WHERE session_id = ?
-		ORDER BY sequence`,
-		sessionID,
-	)
-	if err != nil {
+	var messages []Message
+	if err := s.db.conn.Where("session_id = ?", sessionID).
+		Order("sequence").
+		Find(&messages).Error; err != nil {
 		return nil, "", "", "", "", fmt.Errorf("failed to load messages: %w", err)
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var role string
-		var contentJSON string
-
-		if err := rows.Scan(&role, &contentJSON); err != nil {
-			return nil, "", "", "", "", fmt.Errorf("failed to scan message: %w", err)
-		}
-
-		// Deserialize entire message from JSON
-		var msg llms.MessageContent
-		if err := json.Unmarshal([]byte(contentJSON), &msg); err != nil {
-			return nil, "", "", "", "", fmt.Errorf("failed to unmarshal message content: %w", err)
-		}
-
-		session.Messages = append(session.Messages, msg)
+	// Convert to SessionData
+	session := &SessionData{
+		ID:           dbSession.ID,
+		CreatedAt:    time.Unix(dbSession.CreatedAt, 0),
+		LastUpdated:  time.Unix(dbSession.LastUpdated, 0),
+		FirstPrompt:  dbSession.FirstPrompt,
+		Provider:     dbSession.Provider,
+		Model:        dbSession.Model,
+		WorkingDir:   dbSession.WorkingDir,
+		ProjectSlug:  fmt.Sprintf("%s/%s/%s", host, org, project),
+		Messages:     make([]llms.MessageContent, 0, len(messages)),
+		ContextFiles: make(map[string]string),
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, "", "", "", "", fmt.Errorf("error iterating messages: %w", err)
+	for _, msg := range messages {
+		var llmMsg llms.MessageContent
+		if err := json.Unmarshal([]byte(msg.Content), &llmMsg); err != nil {
+			return nil, "", "", "", "", fmt.Errorf("failed to unmarshal message content: %w", err)
+		}
+		session.Messages = append(session.Messages, llmMsg)
 	}
 
 	slog.Debug("Session loaded", "id", sessionID, "messages", len(session.Messages))
-	return &session, host, org, project, branch, nil
+	return session, host, org, project, branch, nil
 }
 
 // ListSessions lists sessions for a given host/org/project/branch
 func (s *SessionStore) ListSessions(host, org, project, branch string, limit int) ([]SessionData, error) {
-	query := `
-		SELECT s.id, s.created_at, s.last_updated, s.first_prompt,
-		       s.provider, s.model, s.working_dir,
-		       COUNT(m.id) as message_count
-		FROM sessions s
-		JOIN branches b ON s.branch_id = b.id
-		JOIN repositories r ON b.repository_id = r.id
-		LEFT JOIN messages m ON s.id = m.session_id
-		WHERE r.host = ? AND r.org = ? AND r.project = ? AND b.name = ?
-		GROUP BY s.id, s.created_at, s.last_updated, s.first_prompt,
-		         s.provider, s.model, s.working_dir
-		ORDER BY s.last_updated DESC`
+	type sessionWithCount struct {
+		DBSession
+		MessageCount int64
+	}
+
+	var results []sessionWithCount
+	query := s.db.conn.Model(&DBSession{}).
+		Select("sessions.*, COUNT(messages.id) as message_count").
+		Joins("JOIN branches ON sessions.branch_id = branches.id").
+		Joins("JOIN repositories ON branches.repository_id = repositories.id").
+		Joins("LEFT JOIN messages ON sessions.id = messages.session_id").
+		Where("repositories.host = ? AND repositories.org = ? AND repositories.project = ? AND branches.name = ?",
+			host, org, project, branch).
+		Group("sessions.id").
+		Order("sessions.last_updated DESC")
 
 	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+		query = query.Limit(limit)
 	}
 
-	rows, err := s.db.conn.Query(query, host, org, project, branch)
-	if err != nil {
+	if err := query.Find(&results).Error; err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
-	defer rows.Close()
 
-	var sessions []SessionData
-	for rows.Next() {
-		var session SessionData
-		var createdAt, lastUpdated int64
-		var messageCount int
-
-		err := rows.Scan(
-			&session.ID,
-			&createdAt,
-			&lastUpdated,
-			&session.FirstPrompt,
-			&session.Provider,
-			&session.Model,
-			&session.WorkingDir,
-			&messageCount,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan session: %w", err)
+	sessions := make([]SessionData, len(results))
+	for i, r := range results {
+		sessions[i] = SessionData{
+			ID:           r.ID,
+			CreatedAt:    time.Unix(r.CreatedAt, 0),
+			LastUpdated:  time.Unix(r.LastUpdated, 0),
+			FirstPrompt:  r.FirstPrompt,
+			Provider:     r.Provider,
+			Model:        r.Model,
+			WorkingDir:   r.WorkingDir,
+			ProjectSlug:  fmt.Sprintf("%s/%s/%s", host, org, project),
+			MessageCount: int(r.MessageCount),
+			Messages:     []llms.MessageContent{},
+			ContextFiles: make(map[string]string),
 		}
-
-		session.CreatedAt = time.Unix(createdAt, 0)
-		session.LastUpdated = time.Unix(lastUpdated, 0)
-		session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
-		session.MessageCount = messageCount
-		session.Messages = []llms.MessageContent{} // Empty for list view
-		session.ContextFiles = make(map[string]string)
-
-		sessions = append(sessions, session)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating sessions: %w", err)
 	}
 
 	return sessions, nil
@@ -252,64 +196,55 @@ func (s *SessionStore) ListSessions(host, org, project, branch string, limit int
 
 // ListAllSessions lists all sessions across all repositories
 func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
-	query := `
-		SELECT s.id, s.created_at, s.last_updated, s.first_prompt,
-		       s.provider, s.model, s.working_dir, r.host, r.org, r.project,
-		       COUNT(m.id) as message_count
-		FROM sessions s
-		JOIN branches b ON s.branch_id = b.id
-		JOIN repositories r ON b.repository_id = r.id
-		LEFT JOIN messages m ON s.id = m.session_id
-		GROUP BY s.id, s.created_at, s.last_updated, s.first_prompt,
-		         s.provider, s.model, s.working_dir, r.host, r.org, r.project
-		ORDER BY s.last_updated DESC`
+	type sessionWithInfo struct {
+		ID           string
+		CreatedAt    int64
+		LastUpdated  int64
+		FirstPrompt  string
+		Provider     string
+		Model        string
+		WorkingDir   string
+		Host         string
+		Org          string
+		Project      string
+		MessageCount int64
+	}
+
+	var results []sessionWithInfo
+	query := s.db.conn.Model(&DBSession{}).
+		Select("sessions.id, sessions.created_at, sessions.last_updated, sessions.first_prompt, "+
+			"sessions.provider, sessions.model, sessions.working_dir, "+
+			"repositories.host, repositories.org, repositories.project, "+
+			"COUNT(messages.id) as message_count").
+		Joins("JOIN branches ON sessions.branch_id = branches.id").
+		Joins("JOIN repositories ON branches.repository_id = repositories.id").
+		Joins("LEFT JOIN messages ON sessions.id = messages.session_id").
+		Group("sessions.id").
+		Order("sessions.last_updated DESC")
 
 	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+		query = query.Limit(limit)
 	}
 
-	rows, err := s.db.conn.Query(query)
-	if err != nil {
+	if err := query.Find(&results).Error; err != nil {
 		return nil, fmt.Errorf("failed to list all sessions: %w", err)
 	}
-	defer rows.Close()
 
-	var sessions []SessionData
-	for rows.Next() {
-		var session SessionData
-		var createdAt, lastUpdated int64
-		var host, org, project string
-		var messageCount int
-
-		err := rows.Scan(
-			&session.ID,
-			&createdAt,
-			&lastUpdated,
-			&session.FirstPrompt,
-			&session.Provider,
-			&session.Model,
-			&session.WorkingDir,
-			&host,
-			&org,
-			&project,
-			&messageCount,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan session: %w", err)
+	sessions := make([]SessionData, len(results))
+	for i, r := range results {
+		sessions[i] = SessionData{
+			ID:           r.ID,
+			CreatedAt:    time.Unix(r.CreatedAt, 0),
+			LastUpdated:  time.Unix(r.LastUpdated, 0),
+			FirstPrompt:  r.FirstPrompt,
+			Provider:     r.Provider,
+			Model:        r.Model,
+			WorkingDir:   r.WorkingDir,
+			ProjectSlug:  fmt.Sprintf("%s/%s/%s", r.Host, r.Org, r.Project),
+			MessageCount: int(r.MessageCount),
+			Messages:     []llms.MessageContent{},
+			ContextFiles: make(map[string]string),
 		}
-
-		session.CreatedAt = time.Unix(createdAt, 0)
-		session.LastUpdated = time.Unix(lastUpdated, 0)
-		session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
-		session.MessageCount = messageCount
-		session.Messages = []llms.MessageContent{} // Empty for list view
-		session.ContextFiles = make(map[string]string)
-
-		sessions = append(sessions, session)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating sessions: %w", err)
 	}
 
 	return sessions, nil
@@ -317,20 +252,13 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 
 // DeleteSession deletes a session and all its messages
 func (s *SessionStore) DeleteSession(sessionID string) error {
-	result, err := s.db.conn.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to delete session: %w", err)
+	result := s.db.conn.Delete(&DBSession{}, "id = ?", sessionID)
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete session: %w", result.Error)
 	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rows == 0 {
+	if result.RowsAffected == 0 {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
-
 	return nil
 }
 
@@ -343,33 +271,30 @@ func (s *SessionStore) CleanupOldSessions() error {
 	// Delete sessions older than maxAgeDays
 	if s.cfg.MaxAgeDays > 0 {
 		cutoffTime := time.Now().AddDate(0, 0, -s.cfg.MaxAgeDays).Unix()
-		result, err := s.db.conn.Exec(
-			"DELETE FROM sessions WHERE last_updated < ?",
-			cutoffTime,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to delete old sessions: %w", err)
+		result := s.db.conn.Where("last_updated < ?", cutoffTime).Delete(&DBSession{})
+		if result.Error != nil {
+			return fmt.Errorf("failed to delete old sessions: %w", result.Error)
 		}
-
-		if deleted, _ := result.RowsAffected(); deleted > 0 {
-			slog.Info("Deleted old sessions", "count", deleted, "max_age_days", s.cfg.MaxAgeDays)
+		if result.RowsAffected > 0 {
+			slog.Info("Deleted old sessions", "count", result.RowsAffected, "max_age_days", s.cfg.MaxAgeDays)
 		}
 	}
 
 	// Keep only the most recent maxSessions
 	if s.cfg.MaxSessions > 0 {
-		// For each branch, delete sessions beyond the limit
-		_, err := s.db.conn.Exec(`
-			DELETE FROM sessions
-			WHERE id NOT IN (
-				SELECT id FROM sessions
-				ORDER BY last_updated DESC
-				LIMIT ?
-			)`,
-			s.cfg.MaxSessions,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to limit session count: %w", err)
+		// Get IDs to keep
+		var keepIDs []string
+		if err := s.db.conn.Model(&DBSession{}).
+			Order("last_updated DESC").
+			Limit(s.cfg.MaxSessions).
+			Pluck("id", &keepIDs).Error; err != nil {
+			return fmt.Errorf("failed to get sessions to keep: %w", err)
+		}
+
+		if len(keepIDs) > 0 {
+			if err := s.db.conn.Where("id NOT IN ?", keepIDs).Delete(&DBSession{}).Error; err != nil {
+				return fmt.Errorf("failed to limit session count: %w", err)
+			}
 		}
 	}
 
@@ -384,73 +309,69 @@ func (s *SessionStore) SearchMessages(pattern string, limit int) ([]SearchResult
 		return nil, fmt.Errorf("invalid regex pattern: %w", err)
 	}
 
-	// Query all messages (we'll filter in Go since SQLite regexp is limited)
-	query := `
-		SELECT m.session_id, m.sequence, m.role, m.content,
-		       s.first_prompt, s.working_dir,
-		       r.org, r.project, b.name
-		FROM messages m
-		JOIN sessions s ON m.session_id = s.id
-		JOIN branches b ON s.branch_id = b.id
-		JOIN repositories r ON b.repository_id = r.id
-		ORDER BY m.created_at DESC`
-
-	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit*10) // Get more, filter, then limit
+	// Query all messages (filter in Go since SQLite regexp is limited)
+	type messageWithInfo struct {
+		SessionID   string
+		Sequence    int
+		Role        string
+		Content     string
+		FirstPrompt string
+		WorkingDir  string
+		Org         string
+		Project     string
+		BranchName  string
 	}
 
-	rows, err := s.db.conn.Query(query)
+	var messages []messageWithInfo
+	queryLimit := limit * 10
+	if limit <= 0 {
+		queryLimit = 1000
+	}
+
+	err = s.db.conn.Model(&Message{}).
+		Select("messages.session_id, messages.sequence, messages.role, messages.content, "+
+			"sessions.first_prompt, sessions.working_dir, "+
+			"repositories.org, repositories.project, branches.name as branch_name").
+		Joins("JOIN sessions ON messages.session_id = sessions.id").
+		Joins("JOIN branches ON sessions.branch_id = branches.id").
+		Joins("JOIN repositories ON branches.repository_id = repositories.id").
+		Order("messages.created_at DESC").
+		Limit(queryLimit).
+		Find(&messages).Error
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to search messages: %w", err)
 	}
-	defer rows.Close()
 
 	var results []SearchResult
-	for rows.Next() {
-		var sessionID, role, contentJSON, firstPrompt, workingDir, org, project, branch string
-		var sequence int
-
-		err := rows.Scan(
-			&sessionID, &sequence, &role, &contentJSON,
-			&firstPrompt, &workingDir, &org, &project, &branch,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan message: %w", err)
-		}
-
-		// Check if content matches regex
-		if re.MatchString(contentJSON) {
+	for _, m := range messages {
+		if re.MatchString(m.Content) {
 			// Extract matched text snippet
-			matches := re.FindStringSubmatch(contentJSON)
-			snippet := contentJSON
+			matches := re.FindStringSubmatch(m.Content)
+			snippet := m.Content
 			if len(matches) > 0 {
-				// Get context around match
-				idx := strings.Index(contentJSON, matches[0])
+				idx := strings.Index(m.Content, matches[0])
 				start := max(0, idx-100)
-				end := min(len(contentJSON), idx+len(matches[0])+100)
-				snippet = contentJSON[start:end]
+				end := min(len(m.Content), idx+len(matches[0])+100)
+				snippet = m.Content[start:end]
 			}
 
 			results = append(results, SearchResult{
-				SessionID:   sessionID,
-				Sequence:    sequence,
-				Role:        role,
+				SessionID:   m.SessionID,
+				Sequence:    m.Sequence,
+				Role:        m.Role,
 				Snippet:     snippet,
-				FirstPrompt: firstPrompt,
-				WorkingDir:  workingDir,
-				Org:         org,
-				Project:     project,
-				Branch:      branch,
+				FirstPrompt: m.FirstPrompt,
+				WorkingDir:  m.WorkingDir,
+				Org:         m.Org,
+				Project:     m.Project,
+				Branch:      m.BranchName,
 			})
 
 			if limit > 0 && len(results) >= limit {
 				break
 			}
 		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating messages: %w", err)
 	}
 
 	return results, nil
@@ -471,56 +392,51 @@ type SearchResult struct {
 
 // Helper functions for transactions
 
-func (s *SessionStore) getOrCreateRepositoryTx(tx *sql.Tx, host, org, project string) (int64, error) {
-	var id int64
-	err := tx.QueryRow(
-		"SELECT id FROM repositories WHERE host = ? AND org = ? AND project = ?",
-		host, org, project,
-	).Scan(&id)
+func (s *SessionStore) getOrCreateRepositoryTx(tx *gorm.DB, host, org, project string) (int64, error) {
+	var repo Repository
+	result := tx.Where("host = ? AND org = ? AND project = ?", host, org, project).First(&repo)
 
-	if err == nil {
-		return id, nil
+	if result.Error == nil {
+		return repo.ID, nil
 	}
 
-	if err != sql.ErrNoRows {
-		return 0, fmt.Errorf("failed to query repository: %w", err)
+	if result.Error != gorm.ErrRecordNotFound {
+		return 0, fmt.Errorf("failed to query repository: %w", result.Error)
 	}
 
-	result, err := tx.Exec(
-		"INSERT INTO repositories (host, org, project) VALUES (?, ?, ?)",
-		host, org, project,
-	)
-	if err != nil {
+	repo = Repository{
+		Host:    host,
+		Org:     org,
+		Project: project,
+	}
+	if err := tx.Create(&repo).Error; err != nil {
 		return 0, fmt.Errorf("failed to create repository: %w", err)
 	}
 
-	return result.LastInsertId()
+	return repo.ID, nil
 }
 
-func (s *SessionStore) getOrCreateBranchTx(tx *sql.Tx, repositoryID int64, name string) (int64, error) {
-	var id int64
-	err := tx.QueryRow(
-		"SELECT id FROM branches WHERE repository_id = ? AND name = ?",
-		repositoryID, name,
-	).Scan(&id)
+func (s *SessionStore) getOrCreateBranchTx(tx *gorm.DB, repositoryID int64, name string) (int64, error) {
+	var branch Branch
+	result := tx.Where("repository_id = ? AND name = ?", repositoryID, name).First(&branch)
 
-	if err == nil {
-		return id, nil
+	if result.Error == nil {
+		return branch.ID, nil
 	}
 
-	if err != sql.ErrNoRows {
-		return 0, fmt.Errorf("failed to query branch: %w", err)
+	if result.Error != gorm.ErrRecordNotFound {
+		return 0, fmt.Errorf("failed to query branch: %w", result.Error)
 	}
 
-	result, err := tx.Exec(
-		"INSERT INTO branches (repository_id, name) VALUES (?, ?)",
-		repositoryID, name,
-	)
-	if err != nil {
+	branch = Branch{
+		RepositoryID: repositoryID,
+		Name:         name,
+	}
+	if err := tx.Create(&branch).Error; err != nil {
 		return 0, fmt.Errorf("failed to create branch: %w", err)
 	}
 
-	return result.LastInsertId()
+	return branch.ID, nil
 }
 
 // Helper function for min/max (Go 1.21+)

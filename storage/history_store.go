@@ -3,6 +3,8 @@ package storage
 import (
 	"fmt"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // HistoryStore handles prompt and command history persistence
@@ -21,96 +23,136 @@ func NewHistoryStore(db *DB, cfg *HistoryConfig) *HistoryStore {
 
 // AppendPrompt adds a prompt to the history for a given host/org/project/branch
 func (h *HistoryStore) AppendPrompt(host, org, project, branch, prompt string) error {
-	// Get or create repository
-	repoID, err := h.db.GetOrCreateRepository(host, org, project)
-	if err != nil {
-		return err
-	}
-
-	// Get or create branch
-	branchID, err := h.db.GetOrCreateBranch(repoID, branch)
-	if err != nil {
-		return err
-	}
-
-	// Insert prompt
-	_, err = h.db.conn.Exec(`
-		INSERT INTO prompt_history (branch_id, prompt, timestamp)
-		VALUES (?, ?, ?)`,
-		branchID,
-		prompt,
-		time.Now().Unix(),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to append prompt: %w", err)
-	}
-
-	// Apply limit if configured
-	if h.cfg != nil && h.cfg.MaxSessions > 0 {
-		_, err = h.db.conn.Exec(`
-			DELETE FROM prompt_history
-			WHERE branch_id = ?
-			AND id NOT IN (
-				SELECT id FROM prompt_history
-				WHERE branch_id = ?
-				ORDER BY timestamp DESC
-				LIMIT ?
-			)`,
-			branchID, branchID, h.cfg.MaxSessions,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to apply prompt history limit: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*10) * time.Millisecond)
 		}
-	}
 
-	return nil
+		err := h.appendPromptOnce(host, org, project, branch, prompt)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	return lastErr
+}
+
+// appendPromptOnce performs a single attempt to append a prompt
+func (h *HistoryStore) appendPromptOnce(host, org, project, branch, prompt string) error {
+	return h.db.conn.Transaction(func(tx *gorm.DB) error {
+		// Get or create repository within transaction
+		var repo Repository
+		if err := tx.Where(Repository{Host: host, Org: org, Project: project}).
+			FirstOrCreate(&repo).Error; err != nil {
+			return err
+		}
+
+		// Get or create branch within transaction
+		var branchRec Branch
+		if err := tx.Where(Branch{RepositoryID: repo.ID, Name: branch}).
+			FirstOrCreate(&branchRec).Error; err != nil {
+			return err
+		}
+
+		// Insert prompt
+		entry := PromptHistory{
+			BranchID:  branchRec.ID,
+			Prompt:    prompt,
+			Timestamp: time.Now().Unix(),
+		}
+		if err := tx.Create(&entry).Error; err != nil {
+			return fmt.Errorf("failed to append prompt: %w", err)
+		}
+
+		// Apply limit if configured
+		if h.cfg != nil && h.cfg.MaxSessions > 0 {
+			var keepIDs []int64
+			if err := tx.Model(&PromptHistory{}).
+				Where("branch_id = ?", branchRec.ID).
+				Order("timestamp DESC").
+				Limit(h.cfg.MaxSessions).
+				Pluck("id", &keepIDs).Error; err != nil {
+				return err
+			}
+
+			if len(keepIDs) > 0 {
+				if err := tx.Where("branch_id = ? AND id NOT IN ?", branchRec.ID, keepIDs).
+					Delete(&PromptHistory{}).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
 }
 
 // AppendCommand adds a command to the history for a given host/org/project/branch
 func (h *HistoryStore) AppendCommand(host, org, project, branch, command string) error {
-	// Get or create repository
-	repoID, err := h.db.GetOrCreateRepository(host, org, project)
-	if err != nil {
-		return err
-	}
-
-	// Get or create branch
-	branchID, err := h.db.GetOrCreateBranch(repoID, branch)
-	if err != nil {
-		return err
-	}
-
-	// Insert command
-	_, err = h.db.conn.Exec(`
-		INSERT INTO command_history (branch_id, command, timestamp)
-		VALUES (?, ?, ?)`,
-		branchID,
-		command,
-		time.Now().Unix(),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to append command: %w", err)
-	}
-
-	// Apply limit if configured
-	if h.cfg != nil && h.cfg.MaxSessions > 0 {
-		_, err = h.db.conn.Exec(`
-			DELETE FROM command_history
-			WHERE branch_id = ?
-			AND id NOT IN (
-				SELECT id FROM command_history
-				WHERE branch_id = ?
-				ORDER BY timestamp DESC
-				LIMIT ?
-			)`,
-			branchID, branchID, h.cfg.MaxSessions,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to apply command history limit: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*10) * time.Millisecond)
 		}
-	}
 
-	return nil
+		err := h.appendCommandOnce(host, org, project, branch, command)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	return lastErr
+}
+
+// appendCommandOnce performs a single attempt to append a command
+func (h *HistoryStore) appendCommandOnce(host, org, project, branch, command string) error {
+	return h.db.conn.Transaction(func(tx *gorm.DB) error {
+		// Get or create repository within transaction
+		var repo Repository
+		if err := tx.Where(Repository{Host: host, Org: org, Project: project}).
+			FirstOrCreate(&repo).Error; err != nil {
+			return err
+		}
+
+		// Get or create branch within transaction
+		var branchRec Branch
+		if err := tx.Where(Branch{RepositoryID: repo.ID, Name: branch}).
+			FirstOrCreate(&branchRec).Error; err != nil {
+			return err
+		}
+
+		// Insert command
+		entry := CommandHistory{
+			BranchID:  branchRec.ID,
+			Command:   command,
+			Timestamp: time.Now().Unix(),
+		}
+		if err := tx.Create(&entry).Error; err != nil {
+			return fmt.Errorf("failed to append command: %w", err)
+		}
+
+		// Apply limit if configured
+		if h.cfg != nil && h.cfg.MaxSessions > 0 {
+			var keepIDs []int64
+			if err := tx.Model(&CommandHistory{}).
+				Where("branch_id = ?", branchRec.ID).
+				Order("timestamp DESC").
+				Limit(h.cfg.MaxSessions).
+				Pluck("id", &keepIDs).Error; err != nil {
+				return err
+			}
+
+			if len(keepIDs) > 0 {
+				if err := tx.Where("branch_id = ? AND id NOT IN ?", branchRec.ID, keepIDs).
+					Delete(&CommandHistory{}).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
 }
 
 // LoadPromptHistory loads prompt history for a given host/org/project/branch
@@ -121,7 +163,7 @@ func (h *HistoryStore) LoadPromptHistory(host, org, project, branch string, limi
 		return nil, err
 	}
 	if repo == nil {
-		return []HistoryEntry{}, nil // No repository means no history
+		return []HistoryEntry{}, nil
 	}
 
 	// Get branch
@@ -130,43 +172,28 @@ func (h *HistoryStore) LoadPromptHistory(host, org, project, branch string, limi
 		return nil, err
 	}
 	if branchRecord == nil {
-		return []HistoryEntry{}, nil // No branch means no history
+		return []HistoryEntry{}, nil
 	}
 
 	// Query prompts in chronological order (oldest first)
-	query := `
-		SELECT prompt, timestamp
-		FROM prompt_history
-		WHERE branch_id = ?
-		ORDER BY timestamp ASC, id ASC`
+	var prompts []PromptHistory
+	query := h.db.conn.Where("branch_id = ?", branchRecord.ID).
+		Order("timestamp ASC, id ASC")
 
 	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+		query = query.Limit(limit)
 	}
 
-	rows, err := h.db.conn.Query(query, branchRecord.ID)
-	if err != nil {
+	if err := query.Find(&prompts).Error; err != nil {
 		return nil, fmt.Errorf("failed to load prompt history: %w", err)
 	}
-	defer rows.Close()
 
-	var entries []HistoryEntry
-	for rows.Next() {
-		var prompt string
-		var timestamp int64
-
-		if err := rows.Scan(&prompt, &timestamp); err != nil {
-			return nil, fmt.Errorf("failed to scan prompt: %w", err)
+	entries := make([]HistoryEntry, len(prompts))
+	for i, p := range prompts {
+		entries[i] = HistoryEntry{
+			Content:   p.Prompt,
+			Timestamp: time.Unix(p.Timestamp, 0),
 		}
-
-		entries = append(entries, HistoryEntry{
-			Content:   prompt,
-			Timestamp: time.Unix(timestamp, 0),
-		})
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating prompts: %w", err)
 	}
 
 	return entries, nil
@@ -180,7 +207,7 @@ func (h *HistoryStore) LoadCommandHistory(host, org, project, branch string, lim
 		return nil, err
 	}
 	if repo == nil {
-		return []HistoryEntry{}, nil // No repository means no history
+		return []HistoryEntry{}, nil
 	}
 
 	// Get branch
@@ -189,43 +216,28 @@ func (h *HistoryStore) LoadCommandHistory(host, org, project, branch string, lim
 		return nil, err
 	}
 	if branchRecord == nil {
-		return []HistoryEntry{}, nil // No branch means no history
+		return []HistoryEntry{}, nil
 	}
 
 	// Query commands in chronological order (oldest first)
-	query := `
-		SELECT command, timestamp
-		FROM command_history
-		WHERE branch_id = ?
-		ORDER BY timestamp ASC, id ASC`
+	var commands []CommandHistory
+	query := h.db.conn.Where("branch_id = ?", branchRecord.ID).
+		Order("timestamp ASC, id ASC")
 
 	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+		query = query.Limit(limit)
 	}
 
-	rows, err := h.db.conn.Query(query, branchRecord.ID)
-	if err != nil {
+	if err := query.Find(&commands).Error; err != nil {
 		return nil, fmt.Errorf("failed to load command history: %w", err)
 	}
-	defer rows.Close()
 
-	var entries []HistoryEntry
-	for rows.Next() {
-		var command string
-		var timestamp int64
-
-		if err := rows.Scan(&command, &timestamp); err != nil {
-			return nil, fmt.Errorf("failed to scan command: %w", err)
+	entries := make([]HistoryEntry, len(commands))
+	for i, c := range commands {
+		entries[i] = HistoryEntry{
+			Content:   c.Command,
+			Timestamp: time.Unix(c.Timestamp, 0),
 		}
-
-		entries = append(entries, HistoryEntry{
-			Content:   command,
-			Timestamp: time.Unix(timestamp, 0),
-		})
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating commands: %w", err)
 	}
 
 	return entries, nil
@@ -239,7 +251,7 @@ func (h *HistoryStore) ClearPromptHistory(host, org, project, branch string) err
 		return err
 	}
 	if repo == nil {
-		return nil // No repository means nothing to clear
+		return nil
 	}
 
 	// Get branch
@@ -248,11 +260,10 @@ func (h *HistoryStore) ClearPromptHistory(host, org, project, branch string) err
 		return err
 	}
 	if branchRecord == nil {
-		return nil // No branch means nothing to clear
+		return nil
 	}
 
-	_, err = h.db.conn.Exec("DELETE FROM prompt_history WHERE branch_id = ?", branchRecord.ID)
-	if err != nil {
+	if err := h.db.conn.Where("branch_id = ?", branchRecord.ID).Delete(&PromptHistory{}).Error; err != nil {
 		return fmt.Errorf("failed to clear prompt history: %w", err)
 	}
 
@@ -267,7 +278,7 @@ func (h *HistoryStore) ClearCommandHistory(host, org, project, branch string) er
 		return err
 	}
 	if repo == nil {
-		return nil // No repository means nothing to clear
+		return nil
 	}
 
 	// Get branch
@@ -276,21 +287,14 @@ func (h *HistoryStore) ClearCommandHistory(host, org, project, branch string) er
 		return err
 	}
 	if branchRecord == nil {
-		return nil // No branch means nothing to clear
+		return nil
 	}
 
-	_, err = h.db.conn.Exec("DELETE FROM command_history WHERE branch_id = ?", branchRecord.ID)
-	if err != nil {
+	if err := h.db.conn.Where("branch_id = ?", branchRecord.ID).Delete(&CommandHistory{}).Error; err != nil {
 		return fmt.Errorf("failed to clear command history: %w", err)
 	}
 
 	return nil
-}
-
-// HistoryEntry represents a single history item (prompt or command)
-type HistoryEntry struct {
-	Content   string    // Prompt or command text
-	Timestamp time.Time // When it was entered
 }
 
 // CleanupOldHistory removes history entries older than configured age
@@ -302,20 +306,12 @@ func (h *HistoryStore) CleanupOldHistory() error {
 	cutoffTime := time.Now().AddDate(0, 0, -h.cfg.MaxAgeDays).Unix()
 
 	// Clean prompt history
-	_, err := h.db.conn.Exec(
-		"DELETE FROM prompt_history WHERE timestamp < ?",
-		cutoffTime,
-	)
-	if err != nil {
+	if err := h.db.conn.Where("timestamp < ?", cutoffTime).Delete(&PromptHistory{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup old prompt history: %w", err)
 	}
 
 	// Clean command history
-	_, err = h.db.conn.Exec(
-		"DELETE FROM command_history WHERE timestamp < ?",
-		cutoffTime,
-	)
-	if err != nil {
+	if err := h.db.conn.Where("timestamp < ?", cutoffTime).Delete(&CommandHistory{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup old command history: %w", err)
 	}
 
