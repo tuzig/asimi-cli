@@ -17,11 +17,14 @@ func (j *JSON) Scan(value interface{}) error {
 		*j = []byte("null")
 		return nil
 	}
-	bytes, ok := value.([]byte)
-	if !ok {
+	switch v := value.(type) {
+	case []byte:
+		*j = v
+	case string:
+		*j = []byte(v)
+	default:
 		return errors.New("failed to unmarshal JSON value")
 	}
-	*j = bytes
 	return nil
 }
 
@@ -48,8 +51,13 @@ func (a *StringArray) Scan(value interface{}) error {
 		*a = []string{}
 		return nil
 	}
-	bytes, ok := value.([]byte)
-	if !ok {
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
 		return errors.New("failed to unmarshal StringArray value")
 	}
 	return json.Unmarshal(bytes, a)
@@ -298,4 +306,16 @@ type RulerCouncil struct {
 // TableName specifies the table name for RulerCouncil
 func (RulerCouncil) TableName() string {
 	return "ruler_council"
+}
+
+// RitualGuardCheckpoint tracks the last processed event for crash recovery
+type RitualGuardCheckpoint struct {
+	ID        int       `gorm:"primaryKey"`
+	EventID   int64     `gorm:"not null"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime"`
+}
+
+// TableName specifies the table name for RitualGuardCheckpoint
+func (RitualGuardCheckpoint) TableName() string {
+	return "ritual_guard_checkpoint"
 }

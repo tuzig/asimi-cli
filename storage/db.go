@@ -154,6 +154,7 @@ func (db *DB) autoMigrate() error {
 		&CensorPrecedent{},
 		&MarshalIncident{},
 		&RulerCouncil{},
+		&RitualGuardCheckpoint{},
 	)
 }
 
