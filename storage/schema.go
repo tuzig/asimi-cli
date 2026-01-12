@@ -7,7 +7,7 @@ import (
 )
 
 // Schema version for migrations
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // SessionConfig holds session persistence configuration
 type SessionConfig struct {

@@ -144,6 +144,16 @@ func (db *DB) autoMigrate() error {
 		&WorkflowData{},
 		&WorkflowStepData{},
 		&SchemaVersionRecord{},
+		&Edict{},
+		&ZhengmingRequest{},
+		&TianEvent{},
+		&TianEventDLQ{},
+		&Ling{},
+		&ForgeManifest{},
+		&JudgeVerdict{},
+		&CensorPrecedent{},
+		&MarshalIncident{},
+		&RulerCouncil{},
 	)
 }
 
@@ -237,6 +247,35 @@ func (db *DB) Stats() (map[string]int64, error) {
 
 	if err := db.conn.Model(&WorkflowStepData{}).Count(&count).Error; err == nil {
 		stats["workflow_steps"] = count
+	}
+
+	// Shogunate statistics
+	if err := db.conn.Model(&Edict{}).Count(&count).Error; err == nil {
+		stats["edicts"] = count
+	}
+	if err := db.conn.Model(&ZhengmingRequest{}).Count(&count).Error; err == nil {
+		stats["zhengming_requests"] = count
+	}
+	if err := db.conn.Model(&TianEvent{}).Count(&count).Error; err == nil {
+		stats["tian_events"] = count
+	}
+	if err := db.conn.Model(&Ling{}).Count(&count).Error; err == nil {
+		stats["ling"] = count
+	}
+	if err := db.conn.Model(&ForgeManifest{}).Count(&count).Error; err == nil {
+		stats["forge_manifests"] = count
+	}
+	if err := db.conn.Model(&JudgeVerdict{}).Count(&count).Error; err == nil {
+		stats["judge_verdicts"] = count
+	}
+	if err := db.conn.Model(&CensorPrecedent{}).Count(&count).Error; err == nil {
+		stats["censor_precedents"] = count
+	}
+	if err := db.conn.Model(&MarshalIncident{}).Count(&count).Error; err == nil {
+		stats["marshal_incidents"] = count
+	}
+	if err := db.conn.Model(&RulerCouncil{}).Count(&count).Error; err == nil {
+		stats["ruler_council"] = count
 	}
 
 	return stats, nil

@@ -87,9 +87,9 @@ type TUIModel struct {
 type ctrlCState int
 
 const (
-	ctrlCIdle         ctrlCState = iota // No pending CTRL-C
-	ctrlCInBurst                        // Receiving CTRL-C events, waiting for quiet period
-	ctrlCWaitingSecond                  // First press completed, waiting for second press
+	ctrlCIdle          ctrlCState = iota // No pending CTRL-C
+	ctrlCInBurst                         // Receiving CTRL-C events, waiting for quiet period
+	ctrlCWaitingSecond                   // First press completed, waiting for second press
 )
 
 type promptHistoryEntry struct {

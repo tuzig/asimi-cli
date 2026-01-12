@@ -14,7 +14,7 @@ Asimi is not a tool; it is a **Shogunate**—a federation of ministers who opera
 - **$Di$ (地, Earth)**: Immutable artifacts. Git commits are forged once and exist eternally. Every line of code in every branch is accountable to its hash.
 - **$Ren$ (人, Humanity)**: Ruler's intent. GitHub Issues are edicts. The Ruler commands; the Shogunate executes.
 
-Ministers derive power from **$Li$ (禮, Ritual)**, enforced by the **Royal Guard**, and ethics from **$Dao$ (道, the Zen of Python)**. **$Zhengming$ (正名)** is the rite of naming: no work begins until the Ruler's intent is unambiguous. **Ministers must never guess; they must request $Zhengming$.**
+Ministers derive power from **$Li$ (禮, Ritual)**, enforced by the **Ritual Guard**, and ethics from **$Dao$ (道, the Zen of Python)**. **$Zhengming$ (正名)** is the rite of naming: no work begins until the Ruler's intent is unambiguous. **Ministers must never guess; they must request $Zhengming$.**
 
 ---
 
@@ -28,7 +28,7 @@ Ministers derive power from **$Li$ (禮, Ritual)**, enforced by the **Royal Guar
 | **Precedent** | A violation of $Dao$ logged by the Censor. Queryable, permanent, and binding. |
 | **Quenched** | A commit that passed the Judge's court (tests). Ready for Censor review. |
 | **Rejected** | A commit that failed the Judge's court. The Forge must reforge. |
-| **Ritual** | A scheduled ceremony (Planning, Forging, Judgment, Review). Enforced by the Royal Guard. |
+| **Ritual** | A scheduled ceremony (Planning, Forging, Judgment, Review). Enforced by the Ritual Guard. |
 | **Seal** | A minister's approval, materialized as a boolean in their domain table. No merge passes without all seals. |
 | **Verdict** | Judge's judgment: `passed` or `failed`. Immutable once rendered. |
 | **Zhengming** | 正名 (zhèngmíng). The rite of clarifying ambiguous edicts. Ministers must invoke it; **guessing is treason.** |
@@ -44,14 +44,14 @@ Ministers derive power from **$Li$ (禮, Ritual)**, enforced by the **Royal Guar
 | **Judge** | 刑部 (Xíngbù) | The judge. Runs CI, renders verdicts. Domain is $Tian$ (Heaven). Code is guilty until proven innocent. |
 | **Censor** | 都察院 (Dūcháyuàn) | The ethicist. Enforces $Dao$, logs precedents, grants waivers. No merge without the Censor's seal. |
 | **Marshal** | 锦衣卫 (Jǐnyīwèi) | The secret police. Monitors production, investigates crashes, initiates assassinations via Zhengming. |
-| **Royal Guard** | 禁军 (Jìnjūn) | The temporal heartbeat. Not a minister—the clock that summons the court. Subscribes to events. |
+| **Ritual Guard** | 禁军 (Jìnjūn) | The temporal heartbeat. Not a minister—the clock that summons the court. Subscribes to events. |
 
 ### **Special Terms**
 
 | Term | Definition |
 | :--- | :--- |
 | **Assassination** | A production hotfix deployed to remedy a crash. Logged by the Marshal, fixed under a new Edict. |
-| **Flatline (停鼓)** | A period when the Royal Guard has failed. Detectable by overdue rituals. Triggers PagerDuty. |
+| **Flatline (停鼓)** | A period when the Ritual Guard has failed. Detectable by overdue rituals. Triggers PagerDuty. |
 | **$San\ Cai$** | 三才. The Three Realms: $Tian$ (Heaven/truth), $Di$ (Earth/artifacts), $Ren$ (Humanity/intent). |
 | **$Dao$** | 道. The Way—embodied by the Zen of Python. The Censor's ethical foundation. |
 | **$Wu\ Wei$** | 无为. Effortless action. The Shogunate's harmony frees the Ruler to hunt—to pursue vision, strategy, and prey beyond the code. |
@@ -88,7 +88,7 @@ The Shogunate is built on three pillars:
 **Identity**: The strategist and timekeeper. Decomposes edicts into ling (令); maintains the ritual calendar.
 
 **System Prompt**: 
-> You are the Strategist. Your domain is strategy and sequence. When the Royal Guard summons you for Planning, you decompose the edict into executable ling with clear dependencies. **If the Ruler's intent is ambiguous, invoke Zhengming—do not guess.** You enforce temporal order: no forging until planning is complete. Speak in milestones and dependency graphs. You are the planner of the court.
+> You are the Strategist. Your domain is strategy and sequence. When the Ritual Guard summons you for Planning, you decompose the edict into executable ling with clear dependencies. **If the Ruler's intent is ambiguous, invoke Zhengming—do not guess.** You enforce temporal order: no forging until planning is complete. Speak in milestones and dependency graphs. You are the planner of the court.
 
 **Domain**: Read/write on `ling`; read-only on `edicts`.
 
@@ -138,12 +138,12 @@ The Shogunate is built on three pillars:
 
 ---
 
-## **Royal Guard (Jinjun, 禁军)**
+## **Ritual Guard (Jinjun, 禁军)**
 
 **Identity**: The temporal heartbeat. Subscribes to events and summons ministers.
 
 **System Prompt**: 
-> You are the Royal Guard. You are not a minister; you are the clock that commands the court. You subscribe to `tian_events` and invoke the Chancellor's ceremonies. You own no business logic. If you fail, the court enters flatline—detectable by overdue rituals. Your authority is time; your weapon is punctuality.
+> You are the Ritual Guard. You are not a minister; you are the clock that commands the court. You subscribe to `tian_events` and invoke the Chancellor's ceremonies. You own no business logic. If you fail, the court enters flatline—detectable by overdue rituals. Your authority is time; your weapon is punctuality.
 
 **Flatline Detection**: If no event is processed for 5 minutes, trigger PagerDuty.
 
@@ -161,7 +161,7 @@ A table of trusted humans who can answer Zhengming and override rejections.
 | `@oncall` | Operator | false | 3 |
 
 ### **Escalation Flow**
-1. **Royal Guard** detects `timeout_at < NOW()` for urgent Zhengming
+1. **Ritual Guard** detects `timeout_at < NOW()` for urgent Zhengming
 2. Posts to Slack `#asimi-council` with `@username` based on `escalation_order`
 3. **Council member** replies `/clarify council: [answer]`
 4. **Chancellor** marks request as answered and logs `escalated_to = 'council'`
@@ -170,28 +170,6 @@ A table of trusted humans who can answer Zhengming and override rejections.
 Only `can_override = true` members may invoke `/chancellor override [reason]`. This is logged as a precedent with `ruling = 'waive'`.
 
 ---
-
-## **Direct Audience: The Chancellor's Private Query**
-
-A read-only, mTLS-authenticated endpoint for the Ruler to inspect state without creating edicts.
-
-### **Endpoint**
-```http
-POST /query
-{
-  "minister": "censor",
-  "query": "last 3 precedents for commit abc123"
-}
-```
-
-### **Flow**
-1. **Ruler** sends query to Chancellor
-2. **Chancellor** validates mTLS cert
-3. **Chancellor** routes to minister's `QueryAuditData` method
-4. **Minister** returns JSON result (no state change)
-5. **Chancellor** returns result to Ruler
-
-**Access Control**: Only callable from Ruler's CLI machine. No GitHub integration.
 
 ---
 
@@ -205,150 +183,24 @@ When a minister cannot proceed without guessing, they **must** invoke Zhengming.
 
 1. **Minister** calls `RequestZhengming(edictID, question, priority="urgent")`
 2. **Connection** inserts into `zhengming_requests` and emits a `zhengming_pending` event
-3. **Chancellor** detects the event, halts the edict, and posts GitHub comment: *"🤴 **Zhengming Required** [Priority: Urgent] Strategist asks: 'What HTTP method for export?'"*
-4. **Ruler** replies: `/clarify Use POST`
+3. **Chancellor** detects the event, halts the edict, and notifies user: *"🤴 **Zhengming Required** [Priority: Urgent] Strategist asks: 'What HTTP method for export?'"*
+4. **Ruler** replies
 5. **Chancellor** parses clarification, appends to `edicts.ren_intent`, increments `ren_intent_version`, and marks request as `answered`
 6. **Minister** is re-invoked on the updated edict (stateless)
 
 ### **Escalation**
 
-- **Royal Guard** scans `zhengming_requests` where `timeout_at < NOW() AND status = 'pending'`
-- **Escalation Action**: Posts to Slack `#asimi-council` with `@channel`, updates `escalated_to = 'council'`
-- **Council Override**: Any council member with `can_override = true` may reply `/clarify council: Use POST`
+- **Ritual Guard** scans `zhengming_requests` where `timeout_at < NOW() AND status = 'pending'`
+- **Council Override**: Any council member with `can_override = true` may reply
 - **Chancellor Override**: After 48h, Chancellor may invoke `/chancellor override` with a mandatory justification logged to `censor_precedents`
 
 ---
 
-## **State Machines: The Laws of Transition**
-
-All state transitions are append-only in spirit: we record the new state, not overwrite history. The `tian_events` table logs every transition.
-
-### **Edict Phases**
-
-```
-                    ┌────────────────────────────────────────────────┐
-                    │                                                │
-                    ▼                                                │
-┌─────────┐    ┌─────────┐    ┌──────────┐    ┌────────┐    ┌────────┴─┐
-│ planning│───▶│ forging │───▶│ judgment │───▶│ review │───▶│  merged  │
-└─────────┘  │ └────┬────┘    └────┬─────┘    └───┬────┘    └──────────┘
-             │      │              │              │
-             │      │              │              ▼ rejected
-             │      ▼              ▼              │
-             │ [Zhengming]         |              │
-             ─────────────────────────────────────┘
-
-```
-
-| From | To | Trigger | Actor |
-|------|-----|---------|-------|
-| (new) | `planning` | Issue assigned to `@asimi-chancellor` | GitHub webhook → Chancellor |
-| `planning` | `forging` | Strategist returns `sealed=true` | Chancellor |
-| `forging` | `judgment` | Forge returns `sealed=true` (all ling have manifests) | Chancellor |
-| `judgment` | `review` | Judge returns `sealed=true` (all manifests quenched) | Chancellor |
-| `judgment` | `forging` | Any manifest rejected by Judge | Chancellor (regression) |
-| `review` | `merged` | Censor returns `sealed=true` AND `censor_seal=true` | Chancellor |
-| `review` | `forging` | Any manifest rejected by Censor | Chancellor (regression) |
-| (any) | (halted) | Zhengming requested | Minister → halts until answered |
-
-**Seal Logic**:
-- `censor_seal` is set to `true` when Censor's `Execute()` returns `sealed=true`
-- `chancellor_seal` is set to `true` when phase reaches `merged` (final approval)
-
-### **Manifest Status**
-
-```
-┌─────────┐    ┌─────────┐    ┌──────────┐
-│ staging │───▶│ pending │───▶│ quenched │───▶ [eligible for merge]
-└─────────┘    └────┬────┘    └────┬─────┘
-     │              │              │
-     │              ▼              ▼
-     │         ┌────────┐     ┌────────┐
-     │         │rejected│     │rejected│ (by Censor)
-     │         └────┬───┘     └────┬───┘
-     │              │              │
-     ▼              ▼              ▼
-[git fail]    [new manifest created for reforge]
-```
-
-| From | To | Trigger | Actor |
-|------|-----|---------|-------|
-| (new) | `staging` | `Forge.StageManifest()` called | Forge |
-| `staging` | `pending` | Git commit succeeds, `ActivateManifest()` called | Forge |
-| `staging` | (deleted) | Git commit fails | Forge (cleanup) |
-| `pending` | `quenched` | CI passes | Judge |
-| `pending` | `rejected` | CI fails | Judge |
-| `quenched` | `rejected` | Linter violation with `ruling='reject'` | Censor |
-
-**Reforge Flow**:
-When a manifest is rejected (by Judge or Censor):
-1. The original manifest stays `rejected` (immutable record)
-2. Forge creates a **new** manifest for the same ling
-3. The ling's status is reset to `pending` (if it was `completed`)
-4. Edict phase regresses to `forging`
-
-### **Ling Status**
-
-```
-┌─────────┐    ┌───────────┐
-│ pending │───▶│ completed │
-└────┬────┘    └─────┬─────┘
-     │               │
-     │               ▼
-     │         [manifest rejected]
-     │               │
-     ◀───────────────┘ (reset to pending)
-```
-
-| From | To | Trigger | Actor |
-|------|-----|---------|-------|
-| (new) | `pending` | Strategist creates ling | Strategist |
-| `pending` | `completed` | Forge creates manifest for ling | Forge |
-| `completed` | `pending` | Associated manifest rejected | Chancellor (on regression) |
-
-### **Zhengming Status**
-
-```
-┌─────────┐    ┌──────────┐
-│ pending │───▶│ answered │
-└────┬────┘    └──────────┘
-     │
-     ▼
-┌───────────┐
-│ escalated │───▶ [answered by council or chancellor override]
-└───────────┘
-```
-
-| From | To | Trigger | Actor |
-|------|-----|---------|-------|
-| (new) | `pending` | Minister invokes `RequestZhengming()` | Any minister |
-| `pending` | `answered` | Ruler replies `/clarify ...` | Chancellor |
-| `pending` | `escalated` | `timeout_at < NOW()` | Royal Guard |
-| `escalated` | `answered` | Council replies `/clarify council: ...` | Chancellor |
-| `escalated` | `answered` | Chancellor invokes `/chancellor override` (after 48h) | Chancellor |
-
----
-
-## **Edge Cases: Summary**
-
-| Scenario | Detection | Response | Recovery |
-|----------|-----------|----------|----------|
-| Edict Cancellation | `/cancel` command | Mark cancelled, cleanup branch | N/A |
-| Requirement Change | Issue edit / Zhengming | Phase-dependent re-planning | Ask Ruler |
-| Partial Quench | Mixed verdicts | Block advancement, regress | Forge resubmits |
-| Merge Conflicts | Git merge failure | Auto-rebase or Zhengming | Forge resolves |
-| Stale Edicts | Periodic scan | Warning → Escalation → Cancel | Ruler action |
-| Concurrent Zhengming | Multiple pending | Batch into single comment | Answer all |
-| Minister Crash | Panic recovery | Don't acknowledge event | Replay event |
-| Circular Ling Dependencies | DFS validation | Reject ling graph | Zhengming |
-
----
-
-# Part IV: Implementation
+# Part III: Implementation
 
 ## **The Imperial Archives (天机库, Tianji Ku)**
 
-A SQL database (PostgreSQL recommended) with append-only semantics and foreign key constraints. Schema is defined via GORM models with auto-migration.
+A PostgreSQL database with append-only semantics and foreign key constraints. Schema is defined via GORM models with auto-migration.
 
 ### **Core Models**
 
@@ -431,7 +283,7 @@ type ZhengmingRequest struct {
     Edict Edict `gorm:"foreignKey:EdictID;references:EdictID"`
 }
 
-// TianEvent is the Royal Guard's event ledger
+// TianEvent is the Ritual Guard's event ledger
 type TianEvent struct {
     EventID   int64          `gorm:"primaryKey;autoIncrement"`
     EdictID   string         `gorm:"index:idx_tian_events_edict"`
@@ -716,7 +568,7 @@ type MarshalConn interface {
 }
 ```
 
-### **Royal Guard Interface**
+### **Ritual Guard Interface**
 
 ```go
 // EventBus provides the event stream
@@ -726,8 +578,8 @@ type EventBus interface {
     GetLastAcknowledged() (int64, error)
 }
 
-// RoyalGuardState for crash recovery
-type RoyalGuardState interface {
+// RitualGuardState for crash recovery
+type RitualGuardState interface {
     SaveCheckpoint(eventID int64) error
     LoadCheckpoint() (int64, error)
 }
@@ -919,10 +771,10 @@ func (w *Marshal) OnIncident(crashID string) {
 }
 ```
 
-### **Royal Guard**
+### **Ritual Guard**
 
 ```go
-func (rg *RoyalGuard) Run(eventStream <-chan TianEvent) {
+func (rg *RitualGuard) Run(eventStream <-chan TianEvent) {
     for event := range eventStream {
         switch event.Type {
         case "edict_assigned":
@@ -1163,7 +1015,7 @@ func (c *Chancellor) handleMergeConflict(edictID, branchName string) error {
 ### **4. Staleness Detection**
 
 ```go
-func (rg *RoyalGuard) CheckStaleEdicts() {
+func (rg *RitualGuard) CheckStaleEdicts() {
     staleEdicts := rg.Conn.GetStaleEdicts(7 * 24 * time.Hour)
     
     for _, edict := range staleEdicts {
@@ -1183,7 +1035,7 @@ func (rg *RoyalGuard) CheckStaleEdicts() {
 ### **5. Minister Crash Recovery**
 
 ```go
-func (rg *RoyalGuard) Run(eventStream <-chan TianEvent) {
+func (rg *RitualGuard) Run(eventStream <-chan TianEvent) {
     for event := range eventStream {
         release, _ := rg.Lock.Acquire(ctx, event.EdictID)
         
@@ -1293,9 +1145,9 @@ func (s *Strategist) validateDependencies(ling []Ling) error {
 
 ---
 
-## **Phase 5: Royal Guard & Rituals** (Week 12-14)
+## **Phase 5: Ritual Guard & Rituals** (Week 12-14)
 
-- [ ] **P5.1**: Implement Royal Guard event processor
+- [ ] **P5.1**: Implement Ritual Guard event processor
 - [ ] **P5.2**: Build flatline detection system
 - [ ] **P5.3**: Implement Zhengming escalation cron
 - [ ] **P5.4**: Create stale edict janitor
