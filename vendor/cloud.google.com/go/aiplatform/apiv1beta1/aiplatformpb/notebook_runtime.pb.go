@@ -21,12 +21,13 @@
 package aiplatformpb
 
 import (
+	reflect "reflect"
+	sync "sync"
+
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
-	reflect "reflect"
-	sync "sync"
 )
 
 const (
@@ -152,7 +153,8 @@ const (
 	NotebookRuntime_RUNTIME_STATE_UNSPECIFIED NotebookRuntime_RuntimeState = 0
 	// NotebookRuntime is in running state.
 	NotebookRuntime_RUNNING NotebookRuntime_RuntimeState = 1
-	// NotebookRuntime is in starting state.
+	// NotebookRuntime is in starting state. This is when the runtime is being
+	// started from a stopped state.
 	NotebookRuntime_BEING_STARTED NotebookRuntime_RuntimeState = 2
 	// NotebookRuntime is in stopping state.
 	NotebookRuntime_BEING_STOPPED NotebookRuntime_RuntimeState = 3
@@ -470,8 +472,9 @@ func (x *NotebookRuntimeTemplate) GetSoftwareConfig() *NotebookSoftwareConfig {
 }
 
 // A runtime is a virtual machine allocated to a particular user for a
-// particular Notebook file on temporary basis with lifetime limited to 24
-// hours.
+// particular Notebook file on temporary basis with lifetime. Default runtimes
+// have a lifetime of 18 hours, while custom runtimes last for 6 months from
+// their creation or last upgrade.
 type NotebookRuntime struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
