@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/internal/llm"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -105,7 +106,7 @@ func TestEnsureOllamaConfiguredMissingBinary(t *testing.T) {
 	emptyDir := t.TempDir()
 	t.Setenv("PATH", emptyDir)
 
-	err := ensureOllamaConfigured("http://127.0.0.1:12345")
+	err := llm.EnsureOllamaConfigured("http://127.0.0.1:12345")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ollama CLI not found")
 }
@@ -126,7 +127,7 @@ func TestEnsureOllamaConfiguredSuccess(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	err := ensureOllamaConfigured(server.URL)
+	err := llm.EnsureOllamaConfigured(server.URL)
 	require.NoError(t, err)
 }
 
@@ -144,7 +145,7 @@ func TestEnsureOllamaConfiguredServerError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	err := ensureOllamaConfigured(server.URL)
+	err := llm.EnsureOllamaConfigured(server.URL)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "returned status 500")
 }

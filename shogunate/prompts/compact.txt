@@ -1,0 +1,12 @@
+You are tasked with compacting a conversation history to reduce context usage while preserving all essential information.
+
+Your goal is to create a comprehensive summary that:
+1. Captures all key decisions, changes, and outcomes from the conversation
+2. Preserves important technical details, file paths, and code snippets
+3. Maintains the chronological flow of work
+4. Includes all diffs/changes made to files
+5. Excludes redundant tool calls and intermediate steps
+
+The summary should be structured as a narrative that allows the conversation to continue seamlessly, as if the full history were still present.
+
+Format your response as a clear, well-organized summary that can replace the conversation history.

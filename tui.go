@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/auth"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -48,10 +50,11 @@ type TUIModel struct {
 	commandRegistry CommandRegistry
 
 	// Application services (passed in, not owned)
-	session      *Session
-	sessionStore *SessionStore
+	session      *shogunate.Session
+	sessionStore *SessionStore // kept for /resume listing; session manages its own persistence
 	db           *storage.DB
-	scheduler    *CoreToolScheduler
+	scheduler    *shogunate.CoreToolScheduler
+	shogunate    *shogunate.Shogunate
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -66,10 +69,6 @@ type TUIModel struct {
 	persistentPromptHistory  *PromptHistory
 	persistentCommandHistory *CommandHistory
 
-	// Waiting indicator state
-	waitingForResponse bool
-	waitingStart       time.Time
-
 	// CTRL-C state machine for handling duplicate events from iOS/terminal
 	// See: https://github.com/anthropics/asimi/issues/115
 	ctrlCState          ctrlCState // Current state in the CTRL-C state machine
@@ -79,6 +78,12 @@ type TUIModel struct {
 
 	// Host command approval state
 	pendingHostApproval *HostCommandApprovalRequest
+
+	// Zhengming (clarification) state
+	pendingZhengming *shogunate.ZhengmingPendingMsg
+
+	// Context files loaded via @ references (for passing to Chancellor)
+	contextFiles map[string]string
 }
 
 // ctrlCState represents the state machine for CTRL-C handling
@@ -120,9 +125,20 @@ type hostCommandApprovalMsg struct {
 	request HostCommandApprovalRequest
 }
 
+// LearnMsg is sent when user submits a learning note (# prefix in learning mode)
+type LearnMsg struct {
+	Lesson string
+}
+
+// RunCommandMsg is sent when user submits a command (: prefix)
+type RunCommandMsg struct {
+	Command string
+	Args    []string
+}
+
 // NewTUIModel creates a new TUI model
 // NewTUIModelWithStores creates a new TUI model with provided stores (for fx injection)
-func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *CoreToolScheduler) *TUIModel {
+func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *shogunate.CoreToolScheduler, sg *shogunate.Shogunate) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
@@ -178,9 +194,10 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 		sessionStore:             sessionStore,
 		db:                       db,
 		scheduler:                scheduler,
-		waitingForResponse:       false,
+		shogunate:                sg,
 		persistentPromptHistory:  promptHistory,
 		persistentCommandHistory: commandHistory,
+		contextFiles:             make(map[string]string),
 	}
 
 	// Set the GetStatus callback for the chat component
@@ -236,61 +253,25 @@ func (m *TUIModel) initHistory() {
 }
 
 // SetSession sets the session for the TUI model
-func (m *TUIModel) SetSession(session *Session) {
+func (m *TUIModel) SetSession(session *shogunate.Session) {
 	m.session = session
 	m.status.SetSession(session) // Pass session to status component
-	if session != nil {
+	if session != nil && m.sessionStore != nil && m.config != nil {
+		autoSave := m.config.Session.Enabled && m.config.Session.AutoSave
+		session.SetStore(m.sessionStore, autoSave)
+		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
+	} else if session != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
 	}
 }
 
-// reinitializeSession recreates the LLM client and session with current config
+// reinitializeSession triggers LLM reconnection with current config
+// Note: Shogunate is managed via fx lifecycle, this just reconnects the LLM client
 func (m *TUIModel) reinitializeSession() error {
-	// Get the LLM client with the updated config
-	llm, err := getModelClient(m.config)
-	if err != nil {
-		return fmt.Errorf("failed to create LLM client: %w", err)
-	}
-
-	// Create a new session with the LLM
-	repoInfo := GetRepoInfo()
-	sess, err := NewSession(llm, m.config, repoInfo, m.scheduler, func(msg any) {
-		if program != nil {
-			program.Send(msg)
-		}
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
-	}
-
-	// Set the new session
-	m.SetSession(sess)
+	// TODO: Add a Chancellor.Restart() to restart the session
 	return nil
-}
-
-func (m *TUIModel) saveSession() {
-	if m.session == nil || m.sessionStore == nil {
-		return
-	}
-
-	if !m.config.Session.Enabled || !m.config.Session.AutoSave {
-		return
-	}
-
-	m.sessionStore.SaveSession(m.session)
-	slog.Debug("session auto-save queued")
-}
-
-// shutdown performs graceful shutdown of the TUI, ensuring all pending saves complete
-func (m *TUIModel) shutdown() {
-	// Save the current session before closing
-	m.saveSession()
-
-	if m.sessionStore != nil {
-		m.sessionStore.Close()
-	}
 }
 
 // Init implements bubbletea.Model
@@ -937,7 +918,9 @@ func (m TUIModel) handleCtrlCBurstTimeout(msg ctrlCBurstTimeoutMsg) (tea.Model, 
 
 	// This was the second press completing - quit!
 	slog.Info("CTRL-C: Second press completed, quitting")
-	m.shutdown()
+	if m.session != nil {
+		m.session.Save()
+	}
 	return m, tea.Quit
 }
 
@@ -1014,9 +997,12 @@ func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
 			content, err := os.ReadFile(filePath)
 			if err != nil {
 				m.commandLine.AddToast(fmt.Sprintf("Error reading file: %v", err), "error", time.Second*3)
-			} else if m.session != nil {
-				m.session.AddContextFile(filePath, string(content))
+			} else {
+				m.contextFiles[filePath] = string(content)
 				m.content.Chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
+				if m.session != nil {
+					m.session.UpdateTokenCounts(m.contextFiles)
+				}
 			}
 			currentValue := m.prompt.Value()
 			lastAt := strings.LastIndex(currentValue, "@")
@@ -1061,21 +1047,17 @@ func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
 }
 
 func (m *TUIModel) startWaitingForResponse() tea.Cmd {
-	if m.waitingForResponse {
+	if m.status.IsWaiting() {
 		return nil
 	}
-	now := time.Now()
-	m.waitingForResponse = true
-	m.waitingStart = now
 	m.status.StartWaiting()
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return waitingTickMsg{} })
 }
 
 func (m *TUIModel) stopWaitingForResponse() {
-	if !m.waitingForResponse {
+	if !m.status.IsWaiting() {
 		return
 	}
-	m.waitingForResponse = false
 	m.status.StopWaiting()
 }
 
@@ -1161,155 +1143,32 @@ func (m *TUIModel) handleHistoryNavigation(direction int) bool {
 	return false
 }
 
-// handleEnterKey handles the enter key press
+// handleEnterKey classifies the prompt and returns the appropriate message
 func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
 	content := m.prompt.Value()
 	if content == "" {
 		return m, nil
 	}
 
-	// Handle learning mode - append to agents file
+	// Classify and dispatch to message handlers
 	if m.Mode == "learning" {
-		// Remove the leading "#" and trim whitespace
-		learningNote := strings.TrimSpace(strings.TrimPrefix(content, "#"))
-		if learningNote != "" {
-			// Determine agents file from config
-			agentsPath := "AGENTS.md"
-			if m.config != nil && m.config.Session.AgentsFile != "" {
-				agentsPath = m.config.Session.AgentsFile
-			}
-			f, err := os.OpenFile(agentsPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-			if err != nil {
-				m.commandLine.AddToast(fmt.Sprintf("Failed to open %s: %v", agentsPath, err), "error", time.Second*3)
-			} else {
-				defer f.Close()
-				_, err = f.WriteString("\n" + learningNote + "\n")
-				if err != nil {
-					m.commandLine.AddToast(fmt.Sprintf("Failed to write to %s: %v", agentsPath, err), "error", time.Second*3)
-				} else {
-					m.commandLine.AddToast(fmt.Sprintf("Added to %s", agentsPath), "success", time.Second*2)
-					m.content.Chat.AddMessage(fmt.Sprintf("📝 Learning added: %s", learningNote))
-					m.sessionActive = true
-				}
-			}
-		}
-		// Return to normal mode
-		m.prompt.EnterViNormalMode()
+		lesson := strings.TrimSpace(strings.TrimPrefix(content, "#"))
 		m.prompt.SetValue("")
-		return m, func() tea.Msg { return ChangeModeMsg{NewMode: "normal"} }
+		return m, func() tea.Msg { return LearnMsg{Lesson: lesson} }
 	}
 
 	if strings.HasPrefix(content, ":") {
-		// Parse the command (keep the : prefix for display)
 		parts := strings.Fields(content)
 		if len(parts) > 0 {
-			cmdName := parts[0]
-			m.content.Chat.AddToRawHistory("COMMAND", content)
-			cmd, exists := m.commandRegistry.GetCommand(cmdName)
-			if exists {
-				command := cmd.Handler(&m, parts[1:])
-				cmds = append(cmds, command)
-				m.prompt.SetValue("")
-				m.prompt.EnterViInsertMode()
-				cmds = append(cmds, func() tea.Msg { return ChangeModeMsg{NewMode: "insert"} })
-				// Ensure prompt has focus after command
-				m.prompt.Focus()
-			} else {
-				m.commandLine.AddToast(fmt.Sprintf("Unknown command: %s", cmdName), "error", time.Second*3)
-			}
-		}
-	} else {
-		// Clear any lingering toast notifications before handling a new prompt
-		m.commandLine.ClearToasts()
-		refreshGitInfo()
-
-		// Check if we're submitting a historical prompt (user navigated history)
-		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
-			// User is submitting a historical prompt - rollback to that state
-			entry := m.sessionPromptHistory[m.historyCursor]
-			m.cancelStreaming()
-			m.stopStreaming()
-			if m.session != nil {
-				m.session.RollbackTo(entry.SessionSnapshot)
-			}
-			m.content.Chat.TruncateTo(entry.ChatSnapshot)
-			m.content.Chat.ClearToolCallMessageIndex()
-
-			// Now continue with the normal flow from this rolled-back state
-			m.historySaved = false
-		}
-
-		// Add user input to raw history
-		m.content.Chat.AddToRawHistory("USER", content)
-		chatSnapshot := len(m.content.Chat.Messages)
-		var sessionSnapshot int
-		if m.session != nil {
-			sessionSnapshot = m.session.GetMessageSnapshot()
-		}
-		if m.historyCursor < len(m.sessionPromptHistory) {
-			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
-		}
-		m.content.Chat.AddUserMessage(content)
-		if m.session != nil {
-			// Check if we need to auto-compact before sending the prompt (#54)
-			info := m.session.GetContextInfo()
-			// Auto-compact if free tokens are less than 10% of total
-			autoCompactThreshold := float64(info.TotalTokens) * 0.10
-			if float64(info.FreeTokens) < autoCompactThreshold && len(m.session.Messages) > 2 {
-				slog.Info("auto-compacting conversation", "free_tokens", info.FreeTokens, "threshold", autoCompactThreshold)
-				m.content.Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
-
-				// Perform compaction synchronously before sending the prompt
-				ctx := context.Background()
-				// not using summary as this is an automatic workflow and
-				// there's no reason to notfiy the user
-				_, err := m.session.CompactHistory(ctx, compactPrompt)
-				if err != nil {
-					slog.Warn("auto-compaction failed", "error", err)
-					m.content.Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
-				} else {
-					// Get updated context info
-					newInfo := m.session.GetContextInfo()
-					m.content.Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
-						formatTokenCount(newInfo.UsedTokens),
-						formatTokenCount(newInfo.TotalTokens),
-						percentage(newInfo.UsedTokens, newInfo.TotalTokens)))
-					slog.Info("auto-compaction completed", "old_used", info.UsedTokens, "new_used", newInfo.UsedTokens, "saved", info.UsedTokens-newInfo.UsedTokens)
-				}
-			}
-
-			m.sessionActive = true
 			m.prompt.SetValue("")
-			// In vi mode, stay in insert mode for continued conversation
-			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
-				cmds = append(cmds, waitCmd)
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			m.streamingCancel = cancel
-			m.session.AskStream(ctx, content)
-		} else {
-			m.commandLine.AddToast("No model configured, use :models to configure a model", "error", time.Second*5)
-			m.prompt.SetValue("")
-		}
-		m.sessionPromptHistory = append(m.sessionPromptHistory, promptHistoryEntry{
-			Prompt:          content,
-			SessionSnapshot: sessionSnapshot,
-			ChatSnapshot:    chatSnapshot,
-		})
-		m.historyCursor = len(m.sessionPromptHistory)
-		m.historySaved = false
-		m.historyPendingPrompt = ""
-
-		// Save to persistent history
-		if m.persistentPromptHistory != nil {
-			if err := m.persistentPromptHistory.Append(content); err != nil {
-				slog.Warn("failed to save prompt to history", "error", err)
+			return m, func() tea.Msg {
+				return RunCommandMsg{Command: parts[0], Args: parts[1:]}
 			}
 		}
 	}
-	return m, tea.Batch(cmds...)
+
+	m.prompt.SetValue("")
+	return m, func() tea.Msg { return SubmitPromptMsg{Prompt: content} }
 }
 
 // handleSlashKey handles the slash key for command completion
@@ -1424,11 +1283,51 @@ func (m TUIModel) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd
 // handleCustomMessages handles all custom message types
 func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case LearnMsg:
+		if msg.Lesson == "" {
+			m.prompt.EnterViNormalMode()
+			return m, func() tea.Msg { return ChangeModeMsg{NewMode: "normal"} }
+		}
+		agentsPath := "AGENTS.md"
+		if m.config != nil && m.config.Session.AgentsFile != "" {
+			agentsPath = m.config.Session.AgentsFile
+		}
+		f, err := os.OpenFile(agentsPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+		if err != nil {
+			m.commandLine.AddToast(fmt.Sprintf("Failed to open %s: %v", agentsPath, err), "error", time.Second*3)
+		} else {
+			defer f.Close()
+			_, err = f.WriteString("\n" + msg.Lesson + "\n")
+			if err != nil {
+				m.commandLine.AddToast(fmt.Sprintf("Failed to write to %s: %v", agentsPath, err), "error", time.Second*3)
+			} else {
+				m.commandLine.AddToast(fmt.Sprintf("Added to %s", agentsPath), "success", time.Second*2)
+				m.content.Chat.AddMessage(fmt.Sprintf("📝 Learning added: %s", msg.Lesson))
+				m.sessionActive = true
+			}
+		}
+		m.prompt.EnterViNormalMode()
+		return m, func() tea.Msg { return ChangeModeMsg{NewMode: "normal"} }
+
+	case RunCommandMsg:
+		var cmds []tea.Cmd
+		m.content.Chat.AddToRawHistory("COMMAND", msg.Command+" "+strings.Join(msg.Args, " "))
+		cmd, exists := m.commandRegistry.GetCommand(msg.Command)
+		if exists {
+			command := cmd.Handler(&m, msg.Args)
+			cmds = append(cmds, command)
+			m.prompt.EnterViInsertMode()
+			cmds = append(cmds, func() tea.Msg { return ChangeModeMsg{NewMode: "insert"} })
+			m.prompt.Focus()
+		} else {
+			m.commandLine.AddToast(fmt.Sprintf("Unknown command: %s", msg.Command), "error", time.Second*3)
+		}
+		return m, tea.Batch(cmds...)
+
 	case SubmitPromptMsg:
 		var cmds []tea.Cmd
 		content := msg.Prompt
 
-		// This logic is adapted from handleEnterKey
 		m.commandLine.ClearToasts()
 		refreshGitInfo()
 
@@ -1454,37 +1353,38 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
 		m.content.Chat.AddUserMessage(content)
-		if m.session != nil {
-			info := m.session.GetContextInfo()
-			autoCompactThreshold := float64(info.TotalTokens) * 0.10
-			if float64(info.FreeTokens) < autoCompactThreshold && len(m.session.Messages) > 2 {
-				slog.Info("auto-compacting conversation", "free_tokens", info.FreeTokens, "threshold", autoCompactThreshold)
-				m.content.Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
-				ctx := context.Background()
-				_, err := m.session.CompactHistory(ctx, compactPrompt)
-				if err != nil {
-					slog.Warn("auto-compaction failed", "error", err)
-					m.content.Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
-				} else {
-					newInfo := m.session.GetContextInfo()
-					m.content.Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
-						formatTokenCount(newInfo.UsedTokens),
-						formatTokenCount(newInfo.TotalTokens),
-						percentage(newInfo.UsedTokens, newInfo.TotalTokens)))
-					slog.Info("auto-compaction completed", "old_used", info.UsedTokens, "new_used", newInfo.UsedTokens, "saved", info.UsedTokens-newInfo.UsedTokens)
-				}
-			}
 
-			m.sessionActive = true
-			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
-				cmds = append(cmds, waitCmd)
+		/* TODO: remove
+		// Auto-compact if free tokens are less than 10% of total
+		info := m.session.GetContextInfo()
+		autoCompactThreshold := float64(info.TotalTokens) * 0.10
+		if float64(info.FreeTokens) < autoCompactThreshold && len(m.session.Messages) > 2 {
+			slog.Info("auto-compacting conversation", "free_tokens", info.FreeTokens, "threshold", autoCompactThreshold)
+			m.content.Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
+			ctx := context.Background()
+			_, err := m.session.CompactHistory(ctx, compactPrompt)
+			if err != nil {
+				slog.Warn("auto-compaction failed", "error", err)
+				m.content.Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
+			} else {
+				newInfo := m.session.GetContextInfo()
+				m.content.Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
+					formatTokenCount(newInfo.UsedTokens),
+					formatTokenCount(newInfo.TotalTokens),
+					percentage(newInfo.UsedTokens, newInfo.TotalTokens)))
+				slog.Info("auto-compaction completed", "old_used", info.UsedTokens, "new_used", newInfo.UsedTokens, "saved", info.UsedTokens-newInfo.UsedTokens)
 			}
-			ctx, cancel := context.WithCancel(context.Background())
-			m.streamingCancel = cancel
-			m.session.AskStream(ctx, content)
-		} else {
-			m.commandLine.AddToast("No model configured. Use :models to select a model", "error", time.Second*5)
 		}
+		*/
+
+		m.sessionActive = true
+		if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
+			cmds = append(cmds, waitCmd)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		m.streamingCancel = cancel
+
+		m.sendPromptToChancellor(ctx, content)
 		m.sessionPromptHistory = append(m.sessionPromptHistory, promptHistoryEntry{
 			Prompt:          content,
 			SessionSnapshot: sessionSnapshot,
@@ -1510,24 +1410,24 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Chat.FinalizeLastAIMessage()
 		refreshGitInfo()
 
-	case ToolCallScheduledMsg:
+	case shogunate.ToolCallScheduledMsg:
 		m.content.Chat.AddToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
 		m.content.Chat.HandleToolCallScheduled(msg)
 
-	case ToolCallExecutingMsg:
+	case shogunate.ToolCallExecutingMsg:
 		m.content.Chat.AddToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
 		m.content.Chat.HandleToolCallExecuting(msg)
 
-	case ToolCallSuccessMsg:
+	case shogunate.ToolCallSuccessMsg:
 		m.content.Chat.AddToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
 		m.content.Chat.HandleToolCallSuccess(msg)
 		refreshGitInfo()
 
-	case ToolCallErrorMsg:
+	case shogunate.ToolCallErrorMsg:
 		m.content.Chat.AddToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
 		m.content.Chat.HandleToolCallError(msg)
 
-	case ToolCallAbortedMsg:
+	case shogunate.ToolCallAbortedMsg:
 		m.content.Chat.AddToRawHistory("TOOL_ABORTED", fmt.Sprintf("%s\nInput: %s\nReason: sandbox restarted", msg.Call.Tool.Name(), msg.Call.Input))
 		m.content.Chat.HandleToolCallAborted(msg)
 
@@ -1535,21 +1435,21 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Chat.AddToRawHistory("ERROR", fmt.Sprintf("%v", msg.err))
 		m.content.Chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 
-	case streamStartMsg:
+	case shogunate.StreamStartMsg:
 		// Streaming has started
 		m.content.Chat.AddToRawHistory("STREAM_START", "AI streaming response started")
-		slog.Debug("streamStartMsg", "starting_stream", true)
+		slog.Debug("StreamStartMsg", "starting_stream", true)
 		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
 
-	case streamChunkMsg:
+	case shogunate.StreamChunkMsg:
 		// For the first chunk, add a new AI message. For subsequent chunks, append to the last message.
 		m.content.Chat.AddToRawHistory("STREAM_CHUNK", string(msg))
 		// Reset the waiting timer - we received data, so restart the quiet time countdown
 		if m.streamingActive {
 			// Restart the waiting indicator to track quiet time
-			m.waitingStart = time.Now()
-			if !m.waitingForResponse {
+			m.status.ResetWaitingTimer()
+			if !m.status.IsWaiting() {
 				waitCmd := m.startWaitingForResponse()
 				// Update content (which handles chat updates)
 				var contentCmd tea.Cmd
@@ -1562,17 +1462,17 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.AddAIChunk(string(msg))
 		slog.Debug("added_ai_chunk", "total_messages", len(m.content.Chat.Messages))
 
-	case streamReasoningChunkMsg:
+	case shogunate.StreamReasoningChunkMsg:
 		// Handle reasoning/thinking chunks from models like Claude with extended thinking (#38)
 		m.content.Chat.AddToRawHistory("STREAM_REASONING_CHUNK", string(msg))
-		slog.Debug("streamReasoningChunkMsg", "chunk_length", len(msg))
+		slog.Debug("StreamReasoningChunkMsg", "chunk_length", len(msg))
 
 		// Use AddThinkingChunk which handles empty checks and appending internally
 		m.content.Chat.AddThinkingChunk(string(msg))
 
-	case streamCompleteMsg:
+	case shogunate.StreamCompleteMsg:
 		m.content.Chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
-		slog.Debug("streamCompleteMsg", "messages_count", len(m.content.Chat.Messages))
+		slog.Debug("StreamCompleteMsg", "messages_count", len(m.content.Chat.Messages))
 		m.stopStreaming()
 
 		// Finalize the last AI message with success/failure prefix
@@ -1589,23 +1489,25 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamCompleteCallback = nil // Clear after running
 		}
 
-		m.saveSession()
+		if m.session != nil {
+			m.session.Save()
+		}
 		refreshGitInfo()
 
 		return m, guardrailCmd
 
-	case streamInterruptedMsg:
+	case shogunate.StreamInterruptedMsg:
 		// Streaming was interrupted by user
-		m.content.Chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.partialContent))
-		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.partialContent))
+		m.content.Chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
+		slog.Debug("StreamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on interrupt
 		refreshGitInfo()
 
-	case streamErrorMsg:
-		fullError := fmt.Sprintf("Model Error: %v", msg.err)
-		m.content.Chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.err))
-		slog.Error("streamErrorMsg", "error", msg.err)
+	case shogunate.StreamErrorMsg:
+		fullError := fmt.Sprintf("Model Error: %v", msg.Err)
+		m.content.Chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.Err))
+		slog.Error("StreamErrorMsg", "error", msg.Err)
 		// Add full error message to chat for visibility
 		m.content.Chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
 		// Toast will be automatically truncated by commandline component if needed
@@ -1614,19 +1516,19 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stopStreaming()
 		refreshGitInfo()
 
-	case streamMaxTurnsExceededMsg:
+	case shogunate.StreamMaxTurnsExceededMsg:
 		// Max turns exceeded, mark session as inactive and show warning
-		m.content.Chat.AddToRawHistory("STREAM_MAX_TURNS_EXCEEDED", fmt.Sprintf("AI streaming ended after reaching max turns limit: %d", msg.maxTurns))
-		slog.Warn("streamMaxTurnsExceededMsg", "max_turns", msg.maxTurns)
-		m.content.Chat.AddMessage(fmt.Sprintf("\n⚠️  Conversation ended after reaching maximum turn limit (%d turns)", msg.maxTurns))
+		m.content.Chat.AddToRawHistory("STREAM_MAX_TURNS_EXCEEDED", fmt.Sprintf("AI streaming ended after reaching max turns limit: %d", msg.MaxTurns))
+		slog.Warn("StreamMaxTurnsExceededMsg", "max_turns", msg.MaxTurns)
+		m.content.Chat.AddMessage(fmt.Sprintf("\n⚠️  Conversation ended after reaching maximum turn limit (%d turns)", msg.MaxTurns))
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on max turns
 		refreshGitInfo()
 
-	case streamMaxTokensReachedMsg:
+	case shogunate.StreamMaxTokensReachedMsg:
 		// Max tokens reached, mark session as inactive and show warning
-		m.content.Chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.content))
-		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.content))
+		m.content.Chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.Content))
+		slog.Warn("StreamMaxTokensReachedMsg", "content_length", len(msg.Content))
 		m.content.Chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on max tokens
@@ -1718,7 +1620,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case waitingTickMsg:
-		if m.waitingForResponse {
+		if m.status.IsWaiting() {
 			return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return waitingTickMsg{} })
 		}
 		return m, nil
@@ -1736,8 +1638,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle Anthropic specially - show code input modal immediately
 		// TODO: move to performOAuthLogin
 		if provider == "anthropic" {
-			auth := &AuthAnthropic{}
-			authURL, verifier, err := auth.authorize()
+			authClient := &auth.AuthAnthropic{}
+			authURL, verifier, err := authClient.Authorize()
 			if err != nil {
 				slog.Warn("Anthropic Auth failed", "error", err)
 				m.commandLine.AddToast("Authorization failed", "error", 4000)
@@ -2008,16 +1910,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commandLine.AddToast(fmt.Sprintf("Failed to resume session: %v", msg.err), "error", 4000)
 		return m, m.content.ShowChat()
 
-	case llmInitSuccessMsg:
-		// LLM initialization completed successfully
-		m.SetSession(msg.session)
-		slog.Info("LLM session initialized successfully")
-
-	case llmInitErrorMsg:
-		// LLM initialization failed
-		slog.Warn("LLM initialization failed", "error", msg.err)
-		m.commandLine.AddToast("Running without a model, use `:models` to set", "warning", 5000)
-
 	case startConversationMsg:
 		// Handle starting a new conversation (used by init, new, and other commands)
 		slog.Debug("got startConversationMsg", "RunOnHost", msg.RunOnHost, "tryUpgradeToSandbox", msg.tryUpgradeToSandbox)
@@ -2086,12 +1978,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
 				go func() {
-					m.session.AskStream(ctx, msg.prompt)
+					m.session.AskWithStreaming(ctx, msg.prompt, nil)
 				}()
 				return m, tea.Batch(waitCmd, upgradeCmd)
 			} else {
 				go func() {
-					m.session.AskStream(ctx, msg.prompt)
+					m.session.AskWithStreaming(ctx, msg.prompt, nil)
 				}()
 			}
 		} else {
@@ -2199,7 +2091,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandLine.AddToast("Initialization complete!", "success", 3*time.Second)
 
 			// Start a fresh session without clearing the screen
-			m.saveSession()
+			if m.session != nil {
+				m.session.Save()
+			}
 			m.sessionActive = true
 			m.content.Chat.Indent = 0
 			m.initHistory()
@@ -2224,6 +2118,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Error("Init workflow failed", "error", msg.err)
 		m.content.Chat.AddMessage(fmt.Sprintf("%s❌ Initialization failed: %v", systemPrefix, msg.err))
 		m.commandLine.AddToast("Initialization failed", "error", 5*time.Second)
+		return m, nil
+
+	case shogunate.ZhengmingPendingMsg:
+		// Display Zhengming prompt to user
+		m.showZhengmingPrompt(msg)
+		return m, nil
+
+	case shogunate.ZhengmingAnsweredMsg:
+		// Clear Zhengming state
+		m.clearZhengmingPrompt()
 		return m, nil
 
 	}
@@ -2732,4 +2636,144 @@ func jsonEscape(s string) string {
 		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 	}
 	return string(b)
+}
+
+// showZhengmingPrompt displays a Zhengming (clarification) request to the user.
+func (m *TUIModel) showZhengmingPrompt(msg shogunate.ZhengmingPendingMsg) {
+	m.pendingZhengming = &msg
+
+	// Format the Zhengming question
+	formatted := fmt.Sprintf(
+		"\n🔮 **Zhengming Required (正名)**\n\n"+
+			"Minister: %s\n"+
+			"Edict: %s\n"+
+			"Priority: %s\n\n"+
+			"**Question:**\n%s\n\n"+
+			"---\n"+
+			"Please type your answer and press Enter. The Shogunate halts until you respond.",
+		msg.MinisterID,
+		msg.EdictID,
+		string(msg.Priority),
+		msg.Question,
+	)
+
+	m.content.Chat.AddMessage(formatted)
+	m.Mode = "zhengming"
+	m.prompt.Focus()
+}
+
+// clearZhengmingPrompt clears the Zhengming state and returns to normal mode.
+func (m *TUIModel) clearZhengmingPrompt() {
+	m.pendingZhengming = nil
+	m.Mode = "insert"
+}
+
+// sendPromptToChancellor sends a prompt to the Chancellor via the AddPrompt channel
+// and starts a goroutine to receive replies
+func (m *TUIModel) sendPromptToChancellor(ctx context.Context, content string) {
+	replyChan := make(chan shogunate.PromptReply, 100)
+
+	// Get active edict ID if continuing a conversation
+	edictID := m.shogunate.GetActiveEdictID()
+
+	slog.Debug("sendPromptToChancellor: sending context files to Chancellor", "count", len(m.contextFiles))
+
+	// Send prompt to Chancellor with context files
+	env := &shogunate.EdictEnvelope{
+		Prompt:       content,
+		EdictID:      edictID,
+		ContextFiles: m.contextFiles,
+		ReplyChan:    replyChan,
+	}
+
+	// Clear context files after sending (they're now owned by Chancellor)
+	m.contextFiles = make(map[string]string)
+
+	// TODO: rename to m.shogunate.Edict
+	m.shogunate.Chancellor.Edicts <- env
+
+	// Start goroutine to receive Chancellor replies
+	go m.receiveChancellorReplies(ctx, replyChan)
+}
+
+// receiveChancellorReplies receives replies from Chancellor and forwards to TUI
+func (m *TUIModel) receiveChancellorReplies(ctx context.Context, replies <-chan shogunate.PromptReply) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case reply, ok := <-replies:
+			if !ok {
+				// Channel closed - stream complete
+				return
+			}
+			switch reply.Type {
+			case shogunate.ReplyStreamStart:
+				if program != nil {
+					program.Send(shogunate.StreamStartMsg{})
+				}
+			case shogunate.ReplyStreamChunk:
+				if program != nil {
+					program.Send(shogunate.StreamChunkMsg(reply.Content))
+				}
+			case shogunate.ReplyStreamComplete:
+				if program != nil {
+					program.Send(shogunate.StreamCompleteMsg{})
+				}
+				return
+			case shogunate.ReplyToolCall:
+				slog.Debug("chancellor tool call", "tool", reply.Content)
+			case shogunate.ReplyToolResult:
+				slog.Debug("chancellor tool result", "output", reply.Content)
+			case shogunate.ReplyZhengming:
+				// Handle Zhengming - forward to TUI
+				if zm, ok := reply.Data.(shogunate.ZhengmingPendingMsg); ok && program != nil {
+					program.Send(zm)
+				}
+			case shogunate.ReplyError:
+				slog.Error("chancellor error", "error", reply.Error)
+				if program != nil {
+					program.Send(shogunate.StreamErrorMsg{Err: reply.Error})
+				}
+				return
+			}
+		}
+	}
+}
+
+// listenToShogunateResponses listens to the Shogunate's Responses channel
+// and forwards them to the TUI as Bubble Tea messages
+func (m *TUIModel) listenToShogunateResponses() {
+	if m.shogunate == nil {
+		return
+	}
+
+	for resp := range m.shogunate.Responses {
+		switch resp.Type {
+		case shogunate.ResponseStream:
+			// Stream chunk - send to TUI for display
+			if program != nil {
+				program.Send(shogunate.StreamChunkMsg(resp.Content))
+			}
+		case shogunate.ResponseComplete:
+			// Stream complete
+			if program != nil {
+				program.Send(shogunate.StreamCompleteMsg{})
+			}
+		case shogunate.ResponseError:
+			// Error occurred
+			slog.Error("shogunate error", "error", resp.Error)
+			if program != nil {
+				program.Send(shogunate.StreamErrorMsg{Err: resp.Error})
+			}
+		case shogunate.ResponseEdictCreated:
+			// Edict created - start streaming indicator
+			if program != nil {
+				program.Send(shogunate.StreamStartMsg{})
+			}
+		case shogunate.ResponseZhengming:
+			// Zhengming request - handled elsewhere via direct message
+			slog.Debug("zhengming response received", "edict_id", resp.EdictID)
+		}
+	}
 }

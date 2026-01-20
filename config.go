@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	internalconfig "github.com/afittestide/asimi/internal/config"
 	koanftoml "github.com/knadh/koanf/parsers/toml/v2"
 	koanfenv "github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/file"
@@ -29,14 +30,14 @@ type oauthProviderConfig struct {
 
 // Config represents the application configuration structure
 type Config struct {
-	Storage         StorageConfig         `koanf:"storage"`
-	Logging         LoggingConfig         `koanf:"logging"`
-	UI              UIConfig              `koanf:"ui"`
-	LLM             LLMConfig             `koanf:"llm"`
-	History         HistoryConfig         `koanf:"history"`
-	Session         SessionConfig         `koanf:"session"`
-	Container       ContainerConfig       `koanf:"container"`
-	RunShellCommand RunShellCommandConfig `koanf:"run_shell_command"`
+	Storage         StorageConfig            `koanf:"storage"`
+	Logging         LoggingConfig            `koanf:"logging"`
+	UI              UIConfig                 `koanf:"ui"`
+	LLM             internalconfig.LLMConfig `koanf:"llm"`
+	History         HistoryConfig            `koanf:"history"`
+	Session         SessionConfig            `koanf:"session"`
+	Container       ContainerConfig          `koanf:"container"`
+	RunShellCommand RunShellCommandConfig    `koanf:"run_shell_command"`
 }
 
 // StorageConfig holds storage configuration
@@ -50,19 +51,8 @@ type LoggingConfig struct {
 	Format string `koanf:"format"`
 }
 
-// LLMConfig holds LLM configuration
-type LLMConfig struct {
-	Provider                   string `koanf:"provider"`
-	Model                      string `koanf:"model"`
-	APIKey                     string `koanf:"api_key"`
-	BaseURL                    string `koanf:"base_url"`
-	MaxThinkingTokens          int    `koanf:"max_thinking_tokens"`
-	MaxTurns                   int    `koanf:"max_turns"`
-	DisableContextSanitization bool   `koanf:"disable_sanitization"`
-	AuthToken                  string `koanf:"auth_token"`
-	RefreshToken               string `koanf:"refresh_token"`
-	ExperimentalModels         bool   `koanf:"experimental_models"`
-}
+// LLMConfig is an alias to the shared internal config type
+type LLMConfig = internalconfig.LLMConfig
 
 // HistoryConfig holds persistent session history configuration
 type HistoryConfig struct {

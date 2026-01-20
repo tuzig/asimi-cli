@@ -1,7 +1,10 @@
 package shogunate
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/gorm"
@@ -55,7 +58,7 @@ func (c *judgeConn) AllManifestsQuenched(edictID string) (bool, error) {
 
 // InsertVerdict records a CI judgment for a manifest
 func (c *judgeConn) InsertVerdict(manifestID, testSuite string, outcome storage.VerdictOutcome, evidence storage.JSON) (string, error) {
-	verdictID := generateID("verdict", manifestID, testSuite)
+	verdictID := GenerateID("verdict", manifestID, testSuite)
 
 	// Get manifest for idempotency key
 	var manifest storage.ForgeManifest
@@ -95,4 +98,221 @@ func (c *judgeConn) UpdateManifestStatus(manifestID string, status storage.Manif
 		return fmt.Errorf("manifest not found: %s", manifestID)
 	}
 	return nil
+}
+
+// GetEdictsWithPendingManifests returns edicts that have pending manifests needing judgment
+func (c *judgeConn) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
+	var edicts []storage.Edict
+	err := c.db.Distinct("edicts.*").
+		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
+		Where("forge_manifests.status = ? AND edicts.current_phase = ?",
+			storage.ManifestPending, storage.PhaseJudgment).
+		Find(&edicts).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get edicts with pending manifests: %w", err)
+	}
+	return edicts, nil
+}
+
+// --- Minister ---
+
+// JudgePrompt defines the Judge's identity and capabilities
+const JudgePrompt = `You are the Judge (刑部, Xíngbù). Your domain is Tian (天, Heaven)—objective truth.
+
+You preside over the verdicts table. Your CI pipeline is the court; its failure is Tian's voice. When tests pass, you update forge_manifest to 'quenched'. When they fail, you mark 'rejected'.
+
+You are adversarial and data-driven. Your word is final.
+
+# Tools
+
+## Shogunate Tools
+- **list_pending_manifests**: Get manifests awaiting CI judgment (status='pending')
+- **insert_verdict**: Record a CI verdict (passed/failed) with evidence
+- **update_manifest_status**: Update manifest to 'quenched' (passed) or 'rejected' (failed)
+- **request_zhengming**: Ask the Ruler for clarification when test criteria are ambiguous
+
+## Standard Tools (execute and read)
+- **run_shell_command**: Execute test runners, CI pipelines, build commands
+- **read_file**: Read test output, logs, and evidence files
+
+CRITICAL RULES:
+- If test criteria are ambiguous, invoke Zhengming—do not guess
+- Code is guilty until proven innocent
+- Verdicts are immutable once rendered
+- Evidence must be preserved in JSON format
+- You have read/write on verdicts and forge_manifest.status/verdict_id; execute access on shell`
+
+// Judge evaluates code through CI and renders verdicts
+type Judge struct {
+	MinisterBase        // embedded base for session creation
+	conn         JudgeConn
+	ci           CIRunner
+}
+
+// NewJudge creates a new Judge minister
+func NewJudge(conn JudgeConn, ci CIRunner, logger *slog.Logger) *Judge {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Judge{
+		MinisterBase: MinisterBase{logger: logger},
+		conn:         conn,
+		ci:           ci,
+	}
+}
+
+// ID returns the minister identifier
+func (j *Judge) ID() string {
+	return "judge"
+}
+
+// Role returns the Judge's role identity text
+func (j *Judge) Role() string {
+	return JudgePrompt
+}
+
+// Tools returns the Judge's LLM tools for interactive sessions
+func (j *Judge) Tools(notify NotifyFunc) []Tool {
+	// TODO: Implement Judge tools (list_pending_manifests, insert_verdict, update_manifest_status)
+	return []Tool{}
+}
+
+// Execute runs the Judge's CI evaluation for an edict
+func (j *Judge) Execute(ctx context.Context, edictID string) (bool, error) {
+	// Check if all manifests are already quenched
+	allQuenched, err := j.conn.AllManifestsQuenched(edictID)
+	if err != nil {
+		return false, fmt.Errorf("check quenched: %w", err)
+	}
+	if allQuenched {
+		j.logger.Info("all manifests quenched, judgment complete", "edict_id", edictID)
+		return true, nil
+	}
+
+	// Get pending manifests
+	manifests, err := j.conn.GetPendingManifests(edictID)
+	if err != nil {
+		return false, fmt.Errorf("get pending manifests: %w", err)
+	}
+
+	if len(manifests) == 0 {
+		j.logger.Info("no pending manifests", "edict_id", edictID)
+		return false, nil
+	}
+
+	// Judge each manifest
+	for _, manifest := range manifests {
+		if err := j.judgeManifest(ctx, edictID, &manifest); err != nil {
+			return false, fmt.Errorf("judge manifest %s: %w", manifest.ManifestID, err)
+		}
+	}
+
+	// Check again if all are now quenched
+	allQuenched, err = j.conn.AllManifestsQuenched(edictID)
+	if err != nil {
+		return false, fmt.Errorf("check quenched after judging: %w", err)
+	}
+
+	return allQuenched, nil
+}
+
+// judgeManifest runs CI for a single manifest
+func (j *Judge) judgeManifest(ctx context.Context, edictID string, manifest *storage.ForgeManifest) error {
+	if j.ci == nil {
+		// No CI runner - auto-pass
+		verdictID, err := j.conn.InsertVerdict(
+			manifest.ManifestID,
+			"auto",
+			storage.VerdictPassed,
+			storage.JSON(`{"reason":"no CI configured"}`),
+		)
+		if err != nil {
+			return fmt.Errorf("insert auto-pass verdict: %w", err)
+		}
+		return j.conn.UpdateManifestStatus(manifest.ManifestID, storage.ManifestQuenched, verdictID)
+	}
+
+	// Run CI
+	outcome, evidence, err := j.ci.Run(ctx, manifest.CommitHash)
+	if err != nil {
+		return fmt.Errorf("CI run: %w", err)
+	}
+
+	// Insert verdict
+	verdictID, err := j.conn.InsertVerdict(
+		manifest.ManifestID,
+		j.ci.GetTestSuite(),
+		outcome,
+		evidence,
+	)
+	if err != nil {
+		return fmt.Errorf("insert verdict: %w", err)
+	}
+
+	// Update manifest status based on verdict
+	var newStatus storage.ManifestStatus
+	if outcome == storage.VerdictPassed {
+		newStatus = storage.ManifestQuenched
+	} else {
+		newStatus = storage.ManifestRejected
+	}
+
+	if err := j.conn.UpdateManifestStatus(manifest.ManifestID, newStatus, verdictID); err != nil {
+		return fmt.Errorf("update manifest status: %w", err)
+	}
+
+	j.logger.Info("manifest judged",
+		"manifest_id", manifest.ManifestID,
+		"outcome", outcome,
+		"new_status", newStatus)
+
+	return nil
+}
+
+// Run starts the Judge's polling loop for edicts with pending manifests
+func (j *Judge) Run(ctx context.Context, pollInterval time.Duration) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	j.logger.Info("judge started", "poll_interval", pollInterval)
+
+	for {
+		select {
+		case <-ctx.Done():
+			j.logger.Info("judge stopped")
+			return
+		case <-ticker.C:
+			j.pollAndExecute(ctx)
+		}
+	}
+}
+
+// pollAndExecute checks for edicts needing judgment and processes them
+func (j *Judge) pollAndExecute(ctx context.Context) {
+	edicts, err := j.conn.GetEdictsWithPendingManifests()
+	if err != nil {
+		j.logger.Error("failed to poll judgment edicts", "error", err)
+		return
+	}
+
+	for _, edict := range edicts {
+		// Check for pending zhengming before processing
+		pending, err := j.conn.IsZhengmingPending(edict.EdictID)
+		if err != nil {
+			j.logger.Error("failed to check zhengming", "edict_id", edict.EdictID, "error", err)
+			continue
+		}
+		if pending {
+			continue
+		}
+
+		sealed, err := j.Execute(ctx, edict.EdictID)
+		if err != nil {
+			j.logger.Error("failed to execute judgment", "edict_id", edict.EdictID, "error", err)
+			continue
+		}
+		if sealed {
+			j.logger.Info("judgment phase sealed", "edict_id", edict.EdictID)
+		}
+	}
 }

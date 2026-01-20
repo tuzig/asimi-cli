@@ -1,4 +1,4 @@
-package main
+package shogunate
 
 import (
 	"context"
@@ -9,13 +9,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	internalconfig "github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/storage"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/prompts"
 	lctools "github.com/tmc/langchaingo/tools"
@@ -23,8 +24,101 @@ import (
 
 const sandboxOS = "debian"
 
-// NotifyFunc is a function that handles notifications
-type NotifyFunc func(any)
+// Version is the application version, set by main package
+var Version = "dev"
+
+// SessionConfig holds configuration needed by Session.
+type SessionConfig struct {
+	LLM        internalconfig.LLMConfig
+	AgentsFile string
+}
+
+// SessionStore is a placeholder interface for session persistence.
+type SessionStore interface {
+	SaveSession(session *Session)
+	SaveSessionSync(session *Session) error
+	LoadSession(id string) (*Session, error)
+	ListSessions(limit int) ([]Session, error)
+	Close()
+	Flush()
+}
+
+// TokenRefreshFunc is called when OAuth token needs refresh
+type TokenRefreshFunc func(provider string) (string, error)
+
+// ModelClientFunc creates a new LLM client with the given config
+type ModelClientFunc func(config *internalconfig.LLMConfig) (llms.Model, error)
+
+// ToolsBuilderFunc builds tools from configuration
+type ToolsBuilderFunc func(config *SessionConfig) ([]llms.Tool, map[string]interface{})
+
+// Tool input types used by Session for context tracking
+
+// ReadFileInput represents input for read_file tool
+type ReadFileInput struct {
+	Path string `json:"path"`
+}
+
+// ReadManyFilesInput represents input for read_many_files tool
+type ReadManyFilesInput struct {
+	Paths []string `json:"paths"`
+}
+
+// WriteFileInput represents input for write_file tool
+type WriteFileInput struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// Stream notification message types
+
+// StreamChunkMsg contains a streaming text chunk from the LLM
+type StreamChunkMsg string
+
+// StreamReasoningChunkMsg contains a reasoning/thinking chunk from the LLM
+type StreamReasoningChunkMsg string
+
+// StreamStartMsg signals that streaming has begun
+type StreamStartMsg struct{}
+
+// StreamCompleteMsg signals that streaming has completed successfully
+type StreamCompleteMsg struct{}
+
+// StreamInterruptedMsg signals that streaming was interrupted (e.g., by user)
+type StreamInterruptedMsg struct{ PartialContent string }
+
+// StreamErrorMsg signals an error during streaming
+type StreamErrorMsg struct{ Err error }
+
+// StreamMaxTurnsExceededMsg signals that the max turns limit was reached
+type StreamMaxTurnsExceededMsg struct{ MaxTurns int }
+
+// StreamMaxTokensReachedMsg signals that the response was truncated due to token limit
+type StreamMaxTokensReachedMsg struct{ Content string }
+
+// ContainerLaunchMsg signals container lifecycle events
+type ContainerLaunchMsg struct{ Message string }
+
+// PromptReply carries responses back to the TUI via channel
+type PromptReply struct {
+	Type    PromptReplyType
+	Content string
+	Error   error
+	Data    any // For Zhengming requests, tool results, etc.
+}
+
+// PromptReplyType identifies the type of reply
+type PromptReplyType int
+
+const (
+	ReplyStreamStart PromptReplyType = iota
+	ReplyStreamChunk
+	ReplyStreamComplete
+	ReplyToolCall
+	ReplyToolResult
+	ReplyZhengming // Chancellor needs clarification
+	ReplyError
+)
 
 // Session is a lightweight chat loop that uses llms.Model directly
 // and native provider tool/function-calling. It executes tools via the
@@ -40,48 +134,66 @@ type Session struct {
 	ProjectSlug string    `json:"project_slug,omitempty"`
 
 	Messages     []llms.MessageContent `json:"messages"`
-	ContextFiles map[string]string     `json:"context_files"`
 	MessageCount int                   `json:"message_count,omitempty"` // For list views, avoids loading full messages
 
 	// Track files read during session for write protection
 	filesRead map[string]bool `json:"-"`
 
-	llm                     llms.Model              `json:"-"`
-	toolCatalog             map[string]lctools.Tool `json:"-"`
-	toolDefs                []llms.Tool             `json:"-"`
-	lastToolCallKey         string                  `json:"-"`
-	toolCallRepetitionCount int                     `json:"-"`
-	scheduler               *CoreToolScheduler      `json:"-"`
-	notify                  NotifyFunc              `json:"-"`
-	accumulatedContent      strings.Builder         `json:"-"`
-	config                  *LLMConfig              `json:"-"`
-	startTime               time.Time               `json:"-"`
+	llm                     llms.Model                `json:"-"`
+	toolCatalog             map[string]lctools.Tool   `json:"-"`
+	toolDefs                []llms.Tool               `json:"-"`
+	lastToolCallKey         string                    `json:"-"`
+	toolCallRepetitionCount int                       `json:"-"`
+	scheduler               *CoreToolScheduler        `json:"-"`
+	notify                  NotifyFunc                `json:"-"`
+	accumulatedContent      strings.Builder           `json:"-"`
+	config                  *internalconfig.LLMConfig `json:"-"`
+	startTime               time.Time                 `json:"-"`
+
+	// Shogunate Forge for envelope-based tool execution
+	forge *Forge `json:"-"`
 
 	// Token counts - updated when messages/context changes
 	systemPromptTokens int `json:"-"`
 	systemToolsTokens  int `json:"-"`
 	memoryFilesTokens  int `json:"-"`
 	messagesTokens     int `json:"-"`
+
+	// Persistence (injected by TUI after session creation)
+	store      SessionStore `json:"-"`
+	autoSaveOn bool         `json:"-"`
+
+	// Callbacks for OAuth and model client recreation (injected by main)
+	refreshToken   TokenRefreshFunc `json:"-"`
+	recreateClient ModelClientFunc  `json:"-"`
 }
 
-// formatMetadata returns the metadata header used by export helpers.
-func (s *Session) formatMetadata(exportType ExportType, exportedAt time.Time) string {
-	var b strings.Builder
-	exported := exportedAt.Format("2006-01-02 15:04:05")
+// SetOAuthCallbacks sets the callbacks for OAuth token refresh and model client recreation.
+func (s *Session) SetOAuthCallbacks(refresh TokenRefreshFunc, recreate ModelClientFunc) {
+	s.refreshToken = refresh
+	s.recreateClient = recreate
+}
 
-	b.WriteString(fmt.Sprintf("**Asimi Version:** %s \n", version))
-	b.WriteString(fmt.Sprintf("**Export Type:** %s\n", exportType))
-	b.WriteString(fmt.Sprintf("**Session ID:** %s | **Working Directory:** %s\n", s.ID, s.WorkingDir))
-	b.WriteString(fmt.Sprintf("**Provider:** %s | **Model:** %s\n", s.Provider, s.Model))
-	b.WriteString(fmt.Sprintf("**Created:** %s | **Last Updated:** %s | **Exported:** %s\n",
-		s.CreatedAt.Format("2006-01-02 15:04:05"),
-		s.LastUpdated.Format("2006-01-02 15:04:05"),
-		exported))
-	if s.ProjectSlug != "" {
-		b.WriteString(fmt.Sprintf("**Project:** %s\n", s.ProjectSlug))
+// SetStore sets the session store for persistence operations.
+func (s *Session) SetStore(store SessionStore, autoSave bool) {
+	s.store = store
+	s.autoSaveOn = autoSave
+}
+
+// Save persists the current session state asynchronously.
+func (s *Session) Save() {
+	if s.store == nil || !s.autoSaveOn {
+		return
 	}
+	s.store.SaveSession(s)
+	slog.Debug("session save queued")
+}
 
-	return b.String()
+// CloseStore gracefully closes the session store.
+func (s *Session) CloseStore() {
+	if s.store != nil {
+		s.store.Close()
+	}
 }
 
 // No syncMessages method needed anymore - we only use Messages
@@ -91,25 +203,13 @@ func (s *Session) resetStreamBuffer() {
 	s.accumulatedContent.Reset()
 }
 
-// getStreamBuffer returns the current accumulated content and optionally resets it
-func (s *Session) getStreamBuffer(reset bool) string {
-	content := s.accumulatedContent.String()
-	if reset {
-		s.accumulatedContent.Reset()
-	}
-	return content
+// getStreamBuffer returns the current accumulated content
+func (s *Session) getStreamBuffer() string {
+	return s.accumulatedContent.String()
 }
 
 // notification messages
-type streamChunkMsg string
-type streamReasoningChunkMsg string
-type streamStartMsg struct{}
-type streamCompleteMsg struct{}
-type streamInterruptedMsg struct{ partialContent string }
-type streamErrorMsg struct{ err error }
-type streamMaxTurnsExceededMsg struct{ maxTurns int }
-type streamMaxTokensReachedMsg struct{ content string }
-type containerLaunchMsg struct{ message string }
+// Message types are defined in session_msgs.go
 
 // Local copies of prompt partials and template used by the session, to decouple from agent.go.
 var sessPromptPartials = map[string]any{
@@ -132,7 +232,9 @@ var sessPromptPartials = map[string]any{
 var sessSystemPromptTemplate string
 
 // NewSession creates a new Session instance with a system prompt and tools.
-func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, scheduler *CoreToolScheduler, toolNotify NotifyFunc) (*Session, error) {
+// If systemPrompt is empty, it uses the default template from prompts/system_prompt.tmpl.
+// If systemPrompt is provided, it uses that directly (for Shogunate ministers, etc.).
+func NewSession(llm llms.Model, cfg *SessionConfig, repoInfo repo.RepoInfo, tools []Tool, scheduler *CoreToolScheduler, toolNotify NotifyFunc, role string) (*Session, error) {
 	now := time.Now()
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -140,7 +242,7 @@ func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, scheduler *CoreT
 	}
 
 	s := &Session{
-		ID:          generateSessionID(),
+		ID:          GenerateSessionID(),
 		CreatedAt:   now,
 		LastUpdated: now,
 		WorkingDir:  workingDir,
@@ -156,18 +258,19 @@ func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, scheduler *CoreT
 		// Set default maxTurns if not configured
 	} else {
 		// Create default config if none provided
-		s.config = &LLMConfig{}
+		s.config = &internalconfig.LLMConfig{}
 	}
 	if s.config.MaxTurns <= 0 {
 		s.config.MaxTurns = 999
 	}
 
-	// Build system prompt from the existing template and partials, same as the agent.
-	partials := make(map[string]any, len(sessPromptPartials))
-	for k, v := range sessPromptPartials {
-		partials[k] = v
+	// Build system prompt from the existing template and partials (legacy mode)
+	partials := map[string]any{
+		"SandboxStatus": "none",
+		"Env":           sessBuildEnvBlock(repoInfo),
+		"Role":          role,
+		"ProjectName":   repoInfo.Slug,
 	}
-	partials["Env"] = sessBuildEnvBlock(repoInfo)
 
 	pt := prompts.PromptTemplate{
 		Template:         sessSystemPromptTemplate,
@@ -181,22 +284,19 @@ func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, scheduler *CoreT
 	if err != nil {
 		return nil, fmt.Errorf("formatting system prompt: %w", err)
 	}
-	var parts []llms.ContentPart
-	if s.config != nil && s.config.Provider == "anthropic" {
-		parts = append(parts, llms.TextPart("You are Claude Code, Anthropic's official CLI for Claude."))
-	}
-	parts = append(parts, llms.TextPart(sys))
+	parts := []llms.ContentPart{llms.TextPart(sys)}
 
 	// Add agents file (AGENTS.md or CLAUDE.md) to system message if it exists
 	agentsFile := "AGENTS.md"
-	if cfg != nil && cfg.Session.AgentsFile != "" {
-		agentsFile = cfg.Session.AgentsFile
+	if cfg != nil && cfg.AgentsFile != "" {
+		agentsFile = cfg.AgentsFile
 	}
 	projectContext := readProjectContext(agentsFile)
 	if projectContext != "" {
 		parts = append(parts, llms.TextPart(fmt.Sprintf("\n--- Project specific directions from: %s ---\n%s\n--- End of Directions from: %s ---", agentsFile, projectContext, agentsFile)))
-	}
 
+	}
+	// For Ollama, consolidate all parts into a single text
 	if s.config != nil && s.config.Provider == "ollama" {
 		var builder strings.Builder
 		for _, part := range parts {
@@ -216,7 +316,7 @@ func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, scheduler *CoreT
 	})
 
 	// Build tool schema for the model and execution catalog for the scheduler.
-	s.toolDefs, s.toolCatalog = buildLLMTools(cfg)
+	s.toolDefs, s.toolCatalog = buildLLMTools(tools)
 	// Use provided scheduler or create a new one for non-interactive mode
 	if scheduler != nil {
 		s.scheduler = scheduler
@@ -224,24 +324,9 @@ func NewSession(llm llms.Model, cfg *Config, repoInfo RepoInfo, scheduler *CoreT
 	} else {
 		s.scheduler = NewCoreToolScheduler(s.notify)
 	}
-	s.ContextFiles = make(map[string]string)
 	s.startTime = time.Now()
-	s.updateTokenCounts()
+	s.UpdateTokenCounts(nil)
 	return s, nil
-}
-
-// AddContextFile adds file content to the context for the next prompt
-func (s *Session) AddContextFile(path, content string) {
-	s.ContextFiles[path] = content
-	// Invalidate context cache since context files changed
-	s.updateTokenCounts()
-}
-
-// ClearContext removes all dynamically added file content from the context
-func (s *Session) ClearContext() {
-	s.ContextFiles = make(map[string]string)
-	// Invalidate context cache since context files changed
-	s.updateTokenCounts()
 }
 
 // MarkFileAsRead records that a file has been read during this session
@@ -309,36 +394,117 @@ func (s *Session) ClearHistory() {
 	s.toolCallRepetitionCount = 0
 
 	// Invalidate context cache since messages changed
-	s.updateTokenCounts()
+	s.UpdateTokenCounts(nil)
 
 	// Reset session start time
 	s.startTime = time.Now()
-
-	s.ClearContext()
 }
 
-// HasContextFiles returns true if there are files in the context
-func (s *Session) HasContextFiles() bool {
-	return len(s.ContextFiles) > 0
-}
-
-// GetContextFiles returns a copy of the context files map
-func (s *Session) GetContextFiles() map[string]string {
-	result := make(map[string]string)
-	for k, v := range s.ContextFiles {
-		result[k] = v
+// InjectSystemPromptSuffix appends additional content to the system prompt.
+// This is used to add role-specific identity (e.g., Chancellor prompt) to the session.
+func (s *Session) InjectSystemPromptSuffix(suffix string) {
+	if len(s.Messages) == 0 || s.Messages[0].Role != llms.ChatMessageTypeSystem {
+		slog.Warn("cannot inject suffix: no system message found")
+		return
 	}
-	return result
+
+	// Append the suffix as a new text part to the system message
+	s.Messages[0].Parts = append(s.Messages[0].Parts, llms.TextPart(suffix))
+	s.UpdateTokenCounts(nil)
+}
+
+// SetSystemPrompt sets the system prompt
+func (s *Session) SetSystemPrompt(prompt string) {
+	s.ReplaceSystemPrompt(prompt)
+}
+
+// ReplaceSystemPrompt replaces the entire system prompt with new content.
+// This is used for minister sessions that need a completely different identity.
+func (s *Session) ReplaceSystemPrompt(newPrompt string) {
+	systemMsg := llms.MessageContent{
+		Role:  llms.ChatMessageTypeSystem,
+		Parts: []llms.ContentPart{llms.TextPart(newPrompt)},
+	}
+
+	if len(s.Messages) > 0 && s.Messages[0].Role == llms.ChatMessageTypeSystem {
+		s.Messages[0] = systemMsg
+	} else {
+		// Prepend system message
+		s.Messages = append([]llms.MessageContent{systemMsg}, s.Messages...)
+	}
+	s.UpdateTokenCounts(nil)
+}
+
+// RegisterShogunateTools adds shogunate-specific tools to the session's tool catalog.
+// The tools are added to both the execution catalog and the LLM definitions.
+func (s *Session) RegisterShogunateTools(tools []Tool) {
+	for _, tool := range tools {
+		// Add to execution catalog - Tool is compatible with lctools.Tool
+		s.toolCatalog[tool.Name()] = tool
+
+		// Add to LLM tool definitions
+		s.toolDefs = append(s.toolDefs, llms.Tool{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        tool.Name(),
+				Description: tool.Description(),
+				Parameters:  tool.ParameterSchema(),
+			},
+		})
+	}
+	s.UpdateTokenCounts(nil)
+}
+
+// AddTools adds shogunate tools to the session
+func (s *Session) AddTools(tools []Tool) {
+	slog.Info("adding shogunate tools to session", "count", len(tools))
+	s.RegisterShogunateTools(tools)
+	slog.Info("session tools after adding", "toolDefs", len(s.toolDefs), "toolCatalog", len(s.toolCatalog))
+}
+
+// GetNotify returns the session's notify function for use by sub-components.
+func (s *Session) GetNotify() NotifyFunc {
+	return s.notify
+}
+
+// GetScheduler returns the session's tool scheduler.
+func (s *Session) GetScheduler() *CoreToolScheduler {
+	return s.scheduler
+}
+
+// SetForge sets the Shogunate Forge for envelope-based tool execution.
+// It also passes the Session's tools to the Forge for execution.
+func (s *Session) SetForge(forge *Forge) {
+	s.forge = forge
+
+	// Pass Session's tools to the Forge
+	// The tools in toolCatalog are concrete types that implement Tool
+	if forge != nil && len(s.toolCatalog) > 0 {
+		forgeTools := make(map[string]Tool)
+		for name, tool := range s.toolCatalog {
+			if st, ok := tool.(Tool); ok {
+				forgeTools[name] = st
+			}
+		}
+		if len(forgeTools) > 0 {
+			forge.SetTools(forgeTools)
+		}
+	}
+}
+
+// GetForge returns the Shogunate Forge if set.
+func (s *Session) GetForge() *Forge {
+	return s.forge
 }
 
 // buildPromptWithContext builds a prompt that includes all file content
-func (s *Session) buildPromptWithContext(userPrompt string) string {
-	if len(s.ContextFiles) == 0 {
+func buildPromptWithContext(userPrompt string, contextFiles map[string]string) string {
+	if len(contextFiles) == 0 {
 		return userPrompt
 	}
 
 	var fileContents []string
-	for path, content := range s.ContextFiles {
+	for path, content := range contextFiles {
 		fileContents = append(fileContents, fmt.Sprintf("--- Context from: %s ---\n%s\n--- End of Context from: %s ---", path, content, path))
 	}
 
@@ -372,10 +538,10 @@ func (s *Session) checkToolCallLoop(name, argsJSON string) bool {
 	return false
 }
 
-// sanitizeMessages removes any trailing assistant messages with tool calls
+// SanitizeMessages removes any trailing assistant messages with tool calls
 // that don't have corresponding tool responses. This prevents errors when the agent
 // is interrupted mid-execution. Can be disabled via config.
-func (s *Session) sanitizeMessages() {
+func (s *Session) SanitizeMessages() {
 	// Check if sanitization is disabled
 	if s.config != nil && s.config.DisableContextSanitization {
 		return
@@ -460,17 +626,17 @@ func (s *Session) sanitizeMessages() {
 }
 
 // prepareUserMessage builds the prompt with context and adds it to the message history
-func (s *Session) prepareUserMessage(prompt string) {
+func (s *Session) prepareUserMessage(prompt string, contextFiles map[string]string) {
 	// Before adding a new user message, check for and remove any unmatched tool calls
-	s.sanitizeMessages()
+	s.SanitizeMessages()
 
-	fullPrompt := s.buildPromptWithContext(prompt)
+	fullPrompt := buildPromptWithContext(prompt, contextFiles)
 	s.Messages = append(s.Messages, llms.MessageContent{
 		Role:  llms.ChatMessageTypeHuman,
 		Parts: []llms.ContentPart{llms.TextPart(fullPrompt)},
 	})
 	// Invalidate context cache since messages changed
-	s.updateTokenCounts()
+	s.UpdateTokenCounts(nil)
 }
 
 // isOAuthTokenExpiredError checks if an error is due to an expired or revoked OAuth token
@@ -512,7 +678,7 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 
 			// Send reasoning chunk to UI
 			if len(reasoningChunk) > 0 && s.notify != nil {
-				s.notify(streamReasoningChunkMsg(string(reasoningChunk)))
+				s.notify(StreamReasoningChunkMsg(string(reasoningChunk)))
 			}
 			return nil
 		}
@@ -520,17 +686,17 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 	}
 
 	// Remove any unmatched tool calls from context before sending to API
-	s.sanitizeMessages()
+	s.SanitizeMessages()
 
 	// Attempt with explicit tool choice first
 	resp, err := s.llm.GenerateContent(ctx, s.Messages, callOptsWithChoice...)
 	if err != nil {
 		// Check if this is an OAuth token expiration error
-		if isOAuthTokenExpiredError(err) {
+		if isOAuthTokenExpiredError(err) && s.refreshToken != nil && s.recreateClient != nil {
 			slog.Info("OAuth token expired, attempting to force refresh and retry", "error", err)
 
 			// Force refresh the token (ignoring local expiry time since server rejected it)
-			newToken, refreshErr := forceRefreshOAuthToken(s.config.Provider)
+			newToken, refreshErr := s.refreshToken(s.config.Provider)
 			if refreshErr != nil {
 				slog.Error("Failed to force refresh OAuth token", "error", refreshErr)
 				return nil, fmt.Errorf("OAuth token expired and refresh failed: %w (original error: %v)", refreshErr, err)
@@ -540,8 +706,7 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 			s.config.AuthToken = newToken
 
 			// Recreate the LLM client with the new token
-			fullConfig := &Config{LLM: *s.config}
-			newLLM, clientErr := getModelClient(fullConfig)
+			newLLM, clientErr := s.recreateClient(s.config)
 			if clientErr != nil {
 				slog.Error("Failed to recreate LLM client after token refresh", "error", clientErr)
 				return nil, fmt.Errorf("failed to recreate LLM client after token refresh: %w", clientErr)
@@ -554,6 +719,9 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 			if err != nil {
 				return nil, fmt.Errorf("request failed after OAuth token refresh: %w", err)
 			}
+		} else if isOAuthTokenExpiredError(err) {
+			// OAuth error but no callbacks set
+			return nil, fmt.Errorf("OAuth token expired but refresh callbacks not set: %w", err)
 		} else {
 			// Not an OAuth error, return as-is
 			return nil, err
@@ -612,7 +780,7 @@ func (s *Session) appendMessage(choice *llms.ContentChoice) {
 			Parts: parts,
 		})
 		// Invalidate context cache since messages changed
-		s.updateTokenCounts()
+		s.UpdateTokenCounts(nil)
 	}
 }
 
@@ -703,7 +871,7 @@ func (s *Session) RollbackTo(snapshot int) {
 	if snapshot < len(s.Messages) {
 		s.Messages = s.Messages[:snapshot]
 		// Invalidate context cache since messages changed
-		s.updateTokenCounts()
+		s.UpdateTokenCounts(nil)
 	}
 
 	// Reset tool loop detection state when rolling back
@@ -727,8 +895,133 @@ func hasToolCallResponse(toolMessages []llms.MessageContent, toolCallID string) 
 	return false
 }
 
-// processToolCalls handles executing tool calls and building response messages
+// processToolCalls handles executing tool calls and building response messages.
+// When Forge is set, uses the envelope pattern for tool execution with audit trail.
+// Otherwise falls back to direct scheduler execution.
 func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCall) ([]llms.MessageContent, bool) {
+	// Use Forge envelope pattern if available
+	if s.forge != nil {
+		return s.processToolCallsViaForge(ctx, toolCalls)
+	}
+
+	// Fallback to direct execution
+	return s.processToolCallsDirect(ctx, toolCalls)
+}
+
+// forgeReplyTimeout is the maximum time to wait for a single tool execution reply.
+const forgeReplyTimeout = 5 * time.Minute
+
+// processToolCallsViaForge executes tool calls using the Forge envelope pattern.
+func (s *Session) processToolCallsViaForge(ctx context.Context, toolCalls []llms.ToolCall) ([]llms.MessageContent, bool) {
+	// Create reply channel for this batch
+	replyChan := make(chan *LingResult, len(toolCalls))
+
+	// Track valid tool calls sent
+	sentCount := 0
+	toolCallIDs := make(map[int]string) // index -> tool call ID for timeout error messages
+
+	for _, tc := range toolCalls {
+		if tc.FunctionCall == nil {
+			continue
+		}
+		name := tc.FunctionCall.Name
+		argsJSON := tc.FunctionCall.Arguments
+
+		// Check for tool call loops
+		if s.checkToolCallLoop(name, argsJSON) {
+			// Still need to send something so we can collect all results
+			slog.Warn("tool call loop detected", "tool", name, "count", s.toolCallRepetitionCount)
+		}
+
+		// Generate a unique Ling ID
+		lingID := GenerateID("ling", s.ID, tc.ID, name)
+
+		slog.Debug("sending envelope to forge", "tool", name, "ling_id", lingID)
+
+		env := &LingEnvelope{
+			Ling: &storage.Ling{
+				LingID:     lingID,
+				ToolName:   name,
+				ToolInput:  storage.JSON(argsJSON),
+				ToolCallID: tc.ID,
+			},
+			ReplyChan: replyChan,
+		}
+		s.forge.AddLing() <- env
+		toolCallIDs[sentCount] = tc.ID
+		sentCount++
+	}
+
+	// Collect results (blocks until all received or timeout)
+	toolMessages := make([]llms.MessageContent, 0, sentCount)
+	for i := 0; i < sentCount; i++ {
+		select {
+		case <-ctx.Done():
+			// Context cancelled - add abort responses for remaining
+			slog.Debug("context cancelled during forge execution", "received", i, "total", sentCount)
+			for j := i; j < sentCount; j++ {
+				// Drain any remaining results
+				select {
+				case result := <-replyChan:
+					var content string
+					if result.Error != nil {
+						content = fmt.Sprintf("error: %v (aborted)", result.Error)
+					} else {
+						content = result.Output + " (session aborted)"
+					}
+					toolMessages = append(toolMessages, llms.MessageContent{
+						Role: llms.ChatMessageTypeTool,
+						Parts: []llms.ContentPart{llms.ToolCallResponse{
+							ToolCallID: result.Ling.ToolCallID,
+							Name:       result.Ling.ToolName,
+							Content:    content,
+						}},
+					})
+				default:
+					// No more results available
+				}
+			}
+			return toolMessages, true
+
+		case <-time.After(forgeReplyTimeout):
+			// Timeout waiting for Forge reply - likely Forge crashed or deadlocked
+			slog.Error("forge reply timeout", "received", i, "total", sentCount, "timeout", forgeReplyTimeout)
+			// Add timeout error for remaining tool calls
+			for j := i; j < sentCount; j++ {
+				toolMessages = append(toolMessages, llms.MessageContent{
+					Role: llms.ChatMessageTypeTool,
+					Parts: []llms.ContentPart{llms.ToolCallResponse{
+						ToolCallID: toolCallIDs[j],
+						Name:       "unknown",
+						Content:    fmt.Sprintf("error: forge reply timeout after %v", forgeReplyTimeout),
+					}},
+				})
+			}
+			return toolMessages, true
+
+		case result := <-replyChan:
+			var content string
+			if result.Error != nil {
+				content = fmt.Sprintf("error: %v", result.Error)
+			} else {
+				content = result.Output
+			}
+			toolMessages = append(toolMessages, llms.MessageContent{
+				Role: llms.ChatMessageTypeTool,
+				Parts: []llms.ContentPart{llms.ToolCallResponse{
+					ToolCallID: result.Ling.ToolCallID,
+					Name:       result.Ling.ToolName,
+					Content:    content,
+				}},
+			})
+		}
+	}
+
+	return toolMessages, false
+}
+
+// processToolCallsDirect executes tool calls directly via scheduler (legacy path).
+func (s *Session) processToolCallsDirect(ctx context.Context, toolCalls []llms.ToolCall) ([]llms.MessageContent, bool) {
 	toolMessages := make([]llms.MessageContent, 0, len(toolCalls))
 
 	for i, tc := range toolCalls {
@@ -807,11 +1100,10 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCal
 
 // Ask sends a user prompt through the native loop. It returns the final assistant text.
 // It handles provider-native tool calls by executing them and feeding results back.
-func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
+// contextFiles contains files loaded via @ references that should be included in the prompt.
+func (s *Session) Ask(ctx context.Context, prompt string, contextFiles map[string]string) (string, error) {
 	// Build prompt with context if available and add to messages
-	s.prepareUserMessage(prompt)
-	// Clear context after building the prompt
-	defer s.ClearContext()
+	s.prepareUserMessage(prompt, contextFiles)
 
 	// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
 	var finalText string
@@ -861,7 +1153,7 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 		if len(toolMessages) > 0 {
 			s.Messages = append(s.Messages, toolMessages...)
 			// Invalidate context cache since messages changed
-			s.updateTokenCounts()
+			s.UpdateTokenCounts(nil)
 		}
 
 		if shouldReturn {
@@ -886,15 +1178,14 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 // Unlike Ask, it streams chunks to the UI via the notify callback.
 // Unlike AskStream, it blocks until completion and returns the final response.
 // This is useful for workflows that need to show progress but also wait for completion.
-func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, error) {
+// contextFiles contains files loaded via @ references that should be included in the prompt.
+func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFiles map[string]string) (string, error) {
 	// Build prompt with context if available and add to messages
-	s.prepareUserMessage(prompt)
-	// Clear context after building the prompt
-	defer s.ClearContext()
+	s.prepareUserMessage(prompt, contextFiles)
 
 	// Notify UI that streaming has started
 	if s.notify != nil {
-		s.notify(streamStartMsg{})
+		s.notify(StreamStartMsg{})
 	}
 
 	// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
@@ -909,9 +1200,9 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, 
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
-			accumulatedText := s.getStreamBuffer(false)
+			accumulatedText := s.getStreamBuffer()
 			if s.notify != nil {
-				s.notify(streamInterruptedMsg{partialContent: accumulatedText})
+				s.notify(StreamInterruptedMsg{PartialContent: accumulatedText})
 			}
 			return accumulatedText, ctx.Err()
 		default:
@@ -928,7 +1219,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, 
 			chunkStr := string(chunk)
 			s.accumulatedContent.WriteString(chunkStr)
 			if s.notify != nil {
-				s.notify(streamChunkMsg(chunkStr))
+				s.notify(StreamChunkMsg(chunkStr))
 			}
 			return nil
 		}
@@ -936,25 +1227,25 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, 
 		choice, err := s.generateLLMResponse(ctx, streamingFunc)
 		if err != nil {
 			if ctx.Err() != nil {
-				accumulatedText := s.getStreamBuffer(false)
+				accumulatedText := s.getStreamBuffer()
 				if s.notify != nil {
-					s.notify(streamInterruptedMsg{partialContent: accumulatedText})
+					s.notify(StreamInterruptedMsg{PartialContent: accumulatedText})
 				}
 				return accumulatedText, ctx.Err()
 			}
 			if s.notify != nil {
-				s.notify(streamErrorMsg{err: err})
+				s.notify(StreamErrorMsg{Err: err})
 			}
 			return "", err
 		}
 
 		// Use accumulated content as the response
-		responseContent := s.getStreamBuffer(false)
+		responseContent := s.getStreamBuffer()
 
 		// Check if response was truncated due to max tokens
 		if choice.StopReason == "max_tokens" {
 			if s.notify != nil {
-				s.notify(streamMaxTokensReachedMsg{content: responseContent})
+				s.notify(StreamMaxTokensReachedMsg{Content: responseContent})
 			}
 			s.appendMessage(choice)
 			return responseContent + "\n\n[Response truncated due to length limit]", nil
@@ -980,12 +1271,12 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, 
 		toolMessages, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls)
 		if len(toolMessages) > 0 {
 			s.Messages = append(s.Messages, toolMessages...)
-			s.updateTokenCounts()
+			s.UpdateTokenCounts(nil)
 		}
 
 		if shouldReturn {
 			if s.notify != nil {
-				s.notify(streamCompleteMsg{})
+				s.notify(StreamCompleteMsg{})
 			}
 			return finalText, nil
 		}
@@ -1000,9 +1291,9 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, 
 	// Notify completion
 	if s.notify != nil {
 		if i >= maxTurns {
-			s.notify(streamMaxTurnsExceededMsg{maxTurns: maxTurns})
+			s.notify(StreamMaxTurnsExceededMsg{MaxTurns: maxTurns})
 		} else {
-			s.notify(streamCompleteMsg{})
+			s.notify(StreamCompleteMsg{})
 		}
 	}
 
@@ -1014,23 +1305,20 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, 
 
 // AskStream sends a user prompt through the native loop with streaming support.
 // It launches the streaming process in a goroutine and returns immediately.
-// Uses the notify callback to send streaming chunks as they arrive.
+// Sends PromptReply messages directly to the reply channel and closes it when done.
 // Supports cancellation via the provided context.
-func (s *Session) AskStream(ctx context.Context, prompt string) {
+// contextFiles contains files loaded via @ references that should be included in the prompt.
+func (s *Session) AskStream(ctx context.Context, prompt string, reply chan<- PromptReply, edictID string, contextFiles map[string]string) {
 	// Launch streaming in a goroutine to avoid blocking the UI
 	go func() {
-		// Ensure cleanup on exit
-		defer func() {
-			s.ClearContext()
-		}()
+		// Ensure channel close on exit
+		defer close(reply)
 
 		// Build prompt with context if available and add to messages
-		s.prepareUserMessage(prompt)
+		s.prepareUserMessage(prompt, contextFiles)
 
-		// Notify UI that streaming has started
-		if s.notify != nil {
-			s.notify(streamStartMsg{})
-		}
+		// Signal streaming has started
+		reply <- PromptReply{Type: ReplyStreamStart, Data: edictID}
 
 		// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
 		// Cap at a few iterations to avoid infinite loops.
@@ -1043,19 +1331,17 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			select {
 			case <-ctx.Done():
 				// Streaming was cancelled - add any accumulated content to message history
-				accumulatedText := s.getStreamBuffer(false)
+				accumulatedText := s.getStreamBuffer()
 				if strings.TrimSpace(accumulatedText) != "" {
 					s.appendMessage(&llms.ContentChoice{Content: accumulatedText})
 				}
-				if s.notify != nil {
-					s.notify(streamInterruptedMsg{partialContent: accumulatedText})
-				}
+				reply <- PromptReply{Type: ReplyStreamComplete}
 				return
 			default:
 				// Continue with streaming
 			}
 
-			// Create streaming function that accumulates content and notifies UI
+			// Create streaming function that accumulates content and sends to reply channel
 			streamingFunc := func(ctx context.Context, chunk []byte) error {
 				// Check for cancellation in streaming callback
 				select {
@@ -1066,9 +1352,7 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 
 				chunkStr := string(chunk)
 				s.accumulatedContent.WriteString(chunkStr)
-				if s.notify != nil {
-					s.notify(streamChunkMsg(chunkStr))
-				}
+				reply <- PromptReply{Type: ReplyStreamChunk, Content: chunkStr}
 				return nil
 			}
 
@@ -1076,30 +1360,27 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			if err != nil {
 				// Check if this was a cancellation
 				if ctx.Err() != nil {
-					accumulatedText := s.getStreamBuffer(false)
+					accumulatedText := s.getStreamBuffer()
 					if strings.TrimSpace(accumulatedText) != "" {
 						s.appendMessage(&llms.ContentChoice{Content: accumulatedText})
 					}
-					if s.notify != nil {
-						s.notify(streamInterruptedMsg{partialContent: accumulatedText})
-					}
+					reply <- PromptReply{Type: ReplyStreamComplete}
 					return
 				}
 
 				// Regular error
-				if s.notify != nil {
-					s.notify(streamErrorMsg{err: err})
-				}
+				reply <- PromptReply{Type: ReplyError, Error: err}
 				return
 			}
 
 			// Use accumulated content as the response
-			responseContent := s.getStreamBuffer(false)
+			responseContent := s.getStreamBuffer()
 
 			// Check if response was truncated due to max tokens
 			if choice.StopReason == "max_tokens" {
+				// Notify via legacy callback if set (for non-Shogunate paths)
 				if s.notify != nil {
-					s.notify(streamMaxTokensReachedMsg{content: responseContent})
+					s.notify(StreamMaxTokensReachedMsg{Content: responseContent})
 				}
 				s.appendMessage(choice)
 				break
@@ -1119,7 +1400,7 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			if len(toolMessages) > 0 {
 				s.Messages = append(s.Messages, toolMessages...)
 				// Invalidate context cache since messages changed
-				s.updateTokenCounts()
+				s.UpdateTokenCounts(nil)
 			}
 
 			if shouldReturn {
@@ -1135,19 +1416,13 @@ func (s *Session) AskStream(ctx context.Context, prompt string) {
 			break
 		}
 
-		// Check if we exceeded max turns and send appropriate notification
-		if s.notify != nil {
-			if i >= maxTurns {
-				s.notify(streamMaxTurnsExceededMsg{maxTurns: maxTurns})
-			} else {
-				s.notify(streamCompleteMsg{})
-			}
-		}
+		// Send completion
+		reply <- PromptReply{Type: ReplyStreamComplete}
 	}()
 }
 
 // sessBuildEnvBlock constructs a markdown summary of the OS, shell, and key paths.
-func sessBuildEnvBlock(repoInfo RepoInfo) string {
+func sessBuildEnvBlock(repoInfo repo.RepoInfo) string {
 	var env strings.Builder
 
 	env.WriteString(fmt.Sprintf("- **OS:** %s\n", sandboxOS))
@@ -1174,13 +1449,6 @@ Feel free to commit whenever you can summarize the changes in a meaningful commi
 	return env.String()
 }
 
-func normalizeBuildVersion(v string) string {
-	if v == "" || v == "(devel)" {
-		return ""
-	}
-	return strings.TrimPrefix(v, "v")
-}
-
 // readProjectContext reads the contents of the agents file (AGENTS.md or CLAUDE.md) from the current working directory.
 func readProjectContext(agentsFile string) string {
 	wd, err := os.Getwd()
@@ -1196,10 +1464,8 @@ func readProjectContext(agentsFile string) string {
 }
 
 // buildLLMTools returns the LLM tool/function definitions and a catalog by name for execution.
-func buildLLMTools(cfg *Config) ([]llms.Tool, map[string]lctools.Tool) {
-	// Get tools with config
-	tools := getAvailableTools(cfg)
-
+// Tools are passed in rather than built here to avoid dependency on main package.
+func buildLLMTools(tools []Tool) ([]llms.Tool, map[string]lctools.Tool) {
 	// Map our concrete tools by name for execution.
 	execCatalog := map[string]lctools.Tool{}
 	defs := make([]llms.Tool, 0, len(tools))
@@ -1228,11 +1494,15 @@ func (s *Session) GetSessionDuration() time.Duration {
 	return time.Since(s.startTime)
 }
 
-// updateTokenCounts recalculates and stores token counts for all context components
-func (s *Session) updateTokenCounts() {
+// UpdateTokenCounts recalculates and stores token counts for all context components.
+// contextFiles is optional - pass nil when no context files are loaded.
+func (s *Session) UpdateTokenCounts(contextFiles map[string]string) {
 	s.systemPromptTokens = s.CountSystemPromptTokens()
 	s.systemToolsTokens = s.CountSystemToolsTokens()
-	s.memoryFilesTokens = s.CountMemoryFilesTokens()
+	// Only update memory files tokens when context files are explicitly provided
+	if contextFiles != nil {
+		s.memoryFilesTokens = s.CountMemoryFilesTokens(contextFiles)
+	}
 	s.messagesTokens = s.CountMessagesTokens()
 }
 
@@ -1322,7 +1592,7 @@ func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (str
 	if err != nil {
 		// Restore original messages on error
 		s.Messages = originalMessages
-		s.updateTokenCounts()
+		s.UpdateTokenCounts(nil)
 		return "", fmt.Errorf("failed to generate summary: %w", err)
 	}
 
@@ -1349,7 +1619,7 @@ func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (str
 	s.toolCallRepetitionCount = 0
 
 	// Invalidate context cache since messages changed
-	s.updateTokenCounts()
+	s.UpdateTokenCounts(nil)
 
 	return summary, nil
 }
@@ -1392,7 +1662,8 @@ type SessionIndex struct {
 	Sessions []Session `json:"sessions"`
 }
 
-func generateSessionID() string {
+// GenerateSessionID creates a unique session ID with timestamp prefix.
+func GenerateSessionID() string {
 	timestamp := time.Now().Format("2006-01-02-150405")
 
 	randomBytes := make([]byte, 4)
@@ -1402,87 +1673,29 @@ func generateSessionID() string {
 	return fmt.Sprintf("%s-%s", timestamp, suffix)
 }
 
-func branchSlugOrDefault(branch string) string {
-	slug := sanitizeSegment(branch)
-	// TODO: pick a better default branch for cases when working outside repo,
-	//       to avoid a collision make it illegal in git.
-	if slug == "" {
-		return "main"
-	}
+// --- Shogunate Integration ---
 
-	return slug
+// SessionLLMClient implements LLMClient using a Session.
+// This allows Shogunate ministers to use the Session's LLM capabilities.
+type SessionLLMClient struct {
+	session *Session
 }
 
-func findProjectRoot(start string) string {
-	dir := start
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == "/" || parent == dir {
-			return start
-		}
-		dir = parent
-	}
+// NewSessionLLMClient creates an LLM client wrapper around a Session.
+func NewSessionLLMClient(session *Session) *SessionLLMClient {
+	return &SessionLLMClient{session: session}
 }
 
-func sanitizeSegment(value string) string {
-	value = strings.ToLower(value)
-	var b strings.Builder
-	prevHyphen := false
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			prevHyphen = false
-			continue
-		}
-		if !prevHyphen {
-			b.WriteRune('-')
-			prevHyphen = true
-		}
+// Generate produces a response using the Session's LLM.
+func (c *SessionLLMClient) Generate(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	if systemPrompt != "" {
+		c.session.ReplaceSystemPrompt(systemPrompt)
 	}
-	return strings.Trim(b.String(), "-")
-}
 
-func gitRemoteOriginURL(workingDir string) (string, error) {
-	cmd := exec.Command("git", "-C", workingDir, "config", "--get", "remote.origin.url")
-	output, err := cmd.Output()
+	response, err := c.session.Ask(ctx, userPrompt, nil)
 	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func parseGitRemote(remote string) (owner, repo string) {
-	remote = strings.TrimSpace(remote)
-	remote = strings.TrimSuffix(remote, ".git")
-	if remote == "" {
-		return "", ""
+		return "", fmt.Errorf("session ask: %w", err)
 	}
 
-	if strings.Contains(remote, "://") {
-		if u, err := url.Parse(remote); err == nil {
-			segments := strings.Split(strings.Trim(u.Path, "/"), "/")
-			if len(segments) >= 2 {
-				owner = segments[len(segments)-2]
-				repo = segments[len(segments)-1]
-			}
-			return owner, repo
-		}
-	}
-
-	if strings.Contains(remote, ":") {
-		parts := strings.SplitN(remote, ":", 2)
-		if len(parts) == 2 {
-			path := strings.Trim(parts[1], "/")
-			segments := strings.Split(path, "/")
-			if len(segments) >= 2 {
-				owner = segments[len(segments)-2]
-				repo = segments[len(segments)-1]
-			}
-		}
-	}
-
-	return owner, repo
+	return response, nil
 }

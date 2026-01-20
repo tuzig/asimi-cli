@@ -80,6 +80,7 @@ func (StringArray) GormDataType() string {
 type EdictPhase string
 
 const (
+	PhaseBrewing   EdictPhase = "brewing" // Chancellor chats with user to understand intent
 	PhasePlanning  EdictPhase = "planning"
 	PhaseForging   EdictPhase = "forging"
 	PhaseJudgment  EdictPhase = "judgment"
@@ -110,8 +111,10 @@ const (
 type LingStatus string
 
 const (
-	LingPending   LingStatus = "pending"
-	LingCompleted LingStatus = "completed"
+	LingPending    LingStatus = "pending"
+	LingInProgress LingStatus = "in_progress"
+	LingCompleted  LingStatus = "completed"
+	LingBlocked    LingStatus = "blocked"
 )
 
 // ManifestStatus for code artifact lifecycle
@@ -142,10 +145,11 @@ const (
 
 // Edict is the source of Ren: all work originates here
 type Edict struct {
-	EdictID            string     `gorm:"primaryKey"`         // GitHub Issue number (e.g., "owner/repo#123")
-	RenIntent          string     `gorm:"not null;type:text"` // Ruler's original description
+	EdictID            string     `gorm:"primaryKey"`
+	Type               string     `gorm:"size:50;default:'feature'"` // Ritual type: feature, bugfix, hotfix, chore
+	RenIntent          string     `gorm:"not null;type:text"`        // Ruler's description
 	RenIntentVersion   int        `gorm:"default:1"`
-	CurrentPhase       EdictPhase `gorm:"not null;default:'planning';index:idx_edicts_phase"`
+	CurrentPhase       EdictPhase `gorm:"not null;default:'brewing';index:idx_edicts_phase"`
 	ChancellorSeal     bool       `gorm:"default:false"`
 	CensorSeal         bool       `gorm:"default:false"`
 	CancelledAt        *time.Time
@@ -180,7 +184,7 @@ func (ZhengmingRequest) TableName() string {
 	return "zhengming_requests"
 }
 
-// TianEvent is the Ritual Guard's event ledger
+// TianEvent is the event ledger
 type TianEvent struct {
 	EventID   int64     `gorm:"primaryKey;autoIncrement"`
 	EdictID   string    `gorm:"index:idx_tian_events_edict;size:255"`
@@ -212,15 +216,23 @@ func (TianEventDLQ) TableName() string {
 	return "tian_events_dlq"
 }
 
-// Ling (令) is a task order issued by the Strategist
+// Ling (令) is a task order 
 type Ling struct {
 	LingID         string      `gorm:"primaryKey;size:64"`
-	EdictID        string      `gorm:"not null;index:idx_ling_edict_status,priority:1;size:255"`
-	Description    string      `gorm:"not null;type:text"`
-	Dependencies   StringArray `gorm:"type:text"` // JSON array of LingID references
+	EdictID        string      `gorm:"index:idx_ling_edict_status,priority:1;size:255"` // Optional: empty for session tool calls
+	SessionID      int64       `gorm:"column:session_id;index:idx_ling_session"`        // Session that issued this Ling
+	Description    string      `gorm:"type:text"`
+	RitualType     string      `gorm:"size:50;default:'code-change'"` // Sub-ritual: test-method, simple-change, code-change
+	Dependencies   StringArray `gorm:"type:text"`                     // JSON array of LingID references
 	Status         LingStatus  `gorm:"not null;default:'pending';index:idx_ling_edict_status,priority:2"`
 	IdempotencyKey string      `gorm:"uniqueIndex;size:64"` // sha256(edict_id + ren_intent_version + description)
-	CreatedAt      time.Time   `gorm:"autoCreateTime"`
+	// Tool execution fields (used by Forge envelope pattern)
+	// TODO: remove these
+	ToolName   string    `gorm:"column:tool_name;size:100"`   // Name of the tool to execute
+	ToolInput  JSON      `gorm:"column:tool_input;type:text"` // JSON-encoded tool arguments
+	ToolResult string    `gorm:"column:tool_result;type:text"`
+	ToolCallID string    `gorm:"column:tool_call_id;size:64;index"` // LLM's tool call ID for response matching
+	CreatedAt  time.Time `gorm:"autoCreateTime"`
 }
 
 // TableName specifies the table name for Ling
@@ -230,7 +242,8 @@ func (Ling) TableName() string {
 
 // ForgeManifest tracks code artifacts (Earth is immutable)
 type ForgeManifest struct {
-	ManifestID     string         `gorm:"primaryKey;size:64"`
+	ManifestID string `gorm:"primaryKey;size:64"`
+	// TODO: do we need this? the ling already has the edit id
 	EdictID        string         `gorm:"not null;index:idx_forge_manifest_edict_status,priority:1;size:255"`
 	LingID         string         `gorm:"index:idx_forge_manifest_ling;size:64"`
 	CommitHash     string         `gorm:"uniqueIndex;size:64"` // Empty until git commit succeeds

@@ -1,49 +1,12 @@
 package main
 
 import (
-	"time"
+	"os"
+	"testing"
 
-	"github.com/afittestide/asimi/storage"
+	"github.com/stretchr/testify/require"
 	"github.com/tmc/langchaingo/llms"
 )
-
-// testMainSession creates a dummy main.Session for testing
-func testMainSession(id, prompt string, updated time.Time, messageTexts ...string) *Session {
-	var messages []llms.MessageContent
-	for _, text := range messageTexts {
-		messages = append(messages, textMessage(llms.ChatMessageTypeHuman, text))
-	}
-
-	return &Session{
-		ID:           id,
-		FirstPrompt:  prompt,
-		LastUpdated:  updated,
-		Messages:     messages,
-		MessageCount: len(messages), // Set MessageCount for list views
-		Model:        "test",
-		CreatedAt:    updated,
-		WorkingDir:   "/tmp",
-	}
-}
-
-// testStorageSessionData creates a dummy storage.SessionData for testing
-func testStorageSessionData(id, prompt string, updated time.Time, messageTexts ...string) *storage.SessionData {
-	var messages []llms.MessageContent
-	for _, text := range messageTexts {
-		messages = append(messages, textMessage(llms.ChatMessageTypeHuman, text))
-	}
-
-	return &storage.SessionData{
-		ID:           id,
-		FirstPrompt:  prompt,
-		LastUpdated:  updated,
-		Messages:     messages,
-		MessageCount: len(messages), // Set MessageCount for list views
-		Model:        "test",
-		CreatedAt:    updated,
-		WorkingDir:   "/tmp",
-	}
-}
 
 // textMessage creates a dummy text message for testing
 func textMessage(role llms.ChatMessageType, text string) llms.MessageContent {
@@ -53,4 +16,12 @@ func textMessage(role llms.ChatMessageType, text string) llms.MessageContent {
 			llms.TextContent{Text: text},
 		},
 	}
+}
+
+// repoInfoWithProjectRoot creates a RepoInfo with the current working directory as project root.
+func repoInfoWithProjectRoot(t *testing.T) RepoInfo {
+	t.Helper()
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	return MakeRepoInfo(cwd, "")
 }

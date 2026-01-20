@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tmc/langchaingo/tools"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/yargevad/filepathx"
 )
 
@@ -25,7 +25,7 @@ var (
 	shellRunnerOnce    sync.Once
 	// toolScheduler holds the scheduler for clearing the queue on restart
 	// This is set via fx dependency injection
-	toolScheduler *CoreToolScheduler
+	toolScheduler *shogunate.CoreToolScheduler
 )
 
 // validatePathWithinProject checks if a file path is within the current working directory.
@@ -621,7 +621,7 @@ func isPodmanAvailable(config *Config, repoInfo RepoInfo) bool {
 	return true
 }
 
-func initShellRunner(config *Config, scheduler *CoreToolScheduler) {
+func initShellRunner(config *Config, scheduler *shogunate.CoreToolScheduler) {
 	shellRunnerMu.Lock()
 	defer shellRunnerMu.Unlock()
 
@@ -1063,15 +1063,8 @@ func (t ReadManyFilesTool) Format(input, result string, err error) string {
 	return msg.String() + "\n"
 }
 
-type Tool interface {
-	tools.Tool
-	Format(input, result string, err error) string
-	// ParameterSchema returns the JSON schema for the tool's parameters
-	ParameterSchema() map[string]any
-}
-
-func getAvailableTools(config *Config) []Tool {
-	return []Tool{
+func getAvailableTools(config *Config) []shogunate.Tool {
+	return []shogunate.Tool{
 		ReadFileTool{},
 		WriteFileTool{},
 		ListDirectoryTool{},

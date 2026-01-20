@@ -457,7 +457,7 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 				}
 
 				// Use AskWithStreaming to show model output in the UI while blocking
-				response, err := model.session.AskWithStreaming(ctx, prompt)
+				response, err := model.session.AskWithStreaming(ctx, prompt, nil)
 				if err != nil {
 					slog.Error("Workflow prompt failed", "error", err)
 					responseChan <- ""

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	"github.com/tmc/langchaingo/llms"
 )
@@ -26,14 +27,14 @@ func TestSessionStoreCloseWithTimeout(t *testing.T) {
 	}
 	defer db.Close()
 
-	repoInfo := RepoInfo{ProjectRoot: tmpHome}
+	repoInfo := MakeRepoInfo(tmpHome, "")
 	store, err := NewSessionStore(db, repoInfo, 10, 30)
 	if err != nil {
 		t.Fatalf("Failed to create session store: %v", err)
 	}
 
 	// Create a test session
-	session := &Session{
+	session := &shogunate.Session{
 		ID:           "test-session-123",
 		CreatedAt:    time.Now(),
 		LastUpdated:  time.Now(),
@@ -41,7 +42,6 @@ func TestSessionStoreCloseWithTimeout(t *testing.T) {
 		Provider:     "test",
 		Model:        "test-model",
 		WorkingDir:   repoInfo.ProjectRoot,
-		ContextFiles: make(map[string]string),
 	}
 
 	// Add a user message so the session will be saved
@@ -73,27 +73,14 @@ func TestSessionStoreCloseWithTimeout(t *testing.T) {
 	}
 }
 
-// TestTUIModelShutdown verifies that shutdown() calls Close() on the session store
-func TestTUIModelShutdown(t *testing.T) {
+// TestSessionSaveOnQuit verifies that store.SaveSession() persists the session
+// Note: SessionStore closing is handled by fx lifecycle
+func TestSessionSaveOnQuit(t *testing.T) {
 	// Create a temporary directory for the test
 	tmpDir := t.TempDir()
 	originalHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", originalHome)
-
-	// Create a minimal config
-	config := &Config{
-		LLM: LLMConfig{
-			Provider: "test",
-			Model:    "test-model",
-		},
-		Session: SessionConfig{
-			Enabled:     true,
-			AutoSave:    true,
-			MaxSessions: 10,
-			MaxAgeDays:  30,
-		},
-	}
 
 	// Initialize storage
 	dbPath := filepath.Join(tmpDir, ".local", "share", "asimi", "asimi.sqlite")
@@ -104,26 +91,40 @@ func TestTUIModelShutdown(t *testing.T) {
 	defer db.Close()
 
 	// Create a session store using NewSessionStore
-	repoInfo := RepoInfo{ProjectRoot: tmpDir}
+	repoInfo := MakeRepoInfo(tmpDir, "")
 	store, err := NewSessionStore(db, repoInfo, 10, 30)
 	if err != nil {
 		t.Fatalf("Failed to create session store: %v", err)
 	}
+	defer store.Close() // Clean up after test
 
-	// Create a TUI model
-	model := &TUIModel{
-		config:       config,
-		sessionStore: store,
+	// Create a test session with a message so it will be saved
+	session := &shogunate.Session{
+		ID:           "test-save-session",
+		CreatedAt:    time.Now(),
+		LastUpdated:  time.Now(),
+		FirstPrompt:  "Test prompt",
+		Provider:     "test",
+		Model:        "test-model",
+		WorkingDir:   repoInfo.ProjectRoot,
 	}
+	session.Messages = append(session.Messages, llms.MessageContent{
+		Role:  llms.ChatMessageTypeHuman,
+		Parts: []llms.ContentPart{llms.TextPart("test message")},
+	})
 
-	// Call shutdown
-	model.shutdown()
+	// Save session directly via store (as quit handlers do in production code)
+	store.SaveSession(session)
 
-	// Verify that the stop channel was closed by trying to receive from it
-	select {
-	case <-store.stopChan:
-		// Good - channel was closed
-	case <-time.After(100 * time.Millisecond):
-		t.Error("shutdown() did not close the session store")
+	// Give async save a moment to complete
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify session was saved by loading it
+	loadedSession, err := store.LoadSession(session.ID)
+	if err != nil {
+		t.Errorf("Session was not saved: %v", err)
+	}
+	if loadedSession != nil && loadedSession.ID != session.ID {
+		t.Errorf("Expected session ID %s, got %s", session.ID, loadedSession.ID)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	"github.com/tmc/langchaingo/llms"
 )
@@ -171,7 +172,7 @@ type SessionStore struct {
 	Project     string
 	Branch      string
 	ProjectRoot string
-	saveChan    chan *Session
+	saveChan    chan *shogunate.Session
 	stopChan    chan struct{}
 	closeOnce   sync.Once
 	wg          sync.WaitGroup // Track in-flight saves
@@ -199,7 +200,7 @@ func NewSessionStore(db *storage.DB, repoInfo RepoInfo, maxSessions, maxAgeDays 
 		Project:     project,
 		Branch:      branch,
 		ProjectRoot: repoInfo.ProjectRoot,
-		saveChan:    make(chan *Session, 100),
+		saveChan:    make(chan *shogunate.Session, 100),
 		stopChan:    make(chan struct{}),
 	}
 
@@ -237,7 +238,7 @@ func (s *SessionStore) saveWorker() {
 }
 
 // SaveSession saves a session asynchronously
-func (s *SessionStore) SaveSession(session *Session) {
+func (s *SessionStore) SaveSession(session *shogunate.Session) {
 	if session != nil {
 		s.wg.Add(1) // Track this save
 		select {
@@ -250,17 +251,17 @@ func (s *SessionStore) SaveSession(session *Session) {
 }
 
 // SaveSessionSync saves a session synchronously
-func (s *SessionStore) SaveSessionSync(session *Session) error {
+func (s *SessionStore) SaveSessionSync(session *shogunate.Session) error {
 	return s.saveSessionSync(session)
 }
 
-func (s *SessionStore) saveSessionSync(session *Session) error {
+func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 	if session == nil {
 		return fmt.Errorf("cannot save nil session")
 	}
 
 	// Remove unmatched tool calls before saving
-	session.sanitizeMessages()
+	session.SanitizeMessages()
 
 	// Don't save empty sessions (only system messages)
 	hasUserContent := false
@@ -276,7 +277,7 @@ func (s *SessionStore) saveSessionSync(session *Session) error {
 
 	// Generate ID and timestamps for new sessions
 	if session.ID == "" {
-		session.ID = generateSessionID()
+		session.ID = shogunate.GenerateSessionID()
 	}
 	now := time.Now()
 	if session.CreatedAt.IsZero() {
@@ -306,23 +307,22 @@ func (s *SessionStore) saveSessionSync(session *Session) error {
 
 	// Convert main.Session to storage.SessionData
 	storageSession := &storage.SessionData{
-		ID:           session.ID,
-		CreatedAt:    session.CreatedAt,
-		LastUpdated:  session.LastUpdated,
-		FirstPrompt:  session.FirstPrompt,
-		Provider:     session.Provider,
-		Model:        session.Model,
-		WorkingDir:   session.WorkingDir,
-		ProjectSlug:  session.ProjectSlug,
-		Messages:     session.Messages,
-		ContextFiles: session.ContextFiles,
+		ID:          session.ID,
+		CreatedAt:   session.CreatedAt,
+		LastUpdated: session.LastUpdated,
+		FirstPrompt: session.FirstPrompt,
+		Provider:    session.Provider,
+		Model:       session.Model,
+		WorkingDir:  session.WorkingDir,
+		ProjectSlug: session.ProjectSlug,
+		Messages:    session.Messages,
 	}
 
 	return s.store.SaveSession(storageSession, s.Host, s.Org, s.Project, s.Branch)
 }
 
 // LoadSession loads a session by ID
-func (s *SessionStore) LoadSession(id string) (*Session, error) {
+func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 	storageSession, host, org, project, branch, err := s.store.LoadSession(id)
 	if err != nil {
 		return nil, err
@@ -334,34 +334,33 @@ func (s *SessionStore) LoadSession(id string) (*Session, error) {
 	_ = project
 	_ = branch
 
-	// Convert storage.SessionData to main.Session
-	session := &Session{
-		ID:           storageSession.ID,
-		CreatedAt:    storageSession.CreatedAt,
-		LastUpdated:  storageSession.LastUpdated,
-		FirstPrompt:  storageSession.FirstPrompt,
-		Provider:     storageSession.Provider,
-		Model:        storageSession.Model,
-		WorkingDir:   storageSession.WorkingDir,
-		ProjectSlug:  storageSession.ProjectSlug,
-		Messages:     storageSession.Messages,
-		ContextFiles: storageSession.ContextFiles,
+	// Convert storage.SessionData to shogunate.Session
+	session := &shogunate.Session{
+		ID:          storageSession.ID,
+		CreatedAt:   storageSession.CreatedAt,
+		LastUpdated: storageSession.LastUpdated,
+		FirstPrompt: storageSession.FirstPrompt,
+		Provider:    storageSession.Provider,
+		Model:       storageSession.Model,
+		WorkingDir:  storageSession.WorkingDir,
+		ProjectSlug: storageSession.ProjectSlug,
+		Messages:    storageSession.Messages,
 	}
 
 	return session, nil
 }
 
 // ListSessions lists sessions for the current branch
-func (s *SessionStore) ListSessions(limit int) ([]Session, error) {
+func (s *SessionStore) ListSessions(limit int) ([]shogunate.Session, error) {
 	storageSessions, err := s.store.ListSessions(s.Host, s.Org, s.Project, s.Branch, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert []storage.SessionData to []main.Session
-	sessions := make([]Session, len(storageSessions))
+	// Convert []storage.SessionData to []shogunate.Session
+	sessions := make([]shogunate.Session, len(storageSessions))
 	for i, ss := range storageSessions {
-		sessions[i] = Session{
+		sessions[i] = shogunate.Session{
 			ID:           ss.ID,
 			CreatedAt:    ss.CreatedAt,
 			LastUpdated:  ss.LastUpdated,
@@ -371,7 +370,6 @@ func (s *SessionStore) ListSessions(limit int) ([]Session, error) {
 			WorkingDir:   ss.WorkingDir,
 			ProjectSlug:  ss.ProjectSlug,
 			Messages:     ss.Messages,
-			ContextFiles: ss.ContextFiles,
 			MessageCount: ss.MessageCount,
 		}
 	}

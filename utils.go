@@ -3,8 +3,12 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,21 +18,29 @@ import (
 	"sync"
 	"time"
 
+	internalrepo "github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/shogunate"
 	gogit "github.com/go-git/go-git/v5"
 )
 
-// RepoInfo contains information about the git repository and worktree
+// RepoInfo contains information about the git repository and worktree.
+// It embeds the shared internal config type and adds private fields for git operations.
 type RepoInfo struct {
-	ProjectRoot  string
-	WorktreePath string
-	Branch       string
-	IsWorktree   bool
-	IsMain       bool
-	Slug         string // Project slug (e.g., "owner/repo")
-	status       string // Cached git status
-	LinesAdded   int    // Lines added in working directory
-	LinesDeleted int    // Lines deleted in working directory
-	repo         *gogit.Repository
+	internalrepo.RepoInfo
+	status string            // Cached git status
+	repo   *gogit.Repository // Git repository handle for operations
+}
+
+// MakeRepoInfo creates a RepoInfo with the given fields.
+// This is a convenience function for creating RepoInfo structs,
+// especially useful in tests where the embedded struct syntax would be verbose.
+func MakeRepoInfo(projectRoot, branch string) RepoInfo {
+	return RepoInfo{
+		RepoInfo: internalrepo.RepoInfo{
+			ProjectRoot: projectRoot,
+			Branch:      branch,
+		},
+	}
 }
 
 // isMainBranch checks if the given branch name is considered a main branch.
@@ -275,14 +287,16 @@ func GetRepoInfo() RepoInfo {
 	isMain := isMainBranch(branch)
 
 	repoInfo := RepoInfo{
-		ProjectRoot:  projectRoot,
-		WorktreePath: worktreePath,
-		Branch:       branch,
-		IsWorktree:   isWorktree,
-		IsMain:       isMain,
-		Slug:         projectSlug(projectRoot),
-		status:       status,
-		repo:         repo,
+		RepoInfo: internalrepo.RepoInfo{
+			ProjectRoot:  projectRoot,
+			WorktreePath: worktreePath,
+			Branch:       branch,
+			IsWorktree:   isWorktree,
+			IsMain:       isMain,
+			Slug:         projectSlug(projectRoot),
+		},
+		status: status,
+		repo:   repo,
 	}
 
 	// Calculate diff stats if we have a repo and not skipping git status
@@ -335,8 +349,6 @@ func getFileTree(root string) ([]string, error) {
 	return files, nil
 }
 
-// findProjectRoot returns the nearest ancestor directory (including start)
-// that contains a project marker like .git or go.mod. Falls back to start.
 // findMainRepoRoot finds the main repository root when in a worktree
 // by reading the .git file and extracting the main repo path from the gitdir
 func findMainRepoRoot(worktreeDir string) (string, error) {
@@ -768,4 +780,313 @@ func TruncateMiddle(message string, maxWidth int) string {
 	end := string(runes[msgLen-endLen:])
 
 	return beginning + "…" + end
+}
+
+// containerLaunchMsg is sent when the container is launching.
+type containerLaunchMsg struct{ message string }
+
+// generateSessionID creates a unique session ID with timestamp prefix.
+func generateSessionID() string {
+	timestamp := time.Now().Format("2006-01-02-150405")
+	randomBytes := make([]byte, 4)
+	rand.Read(randomBytes)
+	suffix := hex.EncodeToString(randomBytes)
+	return fmt.Sprintf("%s-%s", timestamp, suffix)
+}
+
+// findProjectRoot walks up from start until it finds a .git directory.
+func findProjectRoot(start string) string {
+	dir := start
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == "/" || parent == dir {
+			return start
+		}
+		dir = parent
+	}
+}
+
+const (
+	contextBarWidth              = 10
+	contextCategorySymbol        = "⛁"
+	contextCategoryPartialSymbol = "⛀"
+	contextFreeSymbol            = "⛶"
+)
+
+// Git and slug utilities
+
+func branchSlugOrDefault(branch string) string {
+	slug := sanitizeSegment(branch)
+	if slug == "" {
+		return "main"
+	}
+	return slug
+}
+
+func sanitizeSegment(value string) string {
+	value = strings.ToLower(value)
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevHyphen = false
+			continue
+		}
+		if !prevHyphen {
+			b.WriteRune('-')
+			prevHyphen = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func gitRemoteOriginURL(workingDir string) (string, error) {
+	cmd := exec.Command("git", "-C", workingDir, "config", "--get", "remote.origin.url")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func parseGitRemote(remote string) (owner, repo string) {
+	remote = strings.TrimSpace(remote)
+	remote = strings.TrimSuffix(remote, ".git")
+	if remote == "" {
+		return "", ""
+	}
+
+	if strings.Contains(remote, "://") {
+		if u, err := url.Parse(remote); err == nil {
+			segments := strings.Split(strings.Trim(u.Path, "/"), "/")
+			if len(segments) >= 2 {
+				owner = segments[len(segments)-2]
+				repo = segments[len(segments)-1]
+			}
+			return owner, repo
+		}
+	}
+
+	if strings.Contains(remote, ":") {
+		parts := strings.SplitN(remote, ":", 2)
+		if len(parts) == 2 {
+			path := strings.Trim(parts[1], "/")
+			segments := strings.Split(path, "/")
+			if len(segments) >= 2 {
+				owner = segments[len(segments)-2]
+				repo = segments[len(segments)-1]
+			}
+		}
+	}
+
+	return owner, repo
+}
+
+// Context display utilities
+
+func renderContextInfo(info shogunate.ContextInfo) string {
+	var b strings.Builder
+	total := info.TotalTokens
+	if total <= 0 {
+		total = info.UsedTokens + info.AutocompactBuffer + info.FreeTokens
+	}
+	if total <= 0 {
+		total = 1
+	}
+
+	usedPercent := percentage(clampInt(info.UsedTokens, 0, total), total)
+	systemPromptPercent := percentage(info.SystemPromptTokens, total)
+	systemToolsPercent := percentage(info.SystemToolsTokens, total)
+	memoryFilesPercent := percentage(info.MemoryFilesTokens, total)
+	messagesPercent := percentage(info.MessagesTokens, total)
+
+	b.WriteString("  ⎿  Context Usage\n")
+	b.WriteString(fmt.Sprintf("     %s   %s · %s/%s tokens (%.1f%%)\n",
+		renderContextBar(info),
+		info.Model,
+		formatTokenCount(info.UsedTokens),
+		formatTokenCount(info.TotalTokens),
+		usedPercent,
+	))
+
+	b.WriteString(formatContextLine("System prompt", info.SystemPromptTokens, total, systemPromptPercent))
+	b.WriteString(formatContextLine("System tools", info.SystemToolsTokens, total, systemToolsPercent))
+	b.WriteString(formatContextLine("Memory files", info.MemoryFilesTokens, total, memoryFilesPercent))
+	b.WriteString(formatContextLine("Messages", info.MessagesTokens, total, messagesPercent))
+	b.WriteString(formatFreeSpaceLine(info, total))
+
+	return b.String()
+}
+
+func renderContextBar(info shogunate.ContextInfo) string {
+	total := info.TotalTokens
+	if total <= 0 {
+		total = info.UsedTokens + info.AutocompactBuffer + info.FreeTokens
+	}
+	if total <= 0 {
+		total = 1
+	}
+
+	usedTokens := clampInt(info.UsedTokens, 0, total)
+	bufferTokens := clampInt(info.AutocompactBuffer, 0, total-usedTokens)
+	freeTokens := total - usedTokens - bufferTokens
+	if freeTokens < 0 {
+		freeTokens = 0
+	}
+
+	segments := make([]string, 0, contextBarWidth)
+	remaining := contextBarWidth
+
+	addSegments := func(tokens int, fill, partial string) {
+		if remaining == 0 || tokens <= 0 {
+			return
+		}
+		percentage := float64(tokens) / float64(total) * 100
+		fullSegments, partialSegment := calculateBarSegments(percentage)
+		if fullSegments > remaining {
+			fullSegments = remaining
+			partialSegment = false
+		}
+		for i := 0; i < fullSegments && remaining > 0; i++ {
+			segments = append(segments, fill)
+			remaining--
+		}
+		if partialSegment && remaining > 0 {
+			if partial == "" {
+				partial = fill
+			}
+			segments = append(segments, partial)
+			remaining--
+		}
+	}
+
+	addSegments(usedTokens, "⛁", "⛀")
+	addSegments(freeTokens, "⛶", "")
+	addSegments(bufferTokens, "⛝", "")
+
+	for len(segments) < contextBarWidth {
+		segments = append(segments, "⛶")
+	}
+
+	return strings.Join(segments, " ")
+}
+
+func formatContextLine(label string, tokens, total int, percent float64) string {
+	bar := renderCategoryBar(tokens, total)
+	return fmt.Sprintf("     %s   %s %s: %s tokens (%.1f%%)\n",
+		bar,
+		contextCategorySymbol,
+		label,
+		formatTokenCount(tokens),
+		percent,
+	)
+}
+
+func formatFreeSpaceLine(info shogunate.ContextInfo, total int) string {
+	bar := renderFreeSpaceBar(info, total)
+	totalFreeSpace := info.FreeTokens + info.AutocompactBuffer
+	return fmt.Sprintf("     %s   ⛶ Free space: %s tokens (%.1f%%)\n",
+		bar,
+		formatTokenCount(totalFreeSpace),
+		percentage(totalFreeSpace, total),
+	)
+}
+
+func renderCategoryBar(tokens, total int) string {
+	percentage := 0.0
+	if total > 0 {
+		percentage = float64(tokens) / float64(total) * 100
+	}
+	fullSegments, partialSegment := calculateBarSegments(percentage)
+
+	segments := make([]string, 0, contextBarWidth)
+	for i := 0; i < fullSegments && len(segments) < contextBarWidth; i++ {
+		segments = append(segments, contextCategorySymbol)
+	}
+	if partialSegment && len(segments) < contextBarWidth {
+		segments = append(segments, contextCategoryPartialSymbol)
+	}
+	for len(segments) < contextBarWidth {
+		segments = append(segments, contextFreeSymbol)
+	}
+	return strings.Join(segments, " ")
+}
+
+func renderFreeSpaceBar(info shogunate.ContextInfo, total int) string {
+	freePercentage := 0.0
+	bufferPercentage := 0.0
+	if total > 0 {
+		freePercentage = float64(info.FreeTokens) / float64(total) * 100
+		bufferPercentage = float64(info.AutocompactBuffer) / float64(total) * 100
+	}
+
+	freeSegments, freePartial := calculateBarSegments(freePercentage)
+	bufferSegments, _ := calculateBarSegments(bufferPercentage)
+
+	segments := make([]string, 0, contextBarWidth)
+
+	for i := 0; i < freeSegments && len(segments) < contextBarWidth; i++ {
+		segments = append(segments, "⛶")
+	}
+	if freePartial && len(segments) < contextBarWidth {
+		segments = append(segments, "⛶")
+	}
+
+	if len(segments) < contextBarWidth {
+		segments = append(segments, "↓")
+	}
+
+	for i := 0; i < bufferSegments && len(segments) < contextBarWidth; i++ {
+		segments = append(segments, "⛶")
+	}
+
+	for len(segments) < contextBarWidth {
+		segments = append(segments, "⛶")
+	}
+
+	return strings.Join(segments, " ")
+}
+
+func calculateBarSegments(percentage float64) (int, bool) {
+	if percentage <= 0 {
+		return 0, false
+	}
+	fullSegments := int(percentage / 10)
+	if fullSegments >= contextBarWidth {
+		return contextBarWidth, false
+	}
+	remainder := percentage - float64(fullSegments*10)
+	return fullSegments, remainder > 0
+}
+
+func formatTokenCount(tokens int) string {
+	switch {
+	case tokens >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(tokens)/1_000_000)
+	case tokens >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(tokens)/1_000)
+	default:
+		return fmt.Sprintf("%d", tokens)
+	}
+}
+
+func percentage(part, total int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return math.Round((float64(part)/float64(total))*1000) / 10
+}
+
+func clampInt(value, minValue, maxValue int) int {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }

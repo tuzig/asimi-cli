@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -158,7 +159,7 @@ func TestHandleInitCommand(t *testing.T) {
 
 	// Setup a mock model
 	mockTUI := &TUIModel{
-		session: &Session{},
+		session: &shogunate.Session{},
 	}
 
 	t.Run("Clean directory", func(t *testing.T) {

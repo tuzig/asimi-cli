@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/tmc/langchaingo/llms"
 )
 
 func TestExportShowsToolCalls(t *testing.T) {
 	// Create a test session with tool calls
-	session := &Session{
+	session := &shogunate.Session{
 		ID:          "test-session",
 		CreatedAt:   time.Now(),
 		LastUpdated: time.Now(),
@@ -57,7 +58,6 @@ func TestExportShowsToolCalls(t *testing.T) {
 				},
 			},
 		},
-		ContextFiles: make(map[string]string),
 	}
 
 	t.Run("Full export includes tool calls with stdout", func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestFormatMessagesNumberingSkipsToolMessages(t *testing.T) {
 
 func TestExportToolResultWithStderr(t *testing.T) {
 	// Create a test session with a command that has stderr
-	session := &Session{
+	session := &shogunate.Session{
 		ID:          "test-session",
 		CreatedAt:   time.Now(),
 		LastUpdated: time.Now(),
@@ -233,7 +233,6 @@ func TestExportToolResultWithStderr(t *testing.T) {
 				},
 			},
 		},
-		ContextFiles: make(map[string]string),
 	}
 
 	t.Run("Full export shows stderr", func(t *testing.T) {
@@ -278,7 +277,7 @@ func TestExportToolResultWithStderr(t *testing.T) {
 
 func TestExportNonShellToolCalls(t *testing.T) {
 	// Create a test session with non-shell tool calls
-	session := &Session{
+	session := &shogunate.Session{
 		ID:          "test-session",
 		CreatedAt:   time.Now(),
 		LastUpdated: time.Now(),
@@ -323,7 +322,6 @@ func TestExportNonShellToolCalls(t *testing.T) {
 				},
 			},
 		},
-		ContextFiles: make(map[string]string),
 	}
 
 	t.Run("Non-shell tools show full result in both modes", func(t *testing.T) {
@@ -495,7 +493,7 @@ func TestFormatToolCallWithResult(t *testing.T) {
 }
 
 func TestExportMetadata(t *testing.T) {
-	session := &Session{
+	session := &shogunate.Session{
 		ID:          "test-123",
 		CreatedAt:   time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
 		LastUpdated: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC),
@@ -510,7 +508,6 @@ func TestExportMetadata(t *testing.T) {
 				Parts: []llms.ContentPart{llms.TextPart("System")},
 			},
 		},
-		ContextFiles: make(map[string]string),
 	}
 
 	t.Run("Full export includes metadata", func(t *testing.T) {

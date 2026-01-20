@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -13,11 +14,11 @@ import (
 )
 
 type sessionsLoadedMsg struct {
-	sessions []Session
+	sessions []shogunate.Session
 }
 
 type sessionSelectedMsg struct {
-	session *Session
+	session *shogunate.Session
 }
 
 type sessionResumeErrorMsg struct {
@@ -27,12 +28,12 @@ type sessionResumeErrorMsg struct {
 // ResumeWindow is a simplified component for displaying session selection
 // Navigation is handled by ContentComponent
 type ResumeWindow struct {
-	SelectWindow[Session]
+	SelectWindow[shogunate.Session]
 	loadingSession bool
 }
 
 func NewResumeWindow() ResumeWindow {
-	sw := NewSelectWindow[Session]()
+	sw := NewSelectWindow[shogunate.Session]()
 	sw.Height = 15 // Default height
 	sw.SetSize(70, 15)
 
@@ -42,7 +43,7 @@ func NewResumeWindow() ResumeWindow {
 	}
 }
 
-func (r *ResumeWindow) SetSessions(sessions []Session) {
+func (r *ResumeWindow) SetSessions(sessions []shogunate.Session) {
 	r.SetItems(sessions)
 	r.loadingSession = false
 }
@@ -52,11 +53,11 @@ func (r *ResumeWindow) SetError(err error) {
 	r.loadingSession = false
 }
 
-func (r *ResumeWindow) GetSelectedSession(index int) *Session {
+func (r *ResumeWindow) GetSelectedSession(index int) *shogunate.Session {
 	return r.GetSelectedItem(index)
 }
 
-func sessionTitlePreview(session Session) string {
+func sessionTitlePreview(session shogunate.Session) string {
 
 	snippet := session.FirstPrompt
 	if len(session.Messages) > 0 {
@@ -153,7 +154,7 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 		Background(lipgloss.Color("#000000")).
 		Padding(0, 1)
 
-	config := RenderConfig[Session]{
+	config := RenderConfig[shogunate.Session]{
 		ConstructTitle: func(selectedIndex, totalItems int) string {
 			return titleStyle.Render(fmt.Sprintf("Choose a session to resume [%3d/%3d]:", selectedIndex+1, totalItems))
 		},
@@ -179,7 +180,7 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 			sb.WriteString("Start chatting to create a new session!\n")
 			sb.WriteString("\n")
 		},
-		RenderItem: func(i int, session Session, isSelected bool, sb *strings.Builder) {
+		RenderItem: func(i int, session shogunate.Session, isSelected bool, sb *strings.Builder) {
 			prefix := "  "
 			if isSelected {
 				prefix = "▶ "
@@ -281,7 +282,7 @@ func formatRelativeTime(t time.Time) string {
 
 // handleSessionSelected processes a resumed session and updates the TUI model.
 // It copies session data, rebuilds the chat UI from messages, and resets prompt history state.
-func (m *TUIModel) handleSessionSelected(session *Session) {
+func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	if session == nil {
 		return
 	}
@@ -296,7 +297,6 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 		m.session.Model = session.Model
 		m.session.WorkingDir = session.WorkingDir
 		m.session.ProjectSlug = session.ProjectSlug
-		m.session.ContextFiles = session.ContextFiles
 
 		// Copy messages - need to make a proper copy
 		m.session.Messages = make([]llms.MessageContent, len(session.Messages))
@@ -390,7 +390,7 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 		}
 	}
 	if m.session != nil {
-		m.session.updateTokenCounts()
+		m.session.UpdateTokenCounts(nil)
 	}
 	m.sessionActive = true
 

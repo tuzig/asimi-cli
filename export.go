@@ -9,19 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/tmc/langchaingo/llms"
 )
 
-// ExportType represents the type of export to generate
-type ExportType string
-
+// Export type constants
 const (
-	ExportTypeFull         ExportType = "full"
-	ExportTypeConversation ExportType = "conversation"
+	ExportTypeFull         = "full"
+	ExportTypeConversation = "conversation"
 )
 
 // exportSession exports the current session to a markdown file and returns the filepath
-func exportSession(session *Session, exportType ExportType) (string, error) {
+func exportSession(session *shogunate.Session, exportType string) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("no session to export")
 	}
@@ -39,7 +38,7 @@ func exportSession(session *Session, exportType ExportType) (string, error) {
 
 	// Create temporary file
 	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("asimi-export-%s-%s-%s.md", string(exportType), session.ID, timestamp)
+	filename := fmt.Sprintf("asimi-export-%s-%s-%s.md", exportType, session.ID, timestamp)
 	filepath := filepath.Join(os.TempDir(), filename)
 
 	// Write content to file
@@ -50,14 +49,34 @@ func exportSession(session *Session, exportType ExportType) (string, error) {
 	return filepath, nil
 }
 
+// formatSessionMetadata formats session metadata for export
+func formatSessionMetadata(session *shogunate.Session, exportType string, exportedAt time.Time) string {
+	var b strings.Builder
+	exported := exportedAt.Format("2006-01-02 15:04:05")
+
+	b.WriteString(fmt.Sprintf("**Asimi Version:** %s \n", version))
+	b.WriteString(fmt.Sprintf("**Export Type:** %s\n", exportType))
+	b.WriteString(fmt.Sprintf("**Session ID:** %s | **Working Directory:** %s\n", session.ID, session.WorkingDir))
+	b.WriteString(fmt.Sprintf("**Provider:** %s | **Model:** %s\n", session.Provider, session.Model))
+	b.WriteString(fmt.Sprintf("**Created:** %s | **Last Updated:** %s | **Exported:** %s\n",
+		session.CreatedAt.Format("2006-01-02 15:04:05"),
+		session.LastUpdated.Format("2006-01-02 15:04:05"),
+		exported))
+	if session.ProjectSlug != "" {
+		b.WriteString(fmt.Sprintf("**Project:** %s\n", session.ProjectSlug))
+	}
+
+	return b.String()
+}
+
 // generateFullExportContent generates the full markdown content for the export
 // including system prompt, context files, and conversation
-func generateFullExportContent(session *Session) string {
+func generateFullExportContent(session *shogunate.Session) string {
 	var b strings.Builder
 
 	// Header with full metadata in 4 lines
 	b.WriteString("# Asimi Conversation Export\n\n")
-	b.WriteString(session.formatMetadata(ExportTypeFull, time.Now()))
+	b.WriteString(formatSessionMetadata(session, ExportTypeFull, time.Now()))
 	b.WriteString("\n---\n\n")
 
 	// System Prompt
@@ -70,18 +89,6 @@ func generateFullExportContent(session *Session) string {
 			}
 		}
 		b.WriteString("\n---\n\n")
-	}
-
-	// Context Files
-	if len(session.ContextFiles) > 0 {
-		b.WriteString("## Context Files\n\n")
-		for path, content := range session.ContextFiles {
-			b.WriteString(fmt.Sprintf("### %s\n\n", path))
-			b.WriteString("```\n")
-			b.WriteString(content)
-			b.WriteString("\n```\n\n")
-		}
-		b.WriteString("---\n\n")
 	}
 
 	// Conversation
@@ -100,12 +107,12 @@ func generateFullExportContent(session *Session) string {
 
 // generateConversationExportContent generates a slimmer export with just the conversation
 // including tool calls but with limited output (no stdout)
-func generateConversationExportContent(session *Session) string {
+func generateConversationExportContent(session *shogunate.Session) string {
 	var b strings.Builder
 
 	// Minimal header
 	b.WriteString("# Asimi Conversation\n\n")
-	b.WriteString(session.formatMetadata(ExportTypeConversation, time.Now()))
+	b.WriteString(formatSessionMetadata(session, ExportTypeConversation, time.Now()))
 	b.WriteString("\n---\n\n")
 
 	// Skip system message

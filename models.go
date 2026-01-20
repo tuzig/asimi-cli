@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/auth"
+	"github.com/afittestide/asimi/internal/llm"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -324,8 +326,8 @@ func fetchAnthropicModels(config *Config) ([]AnthropicModel, error) {
 			slog.Debug("Using valid OAuth token for Anthropic")
 		} else {
 			// Token expired - try to refresh for Anthropic
-			auth := &AuthAnthropic{}
-			newAccessToken, refreshErr := auth.access()
+			authClient := &auth.AuthAnthropic{}
+			newAccessToken, refreshErr := authClient.Access()
 			if refreshErr == nil {
 				authToken = newAccessToken
 				slog.Debug("Refreshed OAuth token for Anthropic")
@@ -360,15 +362,15 @@ func fetchAnthropicModels(config *Config) ([]AnthropicModel, error) {
 	client := &http.Client{}
 	if authToken != "" {
 		// Use OAuth authentication
-		client.Transport = &anthropicOAuthTransport{
-			token:  authToken,
-			config: config,
-			base:   http.DefaultTransport,
+		client.Transport = &llm.AnthropicOAuthTransport{
+			Token:     authToken,
+			LLMConfig: &config.LLM,
+			Base:      http.DefaultTransport,
 		}
 	} else {
 		// Use API key authentication
-		client.Transport = &anthropicAPIKeyTransport{
-			base: http.DefaultTransport,
+		client.Transport = &llm.AnthropicAPIKeyTransport{
+			Base: http.DefaultTransport,
 		}
 	}
 

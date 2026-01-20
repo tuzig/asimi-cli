@@ -24,10 +24,7 @@ func TestPromptHistoryStore_CreateAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	// Create prompt history store
 	store, err := NewPromptHistoryStore(db, repoInfo)
@@ -52,10 +49,7 @@ func TestPromptHistoryStore_AppendAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	store, err := NewPromptHistoryStore(db, repoInfo)
 	require.NoError(t, err)
@@ -103,10 +97,7 @@ func TestPromptHistoryStore_Clear(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	store, err := NewPromptHistoryStore(db, repoInfo)
 	require.NoError(t, err)
@@ -144,10 +135,7 @@ func TestPromptHistoryStore_Save(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	store, err := NewPromptHistoryStore(db, repoInfo)
 	require.NoError(t, err)
@@ -172,10 +160,7 @@ func TestCommandHistoryStore_AppendAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	store, err := NewCommandHistoryStore(db, repoInfo)
 	require.NoError(t, err)
@@ -220,8 +205,8 @@ func TestHistoryStore_IsolatedByProject(t *testing.T) {
 	// Use the current directory (which is a git repo) for project1
 	// and a non-git directory for project2
 	cwd, _ := os.Getwd()
-	project1 := RepoInfo{ProjectRoot: cwd, Branch: "main"}
-	project2 := RepoInfo{ProjectRoot: "/nonexistent/project", Branch: "main"}
+	project1 := MakeRepoInfo(cwd, "main")
+	project2 := MakeRepoInfo("/nonexistent/project", "main")
 
 	store1, err := NewPromptHistoryStore(db, project1)
 	require.NoError(t, err)
@@ -274,10 +259,7 @@ func TestHistoryStore_EmptyPrompt(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	store, err := NewPromptHistoryStore(db, repoInfo)
 	require.NoError(t, err)
@@ -305,10 +287,7 @@ func TestHistoryStore_LongPrompt(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	store, err := NewPromptHistoryStore(db, repoInfo)
 	require.NoError(t, err)
@@ -342,10 +321,7 @@ func TestHistoryStore_SpecialCharacters(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	store, err := NewPromptHistoryStore(db, repoInfo)
 	require.NoError(t, err)
@@ -377,10 +353,7 @@ func TestHistoryStore_SpecialCharacters(t *testing.T) {
 
 // TestHistoryStore_NilDatabase tests error handling when database is nil
 func TestHistoryStore_NilDatabase(t *testing.T) {
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	// Try to create store with nil database
 	store, err := NewPromptHistoryStore(nil, repoInfo)
@@ -401,10 +374,7 @@ func TestHistoryStore_ConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
-		ProjectRoot: "/test/project",
-		Branch:      "main",
-	}
+	repoInfo := MakeRepoInfo("/test/project", "main")
 
 	store, err := NewPromptHistoryStore(db, repoInfo)
 	require.NoError(t, err)

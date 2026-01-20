@@ -1,7 +1,10 @@
 package shogunate
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/gorm"
@@ -85,5 +88,188 @@ func (c *ritualGuardConn) MoveToDLQ(event storage.TianEvent, errMsg string, retr
 	if err := c.db.Create(&dlqEntry).Error; err != nil {
 		return fmt.Errorf("failed to move to DLQ: %w", err)
 	}
+	return nil
+}
+
+// --- Minister ---
+
+// RitualGuardPrompt defines the Ritual Guard's identity
+const RitualGuardPrompt = `You are the Ritual Guard (禁军, Jìnjūn). You are not a minister; you are the clock that commands the court.
+
+You subscribe to tian_events and invoke the Chancellor's ceremonies. You own no business logic.
+
+If you fail, the court enters flatline—detectable by overdue rituals. Your authority is time; your weapon is punctuality.
+
+CRITICAL RULES:
+- Process events in order, never skip
+- Save checkpoints for crash recovery
+- Detect flatlines (no events processed for 5 minutes)
+- Escalate urgent Zhengming that times out
+- Move failed events to DLQ after retries`
+
+// RitualGuard processes events and invokes ministers
+type RitualGuard struct {
+	MinisterBase               // embedded base for session creation
+	conn         RitualGuardConn
+	chancellor   *Chancellor
+	maxRetries   int
+	batchSize    int
+	flatlineAge  time.Duration
+}
+
+// NewRitualGuard creates a new Ritual Guard
+func NewRitualGuard(conn RitualGuardConn, chancellor *Chancellor, logger *slog.Logger) *RitualGuard {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &RitualGuard{
+		MinisterBase: MinisterBase{logger: logger},
+		conn:         conn,
+		chancellor:   chancellor,
+		maxRetries:   3,
+		batchSize:    100,
+		flatlineAge:  5 * time.Minute,
+	}
+}
+
+// ID returns the minister identifier (not technically a minister)
+func (r *RitualGuard) ID() string {
+	return "ritual_guard"
+}
+
+// Prompt returns the RitualGuard's system prompt
+func (r *RitualGuard) Role() string {
+	return RitualGuardPrompt
+}
+
+// Tools returns the RitualGuard's LLM tools for interactive sessions
+// RitualGuard doesn't have LLM tools - it's an event processor, not an agent
+func (r *RitualGuard) Tools(notify NotifyFunc) []Tool {
+	return []Tool{}
+}
+
+// Execute is not used by RitualGuard - it runs via Run() instead
+func (r *RitualGuard) Execute(ctx context.Context, edictID string) (bool, error) {
+	return true, nil
+}
+
+// Run processes events from the Tian ledger
+func (r *RitualGuard) Run(ctx context.Context) error {
+	// Get last acknowledged event
+	lastEventID, err := r.conn.GetLastAcknowledgedEvent()
+	if err != nil {
+		return fmt.Errorf("get last acknowledged: %w", err)
+	}
+
+	// Get events to process
+	events, err := r.conn.GetEventsFrom(lastEventID, r.batchSize)
+	if err != nil {
+		return fmt.Errorf("get events: %w", err)
+	}
+
+	if len(events) == 0 {
+		r.logger.Debug("no events to process")
+		return nil
+	}
+
+	// Process each event
+	for _, event := range events {
+		if err := r.processEvent(ctx, event); err != nil {
+			r.logger.Error("event processing failed",
+				"event_id", event.EventID,
+				"error", err)
+			// Continue processing other events
+		}
+
+		// Acknowledge event
+		if err := r.conn.AcknowledgeEvent(event.EventID); err != nil {
+			r.logger.Error("failed to acknowledge event",
+				"event_id", event.EventID,
+				"error", err)
+		}
+
+		// Save checkpoint periodically
+		if err := r.conn.SaveCheckpoint(event.EventID); err != nil {
+			r.logger.Warn("failed to save checkpoint", "error", err)
+		}
+	}
+
+	r.logger.Info("event batch processed", "count", len(events))
+	return nil
+}
+
+// processEvent handles a single event
+func (r *RitualGuard) processEvent(ctx context.Context, event storage.TianEvent) error {
+	r.logger.Debug("processing event",
+		"event_id", event.EventID,
+		"type", event.EventType,
+		"edict_id", event.EdictID)
+
+	// Route event based on type
+	switch event.EventType {
+	// Edict lifecycle events
+	case "edict_assigned", "edict_created":
+		// Invoke Chancellor for new edict
+		if r.chancellor != nil {
+			_, err := r.chancellor.Execute(ctx, event.EdictID)
+			if err != nil {
+				return fmt.Errorf("chancellor execute: %w", err)
+			}
+		}
+
+	case "phase_changed", "forge_committed":
+		// Continue edict processing after phase change
+		if r.chancellor != nil {
+			_, err := r.chancellor.Execute(ctx, event.EdictID)
+			if err != nil {
+				return fmt.Errorf("chancellor execute: %w", err)
+			}
+		}
+
+	// Ritual/Workflow events
+	case "ritual_started":
+		r.logger.Info("ritual started", "edict_id", event.EdictID)
+
+	case "ritual_completed":
+		r.logger.Info("ritual completed", "edict_id", event.EdictID)
+		// Could trigger post-completion actions here
+
+	case "ritual_failed":
+		r.logger.Error("ritual failed", "edict_id", event.EdictID, "payload", string(event.Payload))
+		// Could trigger error handling/notification here
+
+	case "step_completed":
+		r.logger.Debug("step completed", "edict_id", event.EdictID, "payload", string(event.Payload))
+		// Continue workflow execution if needed
+
+	// Ling events
+	case "ling_created":
+		r.logger.Debug("ling created", "edict_id", event.EdictID, "payload", string(event.Payload))
+		// Could wake up Forge to process new ling
+
+	// Zhengming events
+	case "zhengming_needed":
+		r.logger.Info("zhengming needed", "edict_id", event.EdictID)
+		// Workflow will pause waiting for answer
+
+	case "zhengming_answered":
+		// Handle clarification response - resume paused workflow
+		if r.chancellor != nil {
+			r.logger.Info("zhengming answered, resuming", "edict_id", event.EdictID)
+			// Re-execute to continue workflow
+			_, err := r.chancellor.Execute(ctx, event.EdictID)
+			if err != nil {
+				return fmt.Errorf("chancellor execute after zhengming: %w", err)
+			}
+		}
+
+	case "edict_cancelled":
+		r.logger.Info("edict cancelled", "edict_id", event.EdictID)
+		// No action needed - workflow will check state
+
+	default:
+		r.logger.Debug("unknown event type, skipping", "type", event.EventType)
+	}
+
 	return nil
 }

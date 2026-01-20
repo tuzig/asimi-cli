@@ -12,6 +12,5 @@ __asimi_run() {
   return $exit_code
 }
 alias ll="ls -l"
-alias grep="rg"
 export TERM="dumb"
 

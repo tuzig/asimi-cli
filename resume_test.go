@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/stretchr/testify/assert"
 	"github.com/tmc/langchaingo/llms"
 )
@@ -33,7 +34,7 @@ func TestResumeWindowSetSessionsAndRender(t *testing.T) {
 	window := NewResumeWindow()
 	now := time.Now()
 
-	sessions := []Session{
+	sessions := []shogunate.Session{
 		testSession("s-1", "Refactor prompt", now, "Need to refactor"),
 		testSession("s-2", "Investigate bug", now.Add(-2*time.Hour), "Bug details"),
 	}
@@ -75,7 +76,7 @@ func TestResumeWindowScrollInfo(t *testing.T) {
 	window := NewResumeWindow()
 	now := time.Now()
 
-	var sessions []Session
+	var sessions []shogunate.Session
 	for i := 0; i < 20; i++ {
 		sessions = append(sessions, testSession(
 			fmt.Sprintf("s-%d", i+1),
@@ -94,7 +95,7 @@ func TestResumeWindowScrollInfo(t *testing.T) {
 
 func TestResumeWindowGetSelectedSession(t *testing.T) {
 	window := NewResumeWindow()
-	window.SetSessions([]Session{
+	window.SetSessions([]shogunate.Session{
 		testSession("one", "First", time.Now(), "msg"),
 	})
 
@@ -120,13 +121,13 @@ func TestSessionTitlePreviewFallbacks(t *testing.T) {
 	assert.Equal(t, "User question", sessionTitlePreview(session))
 }
 
-func testSession(id, prompt string, updated time.Time, messageTexts ...string) Session {
+func testSession(id, prompt string, updated time.Time, messageTexts ...string) shogunate.Session {
 	var messages []llms.MessageContent
 	for _, text := range messageTexts {
 		messages = append(messages, textMessage(llms.ChatMessageTypeHuman, text))
 	}
 
-	return Session{
+	return shogunate.Session{
 		ID:           id,
 		FirstPrompt:  prompt,
 		LastUpdated:  updated,

@@ -115,7 +115,7 @@ func TestViModePlaceholderText(t *testing.T) {
 func TestViModeHistoryNavigation(t *testing.T) {
 	// This test verifies that arrow keys work for history navigation in vi normal mode
 	config := &Config{}
-	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 
 	// Add some history entries
 	model.sessionPromptHistory = []promptHistoryEntry{
@@ -170,7 +170,7 @@ func TestViModeHistoryNavigation(t *testing.T) {
 func TestViModeHistoryNavigationWithKJ(t *testing.T) {
 	// Test that k and j keys also work for history navigation in vi normal mode
 	config := &Config{}
-	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 
 	// Add history
 	model.sessionPromptHistory = []promptHistoryEntry{
@@ -202,32 +202,32 @@ func TestViModeHistoryNavigationWithKJ(t *testing.T) {
 
 func TestViNormalModeEnterSubmitsPrompt(t *testing.T) {
 	config := &Config{}
-	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true // Ensure chat view is active
 
 	model.prompt.SetValue("ship it")
 	model.prompt.EnterViNormalMode()
 	model.Mode = "normal"
 
-	// In normal mode, Enter key calls handleEnterKey() directly which processes the prompt
-	newModel, _ := model.handleViNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	// In normal mode, Enter key calls handleEnterKey() which returns a SubmitPromptMsg
+	newModel, cmd := model.handleViNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
 	updatedModel, ok := newModel.(TUIModel)
 	assert.True(t, ok, "Should return TUIModel")
 
-	// The prompt should be cleared after submission
+	// The prompt should be cleared after handleEnterKey
 	assert.Equal(t, "", updatedModel.prompt.Value(), "Prompt should be cleared after sending message")
 
-	// Check that the user message was added to chat
-	chat := updatedModel.content.Chat
-	assert.NotEmpty(t, chat.Messages)
-	lastMsg := chat.Messages[len(chat.Messages)-1]
-	assert.Equal(t, "ship it", lastMsg.Content)
-	assert.Equal(t, MessageTypeUser, lastMsg.Type)
+	// Execute the command to get the message
+	assert.NotNil(t, cmd, "Should return a command")
+	msg := cmd()
+	submitMsg, ok := msg.(SubmitPromptMsg)
+	assert.True(t, ok, "Command should produce SubmitPromptMsg")
+	assert.Equal(t, "ship it", submitMsg.Prompt)
 }
 
 func TestViNormalModeEnterWithEmptyPrompt(t *testing.T) {
 	config := &Config{}
-	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true
 
 	model.prompt.SetValue("")

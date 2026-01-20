@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -48,79 +49,79 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestChancellorConn_EdictLifecycle(t *testing.T) {
+func TestChancellor_EdictCreationAndSeals(t *testing.T) {
 	db := setupTestDB(t)
-	conn := NewChancellorConn(db)
+	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 
 	// Create edict
-	err := conn.CreateEdict("test/repo#1", "Fix the login bug")
+	err := chancellor.CreateEdict("test/repo#1", "Fix the login bug")
 	if err != nil {
 		t.Fatalf("Failed to create edict: %v", err)
 	}
 
 	// Get edict
-	edict, err := conn.GetEdict("test/repo#1")
+	edict, err := chancellor.GetEdict("test/repo#1")
 	if err != nil {
 		t.Fatalf("Failed to get edict: %v", err)
 	}
-	if edict.CurrentPhase != storage.PhasePlanning {
-		t.Errorf("Expected phase planning, got %s", edict.CurrentPhase)
+	if edict.CurrentPhase != storage.PhaseBrewing {
+		t.Errorf("Expected phase brewing, got %s", edict.CurrentPhase)
 	}
 
 	// Update phase
-	err = conn.UpdatePhase("test/repo#1", storage.PhaseForging)
+	err = chancellor.UpdatePhase("test/repo#1", storage.PhaseForging)
 	if err != nil {
 		t.Fatalf("Failed to update phase: %v", err)
 	}
 
-	edict, _ = conn.GetEdict("test/repo#1")
+	edict, _ = chancellor.GetEdict("test/repo#1")
 	if edict.CurrentPhase != storage.PhaseForging {
 		t.Errorf("Expected phase forging, got %s", edict.CurrentPhase)
 	}
 
 	// Set seals
-	err = conn.SetChancellorSeal("test/repo#1", true)
+	err = chancellor.SetChancellorSeal("test/repo#1", true)
 	if err != nil {
 		t.Fatalf("Failed to set chancellor seal: %v", err)
 	}
 
-	err = conn.SetCensorSeal("test/repo#1", true)
+	err = chancellor.SetCensorSeal("test/repo#1", true)
 	if err != nil {
 		t.Fatalf("Failed to set censor seal: %v", err)
 	}
 
-	edict, _ = conn.GetEdict("test/repo#1")
+	edict, _ = chancellor.GetEdict("test/repo#1")
 	if !edict.ChancellorSeal || !edict.CensorSeal {
 		t.Error("Seals not set correctly")
 	}
 
 	// Cancel edict
-	err = conn.CancelEdict("test/repo#1", "@admin", "User requested cancellation")
+	err = chancellor.CancelEdict("test/repo#1", "@admin", "User requested cancellation")
 	if err != nil {
 		t.Fatalf("Failed to cancel edict: %v", err)
 	}
 
-	edict, _ = conn.GetEdict("test/repo#1")
+	edict, _ = chancellor.GetEdict("test/repo#1")
 	if edict.CurrentPhase != storage.PhaseCancelled {
 		t.Errorf("Expected phase cancelled, got %s", edict.CurrentPhase)
 	}
 }
 
-func TestChancellorConn_Zhengming(t *testing.T) {
+func TestChancellor_Zhengming(t *testing.T) {
 	db := setupTestDB(t)
-	conn := NewChancellorConn(db)
+	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 
 	// Create edict first
-	conn.CreateEdict("test/repo#2", "Add feature X")
+	chancellor.CreateEdict("test/repo#2", "Add feature X")
 
 	// Request zhengming
-	requestID, err := conn.RequestZhengming("test/repo#2", "What should X do?", storage.PriorityNormal)
+	requestID, err := chancellor.RequestZhengming("test/repo#2", "What should X do?", storage.PriorityNormal)
 	if err != nil {
 		t.Fatalf("Failed to request zhengming: %v", err)
 	}
 
 	// Check pending
-	pending, err := conn.IsZhengmingPending("test/repo#2")
+	pending, err := chancellor.IsZhengmingPending("test/repo#2")
 	if err != nil {
 		t.Fatalf("Failed to check pending: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestChancellorConn_Zhengming(t *testing.T) {
 	}
 
 	// Get pending requests
-	requests, err := conn.GetPendingZhengming("test/repo#2")
+	requests, err := chancellor.GetPendingZhengming("test/repo#2")
 	if err != nil {
 		t.Fatalf("Failed to get pending zhengming: %v", err)
 	}
@@ -138,24 +139,24 @@ func TestChancellorConn_Zhengming(t *testing.T) {
 	}
 
 	// Answer zhengming
-	err = conn.AnswerZhengming(requestID, "X should do Y")
+	err = chancellor.AnswerZhengming(requestID, "X should do Y")
 	if err != nil {
 		t.Fatalf("Failed to answer zhengming: %v", err)
 	}
 
 	// Check no longer pending
-	pending, _ = conn.IsZhengmingPending("test/repo#2")
+	pending, _ = chancellor.IsZhengmingPending("test/repo#2")
 	if pending {
 		t.Error("Expected no pending zhengming after answering")
 	}
 
 	// Append to ren intent
-	err = conn.AppendToRenIntent("test/repo#2", "X should do Y")
+	err = chancellor.AppendToRenIntent("test/repo#2", "X should do Y")
 	if err != nil {
 		t.Fatalf("Failed to append to ren intent: %v", err)
 	}
 
-	edict, _ := conn.GetEdict("test/repo#2")
+	edict, _ := chancellor.GetEdict("test/repo#2")
 	if edict.RenIntentVersion != 2 {
 		t.Errorf("Expected version 2, got %d", edict.RenIntentVersion)
 	}
@@ -165,7 +166,7 @@ func TestStrategistConn_Ling(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Create edict via chancellor
-	chancellor := NewChancellorConn(db)
+	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#3", "Build feature Y")
 
 	// Use strategist to create ling
@@ -205,7 +206,7 @@ func TestForgeConn_Manifests(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup
-	chancellor := NewChancellorConn(db)
+	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#4", "Build feature Z")
 
 	strategist := NewStrategistConn(db)
@@ -259,7 +260,7 @@ func TestJudgeConn_Verdicts(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup: create manifest
-	chancellor := NewChancellorConn(db)
+	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#5", "Test feature")
 
 	forge := NewForgeConn(db)
@@ -305,7 +306,7 @@ func TestCensorConn_Precedents(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup: create quenched manifest
-	chancellor := NewChancellorConn(db)
+	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#6", "Ethics test")
 
 	forge := NewForgeConn(db)
@@ -374,7 +375,7 @@ func TestMarshalConn_Incidents(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup
-	chancellor := NewChancellorConn(db)
+	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#7", "Production issue")
 
 	forge := NewForgeConn(db)
@@ -426,7 +427,7 @@ func TestRitualGuardConn_Events(t *testing.T) {
 	// Create checkpoint table manually for this test
 	db.Exec(`CREATE TABLE IF NOT EXISTS ritual_guard_checkpoint (id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL, updated_at DATETIME)`)
 
-	chancellor := NewChancellorConn(db)
+	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#8", "Event test")
 
 	// Emit events

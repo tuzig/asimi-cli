@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -177,7 +178,9 @@ func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
-	model.saveSession()
+	if model.session != nil {
+		model.session.Save()
+	}
 
 	model.sessionActive = true
 
@@ -196,9 +199,9 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
-	// Shutdown handles saving the session and waiting for completion
-	model.shutdown()
-	// Quit the application
+	if model.session != nil {
+		model.session.Save()
+	}
 	return tea.Quit
 }
 
@@ -214,7 +217,7 @@ func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 	// Immediately show the resume view with loading state
-	showResumeCmd := model.content.ShowResume([]Session{})
+	showResumeCmd := model.content.ShowResume([]shogunate.Session{})
 	model.content.resume.SetLoading(true)
 
 	// Load sessions in the background

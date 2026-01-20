@@ -36,6 +36,7 @@ func TestShogunateSchema_AutoMigrate(t *testing.T) {
 		"censor_precedents",
 		"marshal_incidents",
 		"ruler_council",
+		"ritual_guard_checkpoint",
 	}
 
 	for _, table := range tables {
@@ -48,13 +49,13 @@ func TestShogunateSchema_AutoMigrate(t *testing.T) {
 		}
 	}
 
-	// Verify schema version is 3
+	// Verify schema version matches current
 	var record SchemaVersionRecord
 	if err := db.Conn().First(&record).Error; err != nil {
 		t.Fatalf("Failed to read schema version: %v", err)
 	}
-	if record.Version != 3 {
-		t.Errorf("Expected schema version 3, got %d", record.Version)
+	if record.Version != SchemaVersion {
+		t.Errorf("Expected schema version %d, got %d", SchemaVersion, record.Version)
 	}
 }
 

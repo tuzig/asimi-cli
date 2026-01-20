@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -16,8 +17,8 @@ type StatusComponent struct {
 	HasError    bool // Track if there's a model error
 	Width       int
 	Style       lipgloss.Style
-	Session     *Session  // Reference to session for token/time tracking
-	repoInfo    *RepoInfo // Git repository information
+	Session     *shogunate.Session // Reference to session for token/time tracking
+	repoInfo    *RepoInfo          // Git repository information
 	mode        string
 	ViPendingOp string
 
@@ -52,7 +53,7 @@ func (s *StatusComponent) SetProvider(provider, model string, connected bool) {
 }
 
 // SetSession sets the session reference for tracking
-func (s *StatusComponent) SetSession(session *Session) {
+func (s *StatusComponent) SetSession(session *shogunate.Session) {
 	s.Session = session
 }
 
@@ -70,6 +71,21 @@ func (s *StatusComponent) StartWaiting() {
 // StopWaiting clears the waiting indicator
 func (s *StatusComponent) StopWaiting() {
 	s.waitingForResponse = false
+}
+
+// IsWaiting returns true if waiting for a response
+func (s *StatusComponent) IsWaiting() bool {
+	return s.waitingForResponse
+}
+
+// ResetWaitingTimer resets the waiting timer without changing waiting state
+func (s *StatusComponent) ResetWaitingTimer() {
+	s.waitingSince = time.Now()
+}
+
+// WaitingSince returns when waiting started
+func (s *StatusComponent) WaitingSince() time.Time {
+	return s.waitingSince
 }
 
 // SetError marks the status component as having an error

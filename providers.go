@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	internalconfig "github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"go.uber.org/fx"
@@ -116,8 +118,8 @@ func ProvideRepoInfo(config *Config, logger *slog.Logger) RepoInfo {
 }
 
 // ProvideScheduler creates the tool scheduler for dependency injection
-func ProvideScheduler() *CoreToolScheduler {
-	return NewCoreToolScheduler(nil)
+func ProvideScheduler() *shogunate.CoreToolScheduler {
+	return shogunate.NewCoreToolScheduler(nil)
 }
 
 // ShellRunnerParams holds parameters for shell runner initialization
@@ -126,7 +128,7 @@ type ShellRunnerParams struct {
 	Lifecycle fx.Lifecycle
 	Config    *Config
 	RepoInfo  RepoInfo
-	Scheduler *CoreToolScheduler
+	Scheduler *shogunate.CoreToolScheduler
 	Logger    *slog.Logger
 }
 
@@ -151,61 +153,9 @@ func ProvideShellRunner(params ShellRunnerParams) shellRunner {
 	return runner
 }
 
-// ModelClientParams holds parameters for async LLM client initialization
-type ModelClientParams struct {
-	fx.In
-	Lifecycle fx.Lifecycle
-	Config    *Config
-	RepoInfo  RepoInfo
-	Scheduler *CoreToolScheduler
-	Logger    *slog.Logger
-}
-
-// ProvideModelClient sets up async LLM client initialization
-// The model client will be initialized in a goroutine and send a message when ready
-func ProvideModelClient(params ModelClientParams) {
-	params.Lifecycle.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			// Launch async initialization
-			go func() {
-				params.Logger.Info("connecting to LLM", "provider", params.Config.LLM.Provider)
-				llm, err := getModelClient(params.Config)
-				if cli.Debug {
-					params.Logger.Debug("[TIMING] getModelClient() completed")
-				}
-
-				if err != nil {
-					params.Logger.Warn("failed to connect to LLM, running without AI capabilities", "error", err)
-					if program != nil {
-						program.Send(llmInitErrorMsg{err: err})
-					}
-				} else {
-					params.Logger.Info("LLM client connected")
-					params.Logger.Info("creating session")
-					sess, sessErr := NewSession(llm, params.Config, params.RepoInfo, params.Scheduler, func(m any) {
-						if program != nil {
-							program.Send(m)
-						}
-					})
-					if cli.Debug {
-						params.Logger.Debug("[TIMING] NewSession() completed")
-					}
-
-					if sessErr != nil {
-						params.Logger.Error("failed to create session", "error", sessErr)
-						if program != nil {
-							program.Send(llmInitErrorMsg{err: sessErr})
-						}
-					} else {
-						if program != nil {
-							program.Send(llmInitSuccessMsg{session: sess})
-						}
-					}
-				}
-			}()
-			return nil
-		},
-	})
+// ProvideLLMConfig extracts the LLMConfig from the main Config for use by shogunate
+func ProvideLLMConfig(config *Config) *internalconfig.LLMConfig {
+	return &config.LLM
 }
 
 // PromptHistoryResult holds the prompt history store
@@ -242,27 +192,47 @@ func ProvideCommandHistory(db *storage.DB, repoInfo RepoInfo, logger *slog.Logge
 	return CommandHistoryResult{History: historyStore}, nil
 }
 
+// SessionHistoryParams holds parameters for session history initialization
+type SessionHistoryParams struct {
+	fx.In
+	Lifecycle fx.Lifecycle
+	DB        *storage.DB
+	Config    *Config
+	RepoInfo  RepoInfo
+	Logger    *slog.Logger
+}
+
 // ProvideSessionHistory creates and returns the session history store
-func ProvideSessionHistory(db *storage.DB, config *Config, repoInfo RepoInfo, logger *slog.Logger) (*SessionStore, error) {
-	if !config.Session.Enabled {
+func ProvideSessionHistory(params SessionHistoryParams) (*SessionStore, error) {
+	if !params.Config.Session.Enabled {
 		return nil, nil // Session storage is disabled
 	}
 
-	logger.Info("loading session history")
+	params.Logger.Info("loading session history")
 	maxSessions := 50
 	maxAgeDays := 30
-	if config.Session.MaxSessions > 0 {
-		maxSessions = config.Session.MaxSessions
+	if params.Config.Session.MaxSessions > 0 {
+		maxSessions = params.Config.Session.MaxSessions
 	}
-	if config.Session.MaxAgeDays > 0 {
-		maxAgeDays = config.Session.MaxAgeDays
+	if params.Config.Session.MaxAgeDays > 0 {
+		maxAgeDays = params.Config.Session.MaxAgeDays
 	}
 
-	store, err := NewSessionStore(db, repoInfo, maxSessions, maxAgeDays)
+	store, err := NewSessionStore(params.DB, params.RepoInfo, maxSessions, maxAgeDays)
 	if err != nil {
-		logger.Error("failed to create session store", "error", err)
+		params.Logger.Error("failed to create session store", "error", err)
 		return nil, nil // Don't fail startup
 	}
+
+	// Register cleanup on shutdown
+	params.Lifecycle.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			params.Logger.Info("closing session store")
+			store.Close()
+			return nil
+		},
+	})
+
 	return store, nil
 }
 
@@ -275,13 +245,14 @@ type TUIModelParams struct {
 	CommandHistory *CommandHistory `name:"command"`
 	SessionStore   *SessionStore
 	DB             *storage.DB
-	Scheduler      *CoreToolScheduler
+	Scheduler      *shogunate.CoreToolScheduler
+	Shogunate      *shogunate.Shogunate
 	Logger         *slog.Logger
 }
 
 // ProvideTUIModel creates and returns the TUI model
 func ProvideTUIModel(params TUIModelParams) *TUIModel {
-	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler)
+	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler, params.Shogunate)
 }
 
 // TUIProgramParams holds parameters for TUI program initialization

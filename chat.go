@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -859,14 +860,14 @@ func (c *ChatComponent) ClearToolCallMessageIndex() {
 // ===== Tool Call Message Handling =====
 
 // HandleToolCallScheduled handles a scheduled tool call message
-func (c *ChatComponent) HandleToolCallScheduled(msg ToolCallScheduledMsg) {
+func (c *ChatComponent) HandleToolCallScheduled(msg shogunate.ToolCallScheduledMsg) {
 	message := formatToolCall(msg.Call.Tool.Name(), "📋", msg.Call.Input, "", nil)
 	c.AddMessage(message)
 	c.SetToolCallMessageIndex(msg.Call.ID, len(c.Messages)-1)
 }
 
 // HandleToolCallExecuting handles an executing tool call message
-func (c *ChatComponent) HandleToolCallExecuting(msg ToolCallExecutingMsg) {
+func (c *ChatComponent) HandleToolCallExecuting(msg shogunate.ToolCallExecutingMsg) {
 	formatted := formatToolCall(msg.Call.Tool.Name(), "⚙️", msg.Call.Input, "", nil)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
@@ -879,7 +880,7 @@ func (c *ChatComponent) HandleToolCallExecuting(msg ToolCallExecutingMsg) {
 }
 
 // HandleToolCallSuccess handles a successful tool call message
-func (c *ChatComponent) HandleToolCallSuccess(msg ToolCallSuccessMsg) {
+func (c *ChatComponent) HandleToolCallSuccess(msg shogunate.ToolCallSuccessMsg) {
 	formatted := formatToolCall(msg.Call.Tool.Name(), checkPrefix, msg.Call.Input, msg.Call.Result, nil)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
@@ -894,7 +895,7 @@ func (c *ChatComponent) HandleToolCallSuccess(msg ToolCallSuccessMsg) {
 }
 
 // HandleToolCallError handles a failed tool call message
-func (c *ChatComponent) HandleToolCallError(msg ToolCallErrorMsg) {
+func (c *ChatComponent) HandleToolCallError(msg shogunate.ToolCallErrorMsg) {
 	icon := "⁉️"
 	var deniedErr CommandDeniedError
 	if errors.As(msg.Call.Error, &deniedErr) {
@@ -914,7 +915,7 @@ func (c *ChatComponent) HandleToolCallError(msg ToolCallErrorMsg) {
 }
 
 // HandleToolCallAborted handles an aborted tool call message (e.g., due to sandbox restart)
-func (c *ChatComponent) HandleToolCallAborted(msg ToolCallAbortedMsg) {
+func (c *ChatComponent) HandleToolCallAborted(msg shogunate.ToolCallAbortedMsg) {
 	// Use a distinctive icon to clearly mark aborted tool calls
 	icon := "🚫"
 	formatted := formatToolCall(msg.Call.Tool.Name(), icon, msg.Call.Input, "", msg.Call.Error)
