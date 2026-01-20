@@ -450,14 +450,14 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 			go func() {
 				defer close(responseChan)
 
-				if model.session == nil {
+				if model.shogunate.Session() == nil {
 					slog.Warn("No session available for workflow prompt")
 					responseChan <- ""
 					return
 				}
 
 				// Use AskWithStreaming to show model output in the UI while blocking
-				response, err := model.session.AskWithStreaming(ctx, prompt, nil)
+				response, err := model.shogunate.AskWithStreaming(ctx, prompt, nil)
 				if err != nil {
 					slog.Error("Workflow prompt failed", "error", err)
 					responseChan <- ""
@@ -503,7 +503,7 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 
 // handleInitCommandWithWorkflow is the workflow-based implementation of :init
 func handleInitCommandWithWorkflow(model *TUIModel, args []string) tea.Cmd {
-	if model.session == nil {
+	if model.shogunate.Session() == nil {
 		return func() tea.Msg {
 			return showSystemMsg("No model connection. Use :models to configure a model and start chatting.")
 		}

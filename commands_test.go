@@ -157,9 +157,11 @@ func TestHandleInitCommand(t *testing.T) {
 		}
 	}()
 
-	// Setup a mock model
+	// Setup a mock model with shogunate
+	sg := &shogunate.Shogunate{}
+	sg.SetTestSession(&shogunate.Session{})
 	mockTUI := &TUIModel{
-		session: &shogunate.Session{},
+		shogunate: sg,
 	}
 
 	t.Run("Clean directory", func(t *testing.T) {

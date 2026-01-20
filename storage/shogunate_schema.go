@@ -218,10 +218,11 @@ func (TianEventDLQ) TableName() string {
 
 // Ling (令) is a task order 
 type Ling struct {
-	LingID         string      `gorm:"primaryKey;size:64"`
-	EdictID        string      `gorm:"index:idx_ling_edict_status,priority:1;size:255"` // Optional: empty for session tool calls
-	SessionID      int64       `gorm:"column:session_id;index:idx_ling_session"`        // Session that issued this Ling
-	Description    string      `gorm:"type:text"`
+	LingID      string `gorm:"primaryKey;size:64"`
+	EdictID     string `gorm:"index:idx_ling_edict_status,priority:1;size:255"` // Optional: empty for session tool calls
+	SessionID   int64  `gorm:"column:session_id;index:idx_ling_session"`        // Session that issued this Ling
+	Description string `gorm:"type:text"`
+	// TODO: remove this
 	RitualType     string      `gorm:"size:50;default:'code-change'"` // Sub-ritual: test-method, simple-change, code-change
 	Dependencies   StringArray `gorm:"type:text"`                     // JSON array of LingID references
 	Status         LingStatus  `gorm:"not null;default:'pending';index:idx_ling_edict_status,priority:2"`

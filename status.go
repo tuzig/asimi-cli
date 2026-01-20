@@ -17,8 +17,8 @@ type StatusComponent struct {
 	HasError    bool // Track if there's a model error
 	Width       int
 	Style       lipgloss.Style
-	Session     *shogunate.Session // Reference to session for token/time tracking
-	repoInfo    *RepoInfo          // Git repository information
+	shogunate   *shogunate.Shogunate // Reference to shogunate for token/time tracking
+	repoInfo    *RepoInfo            // Git repository information
 	mode        string
 	ViPendingOp string
 
@@ -52,9 +52,9 @@ func (s *StatusComponent) SetProvider(provider, model string, connected bool) {
 	s.Connected = connected
 }
 
-// SetSession sets the session reference for tracking
-func (s *StatusComponent) SetSession(session *shogunate.Session) {
-	s.Session = session
+// SetShogunate sets the shogunate reference for tracking
+func (s *StatusComponent) SetShogunate(sg *shogunate.Shogunate) {
+	s.shogunate = sg
 }
 
 // SetRepoInfo sets the repository information
@@ -351,12 +351,12 @@ func (s StatusComponent) renderShellRunnerIndicator() string {
 func (s StatusComponent) renderMiddleSection() string {
 	statusStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
 	// Return token usage and session age e.g, `🪣 63%   1h23:45 ⏱`
-	if s.Session == nil {
+	if s.shogunate == nil {
 		return statusStyle.Render("🪣 0%")
 	}
 
 	// Get context usage percentage
-	usagePercent := s.Session.GetContextUsagePercent()
+	usagePercent := s.shogunate.GetContextUsagePercent()
 
 	// Format the output with icons
 	statusStr := fmt.Sprintf("🪣 %.0f%%", usagePercent)

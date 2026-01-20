@@ -5,12 +5,9 @@ type RitualType string
 
 const (
 	// Edict-level rituals (run once per edict)
-	RitualFeature     RitualType = "feature"     // Full cycle: planning → forging → judgment → review
-	RitualBugfix      RitualType = "bugfix"      // Similar to feature but may skip some review
-	RitualHotfix      RitualType = "hotfix"      // Expedited: minimal review, urgent priority
-	RitualChore       RitualType = "chore"       // Maintenance: planning only, no forge/judge/censor
-	RitualAssassinate RitualType = "assassinate" // Emergency production fix
-
+	RitualFeature RitualType = "feature" // Full cycle: planning → forging → judgment → censor
+	RitualBugfix  RitualType = "bugfix"  // Similar to feature but starts with root-cause-analysis
+	RitualChore   RitualType = "chore"   // Maintenance: planning only, no forge/judge/censor
 	// Ling-level sub-rituals (run per-ling)
 	RitualTestMethod   RitualType = "test-method"   // Forge → Judge → Censor for one test
 	RitualSimpleChange RitualType = "simple-change" // Just Forge (no CI/review)
@@ -25,7 +22,7 @@ func (r RitualType) String() string {
 // IsEdictLevel returns true if this ritual type is for edict-level orchestration
 func (r RitualType) IsEdictLevel() bool {
 	switch r {
-	case RitualFeature, RitualBugfix, RitualHotfix, RitualChore, RitualAssassinate:
+	case RitualFeature, RitualBugfix, RitualChore:
 		return true
 	default:
 		return false

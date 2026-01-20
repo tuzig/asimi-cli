@@ -327,6 +327,131 @@ func (s *Shogunate) runSQLCommand(ctx context.Context, cmd string) (string, erro
 	return string(output), err
 }
 
+// --- Session Wrapper Methods ---
+// These methods provide access to the Chancellor's session for TUI operations.
+// All methods handle nil receiver case for safe use when Shogunate is not initialized.
+
+// Session returns the current session from Chancellor
+func (s *Shogunate) Session() *Session {
+	if s == nil || s.Chancellor == nil {
+		return nil
+	}
+	return s.Chancellor.session
+}
+
+// SaveSession saves the current session
+func (s *Shogunate) SaveSession() {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return
+	}
+	s.Chancellor.session.Save()
+}
+
+// GetContextInfo returns context usage information from the current session
+func (s *Shogunate) GetContextInfo() ContextInfo {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return ContextInfo{}
+	}
+	return s.Chancellor.session.GetContextInfo()
+}
+
+// GetContextUsagePercent returns the context usage percentage from the current session
+func (s *Shogunate) GetContextUsagePercent() float64 {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return 0
+	}
+	return s.Chancellor.session.GetContextUsagePercent()
+}
+
+// ClearHistory clears the session's conversation history
+func (s *Shogunate) ClearHistory() {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return
+	}
+	s.Chancellor.session.ClearHistory()
+}
+
+// RollbackTo rolls back the session to a previous message snapshot
+func (s *Shogunate) RollbackTo(snapshot int) {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return
+	}
+	s.Chancellor.session.RollbackTo(snapshot)
+}
+
+// GetMessageSnapshot returns the current message count for rollback purposes
+func (s *Shogunate) GetMessageSnapshot() int {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return 0
+	}
+	return s.Chancellor.session.GetMessageSnapshot()
+}
+
+// CompactHistory compacts the conversation history using the provided prompt
+func (s *Shogunate) CompactHistory(ctx context.Context, compactPrompt string) (string, error) {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return "", fmt.Errorf("no active session")
+	}
+	return s.Chancellor.session.CompactHistory(ctx, compactPrompt)
+}
+
+// UpdateTokenCounts updates the token counts with context files
+func (s *Shogunate) UpdateTokenCounts(contextFiles map[string]string) {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return
+	}
+	s.Chancellor.session.UpdateTokenCounts(contextFiles)
+}
+
+// AskWithStreaming sends a prompt to the LLM with streaming response
+func (s *Shogunate) AskWithStreaming(ctx context.Context, prompt string, contextFiles map[string]string) (string, error) {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return "", fmt.Errorf("no active session")
+	}
+	return s.Chancellor.session.AskWithStreaming(ctx, prompt, contextFiles)
+}
+
+// SetSessionStore sets the session store and auto-save setting
+func (s *Shogunate) SetSessionStore(store SessionStore, autoSave bool) {
+	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+		return
+	}
+	s.Chancellor.session.SetStore(store, autoSave)
+}
+
+// SetSessionFromResumed copies fields from a loaded session to the active session
+func (s *Shogunate) SetSessionFromResumed(loaded *Session) {
+	if s == nil || s.Chancellor == nil || loaded == nil {
+		return
+	}
+	sess := s.Chancellor.session
+	if sess == nil {
+		return
+	}
+	sess.ID = loaded.ID
+	sess.CreatedAt = loaded.CreatedAt
+	sess.LastUpdated = loaded.LastUpdated
+	sess.FirstPrompt = loaded.FirstPrompt
+	sess.Provider = loaded.Provider
+	sess.Model = loaded.Model
+	sess.WorkingDir = loaded.WorkingDir
+	sess.ProjectSlug = loaded.ProjectSlug
+	sess.Messages = make([]llms.MessageContent, len(loaded.Messages))
+	copy(sess.Messages, loaded.Messages)
+}
+
+// SetTestSession sets a session directly for testing purposes.
+// This should only be used in tests.
+func (s *Shogunate) SetTestSession(sess *Session) {
+	if s == nil {
+		return
+	}
+	if s.Chancellor == nil {
+		s.Chancellor = &Chancellor{}
+	}
+	s.Chancellor.session = sess
+}
+
 // ShogunateParams holds parameters for Shogunate initialization
 type ShogunateParams struct {
 	fx.In

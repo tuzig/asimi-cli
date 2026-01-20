@@ -50,7 +50,6 @@ type TUIModel struct {
 	commandRegistry CommandRegistry
 
 	// Application services (passed in, not owned)
-	session      *shogunate.Session
 	sessionStore *SessionStore // kept for /resume listing; session manages its own persistence
 	db           *storage.DB
 	scheduler    *shogunate.CoreToolScheduler
@@ -190,7 +189,6 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 		commandRegistry: registry,
 
 		// Application services (injected)
-		session:                  nil,
 		sessionStore:             sessionStore,
 		db:                       db,
 		scheduler:                scheduler,
@@ -252,13 +250,14 @@ func (m *TUIModel) initHistory() {
 	}
 }
 
-// SetSession sets the session for the TUI model
-func (m *TUIModel) SetSession(session *shogunate.Session) {
-	m.session = session
-	m.status.SetSession(session) // Pass session to status component
+// ConfigureSession configures the session for the TUI model by setting up the session store.
+// This should be called after the Shogunate/Chancellor has created its session.
+func (m *TUIModel) ConfigureSession() {
+	session := m.shogunate.Session()
+	m.status.SetShogunate(m.shogunate)
 	if session != nil && m.sessionStore != nil && m.config != nil {
 		autoSave := m.config.Session.Enabled && m.config.Session.AutoSave
-		session.SetStore(m.sessionStore, autoSave)
+		m.shogunate.SetSessionStore(m.sessionStore, autoSave)
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else if session != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
@@ -918,9 +917,7 @@ func (m TUIModel) handleCtrlCBurstTimeout(msg ctrlCBurstTimeoutMsg) (tea.Model, 
 
 	// This was the second press completing - quit!
 	slog.Info("CTRL-C: Second press completed, quitting")
-	if m.session != nil {
-		m.session.Save()
-	}
+	m.shogunate.SaveSession()
 	return m, tea.Quit
 }
 
@@ -1000,9 +997,7 @@ func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
 			} else {
 				m.contextFiles[filePath] = string(content)
 				m.content.Chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
-				if m.session != nil {
-					m.session.UpdateTokenCounts(m.contextFiles)
-				}
+				m.shogunate.UpdateTokenCounts(m.contextFiles)
 			}
 			currentValue := m.prompt.Value()
 			lastAt := strings.LastIndex(currentValue, "@")
@@ -1074,11 +1069,7 @@ func (m *TUIModel) saveHistoryPresentState() {
 		return
 	}
 	m.historyPendingPrompt = m.prompt.Value()
-	if m.session != nil {
-		m.historyPresentSessionSnapshot = m.session.GetMessageSnapshot()
-	} else {
-		m.historyPresentSessionSnapshot = 0
-	}
+	m.historyPresentSessionSnapshot = m.shogunate.GetMessageSnapshot()
 	m.historyPresentChatSnapshot = len(m.content.Chat.Messages)
 	m.historySaved = true
 }
@@ -1335,9 +1326,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			entry := m.sessionPromptHistory[m.historyCursor]
 			m.cancelStreaming()
 			m.stopStreaming()
-			if m.session != nil {
-				m.session.RollbackTo(entry.SessionSnapshot)
-			}
+			m.shogunate.RollbackTo(entry.SessionSnapshot)
 			m.content.Chat.TruncateTo(entry.ChatSnapshot)
 			m.content.Chat.ClearToolCallMessageIndex()
 			m.historySaved = false
@@ -1345,10 +1334,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.content.Chat.AddToRawHistory("USER", content)
 		chatSnapshot := len(m.content.Chat.Messages)
-		var sessionSnapshot int
-		if m.session != nil {
-			sessionSnapshot = m.session.GetMessageSnapshot()
-		}
+		sessionSnapshot := m.shogunate.GetMessageSnapshot()
 		if m.historyCursor < len(m.sessionPromptHistory) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
@@ -1489,9 +1475,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamCompleteCallback = nil // Clear after running
 		}
 
-		if m.session != nil {
-			m.session.Save()
-		}
+		m.shogunate.SaveSession()
 		refreshGitInfo()
 
 		return m, guardrailCmd
@@ -1914,7 +1898,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle starting a new conversation (used by init, new, and other commands)
 		slog.Debug("got startConversationMsg", "RunOnHost", msg.RunOnHost, "tryUpgradeToSandbox", msg.tryUpgradeToSandbox)
 
-		if m.session == nil {
+		if m.shogunate.Session() == nil {
 			m.commandLine.AddToast("No LLM session available", "error", 4000)
 			return m, nil
 		}
@@ -1949,7 +1933,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stopStreaming()
 
 			// Reset session conversation history
-			m.session.ClearHistory()
+			m.shogunate.ClearHistory()
 		}
 
 		// Display initial messages after clearing history (before streaming starts)
@@ -1978,12 +1962,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
 				go func() {
-					m.session.AskWithStreaming(ctx, msg.prompt, nil)
+					m.shogunate.AskWithStreaming(ctx, msg.prompt, nil)
 				}()
 				return m, tea.Batch(waitCmd, upgradeCmd)
 			} else {
 				go func() {
-					m.session.AskWithStreaming(ctx, msg.prompt, nil)
+					m.shogunate.AskWithStreaming(ctx, msg.prompt, nil)
 				}()
 			}
 		} else {
@@ -2014,7 +1998,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case compactConversationMsg:
 		// Handle conversation compaction
 		slog.Debug("got compactConversationMsg")
-		if m.session == nil {
+		if m.shogunate.Session() == nil {
 			m.commandLine.AddToast("No LLM session available for compaction", "error", 4000)
 			return m, nil
 		}
@@ -2025,7 +2009,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Perform the compaction in a goroutine
 		go func() {
 			ctx := context.Background()
-			summary, err := m.session.CompactHistory(ctx, compactPrompt)
+			summary, err := m.shogunate.CompactHistory(ctx, compactPrompt)
 			if err != nil {
 				if program != nil {
 					program.Send(compactErrorMsg{err: err})
@@ -2042,7 +2026,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Debug("compaction completed")
 
 		// Get context info to show the improvement
-		info := m.session.GetContextInfo()
+		info := m.shogunate.GetContextInfo()
 
 		// Add success message
 		m.content.Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted successfully!\n\nContext usage: %s/%s tokens (%.1f%%)",
@@ -2091,17 +2075,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandLine.AddToast("Initialization complete!", "success", 3*time.Second)
 
 			// Start a fresh session without clearing the screen
-			if m.session != nil {
-				m.session.Save()
-			}
+			m.shogunate.SaveSession()
 			m.sessionActive = true
 			m.content.Chat.Indent = 0
 			m.initHistory()
 			m.cancelStreaming()
 			m.stopStreaming()
-			if m.session != nil {
-				m.session.ClearHistory()
-			}
+			m.shogunate.ClearHistory()
 
 			// Try to upgrade to sandbox (async) in case it wasn't already done
 			refreshGitInfo()
@@ -2302,7 +2282,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	m.prompt.SetHeight(promptHeight)
 
 	// Update status info
-	if m.session != nil {
+	if m.shogunate.Session() != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)

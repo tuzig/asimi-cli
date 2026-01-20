@@ -35,13 +35,13 @@ func TestSessionStoreCloseWithTimeout(t *testing.T) {
 
 	// Create a test session
 	session := &shogunate.Session{
-		ID:           "test-session-123",
-		CreatedAt:    time.Now(),
-		LastUpdated:  time.Now(),
-		FirstPrompt:  "Test prompt",
-		Provider:     "test",
-		Model:        "test-model",
-		WorkingDir:   repoInfo.ProjectRoot,
+		ID:          "test-session-123",
+		CreatedAt:   time.Now(),
+		LastUpdated: time.Now(),
+		FirstPrompt: "Test prompt",
+		Provider:    "test",
+		Model:       "test-model",
+		WorkingDir:  repoInfo.ProjectRoot,
 	}
 
 	// Add a user message so the session will be saved
@@ -100,13 +100,13 @@ func TestSessionSaveOnQuit(t *testing.T) {
 
 	// Create a test session with a message so it will be saved
 	session := &shogunate.Session{
-		ID:           "test-save-session",
-		CreatedAt:    time.Now(),
-		LastUpdated:  time.Now(),
-		FirstPrompt:  "Test prompt",
-		Provider:     "test",
-		Model:        "test-model",
-		WorkingDir:   repoInfo.ProjectRoot,
+		ID:          "test-save-session",
+		CreatedAt:   time.Now(),
+		LastUpdated: time.Now(),
+		FirstPrompt: "Test prompt",
+		Provider:    "test",
+		Model:       "test-model",
+		WorkingDir:  repoInfo.ProjectRoot,
 	}
 	session.Messages = append(session.Messages, llms.MessageContent{
 		Role:  llms.ChatMessageTypeHuman,

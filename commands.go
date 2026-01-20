@@ -178,9 +178,7 @@ func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.session != nil {
-		model.session.Save()
-	}
+	model.shogunate.SaveSession()
 
 	model.sessionActive = true
 
@@ -199,18 +197,16 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.session != nil {
-		model.session.Save()
-	}
+	model.shogunate.SaveSession()
 	return tea.Quit
 }
 
 func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
-		if model.session == nil {
+		if model.shogunate.Session() == nil {
 			return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
 		}
-		info := model.session.GetContextInfo()
+		info := model.shogunate.GetContextInfo()
 		return showContextMsg{content: renderContextInfo(info)}
 	}
 }
@@ -280,7 +276,8 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.session == nil {
+	session := model.shogunate.Session()
+	if session == nil {
 		return func() tea.Msg {
 			return showSystemMsg("No active session to export. Start a conversation first.")
 		}
@@ -301,7 +298,7 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	}
 
 	// Export the session to a file
-	filepath, err := exportSession(model.session, exportType)
+	filepath, err := exportSession(session, exportType)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Export failed: %v", err))
@@ -644,7 +641,8 @@ func checkMissingInfraFiles(agentsFile string) []string {
 }
 
 func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.session == nil {
+	session := model.shogunate.Session()
+	if session == nil {
 		return func() tea.Msg {
 			return showSystemMsg("No active session to compact. Start a conversation first.")
 		}
@@ -652,7 +650,7 @@ func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
 
 	return func() tea.Msg {
 		// Check if there's enough conversation to compact
-		if len(model.session.Messages) <= 2 {
+		if len(session.Messages) <= 2 {
 			return showSystemMsg("Not enough conversation history to compact. Continue chatting first.")
 		}
 

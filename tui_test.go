@@ -59,7 +59,8 @@ func TestTUIModelInit(t *testing.T) {
 
 // TestTUIModelWindowSizeMsg tests handling of window size messages
 func TestTUIModelWindowSizeMsg(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	sg := &shogunate.Shogunate{}
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, sg)
 
 	// Send a window size message
 	newModel, cmd := model.Update(tea.WindowSizeMsg{Width: 100, Height: 50})
@@ -73,7 +74,9 @@ func TestTUIModelWindowSizeMsg(t *testing.T) {
 
 // newTestModel creates a new TUIModel for testing purposes.
 func newTestModel(t *testing.T) *TUIModel {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	// Create a mock Shogunate for testing
+	sg := &shogunate.Shogunate{}
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, sg)
 	// Disable persistent history to keep tests hermetic.
 	model.persistentPromptHistory = nil
 	model.initHistory()
@@ -89,7 +92,8 @@ func newTestModel(t *testing.T) *TUIModel {
 			},
 		},
 	}
-	model.SetSession(sess)
+	model.shogunate.SetTestSession(sess)
+	model.ConfigureSession()
 	return model
 }
 
@@ -157,7 +161,8 @@ func TestTUIModelKeyMsg(t *testing.T) {
 }
 
 func TestDoubleCtrlCToQuit(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	sg := &shogunate.Shogunate{}
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, sg)
 
 	// First CTRL-C starts first burst
 	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -1274,20 +1279,21 @@ func TestHistoryRollback_OnSubmit(t *testing.T) {
 
 	// Simulate submitting the historical prompt
 	chatLenBefore := len(chat.Messages)
-	sessionLenBefore := len(model.session.Messages)
+	session := model.shogunate.Session()
+	sessionLenBefore := len(session.Messages)
 
 	// We'll test the rollback logic directly
 	if model.historySaved && model.historyCursor < len(model.sessionPromptHistory) {
 		entry := model.sessionPromptHistory[model.historyCursor]
-		model.session.RollbackTo(entry.SessionSnapshot)
+		model.shogunate.RollbackTo(entry.SessionSnapshot)
 		chat.TruncateTo(entry.ChatSnapshot)
 	}
 
 	// Verify rollback occurred
-	require.Equal(t, 1, len(model.session.Messages), "Session should be rolled back to system message")
+	require.Equal(t, 1, len(session.Messages), "Session should be rolled back to system message")
 	require.Equal(t, 0, len(chat.Messages), "Chat should be rolled back to empty")
 	require.Less(t, len(chat.Messages), chatLenBefore)
-	require.Equal(t, len(model.session.Messages), sessionLenBefore) // Session didn't change in this test
+	require.Equal(t, len(session.Messages), sessionLenBefore) // Session didn't change in this test
 }
 
 // TestNewSessionCommand_ResetsHistory tests that /new command resets history
@@ -1509,14 +1515,16 @@ func TestStatusComponent_WaitingIndicatorView(t *testing.T) {
 	status := NewStatusComponent(200) // Use very wide width to avoid truncation
 	status.SetProvider("test", "model", true)
 
-	// Create a mock session to provide usage data
+	// Create a mock shogunate to provide usage data
+	sg := &shogunate.Shogunate{}
 	sess := &shogunate.Session{
-		ID:           shogunate.GenerateSessionID(),
-		Provider:     "test",
-		Model:        "model",
-		Messages:     []llms.MessageContent{},
+		ID:       shogunate.GenerateSessionID(),
+		Provider: "test",
+		Model:    "model",
+		Messages: []llms.MessageContent{},
 	}
-	status.SetSession(sess)
+	sg.SetTestSession(sess)
+	status.SetShogunate(sg)
 
 	// View without waiting
 	middleSection := status.renderMiddleSection()
@@ -1661,7 +1669,7 @@ func TestSessionResume_ResetsHistoryState(t *testing.T) {
 
 	// Verify session was properly set
 	require.True(t, updatedModel.sessionActive)
-	require.Equal(t, "resumed-session-id", updatedModel.session.ID)
+	require.Equal(t, "resumed-session-id", updatedModel.shogunate.Session().ID)
 
 	// Verify chat was rebuilt with resumed messages
 	chat := updatedModel.content.Chat
@@ -1711,16 +1719,18 @@ func TestHistoryNavigation_RapidNavigation(t *testing.T) {
 func TestHappyFlowE2E(t *testing.T) {
 	// Create a new TUI model for testing
 	config := mockConfig()
-	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	sg := &shogunate.Shogunate{}
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, sg)
 
 	// Set up a mock session for the test
 	sess := &shogunate.Session{
-		ID:           shogunate.GenerateSessionID(),
-		Provider:     "fake",
-		Model:        "mock-model",
-		Messages:     []llms.MessageContent{},
+		ID:       shogunate.GenerateSessionID(),
+		Provider: "fake",
+		Model:    "mock-model",
+		Messages: []llms.MessageContent{},
 	}
-	model.SetSession(sess)
+	model.shogunate.SetTestSession(sess)
+	model.ConfigureSession()
 
 	// Create a new test model with a large terminal size
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 50))

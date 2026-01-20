@@ -282,28 +282,15 @@ func formatRelativeTime(t time.Time) string {
 
 // handleSessionSelected processes a resumed session and updates the TUI model.
 // It copies session data, rebuilds the chat UI from messages, and resets prompt history state.
-func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
-	if session == nil {
+func (m *TUIModel) handleSessionSelected(loaded *shogunate.Session) {
+	if loaded == nil {
 		return
 	}
 
-	if m.session != nil {
+	if m.shogunate.Session() != nil {
 		// Copy all persisted fields from loaded session to existing session
-		m.session.ID = session.ID
-		m.session.CreatedAt = session.CreatedAt
-		m.session.LastUpdated = session.LastUpdated
-		m.session.FirstPrompt = session.FirstPrompt
-		m.session.Provider = session.Provider
-		m.session.Model = session.Model
-		m.session.WorkingDir = session.WorkingDir
-		m.session.ProjectSlug = session.ProjectSlug
-
-		// Copy messages - need to make a proper copy
-		m.session.Messages = make([]llms.MessageContent, len(session.Messages))
-		copy(m.session.Messages, session.Messages)
+		m.shogunate.SetSessionFromResumed(loaded)
 	} else {
-		// No active session - set the loaded session directly
-		m.session = session
 		slog.Warn("Resumed session without active LLM - some features may be limited")
 	}
 
@@ -312,7 +299,7 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 
 	// Build a map of tool call IDs to their responses for matching
 	toolResults := make(map[string]llms.ToolCallResponse)
-	for _, msgContent := range m.session.Messages {
+	for _, msgContent := range loaded.Messages {
 		if msgContent.Role == llms.ChatMessageTypeTool {
 			for _, part := range msgContent.Parts {
 				if resp, ok := part.(llms.ToolCallResponse); ok {
@@ -322,7 +309,7 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 		}
 	}
 
-	for _, msgContent := range m.session.Messages {
+	for _, msgContent := range loaded.Messages {
 		// Skip system messages
 		if msgContent.Role == llms.ChatMessageTypeSystem {
 			continue
@@ -389,9 +376,7 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 			continue
 		}
 	}
-	if m.session != nil {
-		m.session.UpdateTokenCounts(nil)
-	}
+	m.shogunate.UpdateTokenCounts(nil)
 	m.sessionActive = true
 
 	// Reset in-session prompt history state to prevent rollback issues
@@ -405,6 +390,6 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	m.historyPresentSessionSnapshot = 0
 	m.historyPresentChatSnapshot = 0
 
-	timeStr := formatRelativeTime(session.LastUpdated)
+	timeStr := formatRelativeTime(loaded.LastUpdated)
 	m.commandLine.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
 }
