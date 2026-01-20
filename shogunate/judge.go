@@ -10,110 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// judgeConn implements JudgeConn - judges code through CI
-type judgeConn struct {
-	baseConn
-}
-
-// NewJudgeConn creates a new Judge connection
-func NewJudgeConn(db *gorm.DB) JudgeConn {
-	return &judgeConn{
-		baseConn: baseConn{db: db, ministerID: "judge"},
-	}
-}
-
-// GetPendingManifests retrieves all pending manifests for an edict
-func (c *judgeConn) GetPendingManifests(edictID string) ([]storage.ForgeManifest, error) {
-	var manifests []storage.ForgeManifest
-	err := c.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestPending).
-		Order("created_at ASC").
-		Find(&manifests).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pending manifests: %w", err)
-	}
-	return manifests, nil
-}
-
-// AllManifestsQuenched checks if all manifests for an edict are quenched
-func (c *judgeConn) AllManifestsQuenched(edictID string) (bool, error) {
-	var pendingCount int64
-	err := c.db.Model(&storage.ForgeManifest{}).
-		Where("edict_id = ? AND status != ?", edictID, storage.ManifestQuenched).
-		Count(&pendingCount).Error
-	if err != nil {
-		return false, fmt.Errorf("failed to check quenched status: %w", err)
-	}
-
-	// Also check that at least one manifest exists
-	var totalCount int64
-	err = c.db.Model(&storage.ForgeManifest{}).
-		Where("edict_id = ?", edictID).
-		Count(&totalCount).Error
-	if err != nil {
-		return false, fmt.Errorf("failed to count manifests: %w", err)
-	}
-
-	return totalCount > 0 && pendingCount == 0, nil
-}
-
-// InsertVerdict records a CI judgment for a manifest
-func (c *judgeConn) InsertVerdict(manifestID, testSuite string, outcome storage.VerdictOutcome, evidence storage.JSON) (string, error) {
-	verdictID := GenerateID("verdict", manifestID, testSuite)
-
-	// Get manifest for idempotency key
-	var manifest storage.ForgeManifest
-	if err := c.db.First(&manifest, "manifest_id = ?", manifestID).Error; err != nil {
-		return "", fmt.Errorf("failed to get manifest: %w", err)
-	}
-
-	idempotencyKey := generateIdempotencyKey(manifestID, testSuite, manifest.CommitHash)
-
-	verdict := storage.JudgeVerdict{
-		VerdictID:      verdictID,
-		ManifestID:     manifestID,
-		TestSuite:      testSuite,
-		Outcome:        outcome,
-		Evidence:       evidence,
-		IdempotencyKey: idempotencyKey,
-	}
-
-	if err := c.db.Create(&verdict).Error; err != nil {
-		return "", fmt.Errorf("failed to insert verdict: %w", err)
-	}
-	return verdictID, nil
-}
-
-// UpdateManifestStatus updates a manifest's status after judgment
-func (c *judgeConn) UpdateManifestStatus(manifestID string, status storage.ManifestStatus, verdictID string) error {
-	result := c.db.Model(&storage.ForgeManifest{}).
-		Where("manifest_id = ?", manifestID).
-		Updates(map[string]interface{}{
-			"status":     status,
-			"verdict_id": verdictID,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("failed to update manifest status: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("manifest not found: %s", manifestID)
-	}
-	return nil
-}
-
-// GetEdictsWithPendingManifests returns edicts that have pending manifests needing judgment
-func (c *judgeConn) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
-	var edicts []storage.Edict
-	err := c.db.Distinct("edicts.*").
-		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
-		Where("forge_manifests.status = ? AND edicts.current_phase = ?",
-			storage.ManifestPending, storage.PhaseJudgment).
-		Find(&edicts).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get edicts with pending manifests: %w", err)
-	}
-	return edicts, nil
-}
-
 // --- Minister ---
 
 // JudgePrompt defines the Judge's identity and capabilities
@@ -144,19 +40,17 @@ CRITICAL RULES:
 
 // Judge evaluates code through CI and renders verdicts
 type Judge struct {
-	MinisterBase        // embedded base for session creation
-	conn         JudgeConn
+	MinisterBase // embedded base for database access and session creation
 	ci           CIRunner
 }
 
 // NewJudge creates a new Judge minister
-func NewJudge(conn JudgeConn, ci CIRunner, logger *slog.Logger) *Judge {
+func NewJudge(db *gorm.DB, ci CIRunner, logger *slog.Logger) *Judge {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Judge{
-		MinisterBase: MinisterBase{logger: logger},
-		conn:         conn,
+		MinisterBase: MinisterBase{db: db, ministerID: "judge", logger: logger},
 		ci:           ci,
 	}
 }
@@ -177,10 +71,106 @@ func (j *Judge) Tools(notify NotifyFunc) []Tool {
 	return []Tool{}
 }
 
+// --- Database Methods ---
+
+// GetPendingManifests retrieves all pending manifests for an edict
+func (j *Judge) GetPendingManifests(edictID string) ([]storage.ForgeManifest, error) {
+	var manifests []storage.ForgeManifest
+	err := j.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestPending).
+		Order("created_at ASC").
+		Find(&manifests).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending manifests: %w", err)
+	}
+	return manifests, nil
+}
+
+// AllManifestsQuenched checks if all manifests for an edict are quenched
+func (j *Judge) AllManifestsQuenched(edictID string) (bool, error) {
+	var pendingCount int64
+	err := j.db.Model(&storage.ForgeManifest{}).
+		Where("edict_id = ? AND status != ?", edictID, storage.ManifestQuenched).
+		Count(&pendingCount).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to check quenched status: %w", err)
+	}
+
+	// Also check that at least one manifest exists
+	var totalCount int64
+	err = j.db.Model(&storage.ForgeManifest{}).
+		Where("edict_id = ?", edictID).
+		Count(&totalCount).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to count manifests: %w", err)
+	}
+
+	return totalCount > 0 && pendingCount == 0, nil
+}
+
+// InsertVerdict records a CI judgment for a manifest
+func (j *Judge) InsertVerdict(manifestID, testSuite string, outcome storage.VerdictOutcome, evidence storage.JSON) (string, error) {
+	verdictID := GenerateID("verdict", manifestID, testSuite)
+
+	// Get manifest for idempotency key
+	var manifest storage.ForgeManifest
+	if err := j.db.First(&manifest, "manifest_id = ?", manifestID).Error; err != nil {
+		return "", fmt.Errorf("failed to get manifest: %w", err)
+	}
+
+	idempotencyKey := generateIdempotencyKey(manifestID, testSuite, manifest.CommitHash)
+
+	verdict := storage.JudgeVerdict{
+		VerdictID:      verdictID,
+		ManifestID:     manifestID,
+		TestSuite:      testSuite,
+		Outcome:        outcome,
+		Evidence:       evidence,
+		IdempotencyKey: idempotencyKey,
+	}
+
+	if err := j.db.Create(&verdict).Error; err != nil {
+		return "", fmt.Errorf("failed to insert verdict: %w", err)
+	}
+	return verdictID, nil
+}
+
+// UpdateManifestStatus updates a manifest's status after judgment
+func (j *Judge) UpdateManifestStatus(manifestID string, status storage.ManifestStatus, verdictID string) error {
+	result := j.db.Model(&storage.ForgeManifest{}).
+		Where("manifest_id = ?", manifestID).
+		Updates(map[string]interface{}{
+			"status":     status,
+			"verdict_id": verdictID,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to update manifest status: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("manifest not found: %s", manifestID)
+	}
+	return nil
+}
+
+// GetEdictsWithPendingManifests returns edicts that have pending manifests needing judgment
+func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
+	var edicts []storage.Edict
+	err := j.db.Distinct("edicts.*").
+		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
+		Where("forge_manifests.status = ? AND edicts.current_phase = ?",
+			storage.ManifestPending, storage.PhaseJudgment).
+		Find(&edicts).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get edicts with pending manifests: %w", err)
+	}
+	return edicts, nil
+}
+
+// --- Execute Logic ---
+
 // Execute runs the Judge's CI evaluation for an edict
 func (j *Judge) Execute(ctx context.Context, edictID string) (bool, error) {
 	// Check if all manifests are already quenched
-	allQuenched, err := j.conn.AllManifestsQuenched(edictID)
+	allQuenched, err := j.AllManifestsQuenched(edictID)
 	if err != nil {
 		return false, fmt.Errorf("check quenched: %w", err)
 	}
@@ -190,7 +180,7 @@ func (j *Judge) Execute(ctx context.Context, edictID string) (bool, error) {
 	}
 
 	// Get pending manifests
-	manifests, err := j.conn.GetPendingManifests(edictID)
+	manifests, err := j.GetPendingManifests(edictID)
 	if err != nil {
 		return false, fmt.Errorf("get pending manifests: %w", err)
 	}
@@ -208,7 +198,7 @@ func (j *Judge) Execute(ctx context.Context, edictID string) (bool, error) {
 	}
 
 	// Check again if all are now quenched
-	allQuenched, err = j.conn.AllManifestsQuenched(edictID)
+	allQuenched, err = j.AllManifestsQuenched(edictID)
 	if err != nil {
 		return false, fmt.Errorf("check quenched after judging: %w", err)
 	}
@@ -220,7 +210,7 @@ func (j *Judge) Execute(ctx context.Context, edictID string) (bool, error) {
 func (j *Judge) judgeManifest(ctx context.Context, edictID string, manifest *storage.ForgeManifest) error {
 	if j.ci == nil {
 		// No CI runner - auto-pass
-		verdictID, err := j.conn.InsertVerdict(
+		verdictID, err := j.InsertVerdict(
 			manifest.ManifestID,
 			"auto",
 			storage.VerdictPassed,
@@ -229,7 +219,7 @@ func (j *Judge) judgeManifest(ctx context.Context, edictID string, manifest *sto
 		if err != nil {
 			return fmt.Errorf("insert auto-pass verdict: %w", err)
 		}
-		return j.conn.UpdateManifestStatus(manifest.ManifestID, storage.ManifestQuenched, verdictID)
+		return j.UpdateManifestStatus(manifest.ManifestID, storage.ManifestQuenched, verdictID)
 	}
 
 	// Run CI
@@ -239,7 +229,7 @@ func (j *Judge) judgeManifest(ctx context.Context, edictID string, manifest *sto
 	}
 
 	// Insert verdict
-	verdictID, err := j.conn.InsertVerdict(
+	verdictID, err := j.InsertVerdict(
 		manifest.ManifestID,
 		j.ci.GetTestSuite(),
 		outcome,
@@ -257,7 +247,7 @@ func (j *Judge) judgeManifest(ctx context.Context, edictID string, manifest *sto
 		newStatus = storage.ManifestRejected
 	}
 
-	if err := j.conn.UpdateManifestStatus(manifest.ManifestID, newStatus, verdictID); err != nil {
+	if err := j.UpdateManifestStatus(manifest.ManifestID, newStatus, verdictID); err != nil {
 		return fmt.Errorf("update manifest status: %w", err)
 	}
 
@@ -289,7 +279,7 @@ func (j *Judge) Run(ctx context.Context, pollInterval time.Duration) {
 
 // pollAndExecute checks for edicts needing judgment and processes them
 func (j *Judge) pollAndExecute(ctx context.Context) {
-	edicts, err := j.conn.GetEdictsWithPendingManifests()
+	edicts, err := j.GetEdictsWithPendingManifests()
 	if err != nil {
 		j.logger.Error("failed to poll judgment edicts", "error", err)
 		return
@@ -297,7 +287,7 @@ func (j *Judge) pollAndExecute(ctx context.Context) {
 
 	for _, edict := range edicts {
 		// Check for pending zhengming before processing
-		pending, err := j.conn.IsZhengmingPending(edict.EdictID)
+		pending, err := j.IsZhengmingPending(edict.EdictID)
 		if err != nil {
 			j.logger.Error("failed to check zhengming", "edict_id", edict.EdictID, "error", err)
 			continue

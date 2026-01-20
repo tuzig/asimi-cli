@@ -10,88 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// marshalConn implements MarshalConn - monitors production
-type marshalConn struct {
-	baseConn
-}
-
-// NewMarshalConn creates a new Marshal connection
-func NewMarshalConn(db *gorm.DB) MarshalConn {
-	return &marshalConn{
-		baseConn: baseConn{db: db, ministerID: "marshal"},
-	}
-}
-
-// GetEdict retrieves an edict by ID
-func (c *marshalConn) GetEdict(edictID string) (*storage.Edict, error) {
-	return c.getEdict(edictID)
-}
-
-// GetManifestByCommit finds a manifest by its git commit hash
-func (c *marshalConn) GetManifestByCommit(commitHash string) (*storage.ForgeManifest, error) {
-	var manifest storage.ForgeManifest
-	if err := c.db.First(&manifest, "commit_hash = ?", commitHash).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("manifest not found for commit: %s", commitHash)
-		}
-		return nil, fmt.Errorf("failed to get manifest: %w", err)
-	}
-	return &manifest, nil
-}
-
-// LogIncident records a production crash incident
-func (c *marshalConn) LogIncident(incidentID, edictID, commitHash, rcaSummary string) error {
-	incident := storage.MarshalIncident{
-		IncidentID: incidentID,
-		EdictID:    edictID,
-		CommitHash: commitHash,
-		RCASummary: rcaSummary,
-	}
-
-	if err := c.db.Create(&incident).Error; err != nil {
-		return fmt.Errorf("failed to log incident: %w", err)
-	}
-	return nil
-}
-
-// GetIncident retrieves an incident by ID
-func (c *marshalConn) GetIncident(incidentID string) (*storage.MarshalIncident, error) {
-	var incident storage.MarshalIncident
-	if err := c.db.First(&incident, "incident_id = ?", incidentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("incident not found: %s", incidentID)
-		}
-		return nil, fmt.Errorf("failed to get incident: %w", err)
-	}
-	return &incident, nil
-}
-
-// MarkHotfixApproved approves a hotfix for an incident
-func (c *marshalConn) MarkHotfixApproved(incidentID string) error {
-	result := c.db.Model(&storage.MarshalIncident{}).
-		Where("incident_id = ?", incidentID).
-		Update("hotfix_approved", true)
-	if result.Error != nil {
-		return fmt.Errorf("failed to approve hotfix: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("incident not found: %s", incidentID)
-	}
-	return nil
-}
-
-// GetPendingIncidents returns incidents that need processing (not yet approved)
-func (c *marshalConn) GetPendingIncidents() ([]storage.MarshalIncident, error) {
-	var incidents []storage.MarshalIncident
-	err := c.db.Where("hotfix_approved = ?", false).
-		Order("created_at ASC").
-		Find(&incidents).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pending incidents: %w", err)
-	}
-	return incidents, nil
-}
-
 // --- Minister ---
 
 // MarshalPrompt defines the Marshal's identity and capabilities
@@ -123,19 +41,17 @@ CRITICAL RULES:
 
 // Marshal monitors production and handles incidents
 type Marshal struct {
-	MinisterBase          // embedded base for session creation
-	conn         MarshalConn
+	MinisterBase // embedded base for database access and session creation
 	rca          RCAAnalyzer
 }
 
 // NewMarshal creates a new Marshal minister
-func NewMarshal(conn MarshalConn, rca RCAAnalyzer, logger *slog.Logger) *Marshal {
+func NewMarshal(db *gorm.DB, rca RCAAnalyzer, logger *slog.Logger) *Marshal {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Marshal{
-		MinisterBase: MinisterBase{logger: logger},
-		conn:         conn,
+		MinisterBase: MinisterBase{db: db, ministerID: "marshal", logger: logger},
 		rca:          rca,
 	}
 }
@@ -156,11 +72,80 @@ func (m *Marshal) Tools(notify NotifyFunc) []Tool {
 	return []Tool{}
 }
 
+// --- Database Methods ---
+
+// GetManifestByCommit finds a manifest by its git commit hash
+func (m *Marshal) GetManifestByCommit(commitHash string) (*storage.ForgeManifest, error) {
+	var manifest storage.ForgeManifest
+	if err := m.db.First(&manifest, "commit_hash = ?", commitHash).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("manifest not found for commit: %s", commitHash)
+		}
+		return nil, fmt.Errorf("failed to get manifest: %w", err)
+	}
+	return &manifest, nil
+}
+
+// LogIncident records a production crash incident
+func (m *Marshal) LogIncident(incidentID, edictID, commitHash, rcaSummary string) error {
+	incident := storage.MarshalIncident{
+		IncidentID: incidentID,
+		EdictID:    edictID,
+		CommitHash: commitHash,
+		RCASummary: rcaSummary,
+	}
+
+	if err := m.db.Create(&incident).Error; err != nil {
+		return fmt.Errorf("failed to log incident: %w", err)
+	}
+	return nil
+}
+
+// GetIncident retrieves an incident by ID
+func (m *Marshal) GetIncident(incidentID string) (*storage.MarshalIncident, error) {
+	var incident storage.MarshalIncident
+	if err := m.db.First(&incident, "incident_id = ?", incidentID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("incident not found: %s", incidentID)
+		}
+		return nil, fmt.Errorf("failed to get incident: %w", err)
+	}
+	return &incident, nil
+}
+
+// MarkHotfixApproved approves a hotfix for an incident
+func (m *Marshal) MarkHotfixApproved(incidentID string) error {
+	result := m.db.Model(&storage.MarshalIncident{}).
+		Where("incident_id = ?", incidentID).
+		Update("hotfix_approved", true)
+	if result.Error != nil {
+		return fmt.Errorf("failed to approve hotfix: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("incident not found: %s", incidentID)
+	}
+	return nil
+}
+
+// GetPendingIncidents returns incidents that need processing (not yet approved)
+func (m *Marshal) GetPendingIncidents() ([]storage.MarshalIncident, error) {
+	var incidents []storage.MarshalIncident
+	err := m.db.Where("hotfix_approved = ?", false).
+		Order("created_at ASC").
+		Find(&incidents).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending incidents: %w", err)
+	}
+	return incidents, nil
+}
+
+// --- Execute Logic ---
+
 // Execute runs the Marshal's production monitoring
 // Note: Marshal doesn't participate in normal edict flow, but handles incidents
 func (m *Marshal) Execute(ctx context.Context, edictID string) (bool, error) {
 	// Marshal's Execute is called for 'assassination' type edicts (hotfixes)
-	edict, err := m.conn.GetEdict(edictID)
+	edict, err := m.GetEdict(edictID)
 	if err != nil {
 		return false, fmt.Errorf("get edict: %w", err)
 	}
@@ -196,20 +181,20 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 
 	// Try to find the manifest by commit
 	if edictID == "" {
-		manifest, err := m.conn.GetManifestByCommit(commitHash)
+		manifest, err := m.GetManifestByCommit(commitHash)
 		if err == nil && manifest != nil {
 			edictID = manifest.EdictID
 		}
 	}
 
 	// Log the incident
-	if err := m.conn.LogIncident(incidentID, edictID, commitHash, rcaSummary); err != nil {
+	if err := m.LogIncident(incidentID, edictID, commitHash, rcaSummary); err != nil {
 		return fmt.Errorf("log incident: %w", err)
 	}
 
 	// Request Zhengming for hotfix approval
 	if edictID != "" {
-		_, err := m.conn.RequestZhengming(edictID,
+		_, err := m.RequestZhengming(edictID,
 			fmt.Sprintf("Production incident %s requires hotfix approval.\n\nRCA: %s", incidentID, rcaSummary),
 			storage.PriorityUrgent)
 		if err != nil {
@@ -245,7 +230,7 @@ func (m *Marshal) Run(ctx context.Context, pollInterval time.Duration) {
 
 // pollAndProcess checks for pending incidents and processes them
 func (m *Marshal) pollAndProcess(ctx context.Context) {
-	incidents, err := m.conn.GetPendingIncidents()
+	incidents, err := m.GetPendingIncidents()
 	if err != nil {
 		m.logger.Error("failed to poll incidents", "error", err)
 		return
@@ -254,7 +239,7 @@ func (m *Marshal) pollAndProcess(ctx context.Context) {
 	for _, incident := range incidents {
 		// Check if associated edict has pending zhengming
 		if incident.EdictID != "" {
-			pending, err := m.conn.IsZhengmingPending(incident.EdictID)
+			pending, err := m.IsZhengmingPending(incident.EdictID)
 			if err != nil {
 				m.logger.Error("failed to check zhengming", "incident_id", incident.IncidentID, "error", err)
 				continue

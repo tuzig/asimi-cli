@@ -105,8 +105,7 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 	chancellor.CreateEdict("test/repo#2", "Implement user authentication with login and logout")
 
 	// Create strategist
-	strategistConn := NewStrategistConn(db)
-	strategist := NewStrategist(strategistConn, nil, nil)
+	strategist := NewStrategist(db, nil, nil)
 
 	// Execute planning
 	sealed, err := strategist.Execute(ctx, "test/repo#2")
@@ -118,7 +117,7 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 	}
 
 	// Check ling was created
-	ling, err := strategistConn.GetLingForEdict("test/repo#2")
+	ling, err := strategist.GetLingForEdict("test/repo#2")
 	if err != nil {
 		t.Fatalf("Failed to get ling: %v", err)
 	}
@@ -136,8 +135,7 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 	chancellor.CreateEdict("test/repo#3", "Fix it")
 
 	// Create strategist
-	strategistConn := NewStrategistConn(db)
-	strategist := NewStrategist(strategistConn, nil, nil)
+	strategist := NewStrategist(db, nil, nil)
 
 	// Execute - should request zhengming
 	sealed, err := strategist.Execute(ctx, "test/repo#3")
@@ -149,7 +147,7 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 	}
 
 	// Check zhengming was requested
-	pending, _ := strategistConn.IsZhengmingPending("test/repo#3")
+	pending, _ := strategist.IsZhengmingPending("test/repo#3")
 	if !pending {
 		t.Error("Expected pending zhengming")
 	}
@@ -163,13 +161,12 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#4", "Test feature")
 
-	forgeConn := NewForgeConn(db)
-	manifestID, _ := forgeConn.StageManifest("test/repo#4", "", "test.go", "TestFunc", "hash1")
-	forgeConn.ActivateManifest(manifestID, "commit123")
+	forge := NewForge(db, nil, nil)
+	manifestID, _ := forge.StageManifest("test/repo#4", "", "test.go", "TestFunc", "hash1")
+	forge.ActivateManifest(manifestID, "commit123")
 
 	// Create judge (no CI runner - will auto-pass)
-	judgeConn := NewJudgeConn(db)
-	judge := NewJudge(judgeConn, nil, nil)
+	judge := NewJudge(db, nil, nil)
 
 	// Execute judgment
 	sealed, err := judge.Execute(ctx, "test/repo#4")
@@ -181,7 +178,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	}
 
 	// Check manifest is quenched
-	allQuenched, _ := judgeConn.AllManifestsQuenched("test/repo#4")
+	allQuenched, _ := judge.AllManifestsQuenched("test/repo#4")
 	if !allQuenched {
 		t.Error("Expected all manifests quenched")
 	}
@@ -195,17 +192,16 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#5", "Review feature")
 
-	forgeConn := NewForgeConn(db)
-	manifestID, _ := forgeConn.StageManifest("test/repo#5", "", "review.go", "ReviewFunc", "hash2")
-	forgeConn.ActivateManifest(manifestID, "commit456")
+	forge := NewForge(db, nil, nil)
+	manifestID, _ := forge.StageManifest("test/repo#5", "", "review.go", "ReviewFunc", "hash2")
+	forge.ActivateManifest(manifestID, "commit456")
 
-	judgeConn := NewJudgeConn(db)
-	verdictID, _ := judgeConn.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
-	judgeConn.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID)
+	judge := NewJudge(db, nil, nil)
+	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
+	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID)
 
 	// Create censor (no linter - will auto-approve)
-	censorConn := NewCensorConn(db)
-	censor := NewCensor(censorConn, nil, nil)
+	censor := NewCensor(db, nil, nil)
 
 	// Execute review
 	sealed, err := censor.Execute(ctx, "test/repo#5")
@@ -217,7 +213,7 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	}
 
 	// Check no rejections
-	noReject, _ := censorConn.NoRejections("test/repo#5")
+	noReject, _ := censor.NoRejections("test/repo#5")
 	if !noReject {
 		t.Error("Expected no rejections")
 	}
@@ -231,13 +227,12 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#6", "Production feature")
 
-	forgeConn := NewForgeConn(db)
-	manifestID, _ := forgeConn.StageManifest("test/repo#6", "", "prod.go", "ProdFunc", "hash3")
-	forgeConn.ActivateManifest(manifestID, "prodcommit789")
+	forge := NewForge(db, nil, nil)
+	manifestID, _ := forge.StageManifest("test/repo#6", "", "prod.go", "ProdFunc", "hash3")
+	forge.ActivateManifest(manifestID, "prodcommit789")
 
 	// Create marshal
-	marshalConn := NewMarshalConn(db)
-	marshal := NewMarshal(marshalConn, nil, nil)
+	marshal := NewMarshal(db, nil, nil)
 
 	// Report incident
 	err := marshal.OnIncident(ctx, "sentry-456", "prodcommit789")
@@ -246,7 +241,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	}
 
 	// Check incident was logged
-	incident, err := marshalConn.GetIncident("sentry-456")
+	incident, err := marshal.GetIncident("sentry-456")
 	if err != nil {
 		t.Fatalf("Failed to get incident: %v", err)
 	}

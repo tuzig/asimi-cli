@@ -10,87 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// ritualGuardConn implements RitualGuardConn - event processing
-type ritualGuardConn struct {
-	db *gorm.DB
-}
-
-// NewRitualGuardConn creates a new Ritual Guard connection
-func NewRitualGuardConn(db *gorm.DB) RitualGuardConn {
-	return &ritualGuardConn{db: db}
-}
-
-// GetEventsFrom retrieves events starting from a given event ID
-func (c *ritualGuardConn) GetEventsFrom(fromEventID int64, limit int) ([]storage.TianEvent, error) {
-	var events []storage.TianEvent
-	query := c.db.Where("event_id > ?", fromEventID).
-		Order("event_id ASC")
-	if limit > 0 {
-		query = query.Limit(limit)
-	}
-	err := query.Find(&events).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get events: %w", err)
-	}
-	return events, nil
-}
-
-// AcknowledgeEvent marks an event as processed (no-op for SQLite, used for checkpointing)
-func (c *ritualGuardConn) AcknowledgeEvent(eventID int64) error {
-	// For SQLite, we just track via checkpoint
-	// For PostgreSQL, this could update a processed flag or commit offset
-	return nil
-}
-
-// GetLastAcknowledgedEvent returns the last processed event ID
-func (c *ritualGuardConn) GetLastAcknowledgedEvent() (int64, error) {
-	return c.LoadCheckpoint()
-}
-
-// SaveCheckpoint persists the last processed event ID for crash recovery
-func (c *ritualGuardConn) SaveCheckpoint(eventID int64) error {
-	// Use a simple key-value approach in ruler_council table (repurposed)
-	// In production, this would be a dedicated checkpoint table
-	result := c.db.Exec(`
-		INSERT OR REPLACE INTO ritual_guard_checkpoint (id, event_id, updated_at)
-		VALUES (1, ?, datetime('now'))
-	`, eventID)
-	if result.Error != nil {
-		return fmt.Errorf("failed to save checkpoint: %w", result.Error)
-	}
-	return nil
-}
-
-// LoadCheckpoint retrieves the last processed event ID
-func (c *ritualGuardConn) LoadCheckpoint() (int64, error) {
-	var eventID int64
-	err := c.db.Raw(`SELECT COALESCE(event_id, 0) FROM ritual_guard_checkpoint WHERE id = 1`).
-		Scan(&eventID).Error
-	if err != nil {
-		// Table might not exist or be empty, return 0
-		return 0, nil
-	}
-	return eventID, nil
-}
-
-// MoveToDLQ moves a failed event to the dead letter queue
-func (c *ritualGuardConn) MoveToDLQ(event storage.TianEvent, errMsg string, retryCount int) error {
-	dlqEntry := storage.TianEventDLQ{
-		EventID:           event.EventID,
-		EdictID:           event.EdictID,
-		EventType:         event.EventType,
-		Payload:           event.Payload,
-		ErrorMessage:      errMsg,
-		RetryCount:        retryCount,
-		OriginalCreatedAt: event.CreatedAt,
-	}
-
-	if err := c.db.Create(&dlqEntry).Error; err != nil {
-		return fmt.Errorf("failed to move to DLQ: %w", err)
-	}
-	return nil
-}
-
 // --- Minister ---
 
 // RitualGuardPrompt defines the Ritual Guard's identity
@@ -109,8 +28,7 @@ CRITICAL RULES:
 
 // RitualGuard processes events and invokes ministers
 type RitualGuard struct {
-	MinisterBase               // embedded base for session creation
-	conn         RitualGuardConn
+	MinisterBase            // embedded base for database access and session creation
 	chancellor   *Chancellor
 	maxRetries   int
 	batchSize    int
@@ -118,13 +36,12 @@ type RitualGuard struct {
 }
 
 // NewRitualGuard creates a new Ritual Guard
-func NewRitualGuard(conn RitualGuardConn, chancellor *Chancellor, logger *slog.Logger) *RitualGuard {
+func NewRitualGuard(db *gorm.DB, chancellor *Chancellor, logger *slog.Logger) *RitualGuard {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &RitualGuard{
-		MinisterBase: MinisterBase{logger: logger},
-		conn:         conn,
+		MinisterBase: MinisterBase{db: db, ministerID: "ritual_guard", logger: logger},
 		chancellor:   chancellor,
 		maxRetries:   3,
 		batchSize:    100,
@@ -153,16 +70,91 @@ func (r *RitualGuard) Execute(ctx context.Context, edictID string) (bool, error)
 	return true, nil
 }
 
+// --- Database Methods ---
+
+// GetEventsFrom retrieves events starting from a given event ID
+func (r *RitualGuard) GetEventsFrom(fromEventID int64, limit int) ([]storage.TianEvent, error) {
+	var events []storage.TianEvent
+	query := r.db.Where("event_id > ?", fromEventID).
+		Order("event_id ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&events).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get events: %w", err)
+	}
+	return events, nil
+}
+
+// AcknowledgeEvent marks an event as processed (no-op for SQLite, used for checkpointing)
+func (r *RitualGuard) AcknowledgeEvent(eventID int64) error {
+	// For SQLite, we just track via checkpoint
+	// For PostgreSQL, this could update a processed flag or commit offset
+	return nil
+}
+
+// GetLastAcknowledgedEvent returns the last processed event ID
+func (r *RitualGuard) GetLastAcknowledgedEvent() (int64, error) {
+	return r.LoadCheckpoint()
+}
+
+// SaveCheckpoint persists the last processed event ID for crash recovery
+func (r *RitualGuard) SaveCheckpoint(eventID int64) error {
+	// Use a simple key-value approach in ruler_council table (repurposed)
+	// In production, this would be a dedicated checkpoint table
+	result := r.db.Exec(`
+		INSERT OR REPLACE INTO ritual_guard_checkpoint (id, event_id, updated_at)
+		VALUES (1, ?, datetime('now'))
+	`, eventID)
+	if result.Error != nil {
+		return fmt.Errorf("failed to save checkpoint: %w", result.Error)
+	}
+	return nil
+}
+
+// LoadCheckpoint retrieves the last processed event ID
+func (r *RitualGuard) LoadCheckpoint() (int64, error) {
+	var eventID int64
+	err := r.db.Raw(`SELECT COALESCE(event_id, 0) FROM ritual_guard_checkpoint WHERE id = 1`).
+		Scan(&eventID).Error
+	if err != nil {
+		// Table might not exist or be empty, return 0
+		return 0, nil
+	}
+	return eventID, nil
+}
+
+// MoveToDLQ moves a failed event to the dead letter queue
+func (r *RitualGuard) MoveToDLQ(event storage.TianEvent, errMsg string, retryCount int) error {
+	dlqEntry := storage.TianEventDLQ{
+		EventID:           event.EventID,
+		EdictID:           event.EdictID,
+		EventType:         event.EventType,
+		Payload:           event.Payload,
+		ErrorMessage:      errMsg,
+		RetryCount:        retryCount,
+		OriginalCreatedAt: event.CreatedAt,
+	}
+
+	if err := r.db.Create(&dlqEntry).Error; err != nil {
+		return fmt.Errorf("failed to move to DLQ: %w", err)
+	}
+	return nil
+}
+
+// --- Execute Logic ---
+
 // Run processes events from the Tian ledger
 func (r *RitualGuard) Run(ctx context.Context) error {
 	// Get last acknowledged event
-	lastEventID, err := r.conn.GetLastAcknowledgedEvent()
+	lastEventID, err := r.GetLastAcknowledgedEvent()
 	if err != nil {
 		return fmt.Errorf("get last acknowledged: %w", err)
 	}
 
 	// Get events to process
-	events, err := r.conn.GetEventsFrom(lastEventID, r.batchSize)
+	events, err := r.GetEventsFrom(lastEventID, r.batchSize)
 	if err != nil {
 		return fmt.Errorf("get events: %w", err)
 	}
@@ -182,14 +174,14 @@ func (r *RitualGuard) Run(ctx context.Context) error {
 		}
 
 		// Acknowledge event
-		if err := r.conn.AcknowledgeEvent(event.EventID); err != nil {
+		if err := r.AcknowledgeEvent(event.EventID); err != nil {
 			r.logger.Error("failed to acknowledge event",
 				"event_id", event.EventID,
 				"error", err)
 		}
 
 		// Save checkpoint periodically
-		if err := r.conn.SaveCheckpoint(event.EventID); err != nil {
+		if err := r.SaveCheckpoint(event.EventID); err != nil {
 			r.logger.Warn("failed to save checkpoint", "error", err)
 		}
 	}
@@ -273,3 +265,4 @@ func (r *RitualGuard) processEvent(ctx context.Context, event storage.TianEvent)
 
 	return nil
 }
+

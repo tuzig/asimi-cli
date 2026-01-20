@@ -162,7 +162,7 @@ func TestChancellor_Zhengming(t *testing.T) {
 	}
 }
 
-func TestStrategistConn_Ling(t *testing.T) {
+func TestStrategist_Ling(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Create edict via chancellor
@@ -170,7 +170,7 @@ func TestStrategistConn_Ling(t *testing.T) {
 	chancellor.CreateEdict("test/repo#3", "Build feature Y")
 
 	// Use strategist to create ling
-	strategist := NewStrategistConn(db)
+	strategist := NewStrategist(db, nil, nil)
 
 	ling := &storage.Ling{
 		EdictID:      "test/repo#3",
@@ -202,14 +202,14 @@ func TestStrategistConn_Ling(t *testing.T) {
 	}
 }
 
-func TestForgeConn_Manifests(t *testing.T) {
+func TestForge_Manifests(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup
 	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#4", "Build feature Z")
 
-	strategist := NewStrategistConn(db)
+	strategist := NewStrategist(db, nil, nil)
 	ling := &storage.Ling{
 		EdictID:     "test/repo#4",
 		Description: "Implement handler",
@@ -220,7 +220,7 @@ func TestForgeConn_Manifests(t *testing.T) {
 	lingID := lingList[0].LingID
 
 	// Forge operations
-	forge := NewForgeConn(db)
+	forge := NewForge(db, nil, nil)
 
 	// Get pending ling
 	pendingLing, err := forge.GetPendingLing("test/repo#4")
@@ -256,19 +256,19 @@ func TestForgeConn_Manifests(t *testing.T) {
 	}
 }
 
-func TestJudgeConn_Verdicts(t *testing.T) {
+func TestJudge_Verdicts(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup: create manifest
 	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#5", "Test feature")
 
-	forge := NewForgeConn(db)
+	forge := NewForge(db, nil, nil)
 	manifestID, _ := forge.StageManifest("test/repo#5", "", "test.go", "Test", "hash1")
 	forge.ActivateManifest(manifestID, "commit123")
 
 	// Judge operations
-	judge := NewJudgeConn(db)
+	judge := NewJudge(db, nil, nil)
 
 	// Get pending manifests
 	pending, err := judge.GetPendingManifests("test/repo#5")
@@ -302,23 +302,23 @@ func TestJudgeConn_Verdicts(t *testing.T) {
 	}
 }
 
-func TestCensorConn_Precedents(t *testing.T) {
+func TestCensor_Precedents(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup: create quenched manifest
 	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#6", "Ethics test")
 
-	forge := NewForgeConn(db)
+	forge := NewForge(db, nil, nil)
 	manifestID, _ := forge.StageManifest("test/repo#6", "", "ethics.go", "Ethics", "hash2")
 	forge.ActivateManifest(manifestID, "commit456")
 
-	judge := NewJudgeConn(db)
+	judge := NewJudge(db, nil, nil)
 	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
 	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID)
 
 	// Censor operations
-	censor := NewCensorConn(db)
+	censor := NewCensor(db, nil, nil)
 
 	// Get quenched manifests
 	quenched, err := censor.GetQuenchedManifests("test/repo#6")
@@ -371,19 +371,19 @@ func TestCensorConn_Precedents(t *testing.T) {
 	}
 }
 
-func TestMarshalConn_Incidents(t *testing.T) {
+func TestMarshal_Incidents(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup
 	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
 	chancellor.CreateEdict("test/repo#7", "Production issue")
 
-	forge := NewForgeConn(db)
+	forge := NewForge(db, nil, nil)
 	manifestID, _ := forge.StageManifest("test/repo#7", "", "prod.go", "Prod", "hash3")
 	forge.ActivateManifest(manifestID, "prodcommit789")
 
 	// Marshal operations
-	marshal := NewMarshalConn(db)
+	marshal := NewMarshal(db, nil, nil)
 
 	// Get manifest by commit
 	manifest, err := marshal.GetManifestByCommit("prodcommit789")
@@ -421,7 +421,7 @@ func TestMarshalConn_Incidents(t *testing.T) {
 	}
 }
 
-func TestRitualGuardConn_Events(t *testing.T) {
+func TestRitualGuard_Events(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Create checkpoint table manually for this test
@@ -436,7 +436,7 @@ func TestRitualGuardConn_Events(t *testing.T) {
 	chancellor.EmitEvent("test/repo#8", "phase_changed", storage.JSON(payload))
 
 	// Ritual Guard operations
-	guard := NewRitualGuardConn(db)
+	guard := NewRitualGuard(db, nil, nil)
 
 	// Get events from start
 	events, err := guard.GetEventsFrom(0, 10)

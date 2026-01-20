@@ -10,85 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// strategistConn implements StrategistConn - decomposes edicts into ling
-type strategistConn struct {
-	baseConn
-}
-
-// NewStrategistConn creates a new Strategist connection
-func NewStrategistConn(db *gorm.DB) StrategistConn {
-	return &strategistConn{
-		baseConn: baseConn{db: db, ministerID: "strategist"},
-	}
-}
-
-// GetEdict retrieves an edict by ID
-func (c *strategistConn) GetEdict(edictID string) (*storage.Edict, error) {
-	return c.getEdict(edictID)
-}
-
-// InsertLing creates a new task order for an edict
-func (c *strategistConn) InsertLing(ling *storage.Ling) error {
-	// Generate idempotency key if not set
-	if ling.IdempotencyKey == "" {
-		var edict storage.Edict
-		if err := c.db.First(&edict, "edict_id = ?", ling.EdictID).Error; err != nil {
-			return fmt.Errorf("failed to get edict for idempotency key: %w", err)
-		}
-		ling.IdempotencyKey = generateIdempotencyKey(
-			ling.EdictID,
-			fmt.Sprintf("%d", edict.RenIntentVersion),
-			ling.Description,
-		)
-	}
-
-	// Generate ling ID if not set
-	if ling.LingID == "" {
-		ling.LingID = GenerateID("ling", ling.EdictID, ling.Description)
-	}
-
-	if err := c.db.Create(ling).Error; err != nil {
-		return fmt.Errorf("failed to insert ling: %w", err)
-	}
-	return nil
-}
-
-// GetLingForEdict retrieves all ling for an edict
-func (c *strategistConn) GetLingForEdict(edictID string) ([]storage.Ling, error) {
-	var ling []storage.Ling
-	err := c.db.Where("edict_id = ?", edictID).
-		Order("created_at ASC").
-		Find(&ling).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ling: %w", err)
-	}
-	return ling, nil
-}
-
-// LingExistsForEdict checks if any ling exists for an edict
-func (c *strategistConn) LingExistsForEdict(edictID string) (bool, error) {
-	var count int64
-	err := c.db.Model(&storage.Ling{}).
-		Where("edict_id = ?", edictID).
-		Count(&count).Error
-	if err != nil {
-		return false, fmt.Errorf("failed to check ling existence: %w", err)
-	}
-	return count > 0, nil
-}
-
-// GetEdictsInPlanningPhase returns edicts that need planning
-func (c *strategistConn) GetEdictsInPlanningPhase() ([]storage.Edict, error) {
-	var edicts []storage.Edict
-	err := c.db.Where("current_phase = ?", storage.PhasePlanning).
-		Order("created_at ASC").
-		Find(&edicts).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get planning edicts: %w", err)
-	}
-	return edicts, nil
-}
-
 // --- Minister ---
 
 // StrategistPrompt defines the Strategist's identity and capabilities
@@ -120,19 +41,17 @@ CRITICAL RULES:
 
 // Strategist decomposes edicts into executable ling (令, task orders)
 type Strategist struct {
-	MinisterBase          // embedded base for session creation
-	conn         StrategistConn
+	MinisterBase          // embedded base for database access and session creation
 	llmClient    LLMClient // local LLM client for planning (distinct from MinisterBase.llm)
 }
 
 // NewStrategist creates a new Strategist minister
-func NewStrategist(conn StrategistConn, llm LLMClient, logger *slog.Logger) *Strategist {
+func NewStrategist(db *gorm.DB, llm LLMClient, logger *slog.Logger) *Strategist {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Strategist{
-		MinisterBase: MinisterBase{logger: logger},
-		conn:         conn,
+		MinisterBase: MinisterBase{db: db, ministerID: "strategist", logger: logger},
 		llmClient:    llm,
 	}
 }
@@ -153,10 +72,76 @@ func (s *Strategist) Tools(notify NotifyFunc) []Tool {
 	return []Tool{}
 }
 
+// --- Database Methods ---
+
+// InsertLing creates a new task order for an edict
+func (s *Strategist) InsertLing(ling *storage.Ling) error {
+	// Generate idempotency key if not set
+	if ling.IdempotencyKey == "" {
+		var edict storage.Edict
+		if err := s.db.First(&edict, "edict_id = ?", ling.EdictID).Error; err != nil {
+			return fmt.Errorf("failed to get edict for idempotency key: %w", err)
+		}
+		ling.IdempotencyKey = generateIdempotencyKey(
+			ling.EdictID,
+			fmt.Sprintf("%d", edict.RenIntentVersion),
+			ling.Description,
+		)
+	}
+
+	// Generate ling ID if not set
+	if ling.LingID == "" {
+		ling.LingID = GenerateID("ling", ling.EdictID, ling.Description)
+	}
+
+	if err := s.db.Create(ling).Error; err != nil {
+		return fmt.Errorf("failed to insert ling: %w", err)
+	}
+	return nil
+}
+
+// GetLingForEdict retrieves all ling for an edict
+func (s *Strategist) GetLingForEdict(edictID string) ([]storage.Ling, error) {
+	var ling []storage.Ling
+	err := s.db.Where("edict_id = ?", edictID).
+		Order("created_at ASC").
+		Find(&ling).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ling: %w", err)
+	}
+	return ling, nil
+}
+
+// LingExistsForEdict checks if any ling exists for an edict
+func (s *Strategist) LingExistsForEdict(edictID string) (bool, error) {
+	var count int64
+	err := s.db.Model(&storage.Ling{}).
+		Where("edict_id = ?", edictID).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to check ling existence: %w", err)
+	}
+	return count > 0, nil
+}
+
+// GetEdictsInPlanningPhase returns edicts that need planning
+func (s *Strategist) GetEdictsInPlanningPhase() ([]storage.Edict, error) {
+	var edicts []storage.Edict
+	err := s.db.Where("current_phase = ?", storage.PhasePlanning).
+		Order("created_at ASC").
+		Find(&edicts).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get planning edicts: %w", err)
+	}
+	return edicts, nil
+}
+
+// --- Execute Logic ---
+
 // Execute runs the Strategist's planning logic for an edict
 func (s *Strategist) Execute(ctx context.Context, edictID string) (bool, error) {
 	// Check if ling already exist (idempotency)
-	exists, err := s.conn.LingExistsForEdict(edictID)
+	exists, err := s.LingExistsForEdict(edictID)
 	if err != nil {
 		return false, fmt.Errorf("check existing ling: %w", err)
 	}
@@ -166,14 +151,14 @@ func (s *Strategist) Execute(ctx context.Context, edictID string) (bool, error) 
 	}
 
 	// Get the edict
-	edict, err := s.conn.GetEdict(edictID)
+	edict, err := s.GetEdict(edictID)
 	if err != nil {
 		return false, fmt.Errorf("get edict: %w", err)
 	}
 
 	// Check for ambiguity
 	if s.isAmbiguous(edict.RenIntent) {
-		_, err := s.conn.RequestZhengming(edictID,
+		_, err := s.RequestZhengming(edictID,
 			"The requirements are ambiguous. Please clarify the expected behavior.",
 			storage.PriorityUrgent)
 		if err != nil {
@@ -195,7 +180,7 @@ func (s *Strategist) Execute(ctx context.Context, edictID string) (bool, error) 
 
 	// Insert ling
 	for _, ling := range lingList {
-		if err := s.conn.InsertLing(&ling); err != nil {
+		if err := s.InsertLing(&ling); err != nil {
 			return false, fmt.Errorf("insert ling: %w", err)
 		}
 	}
@@ -304,7 +289,7 @@ func (s *Strategist) Run(ctx context.Context, pollInterval time.Duration) {
 
 // pollAndExecute checks for edicts needing planning and processes them
 func (s *Strategist) pollAndExecute(ctx context.Context) {
-	edicts, err := s.conn.GetEdictsInPlanningPhase()
+	edicts, err := s.GetEdictsInPlanningPhase()
 	if err != nil {
 		s.logger.Error("failed to poll planning edicts", "error", err)
 		return
@@ -312,7 +297,7 @@ func (s *Strategist) pollAndExecute(ctx context.Context) {
 
 	for _, edict := range edicts {
 		// Check for pending zhengming before processing
-		pending, err := s.conn.IsZhengmingPending(edict.EdictID)
+		pending, err := s.IsZhengmingPending(edict.EdictID)
 		if err != nil {
 			s.logger.Error("failed to check zhengming", "edict_id", edict.EdictID, "error", err)
 			continue
@@ -328,7 +313,7 @@ func (s *Strategist) pollAndExecute(ctx context.Context) {
 		}
 		if sealed {
 			// Transition to forging phase
-			if err := s.conn.UpdatePhase(edict.EdictID, storage.PhaseForging); err != nil {
+			if err := s.UpdatePhase(edict.EdictID, storage.PhaseForging); err != nil {
 				s.logger.Error("failed to transition to forging", "edict_id", edict.EdictID, "error", err)
 				continue
 			}
@@ -336,3 +321,4 @@ func (s *Strategist) pollAndExecute(ctx context.Context) {
 		}
 	}
 }
+

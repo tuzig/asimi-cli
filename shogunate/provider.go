@@ -106,26 +106,19 @@ func NewShogunate(db *gorm.DB, config *ShogunateConfig, logger *slog.Logger) *Sh
 func (s *Shogunate) Start(ctx context.Context) error {
 	s.ctx, s.cancel = context.WithCancel(ctx)
 
-	// Create all connections
-	strategistConn := NewStrategistConn(s.db)
-	judgeConn := NewJudgeConn(s.db)
-	censorConn := NewCensorConn(s.db)
-	marshalConn := NewMarshalConn(s.db)
-	ritualGuardConn := NewRitualGuardConn(s.db)
-
-	// Create ministers
-	s.Strategist = NewStrategist(strategistConn, nil, s.logger)
+	// Create ministers (all now take db directly via MinisterBase)
+	s.Strategist = NewStrategist(s.db, nil, s.logger)
 	s.Forge = NewForge(s.db, nil, s.logger) // tools set later via SetTools
-	s.Judge = NewJudge(judgeConn, nil, s.logger)
-	s.Censor = NewCensor(censorConn, nil, s.logger)
-	s.Marshal = NewMarshal(marshalConn, nil, s.logger)
+	s.Judge = NewJudge(s.db, nil, s.logger)
+	s.Censor = NewCensor(s.db, nil, s.logger)
+	s.Marshal = NewMarshal(s.db, nil, s.logger)
 
 	// Create Chancellor
 	s.Chancellor = NewChancellor(s.db, s.llmClient, nil, repo.RepoInfo{}, s.logger)
 	s.Chancellor.SetShogunate(s)
 
 	// Create RitualGuard with Chancellor reference
-	s.RitualGuard = NewRitualGuard(ritualGuardConn, s.Chancellor, s.logger)
+	s.RitualGuard = NewRitualGuard(s.db, s.Chancellor, s.logger)
 
 	// Wire Chancellor to Forge for tool routing
 	// TODO: remove the forge

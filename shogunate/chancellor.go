@@ -256,7 +256,7 @@ func (c *Chancellor) EmitEvent(edictID, eventType string, payload storage.JSON) 
 
 // Chancellor harmonizes all ministers and manages edict lifecycle
 type Chancellor struct {
-	MinisterBase // embedded base provides db, llm, config, repoInfo, logger
+	MinisterBase            // embedded base provides db, llm, config, repoInfo, logger
 	dbPath       string     // Path to database for tools
 	shogunate    *Shogunate // Reference to Shogunate for minister access
 
@@ -961,7 +961,9 @@ func (t InvokeMinisterTool) Name() string {
 }
 
 func (t InvokeMinisterTool) Description() string {
-	return "Invoke a minister by ID to execute its logic for an edict. Ministers process edicts through their specialized phase logic (e.g., strategist for planning, forge for code generation, judge for testing, censor for review, marshal for deployment)."
+	return `Invoke a minister by ID to execute its logic for an edict.
+	Ministers process edicts through their specialized phase logic 
+	(e.g., strategist for planning, forge for code generation, judge for testing and verification, censor for review, marshal for deployment).`
 }
 
 func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, error) {
@@ -1031,7 +1033,7 @@ func (t InvokeMinisterTool) ParameterSchema() map[string]any {
 		"properties": map[string]any{
 			"minister_id": map[string]any{
 				"type":        "string",
-				"description": "The minister to invoke (e.g., strategist, forge, judge, censor, marshal)",
+				"description": "The minister to invoke (strategist, forge, judge, censor or marshal)",
 			},
 			"edict_id": map[string]any{
 				"type":        "string",

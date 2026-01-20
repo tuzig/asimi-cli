@@ -10,20 +10,54 @@ import (
 	"gorm.io/gorm"
 )
 
-// censorConn implements CensorConn - enforces code ethics
-type censorConn struct {
-	baseConn
+// Censor enforces code ethics and maintains precedent law
+type Censor struct {
+	MinisterBase // embedded base for database access and session creation
+	linter       Linter
 }
 
-// NewCensorConn creates a new Censor connection
-func NewCensorConn(db *gorm.DB) CensorConn {
-	return &censorConn{
-		baseConn: baseConn{db: db, ministerID: "censor"},
+// NewCensor creates a new Censor minister
+func NewCensor(db *gorm.DB, linter Linter, logger *slog.Logger) *Censor {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Censor{
+		MinisterBase: MinisterBase{db: db, ministerID: "censor", logger: logger},
+		linter:       linter,
 	}
 }
 
+// ID returns the minister identifier
+func (c *Censor) ID() string {
+	return "censor"
+}
+
+// Role returns the Censor's role identity text
+func (c *Censor) Role() string {
+	return `You are the Censor (都察院, Dūcháyuàn). Your domain is Dao (道, the Zen of Python) and institutional memory.
+
+You preside over the censor_precedents table. You review code changes. You can reject a commit or grant a waiver with justification.
+
+Your rulings are queryable precedent, not opinion. No merge passes without your seal.
+
+CRITICAL RULES:
+- NO GUESSING: If style rules are ambiguous, invoke Zhengming—do
+- Log every violation as a precedent (reject or waive)
+- Precedents are permanent and searchable
+- Waivers require written justification`
+
+}
+
+// Tools returns the Censor's LLM tools for interactive sessions
+func (c *Censor) Tools(notify NotifyFunc) []Tool {
+	// TODO: Implement Censor tools (list_quenched_manifests, log_precedent, reject_manifest, query_precedents)
+	return []Tool{}
+}
+
+// --- Database Methods ---
+
 // GetQuenchedManifests retrieves all quenched manifests ready for ethics review
-func (c *censorConn) GetQuenchedManifests(edictID string) ([]storage.ForgeManifest, error) {
+func (c *Censor) GetQuenchedManifests(edictID string) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
 	err := c.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestQuenched).
 		Order("created_at ASC").
@@ -35,7 +69,7 @@ func (c *censorConn) GetQuenchedManifests(edictID string) ([]storage.ForgeManife
 }
 
 // NoRejections checks if there are any rejected manifests for an edict
-func (c *censorConn) NoRejections(edictID string) (bool, error) {
+func (c *Censor) NoRejections(edictID string) (bool, error) {
 	var count int64
 	err := c.db.Model(&storage.ForgeManifest{}).
 		Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
@@ -47,7 +81,7 @@ func (c *censorConn) NoRejections(edictID string) (bool, error) {
 }
 
 // LogPrecedent records an ethics decision for a manifest
-func (c *censorConn) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
+func (c *Censor) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
 	precedentID := GenerateID("precedent", manifestID, principle)
 
 	// Get manifest for idempotency key
@@ -74,7 +108,7 @@ func (c *censorConn) LogPrecedent(manifestID, principle string, ruling storage.P
 }
 
 // RejectManifest marks a manifest as rejected by the Censor
-func (c *censorConn) RejectManifest(manifestID string) error {
+func (c *Censor) RejectManifest(manifestID string) error {
 	result := c.db.Model(&storage.ForgeManifest{}).
 		Where("manifest_id = ?", manifestID).
 		Update("status", storage.ManifestRejected)
@@ -88,7 +122,7 @@ func (c *censorConn) RejectManifest(manifestID string) error {
 }
 
 // GetPrecedentsForManifest retrieves all precedents for a specific manifest
-func (c *censorConn) GetPrecedentsForManifest(manifestID string) ([]storage.CensorPrecedent, error) {
+func (c *Censor) GetPrecedentsForManifest(manifestID string) ([]storage.CensorPrecedent, error) {
 	var precedents []storage.CensorPrecedent
 	err := c.db.Where("manifest_id = ?", manifestID).
 		Order("created_at ASC").
@@ -100,7 +134,7 @@ func (c *censorConn) GetPrecedentsForManifest(manifestID string) ([]storage.Cens
 }
 
 // QueryPrecedentsByPrinciple searches precedents by principle (for case law lookup)
-func (c *censorConn) QueryPrecedentsByPrinciple(principle string, limit int) ([]storage.CensorPrecedent, error) {
+func (c *Censor) QueryPrecedentsByPrinciple(principle string, limit int) ([]storage.CensorPrecedent, error) {
 	var precedents []storage.CensorPrecedent
 	query := c.db.Where("principle LIKE ?", "%"+principle+"%").
 		Order("created_at DESC")
@@ -115,7 +149,7 @@ func (c *censorConn) QueryPrecedentsByPrinciple(principle string, limit int) ([]
 }
 
 // GetEdictsWithQuenchedManifests returns edicts with quenched manifests needing review
-func (c *censorConn) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
+func (c *Censor) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := c.db.Distinct("edicts.*").
 		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
@@ -128,68 +162,18 @@ func (c *censorConn) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	return edicts, nil
 }
 
-// --- Minister ---
-
-// CensorPrompt defines the Censor's identity and capabilities
-// TODO: fold this where it belongs - in Prompt
-const CensorPrompt = `You are the Censor (都察院, Dūcháyuàn). Your domain is Dao (道, the Zen of Python) and institutional memory.
-
-You preside over the censor_precedents table. You review quenched commits only. You can reject a commit or grant a waiver with justification.
-
-Your rulings are queryable precedent, not opinion. No merge passes without your seal.
-
-CRITICAL RULES:
-- NO GUESSING: If style rules are ambiguous, invoke Zhengming—do
-- Log every violation as a precedent (reject or waive)
-- Precedents are permanent and searchable
-- Waivers require written justification
-`
-
-// Censor enforces code ethics and maintains precedent law
-type Censor struct {
-	MinisterBase         // embedded base for session creation
-	conn         CensorConn
-	linter       Linter
-}
-
-// NewCensor creates a new Censor minister
-func NewCensor(conn CensorConn, linter Linter, logger *slog.Logger) *Censor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &Censor{
-		MinisterBase: MinisterBase{logger: logger},
-		conn:         conn,
-		linter:       linter,
-	}
-}
-
-// ID returns the minister identifier
-func (c *Censor) ID() string {
-	return "censor"
-}
-
-// Role returns the Censor's role identity text
-func (c *Censor) Role() string {
-	return CensorPrompt
-}
-
-// Tools returns the Censor's LLM tools for interactive sessions
-func (c *Censor) Tools(notify NotifyFunc) []Tool {
-	// TODO: Implement Censor tools (list_quenched_manifests, log_precedent, reject_manifest, query_precedents)
-	return []Tool{}
-}
+// --- Execute Logic ---
 
 // Execute runs the Censor's ethics review for an edict
 func (c *Censor) Execute(ctx context.Context, edictID string) (bool, error) {
 	// Check if there are any rejections
-	noRejections, err := c.conn.NoRejections(edictID)
+	noRejections, err := c.NoRejections(edictID)
 	if err != nil {
 		return false, fmt.Errorf("check rejections: %w", err)
 	}
 
 	// Get quenched manifests to review
-	manifests, err := c.conn.GetQuenchedManifests(edictID)
+	manifests, err := c.GetQuenchedManifests(edictID)
 	if err != nil {
 		return false, fmt.Errorf("get quenched manifests: %w", err)
 	}
@@ -212,7 +196,7 @@ func (c *Censor) Execute(ctx context.Context, edictID string) (bool, error) {
 	}
 
 	// Check again for rejections
-	noRejections, err = c.conn.NoRejections(edictID)
+	noRejections, err = c.NoRejections(edictID)
 	if err != nil {
 		return false, fmt.Errorf("check rejections after review: %w", err)
 	}
@@ -224,7 +208,7 @@ func (c *Censor) Execute(ctx context.Context, edictID string) (bool, error) {
 func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeManifest) error {
 	if c.linter == nil {
 		// No linter - auto-approve with precedent
-		_, err := c.conn.LogPrecedent(
+		_, err := c.LogPrecedent(
 			manifest.ManifestID,
 			"auto-approval",
 			storage.RulingWaive,
@@ -246,7 +230,7 @@ func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeMani
 	// Log each violation as a precedent
 	hasRejection := false
 	for _, v := range violations {
-		_, err := c.conn.LogPrecedent(
+		_, err := c.LogPrecedent(
 			manifest.ManifestID,
 			v.Principle,
 			v.Ruling,
@@ -263,7 +247,7 @@ func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeMani
 
 	// Reject manifest if any violations were rejected
 	if hasRejection {
-		if err := c.conn.RejectManifest(manifest.ManifestID); err != nil {
+		if err := c.RejectManifest(manifest.ManifestID); err != nil {
 			return fmt.Errorf("reject manifest: %w", err)
 		}
 		c.logger.Info("manifest rejected by censor",
@@ -298,7 +282,7 @@ func (c *Censor) Run(ctx context.Context, pollInterval time.Duration) {
 
 // pollAndExecute checks for edicts needing ethics review and processes them
 func (c *Censor) pollAndExecute(ctx context.Context) {
-	edicts, err := c.conn.GetEdictsWithQuenchedManifests()
+	edicts, err := c.GetEdictsWithQuenchedManifests()
 	if err != nil {
 		c.logger.Error("failed to poll review edicts", "error", err)
 		return
@@ -306,7 +290,7 @@ func (c *Censor) pollAndExecute(ctx context.Context) {
 
 	for _, edict := range edicts {
 		// Check for pending zhengming before processing
-		pending, err := c.conn.IsZhengmingPending(edict.EdictID)
+		pending, err := c.IsZhengmingPending(edict.EdictID)
 		if err != nil {
 			c.logger.Error("failed to check zhengming", "edict_id", edict.EdictID, "error", err)
 			continue

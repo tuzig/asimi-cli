@@ -9,138 +9,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// forgeConn implements ForgeConn - creates code manifests
-type forgeConn struct {
-	baseConn
-}
-
-// NewForgeConn creates a new Forge connection
-func NewForgeConn(db *gorm.DB) ForgeConn {
-	return &forgeConn{
-		baseConn: baseConn{db: db, ministerID: "forge"},
-	}
-}
-
-// GetEdict retrieves an edict by ID
-func (c *forgeConn) GetEdict(edictID string) (*storage.Edict, error) {
-	return c.getEdict(edictID)
-}
-
-// GetPendingLing retrieves all pending ling for an edict
-func (c *forgeConn) GetPendingLing(edictID string) ([]storage.Ling, error) {
-	var ling []storage.Ling
-	err := c.db.Where("edict_id = ? AND status = ?", edictID, storage.LingPending).
-		Order("created_at ASC").
-		Find(&ling).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pending ling: %w", err)
-	}
-	return ling, nil
-}
-
-// MarkLingCompleted marks a ling as completed
-func (c *forgeConn) MarkLingCompleted(lingID string) error {
-	result := c.db.Model(&storage.Ling{}).
-		Where("ling_id = ?", lingID).
-		Update("status", storage.LingCompleted)
-	if result.Error != nil {
-		return fmt.Errorf("failed to mark ling completed: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("ling not found: %s", lingID)
-	}
-	return nil
-}
-
-// StageManifest creates a staged manifest (not yet committed to git)
-func (c *forgeConn) StageManifest(edictID, lingID, filePath, qualifiedName, patchHash string) (string, error) {
-	manifestID := GenerateID("manifest", edictID, lingID, filePath)
-	idempotencyKey := generateIdempotencyKey(edictID, lingID, filePath, patchHash)
-
-	manifest := storage.ForgeManifest{
-		ManifestID:     manifestID,
-		EdictID:        edictID,
-		LingID:         lingID,
-		FilePath:       filePath,
-		QualifiedName:  qualifiedName,
-		Status:         storage.ManifestStaging,
-		IdempotencyKey: idempotencyKey,
-	}
-
-	if err := c.db.Create(&manifest).Error; err != nil {
-		return "", fmt.Errorf("failed to stage manifest: %w", err)
-	}
-	return manifestID, nil
-}
-
-// ActivateManifest transitions a staged manifest to pending after git commit
-func (c *forgeConn) ActivateManifest(manifestID, commitHash string) error {
-	result := c.db.Model(&storage.ForgeManifest{}).
-		Where("manifest_id = ? AND status = ?", manifestID, storage.ManifestStaging).
-		Updates(map[string]interface{}{
-			"commit_hash": commitHash,
-			"status":      storage.ManifestPending,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("failed to activate manifest: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("staged manifest not found: %s", manifestID)
-	}
-	return nil
-}
-
-// DeleteStagedManifest removes a staged manifest (git commit failed)
-func (c *forgeConn) DeleteStagedManifest(manifestID string) error {
-	result := c.db.Where("manifest_id = ? AND status = ?", manifestID, storage.ManifestStaging).
-		Delete(&storage.ForgeManifest{})
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete staged manifest: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("staged manifest not found: %s", manifestID)
-	}
-	return nil
-}
-
-// GetRejectedManifests retrieves all rejected manifests for an edict
-func (c *forgeConn) GetRejectedManifests(edictID string) ([]storage.ForgeManifest, error) {
-	var manifests []storage.ForgeManifest
-	err := c.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
-		Order("created_at DESC").
-		Find(&manifests).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get rejected manifests: %w", err)
-	}
-	return manifests, nil
-}
-
-// SaveLingResult persists the tool execution result to the database
-func (c *forgeConn) SaveLingResult(ling *storage.Ling, output string, err error) error {
-	updates := map[string]interface{}{
-		"tool_result": output,
-		"status":      storage.LingCompleted,
-	}
-	if err != nil {
-		updates["tool_result"] = fmt.Sprintf("error: %v", err)
-	}
-	result := c.db.Model(&storage.Ling{}).
-		Where("ling_id = ?", ling.LingID).
-		Updates(updates)
-	if result.Error != nil {
-		return fmt.Errorf("failed to save ling result: %w", result.Error)
-	}
-	return nil
-}
-
-// InsertLing creates a new Ling record
-func (c *forgeConn) InsertLing(ling *storage.Ling) error {
-	if err := c.db.Create(ling).Error; err != nil {
-		return fmt.Errorf("failed to insert ling: %w", err)
-	}
-	return nil
-}
-
 // --- Minister ---
 
 // ForgePrompt defines the Forge's identity and capabilities
@@ -177,7 +45,7 @@ CRITICAL RULES:
 // Forge executes tool calls via the envelope pattern.
 // It receives LingEnvelopes, executes the requested tools, and replies directly.
 type Forge struct {
-	MinisterBase              // embedded base for session creation (provides db, logger)
+	MinisterBase              // embedded base for database access and session creation
 	addLing      chan *LingEnvelope
 	tools        map[string]Tool
 }
@@ -188,7 +56,7 @@ func NewForge(db *gorm.DB, tools map[string]Tool, logger *slog.Logger) *Forge {
 		logger = slog.Default()
 	}
 	return &Forge{
-		MinisterBase: MinisterBase{db: db, logger: logger},
+		MinisterBase: MinisterBase{db: db, ministerID: "forge", logger: logger},
 		addLing:      make(chan *LingEnvelope, 100),
 		tools:        tools,
 	}
@@ -205,6 +73,140 @@ func (f *Forge) SetTools(tools map[string]Tool) {
 	f.tools = tools
 	f.logger.Info("forge tools updated", "count", len(tools))
 }
+
+// ID returns the minister identifier.
+func (f *Forge) ID() string {
+	return "forge"
+}
+
+// Role returns the Forge's role identity text.
+func (f *Forge) Role() string {
+	return ForgePrompt
+}
+
+// Tools returns the Forge's LLM tools for interactive sessions.
+func (f *Forge) Tools(notify NotifyFunc) []Tool {
+	return []Tool{}
+}
+
+// --- Database Methods ---
+
+// GetPendingLing retrieves all pending ling for an edict
+func (f *Forge) GetPendingLing(edictID string) ([]storage.Ling, error) {
+	var ling []storage.Ling
+	err := f.db.Where("edict_id = ? AND status = ?", edictID, storage.LingPending).
+		Order("created_at ASC").
+		Find(&ling).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending ling: %w", err)
+	}
+	return ling, nil
+}
+
+// MarkLingCompleted marks a ling as completed
+func (f *Forge) MarkLingCompleted(lingID string) error {
+	result := f.db.Model(&storage.Ling{}).
+		Where("ling_id = ?", lingID).
+		Update("status", storage.LingCompleted)
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark ling completed: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("ling not found: %s", lingID)
+	}
+	return nil
+}
+
+// StageManifest creates a staged manifest (not yet committed to git)
+func (f *Forge) StageManifest(edictID, lingID, filePath, qualifiedName, patchHash string) (string, error) {
+	manifestID := GenerateID("manifest", edictID, lingID, filePath)
+	idempotencyKey := generateIdempotencyKey(edictID, lingID, filePath, patchHash)
+
+	manifest := storage.ForgeManifest{
+		ManifestID:     manifestID,
+		EdictID:        edictID,
+		LingID:         lingID,
+		FilePath:       filePath,
+		QualifiedName:  qualifiedName,
+		Status:         storage.ManifestStaging,
+		IdempotencyKey: idempotencyKey,
+	}
+
+	if err := f.db.Create(&manifest).Error; err != nil {
+		return "", fmt.Errorf("failed to stage manifest: %w", err)
+	}
+	return manifestID, nil
+}
+
+// ActivateManifest transitions a staged manifest to pending after git commit
+func (f *Forge) ActivateManifest(manifestID, commitHash string) error {
+	result := f.db.Model(&storage.ForgeManifest{}).
+		Where("manifest_id = ? AND status = ?", manifestID, storage.ManifestStaging).
+		Updates(map[string]interface{}{
+			"commit_hash": commitHash,
+			"status":      storage.ManifestPending,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to activate manifest: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("staged manifest not found: %s", manifestID)
+	}
+	return nil
+}
+
+// DeleteStagedManifest removes a staged manifest (git commit failed)
+func (f *Forge) DeleteStagedManifest(manifestID string) error {
+	result := f.db.Where("manifest_id = ? AND status = ?", manifestID, storage.ManifestStaging).
+		Delete(&storage.ForgeManifest{})
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete staged manifest: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("staged manifest not found: %s", manifestID)
+	}
+	return nil
+}
+
+// GetRejectedManifests retrieves all rejected manifests for an edict
+func (f *Forge) GetRejectedManifests(edictID string) ([]storage.ForgeManifest, error) {
+	var manifests []storage.ForgeManifest
+	err := f.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
+		Order("created_at DESC").
+		Find(&manifests).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get rejected manifests: %w", err)
+	}
+	return manifests, nil
+}
+
+// SaveLingResult persists the tool execution result to the database
+func (f *Forge) SaveLingResult(ling *storage.Ling, output string, err error) error {
+	updates := map[string]interface{}{
+		"tool_result": output,
+		"status":      storage.LingCompleted,
+	}
+	if err != nil {
+		updates["tool_result"] = fmt.Sprintf("error: %v", err)
+	}
+	result := f.db.Model(&storage.Ling{}).
+		Where("ling_id = ?", ling.LingID).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("failed to save ling result: %w", result.Error)
+	}
+	return nil
+}
+
+// InsertLing creates a new Ling record
+func (f *Forge) InsertLing(ling *storage.Ling) error {
+	if err := f.db.Create(ling).Error; err != nil {
+		return fmt.Errorf("failed to insert ling: %w", err)
+	}
+	return nil
+}
+
+// --- Execute Logic ---
 
 // Run processes incoming LingEnvelopes until context is cancelled.
 // Each envelope is executed and replied to directly via its reply channel.
@@ -270,21 +272,6 @@ func (f *Forge) persist(ling *storage.Ling, output string, err error) {
 		Updates(updates).Error; updateErr != nil {
 		f.logger.Error("failed to persist ling result", "ling_id", ling.LingID, "error", updateErr)
 	}
-}
-
-// ID returns the minister identifier.
-func (f *Forge) ID() string {
-	return "forge"
-}
-
-// Role returns the Forge's role identity text.
-func (f *Forge) Role() string {
-	return ForgePrompt
-}
-
-// Tools returns the Forge's LLM tools for interactive sessions.
-func (f *Forge) Tools(notify NotifyFunc) []Tool {
-	return []Tool{}
 }
 
 // Execute is a no-op for the envelope-based Forge.
