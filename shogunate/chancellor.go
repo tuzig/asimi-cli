@@ -257,8 +257,8 @@ func (c *Chancellor) EmitEvent(edictID, eventType string, payload storage.JSON) 
 // Chancellor harmonizes all ministers and manages edict lifecycle
 type Chancellor struct {
 	MinisterBase // embedded base provides db, llm, config, repoInfo, logger
-	ministers    PhaseMinister
-	dbPath       string // Path to database for tools
+	dbPath       string     // Path to database for tools
+	shogunate    *Shogunate // Reference to Shogunate for minister access
 
 	// Run() loop fields
 	Edicts      chan *EdictEnvelope // Ruler speaks here
@@ -281,14 +281,13 @@ func NewChancellor(db *gorm.DB, llm llms.Model, config *SessionConfig,
 			repoInfo: repoInfo,
 			logger:   logger,
 		},
-		ministers: make(PhaseMinister),
-		Edicts:    make(chan *EdictEnvelope),
+		Edicts: make(chan *EdictEnvelope),
 	}
 }
 
-// RegisterMinister registers a minister for a phase
-func (c *Chancellor) RegisterMinister(phase storage.EdictPhase, minister Minister) {
-	c.ministers[phase] = minister
+// SetShogunate sets the Shogunate reference for minister access
+func (c *Chancellor) SetShogunate(s *Shogunate) {
+	c.shogunate = s
 }
 
 func (c *Chancellor) SetForge(forge *Forge) {
@@ -407,102 +406,15 @@ func (c *Chancellor) Tools(notify NotifyFunc) []Tool {
 		RequestZhengmingTool{chancellor: c, notify: notify},
 		GetEdictStatusTool{chancellor: c},
 		ListEdictsTool{db: c.db},
+		InvokeMinisterTool{chancellor: c},
 	}
 }
 
-// Execute runs the Chancellor's orchestration logic for an edict
+// Execute is a stub to satisfy the Minister interface.
+// Chancellor orchestration is now handled via the invoke_minister tool.
 func (c *Chancellor) Execute(ctx context.Context, edictID string) (bool, error) {
-	// Check for pending zhengming first
-	if pending, err := c.IsZhengmingPending(edictID); err != nil {
-		return false, fmt.Errorf("check zhengming: %w", err)
-	} else if pending {
-		c.logger.Info("edict halted for zhengming", "edict_id", edictID)
-		return false, nil
-	}
-
-	// Get current edict state
-	edict, err := c.GetEdict(edictID)
-	if err != nil {
-		return false, fmt.Errorf("get edict: %w", err)
-	}
-
-	// Check if already complete
-	if edict.CurrentPhase == storage.PhaseMerged || edict.CurrentPhase == storage.PhaseCancelled {
-		return true, nil
-	}
-
-	// Brewing phase is interactive - handled by Shogunate.brewEdict, not ministers
-	// The phase transitions to planning when brewing is complete
-	if edict.CurrentPhase == storage.PhaseBrewing {
-		c.logger.Debug("edict in brewing phase, awaiting completion", "edict_id", edictID)
-		return false, nil
-	}
-
-	// Get the minister for the current phase
-	minister, ok := c.ministers[edict.CurrentPhase]
-	if !ok {
-		return false, fmt.Errorf("no minister registered for phase: %s", edict.CurrentPhase)
-	}
-
-	c.logger.Info("executing phase",
-		"edict_id", edictID,
-		"phase", edict.CurrentPhase,
-		"minister", minister.ID())
-
-	// Execute the phase minister
-	phaseSealed, err := minister.Execute(ctx, edictID)
-	if err != nil {
-		return false, fmt.Errorf("minister %s execute: %w", minister.ID(), err)
-	}
-
-	if !phaseSealed {
-		c.logger.Info("phase not yet sealed", "edict_id", edictID, "phase", edict.CurrentPhase)
-		return false, nil
-	}
-
-	// Phase complete - transition to next phase
-	nextPhase := c.determineNextPhase(edict.CurrentPhase)
-	if nextPhase != edict.CurrentPhase {
-		if err := c.UpdatePhase(edictID, nextPhase); err != nil {
-			return false, fmt.Errorf("update phase: %w", err)
-		}
-		c.logger.Info("phase transition",
-			"edict_id", edictID,
-			"from", edict.CurrentPhase,
-			"to", nextPhase)
-
-		// Emit phase change event
-		c.EmitEvent(edictID, "phase_changed", storage.JSON(
-			fmt.Sprintf(`{"from":"%s","to":"%s"}`, edict.CurrentPhase, nextPhase)))
-	}
-
-	// Check if fully complete (both seals required for merge)
-	if nextPhase == storage.PhaseMerged {
-		if err := c.SetChancellorSeal(edictID, true); err != nil {
-			return false, fmt.Errorf("set chancellor seal: %w", err)
-		}
-		return true, nil
-	}
-
+	c.logger.Debug("chancellor execute called", "edict_id", edictID)
 	return false, nil
-}
-
-// determineNextPhase returns the next phase in the workflow
-func (c *Chancellor) determineNextPhase(current storage.EdictPhase) storage.EdictPhase {
-	switch current {
-	case storage.PhaseBrewing:
-		return storage.PhasePlanning
-	case storage.PhasePlanning:
-		return storage.PhaseForging
-	case storage.PhaseForging:
-		return storage.PhaseJudgment
-	case storage.PhaseJudgment:
-		return storage.PhaseReview
-	case storage.PhaseReview:
-		return storage.PhaseMerged
-	default:
-		return current
-	}
 }
 
 // HandleZhengmingResponse processes a clarification response
@@ -641,11 +553,6 @@ func (c *Chancellor) UpdateEdictType(edictID string, edictType RitualType) error
 		return fmt.Errorf("edict not found: %s", edictID)
 	}
 	return nil
-}
-
-// GetMinisters returns the registered ministers (for ritual building)
-func (c *Chancellor) GetMinisters() PhaseMinister {
-	return c.ministers
 }
 
 // GetDB returns the database connection (for ritual building)
@@ -1041,5 +948,96 @@ func (t AsimiSQLTool) ParameterSchema() map[string]any {
 			},
 		},
 		"required": []string{"query"},
+	}
+}
+
+// InvokeMinisterTool allows the Chancellor to invoke any registered minister for an edict.
+type InvokeMinisterTool struct {
+	chancellor *Chancellor
+}
+
+func (t InvokeMinisterTool) Name() string {
+	return "invoke_minister"
+}
+
+func (t InvokeMinisterTool) Description() string {
+	return "Invoke a minister by ID to execute its logic for an edict. Ministers process edicts through their specialized phase logic (e.g., strategist for planning, forge for code generation, judge for testing, censor for review, marshal for deployment)."
+}
+
+func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		MinisterID string `json:"minister_id"`
+		EdictID    string `json:"edict_id"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+
+	if params.MinisterID == "" {
+		return "", fmt.Errorf("minister_id is required")
+	}
+	if params.EdictID == "" {
+		return "", fmt.Errorf("edict_id is required")
+	}
+
+	// Get minister via Shogunate
+	minister := t.chancellor.shogunate.GetMinister(params.MinisterID)
+	if minister == nil {
+		return "", fmt.Errorf("minister not found: %s", params.MinisterID)
+	}
+
+	// Execute the minister's logic
+	sealed, err := minister.Execute(ctx, params.EdictID)
+	if err != nil {
+		return "", fmt.Errorf("minister %s execution failed: %w", params.MinisterID, err)
+	}
+
+	result := map[string]any{
+		"minister_id": params.MinisterID,
+		"edict_id":    params.EdictID,
+		"sealed":      sealed,
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	return string(resultJSON), nil
+}
+
+func (t InvokeMinisterTool) Format(input, result string, err error) string {
+	var params struct {
+		MinisterID string `json:"minister_id"`
+		EdictID    string `json:"edict_id"`
+	}
+	json.Unmarshal([]byte(input), &params)
+
+	if err != nil {
+		return fmt.Sprintf("Invoke %s Error: %v\n", params.MinisterID, err)
+	}
+
+	var res struct {
+		Sealed bool `json:"sealed"`
+	}
+	json.Unmarshal([]byte(result), &res)
+
+	status := "in progress"
+	if res.Sealed {
+		status = "sealed"
+	}
+	return fmt.Sprintf("Invoke %s [%s]\n", params.MinisterID, status)
+}
+
+func (t InvokeMinisterTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"minister_id": map[string]any{
+				"type":        "string",
+				"description": "The minister to invoke (e.g., strategist, forge, judge, censor, marshal)",
+			},
+			"edict_id": map[string]any{
+				"type":        "string",
+				"description": "The edict ID to process",
+			},
+		},
+		"required": []string{"minister_id", "edict_id"},
 	}
 }

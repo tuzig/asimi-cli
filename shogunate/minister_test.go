@@ -56,23 +56,8 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	// Create connections
-	strategistConn := NewStrategistConn(db)
-	judgeConn := NewJudgeConn(db)
-	censorConn := NewCensorConn(db)
-
-	// Create ministers
-	strategist := NewStrategist(strategistConn, nil, nil)
-	forge := NewForge(db, nil, nil)
-	judge := NewJudge(judgeConn, nil, nil)
-	censor := NewCensor(censorConn, nil, nil)
-
-	// Create chancellor and register ministers
+	// Create chancellor
 	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
-	chancellor.RegisterMinister(storage.PhasePlanning, strategist)
-	chancellor.RegisterMinister(storage.PhaseForging, forge)
-	chancellor.RegisterMinister(storage.PhaseJudgment, judge)
-	chancellor.RegisterMinister(storage.PhaseReview, censor)
 
 	// Create an edict (starts in brewing phase)
 	err := chancellor.CreateEdictFromIssue(ctx, "test/repo#1", "Add a simple hello world function")
@@ -80,25 +65,34 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 		t.Fatalf("Failed to create edict: %v", err)
 	}
 
-	// Transition from brewing to planning (simulating brewing completion)
+	// Verify edict was created in brewing phase
+	edict, err := chancellor.GetEdict("test/repo#1")
+	if err != nil {
+		t.Fatalf("Failed to get edict: %v", err)
+	}
+	if edict.CurrentPhase != storage.PhaseBrewing {
+		t.Errorf("Expected phase brewing, got %s", edict.CurrentPhase)
+	}
+
+	// Transition to planning
 	err = chancellor.UpdatePhase("test/repo#1", storage.PhasePlanning)
 	if err != nil {
 		t.Fatalf("Failed to update phase to planning: %v", err)
 	}
 
-	// Execute - should run planning phase
+	// Verify phase transition
+	edict, _ = chancellor.GetEdict("test/repo#1")
+	if edict.CurrentPhase != storage.PhasePlanning {
+		t.Errorf("Expected phase planning, got %s", edict.CurrentPhase)
+	}
+
+	// Execute stub returns (false, nil)
 	sealed, err := chancellor.Execute(ctx, "test/repo#1")
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
 	if sealed {
-		t.Error("Expected not sealed after first execution")
-	}
-
-	// Check phase transitioned to forging
-	edict, _ := chancellor.GetEdict("test/repo#1")
-	if edict.CurrentPhase != storage.PhaseForging {
-		t.Errorf("Expected phase forging, got %s", edict.CurrentPhase)
+		t.Error("Expected not sealed from stub Execute")
 	}
 }
 
@@ -278,12 +272,6 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	edict, _ := chancellor.GetEdict("test/repo#7")
 	if edict.CurrentPhase != storage.PhaseCancelled {
 		t.Errorf("Expected phase cancelled, got %s", edict.CurrentPhase)
-	}
-
-	// Execute should return true (complete)
-	sealed, _ := chancellor.Execute(ctx, "test/repo#7")
-	if !sealed {
-		t.Error("Expected sealed for cancelled edict")
 	}
 }
 

@@ -136,9 +136,6 @@ type LingProcessor interface {
 	Run(ctx context.Context)
 }
 
-// PhaseMinister maps edict phases to their responsible ministers
-type PhaseMinister map[storage.EdictPhase]Minister
-
 // --- External Dependencies ---
 
 // LLMClient generates text using a language model

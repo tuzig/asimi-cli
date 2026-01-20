@@ -120,14 +120,9 @@ func (s *Shogunate) Start(ctx context.Context) error {
 	s.Censor = NewCensor(censorConn, nil, s.logger)
 	s.Marshal = NewMarshal(marshalConn, nil, s.logger)
 
-	// Create Chancellor and register phase ministers
+	// Create Chancellor
 	s.Chancellor = NewChancellor(s.db, s.llmClient, nil, repo.RepoInfo{}, s.logger)
-	/* TODO: remove these
-	s.Chancellor.RegisterMinister(storage.PhasePlanning, s.strategist)
-	s.Chancellor.RegisterMinister(storage.PhaseForging, s.forge)
-	s.Chancellor.RegisterMinister(storage.PhaseJudgment, s.judge)
-	s.Chancellor.RegisterMinister(storage.PhaseReview, s.censor)
-	*/
+	s.Chancellor.SetShogunate(s)
 
 	// Create RitualGuard with Chancellor reference
 	s.RitualGuard = NewRitualGuard(ritualGuardConn, s.Chancellor, s.logger)
@@ -257,6 +252,26 @@ func (s *Shogunate) GetActiveEdictID() string {
 	s.activeEdictMu.RLock()
 	defer s.activeEdictMu.RUnlock()
 	return s.activeEdictID
+}
+
+// GetMinister returns a minister by ID
+func (s *Shogunate) GetMinister(id string) Minister {
+	switch id {
+	case "chancellor":
+		return s.Chancellor
+	case "strategist":
+		return s.Strategist
+	case "forge":
+		return s.Forge
+	case "judge":
+		return s.Judge
+	case "censor":
+		return s.Censor
+	case "marshal":
+		return s.Marshal
+	default:
+		return nil
+	}
 }
 
 // setActiveEdict sets the active edict ID
