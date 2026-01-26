@@ -3,8 +3,6 @@ package shogunate
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"time"
 
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/gorm"
@@ -43,17 +41,22 @@ CRITICAL RULES:
 type Marshal struct {
 	MinisterBase // embedded base for database access and session creation
 	rca          RCAAnalyzer
+	tasks        chan *TaskEnvelope
 }
 
 // NewMarshal creates a new Marshal minister
-func NewMarshal(db *gorm.DB, rca RCAAnalyzer, logger *slog.Logger) *Marshal {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func NewMarshal(base MinisterBase, rca RCAAnalyzer) *Marshal {
+	base.ministerID = "marshal"
 	return &Marshal{
-		MinisterBase: MinisterBase{db: db, ministerID: "marshal", logger: logger},
+		MinisterBase: base,
 		rca:          rca,
+		tasks:        make(chan *TaskEnvelope, 10),
 	}
+}
+
+// Tasks returns the channel for task submission
+func (m *Marshal) Tasks() chan<- *TaskEnvelope {
+	return m.tasks
 }
 
 // ID returns the minister identifier
@@ -141,9 +144,9 @@ func (m *Marshal) GetPendingIncidents() ([]storage.MarshalIncident, error) {
 
 // --- Execute Logic ---
 
-// Execute runs the Marshal's production monitoring
+// execute runs the Marshal's production monitoring (internal method)
 // Note: Marshal doesn't participate in normal edict flow, but handles incidents
-func (m *Marshal) Execute(ctx context.Context, edictID string) (bool, error) {
+func (m *Marshal) execute(ctx context.Context, edictID string) (bool, error) {
 	// Marshal's Execute is called for 'assassination' type edicts (hotfixes)
 	edict, err := m.GetEdict(edictID)
 	if err != nil {
@@ -210,47 +213,47 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 	return nil
 }
 
-// Run starts the Marshal's polling loop for pending incidents
-func (m *Marshal) Run(ctx context.Context, pollInterval time.Duration) {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	m.logger.Info("marshal started", "poll_interval", pollInterval)
+// Run starts the Marshal's task processing loop
+func (m *Marshal) Run(ctx context.Context) {
+	m.logger.Info("marshal started, awaiting tasks")
 
 	for {
 		select {
 		case <-ctx.Done():
 			m.logger.Info("marshal stopped")
 			return
-		case <-ticker.C:
-			m.pollAndProcess(ctx)
+		case env := <-m.tasks:
+			m.processTask(ctx, env)
 		}
 	}
 }
 
-// pollAndProcess checks for pending incidents and processes them
-func (m *Marshal) pollAndProcess(ctx context.Context) {
-	incidents, err := m.GetPendingIncidents()
-	if err != nil {
-		m.logger.Error("failed to poll incidents", "error", err)
-		return
+// processTask handles a single task envelope
+func (m *Marshal) processTask(ctx context.Context, env *TaskEnvelope) {
+	m.logger.Info("marshal processing task",
+		"edict_id", env.EdictID,
+		"task", env.Task)
+
+	// Execute the marshal logic
+	sealed, err := m.execute(ctx, env.EdictID)
+
+	// Send reply back to Chancellor
+	reply := &TaskReply{
+		EdictID:    env.EdictID,
+		MinisterID: m.ID(),
+		Task:       env.Task,
+		Sealed:     sealed,
+		Error:      err,
 	}
 
-	for _, incident := range incidents {
-		// Check if associated edict has pending zhengming
-		if incident.EdictID != "" {
-			pending, err := m.IsZhengmingPending(incident.EdictID)
-			if err != nil {
-				m.logger.Error("failed to check zhengming", "incident_id", incident.IncidentID, "error", err)
-				continue
-			}
-			if pending {
-				m.logger.Debug("waiting for zhengming response", "incident_id", incident.IncidentID)
-				continue
-			}
-		}
+	if sealed {
+		reply.Output = "marshal task complete"
+	}
 
-		m.logger.Info("processing incident", "incident_id", incident.IncidentID)
-		// Incidents are logged via OnIncident, here we just monitor their status
+	// Send reply (non-blocking)
+	select {
+	case env.ReplyChan <- reply:
+	default:
+		m.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
 	}
 }

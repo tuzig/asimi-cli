@@ -25,20 +25,24 @@ type EventEmitter interface {
 	EmitEvent(edictID, eventType string, payload storage.JSON) error
 }
 
-// --- Envelope Pattern Types ---
+// --- Task Envelope Pattern Types ---
 
-// LingEnvelope wraps a Ling with its reply channel.
-// Each envelope carries its own return address (Wu-Wei pattern).
-type LingEnvelope struct {
-	Ling      *storage.Ling      // Data (persisted)
-	ReplyChan chan<- *LingResult // Return address (not persisted)
+// TaskEnvelope carries a task from Chancellor to a minister.
+// Each envelope includes return address (ReplyChan) for results.
+type TaskEnvelope struct {
+	EdictID   string            // The edict this task belongs to
+	Task      string            // Specific instructions for the minister
+	ReplyChan chan<- *TaskReply // Return channel for results
 }
 
-// LingResult is the reply sent back via the envelope's reply channel.
-type LingResult struct {
-	Ling   *storage.Ling
-	Output string
-	Error  error
+// TaskReply is sent back by ministers when a task completes.
+type TaskReply struct {
+	EdictID    string // Echo back for correlation
+	MinisterID string // Which minister completed this
+	Task       string // Echo back the task for logging
+	Sealed     bool   // True if phase is complete
+	Output     string // Result/response text
+	Error      error  // Any error that occurred
 }
 
 // --- Minister Interface ---
@@ -48,23 +52,16 @@ type Minister interface {
 	// ID returns the minister's unique identifier (e.g., "strategist", "forge")
 	ID() string
 
-	// Execute runs the minister's logic for an edict
-	// Returns (sealed=true) when the phase is complete
-	Execute(ctx context.Context, edictID string) (sealed bool, err error)
-
 	// Role returns the minister's role identity text (injected into system prompt template)
 	Role() string
 
 	// Tools returns the minister's LLM tools for interactive sessions
 	Tools(notify NotifyFunc) []Tool
-}
 
-// LingProcessor is the interface for ministers that process Ling via the envelope pattern.
-// Forge implements this to receive tool calls from Session and reply directly.
-type LingProcessor interface {
-	// AddLing returns the channel to send LingEnvelopes for processing
-	AddLing() chan<- *LingEnvelope
-	// Run starts the processing loop (blocks until context is cancelled)
+	// Tasks returns the channel for submitting TaskEnvelopes
+	Tasks() chan<- *TaskEnvelope
+
+	// Run starts the minister's processing loop (blocks until context cancelled)
 	Run(ctx context.Context)
 }
 
@@ -171,6 +168,20 @@ type MinisterBase struct {
 	logger     *slog.Logger
 }
 
+// NewMinisterBase creates a base for all ministers with shared dependencies.
+func NewMinisterBase(db *gorm.DB, llm llms.Model, config *SessionConfig, repoInfo repo.RepoInfo, logger *slog.Logger) MinisterBase {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return MinisterBase{
+		db:       db,
+		llm:      llm,
+		config:   config,
+		repoInfo: repoInfo,
+		logger:   logger,
+	}
+}
+
 // CreateSession creates a session for a minister with composed system prompt.
 // The system prompt is built from the shared template with the minister's role injected.
 func (m *MinisterBase) CreateSession(minister Minister, notify NotifyFunc) (*Session, error) {
@@ -186,6 +197,14 @@ func (m *MinisterBase) buildSystemPrompt(minister Minister) string {
 	// For now, just return the minister's role as the system prompt.
 	// In the future, this could render a template with Role as a variable.
 	return minister.Role()
+}
+
+// SetMinisterConfig updates the MinisterBase configuration for session creation.
+// This allows ministers to be configured with an LLM client after initialization.
+func (m *MinisterBase) SetMinisterConfig(llm llms.Model, config *SessionConfig, repoInfo repo.RepoInfo) {
+	m.llm = llm
+	m.config = config
+	m.repoInfo = repoInfo
 }
 
 // GenerateID creates a unique ID using SHA256.

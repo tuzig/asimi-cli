@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -78,89 +80,6 @@ const (
 	treeMidPrefix         = " │ "
 )
 
-// ChatMsgBuilder builds multi-line messages with tree prefixes.
-// It mimics strings.Builder but automatically adds treeMidPrefix to intermediate
-// lines and treeFinalPrefix to the last line when String() is called.
-type ChatMsgBuilder struct {
-	prefix      string
-	lines       []string
-	currentLine strings.Builder
-}
-
-// NewChatMsgBuilder creates a new ChatMsgBuilder with the given prefix for the first line
-func NewChatMsgBuilder(prefix string) *ChatMsgBuilder {
-	return &ChatMsgBuilder{
-		prefix: prefix,
-		lines:  make([]string, 0),
-	}
-}
-
-// WriteString appends text to the current line (without ending it)
-func (b *ChatMsgBuilder) WriteString(s string) *ChatMsgBuilder {
-	b.currentLine.WriteString(s)
-	return b
-}
-
-// Writef appends formatted text to the current line (without ending it)
-func (b *ChatMsgBuilder) Writef(format string, args ...interface{}) *ChatMsgBuilder {
-	b.currentLine.WriteString(fmt.Sprintf(format, args...))
-	return b
-}
-
-// WriteLn ends the current line and starts a new one.
-// If called with arguments, appends them to the current line first.
-func (b *ChatMsgBuilder) WriteLn(s ...string) *ChatMsgBuilder {
-	for _, str := range s {
-		b.currentLine.WriteString(str)
-	}
-	b.lines = append(b.lines, b.currentLine.String())
-	b.currentLine.Reset()
-	return b
-}
-
-// WriteLnf appends formatted text to the current line and ends it
-func (b *ChatMsgBuilder) WriteLnf(format string, args ...interface{}) *ChatMsgBuilder {
-	b.currentLine.WriteString(fmt.Sprintf(format, args...))
-	b.lines = append(b.lines, b.currentLine.String())
-	b.currentLine.Reset()
-	return b
-}
-
-// String returns the formatted message with tree prefixes.
-// The first line gets the configured prefix, intermediate lines get treeMidPrefix,
-// and the last line gets treeFinalPrefix.
-func (b *ChatMsgBuilder) String() string {
-	// Include any pending content in currentLine
-	lines := b.lines
-	if b.currentLine.Len() > 0 {
-		lines = append(lines, b.currentLine.String())
-	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-
-	if len(lines) == 1 {
-		return b.prefix + lines[0]
-	}
-
-	var result strings.Builder
-	result.WriteString(b.prefix)
-	result.WriteString(lines[0])
-
-	for i := 1; i < len(lines)-1; i++ {
-		result.WriteString("\n")
-		result.WriteString(treeMidPrefix)
-		result.WriteString(lines[i])
-	}
-
-	result.WriteString("\n")
-	result.WriteString(treeFinalPrefix)
-	result.WriteString(lines[len(lines)-1])
-
-	return result.String()
-}
-
 // NewChatComponent creates a new chat component
 func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
 	return NewChatComponentWithStatus(width, height, markdownEnabled, func() string { return "insert" })
@@ -169,8 +88,8 @@ func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
 // NewChatComponentWithStatus creates a new chat component with a status callback
 // newSessionMessage builds the initial "New session at" message with sandbox status
 func newSessionMessage() string {
-	info := getShellRunnerInfo()
-	msg := NewChatMsgBuilder(systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST"))
+	info := GetShellRunnerInfo()
+	msg := utils.NewMsgBlockBuilder(systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST"))
 	msg.WriteLn()
 
 	if info.Type == "host" {
@@ -556,7 +475,7 @@ func (c *ChatComponent) UpdateContent() {
 			// Thinking/reasoning content styling
 			thinkingStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#6A9955")) // Muted green for thoughts
-			builder := NewChatMsgBuilder("💭 ")
+			builder := utils.NewMsgBlockBuilder("💭 ")
 			// Word wrap and split into lines (c.Width-1 for gutter, -6 for prefix)
 			wrapped := wordwrap.String(message, c.Width-7)
 			lines := strings.Split(wrapped, "\n")
@@ -897,7 +816,7 @@ func (c *ChatComponent) HandleToolCallSuccess(msg shogunate.ToolCallSuccessMsg) 
 // HandleToolCallError handles a failed tool call message
 func (c *ChatComponent) HandleToolCallError(msg shogunate.ToolCallErrorMsg) {
 	icon := "⁉️"
-	var deniedErr CommandDeniedError
+	var deniedErr runners.CommandDeniedError
 	if errors.As(msg.Call.Error, &deniedErr) {
 		icon = "⛔︎"
 	}

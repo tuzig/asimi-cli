@@ -51,7 +51,8 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 func TestChancellor_EdictCreationAndSeals(t *testing.T) {
 	db := setupTestDB(t)
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 
 	// Create edict
 	err := chancellor.CreateEdict("test/repo#1", "Fix the login bug")
@@ -109,7 +110,8 @@ func TestChancellor_EdictCreationAndSeals(t *testing.T) {
 
 func TestChancellor_Zhengming(t *testing.T) {
 	db := setupTestDB(t)
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 
 	// Create edict first
 	chancellor.CreateEdict("test/repo#2", "Add feature X")
@@ -166,11 +168,12 @@ func TestStrategist_Ling(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Create edict via chancellor
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#3", "Build feature Y")
 
 	// Use strategist to create ling
-	strategist := NewStrategist(db, nil, nil)
+	strategist := NewStrategist(base)
 
 	ling := &storage.Ling{
 		EdictID:      "test/repo#3",
@@ -206,10 +209,11 @@ func TestForge_Manifests(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#4", "Build feature Z")
 
-	strategist := NewStrategist(db, nil, nil)
+	strategist := NewStrategist(base)
 	ling := &storage.Ling{
 		EdictID:     "test/repo#4",
 		Description: "Implement handler",
@@ -220,7 +224,7 @@ func TestForge_Manifests(t *testing.T) {
 	lingID := lingList[0].LingID
 
 	// Forge operations
-	forge := NewForge(db, nil, nil)
+	forge := NewForge(base)
 
 	// Get pending ling
 	pendingLing, err := forge.GetPendingLing("test/repo#4")
@@ -260,15 +264,16 @@ func TestJudge_Verdicts(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup: create manifest
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#5", "Test feature")
 
-	forge := NewForge(db, nil, nil)
+	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#5", "", "test.go", "Test", "hash1")
 	forge.ActivateManifest(manifestID, "commit123")
 
 	// Judge operations
-	judge := NewJudge(db, nil, nil)
+	judge := NewJudge(base, nil)
 
 	// Get pending manifests
 	pending, err := judge.GetPendingManifests("test/repo#5")
@@ -306,19 +311,20 @@ func TestCensor_Precedents(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup: create quenched manifest
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#6", "Ethics test")
 
-	forge := NewForge(db, nil, nil)
+	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#6", "", "ethics.go", "Ethics", "hash2")
 	forge.ActivateManifest(manifestID, "commit456")
 
-	judge := NewJudge(db, nil, nil)
+	judge := NewJudge(base, nil)
 	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
 	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID)
 
 	// Censor operations
-	censor := NewCensor(db, nil, nil)
+	censor := NewCensor(base, nil)
 
 	// Get quenched manifests
 	quenched, err := censor.GetQuenchedManifests("test/repo#6")
@@ -375,15 +381,16 @@ func TestMarshal_Incidents(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Setup
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#7", "Production issue")
 
-	forge := NewForge(db, nil, nil)
+	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#7", "", "prod.go", "Prod", "hash3")
 	forge.ActivateManifest(manifestID, "prodcommit789")
 
 	// Marshal operations
-	marshal := NewMarshal(db, nil, nil)
+	marshal := NewMarshal(base, nil)
 
 	// Get manifest by commit
 	manifest, err := marshal.GetManifestByCommit("prodcommit789")
@@ -427,7 +434,8 @@ func TestRitualGuard_Events(t *testing.T) {
 	// Create checkpoint table manually for this test
 	db.Exec(`CREATE TABLE IF NOT EXISTS ritual_guard_checkpoint (id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL, updated_at DATETIME)`)
 
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#8", "Event test")
 
 	// Emit events
@@ -436,7 +444,7 @@ func TestRitualGuard_Events(t *testing.T) {
 	chancellor.EmitEvent("test/repo#8", "phase_changed", storage.JSON(payload))
 
 	// Ritual Guard operations
-	guard := NewRitualGuard(db, nil, nil)
+	guard := NewRitualGuard(base, nil)
 
 	// Get events from start
 	events, err := guard.GetEventsFrom(0, 10)

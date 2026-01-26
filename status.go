@@ -18,6 +18,7 @@ type StatusComponent struct {
 	Width       int
 	Style       lipgloss.Style
 	shogunate   *shogunate.Shogunate // Reference to shogunate for token/time tracking
+	edictID     string               // Active edict ID for session access
 	repoInfo    *RepoInfo            // Git repository information
 	mode        string
 	ViPendingOp string
@@ -52,9 +53,10 @@ func (s *StatusComponent) SetProvider(provider, model string, connected bool) {
 	s.Connected = connected
 }
 
-// SetShogunate sets the shogunate reference for tracking
-func (s *StatusComponent) SetShogunate(sg *shogunate.Shogunate) {
+// SetShogunate sets the shogunate reference and active edict ID for tracking
+func (s *StatusComponent) SetShogunate(sg *shogunate.Shogunate, edictID string) {
 	s.shogunate = sg
+	s.edictID = edictID
 }
 
 // SetRepoInfo sets the repository information
@@ -356,7 +358,7 @@ func (s StatusComponent) renderMiddleSection() string {
 	}
 
 	// Get context usage percentage
-	usagePercent := s.shogunate.GetContextUsagePercent()
+	usagePercent := s.shogunate.GetContextUsagePercent(s.edictID)
 
 	// Format the output with icons
 	statusStr := fmt.Sprintf("🪣 %.0f%%", usagePercent)

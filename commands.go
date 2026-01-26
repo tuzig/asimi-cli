@@ -7,8 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -178,7 +179,7 @@ func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
-	model.shogunate.SaveSession()
+	model.shogunate.SaveSession(model.activeEdictID)
 
 	model.sessionActive = true
 
@@ -197,16 +198,16 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
-	model.shogunate.SaveSession()
+	model.shogunate.SaveSession(model.activeEdictID)
 	return tea.Quit
 }
 
 func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
-		if model.shogunate.Session() == nil {
+		if model.shogunate.Session(model.activeEdictID) == nil {
 			return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
 		}
-		info := model.shogunate.GetContextInfo()
+		info := model.shogunate.GetContextInfo(model.activeEdictID)
 		return showContextMsg{content: renderContextInfo(info)}
 	}
 }
@@ -276,7 +277,7 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
-	session := model.shogunate.Session()
+	session := model.shogunate.Session(model.activeEdictID)
 	if session == nil {
 		return func() tea.Msg {
 			return showSystemMsg("No active session to export. Start a conversation first.")
@@ -316,11 +317,6 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	})
 }
 
-func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
-	// Use the new workflow-based implementation
-	return handleInitCommandWithWorkflow(model, args)
-}
-
 // startConversationMsg is sent to start a new conversation with optional guardrails
 type startConversationMsg struct {
 	prompt              string
@@ -336,142 +332,6 @@ type sandboxUpgradeMsg struct {
 	upgraded bool
 }
 
-// verifyInit runs validation checks after init completes
-// It accepts a containerRunner parameter to run tests in the container
-func verifyInit(model *TUIModel, containerRunner shellRunner) tea.Cmd {
-	return verifyInitWithRetry(model, containerRunner, 0)
-}
-
-// verifyInitWithRetry is the internal implementation with retry tracking
-func verifyInitWithRetry(model *TUIModel, containerRunner shellRunner, retryCount int) tea.Cmd {
-	const maxRetries = 5 // Maximum number of retry attempts
-
-	return func() tea.Msg {
-		slog.Debug("verifyInitWithRetry called", "retryCount", retryCount, "containerRunner", containerRunner)
-
-		// Reload configuration on retry attempts to pick up any changes made by the LLM
-		// (e.g., modifications to .agents/asimi.conf, Dockerfile, etc.)
-		slog.Debug("Reloading configuration for retry attempt", "retryCount", retryCount)
-		err := model.config.ReloadProjectConf()
-		if err != nil {
-			slog.Warn("Failed to reload config during verifyInit retry", "error", err)
-		} else {
-			slog.Debug("Configuration reloaded successfully")
-		}
-
-		var results []string
-
-		report := func(message string) {
-			results = append(results, message)
-			if program != nil {
-				program.Send(showContextMsg{content: treeMidPrefix + message})
-			}
-		}
-
-		// Send initial message
-		if program != nil {
-			msg := "\n" + systemPrefix + "Testing infrastructure"
-			if retryCount > 0 {
-				msg += fmt.Sprintf(" (attempt %d/%d)", retryCount+1, maxRetries+1)
-			}
-			program.Send(showContextMsg{content: msg})
-		}
-
-		slog.Debug("Starting verification checks", "retryCount", retryCount)
-
-		// Determine agents file from config
-		agentsFile := "AGENTS.md"
-		if model.config != nil && model.config.Session.AgentsFile != "" {
-			agentsFile = model.config.Session.AgentsFile
-		}
-
-		// Check required files exist - collect all failures before returning
-		slog.Debug("Checking required files")
-		agentsMdExists := checkFileExists(agentsFile, agentsFile+" created", report)
-		justfileExists := checkFileExists("Justfile", "Justfile created", report)
-
-		if !agentsMdExists || !justfileExists {
-			slog.Debug("Required files missing, handling failure")
-			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
-		}
-
-		// Run build-sandbox
-		slog.Debug("Running build-sandbox")
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if !runBuildSandbox(ctx, report, &results) {
-			slog.Debug("build-sandbox failed, handling failure")
-			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
-		}
-
-		// After build-sandbox succeeds, reinitialize the shell runner to get a fresh container
-		// This is necessary because the previous container was closed and the image was rebuilt
-		slog.Debug("Reinitializing shell runner after build-sandbox")
-		initShellRunner(model.config, model.scheduler)
-		containerRunner = getShellRunner()
-		slog.Debug("Shell runner reinitialized", "containerRunner", containerRunner)
-
-		// Run smoke test in container
-		slog.Debug("Running smoke test in container", "containerRunner", containerRunner)
-		if !runSmokeTest(ctx, containerRunner, report) {
-			slog.Debug("Smoke test failed, handling failure")
-			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
-		}
-
-		// Run tests on host
-		slog.Debug("Running tests on host")
-		if !runHostTests(ctx, report, &results) {
-			slog.Debug("Host tests failed, handling failure")
-			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
-		}
-
-		// Run tests in container
-		slog.Debug("Running tests in container")
-		if !runContainerTests(ctx, containerRunner, report, &results) {
-			slog.Debug("Container tests failed, handling failure")
-			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
-		}
-
-		// All tests passed - stage the files
-		slog.Debug("All verification tests passed! Staging files...")
-
-		// Stage all added/changed files in .agents/ and root infrastructure files
-		filesToStage := []string{
-			agentsFile,
-			"Justfile",
-			".agents/",
-		}
-
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel2()
-
-		for _, file := range filesToStage {
-			result, err := hostRun(ctx2, RunShellCommandInput{
-				Command:     fmt.Sprintf("git add %s", file),
-				Description: fmt.Sprintf("Staging %s", file),
-			})
-
-			if err != nil || result.ExitCode != "0" {
-				slog.Warn("Failed to stage file", "file", file, "error", err, "exitCode", result.ExitCode)
-				report(fmt.Sprintf("⚠️  Failed to stage %s", file))
-			} else {
-				slog.Debug("Staged file successfully", "file", file)
-			}
-		}
-
-		if program != nil {
-			msg := NewChatMsgBuilder(systemPrefix)
-			msg.WriteString(checkPrefix).WriteLn(" Verified!")
-			msg.WriteLn(strings.Join(filesToStage, ", ") + " staged")
-			msg.WriteLn("Start fresh with `:new` and review project's recipes with `:!just -l`")
-
-			program.Send(showContextMsg{content: msg.String()})
-		}
-		return nil
-	}
-}
-
 // checkFileExists checks if a file exists and reports the result
 func checkFileExists(filename, successMsg string, report func(string)) bool {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
@@ -485,9 +345,16 @@ func checkFileExists(filename, successMsg string, report func(string)) bool {
 // runBuildSandbox runs the build-sandbox command on the host
 func runBuildSandbox(ctx context.Context, report func(string), results *[]string) bool {
 	report("$ just build-sandbox # on host")
-	result, err := hostRun(ctx, RunShellCommandInput{
-		Command:     "just build-sandbox",
-		Description: "Building infrastructure files",
+	hostRunner := GetHostRunner()
+	if hostRunner == nil {
+		report("❌ Host runner not available")
+		*results = append(*results, "Host runner not initialized")
+		return false
+	}
+	result, err := hostRunner.Run(ctx, runners.Input{
+		Command:        "just build-sandbox",
+		Description:    "Building infrastructure files",
+		BypassApproval: true,
 	})
 
 	if err != nil || result.ExitCode != "0" {
@@ -503,7 +370,7 @@ func runBuildSandbox(ctx context.Context, report func(string), results *[]string
 }
 
 // runSmokeTest runs a basic smoke test in the container
-func runSmokeTest(ctx context.Context, containerRunner shellRunner, report func(string)) bool {
+func runSmokeTest(ctx context.Context, containerRunner runners.Runner, report func(string)) bool {
 	slog.Debug("runSmokeTest called", "containerRunner", containerRunner)
 	if containerRunner == nil {
 		slog.Error("containerRunner is nil in runSmokeTest")
@@ -512,9 +379,10 @@ func runSmokeTest(ctx context.Context, containerRunner shellRunner, report func(
 	}
 
 	slog.Debug("Calling containerRunner.Run for smoke test")
-	result, err := containerRunner.Run(ctx, RunShellCommandInput{
-		Command:     "uname",
-		Description: "Running smoke test in container",
+	result, err := containerRunner.Run(ctx, runners.Input{
+		Command:        "uname",
+		Description:    "Running smoke test in container",
+		BypassApproval: true,
 	})
 
 	slog.Debug("Smoke test result", "output", result.Output, "exitCode", result.ExitCode, "error", err)
@@ -531,9 +399,16 @@ func runSmokeTest(ctx context.Context, containerRunner shellRunner, report func(
 // runHostTests runs the test suite on the host
 func runHostTests(ctx context.Context, report func(string), results *[]string) bool {
 	report("$ just test # on host")
-	result, err := hostRun(ctx, RunShellCommandInput{
-		Command:     "just test",
-		Description: "Running tests on host",
+	hostRunner := GetHostRunner()
+	if hostRunner == nil {
+		report("❌ Host runner not available")
+		*results = append(*results, "Host runner not initialized")
+		return false
+	}
+	result, err := hostRunner.Run(ctx, runners.Input{
+		Command:        "just test",
+		Description:    "Running tests on host",
+		BypassApproval: true,
 	})
 
 	if err != nil || result.ExitCode != "0" {
@@ -549,11 +424,12 @@ func runHostTests(ctx context.Context, report func(string), results *[]string) b
 }
 
 // runContainerTests runs the test suite in the container
-func runContainerTests(ctx context.Context, containerRunner shellRunner, report func(string), results *[]string) bool {
+func runContainerTests(ctx context.Context, containerRunner runners.Runner, report func(string), results *[]string) bool {
 	report("$ just test # in container")
-	result, err := containerRunner.Run(ctx, RunShellCommandInput{
-		Command:     "just test",
-		Description: "Running tests in container",
+	result, err := containerRunner.Run(ctx, runners.Input{
+		Command:        "just test",
+		Description:    "Running tests in container",
+		BypassApproval: true,
 	})
 
 	if err != nil || result.ExitCode != "0" {
@@ -566,59 +442,6 @@ func runContainerTests(ctx context.Context, containerRunner shellRunner, report 
 
 	report(checkPrefix + " just test in container passed")
 	return true
-}
-
-// handleVerificationFailure handles the case when verification fails
-func handleVerificationFailure(model *TUIModel, containerRunner shellRunner, retryCount, maxRetries int, results []string) tea.Msg {
-	slog.Debug("In verifyInit - handleVerificationFailure", "hasErrors", true, "messages", results, "retryCount", retryCount)
-
-	// Check if we've exceeded the maximum retry count
-	if retryCount >= maxRetries {
-		slog.Debug("Max retries exceeded, giving up", "retryCount", retryCount, "maxRetries", maxRetries)
-		msg := NewChatMsgBuilder(systemPrefix)
-		msg.WriteLnf("❌ Initialization failed after %d attempts.", maxRetries+1)
-		msg.WriteLn("The following issues could not be resolved:")
-		for _, result := range results {
-			msg.WriteLn(result)
-		}
-		msg.WriteLn("For help check out the humans in Asimi's github discussions")
-		return showContextMsg{content: msg.String()}
-	}
-
-	// Stop and remove the container so the next attempt will rebuild with fixes
-	slog.Debug("Attempting to close container before retry", "containerRunner", containerRunner, "retryCount", retryCount)
-	if containerRunner != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		slog.Debug("Calling containerRunner.Close()")
-		if err := containerRunner.Close(ctx); err != nil {
-			slog.Warn("Failed to close container during verifyInit", "error", err)
-		} else {
-			slog.Debug("Container closed successfully")
-		}
-	} else {
-		slog.Debug("containerRunner is nil, skipping close")
-	}
-
-	// Build message for LLM to fix the issues
-	var message strings.Builder
-	message.WriteString("Issues found verifying initialization.\n" +
-		"Please review the failures below and provide a fix.\n" +
-		"If files need to be modified, use the appropriate tools.\n")
-	for _, result := range results {
-		message.WriteString(result + "\n")
-	}
-
-	// Return a startConversationMsg to send this message to the LLM session
-	// TODO: refactor this as this is not really start of conversation but a hack
-	return startConversationMsg{
-		prompt:       message.String(),
-		clearHistory: false,
-		RunOnHost:    true,
-		onStreamComplete: func(model *TUIModel) tea.Cmd {
-			return verifyInitWithRetry(model, containerRunner, retryCount+1)
-		},
-	}
 }
 
 // checkMissingInfraFiles checks which infrastructure files are missing
@@ -641,7 +464,7 @@ func checkMissingInfraFiles(agentsFile string) []string {
 }
 
 func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
-	session := model.shogunate.Session()
+	session := model.shogunate.Session(model.activeEdictID)
 	if session == nil {
 		return func() tea.Msg {
 			return showSystemMsg("No active session to compact. Start a conversation first.")
@@ -656,7 +479,7 @@ func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
 
 		// Show compacting message
 		if program != nil {
-			msg := NewChatMsgBuilder(systemPrefix)
+			msg := utils.NewMsgBlockBuilder(systemPrefix)
 			msg.WriteLn("Compacting conversation history...")
 			msg.WriteLn("This may take a moment as we summarize the conversation.")
 			program.Send(showContextMsg{content: msg.String()})
@@ -712,7 +535,7 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 	return func() tea.Msg {
 		// Show updating message
 		if program != nil {
-			msg := NewChatMsgBuilder(systemPrefix)
+			msg := utils.NewMsgBlockBuilder(systemPrefix)
 			msg.WriteLn("Downloading and installing update...")
 			msg.WriteLn("This may take a moment.")
 			program.Send(showContextMsg{content: msg.String()})

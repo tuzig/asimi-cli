@@ -132,25 +132,28 @@ type ShellRunnerParams struct {
 	Logger    *slog.Logger
 }
 
-// ProvideShellRunner creates and returns a shell runner with proper lifecycle management
-func ProvideShellRunner(params ShellRunnerParams) shellRunner {
+// ProvideShellRunner initializes the shell runner with proper lifecycle management
+func ProvideShellRunner(params ShellRunnerParams) {
 	params.Logger.Info("initializing shell runner")
 
 	// Use auto-detection to select the appropriate shell runner
 	initShellRunner(params.Config, params.Scheduler)
-	runner := getShellRunner()
+	runner := GetRunner()
 
-	params.Logger.Info("shell runner initialized", "type", runner.RunnerType())
+	if runner != nil {
+		params.Logger.Info("shell runner initialized", "type", runner.RunnerType())
+	} else {
+		params.Logger.Info("no shell runner available")
+	}
 
 	// Register cleanup hook to close the shell runner when app stops
 	params.Lifecycle.Append(fx.Hook{
 		OnStop: func(ctx context.Context) error {
 			params.Logger.Info("shutting down shell runner")
-			return runner.Close(ctx)
+			closeShellRunner(ctx)
+			return nil
 		},
 	})
-
-	return runner
 }
 
 // ProvideLLMConfig extracts the LLMConfig from the main Config for use by shogunate

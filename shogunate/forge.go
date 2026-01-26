@@ -3,41 +3,29 @@ package shogunate
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/afittestide/asimi/storage"
-	"gorm.io/gorm"
 )
 
-// It receives LingEnvelopes, executes the requested tools, and replies directly.
+// Forge receives TaskEnvelopes from the Chancellor via the tasks channel.
+// When an LLM is configured, it creates sessions to process tasks through tool execution.
 type Forge struct {
 	MinisterBase // embedded base for database access and session creation
-	addLing      chan *LingEnvelope
-	tools        map[string]Tool
+	tasks        chan *TaskEnvelope
 }
 
-// NewForge creates a new Forge that processes tool calls via envelopes.
-func NewForge(db *gorm.DB, tools map[string]Tool, logger *slog.Logger) *Forge {
-	if logger == nil {
-		logger = slog.Default()
-	}
+// NewForge creates a new Forge that processes tasks via the TaskEnvelope pattern.
+func NewForge(base MinisterBase) *Forge {
+	base.ministerID = "forge"
 	return &Forge{
-		MinisterBase: MinisterBase{db: db, ministerID: "forge", logger: logger},
-		addLing:      make(chan *LingEnvelope, 100),
-		tools:        tools,
+		MinisterBase: base,
+		tasks:        make(chan *TaskEnvelope, 10),
 	}
 }
 
-// AddLing returns the channel for sending LingEnvelopes.
-func (f *Forge) AddLing() chan<- *LingEnvelope {
-	return f.addLing
-}
-
-// SetTools updates the tool registry. This is called when a Session connects
-// to provide the Forge with the Session's available tools.
-func (f *Forge) SetTools(tools map[string]Tool) {
-	f.tools = tools
-	f.logger.Info("forge tools updated", "count", len(tools))
+// Tasks returns the channel for task submission from Chancellor
+func (f *Forge) Tasks() chan<- *TaskEnvelope {
+	return f.tasks
 }
 
 // ID returns the minister identifier.
@@ -62,7 +50,7 @@ CRITICAL RULES:
 
 // Tools returns the Forge's LLM tools for interactive sessions.
 func (f *Forge) Tools(notify NotifyFunc) []Tool {
-	return []Tool{}
+	return GetFileTools()
 }
 
 // --- Database Methods ---
@@ -184,76 +172,76 @@ func (f *Forge) InsertLing(ling *storage.Ling) error {
 
 // --- Execute Logic ---
 
-// Run processes incoming LingEnvelopes until context is cancelled.
-// Each envelope is executed and replied to directly via its reply channel.
+// Run processes incoming TaskEnvelopes until context is cancelled.
+// Each task is executed and replied to directly via its reply channel.
 func (f *Forge) Run(ctx context.Context) {
-	f.logger.Info("forge started, processing envelopes")
+	f.logger.Info("forge started, processing tasks")
 	for {
 		select {
 		case <-ctx.Done():
 			f.logger.Info("forge stopped")
 			return
-		case env := <-f.addLing:
-			f.processEnvelope(ctx, env)
+		case taskEnv := <-f.tasks:
+			f.processTaskEnvelope(ctx, taskEnv)
 		}
 	}
 }
 
-// processEnvelope executes a single envelope and replies.
-func (f *Forge) processEnvelope(ctx context.Context, env *LingEnvelope) {
-	tool, ok := f.tools[env.Ling.ToolName]
-	if !ok {
-		f.logger.Warn("unknown tool", "tool", env.Ling.ToolName)
-		env.ReplyChan <- &LingResult{
-			Ling:   env.Ling,
-			Output: "",
-			Error:  fmt.Errorf("unknown tool: %s", env.Ling.ToolName),
-		}
-		return
+// processTaskEnvelope handles a task from the Chancellor.
+// If an LLM is configured, it creates a session to process the task through the LLM,
+// which may generate tool calls that the Forge executes.
+func (f *Forge) processTaskEnvelope(ctx context.Context, env *TaskEnvelope) {
+	f.logger.Info("forge processing task",
+		"edict_id", env.EdictID,
+		"task", env.Task)
+
+	var output string
+	var taskErr error
+
+	// If LLM is configured, use a session to process the task
+	if f.llm != nil {
+		output, taskErr = f.executeTaskWithSession(ctx, env.Task)
+	} else {
+		// No LLM configured - just acknowledge
+		output = "forge task acknowledged (no LLM configured)"
 	}
 
-	f.logger.Debug("executing tool", "tool", env.Ling.ToolName, "ling_id", env.Ling.LingID)
-	output, err := tool.Call(ctx, string(env.Ling.ToolInput))
+	reply := &TaskReply{
+		EdictID:    env.EdictID,
+		MinisterID: f.ID(),
+		Task:       env.Task,
+		Sealed:     true,
+		Output:     output,
+		Error:      taskErr,
+	}
 
-	// Async persist (audit trail) - fire and forget
-	go f.persist(env.Ling, output, err)
-
-	// Reply directly to the envelope's channel
-	env.ReplyChan <- &LingResult{
-		Ling:   env.Ling,
-		Output: output,
-		Error:  err,
+	select {
+	case env.ReplyChan <- reply:
+	default:
+		f.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
 	}
 }
 
-// persist saves the Ling result to the database asynchronously.
-func (f *Forge) persist(ling *storage.Ling, output string, err error) {
-	// First, insert the Ling if it doesn't exist
-	if insertErr := f.db.Create(ling).Error; insertErr != nil {
-		// Ling may already exist (idempotency), that's fine
-		f.logger.Debug("ling insert (may exist)", "ling_id", ling.LingID, "error", insertErr)
+// executeTaskWithSession creates a session and processes the task through the LLM.
+func (f *Forge) executeTaskWithSession(ctx context.Context, task string) (string, error) {
+	// Create a notify function that logs tool execution
+	notify := func(msg any) {
+		f.logger.Debug("forge session notification", "msg", fmt.Sprintf("%T", msg))
 	}
 
-	// Update with result
-	updates := map[string]interface{}{
-		"tool_result": output,
-		"status":      storage.LingCompleted,
-	}
+	// Create a session for this task
+	session, err := f.CreateSession(f, notify)
 	if err != nil {
-		updates["tool_result"] = fmt.Sprintf("error: %v", err)
+		return "", fmt.Errorf("failed to create forge session: %w", err)
 	}
 
-	if updateErr := f.db.Model(&storage.Ling{}).
-		Where("ling_id = ?", ling.LingID).
-		Updates(updates).Error; updateErr != nil {
-		f.logger.Error("failed to persist ling result", "ling_id", ling.LingID, "error", updateErr)
+	// Ask the LLM to process the task
+	response, err := session.Ask(ctx, task, nil)
+	if err != nil {
+		return "", fmt.Errorf("forge session error: %w", err)
 	}
+
+	f.logger.Info("forge task completed", "response_length", len(response))
+	return response, nil
 }
 
-// Execute is a no-op for the envelope-based Forge.
-// Tool execution happens via the envelope pattern in Run().
-func (f *Forge) Execute(ctx context.Context, edictID string) (bool, error) {
-	// The envelope-based Forge doesn't use Execute for tool calls.
-	// This is kept for Minister interface compatibility.
-	return true, nil
-}

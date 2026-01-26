@@ -3,11 +3,9 @@ package shogunate
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/afittestide/asimi/storage"
-	"gorm.io/gorm"
 )
 
 // --- Minister ---
@@ -36,12 +34,10 @@ type RitualGuard struct {
 }
 
 // NewRitualGuard creates a new Ritual Guard
-func NewRitualGuard(db *gorm.DB, chancellor *Chancellor, logger *slog.Logger) *RitualGuard {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func NewRitualGuard(base MinisterBase, chancellor *Chancellor) *RitualGuard {
+	base.ministerID = "ritual_guard"
 	return &RitualGuard{
-		MinisterBase: MinisterBase{db: db, ministerID: "ritual_guard", logger: logger},
+		MinisterBase: base,
 		chancellor:   chancellor,
 		maxRetries:   3,
 		batchSize:    100,

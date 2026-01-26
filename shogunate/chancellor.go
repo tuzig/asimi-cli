@@ -4,14 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
 	"gorm.io/gorm"
 )
 
@@ -261,46 +258,39 @@ type Chancellor struct {
 	shogunate    *Shogunate // Reference to Shogunate for minister access
 
 	// Run() loop fields
-	Edicts      chan *EdictEnvelope // Ruler speaks here
-	session     *Session            // Session for agentic loop (LLM + tool execution)
-	forge       *Forge              // For delegating to forging phase (code generation)
-	toolCatalog map[string]Tool     // Chancellor's own tools for direct execution
+	Edicts        chan *EdictEnvelope // Ruler speaks here
+	tasks         chan *TaskEnvelope  // For Minister interface (Chancellor doesn't receive tasks)
+	edictSessions map[string]*Session // Per-edict sessions (edictID -> session)
+	toolCatalog   map[string]Tool     // Chancellor's own tools for direct execution
 }
 
 // NewChancellor creates a new Chancellor minister
-func NewChancellor(db *gorm.DB, llm llms.Model, config *SessionConfig,
-	repoInfo repo.RepoInfo, logger *slog.Logger) *Chancellor {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func NewChancellor(base MinisterBase) *Chancellor {
+	base.ministerID = "chancellor"
 	return &Chancellor{
-		MinisterBase: MinisterBase{
-			db:       db,
-			llm:      llm,
-			config:   config,
-			repoInfo: repoInfo,
-			logger:   logger,
-		},
-		Edicts: make(chan *EdictEnvelope),
+		MinisterBase:  base,
+		Edicts:        make(chan *EdictEnvelope),
+		tasks:         make(chan *TaskEnvelope), // Chancellor doesn't process tasks, but interface requires it
+		edictSessions: make(map[string]*Session),
 	}
+}
+
+// Tasks returns the channel for task submission (Chancellor doesn't receive tasks)
+func (c *Chancellor) Tasks() chan<- *TaskEnvelope {
+	return c.tasks
+}
+
+// GetSession returns the session for the specified edict ID
+func (c *Chancellor) GetSession(edictID string) *Session {
+	if edictID == "" {
+		return nil
+	}
+	return c.edictSessions[edictID]
 }
 
 // SetShogunate sets the Shogunate reference for minister access
 func (c *Chancellor) SetShogunate(s *Shogunate) {
 	c.shogunate = s
-}
-
-func (c *Chancellor) SetForge(forge *Forge) {
-	c.forge = forge
-}
-
-// SetMinisterConfig updates the MinisterBase configuration for session creation.
-// This should be called when the LLM client and configuration become available.
-func (c *Chancellor) SetMinisterConfig(llm llms.Model, config *SessionConfig, repoInfo repo.RepoInfo) {
-	slog.Debug("Setting minister config")
-	c.llm = llm
-	c.config = config
-	c.repoInfo = repoInfo
 }
 
 // SetDBPath sets the database path for tools that need file access
@@ -313,7 +303,7 @@ func (c *Chancellor) SetToolCatalog(catalog map[string]Tool) {
 	c.toolCatalog = catalog
 }
 
-// Run listens for prompts from the Ruler and processes them
+// Run listens for prompts from the Ruler
 func (c *Chancellor) Run(ctx context.Context) {
 	c.logger.Info("chancellor started, awaiting ruler's edicts")
 	for {
@@ -358,21 +348,23 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 		return
 	}
 
-	if c.session == nil {
-		// Create session - notify callback is only for tool notifications, not streaming
-		sess, err := c.CreateSession(c, nil)
+	// Get or create session for this edict
+	sess, exists := c.edictSessions[edictID]
+	if !exists {
+		var err error
+		sess, err = c.CreateSession(c, nil)
 		if err != nil {
 			reply <- PromptReply{Type: ReplyError, Error: fmt.Errorf("failed to create session: %w", err)}
 			close(reply)
 			return
 		}
-		c.session = sess
-		c.logger.Info("chancellor created session for brewing")
+		c.edictSessions[edictID] = sess
+		c.logger.Info("chancellor created session for edict", "edict_id", edictID)
 	}
 
 	c.logger.Debug("context files received from TUI", "count", len(contextFiles))
 
-	c.session.AskStream(ctx, prompt, reply, edictID, contextFiles)
+	sess.AskStream(ctx, prompt, reply, edictID, contextFiles)
 }
 
 // generateEdictID creates a unique edict ID
@@ -388,7 +380,7 @@ func (c *Chancellor) ID() string {
 // Role returns the Chancellor's role identity text
 func (c *Chancellor) Role() string {
 	return `You are the Chancellor (宰相, Zǎixiàng).
-You hamronize all rituals by invoking ministers directly. You wield Zhengming (正名) when ambiguity threatens: post the question, halt the edict, await the Ruler's word.
+You hamronize all rituals by invoking ministers using the invoke_minister tool. You wield Zhengming (正名) when ambiguity threatens: post the question, halt the edict, await the Ruler's word.
 Your decisions are bound by Dao (道, the Way). Command the ministries; they report to you, not the Ruler.
 # Critical Rules
 
@@ -962,14 +954,16 @@ func (t InvokeMinisterTool) Name() string {
 
 func (t InvokeMinisterTool) Description() string {
 	return `Invoke a minister by ID to execute its logic for an edict.
-	Ministers process edicts through their specialized phase logic 
-	(e.g., strategist for planning, forge for code generation, judge for testing and verification, censor for review, marshal for deployment).`
+	Ministers process edicts through their specialized phase logic
+	(e.g., strategist for planning, forge for code generation, judge for testing and verification, censor for review, marshal for deployment).
+	Provide specific task instructions for what the minister should do.`
 }
 
 func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		MinisterID string `json:"minister_id"`
 		EdictID    string `json:"edict_id"`
+		Task       string `json:"task"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -981,6 +975,9 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	if params.EdictID == "" {
 		return "", fmt.Errorf("edict_id is required")
 	}
+	if params.Task == "" {
+		return "", fmt.Errorf("task is required")
+	}
 
 	// Get minister via Shogunate
 	minister := t.chancellor.shogunate.GetMinister(params.MinisterID)
@@ -988,26 +985,68 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("minister not found: %s", params.MinisterID)
 	}
 
-	// Execute the minister's logic
-	sealed, err := minister.Execute(ctx, params.EdictID)
-	if err != nil {
-		return "", fmt.Errorf("minister %s execution failed: %w", params.MinisterID, err)
+	// Create per-call reply channel (synchronous blocking pattern)
+	replyChan := make(chan *TaskReply, 1)
+
+	// Create TaskEnvelope with per-call reply channel
+	env := &TaskEnvelope{
+		EdictID:   params.EdictID,
+		Task:      params.Task,
+		ReplyChan: replyChan,
 	}
 
-	result := map[string]any{
-		"minister_id": params.MinisterID,
-		"edict_id":    params.EdictID,
-		"sealed":      sealed,
+	// Send task to minister
+	select {
+	case minister.Tasks() <- env:
+		t.chancellor.logger.Info("task sent to minister",
+			"minister", params.MinisterID,
+			"edict_id", params.EdictID,
+			"task", truncateString(params.Task, 50))
+	case <-ctx.Done():
+		return "", fmt.Errorf("context cancelled while sending task to %s", params.MinisterID)
 	}
 
-	resultJSON, _ := json.Marshal(result)
-	return string(resultJSON), nil
+	// Block until minister replies (only blocks this session's goroutine)
+	select {
+	case reply := <-replyChan:
+		if reply.Error != nil {
+			t.chancellor.logger.Error("task failed",
+				"minister", params.MinisterID,
+				"edict_id", params.EdictID,
+				"error", reply.Error)
+			return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, reply.Error)
+		}
+		// TODO: update the edicts table
+
+		t.chancellor.logger.Info("task completed",
+			"minister", params.MinisterID,
+			"edict_id", params.EdictID,
+			"sealed", reply.Sealed,
+			"output_len", len(reply.Output))
+
+		result := map[string]any{
+			"minister_id": params.MinisterID,
+			"edict_id":    params.EdictID,
+			"status":      "completed",
+			"sealed":      reply.Sealed,
+			"output":      reply.Output,
+		}
+		resultJSON, _ := json.Marshal(result)
+		return string(resultJSON), nil
+
+	case <-time.After(5 * time.Minute):
+		return "", fmt.Errorf("minister %s timeout after 5 minutes", params.MinisterID)
+
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (t InvokeMinisterTool) Format(input, result string, err error) string {
 	var params struct {
 		MinisterID string `json:"minister_id"`
 		EdictID    string `json:"edict_id"`
+		Task       string `json:"task"`
 	}
 	json.Unmarshal([]byte(input), &params)
 
@@ -1015,16 +1054,8 @@ func (t InvokeMinisterTool) Format(input, result string, err error) string {
 		return fmt.Sprintf("Invoke %s Error: %v\n", params.MinisterID, err)
 	}
 
-	var res struct {
-		Sealed bool `json:"sealed"`
-	}
-	json.Unmarshal([]byte(result), &res)
-
-	status := "in progress"
-	if res.Sealed {
-		status = "sealed"
-	}
-	return fmt.Sprintf("Invoke %s [%s]\n", params.MinisterID, status)
+	taskPreview := truncateString(params.Task, 30)
+	return fmt.Sprintf("Invoke %s [%s]\n", params.MinisterID, taskPreview)
 }
 
 func (t InvokeMinisterTool) ParameterSchema() map[string]any {
@@ -1039,7 +1070,11 @@ func (t InvokeMinisterTool) ParameterSchema() map[string]any {
 				"type":        "string",
 				"description": "The edict ID to process",
 			},
+			"task": map[string]any{
+				"type":        "string",
+				"description": "Specific instructions for the minister to execute",
+			},
 		},
-		"required": []string{"minister_id", "edict_id"},
+		"required": []string{"minister_id", "edict_id", "task"},
 	}
 }

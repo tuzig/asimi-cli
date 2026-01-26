@@ -3,28 +3,30 @@ package shogunate
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"time"
 
 	"github.com/afittestide/asimi/storage"
-	"gorm.io/gorm"
 )
 
 // Censor enforces code ethics and maintains precedent law
 type Censor struct {
 	MinisterBase // embedded base for database access and session creation
 	linter       Linter
+	tasks        chan *TaskEnvelope
 }
 
 // NewCensor creates a new Censor minister
-func NewCensor(db *gorm.DB, linter Linter, logger *slog.Logger) *Censor {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func NewCensor(base MinisterBase, linter Linter) *Censor {
+	base.ministerID = "censor"
 	return &Censor{
-		MinisterBase: MinisterBase{db: db, ministerID: "censor", logger: logger},
+		MinisterBase: base,
 		linter:       linter,
+		tasks:        make(chan *TaskEnvelope, 10),
 	}
+}
+
+// Tasks returns the channel for task submission
+func (c *Censor) Tasks() chan<- *TaskEnvelope {
+	return c.tasks
 }
 
 // ID returns the minister identifier
@@ -164,8 +166,8 @@ func (c *Censor) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 
 // --- Execute Logic ---
 
-// Execute runs the Censor's ethics review for an edict
-func (c *Censor) Execute(ctx context.Context, edictID string) (bool, error) {
+// execute runs the Censor's ethics review for an edict (internal method)
+func (c *Censor) execute(ctx context.Context, edictID string) (bool, error) {
 	// Check if there are any rejections
 	noRejections, err := c.NoRejections(edictID)
 	if err != nil {
@@ -262,50 +264,47 @@ func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeMani
 	return nil
 }
 
-// Run starts the Censor's polling loop for edicts with quenched manifests
-func (c *Censor) Run(ctx context.Context, pollInterval time.Duration) {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	c.logger.Info("censor started", "poll_interval", pollInterval)
+// Run starts the Censor's task processing loop
+func (c *Censor) Run(ctx context.Context) {
+	c.logger.Info("censor started, awaiting tasks")
 
 	for {
 		select {
 		case <-ctx.Done():
 			c.logger.Info("censor stopped")
 			return
-		case <-ticker.C:
-			c.pollAndExecute(ctx)
+		case env := <-c.tasks:
+			c.processTask(ctx, env)
 		}
 	}
 }
 
-// pollAndExecute checks for edicts needing ethics review and processes them
-func (c *Censor) pollAndExecute(ctx context.Context) {
-	edicts, err := c.GetEdictsWithQuenchedManifests()
-	if err != nil {
-		c.logger.Error("failed to poll review edicts", "error", err)
-		return
+// processTask handles a single task envelope
+func (c *Censor) processTask(ctx context.Context, env *TaskEnvelope) {
+	c.logger.Info("censor processing task",
+		"edict_id", env.EdictID,
+		"task", env.Task)
+
+	// Execute the review logic
+	sealed, err := c.execute(ctx, env.EdictID)
+
+	// Send reply back to Chancellor
+	reply := &TaskReply{
+		EdictID:    env.EdictID,
+		MinisterID: c.ID(),
+		Task:       env.Task,
+		Sealed:     sealed,
+		Error:      err,
 	}
 
-	for _, edict := range edicts {
-		// Check for pending zhengming before processing
-		pending, err := c.IsZhengmingPending(edict.EdictID)
-		if err != nil {
-			c.logger.Error("failed to check zhengming", "edict_id", edict.EdictID, "error", err)
-			continue
-		}
-		if pending {
-			continue
-		}
+	if sealed {
+		reply.Output = "review complete"
+	}
 
-		sealed, err := c.Execute(ctx, edict.EdictID)
-		if err != nil {
-			c.logger.Error("failed to execute review", "edict_id", edict.EdictID, "error", err)
-			continue
-		}
-		if sealed {
-			c.logger.Info("review phase sealed", "edict_id", edict.EdictID)
-		}
+	// Send reply (non-blocking)
+	select {
+	case env.ReplyChan <- reply:
+	default:
+		c.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
 	}
 }

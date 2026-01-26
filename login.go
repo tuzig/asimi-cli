@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/auth"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -585,14 +586,14 @@ func handleLogoutCommand(model *TUIModel, args []string) tea.Cmd {
 		model.config.LLM.APIKey = ""
 
 		// Clear the session history
-		model.shogunate.ClearHistory()
+		model.shogunate.ClearHistory(model.activeEdictID)
 		model.sessionActive = false
 
 		// Update status line
 		model.status.SetAgent("not configured")
 
 		// Build result message
-		msg := NewChatMsgBuilder(systemPrefix)
+		msg := utils.NewMsgBlockBuilder(systemPrefix)
 		msg.WriteLnf("Logged out from %s", provider)
 
 		if len(errors) > 0 {

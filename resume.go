@@ -287,9 +287,9 @@ func (m *TUIModel) handleSessionSelected(loaded *shogunate.Session) {
 		return
 	}
 
-	if m.shogunate.Session() != nil {
+	if m.shogunate.Session(m.activeEdictID) != nil {
 		// Copy all persisted fields from loaded session to existing session
-		m.shogunate.SetSessionFromResumed(loaded)
+		m.shogunate.SetSessionFromResumed(m.activeEdictID, loaded)
 	} else {
 		slog.Warn("Resumed session without active LLM - some features may be limited")
 	}
@@ -376,7 +376,7 @@ func (m *TUIModel) handleSessionSelected(loaded *shogunate.Session) {
 			continue
 		}
 	}
-	m.shogunate.UpdateTokenCounts(nil)
+	m.shogunate.UpdateTokenCounts(m.activeEdictID, nil)
 	m.sessionActive = true
 
 	// Reset in-session prompt history state to prevent rollback issues

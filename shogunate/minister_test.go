@@ -2,6 +2,7 @@ package shogunate
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -57,7 +58,8 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Create chancellor
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 
 	// Create an edict (starts in brewing phase)
 	err := chancellor.CreateEdictFromIssue(ctx, "test/repo#1", "Add a simple hello world function")
@@ -86,14 +88,8 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 		t.Errorf("Expected phase planning, got %s", edict.CurrentPhase)
 	}
 
-	// Execute stub returns (false, nil)
-	sealed, err := chancellor.Execute(ctx, "test/repo#1")
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
-	}
-	if sealed {
-		t.Error("Expected not sealed from stub Execute")
-	}
+	// Chancellor doesn't have an Execute method anymore - it receives tasks
+	// The test now just verifies edict creation and phase transitions
 }
 
 func TestStrategist_DecomposeEdict(t *testing.T) {
@@ -101,14 +97,15 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 	ctx := context.Background()
 
 	// Create edict
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#2", "Implement user authentication with login and logout")
 
 	// Create strategist
-	strategist := NewStrategist(db, nil, nil)
+	strategist := NewStrategist(base)
 
-	// Execute planning
-	sealed, err := strategist.Execute(ctx, "test/repo#2")
+	// Execute planning (internal method)
+	sealed, err := strategist.execute(ctx, "test/repo#2")
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -131,14 +128,15 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 	ctx := context.Background()
 
 	// Create edict with ambiguous intent
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#3", "Fix it")
 
 	// Create strategist
-	strategist := NewStrategist(db, nil, nil)
+	strategist := NewStrategist(base)
 
-	// Execute - should request zhengming
-	sealed, err := strategist.Execute(ctx, "test/repo#3")
+	// Execute - should request zhengming (internal method)
+	sealed, err := strategist.execute(ctx, "test/repo#3")
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -158,18 +156,19 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create edict and manifest
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#4", "Test feature")
 
-	forge := NewForge(db, nil, nil)
+	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#4", "", "test.go", "TestFunc", "hash1")
 	forge.ActivateManifest(manifestID, "commit123")
 
 	// Create judge (no CI runner - will auto-pass)
-	judge := NewJudge(db, nil, nil)
+	judge := NewJudge(base, nil)
 
-	// Execute judgment
-	sealed, err := judge.Execute(ctx, "test/repo#4")
+	// Execute judgment (internal method)
+	sealed, err := judge.execute(ctx, "test/repo#4")
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -189,22 +188,23 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create quenched manifest
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#5", "Review feature")
 
-	forge := NewForge(db, nil, nil)
+	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#5", "", "review.go", "ReviewFunc", "hash2")
 	forge.ActivateManifest(manifestID, "commit456")
 
-	judge := NewJudge(db, nil, nil)
+	judge := NewJudge(base, nil)
 	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
 	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID)
 
 	// Create censor (no linter - will auto-approve)
-	censor := NewCensor(db, nil, nil)
+	censor := NewCensor(base, nil)
 
-	// Execute review
-	sealed, err := censor.Execute(ctx, "test/repo#5")
+	// Execute review (internal method)
+	sealed, err := censor.execute(ctx, "test/repo#5")
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -224,15 +224,16 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create edict and manifest
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#6", "Production feature")
 
-	forge := NewForge(db, nil, nil)
+	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#6", "", "prod.go", "ProdFunc", "hash3")
 	forge.ActivateManifest(manifestID, "prodcommit789")
 
 	// Create marshal
-	marshal := NewMarshal(db, nil, nil)
+	marshal := NewMarshal(base, nil)
 
 	// Report incident
 	err := marshal.OnIncident(ctx, "sentry-456", "prodcommit789")
@@ -254,7 +255,8 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	chancellor := NewChancellor(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
 
 	// Create and cancel edict
 	chancellor.CreateEdictFromIssue(ctx, "test/repo#7", "Feature to cancel")
@@ -299,5 +301,120 @@ func TestStrategist_ValidDependencies(t *testing.T) {
 	err := strategist.validateDependencies(ling)
 	if err != nil {
 		t.Errorf("Expected no error for valid dependencies: %v", err)
+	}
+}
+
+// TestHappyFlowE2E tests the complete TaskEnvelope flow:
+// Chancellor -> invoke_minister tool -> Minister receives task -> Minister replies (synchronous)
+func TestHappyFlowE2E(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create Chancellor and Shogunate
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
+
+	// Create a simple Shogunate with just Forge for this test
+	shogunate := &Shogunate{
+		db:         db,
+		Chancellor: chancellor,
+		Forge:      NewForge(base),
+	}
+	chancellor.SetShogunate(shogunate)
+
+	// Create an edict for the test
+	edictID := "test-e2e-edict"
+	err := chancellor.CreateEdict(edictID, "E2E test edict")
+	if err != nil {
+		t.Fatalf("Failed to create edict: %v", err)
+	}
+
+	// Start the Forge's Run loop in a goroutine
+	go shogunate.Forge.Run(ctx)
+
+	// Create the InvokeMinisterTool
+	tool := InvokeMinisterTool{chancellor: chancellor}
+
+	// Invoke the Forge minister with a trivial task
+	// With synchronous blocking, this call blocks until minister replies
+	taskInput := `{"minister_id": "forge", "edict_id": "test-e2e-edict", "task": "please reply with 'hello world'"}`
+	result, err := tool.Call(ctx, taskInput)
+	if err != nil {
+		t.Fatalf("Failed to invoke minister: %v", err)
+	}
+
+	// Verify the tool returned success with completed status
+	if result == "" {
+		t.Error("Expected non-empty result from invoke_minister")
+	}
+	t.Logf("invoke_minister result: %s", result)
+
+	// Parse the result to verify it contains completion info
+	var response struct {
+		MinisterID string `json:"minister_id"`
+		EdictID    string `json:"edict_id"`
+		Status     string `json:"status"`
+		Sealed     bool   `json:"sealed"`
+		Output     string `json:"output"`
+	}
+	if err := json.Unmarshal([]byte(result), &response); err != nil {
+		t.Fatalf("Failed to parse result: %v", err)
+	}
+
+	if response.Status != "completed" {
+		t.Errorf("Expected status 'completed', got %s", response.Status)
+	}
+	if response.MinisterID != "forge" {
+		t.Errorf("Expected MinisterID 'forge', got %s", response.MinisterID)
+	}
+	if response.EdictID != edictID {
+		t.Errorf("Expected EdictID %s, got %s", edictID, response.EdictID)
+	}
+	if !response.Sealed {
+		t.Error("Expected Sealed=true from Forge")
+	}
+	t.Logf("Received response: minister=%s, edict=%s, sealed=%v, output=%s",
+		response.MinisterID, response.EdictID, response.Sealed, response.Output)
+}
+
+// TestInvokeMinisterTool_InvalidMinister tests error handling for unknown ministers
+func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
+	shogunate := &Shogunate{
+		db:         db,
+		Chancellor: chancellor,
+	}
+	chancellor.SetShogunate(shogunate)
+
+	tool := InvokeMinisterTool{chancellor: chancellor}
+
+	// Try to invoke a non-existent minister
+	taskInput := `{"minister_id": "unknown", "edict_id": "test", "task": "hello"}`
+	_, err := tool.Call(ctx, taskInput)
+	if err == nil {
+		t.Error("Expected error for unknown minister")
+	}
+}
+
+// TestInvokeMinisterTool_MissingTask tests error handling for missing task parameter
+func TestInvokeMinisterTool_MissingTask(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	chancellor := NewChancellor(base)
+
+	tool := InvokeMinisterTool{chancellor: chancellor}
+
+	// Missing task parameter
+	taskInput := `{"minister_id": "forge", "edict_id": "test"}`
+	_, err := tool.Call(ctx, taskInput)
+	if err == nil {
+		t.Error("Expected error for missing task parameter")
 	}
 }

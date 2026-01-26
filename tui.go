@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/auth"
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
@@ -83,6 +85,9 @@ type TUIModel struct {
 
 	// Context files loaded via @ references (for passing to Chancellor)
 	contextFiles map[string]string
+
+	// Active edict ID for conversation continuity
+	activeEdictID string
 }
 
 // ctrlCState represents the state machine for CTRL-C handling
@@ -149,7 +154,7 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 	status.SetRepoInfo(repoInfo)
 
 	// Initialize shell runner info for status display
-	shellInfo := getShellRunnerInfo()
+	shellInfo := GetShellRunnerInfo()
 	status.SetShellRunnerInfo(&shellInfo)
 
 	markdownEnabled := false
@@ -253,11 +258,11 @@ func (m *TUIModel) initHistory() {
 // ConfigureSession configures the session for the TUI model by setting up the session store.
 // This should be called after the Shogunate/Chancellor has created its session.
 func (m *TUIModel) ConfigureSession() {
-	session := m.shogunate.Session()
-	m.status.SetShogunate(m.shogunate)
+	session := m.shogunate.Session(m.activeEdictID)
+	m.status.SetShogunate(m.shogunate, m.activeEdictID)
 	if session != nil && m.sessionStore != nil && m.config != nil {
 		autoSave := m.config.Session.Enabled && m.config.Session.AutoSave
-		m.shogunate.SetSessionStore(m.sessionStore, autoSave)
+		m.shogunate.SetSessionStore(m.activeEdictID, m.sessionStore, autoSave)
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else if session != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
@@ -917,7 +922,7 @@ func (m TUIModel) handleCtrlCBurstTimeout(msg ctrlCBurstTimeoutMsg) (tea.Model, 
 
 	// This was the second press completing - quit!
 	slog.Info("CTRL-C: Second press completed, quitting")
-	m.shogunate.SaveSession()
+	m.shogunate.SaveSession(m.activeEdictID)
 	return m, tea.Quit
 }
 
@@ -997,7 +1002,7 @@ func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
 			} else {
 				m.contextFiles[filePath] = string(content)
 				m.content.Chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
-				m.shogunate.UpdateTokenCounts(m.contextFiles)
+				m.shogunate.UpdateTokenCounts(m.activeEdictID, m.contextFiles)
 			}
 			currentValue := m.prompt.Value()
 			lastAt := strings.LastIndex(currentValue, "@")
@@ -1069,7 +1074,7 @@ func (m *TUIModel) saveHistoryPresentState() {
 		return
 	}
 	m.historyPendingPrompt = m.prompt.Value()
-	m.historyPresentSessionSnapshot = m.shogunate.GetMessageSnapshot()
+	m.historyPresentSessionSnapshot = m.shogunate.GetMessageSnapshot(m.activeEdictID)
 	m.historyPresentChatSnapshot = len(m.content.Chat.Messages)
 	m.historySaved = true
 }
@@ -1233,10 +1238,18 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 		ctx := context.Background()
 
 		// Get the current shell runner (podman sandbox or host)
-		runner := getShellRunner()
+		runner := GetRunner()
+		if runner == nil {
+			return shellCommandResultMsg{
+				command:  shellCmd,
+				output:   "",
+				exitCode: "-1",
+				err:      fmt.Errorf("no shell runner available"),
+			}
+		}
 
 		// User-initiated commands never need approval
-		params := RunShellCommandInput{
+		params := runners.Input{
 			Command:        shellCmd,
 			Description:    "User shell command",
 			BypassApproval: true, // User explicitly requested this command
@@ -1326,7 +1339,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			entry := m.sessionPromptHistory[m.historyCursor]
 			m.cancelStreaming()
 			m.stopStreaming()
-			m.shogunate.RollbackTo(entry.SessionSnapshot)
+			m.shogunate.RollbackTo(m.activeEdictID, entry.SessionSnapshot)
 			m.content.Chat.TruncateTo(entry.ChatSnapshot)
 			m.content.Chat.ClearToolCallMessageIndex()
 			m.historySaved = false
@@ -1334,7 +1347,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.content.Chat.AddToRawHistory("USER", content)
 		chatSnapshot := len(m.content.Chat.Messages)
-		sessionSnapshot := m.shogunate.GetMessageSnapshot()
+		sessionSnapshot := m.shogunate.GetMessageSnapshot(m.activeEdictID)
 		if m.historyCursor < len(m.sessionPromptHistory) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
@@ -1422,9 +1435,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 
 	case shogunate.StreamStartMsg:
-		// Streaming has started
+		// Streaming has started - capture edict ID for conversation continuity
+		if msg.EdictID != "" {
+			m.activeEdictID = msg.EdictID
+			slog.Debug("StreamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
+		} else {
+			slog.Debug("StreamStartMsg", "starting_stream", true)
+		}
 		m.content.Chat.AddToRawHistory("STREAM_START", "AI streaming response started")
-		slog.Debug("StreamStartMsg", "starting_stream", true)
 		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
 
@@ -1475,7 +1493,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamCompleteCallback = nil // Clear after running
 		}
 
-		m.shogunate.SaveSession()
+		m.shogunate.SaveSession(m.activeEdictID)
 		refreshGitInfo()
 
 		return m, guardrailCmd
@@ -1570,7 +1588,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, handleUpdateConfirm(&m)
 		}
 		// User declined
-		cancelMsg := NewChatMsgBuilder(systemPrefix)
+		cancelMsg := utils.NewMsgBlockBuilder(systemPrefix)
 		cancelMsg.WriteLn("Update cancelled.")
 		cancelMsg.WriteLn("Please run :update again when ready")
 		m.content.Chat.AddMessage(cancelMsg.String())
@@ -1590,14 +1608,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateCompleteMsg:
 		if msg.err != nil {
-			errMsg := NewChatMsgBuilder(systemPrefix)
+			errMsg := utils.NewMsgBlockBuilder(systemPrefix)
 			errMsg.WriteLnf("❌ Update failed: %v", msg.err)
 			errMsg.WriteLnf("Try updating manually with: %s", GetUpdateCommand())
 			m.content.Chat.AddMessage(errMsg.String())
 			return m, nil
 		}
 
-		successMsg := NewChatMsgBuilder(systemPrefix)
+		successMsg := utils.NewMsgBlockBuilder(systemPrefix)
 		successMsg.WriteLn("✓ Update successful!")
 		successMsg.WriteLn("Please restart asimi to use the new version.")
 		m.content.Chat.AddMessage(successMsg.String())
@@ -1898,7 +1916,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle starting a new conversation (used by init, new, and other commands)
 		slog.Debug("got startConversationMsg", "RunOnHost", msg.RunOnHost, "tryUpgradeToSandbox", msg.tryUpgradeToSandbox)
 
-		if m.shogunate.Session() == nil {
+		if m.shogunate.Session(m.activeEdictID) == nil {
 			m.commandLine.AddToast("No LLM session available", "error", 4000)
 			return m, nil
 		}
@@ -1906,12 +1924,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Set the shell runner based on RunOnHost flag
 		if msg.RunOnHost {
 			slog.Debug("using host shell runner for this conversation")
-			currentShellRunner.AllowFallback(true)
+			if podmanRunner := GetPodmanRunner(); podmanRunner != nil {
+				podmanRunner.AllowFallback(true)
+			}
 
 			// Wrap the caller's func with code to restore the previous runner
 			originalCallback := msg.onStreamComplete
 			msg.onStreamComplete = func(model *TUIModel) tea.Cmd {
-				currentShellRunner.AllowFallback(false)
+				if podmanRunner := GetPodmanRunner(); podmanRunner != nil {
+					podmanRunner.AllowFallback(false)
+				}
 
 				// Call the original callback if it exists
 				if originalCallback != nil {
@@ -1933,7 +1955,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stopStreaming()
 
 			// Reset session conversation history
-			m.shogunate.ClearHistory()
+			m.shogunate.ClearHistory(m.activeEdictID)
 		}
 
 		// Display initial messages after clearing history (before streaming starts)
@@ -1962,12 +1984,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
 				go func() {
-					m.shogunate.AskWithStreaming(ctx, msg.prompt, nil)
+					m.shogunate.AskWithStreaming(ctx, m.activeEdictID, msg.prompt, nil)
 				}()
 				return m, tea.Batch(waitCmd, upgradeCmd)
 			} else {
 				go func() {
-					m.shogunate.AskWithStreaming(ctx, msg.prompt, nil)
+					m.shogunate.AskWithStreaming(ctx, m.activeEdictID, msg.prompt, nil)
 				}()
 			}
 		} else {
@@ -1998,7 +2020,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case compactConversationMsg:
 		// Handle conversation compaction
 		slog.Debug("got compactConversationMsg")
-		if m.shogunate.Session() == nil {
+		if m.shogunate.Session(m.activeEdictID) == nil {
 			m.commandLine.AddToast("No LLM session available for compaction", "error", 4000)
 			return m, nil
 		}
@@ -2007,9 +2029,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Chat.AddMessage("🗜️  Compacting conversation history...")
 
 		// Perform the compaction in a goroutine
+		// Capture edictID to avoid data race with closure
+		edictID := m.activeEdictID
 		go func() {
 			ctx := context.Background()
-			summary, err := m.shogunate.CompactHistory(ctx, compactPrompt)
+			summary, err := m.shogunate.CompactHistory(ctx, edictID, compactPrompt)
 			if err != nil {
 				if program != nil {
 					program.Send(compactErrorMsg{err: err})
@@ -2026,7 +2050,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Debug("compaction completed")
 
 		// Get context info to show the improvement
-		info := m.shogunate.GetContextInfo()
+		info := m.shogunate.GetContextInfo(m.activeEdictID)
 
 		// Add success message
 		m.content.Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted successfully!\n\nContext usage: %s/%s tokens (%.1f%%)",
@@ -2046,7 +2070,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Container launch notification
 		m.commandLine.AddToast(msg.message, "info", 3*time.Second)
 		// Update shell runner info in status bar
-		info := getShellRunnerInfo()
+		info := GetShellRunnerInfo()
 		m.status.SetShellRunnerInfo(&info)
 		return m, nil
 
@@ -2075,13 +2099,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandLine.AddToast("Initialization complete!", "success", 3*time.Second)
 
 			// Start a fresh session without clearing the screen
-			m.shogunate.SaveSession()
+			m.shogunate.SaveSession(m.activeEdictID)
 			m.sessionActive = true
 			m.content.Chat.Indent = 0
 			m.initHistory()
 			m.cancelStreaming()
 			m.stopStreaming()
-			m.shogunate.ClearHistory()
+			m.shogunate.ClearHistory(m.activeEdictID)
 
 			// Try to upgrade to sandbox (async) in case it wasn't already done
 			refreshGitInfo()
@@ -2282,7 +2306,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	m.prompt.SetHeight(promptHeight)
 
 	// Update status info
-	if m.shogunate.Session() != nil {
+	if m.shogunate.Session(m.activeEdictID) != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
@@ -2653,10 +2677,15 @@ func (m *TUIModel) clearZhengmingPrompt() {
 func (m *TUIModel) sendPromptToChancellor(ctx context.Context, content string) {
 	replyChan := make(chan shogunate.PromptReply, 100)
 
-	// Get active edict ID if continuing a conversation
-	edictID := m.shogunate.GetActiveEdictID()
+	// Use TUI's active edict ID for conversation continuity
+	edictID := m.activeEdictID
 
-	slog.Debug("sendPromptToChancellor: sending context files to Chancellor", "count", len(m.contextFiles))
+	// Log whether we're continuing an existing edict or starting a new one
+	if edictID == "" {
+		slog.Debug("sendPromptToChancellor: starting NEW edict", "context_files", len(m.contextFiles))
+	} else {
+		slog.Debug("sendPromptToChancellor: continuing existing edict", "edict_id", edictID, "context_files", len(m.contextFiles))
+	}
 
 	// Send prompt to Chancellor with context files
 	env := &shogunate.EdictEnvelope{
@@ -2690,7 +2719,7 @@ func (m *TUIModel) receiveChancellorReplies(ctx context.Context, replies <-chan 
 			switch reply.Type {
 			case shogunate.ReplyStreamStart:
 				if program != nil {
-					program.Send(shogunate.StreamStartMsg{})
+					program.Send(shogunate.StreamStartMsg{EdictID: reply.EdictID})
 				}
 			case shogunate.ReplyStreamChunk:
 				if program != nil {
@@ -2702,9 +2731,15 @@ func (m *TUIModel) receiveChancellorReplies(ctx context.Context, replies <-chan 
 				}
 				return
 			case shogunate.ReplyToolCall:
-				slog.Debug("chancellor tool call", "tool", reply.Content)
+				// Forward tool call messages to TUI for display
+				if program != nil && reply.Data != nil {
+					program.Send(reply.Data)
+				}
 			case shogunate.ReplyToolResult:
-				slog.Debug("chancellor tool result", "output", reply.Content)
+				// Forward tool results to TUI for display
+				if program != nil && reply.Data != nil {
+					program.Send(reply.Data)
+				}
 			case shogunate.ReplyZhengming:
 				// Handle Zhengming - forward to TUI
 				if zm, ok := reply.Data.(shogunate.ZhengmingPendingMsg); ok && program != nil {
@@ -2747,9 +2782,9 @@ func (m *TUIModel) listenToShogunateResponses() {
 				program.Send(shogunate.StreamErrorMsg{Err: resp.Error})
 			}
 		case shogunate.ResponseEdictCreated:
-			// Edict created - start streaming indicator
+			// Edict created - start streaming indicator with edict ID
 			if program != nil {
-				program.Send(shogunate.StreamStartMsg{})
+				program.Send(shogunate.StreamStartMsg{EdictID: resp.EdictID})
 			}
 		case shogunate.ResponseZhengming:
 			// Zhengming request - handled elsewhere via direct message

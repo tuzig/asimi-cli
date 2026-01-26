@@ -1,0 +1,17 @@
+# Base image for Node.js development
+FROM node:20-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install essential tools
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install npm globally
+RUN npm install -g npm@latest
+
+# Default command
+CMD ["bash"]

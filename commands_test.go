@@ -159,9 +159,10 @@ func TestHandleInitCommand(t *testing.T) {
 
 	// Setup a mock model with shogunate
 	sg := &shogunate.Shogunate{}
-	sg.SetTestSession(&shogunate.Session{})
+	edictID := sg.SetTestSession("", &shogunate.Session{})
 	mockTUI := &TUIModel{
-		shogunate: sg,
+		shogunate:     sg,
+		activeEdictID: edictID,
 	}
 
 	t.Run("Clean directory", func(t *testing.T) {
@@ -266,88 +267,4 @@ func TestHandleInitCommand(t *testing.T) {
 			os.Remove(file) // Ignore errors
 		}
 	})
-}
-
-func TestRunInitGuardrails(t *testing.T) {
-	// Setup a temporary directory for the test
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-	defer func() {
-		err := os.Chdir(originalWd)
-		if err != nil {
-			t.Logf("Failed to change back to original directory: %v", err)
-		}
-	}()
-
-	// Setup a mock model
-	mockTUI := &TUIModel{}
-
-	t.Run("Missing files", func(t *testing.T) {
-		// Run guardrails with no files present
-		cmd := verifyInit(mockTUI, nil)
-		msg := cmd()
-
-		// When there are errors, runInitGuardrails returns a startConversationMsg to retry
-		retryMsg, ok := msg.(startConversationMsg)
-		require.True(t, ok, "Expected startConversationMsg for retry, got type: %T", msg)
-		require.Contains(t, retryMsg.prompt, "❌ AGENTS.md was not created")
-		require.Contains(t, retryMsg.prompt, "❌ Justfile was not created")
-		require.Contains(t, retryMsg.prompt, "Issues found verifying initialization")
-		require.True(t, retryMsg.RunOnHost, "Expected RunOnHost to be true")
-	})
-
-	t.Run("Files present", func(t *testing.T) {
-		// Create the required files
-		err := os.WriteFile("AGENTS.md", []byte("# Test AGENTS.md"), 0644)
-		require.NoError(t, err)
-		err = os.WriteFile("Justfile", []byte("default:\n\techo 'hello'"), 0644)
-		require.NoError(t, err)
-
-		// Run guardrails
-		cmd := verifyInit(mockTUI, nil)
-		msg := cmd()
-
-		// When just commands fail (which they will in test), it returns startConversationMsg
-		// When all passes, it returns showContextMsg
-		switch m := msg.(type) {
-		case startConversationMsg:
-			// Just commands failed, which is expected in test environment
-			require.Contains(t, m.prompt, "AGENTS.md created")
-			require.Contains(t, m.prompt, "Justfile created")
-			require.True(t, m.RunOnHost, "Expected RunOnHost to be true")
-		case showContextMsg:
-			// All passed (unlikely in test environment)
-			require.Contains(t, m.content, "AGENTS.md created")
-			require.Contains(t, m.content, "Justfile created")
-		default:
-			t.Fatalf("Expected startConversationMsg or showContextMsg, got: %T", msg)
-		}
-
-		// Clean up
-		os.Remove("AGENTS.md")
-		os.Remove("Justfile")
-	})
-}
-
-func TestTruncateOutput(t *testing.T) {
-	tests := []struct {
-		input    string
-		maxLen   int
-		expected string
-	}{
-		{"short", 10, "short"},
-		{"exactly10!", 10, "exactly10!"},
-		{"this is longer than ten", 10, "this is lo..."},
-		{"", 5, ""},
-	}
-
-	for _, tt := range tests {
-		result := truncateOutput(tt.input, tt.maxLen)
-		if result != tt.expected {
-			t.Errorf("truncateOutput(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
-		}
-	}
 }

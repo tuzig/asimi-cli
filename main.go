@@ -110,7 +110,6 @@ func runInteractiveMode() error {
 			ProvideStorage,
 			ProvideRepoInfo,
 			ProvideScheduler,
-			ProvideShellRunner,
 			ProvideLLMConfig,
 			shogunate.ProvideShogunate,
 			ProvidePromptHistory,
@@ -119,7 +118,8 @@ func runInteractiveMode() error {
 			ProvideTUIModel,
 			StartTUI,
 		),
-		fx.Populate(&currentShellRunner, &tuiProgram),
+		fx.Invoke(ProvideShellRunner), // Side-effect only, doesn't provide a value
+		fx.Populate(&tuiProgram),
 	)
 
 	// Create fx app with all providers
@@ -315,9 +315,6 @@ func main() {
 			fmt.Printf("Error creating session: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Connect the Shogunate Forge to the Session for envelope-based tool execution
-		sess.SetForge(sg.Forge)
 
 		// Start streaming (blocking call that uses notify callback)
 		_, err = sess.AskWithStreaming(context.Background(), cli.Prompt, nil)

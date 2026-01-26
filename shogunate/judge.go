@@ -3,11 +3,8 @@ package shogunate
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"time"
 
 	"github.com/afittestide/asimi/storage"
-	"gorm.io/gorm"
 )
 
 // --- Minister ---
@@ -42,17 +39,22 @@ CRITICAL RULES:
 type Judge struct {
 	MinisterBase // embedded base for database access and session creation
 	ci           CIRunner
+	tasks        chan *TaskEnvelope
 }
 
 // NewJudge creates a new Judge minister
-func NewJudge(db *gorm.DB, ci CIRunner, logger *slog.Logger) *Judge {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func NewJudge(base MinisterBase, ci CIRunner) *Judge {
+	base.ministerID = "judge"
 	return &Judge{
-		MinisterBase: MinisterBase{db: db, ministerID: "judge", logger: logger},
+		MinisterBase: base,
 		ci:           ci,
+		tasks:        make(chan *TaskEnvelope, 10),
 	}
+}
+
+// Tasks returns the channel for task submission
+func (j *Judge) Tasks() chan<- *TaskEnvelope {
+	return j.tasks
 }
 
 // ID returns the minister identifier
@@ -167,8 +169,8 @@ func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 
 // --- Execute Logic ---
 
-// Execute runs the Judge's CI evaluation for an edict
-func (j *Judge) Execute(ctx context.Context, edictID string) (bool, error) {
+// execute runs the Judge's CI evaluation for an edict (internal method)
+func (j *Judge) execute(ctx context.Context, edictID string) (bool, error) {
 	// Check if all manifests are already quenched
 	allQuenched, err := j.AllManifestsQuenched(edictID)
 	if err != nil {
@@ -259,50 +261,47 @@ func (j *Judge) judgeManifest(ctx context.Context, edictID string, manifest *sto
 	return nil
 }
 
-// Run starts the Judge's polling loop for edicts with pending manifests
-func (j *Judge) Run(ctx context.Context, pollInterval time.Duration) {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	j.logger.Info("judge started", "poll_interval", pollInterval)
+// Run starts the Judge's task processing loop
+func (j *Judge) Run(ctx context.Context) {
+	j.logger.Info("judge started, awaiting tasks")
 
 	for {
 		select {
 		case <-ctx.Done():
 			j.logger.Info("judge stopped")
 			return
-		case <-ticker.C:
-			j.pollAndExecute(ctx)
+		case env := <-j.tasks:
+			j.processTask(ctx, env)
 		}
 	}
 }
 
-// pollAndExecute checks for edicts needing judgment and processes them
-func (j *Judge) pollAndExecute(ctx context.Context) {
-	edicts, err := j.GetEdictsWithPendingManifests()
-	if err != nil {
-		j.logger.Error("failed to poll judgment edicts", "error", err)
-		return
+// processTask handles a single task envelope
+func (j *Judge) processTask(ctx context.Context, env *TaskEnvelope) {
+	j.logger.Info("judge processing task",
+		"edict_id", env.EdictID,
+		"task", env.Task)
+
+	// Execute the judgment logic
+	sealed, err := j.execute(ctx, env.EdictID)
+
+	// Send reply back to Chancellor
+	reply := &TaskReply{
+		EdictID:    env.EdictID,
+		MinisterID: j.ID(),
+		Task:       env.Task,
+		Sealed:     sealed,
+		Error:      err,
 	}
 
-	for _, edict := range edicts {
-		// Check for pending zhengming before processing
-		pending, err := j.IsZhengmingPending(edict.EdictID)
-		if err != nil {
-			j.logger.Error("failed to check zhengming", "edict_id", edict.EdictID, "error", err)
-			continue
-		}
-		if pending {
-			continue
-		}
+	if sealed {
+		reply.Output = "judgment complete"
+	}
 
-		sealed, err := j.Execute(ctx, edict.EdictID)
-		if err != nil {
-			j.logger.Error("failed to execute judgment", "edict_id", edict.EdictID, "error", err)
-			continue
-		}
-		if sealed {
-			j.logger.Info("judgment phase sealed", "edict_id", edict.EdictID)
-		}
+	// Send reply (non-blocking)
+	select {
+	case env.ReplyChan <- reply:
+	default:
+		j.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
 	}
 }

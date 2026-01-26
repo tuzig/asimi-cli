@@ -77,10 +77,6 @@ type Shogunate struct {
 	Marshal     *Marshal
 	RitualGuard *RitualGuard
 
-	// Active edict for UI display
-	activeEdictID string
-	activeEdictMu sync.RWMutex
-
 	// Lifecycle
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -106,23 +102,23 @@ func NewShogunate(db *gorm.DB, config *ShogunateConfig, logger *slog.Logger) *Sh
 func (s *Shogunate) Start(ctx context.Context) error {
 	s.ctx, s.cancel = context.WithCancel(ctx)
 
-	// Create ministers (all now take db directly via MinisterBase)
-	s.Strategist = NewStrategist(s.db, nil, s.logger)
-	s.Forge = NewForge(s.db, nil, s.logger) // tools set later via SetTools
-	s.Judge = NewJudge(s.db, nil, s.logger)
-	s.Censor = NewCensor(s.db, nil, s.logger)
-	s.Marshal = NewMarshal(s.db, nil, s.logger)
+	// Create shared MinisterBase once with all shared dependencies
+	base := NewMinisterBase(s.db, s.llmClient, nil, repo.RepoInfo{}, s.logger)
 
-	// Create Chancellor
-	s.Chancellor = NewChancellor(s.db, s.llmClient, nil, repo.RepoInfo{}, s.logger)
+	// Create ministers using the shared base
+	s.Strategist = NewStrategist(base)
+	s.Forge = NewForge(base)
+	s.Judge = NewJudge(base, nil)
+	s.Censor = NewCensor(base, nil)
+	s.Marshal = NewMarshal(base, nil)
+
+	// Chancellor - no separate SetMinisterConfig needed, base has everything
+	s.Chancellor = NewChancellor(base)
 	s.Chancellor.SetShogunate(s)
 
-	// Create RitualGuard with Chancellor reference
-	s.RitualGuard = NewRitualGuard(s.db, s.Chancellor, s.logger)
+	// RitualGuard depends on Chancellor
+	s.RitualGuard = NewRitualGuard(base, s.Chancellor)
 
-	// Wire Chancellor to Forge for tool routing
-	// TODO: remove the forge
-	s.Chancellor.SetForge(s.Forge)
 	s.Chancellor.SetDBPath(s.config.DBPath)
 
 	// Build and set Chancellor's tool definitions for LLM calls
@@ -148,11 +144,11 @@ func (s *Shogunate) Start(ctx context.Context) error {
 
 	// Start all minister goroutines
 	go s.Chancellor.Run(s.ctx) // Chancellor listens for prompts from the Ruler
-	go s.Strategist.Run(s.ctx, s.config.PollInterval)
+	go s.Strategist.Run(s.ctx)
 	go s.Forge.Run(s.ctx)
-	go s.Judge.Run(s.ctx, s.config.PollInterval)
-	go s.Censor.Run(s.ctx, s.config.PollInterval)
-	go s.Marshal.Run(s.ctx, s.config.PollInterval)
+	go s.Judge.Run(s.ctx)
+	go s.Censor.Run(s.ctx)
+	go s.Marshal.Run(s.ctx)
 	go s.runRitualGuard()
 
 	s.logger.Info("shogunate started",
@@ -204,13 +200,6 @@ func (s *Shogunate) routeToEdict(ctx context.Context, edictID, prompt string) er
 	return nil
 }
 
-// SetTools updates the Forge's tool registry
-func (s *Shogunate) SetTools(tools map[string]Tool) {
-	if s.Forge != nil {
-		s.Forge.SetTools(tools)
-	}
-}
-
 // SetLLMClient sets the LLM client for ministers to use
 func (s *Shogunate) SetLLMClient(llm llms.Model) {
 	s.llmMu.Lock()
@@ -223,28 +212,12 @@ func (s *Shogunate) SetLLMClient(llm llms.Model) {
 	s.logger.Info("LLM client set for shogunate")
 }
 
-// SetChancellorConfig configures the Chancellor for session creation.
-// This should be called after SetLLMClient with the session configuration.
-func (s *Shogunate) SetChancellorConfig(llm llms.Model, config *SessionConfig, repoInfo repo.RepoInfo) {
-	if s.Chancellor != nil {
-		s.Chancellor.SetMinisterConfig(llm, config, repoInfo)
-		s.logger.Info("chancellor configured for session creation")
-	}
-}
-
 // IsReady returns true if the Shogunate has an LLM client configured
 // TODO: remove this
 func (s *Shogunate) IsReady() bool {
 	s.llmMu.RLock()
 	defer s.llmMu.RUnlock()
 	return s.llmClient != nil
-}
-
-// GetActiveEdictID returns the currently active edict ID
-func (s *Shogunate) GetActiveEdictID() string {
-	s.activeEdictMu.RLock()
-	defer s.activeEdictMu.RUnlock()
-	return s.activeEdictID
 }
 
 // GetMinister returns a minister by ID
@@ -265,13 +238,6 @@ func (s *Shogunate) GetMinister(id string) Minister {
 	default:
 		return nil
 	}
-}
-
-// setActiveEdict sets the active edict ID
-func (s *Shogunate) setActiveEdict(edictID string) {
-	s.activeEdictMu.Lock()
-	defer s.activeEdictMu.Unlock()
-	s.activeEdictID = edictID
 }
 
 // sendResponse sends a response to the TUI
@@ -336,104 +302,112 @@ func (s *Shogunate) runSQLCommand(ctx context.Context, cmd string) (string, erro
 }
 
 // --- Session Wrapper Methods ---
-// These methods provide access to the Chancellor's session for TUI operations.
+// These methods provide access to the Chancellor's sessions for TUI operations.
+// All methods take an edictID parameter for explicit session lookup.
 // All methods handle nil receiver case for safe use when Shogunate is not initialized.
 
-// Session returns the current session from Chancellor
-func (s *Shogunate) Session() *Session {
+// Session returns the session for the specified edict ID
+func (s *Shogunate) Session(edictID string) *Session {
 	if s == nil || s.Chancellor == nil {
 		return nil
 	}
-	return s.Chancellor.session
+	return s.Chancellor.GetSession(edictID)
 }
 
-// SaveSession saves the current session
-func (s *Shogunate) SaveSession() {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+// SaveSession saves the session for the specified edict
+func (s *Shogunate) SaveSession(edictID string) {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return
 	}
-	s.Chancellor.session.Save()
+	sess.Save()
 }
 
-// GetContextInfo returns context usage information from the current session
-func (s *Shogunate) GetContextInfo() ContextInfo {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+// GetContextInfo returns context usage information from the specified session
+func (s *Shogunate) GetContextInfo(edictID string) ContextInfo {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return ContextInfo{}
 	}
-	return s.Chancellor.session.GetContextInfo()
+	return sess.GetContextInfo()
 }
 
-// GetContextUsagePercent returns the context usage percentage from the current session
-func (s *Shogunate) GetContextUsagePercent() float64 {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+// GetContextUsagePercent returns the context usage percentage from the specified session
+func (s *Shogunate) GetContextUsagePercent(edictID string) float64 {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return 0
 	}
-	return s.Chancellor.session.GetContextUsagePercent()
+	return sess.GetContextUsagePercent()
 }
 
 // ClearHistory clears the session's conversation history
-func (s *Shogunate) ClearHistory() {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+func (s *Shogunate) ClearHistory(edictID string) {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return
 	}
-	s.Chancellor.session.ClearHistory()
+	sess.ClearHistory()
 }
 
 // RollbackTo rolls back the session to a previous message snapshot
-func (s *Shogunate) RollbackTo(snapshot int) {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+func (s *Shogunate) RollbackTo(edictID string, snapshot int) {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return
 	}
-	s.Chancellor.session.RollbackTo(snapshot)
+	sess.RollbackTo(snapshot)
 }
 
 // GetMessageSnapshot returns the current message count for rollback purposes
-func (s *Shogunate) GetMessageSnapshot() int {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+func (s *Shogunate) GetMessageSnapshot(edictID string) int {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return 0
 	}
-	return s.Chancellor.session.GetMessageSnapshot()
+	return sess.GetMessageSnapshot()
 }
 
 // CompactHistory compacts the conversation history using the provided prompt
-func (s *Shogunate) CompactHistory(ctx context.Context, compactPrompt string) (string, error) {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+func (s *Shogunate) CompactHistory(ctx context.Context, edictID, compactPrompt string) (string, error) {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
-	return s.Chancellor.session.CompactHistory(ctx, compactPrompt)
+	return sess.CompactHistory(ctx, compactPrompt)
 }
 
 // UpdateTokenCounts updates the token counts with context files
-func (s *Shogunate) UpdateTokenCounts(contextFiles map[string]string) {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+func (s *Shogunate) UpdateTokenCounts(edictID string, contextFiles map[string]string) {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return
 	}
-	s.Chancellor.session.UpdateTokenCounts(contextFiles)
+	sess.UpdateTokenCounts(contextFiles)
 }
 
 // AskWithStreaming sends a prompt to the LLM with streaming response
-func (s *Shogunate) AskWithStreaming(ctx context.Context, prompt string, contextFiles map[string]string) (string, error) {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+func (s *Shogunate) AskWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string) (string, error) {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
-	return s.Chancellor.session.AskWithStreaming(ctx, prompt, contextFiles)
+	return sess.AskWithStreaming(ctx, prompt, contextFiles)
 }
 
 // SetSessionStore sets the session store and auto-save setting
-func (s *Shogunate) SetSessionStore(store SessionStore, autoSave bool) {
-	if s == nil || s.Chancellor == nil || s.Chancellor.session == nil {
+func (s *Shogunate) SetSessionStore(edictID string, store SessionStore, autoSave bool) {
+	sess := s.Session(edictID)
+	if sess == nil {
 		return
 	}
-	s.Chancellor.session.SetStore(store, autoSave)
+	sess.SetStore(store, autoSave)
 }
 
-// SetSessionFromResumed copies fields from a loaded session to the active session
-func (s *Shogunate) SetSessionFromResumed(loaded *Session) {
-	if s == nil || s.Chancellor == nil || loaded == nil {
-		return
-	}
-	sess := s.Chancellor.session
-	if sess == nil {
+// SetSessionFromResumed copies fields from a loaded session to the specified session
+func (s *Shogunate) SetSessionFromResumed(edictID string, loaded *Session) {
+	sess := s.Session(edictID)
+	if sess == nil || loaded == nil {
 		return
 	}
 	sess.ID = loaded.ID
@@ -449,15 +423,26 @@ func (s *Shogunate) SetSessionFromResumed(loaded *Session) {
 }
 
 // SetTestSession sets a session directly for testing purposes.
-// This should only be used in tests.
-func (s *Shogunate) SetTestSession(sess *Session) {
+// This should only be used in tests. It sets the session for the specified edict ID.
+// Returns the edict ID used (for callers to pass to session methods).
+func (s *Shogunate) SetTestSession(edictID string, sess *Session) string {
 	if s == nil {
-		return
+		return ""
 	}
 	if s.Chancellor == nil {
-		s.Chancellor = &Chancellor{}
+		s.Chancellor = &Chancellor{
+			edictSessions: make(map[string]*Session),
+		}
 	}
-	s.Chancellor.session = sess
+	if s.Chancellor.edictSessions == nil {
+		s.Chancellor.edictSessions = make(map[string]*Session)
+	}
+	// Use the provided edict ID, or a default test edict ID
+	if edictID == "" {
+		edictID = "test-edict"
+	}
+	s.Chancellor.edictSessions[edictID] = sess
+	return edictID
 }
 
 // ShogunateParams holds parameters for Shogunate initialization

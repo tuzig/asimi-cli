@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,8 +27,8 @@ func NewTestShellRunner() *TestShellRunner {
 }
 
 // Run executes a command directly on the host machine
-func (h *TestShellRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
-	var output RunShellCommandOutput
+func (h *TestShellRunner) Run(ctx context.Context, params runners.Input) (runners.Output, error) {
+	var output runners.Output
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -76,16 +78,18 @@ func (h *TestShellRunner) RunnerType() string {
 }
 
 func TestRunShellCommand(t *testing.T) {
-	restore := setShellRunnerForTesting(NewTestShellRunner())
-	defer restore()
-
-	tool := RunShellCommand{}
+	runner := NewTestShellRunner()
+	tool := shogunate.NewRunShellCommand(
+		&testRunnerAdapter{runner},
+		&testRunnerAdapter{runner},
+		func(cmd string) (bool, bool) { return false, false },
+	)
 	input := `{"command": "echo 'hello world'"}`
 
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunShellCommandOutput
+	var output shogunate.RunShellCommandOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
@@ -94,16 +98,18 @@ func TestRunShellCommand(t *testing.T) {
 }
 
 func TestRunShellCommandError(t *testing.T) {
-	restore := setShellRunnerForTesting(NewTestShellRunner())
-	defer restore()
-
-	tool := RunShellCommand{}
+	runner := NewTestShellRunner()
+	tool := shogunate.NewRunShellCommand(
+		&testRunnerAdapter{runner},
+		&testRunnerAdapter{runner},
+		func(cmd string) (bool, bool) { return false, false },
+	)
 	input := `{"command": "exit 1"}`
 
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunShellCommandOutput
+	var output shogunate.RunShellCommandOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
@@ -111,10 +117,12 @@ func TestRunShellCommandError(t *testing.T) {
 }
 
 func TestRunShellCommandFailsWhenPodmanUnavailable(t *testing.T) {
-	restore := setShellRunnerForTesting(failingPodmanRunner{})
-	defer restore()
-
-	tool := RunShellCommand{}
+	runner := failingPodmanRunner{}
+	tool := shogunate.NewRunShellCommand(
+		&testRunnerAdapter{runner},
+		nil,
+		func(cmd string) (bool, bool) { return false, false },
+	)
 	input := `{"command": "echo test"}`
 
 	_, err := tool.Call(context.Background(), input)
@@ -127,10 +135,12 @@ func TestRunShellCommandFailsWhenPodmanUnavailable(t *testing.T) {
 // The HostShellRunner passes this test, but podman runner would truncate output
 // See: https://github.com/afittestide/asimi-cli/issues/20
 func TestRunShellCommandLargeOutput(t *testing.T) {
-	restore := setShellRunnerForTesting(NewTestShellRunner())
-	defer restore()
-
-	tool := RunShellCommand{}
+	runner := NewTestShellRunner()
+	tool := shogunate.NewRunShellCommand(
+		&testRunnerAdapter{runner},
+		&testRunnerAdapter{runner},
+		func(cmd string) (bool, bool) { return false, false },
+	)
 
 	// Generate output larger than 4096 bytes
 	// The actual test would need to be run with podman runner to see the truncation issue
@@ -141,7 +151,7 @@ func TestRunShellCommandLargeOutput(t *testing.T) {
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunShellCommandOutput
+	var output shogunate.RunShellCommandOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
@@ -153,10 +163,12 @@ func TestRunShellCommandLargeOutput(t *testing.T) {
 // This test demonstrates the fragile exit code parsing in podman runner
 // See: https://github.com/afittestide/asimi-cli/issues/20
 func TestRunShellCommandExitCodeWithMarkerInOutput(t *testing.T) {
-	restore := setShellRunnerForTesting(NewTestShellRunner())
-	defer restore()
-
-	tool := RunShellCommand{}
+	runner := NewTestShellRunner()
+	tool := shogunate.NewRunShellCommand(
+		&testRunnerAdapter{runner},
+		&testRunnerAdapter{runner},
+		func(cmd string) (bool, bool) { return false, false },
+	)
 
 	// Command output contains the exit code marker string
 	// This would confuse the podman runner's string-based exit code parsing
@@ -165,7 +177,7 @@ func TestRunShellCommandExitCodeWithMarkerInOutput(t *testing.T) {
 	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
 
-	var output RunShellCommandOutput
+	var output shogunate.RunShellCommandOutput
 	err = json.Unmarshal([]byte(result), &output)
 	assert.NoError(t, err)
 
@@ -174,6 +186,40 @@ func TestRunShellCommandExitCodeWithMarkerInOutput(t *testing.T) {
 	// it might incorrectly parse 42 as the exit code from the output string
 	assert.Equal(t, "0", output.ExitCode, "Exit code should be 0, not parsed from output")
 	assert.Contains(t, output.Output, "**Exit Code**: 42")
+}
+
+// testRunnerAdapter adapts TestShellRunner to shogunate.Runner interface
+type testRunnerAdapter struct {
+	runner interface {
+		Run(context.Context, runners.Input) (runners.Output, error)
+		Restart(context.Context) error
+		Close(context.Context) error
+		RunnerType() string
+	}
+}
+
+func (a *testRunnerAdapter) Run(ctx context.Context, input shogunate.RunnerInput) (shogunate.RunnerOutput, error) {
+	out, err := a.runner.Run(ctx, runners.Input{
+		Command:        input.Command,
+		Description:    input.Description,
+		BypassApproval: input.BypassApproval,
+	})
+	return shogunate.RunnerOutput{
+		Output:   out.Output,
+		ExitCode: out.ExitCode,
+	}, err
+}
+
+func (a *testRunnerAdapter) Restart(ctx context.Context) error {
+	return a.runner.Restart(ctx)
+}
+
+func (a *testRunnerAdapter) Close(ctx context.Context) error {
+	return a.runner.Close(ctx)
+}
+
+func (a *testRunnerAdapter) RunnerType() string {
+	return a.runner.RunnerType()
 }
 
 // TestComposeShellCommand removed - composeShellCommand is deprecated
@@ -189,7 +235,7 @@ func TestReadFileToolWithOffsetAndLimit(t *testing.T) {
 	}
 	defer os.Remove(testFile)
 
-	tool := ReadFileTool{}
+	tool := shogunate.ReadFileTool{}
 
 	tests := []struct {
 		name     string
@@ -237,72 +283,12 @@ func TestReadFileToolWithOffsetAndLimit(t *testing.T) {
 	}
 }
 
-func TestPodmanShellRunner(t *testing.T) {
-	repoInfo := repoInfoWithProjectRoot(t)
-	runner := newPodmanShellRunner(true, nil, repoInfo) // allowFallback=true so test works without podman
-	assert.NotNil(t, runner)
-
-	output, err := runner.Run(context.Background(), RunShellCommandInput{
-		Command:        "echo hello",
-		BypassApproval: true, // Test-initiated command, no approval needed
-	})
-	require.NoError(t, err)
-	assert.Contains(t, output.Output, "hello")
-	assert.Equal(t, "0", output.ExitCode)
-}
-
-func TestPodmanShellRunnerMultipleCommands(t *testing.T) {
-	if os.Getenv("container") != "" {
-		t.Skip("Skipping Podman test when running inside a container")
-	}
-
-	// This test requires podman and the asimi-shell image to be available
-	// Skip if they're not available (e.g., in CI or on systems without podman)
-	if os.Getenv("ASIMI_TEST_PODMAN") == "" {
-		t.Skip("Skipping Podman test. Set ASIMI_TEST_PODMAN=1 to run this test (requires podman and asimi-shell image)")
-	}
-
-	repoInfo := repoInfoWithProjectRoot(t)
-	runner := newPodmanShellRunner(false, nil, repoInfo)
-	assert.NotNil(t, runner)
-
-	// First command
-	output1, err := runner.Run(context.Background(), RunShellCommandInput{
-		Command: "echo first",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, output1.Output, "first")
-	assert.Equal(t, "0", output1.ExitCode)
-
-	// Second command in the same session
-	output2, err := runner.Run(context.Background(), RunShellCommandInput{
-		Command: "echo second",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, output2.Output, "second")
-	assert.Equal(t, "0", output2.ExitCode)
-}
-
-func TestPodmanShellRunnerWithStderr(t *testing.T) {
-	repoInfo := repoInfoWithProjectRoot(t)
-	runner := newPodmanShellRunner(true, nil, repoInfo) // allowFallback=true so test works without podman
-	assert.NotNil(t, runner)
-
-	output, err := runner.Run(context.Background(), RunShellCommandInput{
-		Command:        "echo 'stdout msg' && echo 'stderr msg' >&2",
-		BypassApproval: true, // Test-initiated command, no approval needed
-	})
-
-	require.NoError(t, err)
-	assert.Contains(t, output.Output, "stdout msg")
-	assert.Contains(t, output.Output, "stderr msg")
-	assert.Equal(t, "0", output.ExitCode)
-}
+// PodmanRunner tests are now in internal/runners and test against the runners package directly
 
 type failingPodmanRunner struct{}
 
-func (failingPodmanRunner) Run(ctx context.Context, params RunShellCommandInput) (RunShellCommandOutput, error) {
-	return RunShellCommandOutput{}, PodmanUnavailableError{reason: "podman unavailable"}
+func (failingPodmanRunner) Run(ctx context.Context, params runners.Input) (runners.Output, error) {
+	return runners.Output{}, fmt.Errorf("podman unavailable")
 }
 
 func (failingPodmanRunner) Restart(ctx context.Context) error {
@@ -386,7 +372,7 @@ func TestValidatePathWithinProject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validatePathWithinProject(tt.path)
+			err := shogunate.ValidatePathWithinProject(tt.path)
 			if tt.shouldError {
 				assert.Error(t, err)
 				if tt.errorMsg != "" {
@@ -411,7 +397,7 @@ func TestWriteFileToolPathValidation(t *testing.T) {
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
-	tool := WriteFileTool{}
+	tool := shogunate.WriteFileTool{}
 
 	t.Run("write file within project", func(t *testing.T) {
 		input := `{"path": "test.txt", "content": "hello world"}`
@@ -480,7 +466,7 @@ func TestReplaceTextToolPathValidation(t *testing.T) {
 	err = os.WriteFile("test.txt", []byte(testContent), 0644)
 	require.NoError(t, err)
 
-	tool := ReplaceTextTool{}
+	tool := shogunate.ReplaceTextTool{}
 
 	t.Run("replace text within project", func(t *testing.T) {
 		input := `{"path": "test.txt", "old_text": "hello", "new_text": "goodbye"}`
@@ -550,7 +536,7 @@ func TestPathValidationWithSymlinks(t *testing.T) {
 		t.Skip("Unable to create symlink, skipping test")
 	}
 
-	tool := WriteFileTool{}
+	tool := shogunate.WriteFileTool{}
 
 	t.Run("reject write through symlink to outside", func(t *testing.T) {
 		input := `{"path": "symlink/malicious.txt", "content": "bad content"}`
@@ -575,7 +561,7 @@ func TestReadFileWithStringNumbers(t *testing.T) {
 	}
 	defer os.Remove(testFile)
 
-	tool := ReadFileTool{}
+	tool := shogunate.ReadFileTool{}
 	ctx := context.Background()
 
 	// Test with string values for offset and limit (Claude Code CLI bug workaround)
@@ -607,7 +593,7 @@ func TestReadFileWithStringNumbers(t *testing.T) {
 func TestTestShellRunner_Run(t *testing.T) {
 	runner := NewTestShellRunner()
 
-	params := RunShellCommandInput{
+	params := runners.Input{
 		Command:     "echo hello",
 		Description: "Test echo",
 	}
@@ -622,7 +608,7 @@ func TestTestShellRunner_Run(t *testing.T) {
 func TestTestShellRunner_RunError(t *testing.T) {
 	runner := NewTestShellRunner()
 
-	params := RunShellCommandInput{
+	params := runners.Input{
 		Command:     "exit 42",
 		Description: "Test exit code",
 	}
@@ -634,6 +620,11 @@ func TestTestShellRunner_RunError(t *testing.T) {
 }
 
 func TestShouldRunOnHost(t *testing.T) {
+	// Set up podman as available for testing
+	podmanAvailable := true
+	setTestPodmanAvailable(&podmanAvailable)
+	defer setTestPodmanAvailable(nil)
+
 	tests := []struct {
 		name              string
 		config            *Config
@@ -698,11 +689,9 @@ func TestShouldRunOnHost(t *testing.T) {
 		},
 	}
 
-	currentShellRunner = NewTestShellRunner()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tool := RunShellCommand{config: tt.config}
-			runOnHost, requiresApproval := tool.shouldRunOnHost(tt.command)
+			runOnHost, requiresApproval := shouldRunOnHost(tt.config, tt.command)
 
 			assert.Equal(t, tt.wantRunOnHost, runOnHost, "runOnHost mismatch")
 			assert.Equal(t, tt.wantNeedsApproval, requiresApproval, "requiresApproval mismatch")
@@ -735,7 +724,7 @@ func TestHostCommandApprovalChannel(t *testing.T) {
 
 // TestReadFileToolPathValidation tests that read_file validates paths are within project
 func TestReadFileToolPathValidation(t *testing.T) {
-	tool := ReadFileTool{}
+	tool := shogunate.ReadFileTool{}
 	ctx := context.Background()
 
 	tests := []struct {
@@ -790,7 +779,7 @@ func TestReadFileToolPathValidation(t *testing.T) {
 
 // TestListDirectoryToolPathValidation tests that list_files validates paths are within project
 func TestListDirectoryToolPathValidation(t *testing.T) {
-	tool := ListDirectoryTool{}
+	tool := shogunate.ListDirectoryTool{}
 	ctx := context.Background()
 
 	tests := []struct {
@@ -845,7 +834,7 @@ func TestListDirectoryToolPathValidation(t *testing.T) {
 
 // TestReadManyFilesToolPathValidation tests that read_many_files validates paths are within project
 func TestReadManyFilesToolPathValidation(t *testing.T) {
-	tool := ReadManyFilesTool{}
+	tool := shogunate.ReadManyFilesTool{}
 	ctx := context.Background()
 
 	// Create a temporary test file in the project
@@ -916,7 +905,7 @@ func TestSecurityDemonstration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("ReadFile security", func(t *testing.T) {
-		tool := ReadFileTool{}
+		tool := shogunate.ReadFileTool{}
 
 		// Test 1: Project file should work
 		t.Run("project file allowed", func(t *testing.T) {
@@ -949,7 +938,7 @@ func TestSecurityDemonstration(t *testing.T) {
 	})
 
 	t.Run("ListFiles security", func(t *testing.T) {
-		tool := ListDirectoryTool{}
+		tool := shogunate.ListDirectoryTool{}
 
 		// Test 1: Project directory should work
 		t.Run("project directory allowed", func(t *testing.T) {
@@ -982,7 +971,7 @@ func TestSecurityDemonstration(t *testing.T) {
 	})
 
 	t.Run("ReadManyFiles security", func(t *testing.T) {
-		tool := ReadManyFilesTool{}
+		tool := shogunate.ReadManyFilesTool{}
 
 		// Test: System files should be filtered out
 		t.Run("system files filtered", func(t *testing.T) {

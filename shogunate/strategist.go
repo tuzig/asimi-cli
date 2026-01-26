@@ -2,35 +2,21 @@ package shogunate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"log/slog"
-	"time"
 
 	"github.com/afittestide/asimi/storage"
-	"gorm.io/gorm"
+	"github.com/tmc/langchaingo/llms"
 )
 
 // --- Minister ---
 
-// StrategistPrompt defines the Strategist's identity and capabilities
-const StrategistPrompt = `You are the Strategist (兵部, Bīngbù). Your domain is strategy and sequence.
+// StrategistRole defines the Strategist's identity and capabilities
+const StrategistRole = `You are the Strategist (兵部, Bīngbù). Your domain is strategy and sequence.
 
-When the Ritual Guard summons you for Planning, you decompose the edict into executable ling (令, task orders) with clear dependencies. You enforce temporal order: no forging until planning is complete.
+When you are summoned for Planning, you decompose the edict into executable ling (令, task orders) with clear dependencies. You enforce temporal order: no forging until planning is complete.
 
 Speak in milestones and dependency graphs. You are the planner of the court.
-
-# Tools
-
-## Shogunate Tools
-- **insert_ling**: Create a new task order (ling) with description and dependencies
-- **list_ling**: List all ling for an edict to see current decomposition
-- **update_ling_status**: Update ling status (pending, in_progress, completed, blocked)
-- **request_zhengming**: Ask the Ruler for clarification when requirements are ambiguous
-
-## Standard Tools (read-only access)
-- **read_file**: Read file contents to understand existing code
-- **list_directory**: Explore project structure
-- **read_many_files**: Read multiple files at once for context
 
 CRITICAL RULES:
 - If the Ruler's intent is ambiguous, invoke Zhengming—do not guess
@@ -41,19 +27,22 @@ CRITICAL RULES:
 
 // Strategist decomposes edicts into executable ling (令, task orders)
 type Strategist struct {
-	MinisterBase          // embedded base for database access and session creation
-	llmClient    LLMClient // local LLM client for planning (distinct from MinisterBase.llm)
+	MinisterBase // embedded base for database access and session creation
+	tasks        chan *TaskEnvelope
 }
 
 // NewStrategist creates a new Strategist minister
-func NewStrategist(db *gorm.DB, llm LLMClient, logger *slog.Logger) *Strategist {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func NewStrategist(base MinisterBase) *Strategist {
+	base.ministerID = "strategist"
 	return &Strategist{
-		MinisterBase: MinisterBase{db: db, ministerID: "strategist", logger: logger},
-		llmClient:    llm,
+		MinisterBase: base,
+		tasks:        make(chan *TaskEnvelope, 10),
 	}
+}
+
+// Tasks returns the channel for task submission
+func (s *Strategist) Tasks() chan<- *TaskEnvelope {
+	return s.tasks
 }
 
 // ID returns the minister identifier
@@ -63,13 +52,22 @@ func (s *Strategist) ID() string {
 
 // Role returns the Strategist's role identity text
 func (s *Strategist) Role() string {
-	return StrategistPrompt
+	return StrategistRole
 }
 
 // Tools returns the Strategist's LLM tools for interactive sessions
 func (s *Strategist) Tools(notify NotifyFunc) []Tool {
-	// TODO: Implement Strategist tools (insert_ling, list_ling, update_ling_status)
-	return []Tool{}
+	return []Tool{
+		// Ling management tools
+		&InsertLingTool{strategist: s},
+		&ListLingTool{strategist: s},
+		&UpdateLingStatusTool{strategist: s},
+		// Read-only filesystem tools for understanding the codebase
+		ReadFileTool{},
+		ListDirectoryTool{},
+		ReadManyFilesTool{},
+		GrepTool{},
+	}
 }
 
 // --- Database Methods ---
@@ -138,8 +136,8 @@ func (s *Strategist) GetEdictsInPlanningPhase() ([]storage.Edict, error) {
 
 // --- Execute Logic ---
 
-// Execute runs the Strategist's planning logic for an edict
-func (s *Strategist) Execute(ctx context.Context, edictID string) (bool, error) {
+// execute runs the Strategist's planning logic for an edict (internal method)
+func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) {
 	// Check if ling already exist (idempotency)
 	exists, err := s.LingExistsForEdict(edictID)
 	if err != nil {
@@ -208,7 +206,11 @@ func (s *Strategist) decompose(ctx context.Context, edict *storage.Edict) ([]sto
 
 	// Use LLM to decompose
 	prompt := fmt.Sprintf("Decompose this task into 3-7 atomic, testable steps:\n\n%s", edict.RenIntent)
-	response, err := s.llmClient.Generate(ctx, StrategistPrompt, prompt)
+	messages := []llms.MessageContent{
+		llms.TextParts(llms.ChatMessageTypeSystem, StrategistRole),
+		llms.TextParts(llms.ChatMessageTypeHuman, prompt),
+	}
+	resp, err := s.llm.GenerateContent(ctx, messages)
 	if err != nil {
 		s.logger.Warn("LLM decomposition failed, using fallback", "error", err)
 		return []storage.Ling{{
@@ -217,6 +219,7 @@ func (s *Strategist) decompose(ctx context.Context, edict *storage.Edict) ([]sto
 			Status:      storage.LingPending,
 		}}, nil
 	}
+	response := resp.Choices[0].Content
 
 	// Parse LLM response into ling
 	// For now, treat response as a single ling
@@ -269,56 +272,257 @@ func (s *Strategist) validateDependencies(lingList []storage.Ling) error {
 	return nil
 }
 
-// Run starts the Strategist's polling loop for edicts in planning phase
-func (s *Strategist) Run(ctx context.Context, pollInterval time.Duration) {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	s.logger.Info("strategist started", "poll_interval", pollInterval)
+// Run starts the Strategist's task processing loop
+func (s *Strategist) Run(ctx context.Context) {
+	s.logger.Info("strategist started, awaiting tasks")
 
 	for {
 		select {
 		case <-ctx.Done():
 			s.logger.Info("strategist stopped")
 			return
-		case <-ticker.C:
-			s.pollAndExecute(ctx)
+		case env := <-s.tasks:
+			s.processTask(ctx, env)
 		}
 	}
 }
 
-// pollAndExecute checks for edicts needing planning and processes them
-func (s *Strategist) pollAndExecute(ctx context.Context) {
-	edicts, err := s.GetEdictsInPlanningPhase()
+// processTask handles a single task envelope
+func (s *Strategist) processTask(ctx context.Context, env *TaskEnvelope) {
+	s.logger.Info("strategist processing task",
+		"edict_id", env.EdictID,
+		"task", env.Task)
+
+	// Execute the planning logic
+	sealed, err := s.execute(ctx, env.EdictID)
+
+	// Send reply back to Chancellor
+	reply := &TaskReply{
+		EdictID:    env.EdictID,
+		MinisterID: s.ID(),
+		Task:       env.Task,
+		Sealed:     sealed,
+		Error:      err,
+	}
+
+	if sealed {
+		reply.Output = "planning complete"
+		// Transition to forging phase
+		if phaseErr := s.UpdatePhase(env.EdictID, storage.PhaseForging); phaseErr != nil {
+			s.logger.Error("failed to transition to forging", "edict_id", env.EdictID, "error", phaseErr)
+		}
+	}
+
+	// Send reply (non-blocking)
+	select {
+	case env.ReplyChan <- reply:
+	default:
+		s.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
+	}
+}
+
+// --- Strategist Tools ---
+
+// InsertLingTool creates a new ling (task order) for an edict
+type InsertLingTool struct {
+	strategist *Strategist
+}
+
+func (t *InsertLingTool) Name() string { return "insert_ling" }
+
+func (t *InsertLingTool) Description() string {
+	return "Creates a new ling (task order) for an edict. The input should be a JSON object with 'edict_id', 'description', and optionally 'dependencies' (array of ling IDs that must complete first)."
+}
+
+func (t *InsertLingTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		EdictID      string   `json:"edict_id"`
+		Description  string   `json:"description"`
+		Dependencies []string `json:"dependencies,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.EdictID == "" {
+		return "", fmt.Errorf("edict_id is required")
+	}
+	if params.Description == "" {
+		return "", fmt.Errorf("description is required")
+	}
+
+	ling := &storage.Ling{
+		EdictID:      params.EdictID,
+		Description:  params.Description,
+		Dependencies: storage.StringArray(params.Dependencies),
+		Status:       storage.LingPending,
+	}
+
+	if err := t.strategist.InsertLing(ling); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Created ling %s for edict %s", ling.LingID, params.EdictID), nil
+}
+
+func (t *InsertLingTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"edict_id": map[string]any{
+				"type":        "string",
+				"description": "The edict ID this ling belongs to",
+			},
+			"description": map[string]any{
+				"type":        "string",
+				"description": "Clear, atomic description of the task",
+			},
+			"dependencies": map[string]any{
+				"type":        "array",
+				"description": "Array of ling IDs that must complete before this one",
+				"items":       map[string]any{"type": "string"},
+			},
+		},
+		"required": []string{"edict_id", "description"},
+	}
+}
+
+func (t *InsertLingTool) Format(input, result string, err error) string {
 	if err != nil {
-		s.logger.Error("failed to poll planning edicts", "error", err)
-		return
+		return fmt.Sprintf("Insert Ling: Error: %v\n", err)
+	}
+	return fmt.Sprintf("Insert Ling: %s\n", result)
+}
+
+// ListLingTool lists all ling for an edict
+type ListLingTool struct {
+	strategist *Strategist
+}
+
+func (t *ListLingTool) Name() string { return "list_ling" }
+
+func (t *ListLingTool) Description() string {
+	return "Lists all ling (task orders) for an edict. The input should be a JSON object with 'edict_id'."
+}
+
+func (t *ListLingTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		EdictID string `json:"edict_id"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.EdictID == "" {
+		return "", fmt.Errorf("edict_id is required")
 	}
 
-	for _, edict := range edicts {
-		// Check for pending zhengming before processing
-		pending, err := s.IsZhengmingPending(edict.EdictID)
-		if err != nil {
-			s.logger.Error("failed to check zhengming", "edict_id", edict.EdictID, "error", err)
-			continue
-		}
-		if pending {
-			continue
-		}
+	lingList, err := t.strategist.GetLingForEdict(params.EdictID)
+	if err != nil {
+		return "", err
+	}
 
-		sealed, err := s.Execute(ctx, edict.EdictID)
-		if err != nil {
-			s.logger.Error("failed to execute planning", "edict_id", edict.EdictID, "error", err)
-			continue
-		}
-		if sealed {
-			// Transition to forging phase
-			if err := s.UpdatePhase(edict.EdictID, storage.PhaseForging); err != nil {
-				s.logger.Error("failed to transition to forging", "edict_id", edict.EdictID, "error", err)
-				continue
-			}
-			s.logger.Info("planning phase sealed, transitioning to forging", "edict_id", edict.EdictID)
-		}
+	if len(lingList) == 0 {
+		return "No ling found for this edict", nil
+	}
+
+	result, err := json.MarshalIndent(lingList, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to format ling list: %w", err)
+	}
+	return string(result), nil
+}
+
+func (t *ListLingTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"edict_id": map[string]any{
+				"type":        "string",
+				"description": "The edict ID to list ling for",
+			},
+		},
+		"required": []string{"edict_id"},
 	}
 }
 
+func (t *ListLingTool) Format(input, result string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("List Ling: Error: %v\n", err)
+	}
+	return fmt.Sprintf("List Ling: %s\n", result)
+}
+
+// UpdateLingStatusTool updates the status of a ling
+type UpdateLingStatusTool struct {
+	strategist *Strategist
+}
+
+func (t *UpdateLingStatusTool) Name() string { return "update_ling_status" }
+
+func (t *UpdateLingStatusTool) Description() string {
+	return "Updates the status of a ling. Valid statuses: pending, in_progress, completed, blocked. The input should be a JSON object with 'ling_id' and 'status'."
+}
+
+func (t *UpdateLingStatusTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		LingID string `json:"ling_id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.LingID == "" {
+		return "", fmt.Errorf("ling_id is required")
+	}
+	if params.Status == "" {
+		return "", fmt.Errorf("status is required")
+	}
+
+	// Validate status
+	validStatuses := map[string]storage.LingStatus{
+		"pending":     storage.LingPending,
+		"in_progress": storage.LingInProgress,
+		"completed":   storage.LingCompleted,
+		"blocked":     storage.LingBlocked,
+	}
+	newStatus, ok := validStatuses[params.Status]
+	if !ok {
+		return "", fmt.Errorf("invalid status: %s (valid: pending, in_progress, completed, blocked)", params.Status)
+	}
+
+	result := t.strategist.db.Model(&storage.Ling{}).
+		Where("ling_id = ?", params.LingID).
+		Update("status", newStatus)
+	if result.Error != nil {
+		return "", fmt.Errorf("failed to update ling status: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return "", fmt.Errorf("ling not found: %s", params.LingID)
+	}
+
+	return fmt.Sprintf("Updated ling %s status to %s", params.LingID, params.Status), nil
+}
+
+func (t *UpdateLingStatusTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"ling_id": map[string]any{
+				"type":        "string",
+				"description": "The ling ID to update",
+			},
+			"status": map[string]any{
+				"type":        "string",
+				"description": "New status: pending, in_progress, completed, or blocked",
+				"enum":        []string{"pending", "in_progress", "completed", "blocked"},
+			},
+		},
+		"required": []string{"ling_id", "status"},
+	}
+}
+
+func (t *UpdateLingStatusTool) Format(input, result string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("Update Ling Status: Error: %v\n", err)
+	}
+	return fmt.Sprintf("Update Ling Status: %s\n", result)
+}

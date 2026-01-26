@@ -10,6 +10,8 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -151,7 +153,12 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			result, err := hostRun(ctx, RunShellCommandInput{
+			hostRunner := GetHostRunner()
+			if hostRunner == nil {
+				slog.Debug("Host runner not available, skipping image removal")
+				return nil
+			}
+			result, err := hostRunner.Run(ctx, runners.Input{
 				Command:        fmt.Sprintf("podman rmi %s 2>/dev/null || true", imageName),
 				Description:    "Removing container image",
 				BypassApproval: true,
@@ -225,7 +232,11 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
 
-			result, err := hostRun(ctx, RunShellCommandInput{
+			hostRunner := GetHostRunner()
+			if hostRunner == nil {
+				return w.Retry("❌ Host runner not available")
+			}
+			result, err := hostRunner.Run(ctx, runners.Input{
 				Command:        "just test",
 				Description:    "Running tests on host",
 				BypassApproval: true,
@@ -267,7 +278,11 @@ Read the relevant files, understand the error, and make the necessary correction
 			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 			defer cancel()
 
-			result, err := hostRun(ctx, RunShellCommandInput{
+			hostRunner := GetHostRunner()
+			if hostRunner == nil {
+				return w.Retry("❌ Host runner not available")
+			}
+			result, err := hostRunner.Run(ctx, runners.Input{
 				Command:        "just build-sandbox",
 				Description:    "Building sandbox container",
 				BypassApproval: true})
@@ -313,7 +328,7 @@ Common issues include missing packages, incorrect base images, or syntax errors.
 			w.ReportProgress("Running smoke test in container...")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			runner := getShellRunner()
+			runner := GetRunner()
 			if runner == nil {
 				return w.Retry("❌ Container runner not available")
 			}
@@ -321,7 +336,7 @@ Common issues include missing packages, incorrect base images, or syntax errors.
 				return w.Retry("❌ failed to bring the container up up")
 			}
 
-			result, err := runner.Run(ctx, RunShellCommandInput{
+			result, err := runner.Run(ctx, runners.Input{
 				Command:        "uname",
 				Description:    "Running smoke test in container",
 				BypassApproval: true,
@@ -339,12 +354,12 @@ Common issues include missing packages, incorrect base images, or syntax errors.
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
 
-			runner := getShellRunner()
+			runner := GetRunner()
 			if runner == nil {
 				return w.Retry("❌ Container runner not available")
 			}
 
-			result, err := runner.Run(ctx, RunShellCommandInput{
+			result, err := runner.Run(ctx, runners.Input{
 				Command:        "just test",
 				Description:    "Running tests in container",
 				BypassApproval: true,
@@ -393,13 +408,18 @@ Please fix the issue. You may need to update:
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			for _, file := range filesToStage {
-				result, err := hostRun(ctx, RunShellCommandInput{
-					Command:     fmt.Sprintf("git add %s", file),
-					Description: fmt.Sprintf("Staging %s", file),
-				})
-				if err != nil || result.ExitCode != "0" {
-					slog.Warn("Failed to stage file", "file", file, "error", err, "exitCode", result.ExitCode)
+			hostRunner := GetHostRunner()
+			if hostRunner == nil {
+				slog.Warn("Host runner not available for git staging")
+			} else {
+				for _, file := range filesToStage {
+					result, err := hostRunner.Run(ctx, runners.Input{
+						Command:     fmt.Sprintf("git add %s", file),
+						Description: fmt.Sprintf("Staging %s", file),
+					})
+					if err != nil || result.ExitCode != "0" {
+						slog.Warn("Failed to stage file", "file", file, "error", err, "exitCode", result.ExitCode)
+					}
 				}
 			}
 
@@ -450,14 +470,14 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 			go func() {
 				defer close(responseChan)
 
-				if model.shogunate.Session() == nil {
+				if model.shogunate.Session(model.activeEdictID) == nil {
 					slog.Warn("No session available for workflow prompt")
 					responseChan <- ""
 					return
 				}
 
 				// Use AskWithStreaming to show model output in the UI while blocking
-				response, err := model.shogunate.AskWithStreaming(ctx, prompt, nil)
+				response, err := model.shogunate.AskWithStreaming(ctx, model.activeEdictID, prompt, nil)
 				if err != nil {
 					slog.Error("Workflow prompt failed", "error", err)
 					responseChan <- ""
@@ -470,11 +490,11 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 			return responseChan
 		})
 
-		// Allow host fallback during init
-		runner := getShellRunner()
-		if runner != nil {
-			runner.AllowFallback(true)
-			defer runner.AllowFallback(false)
+		// Allow host fallback during init (only applicable to podman runner)
+		podmanRunner := GetPodmanRunner()
+		if podmanRunner != nil {
+			podmanRunner.AllowFallback(true)
+			defer podmanRunner.AllowFallback(false)
 		}
 
 		// Run the workflow
@@ -489,7 +509,7 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 
 		// Build success message
 		stagedFiles := w.Get("stagedFiles")
-		msg := NewChatMsgBuilder(systemPrefix)
+		msg := utils.NewMsgBlockBuilder(systemPrefix)
 		msg.WriteString(checkPrefix).WriteLn(" Initialization complete!")
 		msg.WriteLn(stagedFiles + " staged")
 		msg.WriteLn("New session started. Review project's recipes with `:!just -l`")
@@ -501,9 +521,9 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 	}
 }
 
-// handleInitCommandWithWorkflow is the workflow-based implementation of :init
-func handleInitCommandWithWorkflow(model *TUIModel, args []string) tea.Cmd {
-	if model.shogunate.Session() == nil {
+// handleInitCommand is the workflow-based implementation of :init
+func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
+	if model.shogunate.Session(model.activeEdictID) == nil {
 		return func() tea.Msg {
 			return showSystemMsg("No model connection. Use :models to configure a model and start chatting.")
 		}
@@ -528,7 +548,7 @@ func handleInitCommandWithWorkflow(model *TUIModel, args []string) tea.Cmd {
 		missingFiles := checkMissingInfraFiles(agentsFile)
 
 		if len(missingFiles) == 0 && !clearMode {
-			msg := NewChatMsgBuilder(systemPrefix)
+			msg := utils.NewMsgBlockBuilder(systemPrefix)
 			msg.WriteLn("All Asimi's files already exist:")
 			msg.WriteLnf("✓ %s", agentsFile)
 			msg.WriteLn("✓ Justfile")
@@ -545,7 +565,7 @@ func handleInitCommandWithWorkflow(model *TUIModel, args []string) tea.Cmd {
 		if clearMode {
 			initialMsg = systemPrefix + "Starting fresh initialization (clear mode)..."
 		} else {
-			msg := NewChatMsgBuilder(systemPrefix)
+			msg := utils.NewMsgBlockBuilder(systemPrefix)
 			msg.WriteLn("Missing infrastructure files detected:")
 			for _, file := range missingFiles {
 				msg.WriteLnf("✗ %s", file)

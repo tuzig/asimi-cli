@@ -10,6 +10,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 )
 
@@ -219,23 +220,20 @@ func (w *Workflow) AddCmd(name, command, storeAs string) *Workflow {
 			var output string
 			var exitCode string
 
-			runner := getShellRunner()
-			if runner != nil {
-				result, err := runner.Run(ctx, RunShellCommandInput{Command: command, Description: name})
-				if err != nil {
-					return w.Retry(fmt.Sprintf("❌ Command failed: %v", err))
-				}
-				output = result.Output
-				exitCode = result.ExitCode
-			} else {
-				// Fallback to hostRun for safe host execution
-				result, err := hostRun(ctx, RunShellCommandInput{Command: command, Description: name})
-				if err != nil {
-					return w.Retry(fmt.Sprintf("❌ Command failed: %v", err))
-				}
-				output = result.Output
-				exitCode = result.ExitCode
+			runner := GetRunner()
+			if runner == nil {
+				// Fallback to host runner
+				runner = GetHostRunner()
 			}
+			if runner == nil {
+				return w.Retry("❌ No shell runner available")
+			}
+			result, err := runner.Run(ctx, runners.Input{Command: command, Description: name})
+			if err != nil {
+				return w.Retry(fmt.Sprintf("❌ Command failed: %v", err))
+			}
+			output = result.Output
+			exitCode = result.ExitCode
 
 			if exitCode != "0" {
 				return w.Retry(fmt.Sprintf("❌ Command failed (exit code: %s): %s", exitCode, output))

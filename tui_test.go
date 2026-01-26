@@ -92,7 +92,7 @@ func newTestModel(t *testing.T) *TUIModel {
 			},
 		},
 	}
-	model.shogunate.SetTestSession(sess)
+	model.activeEdictID = model.shogunate.SetTestSession("", sess)
 	model.ConfigureSession()
 	return model
 }
@@ -1279,13 +1279,13 @@ func TestHistoryRollback_OnSubmit(t *testing.T) {
 
 	// Simulate submitting the historical prompt
 	chatLenBefore := len(chat.Messages)
-	session := model.shogunate.Session()
+	session := model.shogunate.Session(model.activeEdictID)
 	sessionLenBefore := len(session.Messages)
 
 	// We'll test the rollback logic directly
 	if model.historySaved && model.historyCursor < len(model.sessionPromptHistory) {
 		entry := model.sessionPromptHistory[model.historyCursor]
-		model.shogunate.RollbackTo(entry.SessionSnapshot)
+		model.shogunate.RollbackTo(model.activeEdictID, entry.SessionSnapshot)
 		chat.TruncateTo(entry.ChatSnapshot)
 	}
 
@@ -1523,8 +1523,8 @@ func TestStatusComponent_WaitingIndicatorView(t *testing.T) {
 		Model:    "model",
 		Messages: []llms.MessageContent{},
 	}
-	sg.SetTestSession(sess)
-	status.SetShogunate(sg)
+	edictID := sg.SetTestSession("", sess)
+	status.SetShogunate(sg, edictID)
 
 	// View without waiting
 	middleSection := status.renderMiddleSection()
@@ -1669,7 +1669,7 @@ func TestSessionResume_ResetsHistoryState(t *testing.T) {
 
 	// Verify session was properly set
 	require.True(t, updatedModel.sessionActive)
-	require.Equal(t, "resumed-session-id", updatedModel.shogunate.Session().ID)
+	require.Equal(t, "resumed-session-id", updatedModel.shogunate.Session(updatedModel.activeEdictID).ID)
 
 	// Verify chat was rebuilt with resumed messages
 	chat := updatedModel.content.Chat
@@ -1729,7 +1729,7 @@ func TestHappyFlowE2E(t *testing.T) {
 		Model:    "mock-model",
 		Messages: []llms.MessageContent{},
 	}
-	model.shogunate.SetTestSession(sess)
+	model.activeEdictID = model.shogunate.SetTestSession("", sess)
 	model.ConfigureSession()
 
 	// Create a new test model with a large terminal size

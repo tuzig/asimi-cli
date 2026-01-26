@@ -12,3 +12,6 @@ worktrees/
 notes/
 tmp/
 dist/
+# Test fixtures and temporary test directories
+tests/demo1/
+tests/integration/.asimi-integration-*/

@@ -16,7 +16,6 @@ import (
 
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/storage"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/prompts"
 	lctools "github.com/tmc/langchaingo/tools"
@@ -52,24 +51,6 @@ type ModelClientFunc func(config *internalconfig.LLMConfig) (llms.Model, error)
 // ToolsBuilderFunc builds tools from configuration
 type ToolsBuilderFunc func(config *SessionConfig) ([]llms.Tool, map[string]interface{})
 
-// Tool input types used by Session for context tracking
-
-// ReadFileInput represents input for read_file tool
-type ReadFileInput struct {
-	Path string `json:"path"`
-}
-
-// ReadManyFilesInput represents input for read_many_files tool
-type ReadManyFilesInput struct {
-	Paths []string `json:"paths"`
-}
-
-// WriteFileInput represents input for write_file tool
-type WriteFileInput struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
 // Stream notification message types
 
 // StreamChunkMsg contains a streaming text chunk from the LLM
@@ -79,7 +60,9 @@ type StreamChunkMsg string
 type StreamReasoningChunkMsg string
 
 // StreamStartMsg signals that streaming has begun
-type StreamStartMsg struct{}
+type StreamStartMsg struct {
+	EdictID string // Edict ID for conversation continuity
+}
 
 // StreamCompleteMsg signals that streaming has completed successfully
 type StreamCompleteMsg struct{}
@@ -104,7 +87,8 @@ type PromptReply struct {
 	Type    PromptReplyType
 	Content string
 	Error   error
-	Data    any // For Zhengming requests, tool results, etc.
+	Data    any    // For Zhengming requests, tool results, etc.
+	EdictID string // Edict ID for this response (set on ReplyStreamStart)
 }
 
 // PromptReplyType identifies the type of reply
@@ -149,9 +133,6 @@ type Session struct {
 	accumulatedContent      strings.Builder           `json:"-"`
 	config                  *internalconfig.LLMConfig `json:"-"`
 	startTime               time.Time                 `json:"-"`
-
-	// Shogunate Forge for envelope-based tool execution
-	forge *Forge `json:"-"`
 
 	// Token counts - updated when messages/context changes
 	systemPromptTokens int `json:"-"`
@@ -470,31 +451,6 @@ func (s *Session) GetNotify() NotifyFunc {
 // GetScheduler returns the session's tool scheduler.
 func (s *Session) GetScheduler() *CoreToolScheduler {
 	return s.scheduler
-}
-
-// SetForge sets the Shogunate Forge for envelope-based tool execution.
-// It also passes the Session's tools to the Forge for execution.
-func (s *Session) SetForge(forge *Forge) {
-	s.forge = forge
-
-	// Pass Session's tools to the Forge
-	// The tools in toolCatalog are concrete types that implement Tool
-	if forge != nil && len(s.toolCatalog) > 0 {
-		forgeTools := make(map[string]Tool)
-		for name, tool := range s.toolCatalog {
-			if st, ok := tool.(Tool); ok {
-				forgeTools[name] = st
-			}
-		}
-		if len(forgeTools) > 0 {
-			forge.SetTools(forgeTools)
-		}
-	}
-}
-
-// GetForge returns the Shogunate Forge if set.
-func (s *Session) GetForge() *Forge {
-	return s.forge
 }
 
 // buildPromptWithContext builds a prompt that includes all file content
@@ -895,140 +851,45 @@ func hasToolCallResponse(toolMessages []llms.MessageContent, toolCallID string) 
 	return false
 }
 
+// toolCallIDCounter is used to generate unique tool call IDs when provider doesn't supply one
+var toolCallIDCounter int64
+
+// ensureToolCallID returns the tool call ID if valid, or generates a synthetic one.
+// Some providers (e.g., Minimax) may return empty tool call IDs.
+func ensureToolCallID(tc *llms.ToolCall, index int) string {
+	if tc.ID != "" {
+		return tc.ID
+	}
+	// Generate synthetic ID for providers that don't supply one
+	toolCallIDCounter++
+	syntheticID := fmt.Sprintf("synthetic_%d_%d", time.Now().UnixNano(), toolCallIDCounter)
+	tc.ID = syntheticID
+	slog.Warn("provider returned empty tool_call_id, using synthetic ID",
+		"index", index,
+		"tool", tc.FunctionCall.Name,
+		"synthetic_id", syntheticID)
+	return syntheticID
+}
+
 // processToolCalls handles executing tool calls and building response messages.
-// When Forge is set, uses the envelope pattern for tool execution with audit trail.
-// Otherwise falls back to direct scheduler execution.
 func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCall) ([]llms.MessageContent, bool) {
-	// Use Forge envelope pattern if available
-	if s.forge != nil {
-		return s.processToolCallsViaForge(ctx, toolCalls)
-	}
-
-	// Fallback to direct execution
-	return s.processToolCallsDirect(ctx, toolCalls)
-}
-
-// forgeReplyTimeout is the maximum time to wait for a single tool execution reply.
-const forgeReplyTimeout = 5 * time.Minute
-
-// processToolCallsViaForge executes tool calls using the Forge envelope pattern.
-func (s *Session) processToolCallsViaForge(ctx context.Context, toolCalls []llms.ToolCall) ([]llms.MessageContent, bool) {
-	// Create reply channel for this batch
-	replyChan := make(chan *LingResult, len(toolCalls))
-
-	// Track valid tool calls sent
-	sentCount := 0
-	toolCallIDs := make(map[int]string) // index -> tool call ID for timeout error messages
-
-	for _, tc := range toolCalls {
-		if tc.FunctionCall == nil {
-			continue
-		}
-		name := tc.FunctionCall.Name
-		argsJSON := tc.FunctionCall.Arguments
-
-		// Check for tool call loops
-		if s.checkToolCallLoop(name, argsJSON) {
-			// Still need to send something so we can collect all results
-			slog.Warn("tool call loop detected", "tool", name, "count", s.toolCallRepetitionCount)
-		}
-
-		// Generate a unique Ling ID
-		lingID := GenerateID("ling", s.ID, tc.ID, name)
-
-		slog.Debug("sending envelope to forge", "tool", name, "ling_id", lingID)
-
-		env := &LingEnvelope{
-			Ling: &storage.Ling{
-				LingID:     lingID,
-				ToolName:   name,
-				ToolInput:  storage.JSON(argsJSON),
-				ToolCallID: tc.ID,
-			},
-			ReplyChan: replyChan,
-		}
-		s.forge.AddLing() <- env
-		toolCallIDs[sentCount] = tc.ID
-		sentCount++
-	}
-
-	// Collect results (blocks until all received or timeout)
-	toolMessages := make([]llms.MessageContent, 0, sentCount)
-	for i := 0; i < sentCount; i++ {
-		select {
-		case <-ctx.Done():
-			// Context cancelled - add abort responses for remaining
-			slog.Debug("context cancelled during forge execution", "received", i, "total", sentCount)
-			for j := i; j < sentCount; j++ {
-				// Drain any remaining results
-				select {
-				case result := <-replyChan:
-					var content string
-					if result.Error != nil {
-						content = fmt.Sprintf("error: %v (aborted)", result.Error)
-					} else {
-						content = result.Output + " (session aborted)"
-					}
-					toolMessages = append(toolMessages, llms.MessageContent{
-						Role: llms.ChatMessageTypeTool,
-						Parts: []llms.ContentPart{llms.ToolCallResponse{
-							ToolCallID: result.Ling.ToolCallID,
-							Name:       result.Ling.ToolName,
-							Content:    content,
-						}},
-					})
-				default:
-					// No more results available
-				}
-			}
-			return toolMessages, true
-
-		case <-time.After(forgeReplyTimeout):
-			// Timeout waiting for Forge reply - likely Forge crashed or deadlocked
-			slog.Error("forge reply timeout", "received", i, "total", sentCount, "timeout", forgeReplyTimeout)
-			// Add timeout error for remaining tool calls
-			for j := i; j < sentCount; j++ {
-				toolMessages = append(toolMessages, llms.MessageContent{
-					Role: llms.ChatMessageTypeTool,
-					Parts: []llms.ContentPart{llms.ToolCallResponse{
-						ToolCallID: toolCallIDs[j],
-						Name:       "unknown",
-						Content:    fmt.Sprintf("error: forge reply timeout after %v", forgeReplyTimeout),
-					}},
-				})
-			}
-			return toolMessages, true
-
-		case result := <-replyChan:
-			var content string
-			if result.Error != nil {
-				content = fmt.Sprintf("error: %v", result.Error)
-			} else {
-				content = result.Output
-			}
-			toolMessages = append(toolMessages, llms.MessageContent{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{llms.ToolCallResponse{
-					ToolCallID: result.Ling.ToolCallID,
-					Name:       result.Ling.ToolName,
-					Content:    content,
-				}},
-			})
-		}
-	}
-
-	return toolMessages, false
-}
-
-// processToolCallsDirect executes tool calls directly via scheduler (legacy path).
-func (s *Session) processToolCallsDirect(ctx context.Context, toolCalls []llms.ToolCall) ([]llms.MessageContent, bool) {
 	toolMessages := make([]llms.MessageContent, 0, len(toolCalls))
 
-	for i, tc := range toolCalls {
+	for i := range toolCalls {
+		tc := &toolCalls[i] // Use pointer to allow modifying the ID
 		if tc.FunctionCall == nil {
 			continue
 		}
+
 		name := tc.FunctionCall.Name
+		// Skip malformed tool calls with empty names (Minimax streaming artifact)
+		if name == "" {
+			slog.Debug("skipping tool call with empty name", "index", i)
+			continue
+		}
+
+		// Ensure tool call has a valid ID (some providers like Minimax may not provide one)
+		ensureToolCallID(tc, i)
 		argsJSON := tc.FunctionCall.Arguments
 
 		// Check for context cancellation before processing each tool call
@@ -1087,7 +948,7 @@ func (s *Session) processToolCallsDirect(ctx context.Context, toolCalls []llms.T
 		}
 
 		// Execute tool and add response
-		response := s.executeToolCall(ctx, tool, tc, argsJSON)
+		response := s.executeToolCall(ctx, tool, *tc, argsJSON)
 		slog.Debug("Called a tool", "tool", name, "args", argsJSON)
 		toolMessages = append(toolMessages, llms.MessageContent{
 			Role:  llms.ChatMessageTypeTool,
@@ -1314,11 +1175,26 @@ func (s *Session) AskStream(ctx context.Context, prompt string, reply chan<- Pro
 		// Ensure channel close on exit
 		defer close(reply)
 
+		// Set up scheduler to send tool call notifications through the reply channel
+		if s.scheduler != nil {
+			s.scheduler.SetNotify(func(msg any) {
+				switch m := msg.(type) {
+				case ToolCallScheduledMsg, ToolCallExecutingMsg, ToolCallSuccessMsg, ToolCallErrorMsg, ToolCallAbortedMsg:
+					reply <- PromptReply{Type: ReplyToolCall, Data: m}
+				case StreamReasoningChunkMsg:
+					// Forward reasoning chunks through the legacy notify if needed
+					if s.notify != nil {
+						s.notify(m)
+					}
+				}
+			})
+		}
+
 		// Build prompt with context if available and add to messages
 		s.prepareUserMessage(prompt, contextFiles)
 
-		// Signal streaming has started
-		reply <- PromptReply{Type: ReplyStreamStart, Data: edictID}
+		// Signal streaming has started with edict ID
+		reply <- PromptReply{Type: ReplyStreamStart, EdictID: edictID}
 
 		// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
 		// Cap at a few iterations to avoid infinite loops.
