@@ -66,10 +66,14 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 	w.Set("projectName", projectName)
 	w.Set("projectSlug", slug)
 
-	w.AddGate("pre-checks", func(w *Workflow) bool {
+	w.AddCheck("pre-checks", func(w *Workflow) StepResult {
 		w.ReportProgress("Checking for uncommitted changes...")
-		return !hasUncommittedChanges()
-	}, "Please commit or stash your changes and run again").
+		if hasUncommittedChanges() {
+			w.Abort()
+			return StepResult{Message: "Please commit or stash your changes and run again"}
+		}
+		return w.Next("✓ No uncommitted changes")
+	}).
 		AddRun("setup-directories", func(w *Workflow) error {
 			if err := os.MkdirAll(".agents/sandbox", 0o755); err != nil {
 				return fmt.Errorf("error creating .agents directory: %v", err)
@@ -510,11 +514,6 @@ func handleInitCommandWithWorkflow(model *TUIModel, args []string) tea.Cmd {
 	}
 
 	return func() tea.Msg {
-		// Check for uncommitted changes before proceeding
-		if hasUncommittedChanges() {
-			return showSystemMsg("init failed: Please commit or stash your changes and run again")
-		}
-
 		// Check if user wants to clear and regenerate everything
 		clearMode := len(args) > 0 && args[0] == "clear"
 
