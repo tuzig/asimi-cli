@@ -19,7 +19,7 @@ run:
 
 # Run all tests
 test:
-    go test -v ./...
+    go test -timeout 1m -v ./...
 
 # Run tests with coverage
 test-coverage:

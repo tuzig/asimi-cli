@@ -653,15 +653,7 @@ func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
 			return showSystemMsg("Not enough conversation history to compact. Continue chatting first.")
 		}
 
-		// Show compacting message
-		if program != nil {
-			msg := NewChatMsgBuilder(systemPrefix)
-			msg.WriteLn("Compacting conversation history...")
-			msg.WriteLn("This may take a moment as we summarize the conversation.")
-			program.Send(showContextMsg{content: msg.String()})
-		}
-
-		// Send the compact request
+		// Send the compact request (message shown in tui.go handler)
 		return compactConversationMsg{}
 	}
 }

@@ -2128,7 +2128,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Add a message to show we're compacting
-		m.content.Chat.AddMessage("🗜️  Compacting conversation history...")
+		compactMsg := NewChatMsgBuilder("🗜️  Compacting conversation history...")
+		compactMsg.WriteLn("This may take a moment as the model summarizes the chat.")
+		m.content.Chat.AddMessage(compactMsg.String())
 
 		// Perform the compaction in a goroutine
 		go func() {
