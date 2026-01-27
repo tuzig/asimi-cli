@@ -87,9 +87,9 @@ type TUIModel struct {
 type ctrlCState int
 
 const (
-	ctrlCIdle         ctrlCState = iota // No pending CTRL-C
-	ctrlCInBurst                        // Receiving CTRL-C events, waiting for quiet period
-	ctrlCWaitingSecond                  // First press completed, waiting for second press
+	ctrlCIdle          ctrlCState = iota // No pending CTRL-C
+	ctrlCInBurst                         // Receiving CTRL-C events, waiting for quiet period
+	ctrlCWaitingSecond                   // First press completed, waiting for second press
 )
 
 type promptHistoryEntry struct {
@@ -507,6 +507,10 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, func() tea.Msg { return ChangeModeMsg{NewMode: "normal"} }
 	}
+	// ESC in Replace mode -> Normal mode
+	if keyStr == "esc" && m.Mode == "replace" {
+		return m, func() tea.Msg { return ChangeModeMsg{NewMode: "normal"} }
+	}
 	// ESC in Normal mode -> Insert mode (issue #70)
 	if keyStr == "esc" && m.prompt.IsViNormalMode() {
 		m.prompt.EnterViInsertMode()
@@ -526,6 +530,11 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle vi mode key bindings when in normal or visual mode
 	if m.Mode == "normal" || m.Mode == "visual" {
 		return m.handleViNormalMode(msg)
+	}
+
+	// Handle replace mode - replace character under cursor with next typed character
+	if m.Mode == "replace" {
+		return m.handleViReplaceMode(msg)
 	}
 
 	// Handle command-line mode
@@ -639,10 +648,12 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// Handle history navigation with arrow keys first
+	// When prompt is empty, always try history navigation
+	promptEmpty := m.prompt.Value() == ""
 	switch key {
 	case "up", "k":
-		// Only handle history navigation if we're on the first line
-		if m.prompt.TextArea.Line() == 0 {
+		// Handle history navigation if prompt is empty or we're on the first line
+		if promptEmpty || m.prompt.TextArea.Line() == 0 {
 			if handled := m.handleHistoryNavigation(-1); handled {
 				return m, nil
 			}
@@ -652,8 +663,9 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt, cmd = m.prompt.Update(msg)
 		return m, cmd
 	case "down", "j":
-		// Only handle history navigation if we're on the last line
-		if m.prompt.TextArea.Line() == m.prompt.TextArea.LineCount()-1 {
+		// Handle history navigation if prompt is empty or we're on the last line
+		lineCount := m.prompt.TextArea.LineCount()
+		if promptEmpty || lineCount == 0 || m.prompt.TextArea.Line() == lineCount-1 {
 			if handled := m.handleHistoryNavigation(1); handled {
 				return m, nil
 			}
@@ -732,12 +744,57 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt.EnterViLearningMode()
 		m.prompt.SetValue("#")
 		return m, func() tea.Msg { return ChangeModeMsg{NewMode: "learning"} }
+	case "r":
+		// Enter replace mode - next character will replace char under cursor
+		if m.prompt.Value() != "" {
+			return m, func() tea.Msg { return ChangeModeMsg{NewMode: "replace"} }
+		}
+		return m, nil
 	default:
 		// Pass other keys to the textarea for navigation
 		var cmd tea.Cmd
 		m.prompt, cmd = m.prompt.Update(msg)
 		return m, cmd
 	}
+}
+
+// handleViReplaceMode handles the replace mode where next character replaces char under cursor
+func (m TUIModel) handleViReplaceMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Only handle printable runes
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+		replacement := msg.Runes[0]
+
+		// Get current value and cursor position
+		value := m.prompt.Value()
+		lineInfo := m.prompt.TextArea.LineInfo()
+		row := m.prompt.TextArea.Line()
+		col := lineInfo.StartColumn + lineInfo.ColumnOffset
+
+		// Convert to absolute position in the string
+		lines := strings.Split(value, "\n")
+		if row >= 0 && row < len(lines) {
+			lineRunes := []rune(lines[row])
+			if col >= 0 && col < len(lineRunes) {
+				// Replace the character at cursor position
+				lineRunes[col] = replacement
+				lines[row] = string(lineRunes)
+				newValue := strings.Join(lines, "\n")
+				m.prompt.SetValue(newValue)
+
+				// Restore cursor position (SetValue resets it)
+				m.prompt.TextArea.SetCursor(0)
+				currentRow := m.prompt.TextArea.Line()
+				for currentRow < row {
+					m.prompt.TextArea.CursorDown()
+					currentRow = m.prompt.TextArea.Line()
+				}
+				m.prompt.TextArea.SetCursor(col)
+			}
+		}
+	}
+
+	// Return to normal mode after any key (including non-printable)
+	return m, func() tea.Msg { return ChangeModeMsg{NewMode: "normal"} }
 }
 
 // handleViCommandLineMode handles key presses when in vi command-line mode

@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestViModeAlwaysEnabled(t *testing.T) {
@@ -91,6 +92,29 @@ func TestViCommandLineModeUsesInsertKeymap(t *testing.T) {
 
 	// Verify that insert mode uses vi insert keymap
 	assert.Equal(t, prompt.viInsertKeyMap, prompt.TextArea.KeyMap, "Insert mode should use vi insert keymap")
+}
+
+func TestViReplaceModeUsesAbsoluteCursorOnWrappedLine(t *testing.T) {
+	model := newTestModel(t)
+
+	// Force soft wrapping in the prompt textarea.
+	model.prompt.SetWidth(12) // textarea width = 10
+	model.prompt.SetHeight(2)
+
+	model.prompt.SetValue("0123456789abcdef")
+	model.prompt.TextArea.SetCursor(12) // wraps to second segment
+
+	lineInfo := model.prompt.TextArea.LineInfo()
+	require.Greater(t, lineInfo.StartColumn, 0, "expected cursor on wrapped segment")
+
+	model.Mode = "replace"
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	require.Equal(t, "0123456789abXdef", updatedModel.prompt.Value())
+	updatedLineInfo := updatedModel.prompt.TextArea.LineInfo()
+	require.Equal(t, 12, updatedLineInfo.StartColumn+updatedLineInfo.ColumnOffset)
 }
 
 func TestViModePlaceholderText(t *testing.T) {
