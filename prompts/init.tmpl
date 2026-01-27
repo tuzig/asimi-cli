@@ -63,6 +63,7 @@ clean-sandbox:
    - End with the following lines:
 
 ```
+RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 COPY Justfile .
 RUN just bootstrap
 RUN just install

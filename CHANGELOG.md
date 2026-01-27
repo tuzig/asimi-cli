@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Supporting `r` key in normal mode to replace character under cursor (#76)
+
 ### Fixed
 
+- Init workflow pre-checks now abort instead of retry when uncommitted changes are detected
+- Skiping gitlinks and symlinks when checking for file changes
 - Fixing :compact showing duplicate "Compacting..." messages (#121)
+- Fixing arrow keys not working in normal mode with empty prompt (#120)
 
 ## [0.4.2] - 2026-01-06
 

@@ -528,11 +528,9 @@ func (m *gitInfoManager) IsRepository() bool {
 func (m *gitInfoManager) HasUncommittedChanges() bool {
 	m.start()
 
-	m.mu.RLock()
-	repo := m.repo
-	m.mu.RUnlock()
-
-	if repo == nil {
+	// Always ensure we have the correct repo for the current directory
+	repo, _, err := m.ensureRepository()
+	if err != nil || repo == nil {
 		return false
 	}
 
