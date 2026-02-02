@@ -321,6 +321,7 @@ func (failingPodmanRunner) RunnerType() string {
 }
 
 func TestValidatePathWithinProject(t *testing.T) {
+	skipIfNotCI(t)
 	// Create a temporary directory to act as project root
 	tempDir := t.TempDir()
 
@@ -400,6 +401,7 @@ func TestValidatePathWithinProject(t *testing.T) {
 }
 
 func TestWriteFileToolPathValidation(t *testing.T) {
+	skipIfNotCI(t)
 	// Create a temporary directory to act as project root
 	tempDir := t.TempDir()
 
@@ -464,6 +466,7 @@ func TestWriteFileToolPathValidation(t *testing.T) {
 }
 
 func TestReplaceTextToolPathValidation(t *testing.T) {
+	skipIfNotCI(t)
 	// Create a temporary directory to act as project root
 	tempDir := t.TempDir()
 
@@ -521,6 +524,7 @@ func TestReplaceTextToolPathValidation(t *testing.T) {
 }
 
 func TestPathValidationWithSymlinks(t *testing.T) {
+	skipIfNotCI(t)
 	// Skip on Windows as symlink behavior is different
 	if os.Getenv("GOOS") == "windows" {
 		t.Skip("Skipping symlink test on Windows")
@@ -651,7 +655,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		{
 			name: "command matches run_on_host and safe_run_on_host",
 			config: &Config{
-				RunShellCommand: RunShellCommandConfig{
+				Sandbox: SandboxConfig{
 					RunOnHost:     []string{`^gh\s.*`},
 					SafeRunOnHost: []string{`^gh\s+(issue|pr)\s+(view|list)\s.*`},
 				},
@@ -663,7 +667,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		{
 			name: "command matches run_on_host but not safe_run_on_host",
 			config: &Config{
-				RunShellCommand: RunShellCommandConfig{
+				Sandbox: SandboxConfig{
 					RunOnHost:     []string{`^gh\s.*`},
 					SafeRunOnHost: []string{`^gh\s+(issue|pr)\s+(view|list)\s.*`},
 				},
@@ -675,7 +679,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		{
 			name: "command does not match run_on_host",
 			config: &Config{
-				RunShellCommand: RunShellCommandConfig{
+				Sandbox: SandboxConfig{
 					RunOnHost:     []string{`^gh\s.*`},
 					SafeRunOnHost: []string{`^gh\s+(issue|pr)\s+(view|list)\s.*`},
 				},
@@ -687,7 +691,7 @@ func TestShouldRunOnHost(t *testing.T) {
 		{
 			name: "podman command requires approval",
 			config: &Config{
-				RunShellCommand: RunShellCommandConfig{
+				Sandbox: SandboxConfig{
 					RunOnHost:     []string{`^podman\s.*`},
 					SafeRunOnHost: []string{},
 				},

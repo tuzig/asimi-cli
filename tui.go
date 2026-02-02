@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	internalconfig "github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -52,6 +55,10 @@ type TUIModel struct {
 	sessionStore *SessionStore
 	db           *storage.DB
 	scheduler    *CoreToolScheduler
+	shogunate    *shogunate.Shogunate
+
+	// Shogunate integration
+	currentEdictID string // Tracks current edict for multi-turn conversations
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -122,7 +129,7 @@ type hostCommandApprovalMsg struct {
 
 // NewTUIModel creates a new TUI model
 // NewTUIModelWithStores creates a new TUI model with provided stores (for fx injection)
-func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *CoreToolScheduler) *TUIModel {
+func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *CoreToolScheduler, shog *shogunate.Shogunate) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
@@ -168,7 +175,7 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 		completionMode:       "",
 		sessionActive:        false,
 		rawMode:              false,
-		configCreated:        ConfigCreated, // Set from global flag
+		configCreated:        GetConfigCreated(), // Set from global flag
 
 		// Command registry
 		commandRegistry: registry,
@@ -178,6 +185,7 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 		sessionStore:             sessionStore,
 		db:                       db,
 		scheduler:                scheduler,
+		shogunate:                shog,
 		waitingForResponse:       false,
 		persistentPromptHistory:  promptHistory,
 		persistentCommandHistory: commandHistory,
@@ -1144,6 +1152,118 @@ func (m *TUIModel) cancelStreaming() {
 	m.streamingCancel = nil
 }
 
+// submitToShogunate sends a prompt to the Chancellor and returns a command that
+// listens for streaming responses and dispatches them as TUI messages.
+func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, contextFiles map[string]string) tea.Cmd {
+	if m.shogunate == nil {
+		return func() tea.Msg {
+			return streamErrorMsg{err: fmt.Errorf("Shogunate not initialized")}
+		}
+	}
+
+	chancellor := m.shogunate.GetMinister("chancellor")
+	if chancellor == nil {
+		return func() tea.Msg {
+			return streamErrorMsg{err: fmt.Errorf("Chancellor not found")}
+		}
+	}
+
+	// Type assert to get the Chancellor with Edicts channel
+	ch, ok := chancellor.(*shogunate.Chancellor)
+	if !ok {
+		return func() tea.Msg {
+			return streamErrorMsg{err: fmt.Errorf("invalid Chancellor type")}
+		}
+	}
+
+	// Create reply channel for streaming responses
+	replyChan := make(chan shogunate.StreamReply, 100)
+
+	// Send edict to Chancellor
+	env := &shogunate.EdictEnvelope{
+		Prompt:       prompt,
+		EdictID:      m.currentEdictID, // Empty for new edict
+		ContextFiles: contextFiles,
+		ReplyChan:    replyChan,
+	}
+
+	// Non-blocking send to Chancellor
+	go func() {
+		ch.Edicts <- env
+	}()
+
+	m.streamingActive = true
+
+	// Return command that listens for responses
+	return m.listenToShogunateReplies(ctx, replyChan)
+}
+
+// listenToShogunateReplies returns a command that processes replies from the Chancellor
+func (m *TUIModel) listenToShogunateReplies(ctx context.Context, replyChan <-chan shogunate.StreamReply) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case <-ctx.Done():
+			return streamInterruptedMsg{partialContent: ""}
+		case reply, ok := <-replyChan:
+			if !ok {
+				// Channel closed, streaming complete
+				return streamCompleteMsg{}
+			}
+
+			switch r := reply.(type) {
+			case shogunate.TextReply:
+				return shogunateTextMsg{text: r.Text, replyChan: replyChan, ctx: ctx}
+			case shogunate.ThoughtReply:
+				return shogunateThoughtMsg{text: r.Text, replyChan: replyChan, ctx: ctx}
+			case shogunate.ToolReply:
+				return shogunateToolMsg{toolID: r.ToolID, toolMsg: r.ToolMsg, replyChan: replyChan, ctx: ctx}
+			case shogunate.ErrorReply:
+				return streamErrorMsg{err: r.Error}
+			case shogunate.DoneReply:
+				return streamCompleteMsg{}
+			case shogunate.ContextReply:
+				// Handle context updates (e.g., edictID)
+				if r.Key == "edict_id" {
+					if id, ok := r.Value.(string); ok {
+						return shogunateContextMsg{key: r.Key, value: id, replyChan: replyChan, ctx: ctx}
+					}
+				}
+				return m.listenToShogunateReplies(ctx, replyChan)()
+			default:
+				// Unknown reply type, continue listening
+				return m.listenToShogunateReplies(ctx, replyChan)()
+			}
+		}
+	}
+}
+
+// Shogunate streaming message types
+type shogunateTextMsg struct {
+	text      string
+	replyChan <-chan shogunate.StreamReply
+	ctx       context.Context
+}
+
+type shogunateThoughtMsg struct {
+	text      string
+	replyChan <-chan shogunate.StreamReply
+	ctx       context.Context
+}
+
+type shogunateToolMsg struct {
+	toolID    string
+	toolMsg   string
+	replyChan <-chan shogunate.StreamReply
+	ctx       context.Context
+}
+
+type shogunateContextMsg struct {
+	key       string
+	value     string
+	replyChan <-chan shogunate.StreamReply
+	ctx       context.Context
+}
+
 func (m *TUIModel) saveHistoryPresentState() {
 	if m.historySaved {
 		return
@@ -1345,7 +1465,19 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			m.streamingCancel = cancel
-			m.session.AskStream(ctx, content)
+
+			// Route through Shogunate if available, otherwise use legacy session
+			if m.shogunate != nil {
+				// Get context files from session (populated via @ references)
+				var contextFiles map[string]string
+				if m.session != nil {
+					contextFiles = m.session.GetContextFiles()
+				}
+				shogunateCmd := m.submitToShogunate(ctx, content, contextFiles)
+				cmds = append(cmds, shogunateCmd)
+			} else if m.session != nil {
+				m.session.AskStream(ctx, content)
+			}
 		} else {
 			m.commandLine.AddToast("No model configured, use :models to configure a model", "error", time.Second*5)
 			m.prompt.SetValue("")
@@ -1538,7 +1670,18 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			m.streamingCancel = cancel
-			m.session.AskStream(ctx, content)
+
+			// Route through Shogunate if available, otherwise use legacy session
+			if m.shogunate != nil {
+				var contextFiles map[string]string
+				if m.session != nil {
+					contextFiles = m.session.GetContextFiles()
+				}
+				shogunateCmd := m.submitToShogunate(ctx, content, contextFiles)
+				cmds = append(cmds, shogunateCmd)
+			} else if m.session != nil {
+				m.session.AskStream(ctx, content)
+			}
 		} else {
 			m.commandLine.AddToast("No model configured. Use :models to select a model", "error", time.Second*5)
 		}
@@ -1688,6 +1831,41 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on max tokens
 		refreshGitInfo()
+
+	// Shogunate streaming message handlers
+	case shogunateTextMsg:
+		// Handle text chunks from Shogunate
+		m.content.Chat.AddToRawHistory("SHOGUNATE_TEXT", msg.text)
+		if m.streamingActive {
+			m.waitingStart = time.Now()
+			if !m.waitingForResponse {
+				waitCmd := m.startWaitingForResponse()
+				m.content.Chat.AddAIChunk(msg.text)
+				return m, tea.Batch(waitCmd, m.listenToShogunateReplies(msg.ctx, msg.replyChan))
+			}
+		}
+		m.content.Chat.AddAIChunk(msg.text)
+		return m, m.listenToShogunateReplies(msg.ctx, msg.replyChan)
+
+	case shogunateThoughtMsg:
+		// Handle thinking/reasoning chunks from Shogunate
+		m.content.Chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.text)
+		m.content.Chat.AddThinkingChunk(msg.text)
+		return m, m.listenToShogunateReplies(msg.ctx, msg.replyChan)
+
+	case shogunateToolMsg:
+		// Handle tool execution updates from Shogunate
+		m.content.Chat.AddToRawHistory("SHOGUNATE_TOOL", fmt.Sprintf("%s: %s", msg.toolID, msg.toolMsg))
+		m.content.Chat.AddMessage(fmt.Sprintf("⏺ %s", msg.toolMsg))
+		return m, m.listenToShogunateReplies(msg.ctx, msg.replyChan)
+
+	case shogunateContextMsg:
+		// Handle context updates from Shogunate (e.g., edictID)
+		if msg.key == "edict_id" {
+			m.currentEdictID = msg.value
+			slog.Debug("updated current edict ID", "edict_id", msg.value)
+		}
+		return m, m.listenToShogunateReplies(msg.ctx, msg.replyChan)
 
 	case showHelpMsg:
 		// Show the help viewer with the requested topic
@@ -2070,6 +2248,26 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.SetSession(msg.session)
 		slog.Info("LLM session initialized successfully")
 
+		// Configure Shogunate with the LLM model
+		if m.shogunate != nil && msg.session != nil {
+			model := msg.session.GetModel()
+			if model != nil {
+				cfg := &shogunate.SessionConfig{
+					LLM: internalconfig.LLMConfig{
+						MaxTurns:          m.config.LLM.MaxTurns,
+						MaxThinkingTokens: m.config.LLM.MaxThinkingTokens,
+						Provider:          m.config.LLM.Provider,
+						Model:             m.config.LLM.Model,
+					},
+				}
+				repoInfo := repo.RepoInfo{
+					ProjectRoot: m.config.Storage.DatabasePath,
+				}
+				m.shogunate.ConfigureModel(model, cfg, repoInfo)
+				slog.Info("Shogunate configured with LLM model")
+			}
+		}
+
 	case llmInitErrorMsg:
 		// LLM initialization failed
 		slog.Warn("LLM initialization failed", "error", msg.err)
@@ -2141,15 +2339,21 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamingCancel = cancel
 			m.sessionActive = true
 
+			var streamCmd tea.Cmd
+			// Route through Shogunate if available
+			if m.shogunate != nil {
+				streamCmd = m.submitToShogunate(ctx, msg.prompt, nil)
+			} else if m.session != nil {
+				streamCmd = func() tea.Msg {
+					m.session.AskStream(ctx, msg.prompt)
+					return nil
+				}
+			}
+
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
-				go func() {
-					m.session.AskStream(ctx, msg.prompt)
-				}()
-				return m, tea.Batch(waitCmd, upgradeCmd)
-			} else {
-				go func() {
-					m.session.AskStream(ctx, msg.prompt)
-				}()
+				return m, tea.Batch(waitCmd, streamCmd, upgradeCmd)
+			} else if streamCmd != nil {
+				return m, tea.Batch(streamCmd, upgradeCmd)
 			}
 		} else {
 			// If RunOnHost is true and restoration callback is set, restore runner immediately

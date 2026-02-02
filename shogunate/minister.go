@@ -1,18 +1,29 @@
 package shogunate
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"text/template"
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"github.com/tmc/langchaingo/llms"
 	"gorm.io/gorm"
 )
+
+// ministerSystemPromptTemplate is the shared template for all minister system prompts.
+// Ministers provide their Role (identity text) and optional Scratchpad (dynamic context).
+const ministerSystemPromptTemplate = `You are a minister in the Shogunate.
+
+{{.Role}}
+
+{{.Scratchpad}}`
 
 // ZhengmingConn provides clarification request capabilities (behavioral interface)
 type ZhengmingConn interface {
@@ -28,9 +39,53 @@ type EventEmitter interface {
 // TaskEnvelope carries a task from Chancellor to a minister.
 // Each envelope includes return address (ReplyChan) for results.
 type TaskEnvelope struct {
-	EdictID   string            // The edict this task belongs to
-	Task      string            // Specific instructions for the minister
-	ReplyChan chan<- *TaskReply // Return channel for results
+	EdictID    string             // The edict this task belongs to
+	Task       string             // Specific instructions for the minister
+	ReplyChan  chan<- *TaskReply  // Return channel for results
+	StreamChan chan<- StreamReply // For streaming to TUI
+}
+
+// --- Streaming Types (bubbletea-style interface pattern) ---
+
+// StreamReply is the base type for all streaming replies
+type StreamReply any
+
+// TextReply carries streaming text content
+type TextReply struct {
+	Text string
+}
+
+// ThoughtReply carries streaming thinking/reasoning content
+type ThoughtReply struct {
+	Text string
+}
+
+// ToolReply carries tool execution updates
+type ToolReply struct {
+	ToolID  string
+	ToolMsg string
+}
+
+// ErrorReply carries error information
+type ErrorReply struct {
+	Error error
+}
+
+// ContextReply carries context/metadata updates
+type ContextReply struct {
+	Key   string
+	Value any
+}
+
+// DoneReply signals completion
+type DoneReply struct{}
+
+// EdictEnvelope carries the Ruler's prompt to the Chancellor
+type EdictEnvelope struct {
+	Prompt       string             // The Ruler's words
+	EdictID      string             // Empty = new edict, set = continue existing
+	ContextFiles map[string]string  // Files loaded via @ references
+	ReplyChan    chan<- StreamReply // Return channel for streaming responses
 }
 
 // TaskReply is sent back by ministers when a task completes.
@@ -47,12 +102,12 @@ type TaskReply struct {
 type Minister interface {
 	// ID returns the minister's unique identifier (e.g., "strategist", "forge")
 	ID() string
-	// Title returns the minister's honorific title.
-	Title() string
 	// Logger returns the minister's logger with scoped metadata.
 	Logger() *slog.Logger
 	// Role returns the minister's role identity text (injected into system prompt template)
 	Role() string
+	// Scratchpad returns dynamic per-minister context (e.g., available rituals, rules)
+	Scratchpad() string
 	// Tools returns the minister's LLM tools for interactive sessions
 	Tools(notify NotifyFunc) []Tool
 	// Tasks returns the channel for submitting TaskEnvelopes
@@ -160,24 +215,31 @@ type ZhengmingAnsweredMsg struct {
 type MinisterBase struct {
 	db         *gorm.DB
 	ministerID string
-	llm        llms.Model
+	model      llms.Model
 	config     *SessionConfig
 	repoInfo   repo.RepoInfo
+	runner     runners.Runner
 	logger     *slog.Logger
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
-func NewMinisterBase(db *gorm.DB, llm llms.Model, config *SessionConfig, repoInfo repo.RepoInfo, logger *slog.Logger) MinisterBase {
+func NewMinisterBase(db *gorm.DB, model llms.Model, config *SessionConfig, repoInfo repo.RepoInfo, runner runners.Runner, logger *slog.Logger) MinisterBase {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return MinisterBase{
 		db:       db,
-		llm:      llm,
+		model:    model,
 		config:   config,
 		repoInfo: repoInfo,
+		runner:   runner,
 		logger:   logger,
 	}
+}
+
+// Runner returns the shell runner (may be nil)
+func (m *MinisterBase) Runner() runners.Runner {
+	return m.runner
 }
 
 // Logger returns the minister's logger with scoped metadata.
@@ -193,27 +255,37 @@ func (m *MinisterBase) Events() []ShogunateEvent {
 	return nil
 }
 
+// Scratchpad returns dynamic per-minister context. Default is empty.
+// Ministers can override this to provide context like available rituals, rules, etc.
+func (m *MinisterBase) Scratchpad() string {
+	return ""
+}
+
 // CreateSession creates a session for a minister with composed system prompt.
 // The system prompt is built from the shared template with the minister's role injected.
 func (m *MinisterBase) CreateSession(minister Minister, notify NotifyFunc) (*Session, error) {
 	tools := minister.Tools(notify)
 	systemPrompt := m.buildSystemPrompt(minister)
 
-	return NewSession(m.llm, m.config, m.repoInfo, tools, nil, notify, systemPrompt)
+	return NewSession(m.model, m.config, m.repoInfo, tools, nil, notify, systemPrompt)
 }
 
-// buildSystemPrompt composes the system prompt by combining the minister's role
-// with any other context needed.
+// buildSystemPrompt composes the system prompt by rendering the shared template
+// with the minister's Role and Scratchpad.
 func (m *MinisterBase) buildSystemPrompt(minister Minister) string {
-	// For now, just return the minister's role as the system prompt.
-	// In the future, this could render a template with Role as a variable.
-	return minister.Role()
+	tmpl := template.Must(template.New("minister").Parse(ministerSystemPromptTemplate))
+	var buf bytes.Buffer
+	tmpl.Execute(&buf, map[string]string{
+		"Role":       minister.Role(),
+		"Scratchpad": minister.Scratchpad(),
+	})
+	return buf.String()
 }
 
 // SetMinisterConfig updates the MinisterBase configuration for session creation.
-// This allows ministers to be configured with an LLM client after initialization.
-func (m *MinisterBase) SetMinisterConfig(llm llms.Model, config *SessionConfig, repoInfo repo.RepoInfo) {
-	m.llm = llm
+// This allows ministers to be configured with a model client after initialization.
+func (m *MinisterBase) SetMinisterConfig(model llms.Model, config *SessionConfig, repoInfo repo.RepoInfo) {
+	m.model = model
 	m.config = config
 	m.repoInfo = repoInfo
 }
@@ -241,7 +313,7 @@ func generateIdempotencyKey(parts ...string) string {
 func (m *MinisterBase) RequestZhengming(edictID, question string, priority storage.ZhengmingPriority) (string, error) {
 	requestID := GenerateID("zhengming", edictID, m.ministerID, question, time.Now().String())
 
-	req := storage.ZhengmingRequest{
+	req := storage.Zhengming{
 		RequestID:  requestID,
 		EdictID:    edictID,
 		MinisterID: m.ministerID,
@@ -264,7 +336,7 @@ func (m *MinisterBase) RequestZhengming(edictID, question string, priority stora
 // IsZhengmingPending checks if there are pending clarification requests for an edict
 func (m *MinisterBase) IsZhengmingPending(edictID string) (bool, error) {
 	var count int64
-	err := m.db.Model(&storage.ZhengmingRequest{}).
+	err := m.db.Model(&storage.Zhengming{}).
 		Where("edict_id = ? AND status = ?", edictID, storage.ZhengmingPending).
 		Count(&count).Error
 	if err != nil {

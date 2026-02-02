@@ -404,6 +404,7 @@ func (m *sessionMockLLMContext) GenerateContent(ctx context.Context, messages []
 
 // TestSession_MultipleToolCalls tests that Session can handle multiple tool calls in a single response
 func TestSession_MultipleToolCalls(t *testing.T) {
+	skipIfNotCI(t)
 	// Create temporary test files
 	tmpDir := t.TempDir()
 	testFile1 := filepath.Join(tmpDir, "testdata1.txt")

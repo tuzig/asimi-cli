@@ -3,31 +3,18 @@ package storage
 import (
 	"time"
 
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/tmc/langchaingo/llms"
 )
 
 // Schema version for migrations
 const SchemaVersion = 2
 
-// SessionConfig holds session persistence configuration
-type SessionConfig struct {
-	Enabled      bool
-	MaxSessions  int
-	MaxAgeDays   int
-	ListLimit    int
-	AutoSave     bool
-	SaveInterval int
-}
-
-// HistoryConfig holds persistent history configuration
-type HistoryConfig struct {
-	Enabled      bool
-	MaxSessions  int // Used as max entries for history
-	MaxAgeDays   int
-	ListLimit    int
-	AutoSave     bool
-	SaveInterval int
-}
+// Type aliases - use types from internal/config as the single source of truth
+type (
+	SessionConfig = config.SessionConfig
+	HistoryConfig = config.HistoryConfig
+)
 
 // DBSession maps directly to the sessions table with db tags
 // This is used for database operations only

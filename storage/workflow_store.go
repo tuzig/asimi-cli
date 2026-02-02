@@ -18,17 +18,6 @@ const (
 	WorkflowStateFailed    WorkflowState = "failed"
 )
 
-// StepStatus represents the status of a workflow step
-type StepStatus string
-
-const (
-	StepStatusPending   StepStatus = "pending"
-	StepStatusRunning   StepStatus = "running"
-	StepStatusCompleted StepStatus = "completed"
-	StepStatusFailed    StepStatus = "failed"
-	StepStatusSkipped   StepStatus = "skipped"
-)
-
 // WorkflowData represents a workflow stored in the database
 type WorkflowData struct {
 	ID          string        `db:"id"`
@@ -44,15 +33,14 @@ type WorkflowData struct {
 
 // WorkflowStepData represents a workflow step stored in the database
 type WorkflowStepData struct {
-	ID             int64      `db:"id"`
-	WorkflowID     string     `db:"workflow_id"`
-	StepIndex      int        `db:"step_index"`
-	Name           string     `db:"name"`
-	Status         StepStatus `db:"status"`
-	RetryCount     int        `db:"retry_count"`
-	Message        string     `db:"message"`
-	PromptTemplate string     `db:"prompt_template"`
-	PrepareData    string     `db:"prepare_data"` // JSON-encoded map[string]string
+	ID             int64  `db:"id"`
+	WorkflowID     string `db:"workflow_id"`
+	StepIndex      int    `db:"step_index"`
+	Name           string `db:"name"`
+	RetryCount     int    `db:"retry_count"`
+	Message        string `db:"message"`
+	PromptTemplate string `db:"prompt_template"`
+	PrepareData    string `db:"prepare_data"` // JSON-encoded map[string]string
 }
 
 // WorkflowStore handles workflow persistence
@@ -115,11 +103,10 @@ func (s *WorkflowStore) SaveWorkflow(workflow *WorkflowData, host, org, project,
 func (s *WorkflowStore) SaveWorkflowStep(step *WorkflowStepData) error {
 	_, err := s.db.conn.Exec(`
 		INSERT OR REPLACE INTO workflow_steps
-		(workflow_id, step_index, name, status, retry_count, message, prompt_template, prepare_data)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		(workflow_id, step_index, name, retry_count, message, prompt_template, prepare_data)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(workflow_id, step_index) DO UPDATE SET
 			name = excluded.name,
-			status = excluded.status,
 			retry_count = excluded.retry_count,
 			message = excluded.message,
 			prompt_template = excluded.prompt_template,
@@ -127,7 +114,6 @@ func (s *WorkflowStore) SaveWorkflowStep(step *WorkflowStepData) error {
 		step.WorkflowID,
 		step.StepIndex,
 		step.Name,
-		string(step.Status),
 		step.RetryCount,
 		step.Message,
 		step.PromptTemplate,
@@ -179,7 +165,7 @@ func (s *WorkflowStore) LoadWorkflow(workflowID string) (*WorkflowData, error) {
 // LoadWorkflowSteps loads all steps for a workflow
 func (s *WorkflowStore) LoadWorkflowSteps(workflowID string) ([]WorkflowStepData, error) {
 	rows, err := s.db.conn.Query(`
-		SELECT id, workflow_id, step_index, name, status, retry_count, message, prompt_template, prepare_data
+		SELECT id, workflow_id, step_index, name, retry_count, message, prompt_template, prepare_data
 		FROM workflow_steps
 		WHERE workflow_id = ?
 		ORDER BY step_index`,
@@ -193,14 +179,12 @@ func (s *WorkflowStore) LoadWorkflowSteps(workflowID string) ([]WorkflowStepData
 	var steps []WorkflowStepData
 	for rows.Next() {
 		var step WorkflowStepData
-		var status string
 
 		err := rows.Scan(
 			&step.ID,
 			&step.WorkflowID,
 			&step.StepIndex,
 			&step.Name,
-			&status,
 			&step.RetryCount,
 			&step.Message,
 			&step.PromptTemplate,
@@ -210,7 +194,6 @@ func (s *WorkflowStore) LoadWorkflowSteps(workflowID string) ([]WorkflowStepData
 			return nil, fmt.Errorf("failed to scan workflow step: %w", err)
 		}
 
-		step.Status = StepStatus(status)
 		steps = append(steps, step)
 	}
 
@@ -398,22 +381,6 @@ func (s *WorkflowStore) UpdateWorkflowData(workflowID string, data map[string]st
 	return nil
 }
 
-// UpdateStepStatus updates the status and message of a step
-func (s *WorkflowStore) UpdateStepStatus(workflowID string, stepIndex int, status StepStatus, message string) error {
-	_, err := s.db.conn.Exec(`
-		UPDATE workflow_steps
-		SET status = ?, message = ?
-		WHERE workflow_id = ? AND step_index = ?`,
-		string(status),
-		message,
-		workflowID,
-		stepIndex,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update step status: %w", err)
-	}
-	return nil
-}
 
 // IncrementStepRetryCount increments the retry count for a step
 func (s *WorkflowStore) IncrementStepRetryCount(workflowID string, stepIndex int) error {

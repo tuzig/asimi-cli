@@ -8,7 +8,7 @@ This file provides guidance to a coding agent when working with code in this rep
 
 **Write idiomatic Go** - Keep it simple, flat, and direct.
 
-- **Flat structure**: Avoid creating new directories/files unless essential
+- **Model friendly file structure**: Keep file names specific and module names meaningfull
 - **No wrappers**: Avoid unnecessary abstractions
 - **No build tags**: Keep builds simple
 - **Short, meaningful names**: Follow Go conventions

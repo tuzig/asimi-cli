@@ -9,6 +9,7 @@ import (
 )
 
 func TestInitWorkflowRetryBehavior(t *testing.T) {
+	skipIfNotCI(t)
 	// Setup a temporary directory for the test
 	tmpDir := t.TempDir()
 	originalWd, err := os.Getwd()

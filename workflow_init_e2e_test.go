@@ -13,6 +13,7 @@ import (
 // These tests use the mocking infrastructure from tests/e2e/
 
 func TestInitWorkflowPreChecks(t *testing.T) {
+	skipIfNotCI(t)
 	// Setup a temporary directory for the test
 	tmpDir := t.TempDir()
 	originalWd, err := os.Getwd()
@@ -110,6 +111,7 @@ func TestInitWorkflowPreChecks(t *testing.T) {
 }
 
 func TestInitWorkflowDirectorySetup(t *testing.T) {
+	skipIfNotCI(t)
 	// Setup a temporary directory for the test
 	tmpDir := t.TempDir()
 	originalWd, err := os.Getwd()
@@ -157,6 +159,7 @@ func TestInitWorkflowDirectorySetup(t *testing.T) {
 }
 
 func TestInitWorkflowGoToNavigation(t *testing.T) {
+	skipIfNotCI(t)
 	tmpDir := t.TempDir()
 	originalWd, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -254,6 +257,7 @@ func TestInitWorkflowGoToNavigation(t *testing.T) {
 }
 
 func TestInitWorkflowRetryLoops(t *testing.T) {
+	skipIfNotCI(t)
 	tmpDir := t.TempDir()
 	originalWd, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -346,6 +350,7 @@ func TestInitWorkflowRetryLoops(t *testing.T) {
 }
 
 func TestInitWorkflowProgress(t *testing.T) {
+	skipIfNotCI(t)
 	tmpDir := t.TempDir()
 	originalWd, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -394,6 +399,7 @@ func TestInitWorkflowProgress(t *testing.T) {
 }
 
 func TestMissingInfraFiles(t *testing.T) {
+	skipIfNotCI(t)
 	tmpDir := t.TempDir()
 	originalWd, _ := os.Getwd()
 	os.Chdir(tmpDir)

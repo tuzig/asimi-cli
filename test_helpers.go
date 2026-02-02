@@ -1,11 +1,23 @@
 package main
 
 import (
+	"os"
+	"testing"
 	"time"
 
 	"github.com/afittestide/asimi/storage"
 	"github.com/tmc/langchaingo/llms"
 )
+
+// skipIfNotCI skips tests that alter git state or change working directories.
+// These tests can corrupt the local git index when run outside CI.
+// Set CI=true environment variable to run these tests.
+func skipIfNotCI(t *testing.T) {
+	t.Helper()
+	if os.Getenv("CI") == "" {
+		t.Skip("Skipping git-altering test (set CI=true to run)")
+	}
+}
 
 // testMainSession creates a dummy main.Session for testing
 func testMainSession(id, prompt string, updated time.Time, messageTexts ...string) *Session {

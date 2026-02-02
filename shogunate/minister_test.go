@@ -2,18 +2,28 @@ package shogunate
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/glebarez/sqlite"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	_ "modernc.org/sqlite" // SQLite driver
 )
 
 func setupMinisterTestDB(t *testing.T) *gorm.DB {
+	db, _ := setupMinisterTestDBWithPath(t)
+	return db
+}
+
+func setupMinisterTestDBWithPath(t *testing.T) (*gorm.DB, string) {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "minister_test")
 	if err != nil {
@@ -22,17 +32,25 @@ func setupMinisterTestDB(t *testing.T) *gorm.DB {
 	t.Cleanup(func() { os.RemoveAll(tmpDir) })
 
 	dbPath := tmpDir + "/test.db"
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+
+	// Open database using database/sql with modernc.org/sqlite driver
+	sqlDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Use gorm with the existing connection
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
+		t.Fatalf("Failed to initialize gorm: %v", err)
 	}
 
 	// Run migrations
 	err = db.AutoMigrate(
 		&storage.Edict{},
-		&storage.ZhengmingRequest{},
+		&storage.Zhengming{},
 		&storage.TianEvent{},
 		&storage.TianEventDLQ{},
 		&storage.Ling{},
@@ -50,7 +68,7 @@ func setupMinisterTestDB(t *testing.T) *gorm.DB {
 	// Create checkpoint table
 	db.Exec(`CREATE TABLE IF NOT EXISTS ritual_guard_checkpoint (id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL, updated_at DATETIME)`)
 
-	return db
+	return db, dbPath
 }
 
 func TestChancellor_EdictLifecycle(t *testing.T) {
@@ -58,7 +76,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Create chancellor
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create an edict (starts in brewing phase)
@@ -72,7 +90,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get edict: %v", err)
 	}
-	if edict.CurrentPhase != storage.PhaseBrewing {
+	if edict.CurrentPhase != storage.PhaseClassifing {
 		t.Errorf("Expected phase brewing, got %s", edict.CurrentPhase)
 	}
 
@@ -97,7 +115,7 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 	ctx := context.Background()
 
 	// Create edict
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#2", "Implement user authentication with login and logout")
 
@@ -128,7 +146,7 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 	ctx := context.Background()
 
 	// Create edict with ambiguous intent
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#3", "Fix it")
 
@@ -156,7 +174,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create edict and manifest
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#4", "Test feature")
 
@@ -188,7 +206,7 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create quenched manifest
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#5", "Review feature")
 
@@ -224,7 +242,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create edict and manifest
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#6", "Production feature")
 
@@ -255,7 +273,7 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create and cancel edict
@@ -312,14 +330,17 @@ func TestHappyFlowE2E(t *testing.T) {
 	defer cancel()
 
 	// Create Chancellor and Shogunate
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create a simple Shogunate with just Forge for this test
+	forge := NewForge(base)
 	shogunate := &Shogunate{
-		db:         db,
-		Chancellor: chancellor,
-		Forge:      NewForge(base),
+		db:        db,
+		ministers: map[string]Minister{
+			chancellor.ID(): chancellor,
+			forge.ID():      forge,
+		},
 	}
 	chancellor.SetShogunate(shogunate)
 
@@ -331,10 +352,10 @@ func TestHappyFlowE2E(t *testing.T) {
 	}
 
 	// Start the Forge's Run loop in a goroutine
-	go shogunate.Forge.Run(ctx)
+	go forge.Run(ctx)
 
 	// Create the InvokeMinisterTool
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Invoker: chancellor, Logger: nil}
 
 	// Invoke the Forge minister with a trivial task
 	// With synchronous blocking, this call blocks until minister replies
@@ -383,15 +404,17 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 	shogunate := &Shogunate{
-		db:         db,
-		Chancellor: chancellor,
+		db:        db,
+		ministers: map[string]Minister{
+			chancellor.ID(): chancellor,
+		},
 	}
 	chancellor.SetShogunate(shogunate)
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Invoker: chancellor, Logger: nil}
 
 	// Try to invoke a non-existent minister
 	taskInput := `{"minister_id": "unknown", "edict_id": "test", "task": "hello"}`
@@ -406,15 +429,45 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Invoker: chancellor, Logger: nil}
 
 	// Missing task parameter
 	taskInput := `{"minister_id": "forge", "edict_id": "test"}`
 	_, err := tool.Call(ctx, taskInput)
 	if err == nil {
 		t.Error("Expected error for missing task parameter")
+	}
+}
+
+// TestChancellor_GetDBPath tests that getDBPath correctly extracts the database path from gorm.DB
+func TestChancellor_GetDBPath(t *testing.T) {
+	db, expectedPath := setupMinisterTestDBWithPath(t)
+
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+
+	// Call getDBPath and verify it returns the correct path
+	gotPath := chancellor.getDBPath()
+
+	// Resolve symlinks for comparison (e.g., /tmp -> /private/tmp on macOS)
+	expectedResolved, _ := filepath.EvalSymlinks(expectedPath)
+	gotResolved, _ := filepath.EvalSymlinks(gotPath)
+
+	if gotResolved != expectedResolved {
+		t.Errorf("getDBPath() = %q, want %q", gotPath, expectedPath)
+	}
+}
+
+// TestChancellor_GetDBPath_NilDB tests getDBPath returns empty string when db is nil
+func TestChancellor_GetDBPath_NilDB(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+
+	gotPath := chancellor.getDBPath()
+	if gotPath != "" {
+		t.Errorf("getDBPath() with nil db = %q, want empty string", gotPath)
 	}
 }

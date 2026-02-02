@@ -10,6 +10,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/afittestide/asimi/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -94,7 +95,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 
 			// Write asimi.conf with full default content (including comments)
 			if _, err := os.Stat(".agents/asimi.conf"); os.IsNotExist(err) || clearMode {
-				if err := os.WriteFile(".agents/asimi.conf", []byte(defaultConfContent), 0o644); err != nil {
+				if err := os.WriteFile(".agents/asimi.conf", []byte(config.DefaultConfContent()), 0o644); err != nil {
 					return fmt.Errorf("error writing .agents/asimi.conf: %v", err)
 				}
 				w.ReportProgress("Added default .agents/asimi.conf with lots of comments")
@@ -285,7 +286,7 @@ Read the relevant files, understand the error, and make the necessary correction
 			if cfg, err := LoadConfig(); err != nil {
 				slog.Warn("Failed to reload config after build-sandbox", "error", err)
 			} else {
-				slog.Debug("Reinitializing shell runner after build-sandbox", "image_name", cfg.RunShellCommand.ImageName)
+				slog.Debug("Reinitializing shell runner after build-sandbox", "image_name", cfg.Sandbox.ImageName)
 				initShellRunner(cfg, model.scheduler)
 			}
 			// Skip fix-dockerfile and go directly to smoke-test

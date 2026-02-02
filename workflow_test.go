@@ -342,10 +342,7 @@ func TestWorkflowProgress(t *testing.T) {
 
 	w := New("test-progress", nil, repoCtx)
 
-	progressUpdates := []struct {
-		stepIndex int
-		status    storage.StepStatus
-	}{}
+	progressUpdates := []int{}
 
 	w.AddStep(Step{
 		Name: "step-1",
@@ -363,17 +360,14 @@ func TestWorkflowProgress(t *testing.T) {
 
 	// Set progress callback
 	w.onProgress = func(stepIndex int, stepState StepState, message string) {
-		progressUpdates = append(progressUpdates, struct {
-			stepIndex int
-			status    storage.StepStatus
-		}{stepIndex, stepState.Status})
+		progressUpdates = append(progressUpdates, stepIndex)
 	}
 
 	ctx := context.Background()
 	err := w.Run(ctx)
 	require.NoError(t, err, "Workflow failed")
 
-	// Should have progress updates for each step (running + completed)
+	// Should have progress updates for each step
 	assert.GreaterOrEqual(t, len(progressUpdates), 2, "Expected at least 2 progress updates")
 }
 

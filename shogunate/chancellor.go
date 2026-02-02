@@ -1,0 +1,608 @@
+package shogunate
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/storage"
+	"gorm.io/gorm"
+)
+
+// Chancellor harmonizes all ministers and manages edict lifecycle
+type Chancellor struct {
+	MinisterBase // embedded base provides db, llm, config, repoInfo, logger
+	shogunate    *Shogunate
+	taskChan     chan *TaskEnvelope
+
+	// Run() loop fields
+	Edicts           chan *EdictEnvelope // Ruler speaks here
+	edictSessions    map[string]*Session // Per-edict sessions (edictID -> session)
+	activeReplyChans sync.Map            // edictID -> chan<- StreamReply (thread-safe)
+}
+
+// NewChancellor creates a new Chancellor minister
+func NewChancellor(base MinisterBase) *Chancellor {
+	base.ministerID = "chancellor"
+	return &Chancellor{
+		MinisterBase:  base,
+		taskChan:      make(chan *TaskEnvelope, 10),
+		Edicts:        make(chan *EdictEnvelope),
+		edictSessions: make(map[string]*Session),
+		// activeReplyChans is a sync.Map, zero-value ready
+	}
+}
+
+// ID returns the minister identifier
+func (c *Chancellor) ID() string {
+	return "chancellor"
+}
+
+// Title returns the minister's honorific title
+func (c *Chancellor) Title() string { return "Chancellor" }
+
+// Role returns the Chancellor's role identity text
+func (c *Chancellor) Role() string {
+	return `You are the Chancellor (宰相, Zǎixiàng).
+You communicate with the ruler, accepting edicts, classifying them and orchestrating workflows.
+You wield Zhengming (正名) when ambiguity threatens: post the question, halt the edict, await the Ruler's word.
+Your decisions are bound by Dao (道, the Way). Command the ministries; they report to you, not the Ruler.`
+}
+
+// Scratchpad returns dynamic context for the Chancellor including available rituals and rules
+func (c *Chancellor) Scratchpad() string {
+	var b strings.Builder
+
+	b.WriteString("# Available Rituals\n")
+	if c.shogunate == nil || c.shogunate.ritualRegistry == nil {
+		b.WriteString("None loaded\n")
+	} else {
+		names := c.shogunate.ritualRegistry.List()
+		if len(names) == 0 {
+			b.WriteString("None loaded\n")
+		} else {
+			for _, name := range names {
+				ritual := c.shogunate.ritualRegistry.Get(name)
+				if ritual != nil {
+					b.WriteString(fmt.Sprintf("- %s: %s\n", name, ritual.Description))
+				}
+			}
+		}
+	}
+
+	b.WriteString("\n# Critical Rules\n")
+	b.WriteString("- Size the edict (S, M, L, XL) and invoke the appropriate ritual\n")
+	b.WriteString("- Use swift-strike for small, focused changes\n")
+	b.WriteString("- Use grand-campaign for larger architectural work\n")
+	b.WriteString("- Use invoke_minister for ad-hoc tasks not covered by rituals\n")
+	b.WriteString("- When ambiguity threatens progress, invoke Zhengming immediately\n")
+	b.WriteString("- Never guess at requirements—always clarify\n")
+
+	return b.String()
+}
+
+// Tasks returns the channel for submitting TaskEnvelopes
+func (c *Chancellor) Tasks() chan<- *TaskEnvelope { return c.taskChan }
+
+// Tools returns the Chancellor's LLM tools for interactive sessions
+func (c *Chancellor) Tools(notify NotifyFunc) []Tool {
+	// Create zhengming notify wrapper
+	// TODO: Simplify the zhendming notifications
+	var zhengmingNotify tools.ZhengmingNotifyFunc
+	if notify != nil {
+		zhengmingNotify = func(requestID, edictID, ministerID, question string, priority storage.ZhengmingPriority) {
+			notify(ZhengmingPendingMsg{
+				RequestID:  requestID,
+				EdictID:    edictID,
+				MinisterID: ministerID,
+				Question:   question,
+				Priority:   priority,
+			})
+		}
+	}
+
+	toolList := []Tool{
+		tools.AsimiSQLTool{DBPath: c.getDBPath()},
+		tools.CreateEdictTool{Manager: c},
+		tools.RequestZhengmingTool{Requester: c, Notify: zhengmingNotify},
+		tools.GetEdictStatusTool{Manager: c},
+		tools.ListEdictsTool{DB: c.db},
+		// TODO: rename to InviteMinisterTool to join the chat
+		tools.InvokeMinisterTool{Invoker: c, Logger: c.logger},
+		// TODO: add the InvokeRitualTool
+	}
+	// Add read-only file tools
+	for _, t := range tools.GetROTools() {
+		toolList = append(toolList, t)
+	}
+	// Add InvokeRitualTool if ritual runner is available
+	if c.shogunate != nil && c.shogunate.ritualRunner != nil {
+		toolList = append(toolList, tools.InvokeRitualTool{
+			Starter: c,
+			Logger:  c.logger,
+		})
+	}
+	return toolList
+}
+
+// --- Interface implementations for tools package ---
+
+// InvokeMinister implements tools.MinisterInvoker
+func (c *Chancellor) InvokeMinister(ctx context.Context, ministerID, edictID, task string, timeout time.Duration) (*tools.MinisterTaskReply, error) {
+	// Get minister via Shogunate
+	minister := c.shogunate.GetMinister(ministerID)
+	if minister == nil {
+		return nil, fmt.Errorf("minister not found: %s", ministerID)
+	}
+
+	// Create per-call reply channel (synchronous blocking pattern)
+	replyChan := make(chan *TaskReply, 1)
+
+	// Get streaming channel if available (thread-safe lookup)
+	var streamChan chan<- StreamReply
+	if val, ok := c.activeReplyChans.Load(edictID); ok {
+		streamChan = val.(chan<- StreamReply)
+	}
+	c.logger.Debug("invoke_minister looking up stream channel",
+		"edict_id", edictID,
+		"found", streamChan != nil)
+
+	// Create TaskEnvelope with per-call reply channel and streaming channel
+	env := &TaskEnvelope{
+		EdictID:    edictID,
+		Task:       task,
+		ReplyChan:  replyChan,
+		StreamChan: streamChan,
+	}
+
+	// Send task to minister
+	select {
+	case minister.Tasks() <- env:
+		c.logger.Info("task sent to minister",
+			"minister", ministerID,
+			"edict_id", edictID,
+			"task", truncateString(task, 50))
+	case <-ctx.Done():
+		return nil, fmt.Errorf("context cancelled while sending task to %s", ministerID)
+	}
+
+	// Block until minister replies (only blocks this session's goroutine)
+	select {
+	case reply := <-replyChan:
+		return &tools.MinisterTaskReply{
+			MinisterID: reply.MinisterID,
+			Sealed:     reply.Sealed,
+			Output:     reply.Output,
+			Error:      reply.Error,
+		}, nil
+
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("minister %s timeout after %v", ministerID, timeout)
+
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// StartRitual implements tools.RitualStarter
+func (c *Chancellor) StartRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (string, error) {
+	if c.shogunate == nil || c.shogunate.ritualRunner == nil {
+		return "", fmt.Errorf("ritual runner not available")
+	}
+
+	// Get streaming channel if available
+	var notify NotifyFunc
+	if val, ok := c.activeReplyChans.Load(edictID); ok {
+		streamChan := val.(chan<- StreamReply)
+		notify = func(msg any) {
+			if text, ok := msg.(string); ok {
+				streamChan <- TextReply{Text: text}
+			}
+		}
+	}
+
+	// Start the ritual
+	exec, err := c.shogunate.ritualRunner.Start(ctx, ritualName, edictID, inputs, notify)
+	if err != nil {
+		return "", err
+	}
+
+	// Run the ritual asynchronously
+	go func() {
+		if err := c.shogunate.ritualRunner.Run(context.Background(), exec); err != nil {
+			c.logger.Error("ritual failed",
+				"ritual", ritualName,
+				"execution_id", exec.ID,
+				"error", err)
+		}
+	}()
+
+	return exec.ID, nil
+}
+
+// getDBPath extracts the database file path from gorm.DB using PRAGMA database_list
+func (c *Chancellor) getDBPath() string {
+	if c.db == nil {
+		return ""
+	}
+	var file string
+	// PRAGMA database_list returns: seq, name, file
+	row := c.db.Raw("PRAGMA database_list").Row()
+	var seq int
+	var name string
+	if err := row.Scan(&seq, &name, &file); err != nil {
+		c.logger.Warn("failed to get database path", "error", err)
+		return ""
+	}
+	return file
+}
+
+// Run listens for prompts from the Ruler and tasks from ministers
+func (c *Chancellor) Run(ctx context.Context) {
+	c.logger.Info("chancellor started, awaiting ruler's edicts")
+	for {
+		select {
+		case <-ctx.Done():
+			c.logger.Info("chancellor stopped")
+			return
+		case env := <-c.Edicts:
+			c.processPrompt(ctx, env)
+		case task := <-c.taskChan:
+			// Process task and send reply
+			if task.ReplyChan != nil {
+				task.ReplyChan <- &TaskReply{
+					EdictID:    task.EdictID,
+					MinisterID: c.ID(),
+					Task:       task.Task,
+					Sealed:     true,
+					Output:     "Task acknowledged",
+				}
+			}
+		}
+	}
+}
+
+// SetShogunate sets the Shogunate reference for minister access
+func (c *Chancellor) SetShogunate(s *Shogunate) {
+	c.shogunate = s
+}
+
+// GetSession returns the session for the specified edict ID
+func (c *Chancellor) GetSession(edictID string) *Session {
+	if edictID == "" {
+		return nil
+	}
+	return c.edictSessions[edictID]
+}
+
+// --- Edict Management ---
+
+// GetEdict retrieves an edict by ID
+func (c *Chancellor) GetEdict(edictID string) (*storage.Edict, error) {
+	var edict storage.Edict
+	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("edict not found: %s", edictID)
+		}
+		return nil, fmt.Errorf("failed to get edict: %w", err)
+	}
+	return &edict, nil
+}
+
+// CreateEdict creates a new edict in the classifying phase
+func (c *Chancellor) CreateEdict(edictID, intent string) error {
+	edict := storage.Edict{
+		EdictID:      edictID,
+		IssueRef:     edictID,
+		Intent:       intent,
+		CurrentPhase: storage.PhaseClassifing,
+	}
+	if err := c.db.Create(&edict).Error; err != nil {
+		return fmt.Errorf("failed to create edict: %w", err)
+	}
+	return nil
+}
+
+// SetChancellorSeal sets or clears the Chancellor's seal on an edict
+func (c *Chancellor) SetChancellorSeal(edictID string, sealed bool) error {
+	result := c.db.Model(&storage.Edict{}).
+		Where("edict_id = ?", edictID).
+		Update("chancellor_seal", sealed)
+	if result.Error != nil {
+		return fmt.Errorf("failed to set chancellor seal: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("edict not found: %s", edictID)
+	}
+	return nil
+}
+
+// SetCensorSeal sets or clears the Censor's seal on an edict
+func (c *Chancellor) SetCensorSeal(edictID string, sealed bool) error {
+	result := c.db.Model(&storage.Edict{}).
+		Where("edict_id = ?", edictID).
+		Update("censor_seal", sealed)
+	if result.Error != nil {
+		return fmt.Errorf("failed to set censor seal: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("edict not found: %s", edictID)
+	}
+	return nil
+}
+
+// CancelEdict marks an edict as cancelled
+func (c *Chancellor) CancelEdict(edictID, cancelledBy, reason string) error {
+	result := c.db.Model(&storage.Edict{}).
+		Where("edict_id = ?", edictID).
+		Update("current_phase", storage.PhaseCancelled)
+	if result.Error != nil {
+		return fmt.Errorf("failed to cancel edict: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("edict not found: %s", edictID)
+	}
+	return nil
+}
+
+// --- Zhengming (Clarification) Management ---
+
+// GetPendingZhengming retrieves all pending clarification requests for an edict
+func (c *Chancellor) GetPendingZhengming(edictID string) ([]storage.Zhengming, error) {
+	var requests []storage.Zhengming
+	query := c.db.Where("status = ?", storage.ZhengmingPending).Order("created_at ASC")
+	if edictID != "" {
+		query = query.Where("edict_id = ?", edictID)
+	}
+	if err := query.Find(&requests).Error; err != nil {
+		return nil, fmt.Errorf("failed to get pending zhengming: %w", err)
+	}
+	return requests, nil
+}
+
+// AnswerZhengming marks a clarification request as answered
+func (c *Chancellor) AnswerZhengming(requestID, answer string) error {
+	now := time.Now()
+	result := c.db.Model(&storage.Zhengming{}).
+		Where("request_id = ?", requestID).
+		Updates(map[string]interface{}{
+			"answer":      answer,
+			"status":      storage.ZhengmingAnswered,
+			"answered_at": &now,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to answer zhengming: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("zhengming request not found: %s", requestID)
+	}
+	return nil
+}
+
+// AppendToIntent appends clarification to the edict's intent
+func (c *Chancellor) AppendToIntent(edictID, clarification string) error {
+	var edict storage.Edict
+	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+		return fmt.Errorf("failed to get edict: %w", err)
+	}
+
+	newIntent := edict.Intent + "\n\n---\n**Clarification:**\n" + clarification
+
+	result := c.db.Model(&storage.Edict{}).
+		Where("edict_id = ?", edictID).
+		Update("intent", newIntent)
+	if result.Error != nil {
+		return fmt.Errorf("failed to append to intent: %w", result.Error)
+	}
+	return nil
+}
+
+// HandleZhengmingResponse processes a clarification response
+func (c *Chancellor) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
+	// Answer the zhengming
+	if err := c.AnswerZhengming(requestID, answer); err != nil {
+		return fmt.Errorf("answer zhengming: %w", err)
+	}
+
+	// Get the request to find the edict
+	var req storage.Zhengming
+	if err := c.db.First(&req, "request_id = ?", requestID).Error; err != nil {
+		return fmt.Errorf("get request: %w", err)
+	}
+
+	// Append clarification to edict
+	if err := c.AppendToIntent(req.EdictID, answer); err != nil {
+		return fmt.Errorf("append clarification: %w", err)
+	}
+
+	return nil
+}
+
+// --- Manifest and Ling Management ---
+
+// GetAllManifestsForEdict retrieves all manifests for an edict (Chancellor privilege)
+func (c *Chancellor) GetAllManifestsForEdict(edictID string) ([]storage.ForgeManifest, error) {
+	var manifests []storage.ForgeManifest
+	err := c.db.Where("edict_id = ?", edictID).
+		Order("created_at ASC").
+		Find(&manifests).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get manifests: %w", err)
+	}
+	return manifests, nil
+}
+
+// GetAllLingForEdict retrieves all ling for an edict (Chancellor privilege)
+func (c *Chancellor) GetAllLingForEdict(edictID string) ([]storage.Ling, error) {
+	var ling []storage.Ling
+	err := c.db.Where("edict_id = ?", edictID).
+		Order("created_at ASC").
+		Find(&ling).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ling: %w", err)
+	}
+	return ling, nil
+}
+
+// ResetLingStatus resets a ling's status (for regression handling)
+func (c *Chancellor) ResetLingStatus(lingID string, status storage.LingStatus) error {
+	result := c.db.Model(&storage.Ling{}).
+		Where("ling_id = ?", lingID).
+		Update("status", status)
+	if result.Error != nil {
+		return fmt.Errorf("failed to reset ling status: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("ling not found: %s", lingID)
+	}
+	return nil
+}
+
+// RegressToForging moves an edict back to forging phase (for rejections)
+func (c *Chancellor) RegressToForging(ctx context.Context, edictID string, rejectedLingIDs []string) error {
+	// Reset ling status
+	for _, lingID := range rejectedLingIDs {
+		if err := c.ResetLingStatus(lingID, storage.LingPending); err != nil {
+			c.logger.Warn("failed to reset ling status", "ling_id", lingID, "error", err)
+		}
+	}
+
+	// Update phase
+	if err := c.UpdatePhase(edictID, storage.PhaseForging); err != nil {
+		return fmt.Errorf("regress phase: %w", err)
+	}
+
+	c.logger.Info("regressed to forging", "edict_id", edictID, "rejected_ling", rejectedLingIDs)
+	return nil
+}
+
+// --- Context-Aware Operations ---
+
+// CreateEdictFromIssue creates a new edict from a GitHub issue
+func (c *Chancellor) CreateEdictFromIssue(ctx context.Context, edictID, issueBody string) error {
+	if err := c.CreateEdict(edictID, issueBody); err != nil {
+		return fmt.Errorf("create edict: %w", err)
+	}
+
+	// Emit edict created event
+	c.EmitEvent(edictID, "edict_assigned", storage.JSON{"source": "github_issue"})
+
+	c.logger.Info("edict created", "edict_id", edictID)
+	return nil
+}
+
+// CancelEdictWithContext cancels an edict (context-aware variant)
+func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID, cancelledBy, reason string) error {
+	if err := c.CancelEdict(edictID, cancelledBy, reason); err != nil {
+		return err
+	}
+
+	c.EmitEvent(edictID, "edict_cancelled", storage.JSON{
+		"cancelled_by": cancelledBy,
+		"reason":       reason,
+	})
+
+	c.logger.Info("edict cancelled", "edict_id", edictID, "by", cancelledBy)
+	return nil
+}
+
+// --- Prompt Processing ---
+
+// processPrompt handles a single prompt from the Ruler
+func (c *Chancellor) processPrompt(ctx context.Context, env *EdictEnvelope) {
+	// Determine: new edict or continue existing?
+	edictID := env.EdictID
+	if edictID == "" {
+		edictID = generateEdictID()
+		if err := c.CreateEdict(edictID, env.Prompt); err != nil {
+			env.ReplyChan <- ErrorReply{Error: fmt.Errorf("create edict: %w", err)}
+			close(env.ReplyChan)
+			return
+		}
+		c.logger.Info("new edict created", "edict_id", edictID)
+	} else {
+		if err := c.AppendToIntent(edictID, env.Prompt); err != nil {
+			c.logger.Warn("failed to append to intent", "edict_id", edictID, "error", err)
+		}
+	}
+
+	// Brew the edict (call LLM with streaming)
+	c.brewWithStreaming(ctx, edictID, env.Prompt, env.ContextFiles, env.ReplyChan)
+}
+
+// brewWithStreaming delegates to Session for LLM interaction
+func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string, reply chan<- StreamReply) {
+	// Check if LLM is configured before proceeding
+	if c.model == nil {
+		reply <- ErrorReply{Error: fmt.Errorf("LLM not configured - please wait for model to connect")}
+		close(reply)
+		return
+	}
+
+	// Get or create session for this edict
+	sess, exists := c.edictSessions[edictID]
+	if !exists {
+		var err error
+		sess, err = c.CreateSession(c, nil)
+		if err != nil {
+			reply <- ErrorReply{Error: fmt.Errorf("failed to create session: %w", err)}
+			close(reply)
+			return
+		}
+		c.edictSessions[edictID] = sess
+		c.logger.Info("chancellor created session for edict", "edict_id", edictID)
+	}
+
+	c.logger.Debug("context files received from TUI", "count", len(contextFiles))
+
+	// Track the reply channel so ministers can stream to the TUI.
+	c.activeReplyChans.Store(edictID, reply)
+	c.logger.Debug("stored reply channel for streaming", "edict_id", edictID)
+
+	// Set up notify function to forward streaming events to reply channel
+	sess.notify = func(msg any) {
+		switch m := msg.(type) {
+		case StreamChunkMsg:
+			reply <- TextReply{Text: string(m)}
+		case StreamStartMsg:
+			// Streaming started, no action needed
+		case StreamCompleteMsg:
+			// Will be handled after AskWithStreaming returns
+		case StreamInterruptedMsg:
+			reply <- TextReply{Text: m.PartialContent}
+		case StreamErrorMsg:
+			reply <- ErrorReply{Error: m.Err}
+		case ToolCallExecutingMsg:
+			reply <- ToolReply{ToolID: m.Name, ToolMsg: m.Format(m.Input, "", nil)}
+		case ToolCallSuccessMsg:
+			reply <- ToolReply{ToolID: m.Name, ToolMsg: m.Format(m.Input, m.Output, nil)}
+		case ToolCallErrorMsg:
+			reply <- ToolReply{ToolID: m.Name, ToolMsg: m.Format(m.Input, "", m.Error)}
+		}
+	}
+
+	// Use AskWithStreaming for tool execution and streaming
+	_, err := sess.AskWithStreaming(ctx, prompt, contextFiles)
+	if err != nil && ctx.Err() == nil {
+		reply <- ErrorReply{Error: err}
+	}
+	reply <- DoneReply{}
+	close(reply)
+}
+
+// generateEdictID creates a unique edict ID
+func generateEdictID() string {
+	return fmt.Sprintf("edict-%d", time.Now().UnixNano())
+}
+
+// truncateString truncates a string to maxLen characters
+func truncateString(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}

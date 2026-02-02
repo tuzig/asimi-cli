@@ -143,6 +143,7 @@ func TestNormalizeCommandName(t *testing.T) {
 }
 
 func TestHandleInitCommand(t *testing.T) {
+	skipIfNotCI(t)
 	// Setup a temporary directory for the test
 	tmpDir := t.TempDir()
 	originalWd, err := os.Getwd()
@@ -266,6 +267,7 @@ func TestHandleInitCommand(t *testing.T) {
 }
 
 func TestRunInitGuardrails(t *testing.T) {
+	skipIfNotCI(t)
 	// Setup a temporary directory for the test
 	tmpDir := t.TempDir()
 	originalWd, err := os.Getwd()

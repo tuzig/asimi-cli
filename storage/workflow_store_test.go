@@ -68,7 +68,6 @@ func TestWorkflowStore(t *testing.T) {
 		WorkflowID:     "test-workflow-1",
 		StepIndex:      0,
 		Name:           "step-1",
-		Status:         StepStatusPending,
 		RetryCount:     0,
 		Message:        "",
 		PromptTemplate: "Test prompt",
@@ -107,25 +106,6 @@ func TestWorkflowStore(t *testing.T) {
 
 	if loaded.State != WorkflowStateRunning {
 		t.Errorf("Expected state Running, got %s", loaded.State)
-	}
-
-	// Test UpdateStepStatus
-	err = store.UpdateStepStatus("test-workflow-1", 0, StepStatusCompleted, "done")
-	if err != nil {
-		t.Fatalf("Failed to update step status: %v", err)
-	}
-
-	steps, err = store.LoadWorkflowSteps("test-workflow-1")
-	if err != nil {
-		t.Fatalf("Failed to load steps after status update: %v", err)
-	}
-
-	if steps[0].Status != StepStatusCompleted {
-		t.Errorf("Expected step status Completed, got %s", steps[0].Status)
-	}
-
-	if steps[0].Message != "done" {
-		t.Errorf("Expected step message 'done', got '%s'", steps[0].Message)
 	}
 
 	// Test IncrementStepRetryCount

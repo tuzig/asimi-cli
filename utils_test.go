@@ -16,6 +16,7 @@ import (
 )
 
 func TestGitHelpersReturnRepositoryState(t *testing.T) {
+	skipIfNotCI(t)
 	tempDir := t.TempDir()
 
 	repo, worktree := initTempRepo(t, tempDir)

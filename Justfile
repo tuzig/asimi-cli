@@ -17,9 +17,13 @@ build:
 run:
     go run . --debug
 
-# Run all tests
+# Run all tests (skips git-altering tests locally)
 test:
     go test -timeout 1m -v ./...
+
+# Run all tests including git-altering tests (CI mode)
+test-ci:
+    CI=true go test -timeout 1m -v ./...
 
 # Run tests with coverage
 test-coverage:

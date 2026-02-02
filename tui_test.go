@@ -50,7 +50,7 @@ func containsMessage(messages []ChatMessage, substring string) bool {
 
 // TestTUIModelInit tests the initialization of the TUI model
 func TestTUIModelInit(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	cmd := model.Init()
 
 	// Init should return nil as there's no initial command
@@ -59,7 +59,7 @@ func TestTUIModelInit(t *testing.T) {
 
 // TestTUIModelWindowSizeMsg tests handling of window size messages
 func TestTUIModelWindowSizeMsg(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Send a window size message
 	newModel, cmd := model.Update(tea.WindowSizeMsg{Width: 100, Height: 50})
@@ -74,7 +74,7 @@ func TestTUIModelWindowSizeMsg(t *testing.T) {
 // newTestModel creates a new TUIModel for testing purposes.
 func newTestModel(t *testing.T) *TUIModel {
 	llm := fake.NewFakeLLM([]string{})
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	// Disable persistent history to keep tests hermetic.
 	model.persistentPromptHistory = nil
 	model.initHistory()
@@ -86,7 +86,7 @@ func newTestModel(t *testing.T) *TUIModel {
 }
 
 func TestCommandCompletionOrderDefaultsToHelp(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	model.prompt.SetValue(":")
 	model.completionMode = "command"
 	model.updateCommandCompletions()
@@ -118,7 +118,7 @@ func TestTUIModelKeyMsg(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+			model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 			// Send a quit key message
 			newModel, cmd := model.Update(tc.key)
@@ -149,7 +149,7 @@ func TestTUIModelKeyMsg(t *testing.T) {
 }
 
 func TestDoubleCtrlCToQuit(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// First CTRL-C starts first burst
 	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -186,7 +186,7 @@ func TestDoubleCtrlCToQuit(t *testing.T) {
 
 func TestCtrlCDuplicateEventsIgnored(t *testing.T) {
 	// Test that rapid duplicate CTRL-C events (like from iOS) are treated as one press
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Simulate rapid CTRL-C events (like iOS sends)
 	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -221,7 +221,7 @@ func TestCtrlCDuplicateEventsIgnored(t *testing.T) {
 
 func TestCtrlCWindowExpiry(t *testing.T) {
 	// Test that window expiry resets state
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// First CTRL-C and complete first burst
 	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -240,7 +240,7 @@ func TestCtrlCWindowExpiry(t *testing.T) {
 
 func TestCtrlCOtherKeyResets(t *testing.T) {
 	// Test that any other key resets CTRL-C state
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// First CTRL-C
 	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -391,7 +391,7 @@ func TestTUIModelKeyboardInteraction(t *testing.T) {
 
 // TestTUIModelView tests the view rendering
 func TestTUIModelView(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Test view rendering with zero dimensions (should show initializing)
 	view := model.View()
@@ -467,7 +467,7 @@ func TestChatComponentScrollLock(t *testing.T) {
 // TestMouseWheelScrollEntersScrollMode tests that scrolling with mouse wheel
 // switches to SCROLL mode (issue #103)
 func TestMouseWheelScrollEntersScrollMode(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Set up window size so we have a proper viewport
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -529,7 +529,7 @@ func TestMouseWheelScrollEntersScrollMode(t *testing.T) {
 // TestMouseWheelScrollDoesNotEnterScrollModeWhenAtTop tests that scrolling up
 // when already at the top does not switch to scroll mode
 func TestMouseWheelScrollDoesNotEnterScrollModeWhenAtTop(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Set up window size
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -565,7 +565,7 @@ func TestMouseWheelScrollDoesNotEnterScrollModeWhenAtTop(t *testing.T) {
 // TestMouseWheelScrollDoesNotEnterScrollModeWhenAlreadyInScrollMode tests that
 // scrolling when already in scroll mode doesn't re-enter scroll mode
 func TestMouseWheelScrollDoesNotEnterScrollModeWhenAlreadyInScrollMode(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Set up window size
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -925,7 +925,7 @@ func TestTUIModelUpdateFileCompletions(t *testing.T) {
 
 // TestRenderHomeView tests the home view rendering
 func TestRenderHomeView(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	model.width = 80
 	model.height = 24
 
@@ -937,7 +937,7 @@ func TestRenderHomeView(t *testing.T) {
 
 // TestRenderHomeViewWithUpdateAvailable tests the home view shows update notification
 func TestRenderHomeViewWithUpdateAvailable(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	model.width = 80
 	model.height = 24
 	model.updateAvailable = true
@@ -1010,7 +1010,7 @@ func TestColonInNormalModeActivatesCommandLine(t *testing.T) {
 }
 
 func TestShowHelpMsgDisplaysRequestedTopic(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	require.Equal(t, ViewChat, model.content.GetActiveView())
 
 	newModel, _ := model.handleCustomMessages(showHelpMsg{topic: "modes"})
@@ -1707,7 +1707,7 @@ func TestHistoryNavigation_RapidNavigation(t *testing.T) {
 func TestHappyFlowE2E(t *testing.T) {
 	// Create a new TUI model for testing
 	config := mockConfig()
-	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil)
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 
 	// Set up a mock session for the test
 	llm := fake.NewFakeLLM([]string{})

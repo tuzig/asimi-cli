@@ -113,6 +113,7 @@ func runInteractiveMode() error {
 			ProvideLogger,
 			ProvideConfig,
 			ProvideStorage,
+			ProvideGormDB,
 			ProvideRepoInfo,
 			ProvideScheduler,
 			ProvideShellRunner,
@@ -121,6 +122,7 @@ func runInteractiveMode() error {
 			ProvideSessionHistory,
 			ProvideTUIModel,
 			StartTUI,
+			ProvideShogunate,
 		),
 		fx.Invoke(
 			ProvideModelClient,

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +46,7 @@ func TestEscapeTOMLString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := escapeTOMLString(tt.input)
+			result := config.EscapeTOMLString(tt.input)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -96,7 +97,7 @@ func TestGetEnv(t *testing.T) {
 				os.Setenv(tt.key, tt.envValue)
 			}
 
-			result := getEnv(tt.key, tt.fallback)
+			result := config.GetEnv(tt.key, tt.fallback)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -212,6 +213,7 @@ func TestGetOAuthConfig(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
+	skipIfNotCI(t)
 	// Create a temporary directory for test configs
 	tempDir := t.TempDir()
 
@@ -330,6 +332,7 @@ model = "claude-3-opus"
 }
 
 func TestSaveConfig(t *testing.T) {
+	skipIfNotCI(t)
 	// Create a temporary directory for test
 	tempDir := t.TempDir()
 
@@ -465,6 +468,7 @@ max_sessions = 50
 }
 
 func TestSetProjectConfig(t *testing.T) {
+	skipIfNotCI(t)
 	// Create a temporary directory for test
 	tempDir := t.TempDir()
 
@@ -766,7 +770,7 @@ provider = "openai"`,
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lines := splitLines(tt.content)
-			start, end, found := findTOMLSectionBounds(lines, tt.section)
+			start, end, found := config.FindTOMLSectionBounds(lines, tt.section)
 			assert.Equal(t, tt.expectFound, found, "found mismatch")
 			if found {
 				assert.Equal(t, tt.expectStart, start, "start mismatch")
@@ -859,7 +863,7 @@ api_key = "old-key"`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, found := updateTOMLValue(tt.content, tt.section, tt.key, tt.newValue)
+			result, found := config.UpdateTOMLValue(tt.content, tt.section, tt.key, tt.newValue)
 			assert.Equal(t, tt.expectFound, found)
 			for _, s := range tt.expectContains {
 				assert.Contains(t, result, s)
@@ -926,7 +930,7 @@ path = "/data"`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := insertTOMLValue(tt.content, tt.section, tt.key, tt.value)
+			result := config.InsertTOMLValue(tt.content, tt.section, tt.key, tt.value)
 			for _, s := range tt.expectContains {
 				assert.Contains(t, result, s)
 			}
@@ -996,7 +1000,7 @@ provider = "openai"`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := removeTOMLKey(tt.content, tt.section, tt.key)
+			result := config.RemoveTOMLKey(tt.content, tt.section, tt.key)
 			for _, s := range tt.expectContains {
 				assert.Contains(t, result, s)
 			}
@@ -1047,7 +1051,7 @@ path = "/data"`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ensureTOMLSection(tt.content, tt.section)
+			result := config.EnsureTOMLSection(tt.content, tt.section)
 			for _, s := range tt.expectContains {
 				assert.Contains(t, result, s)
 			}
@@ -1102,7 +1106,7 @@ provider = "openai"`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := updateOrInsertTOMLValue(tt.content, tt.section, tt.key, tt.value)
+			result := config.UpdateOrInsertTOMLValue(tt.content, tt.section, tt.key, tt.value)
 			for _, s := range tt.expectContains {
 				assert.Contains(t, result, s)
 			}
@@ -1111,6 +1115,7 @@ provider = "openai"`,
 }
 
 func TestSaveConfigPreservesComments(t *testing.T) {
+	skipIfNotCI(t)
 	// Create a temporary directory for test
 	tempDir := t.TempDir()
 

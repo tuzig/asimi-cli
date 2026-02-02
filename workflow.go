@@ -23,7 +23,6 @@ type StepResult struct {
 // StepState represents the runtime state of a step
 type StepState struct {
 	Name       string
-	Status     storage.StepStatus
 	RetryCount int
 	Message    string
 }
@@ -181,7 +180,6 @@ func (w *Workflow) Add(step Step) *Workflow {
 	w.Steps = append(w.Steps, step)
 	w.StepStates = append(w.StepStates, StepState{
 		Name:       step.Name,
-		Status:     storage.StepStatusPending,
 		RetryCount: 0,
 		Message:    "",
 	})
@@ -475,7 +473,6 @@ func (w *Workflow) Save() error {
 			WorkflowID:     w.ID,
 			StepIndex:      i,
 			Name:           state.Name,
-			Status:         state.Status,
 			RetryCount:     state.RetryCount,
 			Message:        state.Message,
 			PromptTemplate: "",
@@ -525,7 +522,6 @@ func (w *Workflow) Run(ctx context.Context) error {
 		result, err := w.executeStep(ctx, w.CurrentStep, step)
 		if err != nil {
 			w.mu.Lock()
-			w.StepStates[w.CurrentStep].Status = storage.StepStatusFailed
 			w.StepStates[w.CurrentStep].Message = err.Error()
 			w.State = storage.WorkflowStateFailed
 			w.mu.Unlock()
@@ -542,7 +538,6 @@ func (w *Workflow) Run(ctx context.Context) error {
 		if result.NextStep != "" {
 			targetIndex := w.stepIndex(result.NextStep)
 			if targetIndex == -1 {
-				w.StepStates[w.CurrentStep].Status = storage.StepStatusFailed
 				w.State = storage.WorkflowStateFailed
 				w.mu.Unlock()
 				w.Save()
@@ -554,13 +549,11 @@ func (w *Workflow) Run(ctx context.Context) error {
 		switch {
 		case nextOffset > 0:
 			// Proceed or skip
-			w.StepStates[w.CurrentStep].Status = storage.StepStatusCompleted
 			w.CurrentStep += nextOffset
 		case nextOffset == 0:
 			// Retry
 			w.StepStates[w.CurrentStep].RetryCount++
 			if w.StepStates[w.CurrentStep].RetryCount >= w.MaxRetries {
-				w.StepStates[w.CurrentStep].Status = storage.StepStatusFailed
 				w.State = storage.WorkflowStateFailed
 				w.mu.Unlock()
 				w.Save()
@@ -571,13 +564,11 @@ func (w *Workflow) Run(ctx context.Context) error {
 			// Go back
 			newStep := w.CurrentStep + nextOffset
 			if newStep < 0 {
-				w.StepStates[w.CurrentStep].Status = storage.StepStatusFailed
 				w.State = storage.WorkflowStateFailed
 				w.mu.Unlock()
 				w.Save()
 				return fmt.Errorf("step %q: cannot go back %d steps from step %d", step.Name, -nextOffset, w.CurrentStep)
 			}
-			w.StepStates[w.CurrentStep].Status = storage.StepStatusPending
 			w.CurrentStep = newStep
 		}
 		w.mu.Unlock()
@@ -603,10 +594,6 @@ func (w *Workflow) Run(ctx context.Context) error {
 // executeStep runs a single step
 func (w *Workflow) executeStep(ctx context.Context, stepIndex int, step Step) (StepResult, error) {
 	slog.Debug("Executing workflow step", "step", step.Name, "index", stepIndex)
-
-	w.mu.Lock()
-	w.StepStates[stepIndex].Status = storage.StepStatusRunning
-	w.mu.Unlock()
 
 	// Notify progress
 	w.onProgress(stepIndex, w.StepStates[stepIndex], "")
@@ -744,7 +731,6 @@ func Load(db *storage.DB, workflowID string) (*Workflow, error) {
 	for _, sd := range stepData {
 		w.StepStates = append(w.StepStates, StepState{
 			Name:       sd.Name,
-			Status:     sd.Status,
 			RetryCount: sd.RetryCount,
 			Message:    sd.Message,
 		})

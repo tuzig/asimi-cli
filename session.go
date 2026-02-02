@@ -331,6 +331,11 @@ func (s *Session) GetContextFiles() map[string]string {
 	return result
 }
 
+// GetModel returns the LLM model used by this session
+func (s *Session) GetModel() llms.Model {
+	return s.llm
+}
+
 // buildPromptWithContext builds a prompt that includes all file content
 func (s *Session) buildPromptWithContext(userPrompt string) string {
 	if len(s.ContextFiles) == 0 {

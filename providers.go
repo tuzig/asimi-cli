@@ -5,9 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"go.uber.org/fx"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // LoggerResult holds the configured logger
@@ -34,7 +39,7 @@ func ProvideConfig(logger *slog.Logger) (*Config, error) {
 		logger.Warn("failed to ensure user config exists", "error", err)
 	} else if created {
 		logger.Info("created user config file on first run")
-		ConfigCreated = true
+		SetConfigCreated(true)
 	}
 
 	config, err := LoadConfig()
@@ -57,7 +62,7 @@ func ProvideConfig(logger *slog.Logger) (*Config, error) {
 	}
 	// Override from CLI flag
 	if cli.NoCleanup {
-		config.RunShellCommand.NoCleanup = true
+		config.Sandbox.NoCleanup = true
 	}
 	logger.Info("configuration loaded")
 	return config, nil
@@ -276,12 +281,13 @@ type TUIModelParams struct {
 	SessionStore   *SessionStore
 	DB             *storage.DB
 	Scheduler      *CoreToolScheduler
+	Shogunate      *shogunate.Shogunate
 	Logger         *slog.Logger
 }
 
 // ProvideTUIModel creates and returns the TUI model
 func ProvideTUIModel(params TUIModelParams) *TUIModel {
-	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler)
+	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler, params.Shogunate)
 }
 
 // TUIProgramParams holds parameters for TUI program initialization
@@ -303,4 +309,87 @@ func StartTUI(params TUIProgramParams) *tea.Program {
 	program = prog
 
 	return prog
+}
+
+// GormDBParams holds parameters for GORM database initialization
+type GormDBParams struct {
+	fx.In
+	Config *Config
+	Logger *slog.Logger
+}
+
+// ProvideGormDB creates a GORM database connection sharing the same SQLite file
+func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
+	params.Logger.Info("initializing GORM database", "path", params.Config.Storage.DatabasePath)
+
+	// Configure GORM logger based on debug mode
+	var gormLog gormlogger.Interface
+	if cli.Debug {
+		gormLog = gormlogger.Default.LogMode(gormlogger.Info)
+	} else {
+		gormLog = gormlogger.Default.LogMode(gormlogger.Silent)
+	}
+
+	db, err := gorm.Open(sqlite.Open(params.Config.Storage.DatabasePath), &gorm.Config{
+		Logger: gormLog,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open GORM database: %w", err)
+	}
+
+	// Auto-migrate Shogunate tables
+	if err := db.AutoMigrate(
+		&storage.Edict{},
+		&storage.Zhengming{},
+		&storage.TianEvent{},
+		&storage.TianEventDLQ{},
+		&storage.Ling{},
+		&storage.ForgeManifest{},
+		&storage.JudgeVerdict{},
+		&storage.CensorPrecedent{},
+		&storage.MarshalIncident{},
+		&storage.RulerCouncil{},
+		&storage.RitualGuardCheckpoint{},
+	); err != nil {
+		return nil, fmt.Errorf("failed to migrate Shogunate schema: %w", err)
+	}
+
+	params.Logger.Info("GORM database initialized")
+	return db, nil
+}
+
+// ShogunateParams holds parameters for Shogunate initialization
+type ShogunateParams struct {
+	fx.In
+	Lifecycle fx.Lifecycle
+	GormDB    *gorm.DB
+	Config    *Config
+	Runner    shellRunner
+	Logger    *slog.Logger
+}
+
+// ProvideShogunate creates the Shogunate coordinator with lifecycle management
+func ProvideShogunate(params ShogunateParams) *shogunate.Shogunate {
+	params.Logger.Info("initializing Shogunate")
+
+	// Get Shogunate config (use defaults if not configured)
+	cfg := config.DefaultShogunateConfig()
+
+	// Adapt shellRunner to runners.Runner interface for the shogunate
+	runner := AsRunnersRunner(params.Runner)
+	s := shogunate.NewShogunate(params.GormDB, cfg, runner, params.Logger)
+
+	// Register lifecycle hooks
+	params.Lifecycle.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			params.Logger.Info("starting Shogunate")
+			return s.Start(ctx)
+		},
+		OnStop: func(ctx context.Context) error {
+			params.Logger.Info("stopping Shogunate")
+			return s.Stop()
+		},
+	})
+
+	return s
 }

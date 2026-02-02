@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/tmc/langchaingo/tools"
 	"github.com/yargevad/filepathx"
 )
@@ -526,6 +527,45 @@ type shellRunner interface {
 	RunnerType() string // Returns "podman" or "host"
 }
 
+// shellRunnerAdapter adapts a shellRunner to the runners.Runner interface
+// used by the shogunate package.
+type shellRunnerAdapter struct {
+	sr shellRunner
+}
+
+// AsRunnersRunner returns a runners.Runner interface for the given shellRunner.
+// Returns nil if the input is nil.
+func AsRunnersRunner(sr shellRunner) runners.Runner {
+	if sr == nil {
+		return nil
+	}
+	return &shellRunnerAdapter{sr: sr}
+}
+
+func (a *shellRunnerAdapter) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
+	out, err := a.sr.Run(ctx, RunShellCommandInput{
+		Command:        input.Command,
+		Description:    input.Description,
+		BypassApproval: input.BypassApproval,
+	})
+	return runners.Output{
+		Output:   out.Output,
+		ExitCode: out.ExitCode,
+	}, err
+}
+
+func (a *shellRunnerAdapter) Restart(ctx context.Context) error {
+	return a.sr.Restart(ctx)
+}
+
+func (a *shellRunnerAdapter) Close(ctx context.Context) error {
+	return a.sr.Close(ctx)
+}
+
+func (a *shellRunnerAdapter) RunnerType() string {
+	return a.sr.RunnerType()
+}
+
 // HostShellRunner runs commands directly on the host system
 type HostShellRunner struct {
 	config *Config
@@ -604,8 +644,8 @@ func isPodmanAvailable(config *Config, repoInfo RepoInfo) bool {
 
 	// Determine the image name
 	imageName := fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
-	if config != nil && config.RunShellCommand.ImageName != "" {
-		imageName = config.RunShellCommand.ImageName
+	if config != nil && config.Sandbox.ImageName != "" {
+		imageName = config.Sandbox.ImageName
 	}
 
 	// Check if podman is available and the image exists using podman CLI
@@ -633,7 +673,7 @@ func initShellRunner(config *Config, scheduler *CoreToolScheduler) {
 	// Auto-detect and assign shell runner
 	if isPodmanAvailable(config, repoInfo) {
 		slog.Info("using podman shell runner")
-		currentShellRunner = newPodmanShellRunner(config.RunShellCommand.AllowHostFallback, config, repoInfo)
+		currentShellRunner = newPodmanShellRunner(config.Sandbox.AllowHostFallback, config, repoInfo)
 	} else {
 		slog.Info("using host shell runner (podman not available or image missing)")
 		currentShellRunner = newHostShellRunner(config)
@@ -669,7 +709,7 @@ func tryUpgradeToSandbox(config *Config) bool {
 	// Check if sandbox is now available
 	if isPodmanAvailable(config, repoInfo) {
 		slog.Info("sandbox image now available, upgrading from host to podman shell runner")
-		currentShellRunner = newPodmanShellRunner(config.RunShellCommand.AllowHostFallback, config, repoInfo)
+		currentShellRunner = newPodmanShellRunner(config.Sandbox.AllowHostFallback, config, repoInfo)
 		return true
 	}
 
@@ -707,7 +747,7 @@ func (t RunShellCommand) shouldRunOnHost(command string) (runOnHost, requiresApp
 	runner := getShellRunner()
 	if runner != nil && runner.RunnerType() == "podman" {
 		// Check if command matches any run_on_host pattern
-		for _, pattern := range t.config.RunShellCommand.RunOnHost {
+		for _, pattern := range t.config.Sandbox.RunOnHost {
 			matched, _ := regexp.MatchString(pattern, command)
 			if matched {
 				goto onHost
@@ -719,11 +759,11 @@ func (t RunShellCommand) shouldRunOnHost(command string) (runOnHost, requiresApp
 onHost:
 	runOnHost = true
 
-	if len(t.config.RunShellCommand.SafeRunOnHost) == 0 {
+	if len(t.config.Sandbox.SafeRunOnHost) == 0 {
 		return
 	}
 	// First check if command matches any safe_run_on_host pattern (no approval needed)
-	for _, pattern := range t.config.RunShellCommand.SafeRunOnHost {
+	for _, pattern := range t.config.Sandbox.SafeRunOnHost {
 		matched, err := regexp.MatchString(pattern, command)
 		if err != nil {
 			// Log warning but continue checking other patterns

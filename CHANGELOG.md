@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Supporting `r` key in normal mode to replace character under cursor (#76)
+- Adding tool execution and streaming support to Shogunate Session
+
+### Changed
+
+- Merging `[container]` and `[run_shell_command]` config sections into unified `[sandbox]` section
+- Moving config loading functions to `internal/config` package for better code organization
+- Replacing Chancellor's `Send()` method with `AskWithStreaming()` for proper tool execution
 
 ### Fixed
 

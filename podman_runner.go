@@ -53,11 +53,11 @@ func newPodmanShellRunner(allowFallback bool, config *Config, repoInfo RepoInfo)
 	imageName := fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
 
 	if config != nil {
-		if config.RunShellCommand.NoCleanup {
+		if config.Sandbox.NoCleanup {
 			noCleanup = true
 		}
-		if config.RunShellCommand.ImageName != "" {
-			imageName = config.RunShellCommand.ImageName
+		if config.Sandbox.ImageName != "" {
+			imageName = config.Sandbox.ImageName
 		}
 	} else {
 		slog.Debug("Config is nil, using image: ", "name", imageName)
@@ -392,7 +392,7 @@ func (r *PodmanShellRunner) createContainer(ctx context.Context) error {
 	}
 	// Add additional mounts from config if available
 	if r.config != nil {
-		for _, m := range r.config.Container.AdditionalMounts {
+		for _, m := range r.config.Sandbox.AdditionalMounts {
 			slog.Debug("adding additional mount", "source", m.Source, "destination", m.Destination)
 			mounts = append(mounts, spec.Mount{
 				Type:        "bind",
@@ -475,8 +475,8 @@ func (r *PodmanShellRunner) Run(ctx context.Context, params RunShellCommandInput
 	// Get timeout from config or use default of 2 minutes
 	// TODO: move the default to config.go
 	timeoutMinutes := 2
-	if r.config != nil && r.config.RunShellCommand.TimeoutMinutes > 0 {
-		timeoutMinutes = r.config.RunShellCommand.TimeoutMinutes
+	if r.config != nil && r.config.Sandbox.TimeoutMinutes > 0 {
+		timeoutMinutes = r.config.Sandbox.TimeoutMinutes
 	}
 	timeout := time.Duration(timeoutMinutes) * time.Minute
 	slog.Debug("using timeout", "timeout", timeout)
