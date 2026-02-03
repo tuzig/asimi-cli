@@ -1176,62 +1176,54 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		}
 	}
 
-	// Create reply channel for streaming responses
-	replyChan := make(chan shogunate.StreamReply, 100)
+	// Create stream channel for streaming responses
+	streamChan := make(chan shogunate.Reply, 100)
 
 	// Send edict to Chancellor
-	env := &shogunate.EdictEnvelope{
+	edict := &shogunate.Edict{
 		Prompt:       prompt,
 		EdictID:      m.currentEdictID, // Empty for new edict
 		ContextFiles: contextFiles,
-		ReplyChan:    replyChan,
+		Stream:       streamChan,
 	}
 
 	// Non-blocking send to Chancellor
 	go func() {
-		ch.Edicts <- env
+		ch.Edicts <- edict
 	}()
 
 	m.streamingActive = true
 
 	// Return command that listens for responses
-	return m.listenToShogunateReplies(ctx, replyChan)
+	return m.listenToShogunateReplies(ctx, streamChan)
 }
 
 // listenToShogunateReplies returns a command that processes replies from the Chancellor
-func (m *TUIModel) listenToShogunateReplies(ctx context.Context, replyChan <-chan shogunate.StreamReply) tea.Cmd {
+func (m *TUIModel) listenToShogunateReplies(ctx context.Context, streamChan <-chan shogunate.Reply) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case <-ctx.Done():
 			return streamInterruptedMsg{partialContent: ""}
-		case reply, ok := <-replyChan:
+		case reply, ok := <-streamChan:
 			if !ok {
 				// Channel closed, streaming complete
 				return streamCompleteMsg{}
 			}
 
-			switch r := reply.(type) {
-			case shogunate.TextReply:
-				return shogunateTextMsg{text: r.Text, replyChan: replyChan, ctx: ctx}
-			case shogunate.ThoughtReply:
-				return shogunateThoughtMsg{text: r.Text, replyChan: replyChan, ctx: ctx}
-			case shogunate.ToolReply:
-				return shogunateToolMsg{toolID: r.ToolID, toolMsg: r.ToolMsg, replyChan: replyChan, ctx: ctx}
-			case shogunate.ErrorReply:
-				return streamErrorMsg{err: r.Error}
-			case shogunate.DoneReply:
+			switch reply.Type {
+			case shogunate.ReplyText:
+				return shogunateTextMsg{text: reply.Message, streamChan: streamChan, ctx: ctx}
+			case shogunate.ReplyThought:
+				return shogunateThoughtMsg{text: reply.Message, streamChan: streamChan, ctx: ctx}
+			case shogunate.ReplyTool:
+				return shogunateToolMsg{toolID: reply.Name, toolMsg: reply.Message, streamChan: streamChan, ctx: ctx}
+			case shogunate.ReplyError:
+				return streamErrorMsg{err: reply.Err}
+			case shogunate.ReplyDone:
 				return streamCompleteMsg{}
-			case shogunate.ContextReply:
-				// Handle context updates (e.g., edictID)
-				if r.Key == "edict_id" {
-					if id, ok := r.Value.(string); ok {
-						return shogunateContextMsg{key: r.Key, value: id, replyChan: replyChan, ctx: ctx}
-					}
-				}
-				return m.listenToShogunateReplies(ctx, replyChan)()
 			default:
 				// Unknown reply type, continue listening
-				return m.listenToShogunateReplies(ctx, replyChan)()
+				return m.listenToShogunateReplies(ctx, streamChan)()
 			}
 		}
 	}
@@ -1239,29 +1231,29 @@ func (m *TUIModel) listenToShogunateReplies(ctx context.Context, replyChan <-cha
 
 // Shogunate streaming message types
 type shogunateTextMsg struct {
-	text      string
-	replyChan <-chan shogunate.StreamReply
-	ctx       context.Context
+	text       string
+	streamChan <-chan shogunate.Reply
+	ctx        context.Context
 }
 
 type shogunateThoughtMsg struct {
-	text      string
-	replyChan <-chan shogunate.StreamReply
-	ctx       context.Context
+	text       string
+	streamChan <-chan shogunate.Reply
+	ctx        context.Context
 }
 
 type shogunateToolMsg struct {
-	toolID    string
-	toolMsg   string
-	replyChan <-chan shogunate.StreamReply
-	ctx       context.Context
+	toolID     string
+	toolMsg    string
+	streamChan <-chan shogunate.Reply
+	ctx        context.Context
 }
 
 type shogunateContextMsg struct {
-	key       string
-	value     string
-	replyChan <-chan shogunate.StreamReply
-	ctx       context.Context
+	key        string
+	value      string
+	streamChan <-chan shogunate.Reply
+	ctx        context.Context
 }
 
 func (m *TUIModel) saveHistoryPresentState() {
@@ -1841,23 +1833,23 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.waitingForResponse {
 				waitCmd := m.startWaitingForResponse()
 				m.content.Chat.AddAIChunk(msg.text)
-				return m, tea.Batch(waitCmd, m.listenToShogunateReplies(msg.ctx, msg.replyChan))
+				return m, tea.Batch(waitCmd, m.listenToShogunateReplies(msg.ctx, msg.streamChan))
 			}
 		}
 		m.content.Chat.AddAIChunk(msg.text)
-		return m, m.listenToShogunateReplies(msg.ctx, msg.replyChan)
+		return m, m.listenToShogunateReplies(msg.ctx, msg.streamChan)
 
 	case shogunateThoughtMsg:
 		// Handle thinking/reasoning chunks from Shogunate
 		m.content.Chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.text)
 		m.content.Chat.AddThinkingChunk(msg.text)
-		return m, m.listenToShogunateReplies(msg.ctx, msg.replyChan)
+		return m, m.listenToShogunateReplies(msg.ctx, msg.streamChan)
 
 	case shogunateToolMsg:
 		// Handle tool execution updates from Shogunate
 		m.content.Chat.AddToRawHistory("SHOGUNATE_TOOL", fmt.Sprintf("%s: %s", msg.toolID, msg.toolMsg))
 		m.content.Chat.AddMessage(fmt.Sprintf("⏺ %s", msg.toolMsg))
-		return m, m.listenToShogunateReplies(msg.ctx, msg.replyChan)
+		return m, m.listenToShogunateReplies(msg.ctx, msg.streamChan)
 
 	case shogunateContextMsg:
 		// Handle context updates from Shogunate (e.g., edictID)
@@ -1865,7 +1857,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.currentEdictID = msg.value
 			slog.Debug("updated current edict ID", "edict_id", msg.value)
 		}
-		return m, m.listenToShogunateReplies(msg.ctx, msg.replyChan)
+		return m, m.listenToShogunateReplies(msg.ctx, msg.streamChan)
 
 	case showHelpMsg:
 		// Show the help viewer with the requested topic

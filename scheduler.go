@@ -46,7 +46,8 @@ type CoreToolScheduler struct {
 	queue       []*ToolCall
 	isBusy      bool
 	resultChans map[string]chan ToolCallResult
-	notify      func(any)
+	// TODO: refator to a channel
+	notify func(any)
 }
 
 // NewCoreToolScheduler creates a new CoreToolScheduler

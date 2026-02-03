@@ -322,8 +322,8 @@ func TestStrategist_ValidDependencies(t *testing.T) {
 	}
 }
 
-// TestHappyFlowE2E tests the complete TaskEnvelope flow:
-// Chancellor -> invoke_minister tool -> Minister receives task -> Minister replies (synchronous)
+// TestHappyFlowE2E tests the complete Task flow:
+// Chancellor -> invoke_minister tool -> Minister receives Task -> Minister sends Result (synchronous)
 func TestHappyFlowE2E(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())

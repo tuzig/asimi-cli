@@ -10,18 +10,19 @@ import (
 	"github.com/afittestide/asimi/internal/utils"
 )
 
-// MinisterTaskReply is the reply from a minister task execution
-type MinisterTaskReply struct {
-	MinisterID string
-	Sealed     bool
-	Output     string
-	Error      error
+// MinisterResult captures the result of a minister task invocation.
+// This interface avoids circular dependency with the shogunate package.
+type MinisterResult interface {
+	GetMinisterID() string
+	GetSealed() bool
+	GetOutput() string
+	GetErr() error
 }
 
 // MinisterInvoker provides the ability to invoke ministers
 type MinisterInvoker interface {
-	// InvokeMinister sends a task to a minister and waits for a reply
-	InvokeMinister(ctx context.Context, ministerID, edictID, task string, timeout time.Duration) (*MinisterTaskReply, error)
+	// InvokeMinister sends a task to a minister and waits for a result
+	InvokeMinister(ctx context.Context, ministerID, edictID, work string, timeout time.Duration) (MinisterResult, error)
 }
 
 // InvokeMinisterTool allows the Chancellor to invoke any registered minister for an edict.
@@ -46,8 +47,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	var params struct {
 		MinisterID string `json:"minister_id"`
 		EdictID    string `json:"edict_id"`
-		// TODO: better use TaskEnvelope
-		Task string `json:"task"`
+		Work       string `json:"task"` // JSON field is "task" for backwards compatibility
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -59,7 +59,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	if params.EdictID == "" {
 		return "", fmt.Errorf("edict_id is required")
 	}
-	if params.Task == "" {
+	if params.Work == "" {
 		return "", fmt.Errorf("task is required")
 	}
 
@@ -68,7 +68,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		logger = slog.Default()
 	}
 
-	reply, err := t.Invoker.InvokeMinister(ctx, params.MinisterID, params.EdictID, params.Task, 5*time.Minute)
+	res, err := t.Invoker.InvokeMinister(ctx, params.MinisterID, params.EdictID, params.Work, 5*time.Minute)
 	if err != nil {
 		logger.Error("task failed",
 			"minister", params.MinisterID,
@@ -77,26 +77,26 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, err)
 	}
 
-	if reply.Error != nil {
+	if res.GetErr() != nil {
 		logger.Error("task returned error",
 			"minister", params.MinisterID,
 			"edict_id", params.EdictID,
-			"error", reply.Error)
-		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, reply.Error)
+			"error", res.GetErr())
+		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, res.GetErr())
 	}
 
 	logger.Info("task completed",
 		"minister", params.MinisterID,
 		"edict_id", params.EdictID,
-		"sealed", reply.Sealed,
-		"output_len", len(reply.Output))
+		"sealed", res.GetSealed(),
+		"output_len", len(res.GetOutput()))
 
 	result := map[string]any{
 		"minister_id": params.MinisterID,
 		"edict_id":    params.EdictID,
 		"status":      "completed",
-		"sealed":      reply.Sealed,
-		"output":      reply.Output,
+		"sealed":      res.GetSealed(),
+		"output":      res.GetOutput(),
 	}
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil

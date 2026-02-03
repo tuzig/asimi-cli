@@ -13,7 +13,7 @@ import (
 type Censor struct {
 	MinisterBase // embedded base for database access and session creation
 	linter       Linter
-	tasks        chan *TaskEnvelope
+	tasks        chan *Task
 }
 
 // NewCensor creates a new Censor minister
@@ -22,12 +22,12 @@ func NewCensor(base MinisterBase, linter Linter) *Censor {
 	return &Censor{
 		MinisterBase: base,
 		linter:       linter,
-		tasks:        make(chan *TaskEnvelope, 10),
+		tasks:        make(chan *Task, 10),
 	}
 }
 
 // Tasks returns the channel for task submission
-func (c *Censor) Tasks() chan<- *TaskEnvelope {
+func (c *Censor) Tasks() chan<- *Task {
 	return c.tasks
 }
 
@@ -274,39 +274,37 @@ func (c *Censor) Run(ctx context.Context) {
 		case <-ctx.Done():
 			c.logger.Info("censor stopped")
 			return
-		case env := <-c.tasks:
-			c.processTask(ctx, env)
+		case task := <-c.tasks:
+			c.processTask(ctx, task)
 		}
 	}
 }
 
-// processTask handles a single task envelope
-func (c *Censor) processTask(ctx context.Context, env *TaskEnvelope) {
+// processTask handles a single task
+func (c *Censor) processTask(ctx context.Context, task *Task) {
 	c.logger.Info("censor processing task",
-		"edict_id", env.EdictID,
-		"task", env.Task)
+		"edict_id", task.EdictID,
+		"work", task.Work)
 
 	// Execute the review logic
-	sealed, err := c.execute(ctx, env.EdictID)
+	sealed, err := c.execute(ctx, task.EdictID)
 
-	// Send reply back to Chancellor
-	reply := &TaskReply{
-		EdictID:    env.EdictID,
+	// Send result back to Chancellor
+	result := Result{
 		MinisterID: c.ID(),
-		Task:       env.Task,
 		Sealed:     sealed,
-		Error:      err,
+		Err:        err,
 	}
 
 	if sealed {
-		reply.Output = "review complete"
+		result.Output = "review complete"
 	}
 
-	// Send reply (non-blocking)
+	// Send result (non-blocking)
 	select {
-	case env.ReplyChan <- reply:
+	case task.Done <- result:
 	default:
-		c.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
+		c.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
 	}
 }
 

@@ -36,67 +36,63 @@ type EventEmitter interface {
 	EmitEvent(edictID, eventType string, payload storage.JSON) error
 }
 
-// TaskEnvelope carries a task from Chancellor to a minister.
-// Each envelope includes return address (ReplyChan) for results.
-type TaskEnvelope struct {
-	EdictID    string             // The edict this task belongs to
-	Task       string             // Specific instructions for the minister
-	ReplyChan  chan<- *TaskReply  // Return channel for results
-	StreamChan chan<- StreamReply // For streaming to TUI
+// === UNIFIED TYPES ===
+
+// ReplyType distinguishes different kinds of streaming replies
+type ReplyType int
+
+const (
+	ReplyText ReplyType = iota
+	ReplyThought
+	ReplyTool
+	ReplyError
+	ReplyDone
+)
+
+// Reply is a single struct for all streaming messages
+type Reply struct {
+	Type    ReplyType
+	Message string
+	Level   int    // indentation for TUI formatting
+	Name    string // tool name (only for ReplyTool)
+	Err     error  // only for ReplyError
 }
 
-// --- Streaming Types (bubbletea-style interface pattern) ---
-
-// StreamReply is the base type for all streaming replies
-type StreamReply any
-
-// TextReply carries streaming text content
-type TextReply struct {
-	Text string
+// Edict carries the user's prompt to the Chancellor
+type Edict struct {
+	Prompt       string            // The Ruler's words
+	EdictID      string            // Empty = new edict, set = continue existing
+	ContextFiles map[string]string // Files loaded via @ references
+	Stream       chan<- Reply      // For streaming responses to TUI
 }
 
-// ThoughtReply carries streaming thinking/reasoning content
-type ThoughtReply struct {
-	Text string
+// Task carries work from Chancellor to a Minister
+type Task struct {
+	EdictID string       // The edict this task belongs to
+	Work    string       // Specific instructions for the minister (renamed from Task to avoid Task.Task)
+	Stream  chan<- Reply // For streaming to TUI (may be nil)
+	Done    chan<- Result // For completion signal
 }
 
-// ToolReply carries tool execution updates
-type ToolReply struct {
-	ToolID  string
-	ToolMsg string
+// Result signals a Minister has completed a Task
+type Result struct {
+	MinisterID string
+	Sealed     bool   // phase complete
+	Output     string
+	Err        error
 }
 
-// ErrorReply carries error information
-type ErrorReply struct {
-	Error error
-}
+// GetMinisterID implements tools.MinisterResult
+func (r *Result) GetMinisterID() string { return r.MinisterID }
 
-// ContextReply carries context/metadata updates
-type ContextReply struct {
-	Key   string
-	Value any
-}
+// GetSealed implements tools.MinisterResult
+func (r *Result) GetSealed() bool { return r.Sealed }
 
-// DoneReply signals completion
-type DoneReply struct{}
+// GetOutput implements tools.MinisterResult
+func (r *Result) GetOutput() string { return r.Output }
 
-// EdictEnvelope carries the Ruler's prompt to the Chancellor
-type EdictEnvelope struct {
-	Prompt       string             // The Ruler's words
-	EdictID      string             // Empty = new edict, set = continue existing
-	ContextFiles map[string]string  // Files loaded via @ references
-	ReplyChan    chan<- StreamReply // Return channel for streaming responses
-}
-
-// TaskReply is sent back by ministers when a task completes.
-type TaskReply struct {
-	EdictID    string // Echo back for correlation
-	MinisterID string // Which minister completed this
-	Task       string // Echo back the task for logging
-	Sealed     bool   // True if phase is complete
-	Output     string // Result/response text
-	Error      error  // Any error that occurred
-}
+// GetErr implements tools.MinisterResult
+func (r *Result) GetErr() error { return r.Err }
 
 // Minister is the shared interface for all Shogunate ministers
 type Minister interface {
@@ -110,8 +106,8 @@ type Minister interface {
 	Scratchpad() string
 	// Tools returns the minister's LLM tools for interactive sessions
 	Tools(notify NotifyFunc) []Tool
-	// Tasks returns the channel for submitting TaskEnvelopes
-	Tasks() chan<- *TaskEnvelope
+	// Tasks returns the channel for submitting Tasks
+	Tasks() chan<- *Task
 	// Events returns the Shogunate events the minister listens to.
 	Events() []ShogunateEvent
 	// Run starts the minister's processing loop (blocks until context cancelled)

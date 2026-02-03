@@ -41,7 +41,7 @@ CRITICAL RULES:
 type Marshal struct {
 	MinisterBase // embedded base for database access and session creation
 	rca          RCAAnalyzer
-	tasks        chan *TaskEnvelope
+	tasks        chan *Task
 }
 
 // NewMarshal creates a new Marshal minister
@@ -50,12 +50,12 @@ func NewMarshal(base MinisterBase, rca RCAAnalyzer) *Marshal {
 	return &Marshal{
 		MinisterBase: base,
 		rca:          rca,
-		tasks:        make(chan *TaskEnvelope, 10),
+		tasks:        make(chan *Task, 10),
 	}
 }
 
 // Tasks returns the channel for task submission
-func (m *Marshal) Tasks() chan<- *TaskEnvelope {
+func (m *Marshal) Tasks() chan<- *Task {
 	return m.tasks
 }
 
@@ -236,39 +236,37 @@ func (m *Marshal) Run(ctx context.Context) {
 		case <-ctx.Done():
 			m.logger.Info("marshal stopped")
 			return
-		case env := <-m.tasks:
-			m.processTask(ctx, env)
+		case task := <-m.tasks:
+			m.processTask(ctx, task)
 		}
 	}
 }
 
-// processTask handles a single task envelope
-func (m *Marshal) processTask(ctx context.Context, env *TaskEnvelope) {
+// processTask handles a single task
+func (m *Marshal) processTask(ctx context.Context, task *Task) {
 	m.logger.Info("marshal processing task",
-		"edict_id", env.EdictID,
-		"task", env.Task)
+		"edict_id", task.EdictID,
+		"work", task.Work)
 
 	// Execute the marshal logic
-	sealed, err := m.execute(ctx, env.EdictID)
+	sealed, err := m.execute(ctx, task.EdictID)
 
-	// Send reply back to Chancellor
-	reply := &TaskReply{
-		EdictID:    env.EdictID,
+	// Send result back to Chancellor
+	result := Result{
 		MinisterID: m.ID(),
-		Task:       env.Task,
 		Sealed:     sealed,
-		Error:      err,
+		Err:        err,
 	}
 
 	if sealed {
-		reply.Output = "marshal task complete"
+		result.Output = "marshal task complete"
 	}
 
-	// Send reply (non-blocking)
+	// Send result (non-blocking)
 	select {
-	case env.ReplyChan <- reply:
+	case task.Done <- result:
 	default:
-		m.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
+		m.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
 	}
 }
 

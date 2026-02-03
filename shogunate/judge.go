@@ -39,7 +39,7 @@ CRITICAL RULES:
 type Judge struct {
 	MinisterBase // embedded base for database access and session creation
 	ci           CIRunner
-	tasks        chan *TaskEnvelope
+	tasks        chan *Task
 }
 
 // NewJudge creates a new Judge minister
@@ -48,12 +48,12 @@ func NewJudge(base MinisterBase, ci CIRunner) *Judge {
 	return &Judge{
 		MinisterBase: base,
 		ci:           ci,
-		tasks:        make(chan *TaskEnvelope, 10),
+		tasks:        make(chan *Task, 10),
 	}
 }
 
 // Tasks returns the channel for task submission
-func (j *Judge) Tasks() chan<- *TaskEnvelope {
+func (j *Judge) Tasks() chan<- *Task {
 	return j.tasks
 }
 
@@ -274,39 +274,37 @@ func (j *Judge) Run(ctx context.Context) {
 		case <-ctx.Done():
 			j.logger.Info("judge stopped")
 			return
-		case env := <-j.tasks:
-			j.processTask(ctx, env)
+		case task := <-j.tasks:
+			j.processTask(ctx, task)
 		}
 	}
 }
 
-// processTask handles a single task envelope
-func (j *Judge) processTask(ctx context.Context, env *TaskEnvelope) {
+// processTask handles a single task
+func (j *Judge) processTask(ctx context.Context, task *Task) {
 	j.logger.Info("judge processing task",
-		"edict_id", env.EdictID,
-		"task", env.Task)
+		"edict_id", task.EdictID,
+		"work", task.Work)
 
 	// Execute the judgment logic
-	sealed, err := j.execute(ctx, env.EdictID)
+	sealed, err := j.execute(ctx, task.EdictID)
 
-	// Send reply back to Chancellor
-	reply := &TaskReply{
-		EdictID:    env.EdictID,
+	// Send result back to Chancellor
+	result := Result{
 		MinisterID: j.ID(),
-		Task:       env.Task,
 		Sealed:     sealed,
-		Error:      err,
+		Err:        err,
 	}
 
 	if sealed {
-		reply.Output = "judgment complete"
+		result.Output = "judgment complete"
 	}
 
-	// Send reply (non-blocking)
+	// Send result (non-blocking)
 	select {
-	case env.ReplyChan <- reply:
+	case task.Done <- result:
 	default:
-		j.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
+		j.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
 	}
 }
 

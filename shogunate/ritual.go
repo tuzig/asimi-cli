@@ -632,31 +632,31 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		return "", fmt.Errorf("minister not found: %s", step.Minister)
 	}
 
-	// Expand template in task
-	task := r.expandTemplate(step.Task, exec)
+	// Expand template in work
+	work := r.expandTemplate(step.Task, exec)
 
-	// Create task envelope
-	replyChan := make(chan *TaskReply, 1)
-	env := &TaskEnvelope{
-		EdictID:   exec.EdictID,
-		Task:      task,
-		ReplyChan: replyChan,
+	// Create task
+	doneChan := make(chan Result, 1)
+	t := &Task{
+		EdictID: exec.EdictID,
+		Work:    work,
+		Done:    doneChan,
 	}
 
 	// Send task to minister
 	select {
-	case minister.Tasks() <- env:
+	case minister.Tasks() <- t:
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
 
-	// Wait for reply
+	// Wait for result
 	select {
-	case reply := <-replyChan:
-		if reply.Error != nil {
-			return "", reply.Error
+	case result := <-doneChan:
+		if result.Err != nil {
+			return "", result.Err
 		}
-		return reply.Output, nil
+		return result.Output, nil
 	case <-time.After(5 * time.Minute):
 		return "", fmt.Errorf("minister %s timeout", step.Minister)
 	case <-ctx.Done():

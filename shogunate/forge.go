@@ -10,24 +10,24 @@ import (
 	"github.com/afittestide/asimi/storage"
 )
 
-// Forge receives TaskEnvelopes from the Chancellor via the tasks channel.
+// Forge receives Tasks from the Chancellor via the tasks channel.
 // When an LLM is configured, it creates sessions to process tasks through tool execution.
 type Forge struct {
 	MinisterBase // embedded base for database access and session creation
-	tasks        chan *TaskEnvelope
+	tasks        chan *Task
 }
 
-// NewForge creates a new Forge that processes tasks via the TaskEnvelope pattern.
+// NewForge creates a new Forge that processes tasks via the Task pattern.
 func NewForge(base MinisterBase) *Forge {
 	base.ministerID = "forge"
 	return &Forge{
 		MinisterBase: base,
-		tasks:        make(chan *TaskEnvelope, 10),
+		tasks:        make(chan *Task, 10),
 	}
 }
 
 // Tasks returns the channel for task submission from Chancellor
-func (f *Forge) Tasks() chan<- *TaskEnvelope {
+func (f *Forge) Tasks() chan<- *Task {
 	return f.tasks
 }
 
@@ -190,8 +190,8 @@ func (f *Forge) InsertLing(ling *storage.Ling) error {
 
 // --- Execute Logic ---
 
-// Run processes incoming TaskEnvelopes until context is cancelled.
-// Each task is executed and replied to directly via its reply channel.
+// Run processes incoming Tasks until context is cancelled.
+// Each task is executed and replied to directly via its done channel.
 func (f *Forge) Run(ctx context.Context) {
 	f.logger.Info("forge started, processing tasks")
 	for {
@@ -199,49 +199,47 @@ func (f *Forge) Run(ctx context.Context) {
 		case <-ctx.Done():
 			f.logger.Info("forge stopped")
 			return
-		case taskEnv := <-f.tasks:
-			f.processTaskEnvelope(ctx, taskEnv)
+		case task := <-f.tasks:
+			f.processTask(ctx, task)
 		}
 	}
 }
 
-// processTaskEnvelope handles a task from the Chancellor.
+// processTask handles a task from the Chancellor.
 // If an LLM is configured, it creates a session to process the task through the LLM,
 // which may generate tool calls that the Forge executes.
-func (f *Forge) processTaskEnvelope(ctx context.Context, env *TaskEnvelope) {
+func (f *Forge) processTask(ctx context.Context, task *Task) {
 	f.logger.Info("forge processing task",
-		"edict_id", env.EdictID,
-		"task", env.Task)
+		"edict_id", task.EdictID,
+		"work", task.Work)
 
 	var output string
 	var taskErr error
 
 	// If LLM is configured, use a session to process the task
 	if f.model != nil {
-		output, taskErr = f.streamTask(ctx, env.Task, env.EdictID, env.StreamChan)
+		output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Stream)
 	} else {
 		// No LLM configured - just acknowledge
 		output = "forge task acknowledged (no LLM configured)"
 	}
 
-	reply := &TaskReply{
-		EdictID:    env.EdictID,
+	result := Result{
 		MinisterID: f.ID(),
-		Task:       env.Task,
 		Sealed:     true,
 		Output:     output,
-		Error:      taskErr,
+		Err:        taskErr,
 	}
 
 	select {
-	case env.ReplyChan <- reply:
+	case task.Done <- result:
 	default:
-		f.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
+		f.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
 	}
 }
 
 // streamTask creates a session and streams the task through the LLM.
-func (f *Forge) streamTask(ctx context.Context, task, edictID string, streamChan chan<- StreamReply) (string, error) {
+func (f *Forge) streamTask(ctx context.Context, work, edictID string, stream chan<- Reply) (string, error) {
 	notify := func(msg any) {
 		f.logger.Debug("forge session notification", "msg", fmt.Sprintf("%T", msg))
 	}
@@ -258,24 +256,24 @@ func (f *Forge) streamTask(ctx context.Context, task, edictID string, streamChan
 		switch m := msg.(type) {
 		case StreamChunkMsg:
 			response.WriteString(string(m))
-			if streamChan != nil {
+			if stream != nil {
 				select {
-				case streamChan <- TextReply{Text: string(m)}:
+				case stream <- Reply{Type: ReplyText, Message: string(m)}:
 				default:
 					f.logger.Warn("stream channel full, dropping reply")
 				}
 			}
 		case StreamErrorMsg:
-			if streamChan != nil {
+			if stream != nil {
 				select {
-				case streamChan <- ErrorReply{Error: m.Err}:
+				case stream <- Reply{Type: ReplyError, Err: m.Err}:
 				default:
 				}
 			}
 		}
 	}
 
-	_, err = session.AskWithStreaming(ctx, task, nil)
+	_, err = session.AskWithStreaming(ctx, work, nil)
 	if err != nil {
 		return response.String(), err
 	}

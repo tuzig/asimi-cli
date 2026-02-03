@@ -60,8 +60,8 @@ func (r *RitualGuard) Tools(notify NotifyFunc) []Tool {
 }
 
 // Tasks returns a no-op channel (RitualGuard doesn't receive tasks)
-func (r *RitualGuard) Tasks() chan<- *TaskEnvelope {
-	return make(chan *TaskEnvelope)
+func (r *RitualGuard) Tasks() chan<- *Task {
+	return make(chan *Task)
 }
 
 // --- Database Methods ---

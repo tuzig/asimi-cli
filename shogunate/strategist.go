@@ -29,7 +29,7 @@ CRITICAL RULES:
 // Strategist decomposes edicts into executable ling (令, task orders)
 type Strategist struct {
 	MinisterBase // embedded base for database access and session creation
-	tasks        chan *TaskEnvelope
+	tasks        chan *Task
 }
 
 // NewStrategist creates a new Strategist minister
@@ -37,12 +37,12 @@ func NewStrategist(base MinisterBase) *Strategist {
 	base.ministerID = "strategist"
 	return &Strategist{
 		MinisterBase: base,
-		tasks:        make(chan *TaskEnvelope, 10),
+		tasks:        make(chan *Task, 10),
 	}
 }
 
 // Tasks returns the channel for task submission
-func (s *Strategist) Tasks() chan<- *TaskEnvelope {
+func (s *Strategist) Tasks() chan<- *Task {
 	return s.tasks
 }
 
@@ -269,43 +269,41 @@ func (s *Strategist) Run(ctx context.Context) {
 		case <-ctx.Done():
 			s.logger.Info("strategist stopped")
 			return
-		case env := <-s.tasks:
-			s.processTask(ctx, env)
+		case task := <-s.tasks:
+			s.processTask(ctx, task)
 		}
 	}
 }
 
-// processTask handles a single task envelope
-func (s *Strategist) processTask(ctx context.Context, env *TaskEnvelope) {
+// processTask handles a single task
+func (s *Strategist) processTask(ctx context.Context, task *Task) {
 	s.logger.Info("strategist processing task",
-		"edict_id", env.EdictID,
-		"task", env.Task)
+		"edict_id", task.EdictID,
+		"work", task.Work)
 
 	// Execute the planning logic
-	sealed, err := s.execute(ctx, env.EdictID)
+	sealed, err := s.execute(ctx, task.EdictID)
 
-	// Send reply back to Chancellor
-	reply := &TaskReply{
-		EdictID:    env.EdictID,
+	// Send result back to Chancellor
+	result := Result{
 		MinisterID: s.ID(),
-		Task:       env.Task,
 		Sealed:     sealed,
-		Error:      err,
+		Err:        err,
 	}
 
 	if sealed {
-		reply.Output = "planning complete"
+		result.Output = "planning complete"
 		// Transition to forging phase
-		if phaseErr := s.UpdatePhase(env.EdictID, storage.PhaseForging); phaseErr != nil {
-			s.logger.Error("failed to transition to forging", "edict_id", env.EdictID, "error", phaseErr)
+		if phaseErr := s.UpdatePhase(task.EdictID, storage.PhaseForging); phaseErr != nil {
+			s.logger.Error("failed to transition to forging", "edict_id", task.EdictID, "error", phaseErr)
 		}
 	}
 
-	// Send reply (non-blocking)
+	// Send result (non-blocking)
 	select {
-	case env.ReplyChan <- reply:
+	case task.Done <- result:
 	default:
-		s.logger.Warn("reply channel full, dropping reply", "edict_id", env.EdictID)
+		s.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
 	}
 }
 
