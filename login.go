@@ -847,8 +847,8 @@ func handleLogoutCommand(model *TUIModel, args []string) tea.Cmd {
 		model.config.LLM.RefreshToken = ""
 		model.config.LLM.APIKey = ""
 
-		// Clear the session
-		model.session = nil
+		// Clear the session state
+		model.currentEdictID = ""
 		model.sessionActive = false
 
 		// Update status line

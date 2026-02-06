@@ -38,39 +38,24 @@ type EventEmitter interface {
 
 // === UNIFIED TYPES ===
 
-// ReplyType distinguishes different kinds of streaming replies
-type ReplyType int
-
-const (
-	ReplyText ReplyType = iota
-	ReplyThought
-	ReplyTool
-	ReplyError
-	ReplyDone
-)
-
-// Reply is a single struct for all streaming messages
-type Reply struct {
-	Type    ReplyType
-	Message string
-	Level   int    // indentation for TUI formatting
-	Name    string // tool name (only for ReplyTool)
-	Err     error  // only for ReplyError
-}
+// StreamChan is a channel for streaming messages to the TUI.
+// Messages are typed structs that the TUI type-switches on.
+// Using `any` instead of `tea.Msg` avoids importing bubbletea in this package.
+type StreamChan = chan<- any
 
 // Edict carries the user's prompt to the Chancellor
 type Edict struct {
 	Prompt       string            // The Ruler's words
 	EdictID      string            // Empty = new edict, set = continue existing
 	ContextFiles map[string]string // Files loaded via @ references
-	Stream       chan<- Reply      // For streaming responses to TUI
+	Stream       StreamChan        // For streaming typed messages to TUI
 }
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
-	EdictID string       // The edict this task belongs to
-	Work    string       // Specific instructions for the minister (renamed from Task to avoid Task.Task)
-	Stream  chan<- Reply // For streaming to TUI (may be nil)
+	EdictID string     // The edict this task belongs to
+	Work    string     // Specific instructions for the minister (renamed from Task to avoid Task.Task)
+	Stream  StreamChan // For streaming typed messages to TUI (may be nil)
 	Done    chan<- Result // For completion signal
 }
 
@@ -204,6 +189,37 @@ type ZhengmingPendingMsg struct {
 type ZhengmingAnsweredMsg struct {
 	RequestID string
 	Answer    string
+}
+
+// MinisterInvokingMsg notifies the UI that a minister is being invoked
+type MinisterInvokingMsg struct {
+	MinisterID string
+	EdictID    string
+	Task       string
+}
+
+// MinisterCompletedMsg notifies the UI that a minister completed its task
+type MinisterCompletedMsg struct {
+	MinisterID string
+	EdictID    string
+	Output     string
+	Sealed     bool
+	Error      error
+}
+
+// StreamDoneMsg signals that streaming has completed
+type StreamDoneMsg struct{}
+
+// RitualStepMsg notifies the UI of ritual step progress
+type RitualStepMsg struct {
+	RitualName  string
+	ExecutionID string
+	EdictID     string
+	StepName    string
+	StepIndex   int
+	TotalSteps  int
+	Status      string // "started", "completed", "failed", "retrying"
+	Message     string
 }
 
 // MinisterBase provides shared functionality for all ministers.

@@ -239,7 +239,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 }
 
 // streamTask creates a session and streams the task through the LLM.
-func (f *Forge) streamTask(ctx context.Context, work, edictID string, stream chan<- Reply) (string, error) {
+func (f *Forge) streamTask(ctx context.Context, work, edictID string, stream StreamChan) (string, error) {
 	notify := func(msg any) {
 		f.logger.Debug("forge session notification", "msg", fmt.Sprintf("%T", msg))
 	}
@@ -252,26 +252,35 @@ func (f *Forge) streamTask(ctx context.Context, work, edictID string, stream cha
 	var response strings.Builder
 
 	// Set up notify to capture and forward streaming
-	session.notify = func(msg any) {
+	session.SetNotify(func(msg any) {
 		switch m := msg.(type) {
 		case StreamChunkMsg:
 			response.WriteString(string(m))
 			if stream != nil {
 				select {
-				case stream <- Reply{Type: ReplyText, Message: string(m)}:
+				case stream <- m: // Forward typed message directly
 				default:
 					f.logger.Warn("stream channel full, dropping reply")
+				}
+			}
+		case StreamReasoningChunkMsg:
+			// Forward reasoning chunks to stream (for UI display)
+			if stream != nil {
+				select {
+				case stream <- m: // Forward typed message directly
+				default:
+					f.logger.Warn("stream channel full, dropping reasoning")
 				}
 			}
 		case StreamErrorMsg:
 			if stream != nil {
 				select {
-				case stream <- Reply{Type: ReplyError, Err: m.Err}:
+				case stream <- m: // Forward typed message directly
 				default:
 				}
 			}
 		}
-	}
+	})
 
 	_, err = session.AskWithStreaming(ctx, work, nil)
 	if err != nil {

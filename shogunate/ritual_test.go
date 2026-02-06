@@ -1,9 +1,18 @@
 package shogunate
 
 import (
+	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/afittestide/asimi/internal/runners"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestParseRitual(t *testing.T) {
@@ -439,3 +448,266 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 func containsString(s, substr string) bool {
 	return findString(s, substr) != -1
 }
+
+// TestRitualStreamMessages tests that ritual execution sends all expected
+// typed messages through the stream channel (StreamChan).
+func TestRitualStreamMessages(t *testing.T) {
+	// Setup test database
+	db := setupRitualTestDB(t)
+
+	// Create a simple single-step ritual
+	ritual := &RitualDef{
+		Name:        "test-stream",
+		Description: "A test ritual for streaming messages",
+		Triggers:    []RitualTrigger{{Manual: true}},
+		Inputs: map[string]InputDef{
+			"edict_id": {Type: "string", Required: true},
+		},
+		Steps: []RitualStep{
+			{
+				Name:     "echo",
+				Type:     "cmd",
+				Command:  "echo hello",
+				Task:     "Echo hello",
+			},
+		},
+	}
+
+	// Create and populate registry
+	registry := NewRitualRegistry()
+	if err := registry.Register(ritual); err != nil {
+		t.Fatalf("Failed to register ritual: %v", err)
+	}
+
+	// Create a mock runner that succeeds
+	mockRunner := &mockCmdRunner{output: "hello\n", exitCode: "0"}
+
+	// Create ritual runner (no shogunate needed for cmd steps)
+	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+
+	// Collect messages from the stream
+	var messages []any
+	notify := func(msg any) {
+		messages = append(messages, msg)
+	}
+
+	// Start the ritual
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "test-stream", "test-edict-1", map[string]string{"edict_id": "test-edict-1"}, notify)
+	if err != nil {
+		t.Fatalf("Failed to start ritual: %v", err)
+	}
+
+	// Run the ritual to completion
+	err = runner.Run(ctx, exec)
+	if err != nil {
+		t.Fatalf("Ritual run failed: %v", err)
+	}
+
+	// Verify we received the expected message types
+	var (
+		startedCount   int
+		completedCount int
+		ritualComplete int
+	)
+
+	for _, msg := range messages {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			t.Logf("Received RitualStepMsg: ritual=%s step=%s status=%s", stepMsg.RitualName, stepMsg.StepName, stepMsg.Status)
+			switch stepMsg.Status {
+			case "started":
+				startedCount++
+				if stepMsg.StepName != "echo" {
+					t.Errorf("Expected step name 'echo', got %q", stepMsg.StepName)
+				}
+				if stepMsg.RitualName != "test-stream" {
+					t.Errorf("Expected ritual name 'test-stream', got %q", stepMsg.RitualName)
+				}
+			case "completed":
+				completedCount++
+			case "ritual_completed":
+				ritualComplete++
+			}
+		}
+	}
+
+	// Verify message counts
+	if startedCount != 1 {
+		t.Errorf("Expected 1 'started' message, got %d", startedCount)
+	}
+	if completedCount != 1 {
+		t.Errorf("Expected 1 'completed' message, got %d", completedCount)
+	}
+	if ritualComplete != 1 {
+		t.Errorf("Expected 1 'ritual_completed' message, got %d", ritualComplete)
+	}
+
+	// Verify execution state
+	if exec.State != RitualStateCompleted {
+		t.Errorf("Expected state 'completed', got %s", exec.State)
+	}
+}
+
+// TestRitualStreamMessages_MultiStep tests a multi-step ritual sends messages for each step
+func TestRitualStreamMessages_MultiStep(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Create a multi-step ritual
+	ritual := &RitualDef{
+		Name:        "multi-step",
+		Description: "Multi-step ritual",
+		Steps: []RitualStep{
+			{Name: "step1", Type: "cmd", Command: "echo one"},
+			{Name: "step2", Type: "cmd", Command: "echo two", DependsOn: []string{"step1"}},
+			{Name: "step3", Type: "cmd", Command: "echo three", DependsOn: []string{"step2"}},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	mockRunner := &mockCmdRunner{output: "ok\n", exitCode: "0"}
+	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+
+	var messages []RitualStepMsg
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			messages = append(messages, stepMsg)
+		}
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "multi-step", "edict-multi", nil, notify)
+	if err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Should have: started(3) + completed(3) + ritual_completed(1) = 7 messages
+	expectedCount := 7
+	if len(messages) != expectedCount {
+		t.Errorf("Expected %d messages, got %d", expectedCount, len(messages))
+		for i, m := range messages {
+			t.Logf("  [%d] step=%s status=%s", i, m.StepName, m.Status)
+		}
+	}
+
+	// Verify step indices are correct
+	for _, msg := range messages {
+		if msg.Status == "started" || msg.Status == "completed" {
+			if msg.TotalSteps != 3 {
+				t.Errorf("Expected TotalSteps=3, got %d", msg.TotalSteps)
+			}
+		}
+	}
+}
+
+// TestRitualStreamMessages_Failure tests that failure messages are sent correctly
+func TestRitualStreamMessages_Failure(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "fail-ritual",
+		Steps: []RitualStep{
+			{Name: "fail-step", Type: "cmd", Command: "exit 1", OnFailure: "abort"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	// Mock runner that fails
+	mockRunner := &mockCmdRunner{output: "error!", exitCode: "1", err: nil}
+	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+
+	var messages []RitualStepMsg
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			messages = append(messages, stepMsg)
+		}
+	}
+
+	ctx := context.Background()
+	exec, _ := runner.Start(ctx, "fail-ritual", "edict-fail", nil, notify)
+	err := runner.Run(ctx, exec)
+
+	// Should fail
+	if err == nil {
+		t.Error("Expected error from failed ritual")
+	}
+
+	// Should have: started(1) + failed(1) = 2 messages
+	var failedCount int
+	for _, msg := range messages {
+		if msg.Status == "failed" {
+			failedCount++
+		}
+	}
+
+	if failedCount != 1 {
+		t.Errorf("Expected 1 'failed' message, got %d", failedCount)
+	}
+
+	if exec.State != RitualStateFailed {
+		t.Errorf("Expected state 'failed', got %s", exec.State)
+	}
+}
+
+// setupRitualTestDB creates a test database with ritual tables
+func setupRitualTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/ritual_test.db"
+
+	sqlDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize gorm: %v", err)
+	}
+
+	// Migrate ritual tables
+	err = db.AutoMigrate(&RitualExecution{}, &RitualStepState{})
+	if err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	return db
+}
+
+// mockCmdRunner implements runners.Runner for testing
+type mockCmdRunner struct {
+	output   string
+	exitCode string
+	err      error
+}
+
+func (m *mockCmdRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
+	if m.err != nil {
+		return runners.Output{}, m.err
+	}
+	if m.exitCode != "0" {
+		return runners.Output{
+			Output:   m.output,
+			ExitCode: m.exitCode,
+		}, nil
+	}
+	return runners.Output{
+		Output:   m.output,
+		ExitCode: "0",
+	}, nil
+}
+
+func (m *mockCmdRunner) Restart(ctx context.Context) error { return nil }
+func (m *mockCmdRunner) Close(ctx context.Context) error   { return nil }
+func (m *mockCmdRunner) RunnerType() string                { return "mock" }

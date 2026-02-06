@@ -20,8 +20,23 @@ const (
 	ExportTypeConversation ExportType = "conversation"
 )
 
+// ExportableSession is an interface for that can be exported.
+// Implemented by shogunate.Session.
+// TODO: do we ExportableSession or can we extend  shogunate.Session?
+type ExportableSession interface {
+	// GetID returns the session ID
+	GetID() string
+	// GetMessages returns the conversation messages
+	GetMessages() []llms.MessageContent
+	// GetContextFiles returns the context files map
+	GetContextFiles() map[string]string
+	// FormatMetadata returns formatted metadata for export
+	// Uses strings to avoid circular imports between main and shogunate packages
+	FormatMetadata(exportType string, exportedAt string) string
+}
+
 // exportSession exports the current session to a markdown file and returns the filepath
-func exportSession(session *Session, exportType ExportType) (string, error) {
+func exportSession(session ExportableSession, exportType ExportType) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("no session to export")
 	}
@@ -39,7 +54,7 @@ func exportSession(session *Session, exportType ExportType) (string, error) {
 
 	// Create temporary file
 	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("asimi-export-%s-%s-%s.md", string(exportType), session.ID, timestamp)
+	filename := fmt.Sprintf("asimi-export-%s-%s-%s.md", string(exportType), session.GetID(), timestamp)
 	filepath := filepath.Join(os.TempDir(), filename)
 
 	// Write content to file
@@ -52,18 +67,20 @@ func exportSession(session *Session, exportType ExportType) (string, error) {
 
 // generateFullExportContent generates the full markdown content for the export
 // including system prompt, context files, and conversation
-func generateFullExportContent(session *Session) string {
+func generateFullExportContent(session ExportableSession) string {
 	var b strings.Builder
+	messages := session.GetMessages()
+	contextFiles := session.GetContextFiles()
 
 	// Header with full metadata in 4 lines
 	b.WriteString("# Asimi Conversation Export\n\n")
-	b.WriteString(session.formatMetadata(ExportTypeFull, time.Now()))
+	b.WriteString(session.FormatMetadata(string(ExportTypeFull), time.Now().Format("2006-01-02 15:04:05")))
 	b.WriteString("\n---\n\n")
 
 	// System Prompt
-	if len(session.Messages) > 0 && session.Messages[0].Role == llms.ChatMessageTypeSystem {
+	if len(messages) > 0 && messages[0].Role == llms.ChatMessageTypeSystem {
 		b.WriteString("## System Prompt\n\n")
-		for _, part := range session.Messages[0].Parts {
+		for _, part := range messages[0].Parts {
 			if textPart, ok := part.(llms.TextContent); ok {
 				b.WriteString(textPart.Text)
 				b.WriteString("\n")
@@ -73,9 +90,9 @@ func generateFullExportContent(session *Session) string {
 	}
 
 	// Context Files
-	if len(session.ContextFiles) > 0 {
+	if len(contextFiles) > 0 {
 		b.WriteString("## Context Files\n\n")
-		for path, content := range session.ContextFiles {
+		for path, content := range contextFiles {
 			b.WriteString(fmt.Sprintf("### %s\n\n", path))
 			b.WriteString("```\n")
 			b.WriteString(content)
@@ -89,32 +106,33 @@ func generateFullExportContent(session *Session) string {
 
 	// Skip system message (already shown above)
 	startIdx := 0
-	if len(session.Messages) > 0 && session.Messages[0].Role == llms.ChatMessageTypeSystem {
+	if len(messages) > 0 && messages[0].Role == llms.ChatMessageTypeSystem {
 		startIdx = 1
 	}
 
-	formatMessages(&b, session.Messages[startIdx:], true, true) // true = full mode, true = include message numbers
+	formatMessages(&b, messages[startIdx:], true, true) // true = full mode, true = include message numbers
 
 	return b.String()
 }
 
 // generateConversationExportContent generates a slimmer export with just the conversation
 // including tool calls but with limited output (no stdout)
-func generateConversationExportContent(session *Session) string {
+func generateConversationExportContent(session ExportableSession) string {
 	var b strings.Builder
+	messages := session.GetMessages()
 
 	// Minimal header
 	b.WriteString("# Asimi Conversation\n\n")
-	b.WriteString(session.formatMetadata(ExportTypeConversation, time.Now()))
+	b.WriteString(session.FormatMetadata(string(ExportTypeConversation), time.Now().Format("2006-01-02 15:04:05")))
 	b.WriteString("\n---\n\n")
 
 	// Skip system message
 	startIdx := 0
-	if len(session.Messages) > 0 && session.Messages[0].Role == llms.ChatMessageTypeSystem {
+	if len(messages) > 0 && messages[0].Role == llms.ChatMessageTypeSystem {
 		startIdx = 1
 	}
 
-	formatMessages(&b, session.Messages[startIdx:], false, false) // false = conversation mode, false = no message numbers
+	formatMessages(&b, messages[startIdx:], false, false) // false = conversation mode, false = no message numbers
 
 	return b.String()
 }

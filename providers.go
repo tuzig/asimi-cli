@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/shogunate"
@@ -14,6 +15,51 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
+
+// slogGormLogger wraps slog.Logger to implement gormlogger.Interface
+type slogGormLogger struct {
+	logger   *slog.Logger
+	logLevel gormlogger.LogLevel
+}
+
+func newSlogGormLogger(logger *slog.Logger, level gormlogger.LogLevel) *slogGormLogger {
+	return &slogGormLogger{logger: logger, logLevel: level}
+}
+
+func (l *slogGormLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
+	return &slogGormLogger{logger: l.logger, logLevel: level}
+}
+
+func (l *slogGormLogger) Info(ctx context.Context, msg string, args ...interface{}) {
+	if l.logLevel >= gormlogger.Info {
+		l.logger.Info(fmt.Sprintf(msg, args...), "source", "gorm")
+	}
+}
+
+func (l *slogGormLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
+	if l.logLevel >= gormlogger.Warn {
+		l.logger.Warn(fmt.Sprintf(msg, args...), "source", "gorm")
+	}
+}
+
+func (l *slogGormLogger) Error(ctx context.Context, msg string, args ...interface{}) {
+	if l.logLevel >= gormlogger.Error {
+		l.logger.Error(fmt.Sprintf(msg, args...), "source", "gorm")
+	}
+}
+
+func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
+	if l.logLevel <= gormlogger.Silent {
+		return
+	}
+	elapsed := time.Since(begin)
+	sql, rows := fc()
+	if err != nil {
+		l.logger.Debug("gorm trace", "source", "gorm", "sql", sql, "rows", rows, "elapsed", elapsed, "error", err)
+	} else {
+		l.logger.Debug("gorm trace", "source", "gorm", "sql", sql, "rows", rows, "elapsed", elapsed)
+	}
+}
 
 // LoggerResult holds the configured logger
 type LoggerResult struct {
@@ -322,12 +368,12 @@ type GormDBParams struct {
 func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 	params.Logger.Info("initializing GORM database", "path", params.Config.Storage.DatabasePath)
 
-	// Configure GORM logger based on debug mode
+	// Configure GORM logger to use slog (writes to log file, not stdout)
 	var gormLog gormlogger.Interface
 	if cli.Debug {
-		gormLog = gormlogger.Default.LogMode(gormlogger.Info)
+		gormLog = newSlogGormLogger(params.Logger, gormlogger.Info)
 	} else {
-		gormLog = gormlogger.Default.LogMode(gormlogger.Silent)
+		gormLog = newSlogGormLogger(params.Logger, gormlogger.Silent)
 	}
 
 	db, err := gorm.Open(sqlite.Open(params.Config.Storage.DatabasePath), &gorm.Config{

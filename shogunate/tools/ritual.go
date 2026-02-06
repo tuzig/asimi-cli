@@ -15,10 +15,14 @@ type RitualStarter interface {
 	StartRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (executionID string, err error)
 }
 
+// RitualNotifyFunc is called to notify the UI about ritual status
+type RitualNotifyFunc func(ritualName, executionID, edictID, status string)
+
 // InvokeRitualTool starts a YAML-defined ritual workflow
 type InvokeRitualTool struct {
 	Starter RitualStarter
 	Logger  *slog.Logger
+	Notify  RitualNotifyFunc
 }
 
 func (t InvokeRitualTool) Name() string {
@@ -62,7 +66,16 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 
 	executionID, err := t.Starter.StartRitual(ctx, params.RitualName, params.EdictID, params.Inputs)
 	if err != nil {
+		// Notify: failed
+		if t.Notify != nil {
+			t.Notify(params.RitualName, "", params.EdictID, "failed")
+		}
 		return "", fmt.Errorf("failed to start ritual: %w", err)
+	}
+
+	// Notify: started
+	if t.Notify != nil {
+		t.Notify(params.RitualName, executionID, params.EdictID, "started")
 	}
 
 	logger.Info("ritual started",

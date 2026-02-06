@@ -286,3 +286,20 @@ func (s *Shogunate) GetRitualRunner() *RitualRunner {
 	}
 	return s.ritualRunner
 }
+
+// GetCurrentSession returns the session for the specified edict ID.
+// If edictID is empty, returns nil.
+func (s *Shogunate) GetCurrentSession(edictID string) *Session {
+	if s == nil || edictID == "" {
+		return nil
+	}
+	chancellor := s.GetMinister("chancellor")
+	if chancellor == nil {
+		return nil
+	}
+	ch, ok := chancellor.(*Chancellor)
+	if !ok {
+		return nil
+	}
+	return ch.GetSession(edictID)
+}

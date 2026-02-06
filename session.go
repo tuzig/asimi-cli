@@ -64,26 +64,6 @@ type Session struct {
 	messagesTokens     int `json:"-"`
 }
 
-// formatMetadata returns the metadata header used by export helpers.
-func (s *Session) formatMetadata(exportType ExportType, exportedAt time.Time) string {
-	var b strings.Builder
-	exported := exportedAt.Format("2006-01-02 15:04:05")
-
-	b.WriteString(fmt.Sprintf("**Asimi Version:** %s \n", version))
-	b.WriteString(fmt.Sprintf("**Export Type:** %s\n", exportType))
-	b.WriteString(fmt.Sprintf("**Session ID:** %s | **Working Directory:** %s\n", s.ID, s.WorkingDir))
-	b.WriteString(fmt.Sprintf("**Provider:** %s | **Model:** %s\n", s.Provider, s.Model))
-	b.WriteString(fmt.Sprintf("**Created:** %s | **Last Updated:** %s | **Exported:** %s\n",
-		s.CreatedAt.Format("2006-01-02 15:04:05"),
-		s.LastUpdated.Format("2006-01-02 15:04:05"),
-		exported))
-	if s.ProjectSlug != "" {
-		b.WriteString(fmt.Sprintf("**Project:** %s\n", s.ProjectSlug))
-	}
-
-	return b.String()
-}
-
 // No syncMessages method needed anymore - we only use Messages
 
 // resetStreamBuffer safely resets the accumulated content buffer
@@ -292,29 +272,6 @@ func (s *Session) CanWriteFile(path string) (bool, string) {
 
 	// File exists but wasn't read - deny write
 	return false, fmt.Sprintf("file '%s' already exists and was not read in this session. Use read_file first to review the existing content", filepath.Base(path))
-}
-
-// ClearHistory clears the conversation history but keeps the system message
-// TODO: rename to ClearMessages
-func (s *Session) ClearHistory() {
-	// Keep only the system message (first message)
-	if len(s.Messages) > 0 && s.Messages[0].Role == llms.ChatMessageTypeSystem {
-		s.Messages = s.Messages[:1]
-	} else {
-		s.Messages = []llms.MessageContent{}
-	}
-
-	// Reset tool call tracking
-	s.lastToolCallKey = ""
-	s.toolCallRepetitionCount = 0
-
-	// Invalidate context cache since messages changed
-	s.updateTokenCounts()
-
-	// Reset session start time
-	s.startTime = time.Now()
-
-	s.ClearContext()
 }
 
 // HasContextFiles returns true if there are files in the context
@@ -887,136 +844,6 @@ func (s *Session) Ask(ctx context.Context, prompt string) (string, error) {
 	return fmt.Sprintf("%s\n\nEnded after %d interation", finalText, maxTurns), nil
 }
 
-// AskWithStreaming sends a user prompt and streams the response to the UI while blocking.
-// Unlike Ask, it streams chunks to the UI via the notify callback.
-// Unlike AskStream, it blocks until completion and returns the final response.
-// This is useful for workflows that need to show progress but also wait for completion.
-func (s *Session) AskWithStreaming(ctx context.Context, prompt string) (string, error) {
-	// Build prompt with context if available and add to messages
-	s.prepareUserMessage(prompt)
-	// Clear context after building the prompt
-	defer s.ClearContext()
-
-	// Notify UI that streaming has started
-	if s.notify != nil {
-		s.notify(streamStartMsg{})
-	}
-
-	// A simple loop: generate -> maybe tool calls -> tool responses -> generate.
-	var finalText string
-	var lastAssistant string
-	var hadAnyToolCall bool
-	var i int
-	maxTurns := s.config.MaxTurns
-	for i = 0; i < maxTurns; i++ {
-		s.resetStreamBuffer()
-
-		// Check for cancellation
-		select {
-		case <-ctx.Done():
-			accumulatedText := s.getStreamBuffer(false)
-			if s.notify != nil {
-				s.notify(streamInterruptedMsg{partialContent: accumulatedText})
-			}
-			return accumulatedText, ctx.Err()
-		default:
-		}
-
-		// Create streaming function that accumulates content and notifies UI
-		streamingFunc := func(ctx context.Context, chunk []byte) error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			chunkStr := string(chunk)
-			s.accumulatedContent.WriteString(chunkStr)
-			if s.notify != nil {
-				s.notify(streamChunkMsg(chunkStr))
-			}
-			return nil
-		}
-
-		choice, err := s.generateLLMResponse(ctx, streamingFunc)
-		if err != nil {
-			if ctx.Err() != nil {
-				accumulatedText := s.getStreamBuffer(false)
-				if s.notify != nil {
-					s.notify(streamInterruptedMsg{partialContent: accumulatedText})
-				}
-				return accumulatedText, ctx.Err()
-			}
-			if s.notify != nil {
-				s.notify(streamErrorMsg{err: err})
-			}
-			return "", err
-		}
-
-		// Use accumulated content as the response
-		responseContent := s.getStreamBuffer(false)
-
-		// Check if response was truncated due to max tokens
-		if choice.StopReason == "max_tokens" {
-			if s.notify != nil {
-				s.notify(streamMaxTokensReachedMsg{content: responseContent})
-			}
-			s.appendMessage(choice)
-			return responseContent + "\n\n[Response truncated due to length limit]", nil
-		}
-
-		// Record assistant response in message history with thinking content for API compatibility
-		if strings.TrimSpace(responseContent) != "" {
-			finalText = responseContent
-		}
-		s.appendMessage(choice)
-
-		// Handle tool calls, if any.
-		if len(choice.ToolCalls) == 0 {
-			if hadAnyToolCall || strings.TrimSpace(responseContent) == strings.TrimSpace(lastAssistant) {
-				break
-			}
-			lastAssistant = responseContent
-			continue
-		}
-		hadAnyToolCall = true
-
-		// Process tool calls and add responses
-		toolMessages, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls)
-		if len(toolMessages) > 0 {
-			s.Messages = append(s.Messages, toolMessages...)
-			s.updateTokenCounts()
-		}
-
-		if shouldReturn {
-			if s.notify != nil {
-				s.notify(streamCompleteMsg{})
-			}
-			return finalText, nil
-		}
-
-		if len(toolMessages) > 0 {
-			continue
-		}
-
-		break
-	}
-
-	// Notify completion
-	if s.notify != nil {
-		if i >= maxTurns {
-			s.notify(streamMaxTurnsExceededMsg{maxTurns: maxTurns})
-		} else {
-			s.notify(streamCompleteMsg{})
-		}
-	}
-
-	if i < maxTurns {
-		return finalText, nil
-	}
-	return fmt.Sprintf("%s\n\nEnded after %d iterations", finalText, maxTurns), nil
-}
-
 // AskStream sends a user prompt through the native loop with streaming support.
 // It launches the streaming process in a goroutine and returns immediately.
 // Uses the notify callback to send streaming chunks as they arrive.
@@ -1179,13 +1006,6 @@ Feel free to commit whenever you can summarize the changes in a meaningful commi
 	return env.String()
 }
 
-func normalizeBuildVersion(v string) string {
-	if v == "" || v == "(devel)" {
-		return ""
-	}
-	return strings.TrimPrefix(v, "v")
-}
-
 // readProjectContext reads the contents of the agents file (AGENTS.md or CLAUDE.md) from the current working directory.
 func readProjectContext(agentsFile string) string {
 	wd, err := os.Getwd()
@@ -1228,173 +1048,12 @@ func buildLLMTools(cfg *Config) ([]llms.Tool, map[string]lctools.Tool) {
 	return defs, execCatalog
 }
 
-// GetSessionDuration returns the duration since the session started
-func (s *Session) GetSessionDuration() time.Duration {
-	return time.Since(s.startTime)
-}
-
 // updateTokenCounts recalculates and stores token counts for all context components
 func (s *Session) updateTokenCounts() {
 	s.systemPromptTokens = s.CountSystemPromptTokens()
 	s.systemToolsTokens = s.CountSystemToolsTokens()
 	s.memoryFilesTokens = s.CountMemoryFilesTokens()
 	s.messagesTokens = s.CountMessagesTokens()
-}
-
-// GetContextUsagePercent returns the percentage of context used (0-100)
-func (s *Session) GetContextUsagePercent() float64 {
-	info := s.GetContextInfo()
-	if info.TotalTokens <= 0 {
-		return 0
-	}
-	return (float64(info.UsedTokens) / float64(info.TotalTokens)) * 100
-}
-
-// CompactHistory summarizes the conversation history to reduce context usage
-// It uses the high-end model to create a comprehensive summary that includes:
-// - All diffs/changes made to files
-// - Key decisions and outcomes
-// - Important technical details
-// The summary replaces the conversation history while preserving the system message
-func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (string, error) {
-	if len(s.Messages) <= 2 {
-		return "", fmt.Errorf("not enough conversation history to compact")
-	}
-
-	// Build the content to summarize
-	var contentBuilder strings.Builder
-
-	// Collect all diffs and file changes
-	contentBuilder.WriteString("## File Changes and Diffs\n\n")
-	fileChanges := s.extractFileChanges()
-	if len(fileChanges) > 0 {
-		for path, changes := range fileChanges {
-			contentBuilder.WriteString(fmt.Sprintf("### %s\n\n", path))
-			for _, change := range changes {
-				contentBuilder.WriteString(change)
-				contentBuilder.WriteString("\n\n")
-			}
-		}
-	} else {
-		contentBuilder.WriteString("No file changes recorded.\n\n")
-	}
-
-	// Collect conversation messages (excluding tool calls)
-	contentBuilder.WriteString("## Conversation History\n\n")
-	for i := 1; i < len(s.Messages); i++ {
-		msg := s.Messages[i]
-
-		switch msg.Role {
-		case llms.ChatMessageTypeHuman:
-			contentBuilder.WriteString("**User:**\n")
-			for _, part := range msg.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
-					contentBuilder.WriteString(textPart.Text)
-					contentBuilder.WriteString("\n\n")
-				}
-			}
-
-		case llms.ChatMessageTypeAI:
-			contentBuilder.WriteString("**Assistant:**\n")
-			// Only include text content, skip tool calls
-			for _, part := range msg.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
-					contentBuilder.WriteString(textPart.Text)
-					contentBuilder.WriteString("\n\n")
-				}
-			}
-		}
-	}
-
-	// Build the compaction request
-	fullPrompt := fmt.Sprintf("%s\n\n---\n\n%s", compactPrompt, contentBuilder.String())
-
-	// Save the current messages
-	originalMessages := s.Messages
-	systemMessage := s.Messages[0]
-
-	// Create a temporary message history with just the system message and compaction request
-	s.Messages = []llms.MessageContent{
-		systemMessage,
-		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(fullPrompt)},
-		},
-	}
-
-	// Generate the summary using the LLM
-	choice, err := s.generateLLMResponse(ctx, nil)
-	if err != nil {
-		// Restore original messages on error
-		s.Messages = originalMessages
-		s.updateTokenCounts()
-		return "", fmt.Errorf("failed to generate summary: %w", err)
-	}
-
-	summary := choice.Content
-	if choice.ReasoningContent != "" {
-		summary = choice.ReasoningContent + "\n\n" + choice.Content
-	}
-
-	// Replace the conversation history with the summary
-	s.Messages = []llms.MessageContent{
-		systemMessage,
-		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart("Previous conversation summary:\n\n" + summary)},
-		},
-		{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{llms.TextPart("I understand. I have the context from the previous conversation and am ready to continue.")},
-		},
-	}
-
-	// Reset tool call tracking
-	s.lastToolCallKey = ""
-	s.toolCallRepetitionCount = 0
-
-	// Invalidate context cache since messages changed
-	s.updateTokenCounts()
-
-	return summary, nil
-}
-
-// extractFileChanges extracts all file changes from tool call responses
-func (s *Session) extractFileChanges() map[string][]string {
-	changes := make(map[string][]string)
-
-	for _, msg := range s.Messages {
-		if msg.Role != llms.ChatMessageTypeTool {
-			continue
-		}
-
-		for _, part := range msg.Parts {
-			if toolResp, ok := part.(llms.ToolCallResponse); ok {
-				// Track write_file and replace_text operations
-				if toolResp.Name == "write_file" || toolResp.Name == "replace_text" {
-					// Try to extract the file path from the response
-					// The response format varies, but we can try to parse it
-					content := toolResp.Content
-					if strings.Contains(content, "Successfully") || strings.Contains(content, "wrote") {
-						// Extract file path - this is a simple heuristic
-						lines := strings.Split(content, "\n")
-						for _, line := range lines {
-							if strings.Contains(line, "Successfully") || strings.Contains(line, "wrote") {
-								changes["file-changes"] = append(changes["file-changes"], content)
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return changes
-}
-
-type SessionIndex struct {
-	Sessions []Session `json:"sessions"`
 }
 
 func generateSessionID() string {

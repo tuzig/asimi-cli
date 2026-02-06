@@ -609,6 +609,131 @@ func TestCoreToolScheduler_SetNotify(t *testing.T) {
 	assert.NotNil(t, scheduler.notify)
 }
 
+// TestSession_SetNotify_UpdatesScheduler verifies that SetNotify updates both
+// the session's notify and the scheduler's notify (fixes tool call notifications)
+func TestSession_SetNotify_UpdatesScheduler(t *testing.T) {
+	t.Parallel()
+
+	// Create session with nil notify
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, repo.RepoInfo{}, nil, nil, nil, "")
+	require.NoError(t, err)
+
+	// Verify both start as nil
+	assert.Nil(t, sess.notify)
+	assert.Nil(t, sess.scheduler.notify)
+
+	// Set notify via SetNotify method
+	var called bool
+	sess.SetNotify(func(msg any) {
+		called = true
+	})
+
+	// Verify both are now set
+	assert.NotNil(t, sess.notify)
+	assert.NotNil(t, sess.scheduler.notify)
+
+	// Verify scheduler's notify actually works by calling it
+	sess.scheduler.notify(StreamChunkMsg("test"))
+	assert.True(t, called, "scheduler.notify should call the function set via SetNotify")
+}
+
+// TestSession_ToolCallNotifications verifies that tool execution sends proper
+// notifications through the stream (ToolCallExecutingMsg, ToolCallSuccessMsg)
+func TestSession_ToolCallNotifications(t *testing.T) {
+	t.Parallel()
+
+	// Create a mock tool
+	tool := &mockTool{
+		name:   "test_tool",
+		output: "tool output",
+	}
+
+	// Collect notifications
+	var notifications []any
+	notify := func(msg any) {
+		notifications = append(notifications, msg)
+	}
+
+	// Create mock LLM that returns a tool call, then a final response
+	mockLLM := &mockLLMWithToolCall{
+		toolCall: llms.ToolCall{
+			ID: "call-123",
+			FunctionCall: &llms.FunctionCall{
+				Name:      "test_tool",
+				Arguments: `{"input": "test"}`,
+			},
+		},
+		finalResponse: "Done",
+	}
+
+	// Create session with the notify function
+	sess, err := NewSession(mockLLM, &SessionConfig{}, repo.RepoInfo{}, []Tool{tool}, nil, notify, "")
+	require.NoError(t, err)
+
+	// Execute a prompt that triggers tool use
+	ctx := context.Background()
+	_, err = sess.AskWithStreaming(ctx, "Use the test_tool", nil)
+	require.NoError(t, err)
+
+	// Verify we got tool call notifications
+	var executingCount, successCount int
+	for _, msg := range notifications {
+		switch msg.(type) {
+		case ToolCallExecutingMsg:
+			executingCount++
+		case ToolCallSuccessMsg:
+			successCount++
+		}
+	}
+
+	assert.Equal(t, 1, executingCount, "Should have 1 ToolCallExecutingMsg")
+	assert.Equal(t, 1, successCount, "Should have 1 ToolCallSuccessMsg")
+}
+
+// mockLLMWithToolCall returns a tool call on first call, then a text response
+type mockLLMWithToolCall struct {
+	llms.Model
+	toolCall      llms.ToolCall
+	finalResponse string
+	callCount     int
+}
+
+func (m *mockLLMWithToolCall) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
+	return m.finalResponse, nil
+}
+
+func (m *mockLLMWithToolCall) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	m.callCount++
+
+	// Apply streaming if configured
+	callOpts := &llms.CallOptions{}
+	for _, opt := range options {
+		opt(callOpts)
+	}
+
+	// First call returns tool call, subsequent calls return text
+	if m.callCount == 1 {
+		return &llms.ContentResponse{
+			Choices: []*llms.ContentChoice{
+				{
+					ToolCalls: []llms.ToolCall{m.toolCall},
+				},
+			},
+		}, nil
+	}
+
+	// Stream the final response if streaming is enabled
+	if callOpts.StreamingFunc != nil {
+		callOpts.StreamingFunc(ctx, []byte(m.finalResponse))
+	}
+
+	return &llms.ContentResponse{
+		Choices: []*llms.ContentChoice{
+			{Content: m.finalResponse},
+		},
+	}, nil
+}
+
 func TestMustMarshalJSON(t *testing.T) {
 	t.Parallel()
 
@@ -947,7 +1072,7 @@ func TestSession_GenerateLLMResponse_EmptyChoices(t *testing.T) {
 		Parts: []llms.ContentPart{llms.TextContent{Text: "test"}},
 	})
 
-	_, err = sess.generateLLMResponse(context.Background(), nil)
+	_, err = sess.generateLLMResponse(context.Background(), nil, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "empty response")
 }

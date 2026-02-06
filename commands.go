@@ -9,8 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// Verify that shogunate.Session implements ExportableSession
+var _ ExportableSession = (*shogunate.Session)(nil)
 
 //go:embed prompts/init.tmpl
 var initializePrompt string
@@ -204,11 +208,30 @@ func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
-		if model.session == nil {
-			return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
+		// Try Shogunate session first, then fall back to main session
+		var info ContextInfo
+
+		if model.shogunate != nil && model.currentEdictID != "" {
+			if shogunateSession := model.shogunate.GetCurrentSession(model.currentEdictID); shogunateSession != nil {
+				shogunateInfo := shogunateSession.GetContextInfo()
+				// Convert shogunate.ContextInfo to main.ContextInfo
+				info = ContextInfo{
+					Model:              shogunateInfo.Model,
+					TotalTokens:        shogunateInfo.TotalTokens,
+					UsedTokens:         shogunateInfo.UsedTokens,
+					SystemPromptTokens: shogunateInfo.SystemPromptTokens,
+					SystemToolsTokens:  shogunateInfo.SystemToolsTokens,
+					MemoryFilesTokens:  shogunateInfo.MemoryFilesTokens,
+					MessagesTokens:     shogunateInfo.MessagesTokens,
+					FreeTokens:         shogunateInfo.FreeTokens,
+					AutocompactBuffer:  shogunateInfo.AutocompactBuffer,
+				}
+				return showContextMsg{content: renderContextInfo(info)}
+			}
 		}
-		info := model.session.GetContextInfo()
-		return showContextMsg{content: renderContextInfo(info)}
+
+		// No shogunate session available
+		return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
 	}
 }
 
@@ -277,7 +300,17 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.session == nil {
+	// Get the Shogunate session for the current edict
+	var session ExportableSession
+
+	if model.shogunate != nil && model.currentEdictID != "" {
+		if shogunateSession := model.shogunate.GetCurrentSession(model.currentEdictID); shogunateSession != nil {
+			session = shogunateSession
+			slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictID)
+		}
+	}
+
+	if session == nil {
 		return func() tea.Msg {
 			return showSystemMsg("No active session to export. Start a conversation first.")
 		}
@@ -298,7 +331,7 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	}
 
 	// Export the session to a file
-	filepath, err := exportSession(model.session, exportType)
+	filepath, err := exportSession(session, exportType)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Export failed: %v", err))
@@ -641,7 +674,16 @@ func checkMissingInfraFiles(agentsFile string) []string {
 }
 
 func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.session == nil {
+	// Try Shogunate session first, then fall back to main session
+	var messageCount int
+
+	if model.shogunate != nil && model.currentEdictID != "" {
+		if shogunateSession := model.shogunate.GetCurrentSession(model.currentEdictID); shogunateSession != nil {
+			messageCount = len(shogunateSession.GetMessages())
+		}
+	}
+
+	if messageCount == 0 {
 		return func() tea.Msg {
 			return showSystemMsg("No active session to compact. Start a conversation first.")
 		}
@@ -649,7 +691,7 @@ func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
 
 	return func() tea.Msg {
 		// Check if there's enough conversation to compact
-		if len(model.session.Messages) <= 2 {
+		if messageCount <= 2 {
 			return showSystemMsg("Not enough conversation history to compact. Continue chatting first.")
 		}
 

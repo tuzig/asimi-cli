@@ -104,6 +104,43 @@ func (c *Chancellor) Tools(notify NotifyFunc) []Tool {
 		}
 	}
 
+	// Create minister notify wrapper
+	var ministerNotify tools.MinisterNotifyFunc
+	if notify != nil {
+		ministerNotify = func(ministerID, edictID, task, status string) {
+			switch status {
+			case "invoking":
+				notify(MinisterInvokingMsg{
+					MinisterID: ministerID,
+					EdictID:    edictID,
+					Task:       task,
+				})
+			case "completed", "failed":
+				//TODO: There has to be a difference
+				notify(MinisterCompletedMsg{
+					MinisterID: ministerID,
+					EdictID:    edictID,
+					Output:     "",
+					Sealed:     status == "completed",
+					Error:      nil,
+				})
+			}
+		}
+	}
+
+	// Create ritual notify wrapper
+	var ritualNotify tools.RitualNotifyFunc
+	if notify != nil {
+		ritualNotify = func(ritualName, executionID, edictID, status string) {
+			notify(RitualStepMsg{
+				RitualName:  ritualName,
+				ExecutionID: executionID,
+				EdictID:     edictID,
+				Status:      status,
+			})
+		}
+	}
+
 	toolList := []Tool{
 		tools.AsimiSQLTool{DBPath: c.getDBPath()},
 		tools.CreateEdictTool{Manager: c},
@@ -111,8 +148,7 @@ func (c *Chancellor) Tools(notify NotifyFunc) []Tool {
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
 		// TODO: rename to InviteMinisterTool to join the chat
-		tools.InvokeMinisterTool{Invoker: c, Logger: c.logger},
-		// TODO: add the InvokeRitualTool
+		tools.InvokeMinisterTool{Invoker: c, Logger: c.logger, Notify: ministerNotify},
 	}
 	// Add read-only file tools
 	for _, t := range tools.GetROTools() {
@@ -123,6 +159,7 @@ func (c *Chancellor) Tools(notify NotifyFunc) []Tool {
 		toolList = append(toolList, tools.InvokeRitualTool{
 			Starter: c,
 			Logger:  c.logger,
+			Notify:  ritualNotify,
 		})
 	}
 	return toolList
@@ -142,9 +179,9 @@ func (c *Chancellor) InvokeMinister(ctx context.Context, ministerID, edictID, wo
 	doneChan := make(chan Result, 1)
 
 	// Get streaming channel if available (thread-safe lookup)
-	var streamChan chan<- Reply
+	var streamChan StreamChan
 	if val, ok := c.activeReplyChans.Load(edictID); ok {
-		streamChan = val.(chan<- Reply)
+		streamChan = val.(StreamChan)
 	}
 	c.logger.Debug("invoke_minister looking up stream channel",
 		"edict_id", edictID,
@@ -191,11 +228,10 @@ func (c *Chancellor) StartRitual(ctx context.Context, ritualName, edictID string
 	// Get streaming channel if available
 	var notify NotifyFunc
 	if val, ok := c.activeReplyChans.Load(edictID); ok {
-		streamChan := val.(chan<- Reply)
+		streamChan := val.(StreamChan)
 		notify = func(msg any) {
-			if text, ok := msg.(string); ok {
-				streamChan <- Reply{Type: ReplyText, Message: text}
-			}
+			// Forward typed messages directly to the stream
+			streamChan <- msg
 		}
 	}
 
@@ -511,7 +547,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, edict *Edict) {
 	if edictID == "" {
 		edictID = generateEdictID()
 		if err := c.CreateEdict(edictID, edict.Prompt); err != nil {
-			edict.Stream <- Reply{Type: ReplyError, Err: fmt.Errorf("create edict: %w", err)}
+			edict.Stream <- StreamErrorMsg{Err: fmt.Errorf("create edict: %w", err)}
 			close(edict.Stream)
 			return
 		}
@@ -527,10 +563,10 @@ func (c *Chancellor) processPrompt(ctx context.Context, edict *Edict) {
 }
 
 // brewWithStreaming delegates to Session for LLM interaction
-func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string, stream chan<- Reply) {
+func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string, stream StreamChan) {
 	// Check if LLM is configured before proceeding
 	if c.model == nil {
-		stream <- Reply{Type: ReplyError, Err: fmt.Errorf("LLM not configured - please wait for model to connect")}
+		stream <- StreamErrorMsg{Err: fmt.Errorf("LLM not configured - please wait for model to connect")}
 		close(stream)
 		return
 	}
@@ -541,7 +577,7 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 		var err error
 		sess, err = c.CreateSession(c, nil)
 		if err != nil {
-			stream <- Reply{Type: ReplyError, Err: fmt.Errorf("failed to create session: %w", err)}
+			stream <- StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)}
 			close(stream)
 			return
 		}
@@ -555,34 +591,22 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 	c.activeReplyChans.Store(edictID, stream)
 	c.logger.Debug("stored stream channel for streaming", "edict_id", edictID)
 
-	// Set up notify function to forward streaming events to stream channel
-	sess.notify = func(msg any) {
-		switch m := msg.(type) {
-		case StreamChunkMsg:
-			stream <- Reply{Type: ReplyText, Message: string(m)}
-		case StreamStartMsg:
-			// Streaming started, no action needed
-		case StreamCompleteMsg:
-			// Will be handled after AskWithStreaming returns
-		case StreamInterruptedMsg:
-			stream <- Reply{Type: ReplyText, Message: m.PartialContent}
-		case StreamErrorMsg:
-			stream <- Reply{Type: ReplyError, Err: m.Err}
-		case ToolCallExecutingMsg:
-			stream <- Reply{Type: ReplyTool, Name: m.Name, Message: m.Format(m.Input, "", nil)}
-		case ToolCallSuccessMsg:
-			stream <- Reply{Type: ReplyTool, Name: m.Name, Message: m.Format(m.Input, m.Output, nil)}
-		case ToolCallErrorMsg:
-			stream <- Reply{Type: ReplyTool, Name: m.Name, Message: m.Format(m.Input, "", m.Error)}
+	// Forward all typed messages directly to stream channel - no conversion
+	sess.SetNotify(func(msg any) {
+		switch msg.(type) {
+		case StreamStartMsg, StreamCompleteMsg:
+			// Internal signals, don't forward
+		default:
+			stream <- msg
 		}
-	}
+	})
 
 	// Use AskWithStreaming for tool execution and streaming
 	_, err := sess.AskWithStreaming(ctx, prompt, contextFiles)
 	if err != nil && ctx.Err() == nil {
-		stream <- Reply{Type: ReplyError, Err: err}
+		stream <- StreamErrorMsg{Err: err}
 	}
-	stream <- Reply{Type: ReplyDone}
+	stream <- StreamDoneMsg{}
 	close(stream)
 }
 

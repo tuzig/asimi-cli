@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -16,8 +17,8 @@ type StatusComponent struct {
 	HasError    bool // Track if there's a model error
 	Width       int
 	Style       lipgloss.Style
-	Session     *Session  // Reference to session for token/time tracking
-	repoInfo    *RepoInfo // Git repository information
+	Session     *shogunate.Session // Reference to session for token/time tracking
+	repoInfo    *RepoInfo          // Git repository information
 	mode        string
 	ViPendingOp string
 
@@ -52,7 +53,7 @@ func (s *StatusComponent) SetProvider(provider, model string, connected bool) {
 }
 
 // SetSession sets the session reference for tracking
-func (s *StatusComponent) SetSession(session *Session) {
+func (s *StatusComponent) SetSession(session *shogunate.Session) {
 	s.Session = session
 }
 
@@ -331,16 +332,15 @@ func (s StatusComponent) renderShellRunnerIndicator() string {
 	return ret + warnStyle.Render("⚠ host")
 }
 
-// renderMiddleSection renders the middle section with token usage andsession age
+// renderMiddleSection renders the middle section with token usage and session age
 func (s StatusComponent) renderMiddleSection() string {
 	statusStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
-	// Return token usage and session age e.g, `🪣 63%   1h23:45 ⏱`
-	if s.Session == nil {
-		return statusStyle.Render("🪣 0%")
-	}
 
 	// Get context usage percentage
-	usagePercent := s.Session.GetContextUsagePercent()
+	var usagePercent float64
+	if s.Session != nil {
+		usagePercent = s.Session.GetContextUsagePercent()
+	}
 
 	// Format the output with icons
 	statusStr := fmt.Sprintf("🪣 %.0f%%", usagePercent)

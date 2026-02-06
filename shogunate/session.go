@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,6 +29,11 @@ type Session struct {
 	ID          string    `json:"id"`
 	CreatedAt   time.Time `json:"created_at"`
 	LastUpdated time.Time `json:"last_updated"`
+	FirstPrompt string    `json:"first_prompt"`
+	Provider    string    `json:"provider"`
+	Model       string    `json:"model"`
+	WorkingDir  string    `json:"working_dir"`
+	ProjectSlug string    `json:"project_slug,omitempty"`
 
 	model        llms.Model
 	config       *internalconfig.LLMConfig
@@ -46,6 +54,21 @@ type Session struct {
 	// Loop detection
 	lastToolCallKey         string
 	toolCallRepetitionCount int
+
+	// Context files - dynamically added via @ references
+	ContextFiles map[string]string `json:"context_files"`
+
+	// Write protection - track files read during session
+	filesRead map[string]bool
+
+	// Token counts - updated when messages/context changes
+	systemPromptTokens int
+	systemToolsTokens  int
+	memoryFilesTokens  int
+	messagesTokens     int
+
+	// Session timing
+	startTime time.Time
 }
 
 // NewSession creates a new minister session
@@ -58,10 +81,14 @@ func NewSession(
 	notify NotifyFunc,
 	systemPrompt string,
 ) (*Session, error) {
+	now := time.Now()
+	workingDir, _ := os.Getwd()
+
 	session := &Session{
-		ID:           GenerateID("session", time.Now().String()),
-		CreatedAt:    time.Now(),
-		LastUpdated:  time.Now(),
+		ID:           GenerateID("session", now.String()),
+		CreatedAt:   now,
+		LastUpdated:  now,
+		WorkingDir:   workingDir,
 		model:        model,
 		repoInfo:     repoInfo,
 		tools:        tools,
@@ -69,11 +96,16 @@ func NewSession(
 		notify:       notify,
 		systemPrompt: systemPrompt,
 		toolCatalog:  make(map[string]Tool),
+		ContextFiles: make(map[string]string),
+		filesRead:    make(map[string]bool),
+		startTime:    now,
 	}
 
 	// Set config
 	if cfg != nil {
 		session.config = &cfg.LLM
+		session.Provider = cfg.LLM.Provider
+		session.Model = cfg.LLM.Model
 	} else {
 		session.config = &internalconfig.LLMConfig{}
 	}
@@ -102,7 +134,19 @@ func NewSession(
 		session.scheduler = NewCoreToolScheduler(notify)
 	}
 
+	// Initialize token counts
+	session.updateTokenCounts()
+
 	return session, nil
+}
+
+// SetNotify sets the notification callback for both the session and its scheduler.
+// This must be called after NewSession if you want to change the notify callback.
+func (s *Session) SetNotify(notify NotifyFunc) {
+	s.notify = notify
+	if s.scheduler != nil {
+		s.scheduler.SetNotify(notify)
+	}
 }
 
 // Messages returns the session messages
@@ -141,6 +185,481 @@ func (s *Session) AddTools(tools []Tool) {
 	slog.Info("adding shogunate tools to session", "count", len(tools))
 	s.RegisterShogunateTools(tools)
 	slog.Info("session tools after adding", "toolDefs", len(s.toolDefs), "toolCatalog", len(s.toolCatalog))
+}
+
+// --- Context Files Management ---
+
+// AddContextFile adds file content to the context for the next prompt
+func (s *Session) AddContextFile(path, content string) {
+	s.ContextFiles[path] = content
+	s.updateTokenCounts()
+}
+
+// ClearContext removes all dynamically added file content from the context
+func (s *Session) ClearContext() {
+	s.ContextFiles = make(map[string]string)
+	s.updateTokenCounts()
+}
+
+// HasContextFiles returns true if there are files in the context
+func (s *Session) HasContextFiles() bool {
+	return len(s.ContextFiles) > 0
+}
+
+// GetContextFiles returns a copy of the context files map
+func (s *Session) GetContextFiles() map[string]string {
+	result := make(map[string]string)
+	for k, v := range s.ContextFiles {
+		result[k] = v
+	}
+	return result
+}
+
+// --- Write Protection ---
+
+// MarkFileAsRead records that a file has been read during this session
+func (s *Session) MarkFileAsRead(path string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	s.filesRead[absPath] = true
+	slog.Debug("file marked as read", "path", absPath)
+}
+
+// HasFileBeenRead checks if a file has been read during this session
+func (s *Session) HasFileBeenRead(path string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	return s.filesRead[absPath]
+}
+
+// CanWriteFile checks if a file can be written based on session rules:
+// - File does not exist (new file)
+// - OR file was read earlier in this session
+func (s *Session) CanWriteFile(path string) (bool, string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false, fmt.Sprintf("cannot resolve path: %v", err)
+	}
+
+	// Check if file exists
+	_, err = os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, ""
+		}
+		return false, fmt.Sprintf("cannot check file status: %v", err)
+	}
+
+	// File exists - check if it was read in this session
+	if s.HasFileBeenRead(absPath) {
+		return true, ""
+	}
+
+	return false, fmt.Sprintf("file '%s' already exists and was not read in this session. Use read_file first to review the existing content", filepath.Base(path))
+}
+
+// --- Rollback Support ---
+
+// GetMessageSnapshot returns the current size of the message history for rollback purposes
+func (s *Session) GetMessageSnapshot() int {
+	return len(s.messages)
+}
+
+// RollbackTo truncates the message history back to the provided snapshot index
+func (s *Session) RollbackTo(snapshot int) {
+	if snapshot < 1 {
+		snapshot = 1 // always preserve the system prompt
+	}
+	if snapshot > len(s.messages) {
+		snapshot = len(s.messages)
+	}
+	if snapshot < len(s.messages) {
+		s.messages = s.messages[:snapshot]
+		s.updateTokenCounts()
+	}
+
+	// Reset tool loop detection state when rolling back
+	s.lastToolCallKey = ""
+	s.toolCallRepetitionCount = 0
+}
+
+// ClearHistory clears the conversation history but keeps the system message
+func (s *Session) ClearHistory() {
+	if len(s.messages) > 0 && s.messages[0].Role == llms.ChatMessageTypeSystem {
+		s.messages = s.messages[:1]
+	} else {
+		s.messages = []llms.MessageContent{}
+	}
+	s.lastToolCallKey = ""
+	s.toolCallRepetitionCount = 0
+	s.updateTokenCounts()
+	s.startTime = time.Now()
+	s.ClearContext()
+}
+
+// --- Token Counting ---
+
+const (
+	contextBarWidth          = 10
+	autocompactBufferRatio   = 0.225
+	memoryFileOverheadTokens = 20
+	defaultUnknownContextRef = 8192
+)
+
+// extendedModelContextSizes contains context sizes for models not covered by langchaingo.
+var extendedModelContextSizes = map[string]int{
+	"claude-3-5-sonnet-latest":   200_000,
+	"claude-3-5-sonnet":          200_000,
+	"claude-3-opus-20240229":     200_000,
+	"claude-3-sonnet-20240229":   200_000,
+	"claude-3-5-haiku-latest":    200_000,
+	"claude-3-haiku-20240307":    200_000,
+	"claude-sonnet-4-5-20250929": 200_000,
+	"gemini-1.5-flash":           1_000_000,
+	"gemini-1.5-flash-latest":    1_000_000,
+	"gemini-1.5-pro":             2_000_000,
+	"gemini-1.5-pro-latest":      2_000_000,
+	"gemini-pro":                 1_000_000,
+	"gemini-2.0-flash":           1_000_000,
+}
+
+// ContextInfo holds information about context usage.
+type ContextInfo struct {
+	Model              string
+	TotalTokens        int
+	UsedTokens         int
+	SystemPromptTokens int
+	SystemToolsTokens  int
+	MemoryFilesTokens  int
+	MessagesTokens     int
+	FreeTokens         int
+	AutocompactBuffer  int
+}
+
+// GetContextInfo returns detailed information about context usage.
+func (s *Session) GetContextInfo() ContextInfo {
+	info := ContextInfo{
+		Model:              s.getModelName(),
+		TotalTokens:        s.getModelContextSize(),
+		SystemPromptTokens: s.systemPromptTokens,
+		SystemToolsTokens:  s.systemToolsTokens,
+		MemoryFilesTokens:  s.memoryFilesTokens,
+		MessagesTokens:     s.messagesTokens,
+	}
+
+	info.UsedTokens = info.SystemPromptTokens + info.SystemToolsTokens + info.MemoryFilesTokens + info.MessagesTokens
+
+	buffer := int(math.Round(float64(info.TotalTokens) * autocompactBufferRatio))
+	maxBuffer := info.TotalTokens - info.UsedTokens
+	if maxBuffer < 0 {
+		maxBuffer = 0
+	}
+	if buffer > maxBuffer {
+		buffer = maxBuffer
+	}
+	info.AutocompactBuffer = buffer
+
+	free := info.TotalTokens - info.UsedTokens - info.AutocompactBuffer
+	if free < 0 {
+		free = 0
+	}
+	info.FreeTokens = free
+
+	return info
+}
+
+// getModelName returns the configured model name when available.
+func (s *Session) getModelName() string {
+	if s.config != nil && s.config.Model != "" {
+		return s.config.Model
+	}
+	return "Unknown"
+}
+
+// getModelContextSize returns the context window size for the current model.
+func (s *Session) getModelContextSize() int {
+	modelName := s.getModelName()
+
+	if size := llms.GetModelContextSize(modelName); size > 2048 {
+		return size
+	}
+
+	if size, ok := extendedModelContextSizes[strings.ToLower(modelName)]; ok && size > 0 {
+		return size
+	}
+
+	if s.config != nil {
+		switch strings.ToLower(s.config.Provider) {
+		case "anthropic":
+			return 200_000
+		case "openai":
+			return 128_000
+		case "googleai":
+			return 1_000_000
+		}
+	}
+
+	return defaultUnknownContextRef
+}
+
+// updateTokenCounts recalculates and stores token counts for all context components
+func (s *Session) updateTokenCounts() {
+	s.systemPromptTokens = s.countSystemPromptTokens()
+	s.systemToolsTokens = s.countSystemToolsTokens()
+	s.memoryFilesTokens = s.countMemoryFilesTokens()
+	s.messagesTokens = s.countMessagesTokens()
+}
+
+// countSystemPromptTokens counts tokens in the system prompt.
+func (s *Session) countSystemPromptTokens() int {
+	if len(s.messages) == 0 {
+		return 0
+	}
+	if s.messages[0].Role != llms.ChatMessageTypeSystem {
+		return 0
+	}
+
+	var content strings.Builder
+	for _, part := range s.messages[0].Parts {
+		if textPart, ok := part.(llms.TextContent); ok {
+			content.WriteString(textPart.Text)
+		}
+	}
+	return s.countTokens(content.String())
+}
+
+// countSystemToolsTokens counts tokens in tool definitions.
+func (s *Session) countSystemToolsTokens() int {
+	if len(s.toolDefs) == 0 {
+		return 0
+	}
+	toolsJSON, err := json.Marshal(s.toolDefs)
+	if err != nil {
+		return 0
+	}
+	return s.countTokens(string(toolsJSON))
+}
+
+// countMemoryFilesTokens counts tokens in dynamically added context files.
+func (s *Session) countMemoryFilesTokens() int {
+	if len(s.ContextFiles) == 0 {
+		return 0
+	}
+	totalTokens := 0
+	for path, content := range s.ContextFiles {
+		totalTokens += s.countTokens(path)
+		totalTokens += s.countTokens(content)
+		totalTokens += memoryFileOverheadTokens
+	}
+	return totalTokens
+}
+
+// countMessagesTokens counts tokens in conversation history (excluding the system message).
+func (s *Session) countMessagesTokens() int {
+	if len(s.messages) <= 1 {
+		return 0
+	}
+	totalTokens := 0
+	for i := 1; i < len(s.messages); i++ {
+		msg := s.messages[i]
+		for _, part := range msg.Parts {
+			switch p := part.(type) {
+			case llms.TextContent:
+				totalTokens += s.countTokens(p.Text)
+			case llms.ToolCall:
+				if p.FunctionCall != nil {
+					totalTokens += s.countTokens(p.FunctionCall.Name)
+					totalTokens += s.countTokens(p.FunctionCall.Arguments)
+				}
+			case llms.ToolCallResponse:
+				totalTokens += s.countTokens(p.Name)
+				totalTokens += s.countTokens(p.Content)
+			}
+		}
+	}
+	return totalTokens
+}
+
+// countTokens provides token counting using langchaingo.
+func (s *Session) countTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	return llms.CountTokens(s.getModelName(), text)
+}
+
+// GetContextUsagePercent returns the percentage of context used (0-100)
+func (s *Session) GetContextUsagePercent() float64 {
+	info := s.GetContextInfo()
+	if info.TotalTokens <= 0 {
+		return 0
+	}
+	return (float64(info.UsedTokens) / float64(info.TotalTokens)) * 100
+}
+
+// --- History Compaction ---
+
+// CompactHistory summarizes the conversation history to reduce context usage
+func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (string, error) {
+	if len(s.messages) <= 2 {
+		return "", fmt.Errorf("not enough conversation history to compact")
+	}
+
+	// Build the content to summarize
+	var contentBuilder strings.Builder
+
+	contentBuilder.WriteString("## File Changes and Diffs\n\n")
+	fileChanges := s.extractFileChanges()
+	if len(fileChanges) > 0 {
+		for path, changes := range fileChanges {
+			contentBuilder.WriteString(fmt.Sprintf("### %s\n\n", path))
+			for _, change := range changes {
+				contentBuilder.WriteString(change)
+				contentBuilder.WriteString("\n\n")
+			}
+		}
+	} else {
+		contentBuilder.WriteString("No file changes recorded.\n\n")
+	}
+
+	contentBuilder.WriteString("## Conversation History\n\n")
+	for i := 1; i < len(s.messages); i++ {
+		msg := s.messages[i]
+		switch msg.Role {
+		case llms.ChatMessageTypeHuman:
+			contentBuilder.WriteString("**User:**\n")
+			for _, part := range msg.Parts {
+				if textPart, ok := part.(llms.TextContent); ok {
+					contentBuilder.WriteString(textPart.Text)
+					contentBuilder.WriteString("\n\n")
+				}
+			}
+		case llms.ChatMessageTypeAI:
+			contentBuilder.WriteString("**Assistant:**\n")
+			for _, part := range msg.Parts {
+				if textPart, ok := part.(llms.TextContent); ok {
+					contentBuilder.WriteString(textPart.Text)
+					contentBuilder.WriteString("\n\n")
+				}
+			}
+		}
+	}
+
+	fullPrompt := fmt.Sprintf("%s\n\n---\n\n%s", compactPrompt, contentBuilder.String())
+
+	originalMessages := s.messages
+	systemMessage := s.messages[0]
+
+	s.messages = []llms.MessageContent{
+		systemMessage,
+		{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextPart(fullPrompt)},
+		},
+	}
+
+	choice, err := s.generateLLMResponse(ctx, nil, nil)
+	if err != nil {
+		s.messages = originalMessages
+		s.updateTokenCounts()
+		return "", fmt.Errorf("failed to generate summary: %w", err)
+	}
+
+	summary := choice.Content
+	if choice.ReasoningContent != "" {
+		summary = choice.ReasoningContent + "\n\n" + choice.Content
+	}
+
+	s.messages = []llms.MessageContent{
+		systemMessage,
+		{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextPart("Previous conversation summary:\n\n" + summary)},
+		},
+		{
+			Role:  llms.ChatMessageTypeAI,
+			Parts: []llms.ContentPart{llms.TextPart("I understand. I have the context from the previous conversation and am ready to continue.")},
+		},
+	}
+
+	s.lastToolCallKey = ""
+	s.toolCallRepetitionCount = 0
+	s.updateTokenCounts()
+
+	return summary, nil
+}
+
+// extractFileChanges extracts all file changes from tool call responses
+func (s *Session) extractFileChanges() map[string][]string {
+	changes := make(map[string][]string)
+
+	for _, msg := range s.messages {
+		if msg.Role != llms.ChatMessageTypeTool {
+			continue
+		}
+
+		for _, part := range msg.Parts {
+			if toolResp, ok := part.(llms.ToolCallResponse); ok {
+				if toolResp.Name == "write_file" || toolResp.Name == "replace_text" {
+					content := toolResp.Content
+					if strings.Contains(content, "Successfully") || strings.Contains(content, "wrote") {
+						lines := strings.Split(content, "\n")
+						for _, line := range lines {
+							if strings.Contains(line, "Successfully") || strings.Contains(line, "wrote") {
+								changes["file-changes"] = append(changes["file-changes"], content)
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return changes
+}
+
+// --- Session Duration ---
+
+// GetSessionDuration returns the duration since the session started
+func (s *Session) GetSessionDuration() time.Duration {
+	return time.Since(s.startTime)
+}
+
+// --- Export Support ---
+
+// GetID returns the session ID (for ExportableSession interface)
+func (s *Session) GetID() string {
+	return s.ID
+}
+
+// GetMessages returns the session messages (for ExportableSession interface)
+func (s *Session) GetMessages() []llms.MessageContent {
+	return s.messages
+}
+
+// FormatMetadata returns formatted metadata for export (for ExportableSession interface)
+// Note: exportType is a string here to avoid circular import with main package
+func (s *Session) FormatMetadata(exportType, exportedAt string) string {
+	var b strings.Builder
+	exported := exportedAt
+
+	b.WriteString(fmt.Sprintf("**Export Type:** %s\n", exportType))
+	b.WriteString(fmt.Sprintf("**Session ID:** %s | **Working Directory:** %s\n", s.ID, s.WorkingDir))
+	b.WriteString(fmt.Sprintf("**Provider:** %s | **Model:** %s\n", s.Provider, s.Model))
+	b.WriteString(fmt.Sprintf("**Created:** %s | **Last Updated:** %s | **Exported:** %s\n",
+		s.CreatedAt.Format("2006-01-02 15:04:05"),
+		s.LastUpdated.Format("2006-01-02 15:04:05"),
+		exported))
+	if s.ProjectSlug != "" {
+		b.WriteString(fmt.Sprintf("**Project:** %s\n", s.ProjectSlug))
+	}
+
+	return b.String()
 }
 
 // --- Streaming Support ---
@@ -185,7 +704,7 @@ func buildPromptWithContext(userPrompt string, contextFiles map[string]string) s
 // --- LLM Response Generation ---
 
 // generateLLMResponse calls the LLM and returns the response
-func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ctx context.Context, chunk []byte) error) (*llms.ContentChoice, error) {
+func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ctx context.Context, chunk []byte) error, reasoningFunc func(ctx context.Context, reasoningChunk, chunk []byte) error) (*llms.ContentChoice, error) {
 	var callOpts []llms.CallOption
 	if len(s.toolDefs) > 0 {
 		callOpts = append(callOpts, llms.WithTools(s.toolDefs), llms.WithMaxTokens(64000))
@@ -194,6 +713,10 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 
 	if streamingFunc != nil {
 		callOpts = append(callOpts, llms.WithStreamingFunc(streamingFunc))
+	}
+
+	if reasoningFunc != nil {
+		callOpts = append(callOpts, llms.WithStreamingReasoningFunc(reasoningFunc))
 	}
 
 	s.SanitizeMessages()
@@ -526,7 +1049,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		default:
 		}
 
-		// Create streaming function
+		// Create streaming function for content
 		streamingFunc := func(ctx context.Context, chunk []byte) error {
 			select {
 			case <-ctx.Done():
@@ -542,7 +1065,21 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			return nil
 		}
 
-		choice, err := s.generateLLMResponse(ctx, streamingFunc)
+		// Create streaming function for reasoning/thinking content
+		reasoningFunc := func(ctx context.Context, reasoningChunk, chunk []byte) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			if len(reasoningChunk) > 0 && s.notify != nil {
+				s.notify(StreamReasoningChunkMsg(string(reasoningChunk)))
+			}
+			return nil
+		}
+
+		choice, err := s.generateLLMResponse(ctx, streamingFunc, reasoningFunc)
 		if err != nil {
 			if ctx.Err() != nil {
 				accumulatedText := s.getStreamBuffer()
@@ -633,6 +1170,9 @@ func buildLLMTools(tools []Tool) ([]llms.Tool, map[string]Tool) {
 
 // StreamChunkMsg contains a streaming text chunk from the LLM
 type StreamChunkMsg string
+
+// StreamReasoningChunkMsg contains a reasoning/thinking chunk from the LLM
+type StreamReasoningChunkMsg string
 
 // StreamStartMsg signals that streaming has begun
 type StreamStartMsg struct {

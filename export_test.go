@@ -4,21 +4,49 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tmc/langchaingo/llms"
 )
 
+// mockExportableSession implements ExportableSession for testing
+type mockExportableSession struct {
+	ID           string
+	Provider     string
+	Model        string
+	WorkingDir   string
+	ProjectSlug  string
+	Messages     []llms.MessageContent
+	ContextFiles map[string]string
+}
+
+func (m *mockExportableSession) GetID() string {
+	return m.ID
+}
+
+func (m *mockExportableSession) GetMessages() []llms.MessageContent {
+	return m.Messages
+}
+
+func (m *mockExportableSession) GetContextFiles() map[string]string {
+	return m.ContextFiles
+}
+
+func (m *mockExportableSession) FormatMetadata(exportType, exportedAt string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("**Session ID:** %s | ", m.ID))
+	b.WriteString(fmt.Sprintf("**Provider:** %s | ", m.Provider))
+	b.WriteString(fmt.Sprintf("**Model:** %s | ", m.Model))
+	b.WriteString(fmt.Sprintf("**Working Directory:** %s\n", m.WorkingDir))
+	return b.String()
+}
+
 func TestExportShowsToolCalls(t *testing.T) {
 	// Create a test session with tool calls
-	session := &Session{
-		ID:          "test-session",
-		CreatedAt:   time.Now(),
-		LastUpdated: time.Now(),
-		FirstPrompt: "Test prompt",
-		Provider:    "test",
-		Model:       "test-model",
-		WorkingDir:  "/test",
+	session := &mockExportableSession{
+		ID:         "test-session",
+		Provider:   "test",
+		Model:      "test-model",
+		WorkingDir: "/test",
 		Messages: []llms.MessageContent{
 			// System message
 			{
@@ -188,14 +216,11 @@ func TestFormatMessagesNumberingSkipsToolMessages(t *testing.T) {
 
 func TestExportToolResultWithStderr(t *testing.T) {
 	// Create a test session with a command that has stderr
-	session := &Session{
-		ID:          "test-session",
-		CreatedAt:   time.Now(),
-		LastUpdated: time.Now(),
-		FirstPrompt: "Test prompt",
-		Provider:    "test",
-		Model:       "test-model",
-		WorkingDir:  "/test",
+	session := &mockExportableSession{
+		ID:         "test-session",
+		Provider:   "test",
+		Model:      "test-model",
+		WorkingDir: "/test",
 		Messages: []llms.MessageContent{
 			// System message
 			{
@@ -278,14 +303,11 @@ func TestExportToolResultWithStderr(t *testing.T) {
 
 func TestExportNonShellToolCalls(t *testing.T) {
 	// Create a test session with non-shell tool calls
-	session := &Session{
-		ID:          "test-session",
-		CreatedAt:   time.Now(),
-		LastUpdated: time.Now(),
-		FirstPrompt: "Test prompt",
-		Provider:    "test",
-		Model:       "test-model",
-		WorkingDir:  "/test",
+	session := &mockExportableSession{
+		ID:         "test-session",
+		Provider:   "test",
+		Model:      "test-model",
+		WorkingDir: "/test",
 		Messages: []llms.MessageContent{
 			// System message
 			{
@@ -495,11 +517,8 @@ func TestFormatToolCallWithResult(t *testing.T) {
 }
 
 func TestExportMetadata(t *testing.T) {
-	session := &Session{
+	session := &mockExportableSession{
 		ID:          "test-123",
-		CreatedAt:   time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
-		LastUpdated: time.Date(2024, 1, 2, 14, 30, 0, 0, time.UTC),
-		FirstPrompt: "Test prompt",
 		Provider:    "anthropic",
 		Model:       "claude-3-5-sonnet",
 		WorkingDir:  "/home/user/project",

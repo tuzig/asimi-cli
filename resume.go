@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -280,31 +279,13 @@ func formatRelativeTime(t time.Time) string {
 }
 
 // handleSessionSelected processes a resumed session and updates the TUI model.
-// It copies session data, rebuilds the chat UI from messages, and resets prompt history state.
+// It rebuilds the chat UI from messages and resets prompt history state.
+// Note: With the shogunate architecture, resuming only displays the conversation
+// history in the UI - the shogunate will start a fresh session on next prompt.
+// TODO: Implement full session restoration in shogunate.
 func (m *TUIModel) handleSessionSelected(session *Session) {
 	if session == nil {
 		return
-	}
-
-	if m.session != nil {
-		// Copy all persisted fields from loaded session to existing session
-		m.session.ID = session.ID
-		m.session.CreatedAt = session.CreatedAt
-		m.session.LastUpdated = session.LastUpdated
-		m.session.FirstPrompt = session.FirstPrompt
-		m.session.Provider = session.Provider
-		m.session.Model = session.Model
-		m.session.WorkingDir = session.WorkingDir
-		m.session.ProjectSlug = session.ProjectSlug
-		m.session.ContextFiles = session.ContextFiles
-
-		// Copy messages - need to make a proper copy
-		m.session.Messages = make([]llms.MessageContent, len(session.Messages))
-		copy(m.session.Messages, session.Messages)
-	} else {
-		// No active session - set the loaded session directly
-		m.session = session
-		slog.Warn("Resumed session without active LLM - some features may be limited")
 	}
 
 	// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
@@ -312,7 +293,7 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 
 	// Build a map of tool call IDs to their responses for matching
 	toolResults := make(map[string]llms.ToolCallResponse)
-	for _, msgContent := range m.session.Messages {
+	for _, msgContent := range session.Messages {
 		if msgContent.Role == llms.ChatMessageTypeTool {
 			for _, part := range msgContent.Parts {
 				if resp, ok := part.(llms.ToolCallResponse); ok {
@@ -322,7 +303,7 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 		}
 	}
 
-	for _, msgContent := range m.session.Messages {
+	for _, msgContent := range session.Messages {
 		// Skip system messages
 		if msgContent.Role == llms.ChatMessageTypeSystem {
 			continue
@@ -388,9 +369,6 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 		case llms.ChatMessageTypeTool:
 			continue
 		}
-	}
-	if m.session != nil {
-		m.session.updateTokenCounts()
 	}
 	m.sessionActive = true
 

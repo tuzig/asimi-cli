@@ -555,6 +555,20 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		if err != nil {
 			exec.stepStates[exec.CurrentStep].Message = err.Error()
 
+			// Notify: step failed
+			if exec.notify != nil {
+				exec.notify(RitualStepMsg{
+					RitualName:  exec.RitualName,
+					ExecutionID: exec.ID,
+					EdictID:     exec.EdictID,
+					StepName:    step.Name,
+					StepIndex:   exec.CurrentStep,
+					TotalSteps:  len(exec.def.Steps),
+					Status:      "failed",
+					Message:     err.Error(),
+				})
+			}
+
 			// Handle failure action
 			if !r.handleFailure(ctx, exec, step, err) {
 				exec.State = RitualStateFailed
@@ -562,6 +576,20 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 				return err
 			}
 			continue
+		}
+
+		// Notify: step completed
+		if exec.notify != nil {
+			exec.notify(RitualStepMsg{
+				RitualName:  exec.RitualName,
+				ExecutionID: exec.ID,
+				EdictID:     exec.EdictID,
+				StepName:    step.Name,
+				StepIndex:   exec.CurrentStep,
+				TotalSteps:  len(exec.def.Steps),
+				Status:      "completed",
+				Message:     result,
+			})
 		}
 
 		// Update step state
@@ -574,6 +602,19 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 	exec.State = RitualStateCompleted
 	r.saveExecution(exec)
+
+	// Notify: ritual completed
+	if exec.notify != nil {
+		exec.notify(RitualStepMsg{
+			RitualName:  exec.RitualName,
+			ExecutionID: exec.ID,
+			EdictID:     exec.EdictID,
+			StepName:    "",
+			StepIndex:   len(exec.def.Steps),
+			TotalSteps:  len(exec.def.Steps),
+			Status:      "ritual_completed",
+		})
+	}
 
 	r.logger.Info("ritual completed",
 		"ritual", exec.RitualName,
@@ -591,6 +632,19 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		"ritual", exec.RitualName,
 		"step", step.Name,
 		"type", step.Type)
+
+	// Notify: step started
+	if exec.notify != nil {
+		exec.notify(RitualStepMsg{
+			RitualName:  exec.RitualName,
+			ExecutionID: exec.ID,
+			EdictID:     exec.EdictID,
+			StepName:    step.Name,
+			StepIndex:   exec.CurrentStep,
+			TotalSteps:  len(exec.def.Steps),
+			Status:      "started",
+		})
+	}
 
 	// Check dependencies are complete (dependency step index must be less than current)
 	for _, dep := range step.DependsOn {
@@ -742,6 +796,19 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 		}
 		if exec.stepStates[exec.CurrentStep].RetryCount < maxRetries {
 			exec.stepStates[exec.CurrentStep].RetryCount++
+			// Notify: retrying
+			if exec.notify != nil {
+				exec.notify(RitualStepMsg{
+					RitualName:  exec.RitualName,
+					ExecutionID: exec.ID,
+					EdictID:     exec.EdictID,
+					StepName:    step.Name,
+					StepIndex:   exec.CurrentStep,
+					TotalSteps:  len(exec.def.Steps),
+					Status:      "retrying",
+					Message:     fmt.Sprintf("attempt %d/%d", exec.stepStates[exec.CurrentStep].RetryCount, maxRetries),
+				})
+			}
 			r.logger.Info("retrying step",
 				"step", step.Name,
 				"attempt", exec.stepStates[exec.CurrentStep].RetryCount)
