@@ -328,23 +328,16 @@ func (m *TUIModel) shutdown() {
 
 // Init implements bubbletea.Model
 func (m TUIModel) Init() tea.Cmd {
-	// Set up the host command approval channel
-	/* TODO: remove
-	approvalChan := make(chan HostCommandApprovalRequest, 1)
-	SetHostCommandApprovalChannel(approvalChan)
-
-	// Start a goroutine to listen for approval requests and forward them to the TUI
-	go func() {
-		for request := range approvalChan {
-			if program != nil {
-				program.Send(hostCommandApprovalMsg{request: request})
-			}
+	// Async LLM initialization - getModelClient handles credentials/keyring
+	return func() tea.Msg {
+		slog.Info("connecting to LLM", "provider", m.config.LLM.Provider)
+		model, err := getModelClient(m.config)
+		if err != nil {
+			return llmInitErrorMsg{err: err}
 		}
-	}()
-	*/
-
-	// Bubbletea will automatically send a WindowSizeMsg after Init
-	return nil
+		slog.Info("LLM client connected")
+		return llmInitSuccessMsg{model: model}
+	}
 }
 
 // Update implements bubbletea.Model
@@ -2159,28 +2152,22 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.content.ShowChat()
 
 	case llmInitSuccessMsg:
-		// LLM initialization completed successfully
-		m.SetSession(msg.session)
-		slog.Info("LLM session initialized successfully")
-
-		// Configure Shogunate with the LLM model
-		if m.shogunate != nil && msg.session != nil {
-			model := msg.session.GetModel()
-			if model != nil {
-				cfg := &shogunate.SessionConfig{
-					LLM: config.LLMConfig{
-						MaxTurns:          m.config.LLM.MaxTurns,
-						MaxThinkingTokens: m.config.LLM.MaxThinkingTokens,
-						Provider:          m.config.LLM.Provider,
-						Model:             m.config.LLM.Model,
-					},
-				}
-				repoInfo := repo.RepoInfo{
-					ProjectRoot: m.config.Storage.DatabasePath,
-				}
-				m.shogunate.ConfigureModel(model, cfg, repoInfo)
-				slog.Info("Shogunate configured with LLM model")
+		// LLM initialization completed - configure Shogunate with the model
+		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
+		if m.shogunate != nil && msg.model != nil {
+			cfg := &shogunate.SessionConfig{
+				LLM: config.LLMConfig{
+					MaxTurns:          m.config.LLM.MaxTurns,
+					MaxThinkingTokens: m.config.LLM.MaxThinkingTokens,
+					Provider:          m.config.LLM.Provider,
+					Model:             m.config.LLM.Model,
+				},
 			}
+			repoInfo := repo.RepoInfo{
+				ProjectRoot: m.config.Storage.DatabasePath,
+			}
+			m.shogunate.ConfigureModel(msg.model, cfg, repoInfo)
+			slog.Info("Shogunate configured with LLM model")
 		}
 
 	case llmInitErrorMsg:

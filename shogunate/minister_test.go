@@ -4,10 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
@@ -440,6 +445,304 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 		t.Error("Expected error for missing task parameter")
 	}
 }
+
+// TestInvokeMinisterTool_InvalidJSON tests error handling for malformed JSON input
+func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+	tool := InvokeMinisterTool{chancellor: chancellor}
+
+	_, err := tool.Call(context.Background(), `not json`)
+	if err == nil {
+		t.Fatal("Expected error for invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "invalid input") {
+		t.Errorf("Expected 'invalid input' error, got: %v", err)
+	}
+}
+
+// TestInvokeMinisterTool_MissingMinisterID tests error handling for missing minister_id
+func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+	tool := InvokeMinisterTool{chancellor: chancellor}
+
+	_, err := tool.Call(context.Background(), `{"edict_id": "e1", "task": "do something"}`)
+	if err == nil {
+		t.Fatal("Expected error for missing minister_id")
+	}
+	if err.Error() != "minister_id is required" {
+		t.Errorf("Expected 'minister_id is required', got: %v", err)
+	}
+}
+
+// TestInvokeMinisterTool_MissingEdictID tests error handling for missing edict_id
+func TestInvokeMinisterTool_MissingEdictID(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+	tool := InvokeMinisterTool{chancellor: chancellor}
+
+	_, err := tool.Call(context.Background(), `{"minister_id": "forge", "task": "do something"}`)
+	if err == nil {
+		t.Fatal("Expected error for missing edict_id")
+	}
+	if err.Error() != "edict_id is required" {
+		t.Errorf("Expected 'edict_id is required', got: %v", err)
+	}
+}
+
+// TestInvokeMinisterTool_MinisterReturnsError tests that a Result with Err is propagated
+func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+
+	// Create a fake minister that returns an error in Result
+	fake := &fakeMinister{id: "failing", tasks: make(chan *Task, 1)}
+	shogunate := &Shogunate{
+		db:        db,
+		ministers: map[string]Minister{"failing": fake},
+	}
+	chancellor.SetShogunate(shogunate)
+
+	// Start the fake minister: reads task, sends error result
+	go func() {
+		task := <-fake.tasks
+		task.Done <- Result{
+			MinisterID: "failing",
+			Err:        errors.New("something broke"),
+		}
+	}()
+
+	tool := InvokeMinisterTool{chancellor: chancellor}
+	_, err := tool.Call(ctx, `{"minister_id": "failing", "edict_id": "e1", "task": "break"}`)
+	if err == nil {
+		t.Fatal("Expected error when minister returns Result.Err")
+	}
+	if !strings.Contains(err.Error(), "something broke") {
+		t.Errorf("Expected 'something broke' in error, got: %v", err)
+	}
+}
+
+// TestInvokeMinisterTool_ContextCancelledDuringSend tests cancellation while sending task
+func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+
+	// Create a fake minister with a full task channel (buffer 0, no reader)
+	fake := &fakeMinister{id: "blocked", tasks: make(chan *Task)} // unbuffered, no goroutine reading
+	shogunate := &Shogunate{
+		db:        db,
+		ministers: map[string]Minister{"blocked": fake},
+	}
+	chancellor.SetShogunate(shogunate)
+
+	// Cancel context immediately
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tool := InvokeMinisterTool{chancellor: chancellor}
+	_, err := tool.Call(ctx, `{"minister_id": "blocked", "edict_id": "e1", "task": "go"}`)
+	if err == nil {
+		t.Fatal("Expected error when context is cancelled during send")
+	}
+	if !strings.Contains(err.Error(), "context cancelled") {
+		t.Errorf("Expected 'context cancelled' in error, got: %v", err)
+	}
+}
+
+// TestInvokeMinisterTool_ContextCancelledDuringWait tests cancellation while waiting for result
+func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+
+	// Create a fake minister that accepts but never replies
+	fake := &fakeMinister{id: "slow", tasks: make(chan *Task, 1)}
+	shogunate := &Shogunate{
+		db:        db,
+		ministers: map[string]Minister{"slow": fake},
+	}
+	chancellor.SetShogunate(shogunate)
+
+	// Drain the task channel so the send succeeds, but never reply
+	go func() { <-fake.tasks }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel after a short delay to let the send succeed
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	tool := InvokeMinisterTool{chancellor: chancellor}
+	_, err := tool.Call(ctx, `{"minister_id": "slow", "edict_id": "e1", "task": "wait"}`)
+	if err == nil {
+		t.Fatal("Expected error when context is cancelled during wait")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Expected context.Canceled, got: %v", err)
+	}
+}
+
+// TestInvokeMinisterTool_Notifications verifies MinisterInvokingMsg and MinisterCompletedMsg are sent
+func TestInvokeMinisterTool_Notifications(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+
+	// Collect notifications
+	var mu sync.Mutex
+	var notifications []any
+	chancellor.SetNotify(internal.NotifyFunc(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		notifications = append(notifications, msg)
+	}))
+
+	// Create a fake minister that succeeds
+	fake := &fakeMinister{id: "notifier", tasks: make(chan *Task, 1)}
+	shogunate := &Shogunate{
+		db:        db,
+		ministers: map[string]Minister{"notifier": fake},
+	}
+	chancellor.SetShogunate(shogunate)
+
+	go func() {
+		task := <-fake.tasks
+		task.Done <- Result{MinisterID: "notifier", Sealed: true, Output: "done"}
+	}()
+
+	tool := InvokeMinisterTool{chancellor: chancellor}
+	_, err := tool.Call(ctx, `{"minister_id": "notifier", "edict_id": "e1", "task": "notify me"}`)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(notifications) != 2 {
+		t.Fatalf("Expected 2 notifications, got %d", len(notifications))
+	}
+
+	// First: MinisterInvokingMsg
+	invoking, ok := notifications[0].(MinisterInvokingMsg)
+	if !ok {
+		t.Fatalf("Expected MinisterInvokingMsg, got %T", notifications[0])
+	}
+	if invoking.MinisterID != "notifier" || invoking.EdictID != "e1" || invoking.Task != "notify me" {
+		t.Errorf("Unexpected invoking msg: %+v", invoking)
+	}
+
+	// Second: MinisterCompletedMsg
+	completed, ok := notifications[1].(MinisterCompletedMsg)
+	if !ok {
+		t.Fatalf("Expected MinisterCompletedMsg, got %T", notifications[1])
+	}
+	if completed.MinisterID != "notifier" || completed.EdictID != "e1" || completed.Error != nil {
+		t.Errorf("Unexpected completed msg: %+v", completed)
+	}
+	if !completed.Sealed {
+		t.Error("Expected Sealed=true in completed notification")
+	}
+}
+
+// TestInvokeMinisterTool_NotificationsOnError verifies error notifications are sent
+func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+
+	var mu sync.Mutex
+	var notifications []any
+	chancellor.SetNotify(internal.NotifyFunc(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		notifications = append(notifications, msg)
+	}))
+
+	// No ministers registered -> unknown minister error
+	shogunate := &Shogunate{
+		db:        db,
+		ministers: map[string]Minister{},
+	}
+	chancellor.SetShogunate(shogunate)
+
+	tool := InvokeMinisterTool{chancellor: chancellor}
+	_, _ = tool.Call(ctx, `{"minister_id": "ghost", "edict_id": "e1", "task": "haunt"}`)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Should have invoking + completed-with-error
+	if len(notifications) != 2 {
+		t.Fatalf("Expected 2 notifications, got %d", len(notifications))
+	}
+
+	completed, ok := notifications[1].(MinisterCompletedMsg)
+	if !ok {
+		t.Fatalf("Expected MinisterCompletedMsg, got %T", notifications[1])
+	}
+	if completed.Error == nil {
+		t.Error("Expected error in completed notification for unknown minister")
+	}
+}
+
+// TestInvokeMinisterTool_Format tests the Format method
+func TestInvokeMinisterTool_Format(t *testing.T) {
+	tool := InvokeMinisterTool{}
+
+	// Normal case
+	output := tool.Format(`{"minister_id": "forge", "task": "build it"}`, `{"status":"ok"}`, nil)
+	if !strings.Contains(output, "InvokeMinister") {
+		t.Errorf("Expected 'InvokeMinister' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "forge") {
+		t.Errorf("Expected 'forge' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "[build it]") {
+		t.Errorf("Expected '[build it]' in output, got: %s", output)
+	}
+
+	// Error case
+	output = tool.Format(`{"minister_id": "forge", "task": "x"}`, "", errors.New("boom"))
+	if !strings.Contains(output, "Error: boom") {
+		t.Errorf("Expected 'Error: boom' in output, got: %s", output)
+	}
+
+	// Long task truncation
+	longTask := strings.Repeat("a", 50)
+	output = tool.Format(`{"minister_id": "forge", "task": "`+longTask+`"}`, `{}`, nil)
+	if !strings.Contains(output, "...") {
+		t.Errorf("Expected truncation with '...' for long task, got: %s", output)
+	}
+}
+
+// fakeMinister is a minimal Minister implementation for testing
+type fakeMinister struct {
+	MinisterBase
+	id    string
+	tasks chan *Task
+}
+
+func (f *fakeMinister) ID() string              { return f.id }
+func (f *fakeMinister) Role() string             { return "fake minister" }
+func (f *fakeMinister) Title() string            { return "Fake" }
+func (f *fakeMinister) Tools() []Tool            { return nil }
+func (f *fakeMinister) Tasks() chan<- *Task       { return f.tasks }
+func (f *fakeMinister) Run(ctx context.Context)  {}
 
 // TestChancellor_GetDBPath tests that getDBPath correctly extracts the database path from gorm.DB
 func TestChancellor_GetDBPath(t *testing.T) {

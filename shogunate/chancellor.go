@@ -2,11 +2,13 @@ package shogunate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/gorm"
@@ -85,6 +87,216 @@ func (c *Chancellor) Scratchpad() string {
 // Tasks returns the channel for submitting Tasks
 func (c *Chancellor) Tasks() chan<- *Task { return c.taskChan }
 
+// --- InvokeMinisterTool ---
+
+// InvokeMinisterTool allows the Chancellor to invoke any registered minister for an edict.
+type InvokeMinisterTool struct {
+	chancellor *Chancellor
+}
+
+// MinisterInvokingMsg notifies the user that a minister is being invoked
+type MinisterInvokingMsg struct {
+	MinisterID string
+	EdictID    string
+	Task       string
+}
+
+// MinisterCompletedMsg notifies the user that a minister completed its task
+type MinisterCompletedMsg struct {
+	MinisterID string
+	EdictID    string
+	Output     string
+	Sealed     bool
+	Error      error
+}
+
+func (t InvokeMinisterTool) Name() string {
+	return "invoke_minister"
+}
+
+func (t InvokeMinisterTool) Description() string {
+	return `Invoke a minister by ID to execute its logic for an edict.
+	Ministers process edicts through their specialized phase logic
+	(e.g., strategist for planning, forge for code generation, judge for testing and verification, censor for review, marshal for deployment).
+	Provide specific task instructions for what the minister should do.`
+}
+
+func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		MinisterID string `json:"minister_id"`
+		EdictID    string `json:"edict_id"`
+		Work       string `json:"task"` // JSON field is "task" for backwards compatibility
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+
+	if params.MinisterID == "" {
+		return "", fmt.Errorf("minister_id is required")
+	}
+	if params.EdictID == "" {
+		return "", fmt.Errorf("edict_id is required")
+	}
+	if params.Work == "" {
+		return "", fmt.Errorf("task is required")
+	}
+
+	logger := t.chancellor.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	// Notify: invoking
+	if t.chancellor.notify != nil {
+		t.chancellor.notify(MinisterInvokingMsg{
+			MinisterID: params.MinisterID,
+			EdictID:    params.EdictID,
+			Task:       params.Work,
+		})
+	}
+
+	// Get minister via Shogunate
+	minister := t.chancellor.shogunate.GetMinister(params.MinisterID)
+	if minister == nil {
+		err := fmt.Errorf("minister not found: %s", params.MinisterID)
+		if t.chancellor.notify != nil {
+			t.chancellor.notify(MinisterCompletedMsg{
+				MinisterID: params.MinisterID,
+				EdictID:    params.EdictID,
+				Error:      err,
+			})
+		}
+		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, err)
+	}
+
+	// Create per-call done channel (synchronous blocking pattern)
+	doneChan := make(chan Result, 1)
+
+	// Create Task with per-call done channel
+	task := &Task{
+		EdictID: params.EdictID,
+		Work:    params.Work,
+		Done:    doneChan,
+	}
+
+	// Send task to minister
+	timeout := 5 * time.Minute
+	select {
+	case minister.Tasks() <- task:
+		logger.Info("task sent to minister",
+			"minister", params.MinisterID,
+			"edict_id", params.EdictID,
+			"work", truncateString(params.Work, 50))
+	case <-ctx.Done():
+		return "", fmt.Errorf("minister %s failed: context cancelled while sending task to %s", params.MinisterID, params.MinisterID)
+	}
+
+	// Block until minister replies (only blocks this session's goroutine)
+	var result Result
+	select {
+	case result = <-doneChan:
+	case <-time.After(timeout):
+		err := fmt.Errorf("minister %s timeout after %v", params.MinisterID, timeout)
+		if t.chancellor.notify != nil {
+			t.chancellor.notify(MinisterCompletedMsg{
+				MinisterID: params.MinisterID,
+				EdictID:    params.EdictID,
+				Error:      err,
+			})
+		}
+		return "", err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+
+	if result.Err != nil {
+		// Notify: failed
+		if t.chancellor.notify != nil {
+			t.chancellor.notify(MinisterCompletedMsg{
+				MinisterID: params.MinisterID,
+				EdictID:    params.EdictID,
+				Error:      result.Err,
+			})
+		}
+		logger.Error("task returned error",
+			"minister", params.MinisterID,
+			"edict_id", params.EdictID,
+			"error", result.Err)
+		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, result.Err)
+	}
+
+	// Notify: completed
+	if t.chancellor.notify != nil {
+		t.chancellor.notify(MinisterCompletedMsg{
+			MinisterID: params.MinisterID,
+			EdictID:    params.EdictID,
+			Output:     params.Work,
+			Sealed:     true,
+		})
+	}
+
+	logger.Info("task completed",
+		"minister", params.MinisterID,
+		"edict_id", params.EdictID,
+		"sealed", result.Sealed,
+		"output_len", len(result.Output))
+
+	resultMap := map[string]any{
+		"minister_id": params.MinisterID,
+		"edict_id":    params.EdictID,
+		"status":      "completed",
+		"sealed":      result.Sealed,
+		"output":      result.Output,
+	}
+	resultJSON, _ := json.Marshal(resultMap)
+	return string(resultJSON), nil
+}
+
+func (t InvokeMinisterTool) Format(input, result string, err error) string {
+	var params struct {
+		MinisterID string `json:"minister_id"`
+		Task       string `json:"task"`
+	}
+	json.Unmarshal([]byte(input), &params)
+
+	msg := utils.NewMsgBlockBuilder("InvokeMinister")
+	msg.Writef(" %s", params.MinisterID)
+	msg.WriteLn()
+
+	if err != nil {
+		msg.Writef("Error: %v", err)
+	} else {
+		taskPreview := params.Task
+		if len(taskPreview) > 30 {
+			taskPreview = taskPreview[:27] + "..."
+		}
+		msg.Writef("[%s]", taskPreview)
+	}
+
+	return msg.String() + "\n"
+}
+
+func (t InvokeMinisterTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"minister_id": map[string]any{
+				"type":        "string",
+				"description": "The minister to invoke (strategist, forge, judge, censor or marshal)",
+			},
+			"edict_id": map[string]any{
+				"type":        "string",
+				"description": "The edict ID to process",
+			},
+			"task": map[string]any{
+				"type":        "string",
+				"description": "Specific instructions for the minister to execute",
+			},
+		},
+		"required": []string{"minister_id", "edict_id", "task"},
+	}
+}
+
 // Tools returns the Chancellor's LLM tools for interactive sessions
 func (c *Chancellor) Tools() []Tool {
 	// Create zhengming notify wrapper
@@ -106,8 +318,7 @@ func (c *Chancellor) Tools() []Tool {
 		tools.RequestZhengmingTool{Requester: c, Notify: zhengmingNotify},
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
-		// TODO: rename to InviteMinisterTool to join the chat
-		tools.InvokeMinisterTool{Invoker: c, Logger: c.logger, Notify: internal.NotifyFunc(c.notify)},
+		InvokeMinisterTool{chancellor: c},
 	}
 	// Add read-only file tools
 	for _, t := range tools.GetROTools() {
@@ -125,58 +336,6 @@ func (c *Chancellor) Tools() []Tool {
 }
 
 // --- Interface implementations for tools package ---
-
-// InvokeMinister implements tools.MinisterInvoker
-func (c *Chancellor) InvokeMinister(ctx context.Context, ministerID, edictID, work string, timeout time.Duration) (tools.MinisterResult, error) {
-	// Get minister via Shogunate
-	minister := c.shogunate.GetMinister(ministerID)
-	if minister == nil {
-		return nil, fmt.Errorf("minister not found: %s", ministerID)
-	}
-
-	// Create per-call done channel (synchronous blocking pattern)
-	doneChan := make(chan Result, 1)
-
-	// Get streaming channel if available (thread-safe lookup)
-	var streamChan StreamChan
-	if val, ok := c.activeReplyChans.Load(edictID); ok {
-		streamChan = val.(StreamChan)
-	}
-	c.logger.Debug("invoke_minister looking up stream channel",
-		"edict_id", edictID,
-		"found", streamChan != nil)
-
-	// Create Task with per-call done channel and streaming channel
-	t := &Task{
-		EdictID: edictID,
-		Work:    work,
-		Stream:  streamChan,
-		Done:    doneChan,
-	}
-
-	// Send task to minister
-	select {
-	case minister.Tasks() <- t:
-		c.logger.Info("task sent to minister",
-			"minister", ministerID,
-			"edict_id", edictID,
-			"work", truncateString(work, 50))
-	case <-ctx.Done():
-		return nil, fmt.Errorf("context cancelled while sending task to %s", ministerID)
-	}
-
-	// Block until minister replies (only blocks this session's goroutine)
-	select {
-	case result := <-doneChan:
-		return &result, nil
-
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("minister %s timeout after %v", ministerID, timeout)
-
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
 
 // StartRitual implements tools.RitualStarter
 func (c *Chancellor) StartRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (string, error) {
