@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/shogunate/tools"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -513,7 +512,7 @@ func TestRitualStreamMessages(t *testing.T) {
 	)
 
 	for _, msg := range messages {
-		if stepMsg, ok := msg.(tools.RitualStepMsg); ok {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
 			t.Logf("Received RitualStepMsg: ritual=%s step=%s status=%s", stepMsg.RitualName, stepMsg.StepName, stepMsg.Status)
 			switch stepMsg.Status {
 			case "started":
@@ -570,9 +569,9 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 	mockRunner := &mockCmdRunner{output: "ok\n", exitCode: "0"}
 	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
 
-	var messages []tools.RitualStepMsg
+	var messages []RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := msg.(tools.RitualStepMsg); ok {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -625,9 +624,9 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 	mockRunner := &mockCmdRunner{output: "error!", exitCode: "1", err: nil}
 	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
 
-	var messages []tools.RitualStepMsg
+	var messages []RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := msg.(tools.RitualStepMsg); ok {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}

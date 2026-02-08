@@ -11,7 +11,6 @@ import (
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -559,7 +558,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 			// Notify: step failed
 			if exec.notify != nil {
-				exec.notify(tools.RitualStepMsg{
+				exec.notify(RitualStepMsg{
 					RitualName:  exec.RitualName,
 					ExecutionID: exec.ID,
 					EdictID:     exec.EdictID,
@@ -582,7 +581,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 		// Notify: step completed
 		if exec.notify != nil {
-			exec.notify(tools.RitualStepMsg{
+			exec.notify(RitualStepMsg{
 				RitualName:  exec.RitualName,
 				ExecutionID: exec.ID,
 				EdictID:     exec.EdictID,
@@ -607,7 +606,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 	// Notify: ritual completed
 	if exec.notify != nil {
-		exec.notify(tools.RitualStepMsg{
+		exec.notify(RitualStepMsg{
 			RitualName:  exec.RitualName,
 			ExecutionID: exec.ID,
 			EdictID:     exec.EdictID,
@@ -637,7 +636,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 
 	// Notify: step started
 	if exec.notify != nil {
-		exec.notify(tools.RitualStepMsg{
+		exec.notify(RitualStepMsg{
 			RitualName:  exec.RitualName,
 			ExecutionID: exec.ID,
 			EdictID:     exec.EdictID,
@@ -800,7 +799,7 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 			exec.stepStates[exec.CurrentStep].RetryCount++
 			// Notify: retrying
 			if exec.notify != nil {
-				exec.notify(tools.RitualStepMsg{
+				exec.notify(RitualStepMsg{
 					RitualName:  exec.RitualName,
 					ExecutionID: exec.ID,
 					EdictID:     exec.EdictID,

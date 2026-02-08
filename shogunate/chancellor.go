@@ -297,6 +297,150 @@ func (t InvokeMinisterTool) ParameterSchema() map[string]any {
 	}
 }
 
+// --- InvokeRitualTool ---
+
+// RitualStepMsg notifies the UI of ritual step progress
+type RitualStepMsg struct {
+	RitualName  string
+	ExecutionID string
+	EdictID     string
+	StepName    string
+	StepIndex   int
+	TotalSteps  int
+	Status      string // "started", "completed", "failed", "retrying"
+	Message     string
+}
+
+// InvokeRitualTool starts a YAML-defined ritual workflow
+type InvokeRitualTool struct {
+	chancellor *Chancellor
+}
+
+func (t InvokeRitualTool) Name() string {
+	return "invoke_ritual"
+}
+
+func (t InvokeRitualTool) Description() string {
+	return `Start a YAML-defined ritual workflow for an edict.
+Rituals are predefined workflows that orchestrate ministers through a series of steps.
+Use list_rituals to see available rituals, or specify a ritual name directly.
+Common rituals: implement, fix, refactor, review.`
+}
+
+func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		RitualName string            `json:"ritual_name"`
+		EdictID    string            `json:"edict_id"`
+		Inputs     map[string]string `json:"inputs"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+
+	if params.RitualName == "" {
+		return "", fmt.Errorf("ritual_name is required")
+	}
+	if params.EdictID == "" {
+		return "", fmt.Errorf("edict_id is required")
+	}
+
+	if params.Inputs == nil {
+		params.Inputs = make(map[string]string)
+	}
+	// Add edict_id to inputs for template expansion
+	params.Inputs["edict_id"] = params.EdictID
+
+	logger := t.chancellor.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	executionID, err := t.chancellor.StartRitual(ctx, params.RitualName, params.EdictID, params.Inputs)
+	if err != nil {
+		// Notify: failed
+		if t.chancellor.notify != nil {
+			t.chancellor.notify(RitualStepMsg{
+				RitualName: params.RitualName,
+				EdictID:    params.EdictID,
+				Status:     "failed",
+				Message:    fmt.Sprintf("Failed: %s", err),
+			})
+		}
+		return "", fmt.Errorf("failed to start ritual: %w", err)
+	}
+
+	if t.chancellor.notify != nil {
+		t.chancellor.notify(RitualStepMsg{
+			RitualName:  params.RitualName,
+			EdictID:     params.EdictID,
+			ExecutionID: executionID,
+			Status:      "started",
+		})
+	}
+
+	logger.Info("ritual started",
+		"ritual", params.RitualName,
+		"execution_id", executionID,
+		"edict_id", params.EdictID)
+
+	result := map[string]any{
+		"status":       "started",
+		"execution_id": executionID,
+		"ritual_name":  params.RitualName,
+		"edict_id":     params.EdictID,
+	}
+	resultJSON, _ := json.Marshal(result)
+	return string(resultJSON), nil
+}
+
+func (t InvokeRitualTool) Format(input, result string, err error) string {
+	var params struct {
+		RitualName string `json:"ritual_name"`
+	}
+	json.Unmarshal([]byte(input), &params)
+
+	msg := utils.NewMsgBlockBuilder("Ritual")
+	msg.Writef(" %s", params.RitualName)
+	msg.WriteLn()
+
+	if err != nil {
+		msg.Writef("Error: %v", err)
+	} else {
+		var res struct {
+			ExecutionID string `json:"execution_id"`
+		}
+		json.Unmarshal([]byte(result), &res)
+		execID := res.ExecutionID
+		if len(execID) > 8 {
+			execID = execID[:8]
+		}
+		msg.Writef("Started [%s]", execID)
+	}
+
+	return msg.String() + "\n"
+}
+
+func (t InvokeRitualTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"ritual_name": map[string]any{
+				"type":        "string",
+				"description": "Name of the ritual to invoke (e.g., 'implement', 'fix', 'refactor')",
+			},
+			"edict_id": map[string]any{
+				"type":        "string",
+				"description": "The edict ID this ritual is processing",
+			},
+			"inputs": map[string]any{
+				"type":        "object",
+				"description": "Optional inputs for the ritual (key-value pairs)",
+			},
+		},
+		"required": []string{"ritual_name", "edict_id"},
+	}
+}
+
 // Tools returns the Chancellor's LLM tools for interactive sessions
 func (c *Chancellor) Tools() []Tool {
 	// Create zhengming notify wrapper
@@ -326,18 +470,14 @@ func (c *Chancellor) Tools() []Tool {
 	}
 	// Add InvokeRitualTool if ritual runner is available
 	if c.shogunate != nil && c.shogunate.ritualRunner != nil {
-		toolList = append(toolList, tools.InvokeRitualTool{
-			Starter: c,
-			Logger:  c.logger,
-			Notify:  c.notify,
-		})
+		toolList = append(toolList, InvokeRitualTool{chancellor: c})
 	}
 	return toolList
 }
 
 // --- Interface implementations for tools package ---
 
-// StartRitual implements tools.RitualStarter
+// StartRitual starts a ritual and runs it asynchronously
 func (c *Chancellor) StartRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (string, error) {
 	if c.shogunate == nil || c.shogunate.ritualRunner == nil {
 		return "", fmt.Errorf("ritual runner not available")
