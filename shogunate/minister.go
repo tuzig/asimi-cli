@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"text/template"
 	"time"
 
@@ -24,7 +26,13 @@ const ministerSystemPromptTemplate = `You are a minister in the Shogunate.
 
 {{.Role}}
 
-{{.Scratchpad}}`
+{{.Scratchpad}}
+{{- if .ProjectContext}}
+
+--- Project specific directions from: {{.AgentsFile}} ---
+{{.ProjectContext}}
+--- End of Directions from: {{.AgentsFile}} ---
+{{- end}}`
 
 // ZhengmingConn provides clarification request capabilities (behavioral interface)
 type ZhengmingConn interface {
@@ -44,10 +52,10 @@ type EventEmitter interface {
 // Using `any` instead of `tea.Msg` avoids importing bubbletea in this package.
 type StreamChan = chan<- any
 
-// Edict carries the user's prompt to the Chancellor
-type Edict struct {
-	Prompt       string            // The Ruler's words
-	EdictID      string            // Empty = new edict, set = continue existing
+// Prompt carries the user's message to the Chancellor
+type Prompt struct {
+	Message      string            // The Ruler's words
+	SessionID    string            // Empty = new session, set = continue existing
 	ContextFiles map[string]string // Files loaded via @ references
 	Stream       StreamChan        // For streaming typed messages to TUI
 }
@@ -242,15 +250,34 @@ func (m *MinisterBase) CreateSession(minister Minister) (*Session, error) {
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
-// with the minister's Role and Scratchpad.
+// with the minister's Role, Scratchpad, and project context from AGENTS.md.
 func (m *MinisterBase) buildSystemPrompt(minister Minister) string {
+	agentsFile := "AGENTS.md"
+	if m.config != nil && m.config.AgentsFile != "" {
+		agentsFile = m.config.AgentsFile
+	}
 	tmpl := template.Must(template.New("minister").Parse(ministerSystemPromptTemplate))
 	var buf bytes.Buffer
 	tmpl.Execute(&buf, map[string]string{
-		"Role":       minister.Role(),
-		"Scratchpad": minister.Scratchpad(),
+		"Role":           minister.Role(),
+		"Scratchpad":     minister.Scratchpad(),
+		"ProjectContext": readProjectContext(agentsFile),
+		"AgentsFile":     agentsFile,
 	})
 	return buf.String()
+}
+
+// readProjectContext reads the project context file (AGENTS.md or CLAUDE.md) from the working directory.
+func readProjectContext(agentsFile string) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(wd, agentsFile))
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // SetMinisterConfig updates the MinisterBase configuration for session creation.
