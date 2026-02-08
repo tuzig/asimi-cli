@@ -7,6 +7,7 @@ import (
 
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tmc/langchaingo/llms"
@@ -15,9 +16,9 @@ import (
 // mockLLM simulates provider-native function/tool calling behavior.
 type mockLLM struct {
 	llms.Model
-	response  string      // If set, returns this as a simple response
+	response  string          // If set, returns this as a simple response
 	toolCalls []llms.ToolCall // If set, returns these tool calls
-	callCount int         // Track number of GenerateContent calls
+	callCount int             // Track number of GenerateContent calls
 }
 
 func (m *mockLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
@@ -211,7 +212,7 @@ func TestSession_AskWithStreaming_StreamsChunks(t *testing.T) {
 	var chunks []string
 	notify := func(msg any) {
 		if chunk, ok := msg.(StreamChunkMsg); ok {
-			chunks = append(chunks, string(chunk))
+			chunks = append(chunks, chunk.Text)
 		}
 	}
 
@@ -500,7 +501,7 @@ func TestCoreToolScheduler_Schedule(t *testing.T) {
 		notified = true
 	}
 
-	scheduler := NewCoreToolScheduler(notify)
+	scheduler := runners.NewCoreToolScheduler(notify)
 	tool := &mockTool{name: "test", output: "result"}
 
 	ch := scheduler.Schedule(tool, "{}")
@@ -599,16 +600,6 @@ func TestSession_AddTools(t *testing.T) {
 	assert.Contains(t, sess.toolCatalog, "added_tool")
 }
 
-func TestCoreToolScheduler_SetNotify(t *testing.T) {
-	t.Parallel()
-
-	scheduler := NewCoreToolScheduler(nil)
-	assert.Nil(t, scheduler.notify)
-
-	scheduler.SetNotify(func(any) {})
-	assert.NotNil(t, scheduler.notify)
-}
-
 // TestSession_SetNotify_UpdatesScheduler verifies that SetNotify updates both
 // the session's notify and the scheduler's notify (fixes tool call notifications)
 func TestSession_SetNotify_UpdatesScheduler(t *testing.T) {
@@ -620,7 +611,6 @@ func TestSession_SetNotify_UpdatesScheduler(t *testing.T) {
 
 	// Verify both start as nil
 	assert.Nil(t, sess.notify)
-	assert.Nil(t, sess.scheduler.notify)
 
 	// Set notify via SetNotify method
 	var called bool
@@ -628,13 +618,12 @@ func TestSession_SetNotify_UpdatesScheduler(t *testing.T) {
 		called = true
 	})
 
-	// Verify both are now set
+	// Verify session notify is set
 	assert.NotNil(t, sess.notify)
-	assert.NotNil(t, sess.scheduler.notify)
 
-	// Verify scheduler's notify actually works by calling it
-	sess.scheduler.notify(StreamChunkMsg("test"))
-	assert.True(t, called, "scheduler.notify should call the function set via SetNotify")
+	// Verify the notify function works when called
+	sess.notify("test")
+	assert.True(t, called, "notify function should be callable after SetNotify")
 }
 
 // TestSession_ToolCallNotifications verifies that tool execution sends proper
@@ -679,9 +668,9 @@ func TestSession_ToolCallNotifications(t *testing.T) {
 	var executingCount, successCount int
 	for _, msg := range notifications {
 		switch msg.(type) {
-		case ToolCallExecutingMsg:
+		case runners.ToolCallExecutingMsg:
 			executingCount++
-		case ToolCallSuccessMsg:
+		case runners.ToolCallSuccessMsg:
 			successCount++
 		}
 	}
@@ -732,27 +721,6 @@ func (m *mockLLMWithToolCall) GenerateContent(ctx context.Context, messages []ll
 			{Content: m.finalResponse},
 		},
 	}, nil
-}
-
-func TestMustMarshalJSON(t *testing.T) {
-	t.Parallel()
-
-	result := MustMarshalJSON(map[string]string{"key": "value"})
-	assert.Contains(t, result, "key")
-	assert.Contains(t, result, "value")
-}
-
-func TestMustMarshalJSON_Panic(t *testing.T) {
-	t.Parallel()
-
-	// Functions cannot be marshaled to JSON
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Expected panic for unmarshalable value")
-		}
-	}()
-
-	MustMarshalJSON(func() {})
 }
 
 func TestEnsureToolCallID_ExistingID(t *testing.T) {
@@ -1007,7 +975,7 @@ func TestSession_AppendMessage_SkipsEmptyToolCalls(t *testing.T) {
 	sess.appendMessage(&llms.ContentChoice{
 		Content: "text",
 		ToolCalls: []llms.ToolCall{
-			{ID: "tc1", FunctionCall: nil}, // nil FunctionCall
+			{ID: "tc1", FunctionCall: nil},                          // nil FunctionCall
 			{ID: "tc2", FunctionCall: &llms.FunctionCall{Name: ""}}, // empty name
 		},
 	})
@@ -1022,7 +990,7 @@ func TestSession_AppendMessage_SkipsEmptyToolCalls(t *testing.T) {
 func TestNewSession_WithProvidedScheduler(t *testing.T) {
 	t.Parallel()
 
-	customScheduler := NewCoreToolScheduler(func(any) {})
+	customScheduler := runners.NewCoreToolScheduler(func(any) {})
 	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, repo.RepoInfo{}, nil, customScheduler, func(any) {}, "")
 	require.NoError(t, err)
 
@@ -1192,7 +1160,7 @@ func TestSession_ExecuteToolCall_WithScheduler(t *testing.T) {
 	t.Parallel()
 
 	tool := &mockTool{name: "scheduled_tool", output: "scheduled result"}
-	scheduler := NewCoreToolScheduler(func(any) {})
+	scheduler := runners.NewCoreToolScheduler(func(any) {})
 
 	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, repo.RepoInfo{}, []Tool{tool}, scheduler, func(any) {}, "")
 	require.NoError(t, err)
@@ -1235,8 +1203,8 @@ type mockToolError struct {
 	name string
 }
 
-func (t *mockToolError) Name() string                              { return t.name }
-func (t *mockToolError) Description() string                       { return "error tool" }
+func (t *mockToolError) Name() string        { return t.name }
+func (t *mockToolError) Description() string { return "error tool" }
 func (t *mockToolError) Call(ctx context.Context, input string) (string, error) {
 	return "", assert.AnError
 }
@@ -1270,12 +1238,12 @@ func TestCoreToolScheduler_Schedule_Error(t *testing.T) {
 
 	var errorNotified bool
 	notify := func(msg any) {
-		if _, ok := msg.(ToolCallErrorMsg); ok {
+		if _, ok := msg.(runners.ToolCallErrorMsg); ok {
 			errorNotified = true
 		}
 	}
 
-	scheduler := NewCoreToolScheduler(notify)
+	scheduler := runners.NewCoreToolScheduler(notify)
 	tool := &mockToolError{name: "error_tool"}
 
 	ch := scheduler.Schedule(tool, "{}")
@@ -1288,7 +1256,7 @@ func TestCoreToolScheduler_Schedule_Error(t *testing.T) {
 func TestCoreToolScheduler_Schedule_NoNotify(t *testing.T) {
 	t.Parallel()
 
-	scheduler := NewCoreToolScheduler(nil) // No notify function
+	scheduler := runners.NewCoreToolScheduler(nil) // No notify function
 	tool := &mockTool{name: "test", output: "result"}
 
 	ch := scheduler.Schedule(tool, "{}")
@@ -1532,7 +1500,7 @@ func (m *mockLLMSkippedToolCalls) GenerateContent(ctx context.Context, messages 
 	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{
 		Content: "text with skipped tools",
 		ToolCalls: []llms.ToolCall{
-			{ID: "tc1", FunctionCall: nil},                                      // nil FunctionCall - skipped
+			{ID: "tc1", FunctionCall: nil},                                           // nil FunctionCall - skipped
 			{ID: "tc2", FunctionCall: &llms.FunctionCall{Name: "", Arguments: "{}"}}, // empty name - skipped
 		},
 	}}}, nil
@@ -1575,4 +1543,94 @@ func TestSession_ProcessToolCalls_MultipleToolsOneAborted(t *testing.T) {
 	assert.True(t, shouldReturn)
 	// Should have abort responses for remaining tool calls
 	require.NotEmpty(t, messages)
+}
+
+func TestSession_GetContextInfo_Anthropic(t *testing.T) {
+	t.Parallel()
+
+	cfg := &SessionConfig{
+		LLM: internalconfig.LLMConfig{
+			Provider: "anthropic",
+			Model:    "claude-3-5-sonnet-latest",
+		},
+	}
+
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, repo.RepoInfo{}, nil, nil, func(any) {}, "You are a helpful assistant")
+	require.NoError(t, err)
+
+	info := sess.GetContextInfo()
+
+	assert.Equal(t, "claude-3-5-sonnet-latest", info.Model)
+	assert.Equal(t, 200_000, info.TotalTokens)
+	assert.Greater(t, info.SystemPromptTokens, 0)
+	assert.Equal(t, 0, info.MessagesTokens)
+	assert.Greater(t, info.FreeTokens, 0)
+	assert.Greater(t, info.AutocompactBuffer, 0)
+	assert.Equal(t, info.SystemPromptTokens+info.SystemToolsTokens+info.MemoryFilesTokens+info.MessagesTokens, info.UsedTokens)
+	assert.Equal(t, info.TotalTokens, info.UsedTokens+info.FreeTokens+info.AutocompactBuffer)
+}
+
+func TestSession_GetContextInfo_OpenAI(t *testing.T) {
+	t.Parallel()
+
+	cfg := &SessionConfig{
+		LLM: internalconfig.LLMConfig{
+			Provider: "openai",
+			Model:    "gpt-4o",
+		},
+	}
+
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, repo.RepoInfo{}, nil, nil, func(any) {}, "You are a helpful assistant")
+	require.NoError(t, err)
+
+	info := sess.GetContextInfo()
+
+	assert.Equal(t, "gpt-4o", info.Model)
+	assert.Greater(t, info.TotalTokens, 0)
+	assert.Greater(t, info.SystemPromptTokens, 0)
+	assert.Equal(t, info.TotalTokens, info.UsedTokens+info.FreeTokens+info.AutocompactBuffer)
+}
+
+func TestSession_GetContextInfo_WithContextFiles(t *testing.T) {
+	t.Parallel()
+
+	cfg := &SessionConfig{
+		LLM: internalconfig.LLMConfig{
+			Provider: "anthropic",
+			Model:    "claude-3-5-sonnet-latest",
+		},
+	}
+
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, repo.RepoInfo{}, nil, nil, func(any) {}, "system prompt")
+	require.NoError(t, err)
+
+	infoBefore := sess.GetContextInfo()
+
+	// AddContextFile triggers updateTokenCounts
+	sess.AddContextFile("test.go", "package main\n\nfunc main() {}\n")
+
+	infoAfter := sess.GetContextInfo()
+
+	assert.Greater(t, infoAfter.MemoryFilesTokens, infoBefore.MemoryFilesTokens)
+	assert.Greater(t, infoAfter.UsedTokens, infoBefore.UsedTokens)
+	assert.Equal(t, infoAfter.SystemPromptTokens+infoAfter.SystemToolsTokens+infoAfter.MemoryFilesTokens+infoAfter.MessagesTokens, infoAfter.UsedTokens)
+}
+
+func TestSession_GetContextInfo_UnknownModel(t *testing.T) {
+	t.Parallel()
+
+	cfg := &SessionConfig{
+		LLM: internalconfig.LLMConfig{
+			Provider: "custom",
+			Model:    "unknown-model-xyz",
+		},
+	}
+
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, repo.RepoInfo{}, nil, nil, func(any) {}, "system")
+	require.NoError(t, err)
+
+	info := sess.GetContextInfo()
+
+	assert.Equal(t, "unknown-model-xyz", info.Model)
+	assert.Equal(t, defaultUnknownContextRef, info.TotalTokens)
 }

@@ -6,8 +6,15 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
 )
+
+// hasUncommittedChanges checks if the current repo has uncommitted changes
+func hasUncommittedChanges() bool {
+	ri := repo.GetRepoInfo()
+	return !ri.IsClean()
+}
 
 // TestInitWorkflowE2E contains end-to-end tests for the :init command workflow
 // These tests use the mocking infrastructure from tests/e2e/

@@ -9,19 +9,6 @@ import (
 	"github.com/afittestide/asimi/internal/utils"
 )
 
-// RunShellCommandInput is the input for the RunShellCommand tool
-type RunShellCommandInput struct {
-	Command        string `json:"command"`
-	Description    string `json:"description"`
-	BypassApproval bool   `json:"-"`
-}
-
-// RunShellCommandOutput is the output of the RunShellCommand tool
-type RunShellCommandOutput struct {
-	Output   string `json:"stdout"`
-	ExitCode string `json:"exitCode"`
-}
-
 // RunShellCommand is a tool for running shell commands in a persistent shell.
 // It uses the runners package for actual execution.
 type RunShellCommand struct {
@@ -52,13 +39,13 @@ func (t *RunShellCommand) Description() string {
 }
 
 func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error) {
-	var params RunShellCommandInput
+	var params runners.Input
 	err := json.Unmarshal([]byte(input), &params)
 	if err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	var output RunShellCommandOutput
+	var output runners.Output
 	var runErr error
 
 	runnerInput := runners.Input{
@@ -134,7 +121,7 @@ func (t *RunShellCommand) ParameterSchema() map[string]any {
 
 // Format formats a run_shell_command tool call for display
 func (t *RunShellCommand) Format(input, result string, err error) string {
-	var params RunShellCommandInput
+	var params runners.Input
 	json.Unmarshal([]byte(input), &params)
 
 	msg := utils.NewMsgBlockBuilder("")

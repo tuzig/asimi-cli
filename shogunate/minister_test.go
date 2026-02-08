@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -355,7 +354,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	go forge.Run(ctx)
 
 	// Create the InvokeMinisterTool
-	tool := tools.InvokeMinisterTool{Invoker: chancellor, Logger: nil}
+	tool := InvokeMinisterTool{chancellor: chancellor}
 
 	// Invoke the Forge minister with a trivial task
 	// With synchronous blocking, this call blocks until minister replies
@@ -414,7 +413,7 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	}
 	chancellor.SetShogunate(shogunate)
 
-	tool := tools.InvokeMinisterTool{Invoker: chancellor, Logger: nil}
+	tool := InvokeMinisterTool{chancellor: chancellor}
 
 	// Try to invoke a non-existent minister
 	taskInput := `{"minister_id": "unknown", "edict_id": "test", "task": "hello"}`
@@ -432,7 +431,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
 	chancellor := NewChancellor(base)
 
-	tool := tools.InvokeMinisterTool{Invoker: chancellor, Logger: nil}
+	tool := InvokeMinisterTool{chancellor: chancellor}
 
 	// Missing task parameter
 	taskInput := `{"minister_id": "forge", "edict_id": "test"}`

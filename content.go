@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -141,7 +142,7 @@ func (c *ContentComponent) ShowUnifiedModels(models []Model, currentModel string
 }
 
 // ShowResume switches to resume view
-func (c *ContentComponent) ShowResume(sessions []Session) tea.Cmd {
+func (c *ContentComponent) ShowResume(sessions []shogunate.Session) tea.Cmd {
 	c.activeView = ViewResume
 	c.navMode = NavList
 	c.resume.SetSessions(sessions)

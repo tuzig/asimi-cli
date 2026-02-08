@@ -10,15 +10,13 @@ import (
 )
 
 func TestHostRunner(t *testing.T) {
-	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner := NewHostRunner()
 	require.NotNil(t, runner)
 	assert.Equal(t, "host", runner.RunnerType())
 }
 
 func TestHostRunnerRunWithBypassApproval(t *testing.T) {
-	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner := NewHostRunner()
 
 	output, err := runner.Run(context.Background(), Input{
 		Command:        "echo hello",
@@ -31,8 +29,7 @@ func TestHostRunnerRunWithBypassApproval(t *testing.T) {
 }
 
 func TestHostRunnerRunExitCode(t *testing.T) {
-	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner := NewHostRunner()
 
 	output, err := runner.Run(context.Background(), Input{
 		Command:        "exit 42",
@@ -44,8 +41,7 @@ func TestHostRunnerRunExitCode(t *testing.T) {
 }
 
 func TestHostRunnerRunWithStderr(t *testing.T) {
-	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner := NewHostRunner()
 
 	output, err := runner.Run(context.Background(), Input{
 		Command:        "echo 'stdout' && echo 'stderr' >&2",
@@ -59,8 +55,9 @@ func TestHostRunnerRunWithStderr(t *testing.T) {
 }
 
 func TestHostRunnerApprovalRequest(t *testing.T) {
+	runner := NewHostRunner()
 	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner.SetMessageChannel(msgChan)
 
 	// Start a goroutine to handle the approval request
 	go func() {
@@ -86,8 +83,9 @@ func TestHostRunnerApprovalRequest(t *testing.T) {
 }
 
 func TestHostRunnerApprovalDenied(t *testing.T) {
+	runner := NewHostRunner()
 	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner.SetMessageChannel(msgChan)
 
 	// Start a goroutine to deny the approval request
 	go func() {
@@ -113,7 +111,7 @@ func TestHostRunnerApprovalDenied(t *testing.T) {
 }
 
 func TestHostRunnerNoMsgChannel(t *testing.T) {
-	runner := NewHostRunner(nil)
+	runner := NewHostRunner()
 
 	// Without a message channel and requiring approval, it should fail
 	output, err := runner.Run(context.Background(), Input{
@@ -127,8 +125,7 @@ func TestHostRunnerNoMsgChannel(t *testing.T) {
 }
 
 func TestHostRunnerRestart(t *testing.T) {
-	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner := NewHostRunner()
 
 	// Restart should be a no-op for host runner
 	err := runner.Restart(context.Background())
@@ -136,8 +133,7 @@ func TestHostRunnerRestart(t *testing.T) {
 }
 
 func TestHostRunnerClose(t *testing.T) {
-	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner := NewHostRunner()
 
 	// Close should be a no-op for host runner
 	err := runner.Close(context.Background())
@@ -145,18 +141,19 @@ func TestHostRunnerClose(t *testing.T) {
 }
 
 func TestHostRunnerContextCancellation(t *testing.T) {
-	msgChan := make(chan Msg, 10)
-	runner := NewHostRunner(msgChan)
+	runner := NewHostRunner()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Cancel context immediately
-	cancel()
+	// Cancel the context while sleep is still running
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
 
-	// Without bypass, it needs approval but context is cancelled
 	_, err := runner.Run(ctx, Input{
-		Command:        "echo hello",
-		BypassApproval: false,
+		Command:        "sleep 10",
+		BypassApproval: true,
 	})
 
 	require.Error(t, err)

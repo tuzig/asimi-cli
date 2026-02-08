@@ -10,6 +10,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
@@ -53,31 +54,19 @@ type Edict struct {
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
-	EdictID string     // The edict this task belongs to
-	Work    string     // Specific instructions for the minister (renamed from Task to avoid Task.Task)
-	Stream  StreamChan // For streaming typed messages to TUI (may be nil)
+	EdictID string        // The edict this task belongs to
+	Work    string        // Specific instructions for the minister (renamed from Task to avoid Task.Task)
+	Stream  StreamChan    // For streaming typed messages to TUI (may be nil)
 	Done    chan<- Result // For completion signal
 }
 
 // Result signals a Minister has completed a Task
 type Result struct {
 	MinisterID string
-	Sealed     bool   // phase complete
+	Sealed     bool // phase complete
 	Output     string
 	Err        error
 }
-
-// GetMinisterID implements tools.MinisterResult
-func (r *Result) GetMinisterID() string { return r.MinisterID }
-
-// GetSealed implements tools.MinisterResult
-func (r *Result) GetSealed() bool { return r.Sealed }
-
-// GetOutput implements tools.MinisterResult
-func (r *Result) GetOutput() string { return r.Output }
-
-// GetErr implements tools.MinisterResult
-func (r *Result) GetErr() error { return r.Err }
 
 // Minister is the shared interface for all Shogunate ministers
 type Minister interface {
@@ -90,7 +79,7 @@ type Minister interface {
 	// Scratchpad returns dynamic per-minister context (e.g., available rituals, rules)
 	Scratchpad() string
 	// Tools returns the minister's LLM tools for interactive sessions
-	Tools(notify NotifyFunc) []Tool
+	Tools() []Tool
 	// Tasks returns the channel for submitting Tasks
 	Tasks() chan<- *Task
 	// Events returns the Shogunate events the minister listens to.
@@ -173,9 +162,6 @@ type Tool interface {
 	ParameterSchema() map[string]any
 }
 
-// NotifyFunc is a callback for sending notifications to the UI
-type NotifyFunc func(any)
-
 // ZhengmingPendingMsg notifies the UI of a pending clarification request
 type ZhengmingPendingMsg struct {
 	RequestID  string
@@ -191,36 +177,8 @@ type ZhengmingAnsweredMsg struct {
 	Answer    string
 }
 
-// MinisterInvokingMsg notifies the UI that a minister is being invoked
-type MinisterInvokingMsg struct {
-	MinisterID string
-	EdictID    string
-	Task       string
-}
-
-// MinisterCompletedMsg notifies the UI that a minister completed its task
-type MinisterCompletedMsg struct {
-	MinisterID string
-	EdictID    string
-	Output     string
-	Sealed     bool
-	Error      error
-}
-
 // StreamDoneMsg signals that streaming has completed
 type StreamDoneMsg struct{}
-
-// RitualStepMsg notifies the UI of ritual step progress
-type RitualStepMsg struct {
-	RitualName  string
-	ExecutionID string
-	EdictID     string
-	StepName    string
-	StepIndex   int
-	TotalSteps  int
-	Status      string // "started", "completed", "failed", "retrying"
-	Message     string
-}
 
 // MinisterBase provides shared functionality for all ministers.
 // Ministers embed this struct to gain database access and session creation capabilities.
@@ -232,6 +190,7 @@ type MinisterBase struct {
 	repoInfo   repo.RepoInfo
 	runner     runners.Runner
 	logger     *slog.Logger
+	notify     internal.NotifyFunc
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
@@ -275,11 +234,11 @@ func (m *MinisterBase) Scratchpad() string {
 
 // CreateSession creates a session for a minister with composed system prompt.
 // The system prompt is built from the shared template with the minister's role injected.
-func (m *MinisterBase) CreateSession(minister Minister, notify NotifyFunc) (*Session, error) {
-	tools := minister.Tools(notify)
+func (m *MinisterBase) CreateSession(minister Minister) (*Session, error) {
+	tools := minister.Tools()
 	systemPrompt := m.buildSystemPrompt(minister)
 
-	return NewSession(m.model, m.config, m.repoInfo, tools, nil, notify, systemPrompt)
+	return NewSession(m.model, m.config, m.repoInfo, tools, nil, m.notify, systemPrompt)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
@@ -300,6 +259,11 @@ func (m *MinisterBase) SetMinisterConfig(model llms.Model, config *SessionConfig
 	m.model = model
 	m.config = config
 	m.repoInfo = repoInfo
+}
+
+// SetNotify sets the notification callback.
+func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
+	m.notify = notify
 }
 
 // GenerateID creates a unique ID using SHA256.

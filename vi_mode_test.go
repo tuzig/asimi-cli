@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/afittestide/asimi/internal/repo"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -226,7 +227,8 @@ func TestViModeHistoryNavigationWithKJ(t *testing.T) {
 
 func TestViNormalModeEnterSubmitsPrompt(t *testing.T) {
 	config := &Config{}
-	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	ri := &repo.RepoInfo{}
+	model := NewTUIModel(config, ri, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true // Ensure chat view is active
 
 	model.prompt.SetValue("ship it")

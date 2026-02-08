@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	"github.com/tmc/langchaingo/llms"
 )
@@ -26,14 +28,14 @@ func TestSessionStoreCloseWithTimeout(t *testing.T) {
 	}
 	defer db.Close()
 
-	repoInfo := RepoInfo{ProjectRoot: tmpHome}
+	repoInfo := repo.RepoInfo{ProjectRoot: tmpHome}
 	store, err := NewSessionStore(db, repoInfo, 10, 30)
 	if err != nil {
 		t.Fatalf("Failed to create session store: %v", err)
 	}
 
 	// Create a test session
-	session := &Session{
+	session := &shogunate.Session{
 		ID:           "test-session-123",
 		CreatedAt:    time.Now(),
 		LastUpdated:  time.Now(),
@@ -45,9 +47,11 @@ func TestSessionStoreCloseWithTimeout(t *testing.T) {
 	}
 
 	// Add a user message so the session will be saved
-	session.Messages = append(session.Messages, llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextPart("test message")},
+	session.SetMessages([]llms.MessageContent{
+		{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextPart("test message")},
+		},
 	})
 
 	// Queue a save
@@ -104,7 +108,7 @@ func TestTUIModelShutdown(t *testing.T) {
 	defer db.Close()
 
 	// Create a session store using NewSessionStore
-	repoInfo := RepoInfo{ProjectRoot: tmpDir}
+	repoInfo := repo.RepoInfo{ProjectRoot: tmpDir}
 	store, err := NewSessionStore(db, repoInfo, 10, 30)
 	if err != nil {
 		t.Fatalf("Failed to create session store: %v", err)

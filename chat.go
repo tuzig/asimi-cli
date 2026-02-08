@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -168,17 +169,18 @@ func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
 // NewChatComponentWithStatus creates a new chat component with a status callback
 // newSessionMessage builds the initial "New session at" message with sandbox status
 func newSessionMessage() string {
-	info := getShellRunnerInfo()
 	msg := NewChatMsgBuilder(systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST"))
 	msg.WriteLn()
 
+	/* TODO: figure our a way to get the shell runner info
+	info := getShellRunnerInfo()
 	if info.Type == "host" {
 		msg.WriteLn("⚠️ no sandbox, many approvals ahead")
 		msg.WriteLn("please run `just build-sandbox` or `:init` and start a new session")
 	} else {
 		msg.WriteLn("sandbox is ready")
 	}
-
+	*/
 	return msg.String()
 }
 
@@ -859,15 +861,15 @@ func (c *ChatComponent) ClearToolCallMessageIndex() {
 // ===== Tool Call Message Handling =====
 
 // HandleToolCallScheduled handles a scheduled tool call message
-func (c *ChatComponent) HandleToolCallScheduled(msg ToolCallScheduledMsg) {
-	message := formatToolCall(msg.Call.Tool.Name(), "📋", msg.Call.Input, "", nil)
+func (c *ChatComponent) HandleToolCallScheduled(msg runners.ToolCallScheduledMsg) {
+	message := formatToolCall(msg.Call.Tool, "📋", msg.Call.Input, "", nil)
 	c.AddMessage(message)
 	c.SetToolCallMessageIndex(msg.Call.ID, len(c.Messages)-1)
 }
 
 // HandleToolCallExecuting handles an executing tool call message
-func (c *ChatComponent) HandleToolCallExecuting(msg ToolCallExecutingMsg) {
-	formatted := formatToolCall(msg.Call.Tool.Name(), "⚙️", msg.Call.Input, "", nil)
+func (c *ChatComponent) HandleToolCallExecuting(msg runners.ToolCallExecutingMsg) {
+	formatted := formatToolCall(msg.Call.Tool, "⚙️", msg.Call.Input, "", nil)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
@@ -879,8 +881,8 @@ func (c *ChatComponent) HandleToolCallExecuting(msg ToolCallExecutingMsg) {
 }
 
 // HandleToolCallSuccess handles a successful tool call message
-func (c *ChatComponent) HandleToolCallSuccess(msg ToolCallSuccessMsg) {
-	formatted := formatToolCall(msg.Call.Tool.Name(), checkPrefix, msg.Call.Input, msg.Call.Result, nil)
+func (c *ChatComponent) HandleToolCallSuccess(msg runners.ToolCallSuccessMsg) {
+	formatted := formatToolCall(msg.Call.Tool, checkPrefix, msg.Call.Input, msg.Call.Result, nil)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
@@ -894,13 +896,13 @@ func (c *ChatComponent) HandleToolCallSuccess(msg ToolCallSuccessMsg) {
 }
 
 // HandleToolCallError handles a failed tool call message
-func (c *ChatComponent) HandleToolCallError(msg ToolCallErrorMsg) {
+func (c *ChatComponent) HandleToolCallError(msg runners.ToolCallErrorMsg) {
 	icon := "⁉️"
-	var deniedErr CommandDeniedError
+	var deniedErr runners.CommandDeniedError
 	if errors.As(msg.Call.Error, &deniedErr) {
 		icon = "⛔︎"
 	}
-	formatted := formatToolCall(msg.Call.Tool.Name(), icon, msg.Call.Input, "", msg.Call.Error)
+	formatted := formatToolCall(msg.Call.Tool, icon, msg.Call.Input, "", msg.Call.Error)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
@@ -914,10 +916,10 @@ func (c *ChatComponent) HandleToolCallError(msg ToolCallErrorMsg) {
 }
 
 // HandleToolCallAborted handles an aborted tool call message (e.g., due to sandbox restart)
-func (c *ChatComponent) HandleToolCallAborted(msg ToolCallAbortedMsg) {
+func (c *ChatComponent) HandleToolCallAborted(msg runners.ToolCallAbortedMsg) {
 	// Use a distinctive icon to clearly mark aborted tool calls
 	icon := "🚫"
-	formatted := formatToolCall(msg.Call.Tool.Name(), icon, msg.Call.Input, "", msg.Call.Error)
+	formatted := formatToolCall(msg.Call.Tool, icon, msg.Call.Input, "", msg.Call.Error)
 	// Update the existing message if we have its index
 	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
@@ -954,4 +956,18 @@ func (c *ChatComponent) UpdateLastToolCallEmoji(command string, newEmoji string)
 		}
 	}
 	return false
+}
+
+// formatToolCall formats a tool call using the Tool's Format method
+func formatToolCall(tool runners.Tool, icon string, input, result string, err error) string {
+	return fmt.Sprintf("%s %s", icon, tool.Format(input, result, err))
+}
+
+// formatToolCallByName formats a tool call when only the tool name is available (e.g., resume)
+func formatToolCallByName(toolName, icon string, input, result string, err error) string {
+	display := result
+	if err != nil {
+		display = err.Error()
+	}
+	return fmt.Sprintf("%s %s: %s", icon, toolName, truncateSnippet(display, 120))
 }

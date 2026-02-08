@@ -3,8 +3,10 @@ package runners
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
 )
 
 // Input is the input for shell command execution
@@ -25,7 +27,9 @@ type Runner interface {
 	Run(ctx context.Context, input Input) (Output, error)
 	Restart(ctx context.Context) error
 	Close(ctx context.Context) error
+	AllowFallback(bool)
 	RunnerType() string // Returns "podman" or "host"
+	SetMessageChannel(msgChan chan<- Msg)
 }
 
 // Type aliases - use types from internal/config as the single source of truth
@@ -37,12 +41,13 @@ type (
 // Messages sent by runners (bubbletea pattern)
 
 // Msg is the interface for runner messages
-type Msg interface{ runnerMsg() }
+type Msg interface{}
 
 // ContainerLaunchedMsg is sent when a container is launched
-type ContainerLaunchedMsg struct{ Message string }
-
-func (ContainerLaunchedMsg) runnerMsg() {}
+type ContainerLaunchedMsg struct {
+	Message     string
+	ContainerID string
+}
 
 // ApprovalRequestMsg is sent when a command needs user approval
 type ApprovalRequestMsg struct {
@@ -50,14 +55,10 @@ type ApprovalRequestMsg struct {
 	ResponseChan chan bool
 }
 
-func (ApprovalRequestMsg) runnerMsg() {}
-
 // ClearSchedulerMsg is sent when the runner needs to clear the scheduler queue
 type ClearSchedulerMsg struct {
 	ResultChan chan int
 }
-
-func (ClearSchedulerMsg) runnerMsg() {}
 
 // CommandDeniedError is returned when a user denies a host command approval request
 type CommandDeniedError struct {
@@ -82,4 +83,21 @@ type SandboxMissingError struct{}
 
 func (e SandboxMissingError) Error() string {
 	return "Sandbox container image is missing. Did you run `:init` ?"
+}
+
+func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
+	var runner Runner
+	runner = NewHostRunner()
+	// Auto-detect and assign shell runner
+	if IsPodmanAvailable(config.ImageName) {
+		slog.Info("using podman shell runner")
+		runner = NewPodmanRunner(config, repoInfo, runner)
+	} else {
+		slog.Info("using host shell runner (podman not available or image missing)")
+	}
+	return runner
+}
+func HostRun(ctx context.Context, in Input) (Output, error) {
+	runner := NewHostRunner()
+	return runner.Run(ctx, in)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/utils"
 )
 
@@ -15,14 +16,23 @@ type RitualStarter interface {
 	StartRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (executionID string, err error)
 }
 
-// RitualNotifyFunc is called to notify the UI about ritual status
-type RitualNotifyFunc func(ritualName, executionID, edictID, status string)
-
 // InvokeRitualTool starts a YAML-defined ritual workflow
 type InvokeRitualTool struct {
 	Starter RitualStarter
 	Logger  *slog.Logger
-	Notify  RitualNotifyFunc
+	Notify  internal.NotifyFunc
+}
+
+// RitualStepMsg notifies the UI of ritual step progress
+type RitualStepMsg struct {
+	RitualName  string
+	ExecutionID string
+	EdictID     string
+	StepName    string
+	StepIndex   int
+	TotalSteps  int
+	Status      string // "started", "completed", "failed", "retrying"
+	Message     string
 }
 
 func (t InvokeRitualTool) Name() string {
@@ -68,14 +78,23 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	if err != nil {
 		// Notify: failed
 		if t.Notify != nil {
-			t.Notify(params.RitualName, "", params.EdictID, "failed")
+			t.Notify(RitualStepMsg{
+				RitualName: params.RitualName,
+				EdictID:    params.EdictID,
+				Status:     "failed",
+				Message:    fmt.Sprintf("Failed: %s", err),
+			})
 		}
 		return "", fmt.Errorf("failed to start ritual: %w", err)
 	}
 
-	// Notify: started
 	if t.Notify != nil {
-		t.Notify(params.RitualName, executionID, params.EdictID, "started")
+		t.Notify(RitualStepMsg{
+			RitualName:  params.RitualName,
+			EdictID:     params.EdictID,
+			ExecutionID: executionID,
+			Status:      "started",
+		})
 	}
 
 	logger.Info("ritual started",

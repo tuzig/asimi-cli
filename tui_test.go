@@ -10,11 +10,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
-	gogit "github.com/go-git/go-git/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/fake"
+
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/shogunate"
 )
 
 // mockConfig returns a mock configuration for testing
@@ -53,8 +55,8 @@ func TestTUIModelInit(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	cmd := model.Init()
 
-	// Init should return nil as there's no initial command
-	require.Nil(t, cmd)
+	// Init should return a command to async-initialize the LLM
+	require.NotNil(t, cmd)
 }
 
 // TestTUIModelWindowSizeMsg tests handling of window size messages
@@ -74,12 +76,13 @@ func TestTUIModelWindowSizeMsg(t *testing.T) {
 // newTestModel creates a new TUIModel for testing purposes.
 func newTestModel(t *testing.T) *TUIModel {
 	llm := fake.NewFakeLLM([]string{})
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	ri := &repo.RepoInfo{}
+	model := NewTUIModel(mockConfig(), ri, nil, nil, nil, nil, nil, nil)
 	// Disable persistent history to keep tests hermetic.
 	model.persistentPromptHistory = nil
 	model.initHistory()
-	// Use native session path for tests now that legacy agent is removed.
-	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, RepoInfo{}, nil, func(any) {})
+	// Use shogunate session for tests.
+	sess, err := shogunate.NewSession(llm, nil, repo.RepoInfo{}, nil, nil, func(any) {}, "")
 	require.NoError(t, err)
 	model.SetSession(sess)
 	return model
@@ -748,7 +751,7 @@ func TestStatusComponent(t *testing.T) {
 	status.SetProvider("test", "model", true)
 
 	// Set repo info to test branch rendering
-	repoInfo := &RepoInfo{
+	repoInfo := &repo.RepoInfo{
 		Branch: "main",
 	}
 	status.SetRepoInfo(repoInfo)
@@ -764,57 +767,6 @@ func TestStatusComponent(t *testing.T) {
 	require.Contains(t, view, "main")       // Should contain branch name
 	require.Contains(t, view, "test-model") // Should contain provider-model
 	// Connected status is now indicated by green color, not an emoji
-}
-
-func TestSummarizeStatus(t *testing.T) {
-	cases := []struct {
-		name     string
-		status   gogit.Status
-		expected string
-	}{
-		{
-			name:     "empty status",
-			status:   gogit.Status{},
-			expected: "",
-		},
-		{
-			name: "mixed indicators",
-			status: gogit.Status{
-				"modified.go": &gogit.FileStatus{
-					Staging:  gogit.Modified,
-					Worktree: gogit.Unmodified,
-				},
-				"staged_added.go": &gogit.FileStatus{
-					Staging:  gogit.Added,
-					Worktree: gogit.Unmodified,
-				},
-				"deleted.txt": &gogit.FileStatus{
-					Staging:  gogit.Deleted,
-					Worktree: gogit.Unmodified,
-				},
-				"renamed.txt": &gogit.FileStatus{
-					Staging:  gogit.Renamed,
-					Worktree: gogit.Unmodified,
-				},
-				"untracked.md": &gogit.FileStatus{
-					Staging:  gogit.Untracked,
-					Worktree: gogit.Untracked,
-				},
-				"worktree_modified.go": &gogit.FileStatus{
-					Staging:  gogit.Unmodified,
-					Worktree: gogit.Modified,
-				},
-			},
-			expected: "[!+-→?]",
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.expected, summarizeStatus(tc.status))
-		})
-	}
 }
 
 // TestBaseModal tests the base modal component
@@ -1521,7 +1473,7 @@ func TestStreamChunkMsg_StopsWaiting(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Receive stream chunk - should reset the waiting timer
-	newModel, _ := model.handleCustomMessages(streamChunkMsg("chunk"))
+	newModel, _ := model.handleCustomMessages(shogunate.StreamChunkMsg{Text: "chunk"})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
@@ -1540,7 +1492,7 @@ func TestStreamCompleteMsg_StopsWaiting(t *testing.T) {
 	require.True(t, model.waitingForResponse)
 
 	// Stream completes
-	newModel, _ := model.handleCustomMessages(streamCompleteMsg{})
+	newModel, _ := model.handleCustomMessages(shogunate.StreamCompleteMsg{})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
@@ -1557,7 +1509,7 @@ func TestStreamErrorMsg_StopsWaiting(t *testing.T) {
 
 	// Stream error
 	testErr := errors.New("test error")
-	newModel, _ := model.handleCustomMessages(streamErrorMsg{err: testErr})
+	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{Err: testErr})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
@@ -1581,15 +1533,15 @@ func TestSessionResume_ResetsHistoryState(t *testing.T) {
 	model.historyPresentChatSnapshot = 4
 
 	// Create a mock resumed session
-	resumedSession := &Session{
+	resumedSession := &shogunate.Session{
 		ID:          "resumed-session-id",
 		FirstPrompt: "resumed prompt",
-		Messages: []llms.MessageContent{
-			{Role: llms.ChatMessageTypeSystem, Parts: []llms.ContentPart{llms.TextContent{Text: "system"}}},
-			{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextContent{Text: "hello"}}},
-			{Role: llms.ChatMessageTypeAI, Parts: []llms.ContentPart{llms.TextContent{Text: "hi there"}}},
-		},
 	}
+	resumedSession.SetMessages([]llms.MessageContent{
+		{Role: llms.ChatMessageTypeSystem, Parts: []llms.ContentPart{llms.TextContent{Text: "system"}}},
+		{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextContent{Text: "hello"}}},
+		{Role: llms.ChatMessageTypeAI, Parts: []llms.ContentPart{llms.TextContent{Text: "hi there"}}},
+	})
 
 	// Process the sessionSelectedMsg
 	newModel, _ := model.handleCustomMessages(sessionSelectedMsg{session: resumedSession})
@@ -1659,7 +1611,7 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// Set up a mock session for the test
 	llm := fake.NewFakeLLM([]string{})
-	sess, err := NewSession(llm, &Config{LLM: LLMConfig{Provider: "fake"}}, RepoInfo{}, nil, func(any) {})
+	sess, err := shogunate.NewSession(llm, nil, repo.RepoInfo{}, nil, nil, func(any) {}, "")
 	require.NoError(t, err)
 	model.SetSession(sess)
 
@@ -1907,59 +1859,6 @@ func TestYesNoModePriority(t *testing.T) {
 	require.Contains(t, view, "Confirm?", "Expected yes/no prompt to have priority over toast")
 	require.NotContains(t, view, "Test toast", "Expected toast to be hidden when in yes/no mode")
 }
-
-// Tests from main_branch_test.go
-
-func TestIsMainBranch(t *testing.T) {
-	tests := []struct {
-		name     string
-		branch   string
-		expected bool
-	}{
-		{
-			name:     "main branch",
-			branch:   "main",
-			expected: true,
-		},
-		{
-			name:     "master branch",
-			branch:   "master",
-			expected: true,
-		},
-		{
-			name:     "feature branch",
-			branch:   "feature/test",
-			expected: false,
-		},
-		{
-			name:     "develop branch",
-			branch:   "develop",
-			expected: false,
-		},
-		{
-			name:     "empty branch",
-			branch:   "",
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isMainBranch(tt.branch)
-			require.Equal(t, tt.expected, result, "isMainBranch(%q)", tt.branch)
-		})
-	}
-}
-
-func TestGetRepoInfo(t *testing.T) {
-	// Test that GetRepoInfo can be called
-	repoInfo := GetRepoInfo()
-	// Just verify the function can be called without panicking
-	// The actual content depends on the test environment
-	t.Logf("GetRepoInfo returned: %+v", repoInfo)
-}
-
-// Tests from select_window_test.go
 
 func TestSelectWindowNavigationHelpers(t *testing.T) {
 	// Create a window with mixed selectable/non-selectable items

@@ -114,4 +114,3 @@ func GetEditTools() []Tool {
 		GrepTool{},
 	}
 }
-

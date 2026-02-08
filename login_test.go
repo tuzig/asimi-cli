@@ -1,11 +1,14 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCodeInputModal_NewCodeInputModal(t *testing.T) {
@@ -219,4 +222,144 @@ func TestCodeInputModal_Render(t *testing.T) {
 	rendered = modal.Render()
 
 	assert.Contains(t, rendered, "▶ Copy Anthropic")
+}
+
+func TestGetOAuthConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		provider    string
+		setupEnv    func()
+		cleanupEnv  func()
+		expectError bool
+		checkResult func(t *testing.T, cfg oauthProviderConfig)
+	}{
+		{
+			name:     "googleai with defaults",
+			provider: "googleai",
+			setupEnv: func() {
+				os.Setenv("GOOGLE_CLIENT_ID", "test-client-id")
+				os.Setenv("GOOGLE_CLIENT_SECRET", "test-secret")
+			},
+			cleanupEnv: func() {
+				os.Unsetenv("GOOGLE_CLIENT_ID")
+				os.Unsetenv("GOOGLE_CLIENT_SECRET")
+			},
+			expectError: false,
+			checkResult: func(t *testing.T, cfg oauthProviderConfig) {
+				assert.Equal(t, "test-client-id", cfg.ClientID)
+				assert.Equal(t, "test-secret", cfg.ClientSecret)
+				assert.Contains(t, cfg.AuthURL, "accounts.google.com")
+				assert.Contains(t, cfg.TokenURL, "oauth2.googleapis.com")
+				assert.Contains(t, cfg.Scopes, "https://www.googleapis.com/auth/generative-language")
+			},
+		},
+		{
+			name:     "googleai with custom scopes",
+			provider: "googleai",
+			setupEnv: func() {
+				os.Setenv("GOOGLE_CLIENT_ID", "test-client-id")
+				os.Setenv("GOOGLE_CLIENT_SECRET", "test-secret")
+				os.Setenv("GOOGLE_OAUTH_SCOPES", "scope1,scope2")
+			},
+			cleanupEnv: func() {
+				os.Unsetenv("GOOGLE_CLIENT_ID")
+				os.Unsetenv("GOOGLE_CLIENT_SECRET")
+				os.Unsetenv("GOOGLE_OAUTH_SCOPES")
+			},
+			expectError: false,
+			checkResult: func(t *testing.T, cfg oauthProviderConfig) {
+				assert.Equal(t, []string{"scope1", "scope2"}, cfg.Scopes)
+			},
+		},
+		{
+			name:     "openai with configuration",
+			provider: "openai",
+			setupEnv: func() {
+				os.Setenv("OPENAI_AUTH_URL", "https://auth.openai.com")
+				os.Setenv("OPENAI_TOKEN_URL", "https://token.openai.com")
+				os.Setenv("OPENAI_CLIENT_ID", "openai-client")
+				os.Setenv("OPENAI_CLIENT_SECRET", "openai-secret")
+			},
+			cleanupEnv: func() {
+				os.Unsetenv("OPENAI_AUTH_URL")
+				os.Unsetenv("OPENAI_TOKEN_URL")
+				os.Unsetenv("OPENAI_CLIENT_ID")
+				os.Unsetenv("OPENAI_CLIENT_SECRET")
+			},
+			expectError: false,
+			checkResult: func(t *testing.T, cfg oauthProviderConfig) {
+				assert.Equal(t, "https://auth.openai.com", cfg.AuthURL)
+				assert.Equal(t, "https://token.openai.com", cfg.TokenURL)
+				assert.Equal(t, "openai-client", cfg.ClientID)
+			},
+		},
+		{
+			name:        "unsupported provider",
+			provider:    "unsupported",
+			setupEnv:    func() {},
+			cleanupEnv:  func() {},
+			expectError: true,
+		},
+		{
+			name:     "missing client ID",
+			provider: "googleai",
+			setupEnv: func() {
+				// Don't set CLIENT_ID
+				os.Setenv("GOOGLE_CLIENT_SECRET", "test-secret")
+			},
+			cleanupEnv: func() {
+				os.Unsetenv("GOOGLE_CLIENT_SECRET")
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setupEnv()
+			defer tt.cleanupEnv()
+
+			cfg, err := getOAuthConfig(tt.provider)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				if tt.checkResult != nil {
+					tt.checkResult(t, cfg)
+				}
+			}
+		})
+	}
+}
+
+// NOTE: UpdateUserLLMAuth tests are disabled because they trigger system keyring dialogs.
+// To test this function manually, set ASIMI_TEST_KEYRING=1 and run:
+//
+//	ASIMI_TEST_KEYRING=1 go test -v -run TestUpdateUserLLMAuthIntegration
+func TestUpdateUserLLMAuthIntegration(t *testing.T) {
+	// Skip unless explicitly enabled
+	if os.Getenv("ASIMI_TEST_KEYRING") != "1" {
+		t.Skip("Skipping UpdateUserLLMAuth test. Set ASIMI_TEST_KEYRING=1 to run this test manually.")
+	}
+
+	t.Log("WARNING: This test will trigger system keyring dialogs!")
+
+	t.Run("creates config file if not exists", func(t *testing.T) {
+		tempHome := t.TempDir()
+		originalHome := os.Getenv("HOME")
+		os.Setenv("HOME", tempHome)
+		defer os.Setenv("HOME", originalHome)
+
+		err := UpdateUserLLMAuth("openai", "test-api-key", "gpt-4")
+		require.NoError(t, err)
+
+		configDir := filepath.Join(tempHome, ".config", "asimi")
+		_, err = os.Stat(configDir)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(configDir, "asimi.conf")
+		_, err = os.Stat(configPath)
+		assert.NoError(t, err, "Config file should be created")
+	})
 }

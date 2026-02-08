@@ -55,7 +55,7 @@ func (r *RitualGuard) Role() string {
 
 // Tools returns the RitualGuard's LLM tools for interactive sessions
 // RitualGuard doesn't have LLM tools - it's an event processor, not an agent
-func (r *RitualGuard) Tools(notify NotifyFunc) []Tool {
+func (r *RitualGuard) Tools() []Tool {
 	return []Tool{}
 }
 

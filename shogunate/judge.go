@@ -68,7 +68,7 @@ func (j *Judge) Role() string {
 }
 
 // Tools returns the Judge's LLM tools for interactive sessions
-func (j *Judge) Tools(notify NotifyFunc) []Tool {
+func (j *Judge) Tools() []Tool {
 	toolList := []Tool{
 		// Specialized Judge tools for verdict management
 		&RecordVerdictTool{judge: j},

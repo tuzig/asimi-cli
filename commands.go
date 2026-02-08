@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -237,7 +239,7 @@ func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 	// Immediately show the resume view with loading state
-	showResumeCmd := model.content.ShowResume([]Session{})
+	showResumeCmd := model.content.ShowResume([]shogunate.Session{})
 	model.content.resume.SetLoading(true)
 
 	// Load sessions in the background
@@ -250,9 +252,8 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 			return showSystemMsg("Session resume is disabled in configuration.")
 		}
 
-		repoInfo := GetRepoInfo()
-
-		currentBranch := branchSlugOrDefault(repoInfo.Branch)
+		repoInfo := repo.GetRepoInfo()
+		currentBranch := repoInfo.BranchSlugOrDefault()
 		if model.sessionStore == nil ||
 			model.sessionStore.ProjectRoot != repoInfo.ProjectRoot ||
 			model.sessionStore.Branch != currentBranch {
@@ -371,12 +372,12 @@ type sandboxUpgradeMsg struct {
 
 // verifyInit runs validation checks after init completes
 // It accepts a containerRunner parameter to run tests in the container
-func verifyInit(model *TUIModel, containerRunner shellRunner) tea.Cmd {
+func verifyInit(model *TUIModel, containerRunner runners.Runner) tea.Cmd {
 	return verifyInitWithRetry(model, containerRunner, 0)
 }
 
 // verifyInitWithRetry is the internal implementation with retry tracking
-func verifyInitWithRetry(model *TUIModel, containerRunner shellRunner, retryCount int) tea.Cmd {
+func verifyInitWithRetry(model *TUIModel, containerRunner runners.Runner, retryCount int) tea.Cmd {
 	const maxRetries = 5 // Maximum number of retry attempts
 
 	return func() tea.Msg {
@@ -441,8 +442,8 @@ func verifyInitWithRetry(model *TUIModel, containerRunner shellRunner, retryCoun
 		// After build-sandbox succeeds, reinitialize the shell runner to get a fresh container
 		// This is necessary because the previous container was closed and the image was rebuilt
 		slog.Debug("Reinitializing shell runner after build-sandbox")
-		initShellRunner(model.config, model.scheduler)
-		containerRunner = getShellRunner()
+		// TODO: should the repoInfo be part of status?
+		containerRunner = runners.InitShellRunner(&model.config.Sandbox, *model.status.repoInfo)
 		slog.Debug("Shell runner reinitialized", "containerRunner", containerRunner)
 
 		// Run smoke test in container
@@ -480,7 +481,7 @@ func verifyInitWithRetry(model *TUIModel, containerRunner shellRunner, retryCoun
 		defer cancel2()
 
 		for _, file := range filesToStage {
-			result, err := hostRun(ctx2, RunShellCommandInput{
+			result, err := runners.HostRun(ctx2, runners.Input{
 				Command:     fmt.Sprintf("git add %s", file),
 				Description: fmt.Sprintf("Staging %s", file),
 			})
@@ -518,7 +519,7 @@ func checkFileExists(filename, successMsg string, report func(string)) bool {
 // runBuildSandbox runs the build-sandbox command on the host
 func runBuildSandbox(ctx context.Context, report func(string), results *[]string) bool {
 	report("$ just build-sandbox # on host")
-	result, err := hostRun(ctx, RunShellCommandInput{
+	result, err := runners.HostRun(ctx, runners.Input{
 		Command:     "just build-sandbox",
 		Description: "Building infrastructure files",
 	})
@@ -536,7 +537,7 @@ func runBuildSandbox(ctx context.Context, report func(string), results *[]string
 }
 
 // runSmokeTest runs a basic smoke test in the container
-func runSmokeTest(ctx context.Context, containerRunner shellRunner, report func(string)) bool {
+func runSmokeTest(ctx context.Context, containerRunner runners.Runner, report func(string)) bool {
 	slog.Debug("runSmokeTest called", "containerRunner", containerRunner)
 	if containerRunner == nil {
 		slog.Error("containerRunner is nil in runSmokeTest")
@@ -545,7 +546,7 @@ func runSmokeTest(ctx context.Context, containerRunner shellRunner, report func(
 	}
 
 	slog.Debug("Calling containerRunner.Run for smoke test")
-	result, err := containerRunner.Run(ctx, RunShellCommandInput{
+	result, err := containerRunner.Run(ctx, runners.Input{
 		Command:     "uname",
 		Description: "Running smoke test in container",
 	})
@@ -564,7 +565,7 @@ func runSmokeTest(ctx context.Context, containerRunner shellRunner, report func(
 // runHostTests runs the test suite on the host
 func runHostTests(ctx context.Context, report func(string), results *[]string) bool {
 	report("$ just test # on host")
-	result, err := hostRun(ctx, RunShellCommandInput{
+	result, err := runners.HostRun(ctx, runners.Input{
 		Command:     "just test",
 		Description: "Running tests on host",
 	})
@@ -582,9 +583,9 @@ func runHostTests(ctx context.Context, report func(string), results *[]string) b
 }
 
 // runContainerTests runs the test suite in the container
-func runContainerTests(ctx context.Context, containerRunner shellRunner, report func(string), results *[]string) bool {
+func runContainerTests(ctx context.Context, containerRunner runners.Runner, report func(string), results *[]string) bool {
 	report("$ just test # in container")
-	result, err := containerRunner.Run(ctx, RunShellCommandInput{
+	result, err := containerRunner.Run(ctx, runners.Input{
 		Command:     "just test",
 		Description: "Running tests in container",
 	})
@@ -602,7 +603,7 @@ func runContainerTests(ctx context.Context, containerRunner shellRunner, report 
 }
 
 // handleVerificationFailure handles the case when verification fails
-func handleVerificationFailure(model *TUIModel, containerRunner shellRunner, retryCount, maxRetries int, results []string) tea.Msg {
+func handleVerificationFailure(model *TUIModel, containerRunner runners.Runner, retryCount, maxRetries int, results []string) tea.Msg {
 	slog.Debug("In verifyInit - handleVerificationFailure", "hasErrors", true, "messages", results, "retryCount", retryCount)
 
 	// Check if we've exceeded the maximum retry count

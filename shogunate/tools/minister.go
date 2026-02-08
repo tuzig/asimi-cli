@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/utils"
 )
 
@@ -25,15 +26,28 @@ type MinisterInvoker interface {
 	InvokeMinister(ctx context.Context, ministerID, edictID, work string, timeout time.Duration) (MinisterResult, error)
 }
 
-// MinisterNotifyFunc is called to notify the UI about minister invocation status
-type MinisterNotifyFunc func(ministerID, edictID, task, status string)
-
 // InvokeMinisterTool allows the Chancellor to invoke any registered minister for an edict.
 type InvokeMinisterTool struct {
 	// TODO: Simplify, the Invoker adds nothing...
 	Invoker MinisterInvoker
 	Logger  *slog.Logger
-	Notify  MinisterNotifyFunc
+	Notify  internal.NotifyFunc
+}
+
+// MinisterInvokingMsg notifies the user that a minister is being invoked
+type MinisterInvokingMsg struct {
+	MinisterID string
+	EdictID    string
+	Task       string
+}
+
+// MinisterCompletedMsg notifies the user that a minister completed its task
+type MinisterCompletedMsg struct {
+	MinisterID string
+	EdictID    string
+	Output     string
+	Sealed     bool
+	Error      error
 }
 
 func (t InvokeMinisterTool) Name() string {
@@ -74,14 +88,23 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 
 	// Notify: invoking
 	if t.Notify != nil {
-		t.Notify(params.MinisterID, params.EdictID, params.Work, "invoking")
-	}
+		t.Notify(MinisterInvokingMsg{
+			MinisterID: params.MinisterID,
+			EdictID:    params.EdictID,
+			Task:       params.Work,
+		})
 
+	}
 	res, err := t.Invoker.InvokeMinister(ctx, params.MinisterID, params.EdictID, params.Work, 5*time.Minute)
 	if err != nil {
-		// Notify: failed
 		if t.Notify != nil {
-			t.Notify(params.MinisterID, params.EdictID, params.Work, "failed")
+			t.Notify(MinisterCompletedMsg{
+				MinisterID: params.MinisterID,
+				EdictID:    params.EdictID,
+				Output:     "",
+				Sealed:     false,
+				Error:      err,
+			})
 		}
 		logger.Error("task failed",
 			"minister", params.MinisterID,
@@ -90,21 +113,34 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, err)
 	}
 
-	if res.GetErr() != nil {
+	err = res.GetErr()
+	if err != nil {
 		// Notify: failed
 		if t.Notify != nil {
-			t.Notify(params.MinisterID, params.EdictID, params.Work, "failed")
+			t.Notify(MinisterCompletedMsg{
+				MinisterID: params.MinisterID,
+				EdictID:    params.EdictID,
+				Output:     "",
+				Sealed:     false,
+				Error:      err,
+			})
 		}
 		logger.Error("task returned error",
 			"minister", params.MinisterID,
 			"edict_id", params.EdictID,
-			"error", res.GetErr())
-		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, res.GetErr())
+			"error", err)
+		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, err)
 	}
 
 	// Notify: completed
 	if t.Notify != nil {
-		t.Notify(params.MinisterID, params.EdictID, params.Work, "completed")
+		t.Notify(MinisterCompletedMsg{
+			MinisterID: params.MinisterID,
+			EdictID:    params.EdictID,
+			Output:     params.Work,
+			Sealed:     true,
+			Error:      nil,
+		})
 	}
 
 	logger.Info("task completed",

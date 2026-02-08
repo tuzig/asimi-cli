@@ -1,4 +1,4 @@
-package main
+package runners
 
 import (
 	"context"
@@ -6,8 +6,17 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/tmc/langchaingo/tools"
 )
+
+// Tool defines a tool that can be invoked by the scheduler.
+// Extends langchaingo's tools.Tool with Format and ParameterSchema.
+type Tool interface {
+	Name() string
+	Description() string
+	Call(ctx context.Context, input string) (string, error)
+	Format(input, result string, err error) string
+	ParameterSchema() map[string]any
+}
 
 // ToolCallStatus represents the status of a tool call
 type ToolCallStatus string
@@ -26,7 +35,7 @@ const (
 // ToolCall represents a single tool call task
 type ToolCall struct {
 	ID     string
-	Tool   tools.Tool
+	Tool   Tool
 	Input  string
 	Status ToolCallStatus
 	Result string
@@ -69,7 +78,7 @@ func (s *CoreToolScheduler) SetNotify(notify func(any)) {
 }
 
 // Schedule adds a new tool call to the scheduler and returns a channel for the result
-func (s *CoreToolScheduler) Schedule(tool tools.Tool, input string) <-chan ToolCallResult {
+func (s *CoreToolScheduler) Schedule(tool Tool, input string) <-chan ToolCallResult {
 	slog.Debug("scheduler.enqueue", "tool", tool.Name())
 	s.mu.Lock()
 	defer s.mu.Unlock()

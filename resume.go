@@ -5,6 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -12,11 +15,11 @@ import (
 )
 
 type sessionsLoadedMsg struct {
-	sessions []Session
+	sessions []shogunate.Session
 }
 
 type sessionSelectedMsg struct {
-	session *Session
+	session *shogunate.Session
 }
 
 type sessionResumeErrorMsg struct {
@@ -26,12 +29,12 @@ type sessionResumeErrorMsg struct {
 // ResumeWindow is a simplified component for displaying session selection
 // Navigation is handled by ContentComponent
 type ResumeWindow struct {
-	SelectWindow[Session]
+	SelectWindow[shogunate.Session]
 	loadingSession bool
 }
 
 func NewResumeWindow() ResumeWindow {
-	sw := NewSelectWindow[Session]()
+	sw := NewSelectWindow[shogunate.Session]()
 	sw.Height = 15 // Default height
 	sw.SetSize(70, 15)
 
@@ -41,7 +44,7 @@ func NewResumeWindow() ResumeWindow {
 	}
 }
 
-func (r *ResumeWindow) SetSessions(sessions []Session) {
+func (r *ResumeWindow) SetSessions(sessions []shogunate.Session) {
 	r.SetItems(sessions)
 	r.loadingSession = false
 }
@@ -51,15 +54,16 @@ func (r *ResumeWindow) SetError(err error) {
 	r.loadingSession = false
 }
 
-func (r *ResumeWindow) GetSelectedSession(index int) *Session {
+func (r *ResumeWindow) GetSelectedSession(index int) *shogunate.Session {
 	return r.GetSelectedItem(index)
 }
 
-func sessionTitlePreview(session Session) string {
+func sessionTitlePreview(session shogunate.Session) string {
 
 	snippet := session.FirstPrompt
-	if len(session.Messages) > 0 {
-		snippet = lastHumanMessage(session.Messages)
+	msgs := session.GetMessages()
+	if len(msgs) > 0 {
+		snippet = lastHumanMessage(msgs)
 	}
 
 	snippet = cleanSnippet(snippet)
@@ -152,7 +156,7 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 		Background(lipgloss.Color("#000000")).
 		Padding(0, 1)
 
-	config := RenderConfig[Session]{
+	config := RenderConfig[shogunate.Session]{
 		ConstructTitle: func(selectedIndex, totalItems int) string {
 			return titleStyle.Render(fmt.Sprintf("Choose a session to resume [%3d/%3d]:", selectedIndex+1, totalItems))
 		},
@@ -178,7 +182,7 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 			sb.WriteString("Start chatting to create a new session!\n")
 			sb.WriteString("\n")
 		},
-		RenderItem: func(i int, session Session, isSelected bool, sb *strings.Builder) {
+		RenderItem: func(i int, session shogunate.Session, isSelected bool, sb *strings.Builder) {
 			prefix := "  "
 			if isSelected {
 				prefix = "▶ "
@@ -208,13 +212,13 @@ func (r *ResumeWindow) LoadSession(sessionID string) tea.Cmd {
 	r.loadingSession = true
 
 	return func() tea.Msg {
-		config, err := LoadConfig()
+		cfg, err := config.LoadConfig()
 		if err != nil {
 			return sessionResumeErrorMsg{err: fmt.Errorf("failed to load config: %w", err)}
 		}
 
 		// Initialize storage
-		db, err := storage.InitDB(config.Storage.DatabasePath)
+		db, err := storage.InitDB(cfg.Storage.DatabasePath)
 		if err != nil {
 			return sessionResumeErrorMsg{err: fmt.Errorf("failed to initialize storage: %w", err)}
 		}
@@ -222,14 +226,14 @@ func (r *ResumeWindow) LoadSession(sessionID string) tea.Cmd {
 
 		maxSessions := 50
 		maxAgeDays := 30
-		if config.Session.MaxSessions > 0 {
-			maxSessions = config.Session.MaxSessions
+		if cfg.Session.MaxSessions > 0 {
+			maxSessions = cfg.Session.MaxSessions
 		}
-		if config.Session.MaxAgeDays > 0 {
-			maxAgeDays = config.Session.MaxAgeDays
+		if cfg.Session.MaxAgeDays > 0 {
+			maxAgeDays = cfg.Session.MaxAgeDays
 		}
 
-		repoInfo := GetRepoInfo()
+		repoInfo := repo.GetRepoInfo()
 		store, err := NewSessionStore(db, repoInfo, maxSessions, maxAgeDays)
 		if err != nil {
 			return sessionResumeErrorMsg{err: fmt.Errorf("failed to create session store: %w", err)}
@@ -283,7 +287,7 @@ func formatRelativeTime(t time.Time) string {
 // Note: With the shogunate architecture, resuming only displays the conversation
 // history in the UI - the shogunate will start a fresh session on next prompt.
 // TODO: Implement full session restoration in shogunate.
-func (m *TUIModel) handleSessionSelected(session *Session) {
+func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	if session == nil {
 		return
 	}
@@ -292,8 +296,9 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 	m.content.Chat.Clear()
 
 	// Build a map of tool call IDs to their responses for matching
+	allMessages := session.GetMessages()
 	toolResults := make(map[string]llms.ToolCallResponse)
-	for _, msgContent := range session.Messages {
+	for _, msgContent := range allMessages {
 		if msgContent.Role == llms.ChatMessageTypeTool {
 			for _, part := range msgContent.Parts {
 				if resp, ok := part.(llms.ToolCallResponse); ok {
@@ -303,7 +308,7 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 		}
 	}
 
-	for _, msgContent := range session.Messages {
+	for _, msgContent := range allMessages {
 		// Skip system messages
 		if msgContent.Role == llms.ChatMessageTypeSystem {
 			continue
@@ -360,7 +365,7 @@ func (m *TUIModel) handleSessionSelected(session *Session) {
 						}
 					}
 					// Format the tool call with its result
-					formatted := formatToolCall(tc.FunctionCall.Name, checkPrefix, tc.FunctionCall.Arguments, result, toolErr)
+					formatted := formatToolCallByName(tc.FunctionCall.Name, checkPrefix, tc.FunctionCall.Arguments, result, toolErr)
 					m.content.Chat.AddMessage(formatted)
 				}
 			}

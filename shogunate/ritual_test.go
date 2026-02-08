@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -512,7 +513,7 @@ func TestRitualStreamMessages(t *testing.T) {
 	)
 
 	for _, msg := range messages {
-		if stepMsg, ok := msg.(RitualStepMsg); ok {
+		if stepMsg, ok := msg.(tools.RitualStepMsg); ok {
 			t.Logf("Received RitualStepMsg: ritual=%s step=%s status=%s", stepMsg.RitualName, stepMsg.StepName, stepMsg.Status)
 			switch stepMsg.Status {
 			case "started":
@@ -569,9 +570,9 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 	mockRunner := &mockCmdRunner{output: "ok\n", exitCode: "0"}
 	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
 
-	var messages []RitualStepMsg
+	var messages []tools.RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := msg.(RitualStepMsg); ok {
+		if stepMsg, ok := msg.(tools.RitualStepMsg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -624,9 +625,9 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 	mockRunner := &mockCmdRunner{output: "error!", exitCode: "1", err: nil}
 	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
 
-	var messages []RitualStepMsg
+	var messages []tools.RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := msg.(RitualStepMsg); ok {
+		if stepMsg, ok := msg.(tools.RitualStepMsg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -708,6 +709,8 @@ func (m *mockCmdRunner) Run(ctx context.Context, input runners.Input) (runners.O
 	}, nil
 }
 
-func (m *mockCmdRunner) Restart(ctx context.Context) error { return nil }
-func (m *mockCmdRunner) Close(ctx context.Context) error   { return nil }
-func (m *mockCmdRunner) RunnerType() string                { return "mock" }
+func (m *mockCmdRunner) Restart(ctx context.Context) error       { return nil }
+func (m *mockCmdRunner) Close(ctx context.Context) error         { return nil }
+func (m *mockCmdRunner) AllowFallback(bool)                      {}
+func (m *mockCmdRunner) RunnerType() string                      { return "mock" }
+func (m *mockCmdRunner) SetMessageChannel(chan<- runners.Msg)     {}

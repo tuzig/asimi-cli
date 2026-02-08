@@ -1,4 +1,4 @@
-package main
+package runners
 
 import (
 	"context"
@@ -30,6 +30,14 @@ func (t *mockTool) Call(ctx context.Context, input string) (string, error) {
 	return "", nil
 }
 
+func (t *mockTool) Format(input, result string, err error) string {
+	return t.name + ": " + result
+}
+
+func (t *mockTool) ParameterSchema() map[string]any {
+	return nil
+}
+
 type mockModel struct {
 	messages []tea.Msg
 }
@@ -51,20 +59,10 @@ func (m *mockModel) View() string {
 }
 
 func TestCoreToolScheduler(t *testing.T) {
-	model := &mockModel{}
-	// Use the package-level program so the scheduler can send messages to it.
-	program = tea.NewProgram(model, tea.WithoutRenderer(), tea.WithInput(nil))
+	var msgs []any
 	scheduler := NewCoreToolScheduler(func(msg any) {
-		program.Send(msg)
+		msgs = append(msgs, msg)
 	})
-
-	done := make(chan struct{})
-	go func() {
-		if _, err := program.Run(); err != nil {
-			t.Log(err)
-		}
-		close(done)
-	}()
 
 	tool := &mockTool{
 		name:        "test-tool",
@@ -84,16 +82,13 @@ func TestCoreToolScheduler(t *testing.T) {
 	assert.NoError(t, result.Error)
 	assert.Equal(t, "output for test-input", result.Output)
 
-	program.Quit()
-	<-done
-
 	// Check messages sent to the model
-	assert.GreaterOrEqual(t, len(model.messages), 3)
-	_, ok := model.messages[0].(ToolCallScheduledMsg)
+	assert.GreaterOrEqual(t, len(msgs), 3)
+	_, ok := msgs[0].(ToolCallScheduledMsg)
 	assert.True(t, ok)
-	_, ok = model.messages[1].(ToolCallExecutingMsg)
+	_, ok = msgs[1].(ToolCallExecutingMsg)
 	assert.True(t, ok)
-	_, ok = model.messages[2].(ToolCallSuccessMsg)
+	_, ok = msgs[2].(ToolCallSuccessMsg)
 	assert.True(t, ok)
 }
 

@@ -16,15 +16,14 @@ func TestNewPodmanRunner(t *testing.T) {
 		Slug:        "test/project",
 	}
 
-	msgChan := make(chan Msg, 10)
-	hostRunner := NewHostRunner(msgChan)
+	hostRunner := NewHostRunner()
 
-	config := Config{
+	config := &Config{
 		AllowHostFallback: true,
-		NoCleanup:     false,
+		NoCleanup:         false,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, msgChan, hostRunner)
+	runner := NewPodmanRunner(config, repoInfo, hostRunner)
 	require.NotNil(t, runner)
 	assert.Equal(t, "localhost/asimi-sandbox-test/project:latest", runner.imageName)
 	assert.True(t, runner.allowFallback)
@@ -37,14 +36,12 @@ func TestNewPodmanRunnerCustomImage(t *testing.T) {
 		Slug:        "test/project",
 	}
 
-	msgChan := make(chan Msg, 10)
-
-	config := Config{
-		ImageName:     "custom-image:v1",
+	config := &Config{
+		ImageName:         "custom-image:v1",
 		AllowHostFallback: false,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, msgChan, nil)
+	runner := NewPodmanRunner(config, repoInfo, nil)
 	require.NotNil(t, runner)
 	assert.Equal(t, "custom-image:v1", runner.imageName)
 	assert.False(t, runner.allowFallback)
@@ -60,14 +57,13 @@ func TestPodmanRunnerWithFallback(t *testing.T) {
 		Slug:        "test/nonexistent-image",
 	}
 
-	msgChan := make(chan Msg, 10)
-	hostRunner := NewHostRunner(msgChan)
+	hostRunner := NewHostRunner()
 
-	config := Config{
+	config := &Config{
 		AllowHostFallback: true,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, msgChan, hostRunner)
+	runner := NewPodmanRunner(config, repoInfo, hostRunner)
 	require.NotNil(t, runner)
 
 	// This should fall back to host runner since the image doesn't exist
@@ -102,13 +98,11 @@ func TestPodmanRunnerIntegration(t *testing.T) {
 		Slug:        "test/project",
 	}
 
-	msgChan := make(chan Msg, 10)
-
-	config := Config{
+	config := &Config{
 		AllowHostFallback: false,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, msgChan, nil)
+	runner := NewPodmanRunner(config, repoInfo, nil)
 	require.NotNil(t, runner)
 	defer runner.Close(context.Background())
 
@@ -151,13 +145,13 @@ func TestPodmanRunnerContainerLaunchMessage(t *testing.T) {
 		Slug:        "test/project",
 	}
 
-	msgChan := make(chan Msg, 10)
-
-	config := Config{
+	config := &Config{
 		AllowHostFallback: false,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, msgChan, nil)
+	runner := NewPodmanRunner(config, repoInfo, nil)
+	msgChan := make(chan Msg, 10)
+	runner.SetMessageChannel(msgChan)
 	require.NotNil(t, runner)
 	defer runner.Close(context.Background())
 

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	"github.com/tmc/langchaingo/llms"
 )
@@ -17,7 +19,7 @@ import (
 // We need to extract host from the Git remote URL
 func parseProjectSlug(workingDir string) (host, org, project string) {
 	// Try to get the Git remote URL to extract the host
-	remote, err := gitRemoteOriginURL(workingDir)
+	remote, err := repo.GitRemoteOriginURL(workingDir)
 	if err != nil || remote == "" {
 		// Fallback: no git remote
 		return "local", "local", "unknown"
@@ -42,12 +44,12 @@ func parseProjectSlug(workingDir string) (host, org, project string) {
 	}
 
 	// Parse org and project
-	owner, repo := parseGitRemote(remote)
-	if owner == "" || repo == "" {
+	owner, repoName := repo.ParseGitRemote(remote)
+	if owner == "" || repoName == "" {
 		return host, "unknown", "unknown"
 	}
 
-	return host, sanitizeSegment(owner), sanitizeSegment(repo)
+	return host, repo.SanitizeSegment(owner), repo.SanitizeSegment(repoName)
 }
 
 // baseHistory contains common fields and logic for history stores
@@ -65,13 +67,13 @@ type PromptHistory struct {
 }
 
 // NewPromptHistoryStore creates a new prompt history store using SQLite
-func NewPromptHistoryStore(db *storage.DB, repoInfo RepoInfo) (*PromptHistory, error) {
+func NewPromptHistoryStore(db *storage.DB, repoInfo repo.RepoInfo) (*PromptHistory, error) {
 	if db == nil {
 		return nil, fmt.Errorf("storage not initialized")
 	}
 
 	host, org, project := parseProjectSlug(repoInfo.ProjectRoot)
-	branch := branchSlugOrDefault(repoInfo.Branch)
+	branch := repoInfo.BranchSlugOrDefault()
 
 	// Create history store with config (use defaults if not available)
 	histCfg := &storage.HistoryConfig{
@@ -117,13 +119,13 @@ type CommandHistory struct {
 }
 
 // NewCommandHistoryStore creates a new command history store using SQLite
-func NewCommandHistoryStore(db *storage.DB, repoInfo RepoInfo) (*CommandHistory, error) {
+func NewCommandHistoryStore(db *storage.DB, repoInfo repo.RepoInfo) (*CommandHistory, error) {
 	if db == nil {
 		return nil, fmt.Errorf("storage not initialized")
 	}
 
 	host, org, project := parseProjectSlug(repoInfo.ProjectRoot)
-	branch := branchSlugOrDefault(repoInfo.Branch)
+	branch := repoInfo.BranchSlugOrDefault()
 
 	// Create history store with config (use defaults if not available)
 	histCfg := &storage.HistoryConfig{
@@ -171,20 +173,20 @@ type SessionStore struct {
 	Project     string
 	Branch      string
 	ProjectRoot string
-	saveChan    chan *Session
+	saveChan    chan *shogunate.Session
 	stopChan    chan struct{}
 	closeOnce   sync.Once
 	wg          sync.WaitGroup // Track in-flight saves
 }
 
 // NewSessionStore creates a new session store using SQLite
-func NewSessionStore(db *storage.DB, repoInfo RepoInfo, maxSessions, maxAgeDays int) (*SessionStore, error) {
+func NewSessionStore(db *storage.DB, repoInfo repo.RepoInfo, maxSessions, maxAgeDays int) (*SessionStore, error) {
 	if db == nil {
 		return nil, fmt.Errorf("storage not initialized")
 	}
 
 	host, org, project := parseProjectSlug(repoInfo.ProjectRoot)
-	branch := branchSlugOrDefault(repoInfo.Branch)
+	branch := repoInfo.BranchSlugOrDefault()
 
 	sessCfg := &storage.SessionConfig{
 		Enabled:     true,
@@ -199,7 +201,7 @@ func NewSessionStore(db *storage.DB, repoInfo RepoInfo, maxSessions, maxAgeDays 
 		Project:     project,
 		Branch:      branch,
 		ProjectRoot: repoInfo.ProjectRoot,
-		saveChan:    make(chan *Session, 100),
+		saveChan:    make(chan *shogunate.Session, 100),
 		stopChan:    make(chan struct{}),
 	}
 
@@ -237,7 +239,7 @@ func (s *SessionStore) saveWorker() {
 }
 
 // SaveSession saves a session asynchronously
-func (s *SessionStore) SaveSession(session *Session) {
+func (s *SessionStore) SaveSession(session *shogunate.Session) {
 	if session != nil {
 		s.wg.Add(1) // Track this save
 		select {
@@ -250,21 +252,22 @@ func (s *SessionStore) SaveSession(session *Session) {
 }
 
 // SaveSessionSync saves a session synchronously
-func (s *SessionStore) SaveSessionSync(session *Session) error {
+func (s *SessionStore) SaveSessionSync(session *shogunate.Session) error {
 	return s.saveSessionSync(session)
 }
 
-func (s *SessionStore) saveSessionSync(session *Session) error {
+func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 	if session == nil {
 		return fmt.Errorf("cannot save nil session")
 	}
 
 	// Remove unmatched tool calls before saving
-	session.sanitizeMessages()
+	session.SanitizeMessages()
 
 	// Don't save empty sessions (only system messages)
+	messages := session.GetMessages()
 	hasUserContent := false
-	for _, msg := range session.Messages {
+	for _, msg := range messages {
 		if msg.Role == llms.ChatMessageTypeHuman || msg.Role == llms.ChatMessageTypeAI {
 			hasUserContent = true
 			break
@@ -276,7 +279,7 @@ func (s *SessionStore) saveSessionSync(session *Session) error {
 
 	// Generate ID and timestamps for new sessions
 	if session.ID == "" {
-		session.ID = generateSessionID()
+		session.ID = shogunate.GenerateSessionID()
 	}
 	now := time.Now()
 	if session.CreatedAt.IsZero() {
@@ -285,8 +288,8 @@ func (s *SessionStore) saveSessionSync(session *Session) error {
 	session.LastUpdated = now
 
 	// Set FirstPrompt if not set
-	if session.FirstPrompt == "" && len(session.Messages) > 0 {
-		for _, msg := range session.Messages {
+	if session.FirstPrompt == "" && len(messages) > 0 {
+		for _, msg := range messages {
 			if msg.Role == llms.ChatMessageTypeHuman {
 				for _, part := range msg.Parts {
 					if textPart, ok := part.(llms.TextContent); ok {
@@ -314,7 +317,7 @@ func (s *SessionStore) saveSessionSync(session *Session) error {
 		Model:        session.Model,
 		WorkingDir:   session.WorkingDir,
 		ProjectSlug:  session.ProjectSlug,
-		Messages:     session.Messages,
+		Messages:     messages,
 		ContextFiles: session.ContextFiles,
 	}
 
@@ -322,7 +325,7 @@ func (s *SessionStore) saveSessionSync(session *Session) error {
 }
 
 // LoadSession loads a session by ID
-func (s *SessionStore) LoadSession(id string) (*Session, error) {
+func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 	storageSession, host, org, project, branch, err := s.store.LoadSession(id)
 	if err != nil {
 		return nil, err
@@ -334,8 +337,8 @@ func (s *SessionStore) LoadSession(id string) (*Session, error) {
 	_ = project
 	_ = branch
 
-	// Convert storage.SessionData to main.Session
-	session := &Session{
+	// Convert storage.SessionData to shogunate.Session
+	session := &shogunate.Session{
 		ID:           storageSession.ID,
 		CreatedAt:    storageSession.CreatedAt,
 		LastUpdated:  storageSession.LastUpdated,
@@ -344,24 +347,23 @@ func (s *SessionStore) LoadSession(id string) (*Session, error) {
 		Model:        storageSession.Model,
 		WorkingDir:   storageSession.WorkingDir,
 		ProjectSlug:  storageSession.ProjectSlug,
-		Messages:     storageSession.Messages,
 		ContextFiles: storageSession.ContextFiles,
 	}
+	session.SetMessages(storageSession.Messages)
 
 	return session, nil
 }
 
 // ListSessions lists sessions for the current branch
-func (s *SessionStore) ListSessions(limit int) ([]Session, error) {
+func (s *SessionStore) ListSessions(limit int) ([]shogunate.Session, error) {
 	storageSessions, err := s.store.ListSessions(s.Host, s.Org, s.Project, s.Branch, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert []storage.SessionData to []main.Session
-	sessions := make([]Session, len(storageSessions))
+	sessions := make([]shogunate.Session, len(storageSessions))
 	for i, ss := range storageSessions {
-		sessions[i] = Session{
+		sessions[i] = shogunate.Session{
 			ID:           ss.ID,
 			CreatedAt:    ss.CreatedAt,
 			LastUpdated:  ss.LastUpdated,
@@ -370,10 +372,10 @@ func (s *SessionStore) ListSessions(limit int) ([]Session, error) {
 			Model:        ss.Model,
 			WorkingDir:   ss.WorkingDir,
 			ProjectSlug:  ss.ProjectSlug,
-			Messages:     ss.Messages,
 			ContextFiles: ss.ContextFiles,
 			MessageCount: ss.MessageCount,
 		}
+		sessions[i].SetMessages(ss.Messages)
 	}
 
 	return sessions, nil

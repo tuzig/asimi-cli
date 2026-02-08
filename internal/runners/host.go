@@ -15,8 +15,12 @@ type HostRunner struct {
 }
 
 // NewHostRunner creates a new HostRunner
-func NewHostRunner(msgChan chan<- Msg) *HostRunner {
-	return &HostRunner{msgChan: msgChan}
+func NewHostRunner() *HostRunner {
+	return &HostRunner{}
+}
+
+func (r *HostRunner) SetMessageChannel(msgChan chan<- Msg) {
+	r.msgChan = msgChan
 }
 
 func (r *HostRunner) Run(ctx context.Context, input Input) (Output, error) {
@@ -55,6 +59,10 @@ func (r *HostRunner) Run(ctx context.Context, input Input) (Output, error) {
 	output.Output = stdout.String() + "\n" + stderr.String()
 
 	if runErr != nil {
+		if ctx.Err() != nil {
+			output.ExitCode = "-1"
+			return output, ctx.Err()
+		}
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			output.ExitCode = fmt.Sprintf("%d", exitErr.ExitCode())
 		} else {
@@ -83,6 +91,9 @@ func (r *HostRunner) Close(ctx context.Context) error {
 
 func (r *HostRunner) RunnerType() string {
 	return "host"
+}
+
+func (r *HostRunner) AllowFallback(allow bool) {
 }
 
 // requestApproval sends an approval request via the message channel and waits for response

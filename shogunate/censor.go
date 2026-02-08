@@ -52,7 +52,7 @@ CRITICAL RULES:
 }
 
 // Tools returns the Censor's LLM tools for interactive sessions
-func (c *Censor) Tools(notify NotifyFunc) []Tool {
+func (c *Censor) Tools() []Tool {
 	toolList := []Tool{
 		// Specialized Censor tools for ethics review
 		&RecordPrecedentTool{censor: c},

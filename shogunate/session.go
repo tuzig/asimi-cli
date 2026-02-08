@@ -2,6 +2,7 @@ package shogunate
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,10 +14,41 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/tmc/langchaingo/llms"
 )
+
+// --- Stream notification message types ---
+
+// StreamChunkMsg contains a streaming text chunk from the LLM
+type StreamChunkMsg struct {
+	Text string
+}
+
+// StreamReasoningChunkMsg contains a reasoning/thinking chunk from the LLM
+type StreamReasoningChunkMsg struct {
+	Text string
+}
+
+// StreamStartMsg signals that streaming has begun
+type StreamStartMsg struct {
+	EdictID string
+}
+
+// StreamCompleteMsg signals that streaming has completed successfully
+type StreamCompleteMsg struct{}
+
+// StreamInterruptedMsg signals that streaming was interrupted
+type StreamInterruptedMsg struct{ PartialContent string }
+
+// StreamErrorMsg signals an error during streaming
+type StreamErrorMsg struct{ Err error }
+
+// StreamMaxTokensReachedMsg signals that the response was truncated due to token limit
+type StreamMaxTokensReachedMsg struct{ Content string }
 
 // SessionConfig holds configuration for minister sessions
 type SessionConfig struct {
@@ -40,13 +72,13 @@ type Session struct {
 	repoInfo     repo.RepoInfo
 	tools        []Tool
 	messages     []llms.MessageContent
-	notify       NotifyFunc
+	notify       internal.NotifyFunc
 	systemPrompt string
 
 	// Tool execution
 	toolCatalog map[string]Tool
 	toolDefs    []llms.Tool
-	scheduler   *CoreToolScheduler
+	scheduler   *runners.CoreToolScheduler
 
 	// Streaming
 	accumulatedContent strings.Builder
@@ -54,6 +86,9 @@ type Session struct {
 	// Loop detection
 	lastToolCallKey         string
 	toolCallRepetitionCount int
+
+	// MessageCount is the number of messages (used for display in session listings)
+	MessageCount int `json:"message_count,omitempty"`
 
 	// Context files - dynamically added via @ references
 	ContextFiles map[string]string `json:"context_files"`
@@ -77,8 +112,8 @@ func NewSession(
 	cfg *SessionConfig,
 	repoInfo repo.RepoInfo,
 	tools []Tool,
-	scheduler *CoreToolScheduler,
-	notify NotifyFunc,
+	scheduler *runners.CoreToolScheduler,
+	notify internal.NotifyFunc,
 	systemPrompt string,
 ) (*Session, error) {
 	now := time.Now()
@@ -86,7 +121,7 @@ func NewSession(
 
 	session := &Session{
 		ID:           GenerateID("session", now.String()),
-		CreatedAt:   now,
+		CreatedAt:    now,
 		LastUpdated:  now,
 		WorkingDir:   workingDir,
 		model:        model,
@@ -131,7 +166,7 @@ func NewSession(
 		session.scheduler = scheduler
 		session.scheduler.SetNotify(notify)
 	} else {
-		session.scheduler = NewCoreToolScheduler(notify)
+		session.scheduler = runners.NewCoreToolScheduler(notify)
 	}
 
 	// Initialize token counts
@@ -140,18 +175,27 @@ func NewSession(
 	return session, nil
 }
 
-// SetNotify sets the notification callback for both the session and its scheduler.
-// This must be called after NewSession if you want to change the notify callback.
-func (s *Session) SetNotify(notify NotifyFunc) {
-	s.notify = notify
-	if s.scheduler != nil {
-		s.scheduler.SetNotify(notify)
-	}
+// GetModel returns the LLM model for this session
+func (s *Session) GetModel() llms.Model {
+	return s.model
 }
 
 // Messages returns the session messages
 func (s *Session) Messages() []llms.MessageContent {
 	return s.messages
+}
+
+// SetMessages replaces the session messages (used when loading from storage)
+func (s *Session) SetMessages(msgs []llms.MessageContent) {
+	s.messages = msgs
+}
+
+// SetNotify updates the session's notify function and the scheduler's notify
+func (s *Session) SetNotify(notify internal.NotifyFunc) {
+	s.notify = notify
+	if s.scheduler != nil {
+		s.scheduler.SetNotify(notify)
+	}
 }
 
 // AddMessage adds a message to the session
@@ -1060,7 +1104,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			chunkStr := string(chunk)
 			s.accumulatedContent.WriteString(chunkStr)
 			if s.notify != nil {
-				s.notify(StreamChunkMsg(chunkStr))
+				s.notify(StreamChunkMsg{Text: chunkStr})
 			}
 			return nil
 		}
@@ -1074,7 +1118,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			}
 
 			if len(reasoningChunk) > 0 && s.notify != nil {
-				s.notify(StreamReasoningChunkMsg(string(reasoningChunk)))
+				s.notify(StreamReasoningChunkMsg{Text: string(reasoningChunk)})
 			}
 			return nil
 		}
@@ -1166,31 +1210,6 @@ func buildLLMTools(tools []Tool) ([]llms.Tool, map[string]Tool) {
 	return defs, execCatalog
 }
 
-// --- Stream notification message types ---
-
-// StreamChunkMsg contains a streaming text chunk from the LLM
-type StreamChunkMsg string
-
-// StreamReasoningChunkMsg contains a reasoning/thinking chunk from the LLM
-type StreamReasoningChunkMsg string
-
-// StreamStartMsg signals that streaming has begun
-type StreamStartMsg struct {
-	EdictID string
-}
-
-// StreamCompleteMsg signals that streaming has completed successfully
-type StreamCompleteMsg struct{}
-
-// StreamInterruptedMsg signals that streaming was interrupted
-type StreamInterruptedMsg struct{ PartialContent string }
-
-// StreamErrorMsg signals an error during streaming
-type StreamErrorMsg struct{ Err error }
-
-// StreamMaxTokensReachedMsg signals that the response was truncated due to token limit
-type StreamMaxTokensReachedMsg struct{ Content string }
-
 // --- Tool Input Types (for JSON parsing) ---
 
 // ReadFileInput represents the input for read_file tool
@@ -1215,103 +1234,17 @@ type ToolResult struct {
 	Error  error
 }
 
-// CoreToolScheduler handles tool execution with rate limiting
-type CoreToolScheduler struct {
-	notify NotifyFunc
-}
-
-// NewCoreToolScheduler creates a new tool scheduler
-func NewCoreToolScheduler(notify NotifyFunc) *CoreToolScheduler {
-	return &CoreToolScheduler{notify: notify}
-}
-
-// SetNotify sets the notification callback
-func (s *CoreToolScheduler) SetNotify(notify NotifyFunc) {
-	s.notify = notify
-}
-
-// Schedule schedules a tool for execution and returns a result channel
-func (s *CoreToolScheduler) Schedule(tool Tool, argsJSON string) <-chan ToolResult {
-	ch := make(chan ToolResult, 1)
-
-	go func() {
-		// Notify that tool is being executed
-		if s.notify != nil {
-			s.notify(ToolCallExecutingMsg{
-				Name:   tool.Name(),
-				Input:  argsJSON,
-				Format: tool.Format,
-			})
-		}
-
-		out, err := tool.Call(context.Background(), argsJSON)
-
-		// Notify result
-		if s.notify != nil {
-			if err != nil {
-				s.notify(ToolCallErrorMsg{
-					Name:   tool.Name(),
-					Input:  argsJSON,
-					Error:  err,
-					Format: tool.Format,
-				})
-			} else {
-				s.notify(ToolCallSuccessMsg{
-					Name:   tool.Name(),
-					Input:  argsJSON,
-					Output: out,
-					Format: tool.Format,
-				})
-			}
-		}
-
-		ch <- ToolResult{Output: out, Error: err}
-		close(ch)
-	}()
-
-	return ch
-}
-
-// Tool notification message types
-type (
-	ToolCallScheduledMsg struct {
-		Name   string
-		Input  string
-		Format func(input, result string, err error) string
-	}
-	ToolCallExecutingMsg struct {
-		Name   string
-		Input  string
-		Format func(input, result string, err error) string
-	}
-	ToolCallSuccessMsg struct {
-		Name   string
-		Input  string
-		Output string
-		Format func(input, result string, err error) string
-	}
-	ToolCallErrorMsg struct {
-		Name   string
-		Input  string
-		Error  error
-		Format func(input, result string, err error) string
-	}
-	ToolCallAbortedMsg struct {
-		Name  string
-		Input string
-	}
-)
-
 // --- JSON Helper ---
 
 // JSON is a map for storing arbitrary JSON data
 type JSON = map[string]any
 
-// MustMarshalJSON marshals a value to JSON, panicking on error
-func MustMarshalJSON(v any) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return string(data)
+func GenerateSessionID() string {
+	timestamp := time.Now().Format("2006-01-02-150405")
+
+	randomBytes := make([]byte, 4)
+	crand.Read(randomBytes)
+	suffix := hex.EncodeToString(randomBytes)
+
+	return fmt.Sprintf("%s-%s", timestamp, suffix)
 }

@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	internalconfig "github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
@@ -53,7 +54,7 @@ type TUIModel struct {
 	// Application services (passed in, not owned)
 	sessionStore *SessionStore
 	db           *storage.DB
-	scheduler    *CoreToolScheduler
+	scheduler    *runners.CoreToolScheduler
 	shogunate    *shogunate.Shogunate
 
 	// Shogunate integration
@@ -84,7 +85,8 @@ type TUIModel struct {
 	ctrlCFirstPressTime time.Time  // When the first press was completed (for window calculation)
 
 	// Host command approval state
-	pendingHostApproval *HostCommandApprovalRequest
+	pendingHostApproval *runners.ApprovalRequestMsg
+	repoInfo            *repo.RepoInfo
 }
 
 // ctrlCState represents the state machine for CTRL-C handling
@@ -121,14 +123,9 @@ type shellCommandResultMsg struct {
 	err      error
 }
 
-// hostCommandApprovalMsg is sent when a host command needs user approval
-type hostCommandApprovalMsg struct {
-	request HostCommandApprovalRequest
-}
-
 // NewTUIModel creates a new TUI model
 // NewTUIModelWithStores creates a new TUI model with provided stores (for fx injection)
-func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *CoreToolScheduler, shog *shogunate.Shogunate) *TUIModel {
+func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *runners.CoreToolScheduler, shog *shogunate.Shogunate) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
@@ -139,25 +136,22 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 	status := NewStatusComponent(80)
 	status.SetRepoInfo(repoInfo)
 
-	// Initialize shell runner info for status display
-	shellInfo := getShellRunnerInfo()
-	status.SetShellRunnerInfo(&shellInfo)
-
 	markdownEnabled := false
-	if config != nil {
-		markdownEnabled = config.UI.MarkdownEnabled
+	if cfg != nil {
+		markdownEnabled = cfg.UI.MarkdownEnabled
 		// Set prompt expanded height from config
-		if config.UI.PromptExpandedHeight > 0 {
-			prompt.SetExpandedHeight(config.UI.PromptExpandedHeight)
+		if cfg.UI.PromptExpandedHeight > 0 {
+			prompt.SetExpandedHeight(cfg.UI.PromptExpandedHeight)
 		}
 	}
 
 	model := &TUIModel{
-		config: config,
+		config: cfg,
 		// width:  80, // Default width
 		// height: 24, // Default height
 		theme: theme,
 
+		repoInfo: repoInfo,
 		// Initialize components
 		status:         status,
 		prompt:         prompt,
@@ -174,7 +168,7 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 		completionMode:       "",
 		sessionActive:        false,
 		rawMode:              false,
-		configCreated:        GetConfigCreated(), // Set from global flag
+		configCreated:        config.ConfigCreated, // Set from global flag
 
 		// Command registry
 		commandRegistry: registry,
@@ -193,7 +187,7 @@ func NewTUIModel(config *Config, repoInfo *RepoInfo, promptHistory *PromptHistor
 	model.content.Chat.GetStatus = func() string { return model.Mode }
 
 	// Set initial status info - show disconnected state initially
-	model.status.SetProvider(config.LLM.Provider, config.LLM.Model, false)
+	model.status.SetProvider(cfg.LLM.Provider, cfg.LLM.Model, false)
 	model.initHistory()
 
 	return model
@@ -251,7 +245,7 @@ func (m *TUIModel) getCurrentSession() *shogunate.Session {
 
 // SetSession configures the shogunate with an LLM model from a legacy session.
 // This is used during initialization and model changes.
-func (m *TUIModel) SetSession(session *Session) {
+func (m *TUIModel) SetSession(session *shogunate.Session) {
 	if session != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 		// Configure the shogunate with the model from the legacy session
@@ -259,7 +253,7 @@ func (m *TUIModel) SetSession(session *Session) {
 			model := session.GetModel()
 			if model != nil {
 				cfg := &shogunate.SessionConfig{
-					LLM: internalconfig.LLMConfig{
+					LLM: config.LLMConfig{
 						MaxTurns:          m.config.LLM.MaxTurns,
 						MaxThinkingTokens: m.config.LLM.MaxThinkingTokens,
 						Provider:          m.config.LLM.Provider,
@@ -281,14 +275,14 @@ func (m *TUIModel) SetSession(session *Session) {
 // reinitializeSession recreates the LLM client and session with current config
 func (m *TUIModel) reinitializeSession() error {
 	// Get the LLM client with the updated config
+	/* TODO: fix this
 	llm, err := getModelClient(m.config)
 	if err != nil {
 		return fmt.Errorf("failed to create LLM client: %w", err)
 	}
 
 	// Create a new session with the LLM
-	repoInfo := GetRepoInfo()
-	sess, err := NewSession(llm, m.config, repoInfo, m.scheduler, func(msg any) {
+	sess, err := NewSession(llm, m.config, m.status.repoInfo, m.scheduler, func(msg any) {
 		if program != nil {
 			program.Send(msg)
 		}
@@ -299,6 +293,7 @@ func (m *TUIModel) reinitializeSession() error {
 
 	// Set the new session
 	m.SetSession(sess)
+	*/
 	return nil
 }
 
@@ -317,22 +312,7 @@ func (m *TUIModel) saveSession() {
 		return
 	}
 
-	// Convert shogunate.Session to legacy Session for storage
-	// TODO: Migrate SessionStore to work directly with shogunate.Session
-	legacySession := &Session{
-		ID:           session.ID,
-		CreatedAt:    session.CreatedAt,
-		LastUpdated:  session.LastUpdated,
-		FirstPrompt:  session.FirstPrompt,
-		Provider:     session.Provider,
-		Model:        session.Model,
-		WorkingDir:   session.WorkingDir,
-		ProjectSlug:  session.ProjectSlug,
-		Messages:     session.GetMessages(),
-		ContextFiles: session.GetContextFiles(),
-	}
-
-	m.sessionStore.SaveSession(legacySession)
+	m.sessionStore.SaveSession(session)
 	slog.Debug("session auto-save queued")
 }
 
@@ -349,6 +329,7 @@ func (m *TUIModel) shutdown() {
 // Init implements bubbletea.Model
 func (m TUIModel) Init() tea.Cmd {
 	// Set up the host command approval channel
+	/* TODO: remove
 	approvalChan := make(chan HostCommandApprovalRequest, 1)
 	SetHostCommandApprovalChannel(approvalChan)
 
@@ -360,6 +341,7 @@ func (m TUIModel) Init() tea.Cmd {
 			}
 		}
 	}()
+	*/
 
 	// Bubbletea will automatically send a WindowSizeMsg after Init
 	return nil
@@ -1202,14 +1184,14 @@ func (m *TUIModel) cancelStreaming() {
 func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, contextFiles map[string]string) tea.Cmd {
 	if m.shogunate == nil {
 		return func() tea.Msg {
-			return streamErrorMsg{err: fmt.Errorf("Shogunate not initialized")}
+			return shogunate.StreamErrorMsg{Err: fmt.Errorf("Shogunate not initialized")}
 		}
 	}
 
 	chancellor := m.shogunate.GetMinister("chancellor")
 	if chancellor == nil {
 		return func() tea.Msg {
-			return streamErrorMsg{err: fmt.Errorf("Chancellor not found")}
+			return shogunate.StreamErrorMsg{Err: fmt.Errorf("Chancellor not found")}
 		}
 	}
 
@@ -1217,7 +1199,7 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 	ch, ok := chancellor.(*shogunate.Chancellor)
 	if !ok {
 		return func() tea.Msg {
-			return streamErrorMsg{err: fmt.Errorf("invalid Chancellor type")}
+			return shogunate.StreamErrorMsg{Err: fmt.Errorf("invalid Chancellor type")}
 		}
 	}
 
@@ -1238,154 +1220,7 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 	}()
 
 	m.streamingActive = true
-
-	// Return command that listens for responses
-	return m.listenToShogunateReplies(ctx, streamChan)
-}
-
-// listenToShogunateReplies returns a command that processes typed messages from the Chancellor
-func (m *TUIModel) listenToShogunateReplies(ctx context.Context, streamChan <-chan any) tea.Cmd {
-	return func() tea.Msg {
-		select {
-		case <-ctx.Done():
-			return streamInterruptedMsg{partialContent: ""}
-		case msg, ok := <-streamChan:
-			if !ok {
-				// Channel closed, streaming complete
-				return streamCompleteMsg{}
-			}
-
-			// Type-switch on the actual message types from shogunate
-			switch m := msg.(type) {
-			case shogunate.StreamChunkMsg:
-				return shogunateTextMsg{text: string(m), streamChan: streamChan, ctx: ctx}
-			case shogunate.StreamReasoningChunkMsg:
-				return shogunateThoughtMsg{text: string(m), streamChan: streamChan, ctx: ctx}
-			case shogunate.StreamInterruptedMsg:
-				return shogunateTextMsg{text: m.PartialContent, streamChan: streamChan, ctx: ctx}
-			case shogunate.StreamErrorMsg:
-				return streamErrorMsg{err: m.Err}
-			case shogunate.StreamDoneMsg:
-				return streamCompleteMsg{}
-			case shogunate.ToolCallExecutingMsg:
-				return shogunateToolMsg{
-					toolID:     m.Name,
-					toolMsg:    m.Format(m.Input, "", nil),
-					streamChan: streamChan,
-					ctx:        ctx,
-				}
-			case shogunate.ToolCallSuccessMsg:
-				return shogunateToolMsg{
-					toolID:     m.Name,
-					toolMsg:    m.Format(m.Input, m.Output, nil),
-					streamChan: streamChan,
-					ctx:        ctx,
-				}
-			case shogunate.ToolCallErrorMsg:
-				return shogunateToolMsg{
-					toolID:     m.Name,
-					toolMsg:    m.Format(m.Input, "", m.Error),
-					streamChan: streamChan,
-					ctx:        ctx,
-				}
-			case shogunate.MinisterInvokingMsg:
-				return shogunateToolMsg{
-					toolID:     "invoke_minister",
-					toolMsg:    fmt.Sprintf("Invoking %s...", m.MinisterID),
-					streamChan: streamChan,
-					ctx:        ctx,
-				}
-			case shogunate.MinisterCompletedMsg:
-				status := "completed"
-				if m.Error != nil {
-					status = "failed"
-				}
-				return shogunateToolMsg{
-					toolID:     "invoke_minister",
-					toolMsg:    fmt.Sprintf("Minister %s %s", m.MinisterID, status),
-					streamChan: streamChan,
-					ctx:        ctx,
-				}
-			case shogunate.RitualStepMsg:
-				var message string
-				if m.StepName != "" {
-					message = fmt.Sprintf("[%d/%d] %s: %s", m.StepIndex+1, m.TotalSteps, m.StepName, m.Status)
-				} else {
-					message = fmt.Sprintf("Ritual %s: %s", m.RitualName, m.Status)
-				}
-				return shogunateToolMsg{
-					toolID:     "ritual",
-					toolMsg:    message,
-					streamChan: streamChan,
-					ctx:        ctx,
-				}
-			default:
-				// Unknown message type, continue listening
-				return listenToShogunateRepliesCmd(ctx, streamChan)
-			}
-		}
-	}
-}
-
-// listenToShogunateRepliesCmd is a helper to create a listening command without TUIModel reference
-func listenToShogunateRepliesCmd(ctx context.Context, streamChan <-chan any) tea.Msg {
-	select {
-	case <-ctx.Done():
-		return streamInterruptedMsg{partialContent: ""}
-	case msg, ok := <-streamChan:
-		if !ok {
-			return streamCompleteMsg{}
-		}
-		// Re-process - this handles the recursive case for unknown types
-		switch m := msg.(type) {
-		case shogunate.StreamChunkMsg:
-			return shogunateTextMsg{text: string(m), streamChan: streamChan, ctx: ctx}
-		case shogunate.StreamReasoningChunkMsg:
-			return shogunateThoughtMsg{text: string(m), streamChan: streamChan, ctx: ctx}
-		case shogunate.StreamInterruptedMsg:
-			return shogunateTextMsg{text: m.PartialContent, streamChan: streamChan, ctx: ctx}
-		case shogunate.StreamErrorMsg:
-			return streamErrorMsg{err: m.Err}
-		case shogunate.StreamDoneMsg:
-			return streamCompleteMsg{}
-		case shogunate.ToolCallExecutingMsg:
-			return shogunateToolMsg{toolID: m.Name, toolMsg: m.Format(m.Input, "", nil), streamChan: streamChan, ctx: ctx}
-		case shogunate.ToolCallSuccessMsg:
-			return shogunateToolMsg{toolID: m.Name, toolMsg: m.Format(m.Input, m.Output, nil), streamChan: streamChan, ctx: ctx}
-		case shogunate.ToolCallErrorMsg:
-			return shogunateToolMsg{toolID: m.Name, toolMsg: m.Format(m.Input, "", m.Error), streamChan: streamChan, ctx: ctx}
-		default:
-			// Unknown, continue
-			return listenToShogunateRepliesCmd(ctx, streamChan)
-		}
-	}
-}
-
-// Shogunate streaming message types
-type shogunateTextMsg struct {
-	text       string
-	streamChan <-chan any
-	ctx        context.Context
-}
-
-type shogunateThoughtMsg struct {
-	text       string
-	streamChan <-chan any
-	ctx        context.Context
-}
-
-type shogunateToolMsg struct {
-	toolID     string
-	toolMsg    string
-	streamChan <-chan any
-	ctx        context.Context
-}
-
-type shogunateContextMsg struct {
-	key        string
-	value      string
-	streamChan <-chan any
-	ctx        context.Context
+	return nil
 }
 
 func (m *TUIModel) saveHistoryPresentState() {
@@ -1524,7 +1359,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 	} else {
 		// Clear any lingering toast notifications before handling a new prompt
 		m.commandLine.ClearToasts()
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 
 		// Check if we're submitting a historical prompt (user navigated history)
 		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
@@ -1694,10 +1529,10 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 		ctx := context.Background()
 
 		// Get the current shell runner (podman sandbox or host)
-		runner := getShellRunner()
+		runner := m.shogunate.GetRunner()
 
 		// User-initiated commands never need approval
-		params := RunShellCommandInput{
+		params := runners.Input{
 			Command:        shellCmd,
 			Description:    "User shell command",
 			BypassApproval: true, // User explicitly requested this command
@@ -1741,7 +1576,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// This logic is adapted from handleEnterKey
 		m.commandLine.ClearToasts()
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 
 		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
 			entry := m.sessionPromptHistory[m.historyCursor]
@@ -1829,26 +1664,26 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Use AddAIChunk for non-streaming AI responses
 		m.content.Chat.AddAIChunk(string(msg))
 		m.content.Chat.FinalizeLastAIMessage()
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 
-	case ToolCallScheduledMsg:
+	case runners.ToolCallScheduledMsg:
 		m.content.Chat.AddToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
 		m.content.Chat.HandleToolCallScheduled(msg)
 
-	case ToolCallExecutingMsg:
+	case runners.ToolCallExecutingMsg:
 		m.content.Chat.AddToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
 		m.content.Chat.HandleToolCallExecuting(msg)
 
-	case ToolCallSuccessMsg:
+	case runners.ToolCallSuccessMsg:
 		m.content.Chat.AddToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
 		m.content.Chat.HandleToolCallSuccess(msg)
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 
-	case ToolCallErrorMsg:
+	case runners.ToolCallErrorMsg:
 		m.content.Chat.AddToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
 		m.content.Chat.HandleToolCallError(msg)
 
-	case ToolCallAbortedMsg:
+	case runners.ToolCallAbortedMsg:
 		m.content.Chat.AddToRawHistory("TOOL_ABORTED", fmt.Sprintf("%s\nInput: %s\nReason: sandbox restarted", msg.Call.Tool.Name(), msg.Call.Input))
 		m.content.Chat.HandleToolCallAborted(msg)
 
@@ -1856,42 +1691,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Chat.AddToRawHistory("ERROR", fmt.Sprintf("%v", msg.err))
 		m.content.Chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 
-	case streamStartMsg:
+	case shogunate.StreamStartMsg:
 		// Streaming has started
 		m.content.Chat.AddToRawHistory("STREAM_START", "AI streaming response started")
 		slog.Debug("streamStartMsg", "starting_stream", true)
 		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
 
-	case streamChunkMsg:
-		// For the first chunk, add a new AI message. For subsequent chunks, append to the last message.
-		m.content.Chat.AddToRawHistory("STREAM_CHUNK", string(msg))
-		// Reset the waiting timer - we received data, so restart the quiet time countdown
-		if m.streamingActive {
-			// Restart the waiting indicator to track quiet time
-			m.waitingStart = time.Now()
-			if !m.waitingForResponse {
-				waitCmd := m.startWaitingForResponse()
-				// Update content (which handles chat updates)
-				var contentCmd tea.Cmd
-				m.content, contentCmd = m.content.Update(msg)
-				return m, tea.Batch(waitCmd, contentCmd)
-			}
-		}
-		chat := m.content.Chat
-		// Use unified AddAIChunk method for streaming AI responses
-		chat.AddAIChunk(string(msg))
-		slog.Debug("added_ai_chunk", "total_messages", len(m.content.Chat.Messages))
-
-	case streamReasoningChunkMsg:
-		// Handle reasoning/thinking chunks from models like Claude with extended thinking (#38)
-		m.content.Chat.AddToRawHistory("STREAM_REASONING_CHUNK", string(msg))
-		slog.Debug("streamReasoningChunkMsg", "chunk_length", len(msg))
-
-		// Use AddThinkingChunk which handles empty checks and appending internally
-		m.content.Chat.AddThinkingChunk(string(msg))
-
-	case streamCompleteMsg:
+	case shogunate.StreamCompleteMsg:
 		m.content.Chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(m.content.Chat.Messages))
 		m.stopStreaming()
@@ -1911,86 +1718,69 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.saveSession()
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 
 		return m, guardrailCmd
 
-	case streamInterruptedMsg:
+	case shogunate.StreamInterruptedMsg:
 		// Streaming was interrupted by user
-		m.content.Chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.partialContent))
-		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.partialContent))
+		m.content.Chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
+		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on interrupt
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 
-	case streamErrorMsg:
-		fullError := fmt.Sprintf("Model Error: %v", msg.err)
-		m.content.Chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.err))
-		slog.Error("streamErrorMsg", "error", msg.err)
+	case shogunate.StreamErrorMsg:
+		fullError := fmt.Sprintf("Model Error: %v", msg.Err)
+		m.content.Chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.Err))
+		slog.Error("shogunate.StreamErrorMsg", "error", msg.Err)
 		// Add full error message to chat for visibility
 		m.content.Chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
 		// Toast will be automatically truncated by commandline component if needed
 		m.commandLine.AddToast(fullError, "error", time.Second*5)
 		m.status.SetError() // Update status icon to show error
 		m.stopStreaming()
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 
-	case streamMaxTurnsExceededMsg:
-		// Max turns exceeded, mark session as inactive and show warning
-		m.content.Chat.AddToRawHistory("STREAM_MAX_TURNS_EXCEEDED", fmt.Sprintf("AI streaming ended after reaching max turns limit: %d", msg.maxTurns))
-		slog.Warn("streamMaxTurnsExceededMsg", "max_turns", msg.maxTurns)
-		m.content.Chat.AddMessage(fmt.Sprintf("\n⚠️  Conversation ended after reaching maximum turn limit (%d turns)", msg.maxTurns))
-		m.stopStreaming()
-		m.streamCompleteCallback = nil // Clear callback on max turns
-		refreshGitInfo()
-
-	case streamMaxTokensReachedMsg:
+		/* TODO: Add the message bellow
+		case streamMaxTurnsExceededMsg:
+			// Max turns exceeded, mark session as inactive and show warning
+			m.content.Chat.AddToRawHistory("STREAM_MAX_TURNS_EXCEEDED", fmt.Sprintf("AI streaming ended after reaching max turns limit: %d", msg.maxTurns))
+			slog.Warn("streamMaxTurnsExceededMsg", "max_turns", msg.maxTurns)
+			m.content.Chat.AddMessage(fmt.Sprintf("\n⚠️  Conversation ended after reaching maximum turn limit (%d turns)", msg.maxTurns))
+			m.stopStreaming()
+			m.streamCompleteCallback = nil // Clear callback on max turns
+			m.repoInfo.RefreshDiff()
+		*/
+	case shogunate.StreamMaxTokensReachedMsg:
 		// Max tokens reached, mark session as inactive and show warning
-		m.content.Chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.content))
-		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.content))
+		m.content.Chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.Content))
+		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.Content))
 		m.content.Chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on max tokens
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 
 	// Shogunate streaming message handlers
-	case shogunateTextMsg:
+	case shogunate.StreamChunkMsg:
 		// Handle text chunks from Shogunate
-		m.content.Chat.AddToRawHistory("SHOGUNATE_TEXT", msg.text)
+		m.content.Chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
 		if m.streamingActive {
 			m.waitingStart = time.Now()
 			if !m.waitingForResponse {
 				waitCmd := m.startWaitingForResponse()
-				m.content.Chat.AddAIChunk(msg.text)
-				return m, tea.Batch(waitCmd, m.listenToShogunateReplies(msg.ctx, msg.streamChan))
+				m.content.Chat.AddAIChunk(msg.Text)
+				return m, waitCmd
 			}
 		}
-		m.content.Chat.AddAIChunk(msg.text)
-		return m, m.listenToShogunateReplies(msg.ctx, msg.streamChan)
+		m.content.Chat.AddAIChunk(msg.Text)
+		return m, nil
 
-	case shogunateThoughtMsg:
+	case shogunate.StreamReasoningChunkMsg:
 		// Handle thinking/reasoning chunks from Shogunate
-		m.content.Chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.text)
-		m.content.Chat.AddThinkingChunk(msg.text)
-		return m, m.listenToShogunateReplies(msg.ctx, msg.streamChan)
-
-	case shogunateToolMsg:
-		// Handle tool execution updates from Shogunate
-		m.content.Chat.AddToRawHistory("SHOGUNATE_TOOL", fmt.Sprintf("%s: %s", msg.toolID, msg.toolMsg))
-		m.content.Chat.AddMessage(fmt.Sprintf("⏺ %s", msg.toolMsg))
-		return m, m.listenToShogunateReplies(msg.ctx, msg.streamChan)
-
-	case shogunateContextMsg:
-		// Handle context updates from Shogunate (e.g., edictID)
-		if msg.key == "edict_id" {
-			m.currentEdictID = msg.value
-			slog.Debug("updated current edict ID", "edict_id", msg.value)
-			// Update status bar with the shogunate session for token tracking
-			if session := m.getCurrentSession(); session != nil {
-				m.status.SetSession(session)
-			}
-		}
-		return m, m.listenToShogunateReplies(msg.ctx, msg.streamChan)
+		m.content.Chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
+		m.content.Chat.AddThinkingChunk(msg.Text)
+		return m, nil
 
 	case showHelpMsg:
 		// Show the help viewer with the requested topic
@@ -2050,13 +1840,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Chat.AddMessage(cancelMsg.String())
 		return m, nil
 
-	case hostCommandApprovalMsg:
+	case runners.ApprovalRequestMsg:
 		// Store the pending approval request
-		m.pendingHostApproval = &msg.request
-		m.content.Chat.UpdateLastToolCallEmoji(msg.request.Command, approvalPrefix)
-		// Truncate command for display if too long
-		displayCmd := msg.request.Command
+		m.pendingHostApproval = &msg
+		m.content.Chat.UpdateLastToolCallEmoji(msg.Command, approvalPrefix)
+		displayCmd := msg.Command
 		maxLen := 50
+		// TODO: truncate the middle
 		if len(displayCmd) > maxLen {
 			displayCmd = displayCmd[:maxLen] + "..."
 		}
@@ -2168,7 +1958,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Save config and reinitialize session
-		if err := SaveConfig(m.config); err != nil {
+		if err := config.SaveConfig(m.config); err != nil {
 			slog.Error("Failed to save config", "error", err)
 			m.commandLine.AddToast("Failed to save config", "error", 4000)
 			// Revert changes
@@ -2182,7 +1972,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Revert changes
 				m.config.LLM.Provider = oldProvider
 				m.config.LLM.Model = oldModel
-				if err := SaveConfig(m.config); err != nil {
+				if err := config.SaveConfig(m.config); err != nil {
 					slog.Error("Failed to save reverted config", "error", err)
 				}
 			} else {
@@ -2378,7 +2168,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			model := msg.session.GetModel()
 			if model != nil {
 				cfg := &shogunate.SessionConfig{
-					LLM: internalconfig.LLMConfig{
+					LLM: config.LLMConfig{
 						MaxTurns:          m.config.LLM.MaxTurns,
 						MaxThinkingTokens: m.config.LLM.MaxThinkingTokens,
 						Provider:          m.config.LLM.Provider,
@@ -2433,12 +2223,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Set the shell runner based on RunOnHost flag
 		if msg.RunOnHost {
 			slog.Debug("using host shell runner for this conversation")
-			currentShellRunner.AllowFallback(true)
+			m.shogunate.GetRunner().AllowFallback(true)
 
 			// Wrap the caller's func with code to restore the previous runner
 			originalCallback := msg.onStreamComplete
 			msg.onStreamComplete = func(model *TUIModel) tea.Cmd {
-				currentShellRunner.AllowFallback(false)
+				model.shogunate.GetRunner().AllowFallback(false)
 
 				// Call the original callback if it exists
 				if originalCallback != nil {
@@ -2455,7 +2245,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var upgradeCmd tea.Cmd
 		if msg.tryUpgradeToSandbox {
 			upgradeCmd = func() tea.Msg {
-				upgraded := tryUpgradeToSandbox(m.config)
+				upgraded := false // TODO: fix tryUpgradeToSandbox(m.config)
 				return sandboxUpgradeMsg{upgraded: upgraded}
 			}
 		}
@@ -2581,18 +2371,18 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Chat.AddMessage(fmt.Sprintf("❌ Failed to compact conversation: %v\n\nYour conversation context was left unchanged.", msg.err))
 		m.commandLine.AddToast("Compaction failed - context unchanged", "error", 3000)
 
-	case containerLaunchMsg:
+	case runners.ContainerLaunchedMsg:
 		// Container launch notification
-		m.commandLine.AddToast(msg.message, "info", 3*time.Second)
+		m.commandLine.AddToast(msg.Message, "info", 3*time.Second)
 		// Update shell runner info in status bar
-		info := getShellRunnerInfo()
-		m.status.SetShellRunnerInfo(&info)
+		// TODO set the container ID
+		m.status.ContainerID = m.status.ContainerID
 		return m, nil
 
 	case shellCommandResultMsg:
 		// Shell command execution completed
 		m.content.Chat.AddShellCommandResult(msg)
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 		m.prompt.Focus()
 		return m, nil
 
@@ -2625,13 +2415,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Try to upgrade to sandbox (async) in case it wasn't already done
-			refreshGitInfo()
+			m.repoInfo.RefreshDiff()
 			return m, func() tea.Msg {
-				upgraded := tryUpgradeToSandbox(m.config)
+				upgraded := false // TODO: we need to tryUpgradeToSandbox(m.config)
 				return sandboxUpgradeMsg{upgraded: upgraded}
 			}
 		}
-		refreshGitInfo()
+		m.repoInfo.RefreshDiff()
 		return m, nil
 
 	case initWorkflowErrorMsg:

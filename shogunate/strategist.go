@@ -57,7 +57,7 @@ func (s *Strategist) Role() string {
 }
 
 // Tools returns the Strategist's LLM tools for interactive sessions
-func (s *Strategist) Tools(notify NotifyFunc) []Tool {
+func (s *Strategist) Tools() []Tool {
 	toolList := []Tool{
 		// Ling management tools
 		&InsertLingTool{strategist: s},

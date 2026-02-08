@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ func TestPromptHistoryStore_CreateAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -52,7 +53,7 @@ func TestPromptHistoryStore_AppendAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -103,7 +104,7 @@ func TestPromptHistoryStore_Clear(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -144,7 +145,7 @@ func TestPromptHistoryStore_Save(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -172,7 +173,7 @@ func TestCommandHistoryStore_AppendAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -220,8 +221,8 @@ func TestHistoryStore_IsolatedByProject(t *testing.T) {
 	// Use the current directory (which is a git repo) for project1
 	// and a non-git directory for project2
 	cwd, _ := os.Getwd()
-	project1 := RepoInfo{ProjectRoot: cwd, Branch: "main"}
-	project2 := RepoInfo{ProjectRoot: "/nonexistent/project", Branch: "main"}
+	project1 := repo.RepoInfo{ProjectRoot: cwd, Branch: "main"}
+	project2 := repo.RepoInfo{ProjectRoot: "/nonexistent/project", Branch: "main"}
 
 	store1, err := NewPromptHistoryStore(db, project1)
 	require.NoError(t, err)
@@ -274,7 +275,7 @@ func TestHistoryStore_EmptyPrompt(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -305,7 +306,7 @@ func TestHistoryStore_LongPrompt(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -342,7 +343,7 @@ func TestHistoryStore_SpecialCharacters(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -377,7 +378,7 @@ func TestHistoryStore_SpecialCharacters(t *testing.T) {
 
 // TestHistoryStore_NilDatabase tests error handling when database is nil
 func TestHistoryStore_NilDatabase(t *testing.T) {
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}
@@ -401,7 +402,7 @@ func TestHistoryStore_ConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	repoInfo := RepoInfo{
+	repoInfo := repo.RepoInfo{
 		ProjectRoot: "/test/project",
 		Branch:      "main",
 	}

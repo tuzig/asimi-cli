@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -40,9 +43,9 @@ type startInitWorkflowMsg struct {
 
 // newInitWorkflow creates a workflow for initializing a project
 func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workflow {
-	repoInfo := GetRepoInfo()
+	repoInfo := repo.GetRepoInfo()
 	host, org, project := parseProjectSlug(repoInfo.ProjectRoot)
-	branch := branchSlugOrDefault(repoInfo.Branch)
+	branch := repoInfo.BranchSlugOrDefault()
 	repoCtx := RepoContext{
 		Host:    host,
 		Org:     org,
@@ -50,7 +53,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 		Branch:  branch,
 	}
 
-	SetIDGenerator(generateSessionID)
+	SetIDGenerator(shogunate.GenerateSessionID)
 
 	w := New("init", model.db, repoCtx, WithMaxRetries(5))
 
@@ -69,7 +72,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 
 	w.AddCheck("pre-checks", func(w *Workflow) StepResult {
 		w.ReportProgress("Checking for uncommitted changes...")
-		if hasUncommittedChanges() {
+		if repoInfo.IsClean() {
 			w.Abort()
 			return StepResult{Message: "Please commit or stash your changes and run again"}
 		}
@@ -135,7 +138,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 
 			// If using CLAUDE.md, update the config to use it
 			if agentsFile == "CLAUDE.md" {
-				if err := SetProjectConfig("session", "agents_file", agentsFile); err != nil {
+				if err := config.SetProjectConfig("session", "agents_file", agentsFile); err != nil {
 					slog.Warn("Could not update config with agents_file", "error", err)
 				} else {
 					w.ReportProgress("Configured agents_file = CLAUDE.md")
@@ -156,7 +159,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			result, err := hostRun(ctx, RunShellCommandInput{
+			result, err := runners.HostRun(ctx, runners.Input{
 				Command:        fmt.Sprintf("podman rmi %s 2>/dev/null || true", imageName),
 				Description:    "Removing container image",
 				BypassApproval: true,
@@ -216,10 +219,10 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 				}
 
 				// Reload config - AI may have modified .agents/asimi.conf
-				if cfg, err := LoadConfig(); err != nil {
+				if cfg, err := config.LoadConfig(); err != nil {
 					slog.Warn("Failed to reload config after ai-analysis", "error", err)
 				} else {
-					initShellRunner(cfg, model.scheduler)
+					slog.Debug("Config reloaded", "image_name", cfg.Sandbox.ImageName)
 				}
 				return w.Next(checkPrefix + " model analysis completed")
 			},
@@ -230,7 +233,7 @@ func newInitWorkflow(model *TUIModel, clearMode bool, agentsFile string) *Workfl
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
 
-			result, err := hostRun(ctx, RunShellCommandInput{
+			result, err := runners.HostRun(ctx, runners.Input{
 				Command:        "just test",
 				Description:    "Running tests on host",
 				BypassApproval: true,
@@ -272,7 +275,7 @@ Read the relevant files, understand the error, and make the necessary correction
 			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 			defer cancel()
 
-			result, err := hostRun(ctx, RunShellCommandInput{
+			result, err := runners.HostRun(ctx, runners.Input{
 				Command:        "just build-sandbox",
 				Description:    "Building sandbox container",
 				BypassApproval: true})
@@ -283,11 +286,11 @@ Read the relevant files, understand the error, and make the necessary correction
 			}
 
 			// Reload config to pick up any changes from the build (e.g., image_name in Justfile)
-			if cfg, err := LoadConfig(); err != nil {
+			if cfg, err := config.LoadConfig(); err != nil {
 				slog.Warn("Failed to reload config after build-sandbox", "error", err)
 			} else {
 				slog.Debug("Reinitializing shell runner after build-sandbox", "image_name", cfg.Sandbox.ImageName)
-				initShellRunner(cfg, model.scheduler)
+				slog.Debug("Config reloaded", "image_name", cfg.Sandbox.ImageName)
 			}
 			// Skip fix-dockerfile and go directly to smoke-test
 			return w.GoTo("smoke-test", checkPrefix+" Sandbox built successfully")
@@ -318,7 +321,7 @@ Common issues include missing packages, incorrect base images, or syntax errors.
 			w.ReportProgress("Running smoke test in container...")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			runner := getShellRunner()
+			runner := model.shogunate.GetRunner()
 			if runner == nil {
 				return w.Retry("❌ Container runner not available")
 			}
@@ -326,7 +329,7 @@ Common issues include missing packages, incorrect base images, or syntax errors.
 				return w.Retry("❌ failed to bring the container up up")
 			}
 
-			result, err := runner.Run(ctx, RunShellCommandInput{
+			result, err := runner.Run(ctx, runners.Input{
 				Command:        "uname",
 				Description:    "Running smoke test in container",
 				BypassApproval: true,
@@ -344,12 +347,12 @@ Common issues include missing packages, incorrect base images, or syntax errors.
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
 
-			runner := getShellRunner()
+			runner := model.shogunate.GetRunner()
 			if runner == nil {
 				return w.Retry("❌ Container runner not available")
 			}
 
-			result, err := runner.Run(ctx, RunShellCommandInput{
+			result, err := runner.Run(ctx, runners.Input{
 				Command:        "just test",
 				Description:    "Running tests in container",
 				BypassApproval: true,
@@ -399,7 +402,7 @@ Please fix the issue. You may need to update:
 			defer cancel()
 
 			for _, file := range filesToStage {
-				result, err := hostRun(ctx, RunShellCommandInput{
+				result, err := runners.HostRun(ctx, runners.Input{
 					Command:     fmt.Sprintf("git add %s", file),
 					Description: fmt.Sprintf("Staging %s", file),
 				})
@@ -477,7 +480,7 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 		})
 
 		// Allow host fallback during init
-		runner := getShellRunner()
+		runner := model.shogunate.GetRunner()
 		if runner != nil {
 			runner.AllowFallback(true)
 			defer runner.AllowFallback(false)

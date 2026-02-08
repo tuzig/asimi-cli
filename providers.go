@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,20 +82,20 @@ func ProvideConfig(logger *slog.Logger) (*Config, error) {
 	logger.Info("loading configuration")
 
 	// Ensure user config file exists (creates it on first run)
-	created, err := EnsureUserConfigExists()
+	created, err := config.EnsureUserConfigExists()
 	if err != nil {
 		logger.Warn("failed to ensure user config exists", "error", err)
 	} else if created {
 		logger.Info("created user config file on first run")
-		SetConfigCreated(true)
+		config.ConfigCreated = true
 	}
 
-	config, err := LoadConfig()
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		logger.Info("using default configuration due to load failure")
 		logger.Debug("Warning: Using defaults due to config load failure", "error", err)
 		// Continue with default config
-		config = &Config{
+		cfg = &Config{
 			Logging: LoggingConfig{
 				Level:  "info",
 				Format: "text",
@@ -108,10 +110,10 @@ func ProvideConfig(logger *slog.Logger) (*Config, error) {
 	}
 	// Override from CLI flag
 	if cli.NoCleanup {
-		config.Sandbox.NoCleanup = true
+		cfg.Sandbox.NoCleanup = true
 	}
 	logger.Info("configuration loaded")
-	return config, nil
+	return cfg, nil
 }
 
 // StorageParams holds parameters for storage initialization
@@ -155,9 +157,9 @@ func ProvideStorage(params StorageParams) (StorageResult, error) {
 }
 
 // ProvideRepoInfo returns information about the git repository
-func ProvideRepoInfo(config *Config, logger *slog.Logger) RepoInfo {
+func ProvideRepoInfo(config *Config, logger *slog.Logger) repo.RepoInfo {
 	logger.Info("detecting git repository")
-	repoInfo := GetRepoInfo()
+	repoInfo := repo.GetRepoInfo()
 	if repoInfo.ProjectRoot != "" {
 		logger.Info("git repository detected", "root", repoInfo.ProjectRoot, "branch", repoInfo.Branch)
 	} else {
@@ -167,8 +169,8 @@ func ProvideRepoInfo(config *Config, logger *slog.Logger) RepoInfo {
 }
 
 // ProvideScheduler creates the tool scheduler for dependency injection
-func ProvideScheduler() *CoreToolScheduler {
-	return NewCoreToolScheduler(nil)
+func ProvideScheduler() *runners.CoreToolScheduler {
+	return runners.NewCoreToolScheduler(nil)
 }
 
 // ShellRunnerParams holds parameters for shell runner initialization
@@ -176,18 +178,17 @@ type ShellRunnerParams struct {
 	fx.In
 	Lifecycle fx.Lifecycle
 	Config    *Config
-	RepoInfo  RepoInfo
-	Scheduler *CoreToolScheduler
+	RepoInfo  repo.RepoInfo
+	Scheduler *runners.CoreToolScheduler
 	Logger    *slog.Logger
 }
 
 // ProvideShellRunner creates and returns a shell runner with proper lifecycle management
-func ProvideShellRunner(params ShellRunnerParams) shellRunner {
+func ProvideShellRunner(params ShellRunnerParams) runners.Runner {
 	params.Logger.Info("initializing shell runner")
 
 	// Use auto-detection to select the appropriate shell runner
-	initShellRunner(params.Config, params.Scheduler)
-	runner := getShellRunner()
+	runner := runners.InitShellRunner(&params.Config.Sandbox, params.RepoInfo)
 
 	params.Logger.Info("shell runner initialized", "type", runner.RunnerType())
 
@@ -200,63 +201,6 @@ func ProvideShellRunner(params ShellRunnerParams) shellRunner {
 	})
 
 	return runner
-}
-
-// ModelClientParams holds parameters for async LLM client initialization
-type ModelClientParams struct {
-	fx.In
-	Lifecycle fx.Lifecycle
-	Config    *Config
-	RepoInfo  RepoInfo
-	Scheduler *CoreToolScheduler
-	Logger    *slog.Logger
-}
-
-// ProvideModelClient sets up async LLM client initialization
-// The model client will be initialized in a goroutine and send a message when ready
-func ProvideModelClient(params ModelClientParams) {
-	params.Lifecycle.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			// Launch async initialization
-			go func() {
-				params.Logger.Info("connecting to LLM", "provider", params.Config.LLM.Provider)
-				llm, err := getModelClient(params.Config)
-				if cli.Debug {
-					params.Logger.Debug("[TIMING] getModelClient() completed")
-				}
-
-				if err != nil {
-					params.Logger.Warn("failed to connect to LLM, running without AI capabilities", "error", err)
-					if program != nil {
-						program.Send(llmInitErrorMsg{err: err})
-					}
-				} else {
-					params.Logger.Info("LLM client connected")
-					params.Logger.Info("creating session")
-					sess, sessErr := NewSession(llm, params.Config, params.RepoInfo, params.Scheduler, func(m any) {
-						if program != nil {
-							program.Send(m)
-						}
-					})
-					if cli.Debug {
-						params.Logger.Debug("[TIMING] NewSession() completed")
-					}
-
-					if sessErr != nil {
-						params.Logger.Error("failed to create session", "error", sessErr)
-						if program != nil {
-							program.Send(llmInitErrorMsg{err: sessErr})
-						}
-					} else {
-						if program != nil {
-							program.Send(llmInitSuccessMsg{session: sess})
-						}
-					}
-				}
-			}()
-			return nil
-		},
-	})
 }
 
 // PromptHistoryResult holds the prompt history store
@@ -272,7 +216,7 @@ type CommandHistoryResult struct {
 }
 
 // ProvidePromptHistory creates and returns the prompt history store
-func ProvidePromptHistory(db *storage.DB, repoInfo RepoInfo, logger *slog.Logger) (PromptHistoryResult, error) {
+func ProvidePromptHistory(db *storage.DB, repoInfo repo.RepoInfo, logger *slog.Logger) (PromptHistoryResult, error) {
 	logger.Info("loading prompt history")
 	historyStore, err := NewPromptHistoryStore(db, repoInfo)
 	if err != nil {
@@ -283,7 +227,7 @@ func ProvidePromptHistory(db *storage.DB, repoInfo RepoInfo, logger *slog.Logger
 }
 
 // ProvideCommandHistory creates and returns the command history store
-func ProvideCommandHistory(db *storage.DB, repoInfo RepoInfo, logger *slog.Logger) (CommandHistoryResult, error) {
+func ProvideCommandHistory(db *storage.DB, repoInfo repo.RepoInfo, logger *slog.Logger) (CommandHistoryResult, error) {
 	logger.Info("loading command history")
 	historyStore, err := NewCommandHistoryStore(db, repoInfo)
 	if err != nil {
@@ -294,7 +238,7 @@ func ProvideCommandHistory(db *storage.DB, repoInfo RepoInfo, logger *slog.Logge
 }
 
 // ProvideSessionHistory creates and returns the session history store
-func ProvideSessionHistory(db *storage.DB, config *Config, repoInfo RepoInfo, logger *slog.Logger) (*SessionStore, error) {
+func ProvideSessionHistory(db *storage.DB, config *Config, repoInfo repo.RepoInfo, logger *slog.Logger) (*SessionStore, error) {
 	if !config.Session.Enabled {
 		return nil, nil // Session storage is disabled
 	}
@@ -321,12 +265,12 @@ func ProvideSessionHistory(db *storage.DB, config *Config, repoInfo RepoInfo, lo
 type TUIModelParams struct {
 	fx.In
 	Config         *Config
-	RepoInfo       RepoInfo
+	RepoInfo       repo.RepoInfo
 	PromptHistory  *PromptHistory  `name:"prompt"`
 	CommandHistory *CommandHistory `name:"command"`
 	SessionStore   *SessionStore
 	DB             *storage.DB
-	Scheduler      *CoreToolScheduler
+	Scheduler      *runners.CoreToolScheduler
 	Shogunate      *shogunate.Shogunate
 	Logger         *slog.Logger
 }
@@ -410,7 +354,7 @@ type ShogunateParams struct {
 	Lifecycle fx.Lifecycle
 	GormDB    *gorm.DB
 	Config    *Config
-	Runner    shellRunner
+	Runner    runners.Runner
 	Logger    *slog.Logger
 }
 
@@ -421,9 +365,8 @@ func ProvideShogunate(params ShogunateParams) *shogunate.Shogunate {
 	// Get Shogunate config (use defaults if not configured)
 	cfg := config.DefaultShogunateConfig()
 
-	// Adapt shellRunner to runners.Runner interface for the shogunate
-	runner := AsRunnersRunner(params.Runner)
-	s := shogunate.NewShogunate(params.GormDB, cfg, runner, params.Logger)
+	s := shogunate.NewShogunate(params.GormDB, cfg, params.Runner, params.Logger)
+	// notify is set later via s.SetNotify(program.Send) once the TUI program is created
 
 	// Register lifecycle hooks
 	params.Lifecycle.Append(fx.Hook{

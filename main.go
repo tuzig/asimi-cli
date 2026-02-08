@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	"runtime/pprof"
 	"runtime/trace"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -98,11 +96,9 @@ func runInteractiveMode() error {
 
 	fmt.Printf("Asimi %s loading...\n", version)
 
-	// Variables to hold populated dependencies
-	var tuiProgram *tea.Program
-
-	// Conditionally enable fx logging based on debug flag
+	var tuiModel *TUIModel
 	var fxOptions []fx.Option
+
 	if !cli.Debug {
 		fxOptions = append(fxOptions, fx.NopLogger)
 	}
@@ -124,10 +120,7 @@ func runInteractiveMode() error {
 			StartTUI,
 			ProvideShogunate,
 		),
-		fx.Invoke(
-			ProvideModelClient,
-		),
-		fx.Populate(&currentShellRunner, &tuiProgram),
+		fx.Populate(&tuiModel),
 	)
 
 	// Create fx app with all providers
@@ -138,6 +131,9 @@ func runInteractiveMode() error {
 	if err := app.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start fx app: %w", err)
 	}
+	tuiProgram := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// TODO: simplify by refactoring internal.NotifyFunc to func(msg tea.Msg)
+	tuiModel.shogunate.SetNotify(func(msg any) { tuiProgram.Send(msg) })
 	defer app.Stop(ctx)
 
 	slog.Debug("[TIMING] fx app initialized", "duration", time.Since(startTime))
@@ -145,7 +141,7 @@ func runInteractiveMode() error {
 	// Check for updates in background (non-blocking)
 	go func() {
 		if AutoCheckForUpdates(version) {
-			program.Send(updateAvailableMsg{})
+			tuiProgram.Send(updateAvailableMsg{})
 		}
 	}()
 
@@ -175,7 +171,7 @@ type errMsg struct{ err error }
 
 // llmInitSuccessMsg is sent when LLM initialization completes successfully
 type llmInitSuccessMsg struct {
-	session *Session
+	model llms.Model
 }
 
 // llmInitErrorMsg is sent when LLM initialization fails
@@ -277,41 +273,7 @@ func main() {
 	}
 
 	if hasPromptArg {
-		// Non-interactive mode via native Session path
-		config, err := LoadConfig()
-		if err != nil {
-			fmt.Printf("Error loading configuration: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Initialize shell runner with config (no scheduler registry for non-interactive mode)
-		initShellRunner(config, nil)
-
-		llm, err := getModelClient(config)
-		if err != nil {
-			fmt.Printf("Error creating LLM client: %v\n", err)
-			fmt.Printf("Please authenticate by running the program in interactive mode and ':models'\n")
-			os.Exit(1)
-		}
-		// Set up streaming for non-interactive mode
-		done := make(chan struct{})
-		var finalResponse strings.Builder
-		var mu sync.Mutex
-
-		repoInfo := GetRepoInfo()
-		sess, err := NewSession(llm, config, repoInfo, nil, consoleStreamingNotify(done, &finalResponse, &mu))
-		if err != nil {
-			fmt.Printf("Error creating session: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Start streaming
-		sess.AskStream(context.Background(), cli.Prompt)
-
-		// Wait for streaming to complete
-		<-done
-
-		os.Exit(0)
+		fmt.Println("Not implmented yet")
 	}
 
 	// Interactive mode
@@ -337,195 +299,6 @@ func main() {
 	}
 
 	slog.Debug("[TIMING] Total execution time", "duration", time.Since(startTime))
-}
-
-// formatToolCall formats a tool call according to the spec: two lines with ⏺ and ⎿ symbols
-func formatToolCall(toolName, icon string, input, result string, err error) string {
-	// Parse input JSON to extract key parameters for the first line
-	var params map[string]interface{}
-	json.Unmarshal([]byte(input), &params)
-
-	f := toolName
-	for i := range availableTools {
-		tool := availableTools[i]
-		//nolint:typecheck // Tool interface is correctly defined in tools.go
-		if tool.Name() == toolName {
-			f = tool.Format(input, result, err)
-		}
-	}
-	// Add a special err message type
-	return fmt.Sprintf("%s %s", icon, f)
-
-}
-
-// consoleStreamingNotify handles streaming and tool messages for non-interactive mode
-func consoleStreamingNotify(done chan struct{}, finalResponse *strings.Builder, mu *sync.Mutex) func(any) {
-	// Track active tool calls to update their status
-	activeToolCalls := make(map[string]*toolCallDisplay)
-
-	return func(m any) {
-		switch v := m.(type) {
-		case ToolCallScheduledMsg:
-			// Create initial display with hollow circle
-			display := &toolCallDisplay{
-				toolName: v.Call.Tool.Name(),
-				input:    v.Call.Input,
-				status:   "scheduled",
-			}
-			activeToolCalls[v.Call.ID] = display
-			display.show()
-			slog.Debug("tool.scheduled", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
-		case ToolCallExecutingMsg:
-			// Update to half-filled circle
-			if display, exists := activeToolCalls[v.Call.ID]; exists {
-				display.status = "executing"
-				display.update()
-			}
-			slog.Debug("tool.executing", "tool", v.Call.Tool.Name(), "input", v.Call.Input)
-		case ToolCallSuccessMsg:
-			// Update to full circle and show result
-			if display, exists := activeToolCalls[v.Call.ID]; exists {
-				display.status = "success"
-				display.result = v.Call.Result
-				display.complete()
-				delete(activeToolCalls, v.Call.ID)
-			}
-			slog.Debug("tool.success", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "output", v.Call.Result)
-		case ToolCallErrorMsg:
-			// Update to X and show error
-			if display, exists := activeToolCalls[v.Call.ID]; exists {
-				display.status = "error"
-				display.err = v.Call.Error
-				display.complete()
-				delete(activeToolCalls, v.Call.ID)
-			}
-			slog.Error("tool.error", "tool", v.Call.Tool.Name(), "input", v.Call.Input, "error", v.Call.Error)
-		case streamStartMsg:
-			slog.Debug("console streaming started")
-		case streamChunkMsg:
-			chunk := string(v)
-			slog.Debug("console streaming chunk", "chunk", chunk)
-			fmt.Print(chunk)
-			mu.Lock()
-			finalResponse.WriteString(chunk)
-			mu.Unlock()
-		case streamCompleteMsg:
-			fmt.Println() // Add newline after streaming
-			slog.Debug("console streaming completed")
-			close(done)
-		case streamInterruptedMsg:
-			slog.Debug("console streaming interrupted", "partial_content", v.partialContent)
-			fmt.Printf("\n[Interrupted] %s\n", v.partialContent)
-			mu.Lock()
-			finalResponse.WriteString(v.partialContent)
-			mu.Unlock()
-			close(done)
-		case streamErrorMsg:
-			slog.Debug("console streaming error", "error", v.err)
-			fmt.Printf("\nError: %v\n", v.err)
-			close(done)
-		case streamMaxTokensReachedMsg:
-			slog.Debug("console streaming max tokens reached", "content", v.content)
-			fmt.Printf("\n\n[Response truncated due to length limit]\n")
-			close(done)
-		}
-	}
-}
-
-// toolCallDisplay manages the display of a tool call with dynamic status updates
-type toolCallDisplay struct {
-	toolName string
-	input    string
-	result   string
-	err      error
-	status   string // "scheduled", "executing", "success", "error"
-	linePos  int    // Track cursor position for updates
-}
-
-// show displays the initial tool call with hollow circle
-func (d *toolCallDisplay) show() {
-	formatted := d.formatWithStatus()
-	lines := strings.Split(formatted, "\n")
-
-	// Print both lines and remember position
-	fmt.Print(lines[0])
-	if len(lines) > 1 {
-		fmt.Printf("\n%s", lines[1])
-	}
-	fmt.Print("\n")
-
-	// Store position for updates (2 lines up from current position)
-	d.linePos = 2
-}
-
-// update modifies the existing display in place
-func (d *toolCallDisplay) update() {
-	formatted := d.formatWithStatus()
-	lines := strings.Split(formatted, "\n")
-
-	// Move cursor up to overwrite previous lines
-	fmt.Printf("\033[%dA", d.linePos) // Move up
-	fmt.Print("\033[2K")              // Clear line
-	fmt.Print(lines[0])               // Print first line
-
-	if len(lines) > 1 {
-		fmt.Print("\n\033[2K") // Move down and clear line
-		fmt.Print(lines[1])    // Print second line
-	}
-	fmt.Print("\n")
-}
-
-// complete finalizes the display and moves cursor to next line
-func (d *toolCallDisplay) complete() {
-	formatted := d.formatWithStatus()
-	lines := strings.Split(formatted, "\n")
-
-	// Move cursor up to overwrite previous lines
-	fmt.Printf("\033[%dA", d.linePos) // Move up
-	fmt.Print("\033[2K")              // Clear line
-	fmt.Print(lines[0])               // Print first line
-
-	if len(lines) > 1 {
-		fmt.Print("\n\033[2K") // Move down and clear line
-		fmt.Print(lines[1])    // Print second line
-	}
-	fmt.Print("\n")
-}
-
-// formatWithStatus formats the tool call for the UI
-func (d *toolCallDisplay) formatWithStatus() string {
-	// Get the base format from the tool
-	var baseFormat string
-	for i := range availableTools {
-		tool := availableTools[i]
-		//nolint:typecheck // Tool interface is correctly defined in tools.go
-		if tool.Name() == d.toolName {
-			baseFormat = tool.Format(d.input, d.result, d.err)
-			break
-		}
-	}
-
-	if baseFormat == "" {
-		baseFormat = fmt.Sprintf("⏺ Unknown tool: %s\n  ⎿  Error: tool not found", d.toolName)
-	}
-
-	// Replace the circle based on status
-	var statusCircle string
-	switch d.status {
-	case "scheduled":
-		statusCircle = "○" // Hollow circle
-	case "executing":
-		statusCircle = "◐" // Half-filled circle
-	case "success":
-		statusCircle = "●" // Full circle
-	case "error":
-		statusCircle = "✗" // X mark
-	default:
-		statusCircle = "○"
-	}
-
-	// Replace the first ○ with the status circle
-	return strings.Replace(baseFormat, "○", statusCircle, 1)
 }
 
 // getModelClient creates and returns an LLM client based on the configuration

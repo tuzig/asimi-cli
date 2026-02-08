@@ -51,7 +51,7 @@ CRITICAL RULES:
 }
 
 // Tools returns the Forge's LLM tools for interactive sessions.
-func (f *Forge) Tools(notify NotifyFunc) []Tool {
+func (f *Forge) Tools() []Tool {
 	toolList := []Tool{
 		// Specialized Forge tools for manifest tracking
 		&CreateManifestTool{forge: f},
@@ -240,47 +240,12 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session and streams the task through the LLM.
 func (f *Forge) streamTask(ctx context.Context, work, edictID string, stream StreamChan) (string, error) {
-	notify := func(msg any) {
-		f.logger.Debug("forge session notification", "msg", fmt.Sprintf("%T", msg))
-	}
-
-	session, err := f.CreateSession(f, notify)
+	session, err := f.CreateSession(f)
 	if err != nil {
 		return "", fmt.Errorf("failed to create forge session: %w", err)
 	}
 
 	var response strings.Builder
-
-	// Set up notify to capture and forward streaming
-	session.SetNotify(func(msg any) {
-		switch m := msg.(type) {
-		case StreamChunkMsg:
-			response.WriteString(string(m))
-			if stream != nil {
-				select {
-				case stream <- m: // Forward typed message directly
-				default:
-					f.logger.Warn("stream channel full, dropping reply")
-				}
-			}
-		case StreamReasoningChunkMsg:
-			// Forward reasoning chunks to stream (for UI display)
-			if stream != nil {
-				select {
-				case stream <- m: // Forward typed message directly
-				default:
-					f.logger.Warn("stream channel full, dropping reasoning")
-				}
-			}
-		case StreamErrorMsg:
-			if stream != nil {
-				select {
-				case stream <- m: // Forward typed message directly
-				default:
-				}
-			}
-		}
-	})
 
 	_, err = session.AskWithStreaming(ctx, work, nil)
 	if err != nil {

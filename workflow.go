@@ -10,6 +10,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 )
 
@@ -50,6 +51,7 @@ type Workflow struct {
 	UpdatedAt   time.Time
 
 	// Runtime (not persisted)
+	runner       runners.Runner
 	aborted      bool
 	mu           sync.Mutex
 	db           *storage.DB
@@ -65,6 +67,13 @@ type Workflow struct {
 
 // Option is a functional option for configuring a workflow
 type Option func(*Workflow)
+
+// WithRunner sets the shell runner for command execution
+func WithRunner(r runners.Runner) Option {
+	return func(w *Workflow) {
+		w.runner = r
+	}
+}
 
 // WithMaxRetries sets the maximum retries per step
 func WithMaxRetries(maxRetries int) Option {
@@ -217,17 +226,17 @@ func (w *Workflow) AddCmd(name, command, storeAs string) *Workflow {
 			var output string
 			var exitCode string
 
-			runner := getShellRunner()
+			runner := w.runner
 			if runner != nil {
-				result, err := runner.Run(ctx, RunShellCommandInput{Command: command, Description: name})
+				result, err := runner.Run(ctx, runners.Input{Command: command, Description: name})
 				if err != nil {
 					return w.Retry(fmt.Sprintf("❌ Command failed: %v", err))
 				}
 				output = result.Output
 				exitCode = result.ExitCode
 			} else {
-				// Fallback to hostRun for safe host execution
-				result, err := hostRun(ctx, RunShellCommandInput{Command: command, Description: name})
+				// Fallback to HostRun for safe host execution
+				result, err := runners.HostRun(ctx, runners.Input{Command: command, Description: name})
 				if err != nil {
 					return w.Retry(fmt.Sprintf("❌ Command failed: %v", err))
 				}

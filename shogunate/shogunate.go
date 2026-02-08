@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
@@ -67,9 +68,12 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	// Create ritual runner with shell runner for cmd steps
 	s.ritualRunner = NewRitualRunner(s.ritualRegistry, s, db, runner, s.logger)
 
-	// Create all ministers with minimal base (model/config/repoInfo can be set later)
-	// Runner is passed so ministers that need shell access get it for free
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, runner, s.logger)
+	// Create all ministers with minimal base (model/config/repoInfo/notify set later)
+	base := MinisterBase{
+		db:     db,
+		runner: runner,
+		logger: logger,
+	}
 
 	chancellor := NewChancellor(base)
 	chancellor.SetShogunate(s)
@@ -82,6 +86,18 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ministers["marshal"] = NewMarshal(base, nil)
 
 	return s
+}
+
+// SetNotify sets the notification callback for all ministers.
+func (s *Shogunate) SetNotify(notify internal.NotifyFunc) {
+	if s == nil {
+		return
+	}
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetNotify(internal.NotifyFunc) }); ok {
+			base.SetNotify(notify)
+		}
+	}
 }
 
 // SetRitualGuard sets the ritual guard runner.
@@ -156,7 +172,9 @@ func (s *Shogunate) ConfigureModel(model llms.Model, config *SessionConfig, repo
 		return
 	}
 	for _, minister := range s.Ministers() {
-		if base, ok := minister.(interface{ SetMinisterConfig(llms.Model, *SessionConfig, repo.RepoInfo) }); ok {
+		if base, ok := minister.(interface {
+			SetMinisterConfig(llms.Model, *SessionConfig, repo.RepoInfo)
+		}); ok {
 			base.SetMinisterConfig(model, config, repoInfo)
 		}
 	}
@@ -269,6 +287,14 @@ func (s *Shogunate) loadRituals() error {
 	}
 
 	return nil
+}
+
+// GetRunner returns the shell runner
+func (s *Shogunate) GetRunner() runners.Runner {
+	if s == nil {
+		return nil
+	}
+	return s.runner
 }
 
 // GetRitualRegistry returns the ritual registry

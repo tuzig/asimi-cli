@@ -8,8 +8,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 )
+
+// Type aliases for backward compatibility with old root-package types
+type RunShellCommandInput = runners.Input
+type RunShellCommandOutput = runners.Output
+
+// testShellRunner holds the mock runner for testing
+var testShellRunner runners.Runner
+
+func setShellRunnerForTesting(runner runners.Runner) func() {
+	old := testShellRunner
+	testShellRunner = runner
+	return func() { testShellRunner = old }
+}
+
+func getShellRunner() runners.Runner {
+	return testShellRunner
+}
 
 // mockShellRunner is a configurable mock implementation of shellRunner for testing
 type mockShellRunner struct {
@@ -92,6 +110,8 @@ func (m *mockShellRunner) AllowFallback(allow bool) {
 func (m *mockShellRunner) RunnerType() string {
 	return m.runnerType
 }
+
+func (m *mockShellRunner) SetMessageChannel(chan<- runners.Msg) {}
 
 func (m *mockShellRunner) withResult(pattern string, result RunShellCommandOutput) *mockShellRunner {
 	m.mu.Lock()

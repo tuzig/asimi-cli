@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -446,7 +448,7 @@ type RitualExecution struct {
 	// Runtime (not persisted)
 	def        *RitualDef
 	stepStates []RitualStepState
-	notify     NotifyFunc
+	notify     internal.NotifyFunc
 }
 
 // TableName returns the table name for RitualExecution
@@ -470,7 +472,7 @@ func (RitualStepState) TableName() string {
 }
 
 // Start begins execution of a ritual
-func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, inputs map[string]string, notify NotifyFunc) (*RitualExecution, error) {
+func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, inputs map[string]string, notify internal.NotifyFunc) (*RitualExecution, error) {
 	def := r.registry.Get(ritualName)
 	if def == nil {
 		return nil, fmt.Errorf("ritual not found: %s", ritualName)
@@ -557,7 +559,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 			// Notify: step failed
 			if exec.notify != nil {
-				exec.notify(RitualStepMsg{
+				exec.notify(tools.RitualStepMsg{
 					RitualName:  exec.RitualName,
 					ExecutionID: exec.ID,
 					EdictID:     exec.EdictID,
@@ -580,7 +582,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 		// Notify: step completed
 		if exec.notify != nil {
-			exec.notify(RitualStepMsg{
+			exec.notify(tools.RitualStepMsg{
 				RitualName:  exec.RitualName,
 				ExecutionID: exec.ID,
 				EdictID:     exec.EdictID,
@@ -605,7 +607,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 	// Notify: ritual completed
 	if exec.notify != nil {
-		exec.notify(RitualStepMsg{
+		exec.notify(tools.RitualStepMsg{
 			RitualName:  exec.RitualName,
 			ExecutionID: exec.ID,
 			EdictID:     exec.EdictID,
@@ -635,7 +637,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 
 	// Notify: step started
 	if exec.notify != nil {
-		exec.notify(RitualStepMsg{
+		exec.notify(tools.RitualStepMsg{
 			RitualName:  exec.RitualName,
 			ExecutionID: exec.ID,
 			EdictID:     exec.EdictID,
@@ -798,7 +800,7 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 			exec.stepStates[exec.CurrentStep].RetryCount++
 			// Notify: retrying
 			if exec.notify != nil {
-				exec.notify(RitualStepMsg{
+				exec.notify(tools.RitualStepMsg{
 					RitualName:  exec.RitualName,
 					ExecutionID: exec.ID,
 					EdictID:     exec.EdictID,

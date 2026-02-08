@@ -28,7 +28,7 @@ type PodmanRunner struct {
 	containerName    string
 	allowFallback    bool
 	noCleanup        bool
-	config           Config
+	config           *Config
 	repoInfo         repo.RepoInfo
 	msgChan          chan<- Msg
 	fallback         Runner
@@ -50,7 +50,7 @@ type commandOutput struct {
 }
 
 // NewPodmanRunner creates a new PodmanRunner
-func NewPodmanRunner(cfg Config, repoInfo repo.RepoInfo, msgChan chan<- Msg, fallback Runner) *PodmanRunner {
+func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, fallback Runner) *PodmanRunner {
 	pid := os.Getpid()
 
 	imageName := cfg.ImageName
@@ -65,11 +65,14 @@ func NewPodmanRunner(cfg Config, repoInfo repo.RepoInfo, msgChan chan<- Msg, fal
 		noCleanup:     cfg.NoCleanup,
 		config:        cfg,
 		repoInfo:      repoInfo,
-		msgChan:       msgChan,
 		fallback:      fallback,
 		outputs:       make(map[int]*commandOutput),
 		nextCommandID: 1,
 	}
+}
+
+func (r *PodmanRunner) SetMessageChannel(msgChan chan<- Msg) {
+	r.msgChan = msgChan
 }
 
 func (r *PodmanRunner) initialize(ctx context.Context) error {
@@ -124,6 +127,7 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 			// Notify that container was launched
 			if r.msgChan != nil {
+				// TODO: add the process ID to the message
 				r.msgChan <- ContainerLaunchedMsg{Message: "Container launched"}
 			}
 		}
@@ -552,7 +556,7 @@ func (r *PodmanRunner) ContainerID() string {
 	return ""
 }
 
-// AllowHostFallback enables or disables fallback to host runner
-func (r *PodmanRunner) AllowHostFallback(allow bool) {
+// AllowFallback enables or disables fallback to host runner
+func (r *PodmanRunner) AllowFallback(allow bool) {
 	r.allowFallback = allow
 }

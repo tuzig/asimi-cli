@@ -70,7 +70,7 @@ func (m *Marshal) Role() string {
 }
 
 // Tools returns the Marshal's LLM tools for interactive sessions
-func (m *Marshal) Tools(notify NotifyFunc) []Tool {
+func (m *Marshal) Tools() []Tool {
 	toolList := []Tool{
 		// Specialized Marshal tools for incident management
 		&CreateIncidentTool{marshal: m},

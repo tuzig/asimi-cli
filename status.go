@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,16 +19,14 @@ type StatusComponent struct {
 	Width       int
 	Style       lipgloss.Style
 	Session     *shogunate.Session // Reference to session for token/time tracking
-	repoInfo    *RepoInfo          // Git repository information
+	repoInfo    *repo.RepoInfo     // Git repository information
 	mode        string
 	ViPendingOp string
 
 	// Waiting indicator
 	waitingForResponse bool
 	waitingSince       time.Time
-
-	// Shell runner info
-	shellRunnerInfo *ShellRunnerInfo
+	ContainerID        string
 }
 
 // NewStatusComponent creates a new status component
@@ -38,11 +37,6 @@ func NewStatusComponent(width int) StatusComponent {
 			Foreground(globalTheme.TextColor),
 		mode: "INSERT", // start in insert mode
 	}
-}
-
-// SetShellRunnerInfo sets the shell runner information for display
-func (s *StatusComponent) SetShellRunnerInfo(info *ShellRunnerInfo) {
-	s.shellRunnerInfo = info
 }
 
 // SetProvider sets the current provider and model
@@ -58,7 +52,7 @@ func (s *StatusComponent) SetSession(session *shogunate.Session) {
 }
 
 // SetRepoInfo sets the repository information
-func (s *StatusComponent) SetRepoInfo(repoInfo *RepoInfo) {
+func (s *StatusComponent) SetRepoInfo(repoInfo *repo.RepoInfo) {
 	s.repoInfo = repoInfo
 }
 
@@ -317,9 +311,9 @@ func (s StatusComponent) renderShellRunnerIndicator() string {
 	ret := "🏖️ "
 	warnStyle := lipgloss.NewStyle().Foreground(globalTheme.Warning)
 
-	if s.shellRunnerInfo != nil && s.shellRunnerInfo.Type == "podman" {
+	if s.ContainerID != "" {
 		// Show container indicator with container ID
-		id := s.shellRunnerInfo.ContainerID
+		id := s.ContainerID
 		if id == "" {
 			ret += "TBD"
 		} else {

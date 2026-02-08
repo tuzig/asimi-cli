@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/gorm"
@@ -19,9 +19,8 @@ type Chancellor struct {
 	taskChan     chan *Task
 
 	// Run() loop fields
-	Edicts           chan *Edict         // Ruler speaks here
-	edictSessions    map[string]*Session // Per-edict sessions (edictID -> session)
-	activeReplyChans sync.Map            // edictID -> chan<- Reply (thread-safe)
+	Edicts        chan *Edict         // Ruler speaks here
+	edictSessions map[string]*Session // Per-edict sessions (edictID -> session)
 }
 
 // NewChancellor creates a new Chancellor minister
@@ -32,7 +31,6 @@ func NewChancellor(base MinisterBase) *Chancellor {
 		taskChan:      make(chan *Task, 10),
 		Edicts:        make(chan *Edict),
 		edictSessions: make(map[string]*Session),
-		// activeReplyChans is a sync.Map, zero-value ready
 	}
 }
 
@@ -88,57 +86,18 @@ func (c *Chancellor) Scratchpad() string {
 func (c *Chancellor) Tasks() chan<- *Task { return c.taskChan }
 
 // Tools returns the Chancellor's LLM tools for interactive sessions
-func (c *Chancellor) Tools(notify NotifyFunc) []Tool {
+func (c *Chancellor) Tools() []Tool {
 	// Create zhengming notify wrapper
 	// TODO: Simplify the zhendming notifications
 	var zhengmingNotify tools.ZhengmingNotifyFunc
-	if notify != nil {
-		zhengmingNotify = func(requestID, edictID, ministerID, question string, priority storage.ZhengmingPriority) {
-			notify(ZhengmingPendingMsg{
-				RequestID:  requestID,
-				EdictID:    edictID,
-				MinisterID: ministerID,
-				Question:   question,
-				Priority:   priority,
-			})
-		}
-	}
-
-	// Create minister notify wrapper
-	var ministerNotify tools.MinisterNotifyFunc
-	if notify != nil {
-		ministerNotify = func(ministerID, edictID, task, status string) {
-			switch status {
-			case "invoking":
-				notify(MinisterInvokingMsg{
-					MinisterID: ministerID,
-					EdictID:    edictID,
-					Task:       task,
-				})
-			case "completed", "failed":
-				//TODO: There has to be a difference
-				notify(MinisterCompletedMsg{
-					MinisterID: ministerID,
-					EdictID:    edictID,
-					Output:     "",
-					Sealed:     status == "completed",
-					Error:      nil,
-				})
-			}
-		}
-	}
-
-	// Create ritual notify wrapper
-	var ritualNotify tools.RitualNotifyFunc
-	if notify != nil {
-		ritualNotify = func(ritualName, executionID, edictID, status string) {
-			notify(RitualStepMsg{
-				RitualName:  ritualName,
-				ExecutionID: executionID,
-				EdictID:     edictID,
-				Status:      status,
-			})
-		}
+	zhengmingNotify = func(requestID, edictID, ministerID, question string, priority storage.ZhengmingPriority) {
+		c.notify(ZhengmingPendingMsg{
+			RequestID:  requestID,
+			EdictID:    edictID,
+			MinisterID: ministerID,
+			Question:   question,
+			Priority:   priority,
+		})
 	}
 
 	toolList := []Tool{
@@ -148,7 +107,7 @@ func (c *Chancellor) Tools(notify NotifyFunc) []Tool {
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
 		// TODO: rename to InviteMinisterTool to join the chat
-		tools.InvokeMinisterTool{Invoker: c, Logger: c.logger, Notify: ministerNotify},
+		tools.InvokeMinisterTool{Invoker: c, Logger: c.logger, Notify: internal.NotifyFunc(c.notify)},
 	}
 	// Add read-only file tools
 	for _, t := range tools.GetROTools() {
@@ -159,7 +118,7 @@ func (c *Chancellor) Tools(notify NotifyFunc) []Tool {
 		toolList = append(toolList, tools.InvokeRitualTool{
 			Starter: c,
 			Logger:  c.logger,
-			Notify:  ritualNotify,
+			Notify:  c.notify,
 		})
 	}
 	return toolList
@@ -225,18 +184,8 @@ func (c *Chancellor) StartRitual(ctx context.Context, ritualName, edictID string
 		return "", fmt.Errorf("ritual runner not available")
 	}
 
-	// Get streaming channel if available
-	var notify NotifyFunc
-	if val, ok := c.activeReplyChans.Load(edictID); ok {
-		streamChan := val.(StreamChan)
-		notify = func(msg any) {
-			// Forward typed messages directly to the stream
-			streamChan <- msg
-		}
-	}
-
 	// Start the ritual
-	exec, err := c.shogunate.ritualRunner.Start(ctx, ritualName, edictID, inputs, notify)
+	exec, err := c.shogunate.ritualRunner.Start(ctx, ritualName, edictID, inputs, c.notify)
 	if err != nil {
 		return "", err
 	}
@@ -280,6 +229,7 @@ func (c *Chancellor) Run(ctx context.Context) {
 			c.logger.Info("chancellor stopped")
 			return
 		case edict := <-c.Edicts:
+			c.logger.Debug("Processing prompt", "prompt", edict)
 			c.processPrompt(ctx, edict)
 		case task := <-c.taskChan:
 			// Process task and send result
@@ -559,15 +509,14 @@ func (c *Chancellor) processPrompt(ctx context.Context, edict *Edict) {
 	}
 
 	// Brew the edict (call LLM with streaming)
-	c.brewWithStreaming(ctx, edictID, edict.Prompt, edict.ContextFiles, edict.Stream)
+	c.brewWithStreaming(ctx, edictID, edict.Prompt, edict.ContextFiles)
 }
 
 // brewWithStreaming delegates to Session for LLM interaction
-func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string, stream StreamChan) {
+func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string) {
 	// Check if LLM is configured before proceeding
 	if c.model == nil {
-		stream <- StreamErrorMsg{Err: fmt.Errorf("LLM not configured - please wait for model to connect")}
-		close(stream)
+		c.notify(StreamErrorMsg{Err: fmt.Errorf("LLM not configured - please wait for model to connect")})
 		return
 	}
 
@@ -575,10 +524,9 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 	sess, exists := c.edictSessions[edictID]
 	if !exists {
 		var err error
-		sess, err = c.CreateSession(c, nil)
+		sess, err = c.CreateSession(c)
 		if err != nil {
-			stream <- StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)}
-			close(stream)
+			c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
 		c.edictSessions[edictID] = sess
@@ -587,27 +535,15 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 
 	c.logger.Debug("context files received from TUI", "count", len(contextFiles))
 
-	// Track the stream channel so ministers can stream to the TUI.
-	c.activeReplyChans.Store(edictID, stream)
 	c.logger.Debug("stored stream channel for streaming", "edict_id", edictID)
-
-	// Forward all typed messages directly to stream channel - no conversion
-	sess.SetNotify(func(msg any) {
-		switch msg.(type) {
-		case StreamStartMsg, StreamCompleteMsg:
-			// Internal signals, don't forward
-		default:
-			stream <- msg
-		}
-	})
 
 	// Use AskWithStreaming for tool execution and streaming
 	_, err := sess.AskWithStreaming(ctx, prompt, contextFiles)
 	if err != nil && ctx.Err() == nil {
-		stream <- StreamErrorMsg{Err: err}
+		c.notify(StreamErrorMsg{Err: err})
+		return
 	}
-	stream <- StreamDoneMsg{}
-	close(stream)
+	c.notify(StreamDoneMsg{})
 }
 
 // generateEdictID creates a unique edict ID
