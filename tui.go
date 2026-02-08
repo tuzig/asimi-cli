@@ -243,12 +243,10 @@ func (m *TUIModel) getCurrentSession() *shogunate.Session {
 	return nil
 }
 
-// SetSession configures the shogunate with an LLM model from a legacy session.
-// This is used during initialization and model changes.
+// SetSession configures the Shogunate with an LLM model from a session.
 func (m *TUIModel) SetSession(session *shogunate.Session) {
 	if session != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
-		// Configure the shogunate with the model from the legacy session
 		if m.shogunate != nil {
 			model := session.GetModel()
 			if model != nil {
@@ -264,7 +262,6 @@ func (m *TUIModel) SetSession(session *shogunate.Session) {
 					ProjectRoot: m.config.Storage.DatabasePath,
 				}
 				m.shogunate.ConfigureModel(model, cfg, repoInfo)
-				slog.Info("Shogunate configured with LLM model from SetSession")
 			}
 		}
 	} else {
@@ -272,29 +269,17 @@ func (m *TUIModel) SetSession(session *shogunate.Session) {
 	}
 }
 
-// reinitializeSession recreates the LLM client and session with current config
-func (m *TUIModel) reinitializeSession() error {
-	// Get the LLM client with the updated config
-	/* TODO: fix this
-	llm, err := getModelClient(m.config)
-	if err != nil {
-		return fmt.Errorf("failed to create LLM client: %w", err)
-	}
-
-	// Create a new session with the LLM
-	sess, err := NewSession(llm, m.config, m.status.repoInfo, m.scheduler, func(msg any) {
-		if program != nil {
-			program.Send(msg)
+// switchModel recreates the LLM client with current config and reconfigures the Shogunate.
+func (m *TUIModel) switchModel() tea.Cmd {
+	return func() tea.Msg {
+		slog.Info("switching LLM model", "provider", m.config.LLM.Provider, "model", m.config.LLM.Model)
+		model, err := getModelClient(m.config)
+		if err != nil {
+			return llmInitErrorMsg{err: err}
 		}
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+		slog.Info("LLM model switched successfully")
+		return llmInitSuccessMsg{model: model}
 	}
-
-	// Set the new session
-	m.SetSession(sess)
-	*/
-	return nil
 }
 
 func (m *TUIModel) saveSession() {
@@ -1958,27 +1943,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.config.LLM.Provider = oldProvider
 			m.config.LLM.Model = oldModel
 		} else {
-			// Reinitialize session with new model
-			if err := m.reinitializeSession(); err != nil {
-				slog.Error("Failed to reinitialize session", "error", err)
-				m.commandLine.AddToast("Failed to re-init model. Please try again", "error", 4000)
-				// Revert changes
-				m.config.LLM.Provider = oldProvider
-				m.config.LLM.Model = oldModel
-				if err := config.SaveConfig(m.config); err != nil {
-					slog.Error("Failed to save reverted config", "error", err)
-				}
-			} else {
-				modelName := msg.model.DisplayName
-				if modelName == "" {
-					modelName = msg.model.ID
-				}
-				providerChanged := ""
-				if msg.model.Provider != oldProvider {
-					providerChanged = fmt.Sprintf(" (switched to %s)", msg.model.Provider)
-				}
-				m.commandLine.AddToast(fmt.Sprintf("Model changed to %s%s", modelName, providerChanged), "success", 3000)
+			modelName := msg.model.DisplayName
+			if modelName == "" {
+				modelName = msg.model.ID
 			}
+			providerChanged := ""
+			if msg.model.Provider != oldProvider {
+				providerChanged = fmt.Sprintf(" (switched to %s)", msg.model.Provider)
+			}
+			m.commandLine.AddToast(fmt.Sprintf("Model changed to %s%s", modelName, providerChanged), "success", 3000)
+			return m, m.switchModel()
 		}
 		return m, nil
 

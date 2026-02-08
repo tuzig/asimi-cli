@@ -656,7 +656,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, edict *Edict) {
 	if edictID == "" {
 		edictID = generateEdictID()
 		if err := c.CreateEdict(edictID, edict.Prompt); err != nil {
-			edict.Stream <- StreamErrorMsg{Err: fmt.Errorf("create edict: %w", err)}
+			c.notify(StreamErrorMsg{Err: fmt.Errorf("create edict: %w", err)})
 			close(edict.Stream)
 			return
 		}

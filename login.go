@@ -616,18 +616,13 @@ func (m *TUIModel) performOAuthLogin(provider string) tea.Cmd {
 			m.commandLine.AddToast("Authorized, but failed to persist token", "error", 4000)
 		}
 
-		// Reinitialize LLM and session with new credentials
-		if err := m.reinitializeSession(); err != nil {
-			m.commandLine.AddToast("Failed to initialize AI session: "+err.Error(), "error", 5000)
-			return showOauthFailed{err.Error()}
+		// Initialize LLM with new credentials
+		model, err := getModelClient(m.config)
+		if err != nil {
+			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 
-		// Update status line
-		m.status.SetAgent(provider + " (" + m.config.LLM.Model + ")")
-		m.content.Chat.AddMessage("Authenticated with " + provider + ", model: " + m.config.LLM.Model)
-		m.commandLine.AddToast("Authentication saved", "info", 2500)
-		m.sessionActive = true
-		return nil
+		return llmInitSuccessMsg{model: model}
 	}
 }
 
@@ -661,19 +656,13 @@ func (m *TUIModel) completeAnthropicOAuth(authCode, verifier string) tea.Cmd {
 			m.config.LLM.Model = "claude-3-5-sonnet-20241022"
 		}
 
-		// Reinitialize LLM and session with new credentials
-		if err := m.reinitializeSession(); err != nil {
-			m.commandLine.AddToast("Failed to initialize AI session: "+err.Error(), "error", 5000)
-			return showOauthFailed{err.Error()}
+		// Initialize LLM with new credentials
+		model, err := getModelClient(m.config)
+		if err != nil {
+			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 
-		// Update status and UI
-		m.status.SetAgent("anthropic (" + m.config.LLM.Model + ")")
-		m.commandLine.AddToast("✅ Anthropic Authenticated using Oauth", "info", 2500)
-		m.sessionActive = true
-
-		// Show model selection modal after successful authentication
-		return showModelSelectionMsg{}
+		return llmInitSuccessMsg{model: model}
 	}
 }
 func runOAuthLoopback(provider string) (accessToken, refreshToken string, expiry time.Time, err error) {
