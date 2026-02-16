@@ -110,9 +110,11 @@ Classifying → Planning → Forging → Judging → Censoring → Sealed
 - `forging` — Forge implements the code changes
 - `judging` — Judge runs tests and validates changes
 - `censoring` — Censor reviews for quality and standards
-- `sealed` — Edict successfully completed
+- `sealed` — Edict successfully completed (minister marks it sealed after successful completion)
 - `cancelled` — Edict was cancelled
 - `halted` — Edict paused waiting on user feedback (Zhengming pending)
+
+**Phase Transitions:** Ministers transition the edict through phases as they complete their work. The final minister in the ritual marks the edict as `sealed` upon successful completion.
 
 ### Ministers
 
@@ -319,12 +321,60 @@ my-ritual:
           Do something for the edict.
 ```
 
+**Template Variables:**
+
+Ritual `arrange` and `act` fields support template expansion using `{{ .variable }}` syntax:
+
+| Variable | Description | Available In |
+|----------|-------------|--------------|
+| `.edict_id` | Unique identifier for the current edict | All rituals |
+| `.session_id` | Current session identifier | All rituals |
+| `.intent` | The edict's intent text | All rituals |
+| `.scope` | Classified scope (S, M, L) | All rituals |
+| `.phase` | Current edict phase | All rituals |
+| `.ritual_name` | Name of the running ritual | All rituals |
+| `.step_name` | Name of the current step | Step `act` only |
+| `.minister_id` | ID of the executing minister | Step `act` only |
+
+**Builtin Arrange Functions:**
+
+The `arrange` field can reference builtin shell functions that output structured data:
+
+| Function | Output | Description |
+|----------|--------|-------------|
+| `get_edict {{ .edict_id }}` | Markdown | Full edict details including intent, scope, phase, lings |
+| `get_court_status` | Markdown | Current state of all ministers and active edicts |
+| `get_manifests {{ .edict_id }}` | Markdown | List of forge manifests for the edict |
+| `get_verdicts {{ .edict_id }}` | Markdown | Judge verdicts for the edict |
+| `get_precedents` | Markdown | Recent censor precedents |
+
 **Failure handling:**
 - `retry` — Retry the step up to `max_retries` (default when set at ritual level)
 - `"step_name"` — Jump to a named step (e.g., `on_failure: "forge"`)
 - `abort` — Stop the ritual entirely
 
 `on_failure` and `max_retries` can be set at the ritual level as defaults, and overridden per step.
+
+**When all retries are exhausted**, the Shogunate invokes the `report_failure` ritual:
+
+```yaml
+report_failure:
+    arrange:
+        get_edict {{ .edict_id }}
+        get_manifests {{ .edict_id }}
+        get_verdicts {{ .edict_id }}
+    steps:
+      - name: summarize
+        minister: strategist
+        act: |
+          Summarize the work completed and the failure that occurred.
+          Identify what was attempted and where it went wrong.
+          Distill a zhengming question for the Ruler to guide next steps.
+```
+
+**Loop exhaustion recovery:**
+
+When a step exhausts all `max_retries` attempts, the Shogunate invokes the `report_failure` ritual. This ritual summarizes the work done, identifies the failure point, and distills a Zhengming question for the Ruler to decide the path forward.
 
 ---
 
@@ -414,12 +464,12 @@ The Judge creates **Verdicts** after running tests:
 
 ### Incident Severity
 
-The Marshal tracks incidents with severity levels:
+The Marshal tracks incidents using standard logging severity levels:
 
-- `low` — Minor issue, no immediate impact
-- `medium` — Notable issue, requires attention
-- `high` — Significant issue, impacts functionality
-- `critical` — Severe issue, blocks progress or causes data loss
+- `debug` — Tracing information, no impact
+- `info` — Normal operational events
+- `warn` — Warning conditions, potential issues
+- `error` — Error conditions, requires attention
 
 ### Censor Precedents
 
@@ -722,8 +772,8 @@ The `Session` also enforces **write protection** — a file must be read via `re
 | **Intent drift** | Chancellor classifies edicts; Strategist plans before Forge implements |
 | **Ambiguity propagation** | Zhengming: any minister can halt and request clarification |
 | **Runaway minister** | 5-minute timeout on task dispatch; context cancellation propagates |
-| **Tool call loops** | Session detects repeated identical tool calls after 3 attempts |
-| **Unauthorized file writes** | Write protection: file must be `read_file`'d before `write_file` |
+| **Tool call loops** | Session detects repeated identical tool calls after 3 attempts; invokes `report_failure` ritual |
+| **Unauthorized file writes** | Write protection: file must be `read_file`'d before `write_file` or `replace_text` |
 | **Ritual failure** | Step-level retry, goto, abort; Censor can regress to Strategist |
 | **Precedent violation** | Censor logs all rulings to `censor_precedents` table as searchable case law |
 
@@ -733,12 +783,12 @@ The `Session` also enforces **write protection** — a file must be read via `re
 
 ### Shogunate Settings
 
-In `.agents/asimi.toml`:
+Configured in `internal/config/types.go` under `ShogunateConfig`, set via `.agents/asimi.toml`:
 
 ```toml
 [shogunate]
-poll_interval = "5s"     # Ritual Guard polling interval
-ritual_timeout = "30s"   # Max time per ritual step
+poll_interval = "5s"     # Ritual Guard polling interval (default: 5s)
+ritual_timeout = "30s"   # Max time per ritual step (default: 30s)
 ```
 
 ### Project Rituals
