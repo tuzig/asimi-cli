@@ -828,22 +828,27 @@ func updateToolCalls(tools []ToolCall, delta []*ToolCall) []ToolCall {
 		return tools
 	}
 	for _, t := range delta {
-		// OpenAI uses the Index field to identify which tool call this delta belongs to
-		// If ID is present, this is a new tool call
-		if t.ID != "" {
-			// Ensure we have enough space in the tools slice
-			for len(tools) <= t.Index {
-				tools = append(tools, ToolCall{})
-			}
-			// Initialize the tool call at the specified index
-			tools[t.Index] = *t
-			continue
+		// Ensure we have enough space in the tools slice
+		for len(tools) <= t.Index {
+			tools = append(tools, ToolCall{})
 		}
 
-		// If ID is empty, this is a continuation of an existing tool call
-		// Append arguments to the tool call at the specified index
-		if t.Index < len(tools) && t.Function.Arguments != "" {
-			tools[t.Index].Function.Arguments += t.Function.Arguments
+		existing := &tools[t.Index]
+
+		// If this is a new tool call (ID not yet set), initialize it
+		if existing.ID == "" && t.ID != "" {
+			existing.ID = t.ID
+			existing.Type = t.Type
+		}
+
+		// Preserve the function name - don't overwrite with empty
+		if t.Function.Name != "" {
+			existing.Function.Name = t.Function.Name
+		}
+
+		// Accumulate arguments
+		if t.Function.Arguments != "" {
+			existing.Function.Arguments += t.Function.Arguments
 		}
 	}
 
