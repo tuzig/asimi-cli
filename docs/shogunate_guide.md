@@ -15,29 +15,35 @@ The Five Constant Virtues (五常, Wǔcháng):
 - 智 (Zhì) — Wisdom: The Strategist exercises 智, discerning the proper path through complexity
 - 信 (Xìn) — Trustworthiness: The Tian ledger maintains 信, providing immutable accountability
 
-As Confucius taught in the Analects (論語): "If names be not correct, language
-is not in accordance with the truth of things. If language be not in accordance
-with the truth of things, affairs cannot be carried on to success."
-(名不正，則言不順；言不順，則事不成。) This is the essence of Zhengming (正名).
+As Confucius taught in the Analects (論語): 
 
-### Guiding Principles
+> If names be not correct, language is not in accordance with the truth of things.
+> If language be not in accordance with the truth of things,
+> affairs cannot be carried on to success."
+> 名不正，則言不順；言不順，則事不成。
+
+This is the essence of Zhengming (正名).
 
 ### Main Function
 
 The Shogunate's purpose is to free the Ruler to hunt.
-The Ruler and Confucius will hunt for openings and knight moves.
+The Ruler together with Confucius the sage will hunt for new rituals,
+improvments and look behind corners to come up with knight moves.
 The court handles the bureaucracy so the Ruler
 can stay in skirmish tempo, spotting openings and shaping direction.
 
-The Shogunate works by harmonizing three realms:
+To free the ruler, the Shogunate harmonizes the three realms:
 
-- **Heaven (天, Tiān)** — Intent. The Ruler's will, captured in edicts. Heaven represents purpose, direction, and the "why" of all action. It flows downward through the hierarchy as commands and clarifications.
+- **Humanity (人, Rén)** — The Ruler. The source of intent and will, the "why" of all action. Ren flows downward through edicts and clarifications. The Ruler's humaneness (仁) is the wellspring from which all purpose emerges.
 
-- **Earth (地, Dì)** — Implementation. The codebase, filesystem, and tooling. Earth receives Heaven's intent and grounds it in reality. It is the "what" and "where" — files modified, tests run, commits made.
+- **Heaven (天, Tiān)** — The Ledger. Events, logs, test results, and the immutable record of all that transpires. Heaven witnesses and remembers — the Tian (天) database provides accountability and the mandate that validates the Ruler's decrees.
 
-- **Humanity (人, Rén)** — Process. The ministers, rituals, and workflows that mediate between Heaven and Earth. Humanity is the "how" — the intelligence and coordination that transforms intent into implementation while preserving virtue.
+- **Earth (地, Dì)** — Implementation. The codebase, commits, branches and worktrees. Earth receives the Ruler's intent and grounds it in material reality.
 
-When the three realms are in harmony, intent flows naturally into code without friction. The Ruler speaks, ministers act, the earth changes. When harmony breaks — ambiguity in Heaven, errors on Earth, or dysfunction in Humanity — Zhengming restores alignment.
+The ministers and rituals mediate between these realms — translating Ren into action, recording outcomes in Tian, shaping changes in Di. When the three realms are in harmony, intent flows naturally into code without friction. The Ruler speaks, ministers act, Heaven records, Earth changes. When harmony breaks — ambiguity in Ren, gaps in Tian, or errors in Di — Zhengming restores alignment.
+
+> **Note on Ren:** Chinese has two homophones: 人 (humanity, the realm) and 仁 (benevolence, the virtue). The Ruler's 人 (humanity) is the source of intent;
+> the ministers 仁 (benevolence) gives that intent moral weight. Both are pronounced *rén*, but they carry distinct meanings — one ontological (who acts), one ethical (how one acts).
 
 ### Guiding Principles
 
@@ -45,7 +51,7 @@ The Shogunate embodies these principles:
 
 1. **Zhengming** (正名) — Rectification of Names.
    Never guess at requirements. When ambiguity threatens, stop and ask.
-   **To guess is treason** — a minister that proceeds without clarity betrays the Ruler's trust.
+   **Guessing is TREASON** — a minister that proceeds without clarity betrays the Ruler's trust.
 
 2. **Dao** (道) — The Way.
    Follow Wu-Wei. Use rituals for repeatable frictionless workflows,
@@ -53,9 +59,6 @@ The Shogunate embodies these principles:
 
 3. **De** (德) — Virtue.
    The Censor ensures ethical behavior. Code must be beautiful.
-
-4. **Tian** (天) — Heaven.
-   All actions are recorded. The ledger provides accountability.
 
 The metaphor isn't just aesthetic — it encodes a philosophy of careful, principled software development where clarity precedes action and quality is non-negotiable.
 
@@ -304,11 +307,20 @@ Each step follows Arrange-Act-Assert. `arrange` and `assert` are optional shell 
 steps:
   - name: build
     minister: forge
+    scope: edict              # Context inheritance
+    env:                      # Environment variables
+      GOOS: linux
+      GOARCH: amd64
     arrange: "git stash"           # Shell: setup before minister executes
     act: Implement feature X       # LLM: minister instruction
     assert: "just fmt && just lint" # Shell: must pass or step fails
 ```
 
+- `scope` — controls context inheritance:
+  - `edict` — retain the edict's context (default)
+  - `private` — start with a fresh context
+  - `<step_name>` — fork from a specific step's context
+- `env` — environment variables available to `arrange`, `act`, and `assert`
 - `arrange` — runs before the minister, gathers context. Variables it exports become template inputs for `act`.
 - `act` — the minister's instruction (LLM call).
 - `assert` — runs after the minister completes. Non-zero exit fails the step.
