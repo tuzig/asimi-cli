@@ -32,6 +32,7 @@ It embodies these principles:
 
 1. **Zhengming** (正名) — Rectification of Names.
    Never guess at requirements. When ambiguity threatens, stop and ask.
+   **To guess is treason** — a minister that proceeds without clarity betrays the Ruler's trust.
 
 2. **Dao** (道) — The Way.
    Follow Wu-Wei. Use rituals for repeatable frictionless workflows,
@@ -120,12 +121,12 @@ Each minister is a specialized AI agent with a specific role:
 | Minister | Role | Core Tools | Specialized Tools |
 |----------|------|------------|-------------------|
 | **Chancellor** | Coordinates all ministers, manages edict lifecycle, interfaces with the Ruler | — | `create_edict`, `cancel_edict`, `request_zhengming`, `answer_zhengming`, `get_edict_status`, `list_edicts`, `list_rituals`, `enact_ritual`, `get_tian_events`, `asimisql` |
-| **Strategist** | Analyzes edicts, creates execution plans, decomposes work into Lings | `read_file`, `list_files`, `grep` | `create_ling`, `update_ling`, `list_lings` |
-| **Forge** | Implements code changes according to plans | `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, `run_shell_command` | `create_manifest`, `update_manifest`, `commit_manifest` |
-| **Judge** | Writes tests and validates changes through test coverage | `read_file`, `write_file`, `edit_file`, `list_files`, `run_shell_command` | `record_verdict` |
-| **Censor** | Reviews code for ethics, quality, and standards compliance | `read_file`, `list_files`, `grep` | `record_precedent` |
-| **Marshal** | Handles production incidents and performs root cause analysis | `read_file`, `list_files`, `grep`, `run_shell_command` | `create_incident`, `resolve_incident` |
-| **Confucius** | Sees all state read-only, helps distill intent into edicts | `read_file`, `list_files`, `grep` (all tables) | `create_edict` |
+| **Strategist** | Analyzes edicts, creates execution plans, decomposes work into Lings | `read_file`, `list_files`, `grep` | `create_ling`, `update_ling`, `list_lings`, `request_zhengming` |
+| **Forge** | Implements code changes according to plans | `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, `run_shell_command` | `create_manifest`, `update_manifest`, `commit_manifest`, `request_zhengming` |
+| **Judge** | Writes tests and validates changes through test coverage | `read_file`, `write_file`, `edit_file`, `list_files`, `run_shell_command` | `record_verdict`, `reject_manifest`, `request_zhengming` |
+| **Censor** | Reviews code for ethics, quality, and standards compliance | `read_file`, `list_files`, `grep` | `record_precedent`, `reject_manifest`, `request_zhengming` |
+| **Marshal** | Handles production incidents and performs root cause analysis | `read_file`, `list_files`, `grep`, `run_shell_command` | `create_incident`, `resolve_incident`, `request_zhengming` |
+| **Confucius** | Sees all state read-only, helps distill intent into edicts | `read_file`, `list_files`, `grep` (all tables) | `create_edict`, `request_zhengming` |
 
 **Core Tools** are the basic file system and shell tools needed for each minister's work. **Specialized Tools** are unique to each minister's role in the Shogunate.
 
@@ -158,10 +159,11 @@ proceeding.
 **The Zhengming Loop:**
 
 1. Minister calls `request_zhengming` with a question — edict moves to `halted`
-2. Ruler provides their answer
-3. Chancellor calls `answer_zhengming` — answer appended to edict intent, edict resumes previous phase
+2. Chancellor receives the question and attempts to answer from its wider context
+3. If the Chancellor cannot answer, it escalates to the Ruler
+4. Answer (from Chancellor or Ruler) is appended to edict intent, edict resumes previous phase
 
-Zhengming is a clarification protocol, not a failure recovery mechanism. Ministers invoke it explicitly when they detect ambiguity—it operates outside the normal failure flow.
+Zhengming is a clarification protocol, not a failure recovery mechanism. Ministers invoke it explicitly when they detect ambiguity—it operates outside the normal failure flow. **To guess is treason**—a minister that proceeds without clarity betrays the Ruler's trust.
 
 ### Rituals
 
@@ -198,9 +200,9 @@ swift-strike:
         on_failure: "forge"
 ```
 
-#### Grand Campaign (L-size edicts)
+#### Grand Campaign (M-size edicts)
 
-For larger architectural work with strict gatekeeping:
+For medium-complexity work with planning and review:
 
 ```yaml
 grand-campaign:
@@ -233,6 +235,32 @@ grand-campaign:
           Review the changes for quality and standards compliance.
         depends_on: [judge]
         on_failure: "strategist"
+```
+
+#### Grand Orchestration (L-size edicts)
+
+For complicated architectural work requiring custom workflow design. The Strategist first designs an ad-hoc ritual tailored to the edict's complexity, then the court executes it:
+
+```yaml
+grand-orchestration:
+    on_failure: retry
+    max_retries: 3
+    arrange:
+        get_edict {{ .edict_id }}
+    steps:
+      - name: architect
+        minister: strategist
+        act: |
+          Analyze the edict and design a custom ritual workflow.
+          Create the ritual definition as a YAML document.
+          This ritual will be enacted for this specific edict.
+
+      - name: ratify
+        minister: chancellor
+        act: |
+          Review the proposed ritual for feasibility and safety.
+          If approved, create the ad-hoc ritual and enact it.
+        depends_on: [architect]
 ```
 
 #### Wakeup
@@ -329,25 +357,32 @@ my-ritual:
 - `create_ling(edict_id, description, depends_on?)` — Create a new Ling (sub-task) for an edict
 - `update_ling(ling_id, status?, description?)` — Update a Ling's status or description
 - `list_lings(edict_id)` — List all Lings for an edict with their dependencies
+- `request_zhengming(edict_id, question, priority?)` — Request clarification from the Ruler
 
 ### Forge Tools
 
 - `create_manifest(edict_id, file_path, change_type)` — Record a new file change (create/modify/delete)
 - `update_manifest(manifest_id, status)` — Update manifest status (staged → live → quenched)
 - `commit_manifest(manifest_id, commit_sha)` — Mark manifest as committed with git SHA
+- `request_zhengming(edict_id, question, priority?)` — Request clarification from the Ruler
 
 ### Judge Tools
 
 - `record_verdict(edict_id, ling_id?, passed, details?)` — Record test results for an edict or specific Ling
+- `reject_manifest(manifest_id, reason)` — Mark a manifest as rejected with reasoning
+- `request_zhengming(edict_id, question, priority?)` — Request clarification from the Ruler
 
 ### Censor Tools
 
 - `record_precedent(edict_id, approved, reasoning)` — Record ethics review outcome with reasoning
+- `reject_manifest(manifest_id, reason)` — Mark a manifest as rejected with reasoning
+- `request_zhengming(edict_id, question, priority?)` — Request clarification from the Ruler
 
 ### Marshal Tools
 
 - `create_incident(description, severity, edict_id?)` — Create a new incident, optionally linked to an edict
 - `resolve_incident(incident_id, resolution, root_cause?)` — Mark incident resolved with details
+- `request_zhengming(edict_id, question, priority?)` — Request clarification from the Ruler
 
 ---
 
@@ -360,13 +395,31 @@ When the Forge implements changes, it creates **Manifests** tracking each file m
 - `staged` — Change created but not committed
 - `live` — Committed to the repository
 - `quenched` — Validated by the Judge
-- `rejected` — Failed review
+- `rejected` — Failed review (set by Judge or Censor via `reject_manifest`)
+
+### Ling Status
+
+Lings track their progress through the execution plan:
+
+- `pending` — Not yet started
+- `in_progress` — Currently being worked on
+- `completed` — Successfully finished
+- `blocked` — Waiting on dependency or Zhengming
 
 ### Judge Verdicts
 
 The Judge creates **Verdicts** after running tests:
 - `passed` — Tests succeeded
 - `failed` — Tests failed
+
+### Incident Severity
+
+The Marshal tracks incidents with severity levels:
+
+- `low` — Minor issue, no immediate impact
+- `medium` — Notable issue, requires attention
+- `high` — Significant issue, impacts functionality
+- `critical` — Severe issue, blocks progress or causes data loss
 
 ### Censor Precedents
 
@@ -376,12 +429,14 @@ The Censor records **Precedents** from ethics reviews:
 
 ### Tian Events
 
-The **Tian** (天, Heaven) ledger records all events in the edict lifecycle for auditing and debugging:
+The **Tian** (天, Heaven) ledger records all events in the edict lifecycle for auditing and debugging. **All events are logged to the session logs** for complete traceability:
 
 - `edict_created`
 - `edict_assigned`
 - `phase_changed`
 - `forge_committed`
+- `manifest_committed`
+- `manifest_rejected`
 - `ritual_started`
 - `ritual_completed`
 - `ritual_failed`
@@ -625,6 +680,7 @@ The Shogunate maintains a central event registry. Ministers subscribe to event t
 | `zhengming_raised` | any minister | Chancellor |
 | `zhengming_answered` | Chancellor | originating minister |
 | `manifest_committed` | Forge | Judge |
+| `manifest_rejected` | Judge, Censor | Forge |
 | `verdict_delivered` | Judge | Chancellor, Censor |
 | `precedent_recorded` | Censor | Chancellor |
 | `incident_created` | logger, Marshal | Chancellor |
@@ -641,12 +697,12 @@ Ministers are isolated by **tool catalogs** — each minister receives a differe
 | Minister | File Tools | Shell | DB Tables | Orchestration Tools |
 |----------|-----------|-------|-----------|-------------------|
 | **Chancellor** | read-only (list, read, read_many, grep) | no | edicts, zhengming, forge_manifests, ling | create_edict, enact_ritual, asimi_sql |
-| **Strategist** | read-only | no | ling | create_ling, list_ling, update_ling |
-| **Forge** | read-write (read, write, replace, list, read_many, grep) | yes | forge_manifests | create_manifest, update_manifest, commit_manifest |
-| **Judge** | edit (read, write, replace, list, read_many, grep) | yes | verdicts, forge_manifests | record_verdict, list_pending_manifests, update_manifest_status |
-| **Censor** | read-only | no | censor_precedents | record_precedent, list_quenched_manifests, query_precedents |
-| **Marshal** | read-only | yes | incidents | create_incident, resolve_incident, get_incident |
-| **Confucius** | read-only (all tables) | no | edicts, ling, forge_manifests, verdicts, censor_precedents | create_edict |
+| **Strategist** | read-only | no | ling | create_ling, list_ling, update_ling, request_zhengming |
+| **Forge** | read-write (read, write, replace, list, read_many, grep) | yes | forge_manifests | create_manifest, update_manifest, commit_manifest, request_zhengming |
+| **Judge** | edit (read, write, replace, list, read_many, grep) | yes | verdicts, forge_manifests | record_verdict, reject_manifest, request_zhengming |
+| **Censor** | read-only | no | censor_precedents | record_precedent, reject_manifest, request_zhengming |
+| **Marshal** | read-only | yes | incidents | create_incident, resolve_incident, request_zhengming |
+| **Confucius** | read-only (all tables) | no | edicts, ling, forge_manifests, verdicts, censor_precedents | create_edict, request_zhengming |
 
 Key constraints:
 - **Strategist cannot write code** — it only plans (ling) and reads.
