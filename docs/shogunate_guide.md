@@ -22,13 +22,26 @@ with the truth of things, affairs cannot be carried on to success."
 
 ### Guiding Principles
 
+### Main Function
+
 The Shogunate's purpose is to free the Ruler to hunt.
 The Ruler and Confucius will hunt for openings and knight moves.
-The Shogunate works by harmonizing intent, earth and heaven.
 The court handles the bureaucracy so the Ruler
 can stay in skirmish tempo, spotting openings and shaping direction.
 
-It embodies these principles:
+The Shogunate works by harmonizing three realms:
+
+- **Heaven (天, Tiān)** — Intent. The Ruler's will, captured in edicts. Heaven represents purpose, direction, and the "why" of all action. It flows downward through the hierarchy as commands and clarifications.
+
+- **Earth (地, Dì)** — Implementation. The codebase, filesystem, and tooling. Earth receives Heaven's intent and grounds it in reality. It is the "what" and "where" — files modified, tests run, commits made.
+
+- **Humanity (人, Rén)** — Process. The ministers, rituals, and workflows that mediate between Heaven and Earth. Humanity is the "how" — the intelligence and coordination that transforms intent into implementation while preserving virtue.
+
+When the three realms are in harmony, intent flows naturally into code without friction. The Ruler speaks, ministers act, the earth changes. When harmony breaks — ambiguity in Heaven, errors on Earth, or dysfunction in Humanity — Zhengming restores alignment.
+
+### Guiding Principles
+
+The Shogunate embodies these principles:
 
 1. **Zhengming** (正名) — Rectification of Names.
    Never guess at requirements. When ambiguity threatens, stop and ask.
