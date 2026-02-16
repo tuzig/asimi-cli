@@ -308,6 +308,8 @@ steps:
   - name: build
     minister: forge
     scope: edict              # Context inheritance
+    model: claude-sonnet-4    # Override model for this step
+    temperature: 0.3          # Lower for precise work
     env:                      # Environment variables
       GOOS: linux
       GOARCH: amd64
@@ -320,6 +322,8 @@ steps:
   - `edict` — retain the edict's context (default)
   - `private` — start with a fresh context
   - `<step_name>` — fork from a specific step's context
+- `model` — override the model for this step (e.g., use a faster model for simple tasks)
+- `temperature` — LLM temperature override (0.0-1.0); lower for precise work, higher for creative exploration
 - `env` — environment variables available to `arrange`, `act`, and `assert`
 - `arrange` — runs before the minister, gathers context. Variables it exports become template inputs for `act`.
 - `act` — the minister's instruction (LLM call).
