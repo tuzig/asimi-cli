@@ -1,312 +1,406 @@
-# Shogunate User Guide
+# The Shogunate — Architecture Specification
 
-The Shogunate is Asimi's autonomous agent framework, inspired by the imperial bureaucracy of ancient China. It orchestrates multiple specialized AI ministers to handle complex software engineering tasks from inception to deployment.
+> **Status**: Part A documents the implemented system. Part B sketches future design goals.
 
-## Overvie
+---
 
-When you interact with Asimi in Shogunate mode, you assume the role of the **Ruler**.
-You issue **Edicts** (work orders) which the Chancellor classifies and enact a right-sized ritual to handle it.
+## Part A — What Exists Today
 
-Large changes go through the "Grand Campaign" ritual:
-```
-Ruler (You)
-    |
-    v
-Chancellor  <---> Zhengming (clarification requests)
-    |
-    +-- Strategist (planning)
-    +-- Forge (implementation)
-    +-- Judge (testing)
-    +-- Censor (review)
-```
+### I. Court Architecture
 
-## Core Concepts
-
-### Edicts
-
-An **Edict** is a work order issued by the Ruler. It captures your intent and tracks the entire lifecycle of a task from request to completion.
-
-**Phases:**
-- `classifying` - Chancellor determines the scope and approach
-- `planning` - Strategist breaks down the work into Lings
-- `forging` - Forge implements the code changes
-- `judging` - Judge runs tests and validates changes
-- `censoring` - Censor reviews for quality and standards
-- `deploying` - Changes are deployed (future)
-- `sealed` - Edict successfully completed
-- `cancelled` - Edict was cancelled
-
-TODO: add "halted" waiting on user feddback
-
-### Ministers
-
-Each minister is a specialized AI agent with a specific role:
-
-| Minister | Role | Tools |
-|----------|------|-------|
-| **Chancellor** | Coordinates all ministers, manages edict lifecycle, interfaces with the Ruler | `create_edict`, `request_zhengming`, `get_edict_status`, `list_edicts`, `invoke_minister`, `asimisql` |
-| **Strategist** | Analyzes edicts, creates execution plans, decomposes work into Lings | - |
-| **Forge** | Implements code changes according to plans | - |
-| **Judge** | Write tests and validates changes through test coverage | - |
-| **Censor** | Reviews code for ethics, quality, and standards compliance | - |
-| **Marshal** | Handles production incidents and performs root cause analysis | - |
-
-### Lings
-
-A **Ling** is a sub-task within an edict's execution plan. The Strategist creates Lings during the planning phase, breaking down the edict intent into actionable work items with dependencies.
+The Shogunate is a **coordinator-actor system**. A single `Shogunate` struct
+owns the lifecycle of six ministers, a ritual registry, a ritual runner, and an event registry.
+Ministers are persistent goroutines that receive work over channels and reply
+with results.
 
 ```
-Edict: "Add user authentication"
-  |
-  +-- Ling 1: "Create user model"
-  +-- Ling 2: "Add login endpoint" (depends on Ling 1)
-  +-- Ling 3: "Add logout endpoint" (depends on Ling 1)
-  +-- Ling 4: "Write authentication tests" (depends on Lings 2, 3)
+                        ┌─────────────────────────────┐
+                        │         TUI (tui)           │
+                        │  [Ruling]       [Hunting]   │
+                        └─────┬───────────────┬───────┘
+                              │ Prompt        │ Prompt
+                        ┌─────▼─────┐   ┌────▼──────┐
+                        │Chancellor │   │ Confucius │
+                        │  (宰相)    │   │  (孔子)    │
+                        └─────┬─────┘   └───────────┘
+                              │              sees all (read-only)
+                              │              creates edicts ──►─┐
+                              │ Task / Result                   │
+          ┌────────────┬──────┼───────┬────────────┐            │
+          ▼            ▼      ▼       ▼            ▼            │
+     Strategist     Forge   Judge   Censor     Marshal          │
+      (兵部)        (工部)  (刑部)  (都察院)    (锦衣卫)          │
+                                                                │
+                        ┌─────────────────┐                     │
+                        │  Ritual Runner  │◄────────────────────┘
+                        │  (embedded YAML)│
+                        └────────┬────────┘
+                                 │ dispatches Tasks
+                                 ▼
+                            ministers...
 ```
 
-### Zhengming (Clarification)
+**Core types** (`minister.go`):
 
-**Zhengming** (正名, "rectification of names") is the protocol for requesting clarification when requirements are ambiguous. When a minister encounters uncertainty that could impact the work, they invoke Zhengming to ask the Ruler for guidance.
+```go
+// Minister is the shared interface for all Shogunate ministers
+type Minister interface {
+    ID() string
+    Role() string
+    Scratchpad() string
+    Tools() []Tool
+    Tasks() chan<- *Task
+    Events() chan<- *Event
+    Run(ctx context.Context)
+}
 
-The edict is paused until you respond. This ensures the Shogunate never guesses at requirements - it always seeks clarity before proceeding.
+// Prompt carries the Ruler's message to the Chancellor
+type Prompt struct {
+    Message      string
+    SessionID    string            // empty = new session
+    ContextFiles map[string]string // files loaded via @ references
+}
 
-**Priority levels:**
-- `normal` - Standard timeout (24 hours)
-- `urgent` - Short timeout (1 hour)
+// Task carries work from Chancellor to a Minister
+type Task struct {
+    EdictID string
+    Work    string
+    Done    chan<- Result
+}
 
-### Rituals
+// Result signals a Minister has completed a Task
+type Result struct {
+    MinisterID string
+    Sealed     bool
+    Output     string
+    Err        error
+}
+```
 
-**Rituals** are YAML-defined workflows that orchestrate ministers through a series of steps. They provide reusable patterns for common tasks.
+Every minister embeds `MinisterBase`, which provides database access, session creation, event emission, and zhengming (clarification) requests.
 
-**Built-in rituals:**
+#### Bootstrap Sequence
 
-#### Swift Strike (S)
-For small, focused changes. A tight loop between Forge and Judge:
+1. **`NewShogunate(db, cfg, runner, logger)`** — creates all six ministers with a shared `MinisterBase` (db, runner, logger). No LLM client yet.
+2. **`ConfigureModel(model, sessionConfig, repoInfo)`** — injects the LLM client and config into every minister via `SetMinisterConfig()`.
+3. **`Start(ctx)`** — loads rituals from embedded YAML + `.agents/rituals/`, launches each minister's `Run()` goroutine, starts the ritual guard polling loop, and invokes the `wakeup` ritual.
+4. **TUI sends a `Prompt`** to `chancellor.Prompts` channel.
+5. **Chancellor** creates an edict (`PhaseClassifying`), creates a `Session`, and streams the LLM response back to the TUI via notify callbacks.
+6. **LLM tool calls** (`invoke_minister`, `invoke_ritual`) dispatch work to other ministers or start ritual workflows.
+
+---
+
+### II. Edict Lifecycle
+
+An edict is a persistent record in SQLite (the `edicts` table). It tracks intent, phase, and seals.
+
+**Creation**: When the Chancellor receives a `Prompt` with no `SessionID`, it calls `CreateEdict(edictID, intent)` which writes a row with `current_phase = PhaseClassifying`.
+
+**Phase progression**:
+
+```
+Classifying → Planning → Forging → Judging → Censoring → Done
+                                                    ↑
+                                              (or Cancelled)
+```
+
+Ministers advance the phase by calling `UpdatePhase()` on their `MinisterBase`. The Chancellor can also regress to an earlier phase — for example, `RegressToForging()` resets rejected ling and moves back to `PhaseForging`.
+
+**Seals**: The edict carries two seal columns — `chancellor_seal` and `censor_seal` — set via `SetChancellorSeal()` and `SetCensorSeal()`. Both must be set for an edict to be considered fully approved.
+
+**Zhengming** (正名, rectification of names): Any minister can halt progress by calling `RequestZhengming(edictID, question, priority)`, which inserts a row into the `zhengming` table. The Chancellor presents the question to the Ruler and calls `AnswerZhengming()` + `AppendToIntent()` when answered.
+
+---
+
+### III. Ritual Protocol
+
+A ritual is a YAML-defined workflow that orchestrates ministers through a series of steps. Two rituals are embedded in the binary:
+
+**swift-strike** (S-size edicts) — a tight forge/judge loop:
+
 ```yaml
+name: swift-strike
 steps:
-  - name: build
-    minister: forge
-    task: Implement the changes for edict {{ .edict_id }}
-    on_failure: retry
-    max_retries: 3
-  - name: test
-    minister: judge
-    depends_on: [forge]
-    on_failure_target: forge  # Loop back on failure
-```
-
-#### Grand Campaign (L)
-For larger architectural work with strict gatekeeping:
-```yaml
-steps:
-  - name: strategist  # Create battle plan
-  - name: forge       # Execute the plan
-  - name: judge       # Run trials
-  - name: censor      # Final review
-```
-
-**Creating custom rituals:**
-
-Place YAML files in `.agents/rituals/` to define project-specific rituals:
-
-```yaml
-# .agents/rituals/my-ritual.yaml
-name: my-ritual
-description: "Custom workflow for my project"
-triggers:
-  - manual: true
-inputs:
-  edict_id:
-    type: string
-    required: true
-steps:
-  - name: step-1
+  - name: forge
     minister: forge
     task: |
-      Do something for {{ .edict_id }}
+      Implement the changes for edict {{ .edict_id }}.
+      Focus on minimal, targeted changes.
     on_failure: retry
-    max_retries: 2
+    max_retries: 3
+
+  - name: judge
+    minister: judge
+    task: |
+      Run tests and validate the changes for edict {{ .edict_id }}.
+    depends_on: [forge]
+    on_failure: goto
+    on_failure_target: forge
 ```
 
+**grand-campaign** (L-size edicts) — architecture-first with strict gatekeeping:
 
-**Step types:**
-- `minister` - Invoke a minister with a task
-- `prompt` - Execute an LLM prompt directly
-- `cmd` - Run a shell command
-- `gate` - Conditional check before proceeding
+```yaml
+name: grand-campaign
+steps:
+  - name: strategist
+    minister: strategist
+    task: Analyze and produce a Battle Plan...
+    on_failure: zhengming
 
-TODO: replace the types with a "before" and "after" for shell commands wrapping of the response
+  - name: forge
+    minister: forge
+    depends_on: [strategist]
+    on_failure: retry
+    max_retries: 3
 
-**Failure handling:**
-- `retry` - Retry the step up to max_retries
-- `zhengming` - Request clarification from the Ruler
-- `goto` - Jump to a specific step (use `on_failure_target`)
-- `abort` - Stop the ritual entirely
+  - name: judge
+    minister: judge
+    depends_on: [forge]
+    on_failure: goto
+    on_failure_target: forge
 
-TODO: remove zhengming as it's like panic and does flow through the normak failure handling
-
-## Data Model
-
-### Forge Manifests
-
-When the Forge implements changes, it creates **Manifests** tracking each file modification:
-
-**Statuses:**
-- `staged` - Change created but not committed
-- `live` - Committed to the repository
-- `quenched` - Validated by the Judge
-- `rejected` - Failed review
-
-### Judge Verdicts
-
-The Judge creates **Verdicts** after running tests:
-- `passed` - Tests succeeded
-- `failed` - Tests failed
-
-### Censor Precedents
-
-The Censor records **Precedents** from ethics reviews:
-- `approved` - Code meets standards
-- `rejected` - Code violates principles
-
-### Tian Events
-
-The **Tian** (天, Heaven) ledger records all events in the edict lifecycle for auditing and debugging:
-- `edict_created`
-- `edict_assigned`
-- `phase_changed`
-- `forge_committed`
-- `ritual_started`
-- `ritual_completed`
-- `ritual_failed`
-- `zhengming_needed`
-- `zhengming_answered`
-- `edict_cancelled`
-
-TODO: add ritual_step_started/completed/failed
-
-## Using the Shogunate
-
-### Starting the Shogunate
-
-The Shogunate starts automatically when Asimi initializes. Ministers begin their processing loops and await tasks.
-
-### Issuing Edicts
-
-Simply describe what you want in natural language. The Chancellor will:
-1. Create an edict capturing your intent
-2. Classify the scope (S, M, L, XL)
-3. Enact an appropriate ritual
-
-When a ritual is on the Ritual Guard takes over and executes the workflow.
-
-Example:
-```
-You: Add a logout button to the header that clears the session and redirects to /login
-
-Chancellor: [Creates edict, invokes swift-strike ritual]
-  Forge: [Implements the button]
-  Judge: [Runs tests]
-  -> Edict sealed
+  - name: censor
+    minister: censor
+    depends_on: [judge]
+    on_failure: goto
+    on_failure_target: strategist
 ```
 
-### Responding to Zhengming
+**wakeup** — invoked as the last step of `Start()`, orients the court before the Ruler speaks:
 
-When a minister needs clarification, you'll be prompted:
+```yaml
+name: wakeup
+steps:
+  - name: orient
+    minister: strategist
+    before: |
+      git_branch=$(git rev-parse --abbrev-ref HEAD)
+      git_status=$(git status --short)
+      git_log=$(git log --oneline -5)
+      pending_edicts=$(asimi-sql "SELECT edict_id, current_phase FROM edicts WHERE current_phase NOT IN ('done','cancelled')")
+      pending_zhengming=$(asimi-sql "SELECT edict_id, question FROM zhengming WHERE answer IS NULL")
+    task: |
+      Court is now in session. Here is the state of affairs:
+      Branch: {{ .git_branch }}
+      Working tree: {{ .git_status }}
+      Recent commits: {{ .git_log }}
+      Pending edicts: {{ .pending_edicts }}
+      Unanswered zhengming: {{ .pending_zhengming }}
+
+      Help the Ruler start his day by raising zhengming.
+      Suggest 2-3 actionable options for the Ruler to pursue.
+      Return them as a numbered list, each with a one-line description.
 
 ```
-Zhengming from Chancellor:
-"Should the logout confirmation use a modal dialog or inline confirmation?"
 
-> Use a modal dialog with "Cancel" and "Logout" buttons
+The Strategist raises zhengming directly — the Ruler sees the options and picks one to start the session.
+
+**Event Registry**: The Shogunate maintains a central event registry. Ministers subscribe to event types they care about and receive them as tasks. Events flow through the registry, not directly between ministers.
+
+| Event | Emitted by | Subscribers |
+|-------|-----------|-------------|
+| `edict_created` | Chancellor | Strategist |
+| `phase_changed` | any minister | Chancellor |
+| `zhengming_raised` | any minister | Chancellor |
+| `zhengming_answered` | Chancellor | originating minister |
+| `manifest_committed` | Forge | Judge |
+| `verdict_delivered` | Judge | Chancellor, Censor |
+| `precedent_recorded` | Censor | Chancellor |
+| `incident_created` | logger, Marshal | Chancellor |
+
+A warning or error level log message is an incident. The logger emits `incident_created` directly — the Shogunate handles it from there.
+
+A ritual step can also subscribe to events via an `on_event` field — the step blocks until the named event fires, then proceeds with the event payload available as template variables.
+
+Each step can have `before` and `after` scripts. A `before` script runs before the step executes — its variables become template inputs for the step's `task`. An `after` script runs after the step completes and receives the step's output as `$STEP_OUTPUT`.
+
+**Step types**: `minister` (invoke a minister), `cmd` (shell command), `prompt` (LLM call), `gate` (wait for condition), `confirm` (require user approval).
+
+**Failure modes**: `retry` (up to `max_retries`), `goto` (jump to a named step), `zhengming` (halt and ask the Ruler), `abort` (give up).
+
+The `RitualRunner` executes steps sequentially, respecting `depends_on` ordering. Project-specific rituals can be added under `.agents/rituals/` and will be loaded at startup (overriding embedded rituals of the same name).
+
+The Chancellor's `invoke_ritual` tool starts a ritual asynchronously — `RitualRunner.Start()` creates a `RitualExecution`, then `RitualRunner.Run()` proceeds in a background goroutine.
+
+---
+
+### IV. Threading Strategy
+
+The Shogunate uses a **channel-based actor pattern** built on Go's CSP primitives.
+
+**Minister goroutines** (persistent): Each minister's `Run()` method blocks on a `select` over its task channel and the context's Done channel:
+
+```go
+// Every minister follows this pattern:
+func (m *SomeMinister) Run(ctx context.Context) {
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case task := <-m.tasks:
+            m.processTask(ctx, task)
+        case event := <-m.events:
+            m.handleEvent(ctx, event)
+        }
+    }
+}
 ```
 
-Your response is appended to the edict's intent and processing continues.
+**Task dispatch** (synchronous blocking): The Chancellor's `invoke_minister` tool sends a `Task` on the target minister's channel, then blocks on the per-call `Done` channel waiting for a `Result`. A **5-minute timeout** prevents indefinite blocking.
 
-### Checking Status
-
-Ask about edict status:
 ```
-You: What's the status of the logout feature?
-
-Chancellor: [Uses get_edict_status tool]
-  Edict issue-123: phase=judging, all tests passing
-```
-
-### Cancelling Edicts
-
-If you change your mind:
-```
-You: Cancel the logout feature edict
-
-Chancellor: [Updates phase to cancelled]
-  Edict issue-123 cancelled
+Chancellor goroutine          Minister goroutine
+       │                              │
+       ├── Task ──────────────────►   │
+       │   (blocks on Done chan)       ├── processTask()
+       │                              │
+       │   ◄───────── Result ─────────┤
+       │                              │
 ```
 
-## Configuration
+**Ritual runner**: Runs in a separate goroutine spawned by `StartRitual()`. It dispatches `Task` messages to ministers sequentially according to the ritual's step order.
 
-### Shogunate Settings
+**Ritual guard**: A polling loop (`runRitualGuard()`) that ticks at a configurable interval and runs the `RitualGuardRunner.Run()` method with a per-cycle timeout (default 30s). The guard processes events from the event registry.
 
-In `.agents/asimi.toml`:
+**Cancellation**: `Shogunate.Stop()` cancels the root context, which propagates to all minister goroutines and the ritual guard.
 
-```toml
-[shogunate]
-poll_interval = "5s"     # Ritual Guard polling interval
-ritual_timeout = "30s"   # Max time per ritual step
+---
+
+### V. Tool-Level Isolation
+
+Ministers are isolated not by filesystem namespaces but by **tool catalogs** — each minister receives a different set of tools when its `Session` is created.
+
+| Minister | File Tools | Shell | DB Tables | Orchestration Tools |
+|----------|-----------|-------|-----------|-------------------|
+| **Chancellor** | read-only (list, read, read_many, grep) | no | edicts, zhengming, forge_manifests, ling | invoke_minister, invoke_ritual, create_edict, asimi_sql |
+| **Strategist** | read-only | no | ling | insert_ling, list_ling, update_ling_status |
+| **Forge** | read-write (read, write, replace, list, read_many, grep) | yes | forge_manifests | create_manifest, update_manifest, commit_manifest |
+| **Judge** | edit (read, write, replace, list, read_many, grep) | yes | verdicts, forge_manifests | record_verdict, list_pending_manifests, update_manifest_status |
+| **Censor** | read-only | no | censor_precedents | record_precedent, list_quenched_manifests, query_precedents |
+| **Marshal** | read-only | yes | incidents | create_incident, resolve_incident, get_incident, get_manifest_by_commit |
+| **Confucius** | read-only (all tables) | no | edicts, ling, forge_manifests, verdicts, censor_precedents | create_edict |
+
+Key constraints enforced by this design:
+- **Strategist cannot write code** — it only plans (ling) and reads.
+- **Censor cannot modify files** — it reviews and records precedents.
+- **Chancellor cannot write files** — it orchestrates, never implements.
+- **Only Forge and Judge have shell access** alongside the Marshal (for incident investigation).
+- **Confucius sees all but changes nothing** — full read-only across every table; can only create edicts.
+
+The `Session` also enforces **write protection** — a file must be read via `read_file` before it can be written via `write_file`. This is tracked per-session in `filesRead`.
+
+---
+
+### VI. TUI — Tabs and Two Tempos
+
+The TUI uses **vi-style tabs** with a top tab-bar. Asimi starts with two tabs: **Ruling** and **Hunting**. Each tab has its own chat history and input buffer — switching tabs preserves your place in both.
+
+**Navigation**: `gt` / `gT` (next/prev tab), `1gt` / `2gt` (jump by number).
+
+```
+┌──────────────────────────────────────────────┐
+│ [Ruling] [Hunting]                           │
+│──────────────────────────────────────────────│
+│ [CHANCELLOR] Session: edict-1739...          │
+│ ─────────────────────────────────────        │
+│ Chancellor: I'll analyze this request and    │
+│ invoke the appropriate ritual...             │
+│                                              │
+│ ┌ InvokeMinister forge                       │
+│ │ [implement auth changes...]                │
+│ └                                            │
+│                                              │
+│ ┌ Ritual swift-strike                        │
+│ │ Started [a3f8b2c1]                         │
+│ └                                            │
+│                                              │
+│ > _                                          │
+└──────────────────────────────────────────────┘
 ```
 
-### Project Rituals
+#### Ruling Tab — Campaign Tempo
 
-Create custom rituals in `.agents/rituals/*.yaml` to define project-specific workflows.
+The Ruling tab is the court. You talk to the **Chancellor**, edicts flow through phases (classify → plan → forge → judge → censor), rituals orchestrate ministers. This is deliberate, structured work.
 
-## Architecture Notes
+#### Hunting Tab — Skirmish Tempo
 
-### Event-Driven Design
+The Hunting tab is where agility lives — knight moves, L-shaped lateral thinking. You talk to **Confucius** (孔子), a new role that sits outside the court hierarchy.
 
-The Shogunate uses an event-driven architecture:
-1. Events are recorded to the Tian ledger
-2. The Ritual Guard polls for events
-3. Rituals react to relevant events
-4. Ministers process tasks asynchronously
+**Confucius** sees everything: edicts, ling, manifests, precedents, code — full read-only access across the entire system. His job is to distill the Ruler's *ren* (仁) — to help fuzzy intent crystallize into sharp edicts.
 
-### Session Isolation
+The flow between tabs:
 
-Each edict gets its own LLM session, maintaining context for the duration of the task. This allows multiple edicts to be processed concurrently without context contamination.
-
-### Streaming
-
-All minister responses stream back to the TUI in real-time, so you can follow progress as the Shogunate works.
-
-## Troubleshooting
-
-### "LLM not configured"
-The model hasn't connected yet. Wait for authentication to complete.
-
-### Edict stuck in a phase
-Check for pending Zhengming requests - the Shogunate may be waiting for your input.
-
-### Ritual failures
-Check the Tian events to see what happened:
-```sql
-SELECT * FROM tian_events WHERE edict_id = 'your-edict-id' ORDER BY created_at;
+```
+Hunting tab                          Ruling tab
+───────────                          ──────────
+You + Confucius                      Chancellor + Court
+    │                                     │
+    ├─ "this auth is brittle"             │
+    ├─ Confucius probes, questions        │
+    ├─ intent crystallizes                │
+    ├─ creates edict ────────────────────►│
+    │   [edict-a3f8b2c1](ruling://...)    ├─ Chancellor classifies
+    │                                     ├─ ritual kicks off
+    │                                     ▼
 ```
 
-Use the `asimisql` tool or direct database access to inspect state.
+When Confucius creates an edict, the Hunting tab shows a clickable link. Clicking it switches to the Ruling tab, scrolled to where that edict's conversation begins. The Hunting tab stays where you left it.
 
-## Philosophy
+| Aspect | Ruling | Hunting |
+|--------|--------|---------|
+| **Counterpart** | Chancellor | Confucius |
+| **Tempo** | Campaign (grand-campaign) | Skirmish (swift-strike) |
+| **Purpose** | Execute edicts | Spot openings, distill intent |
+| **Edict creation** | Ruler dictates directly | Confucius distills from conversation |
+| **Awareness** | Court ministers only | Full read-only across all state |
 
-The Shogunate embodies these principles:
+#### Stream Messages
 
-1. **Zhengming** (正名) - Rectification of Names
-   Never guess at requirements. When ambiguity threatens, stop and ask.
+Stream message types flow from the Session to the TUI:
 
-2. **Dao** (道) - The Way
-   Follow established patterns. Use rituals for repeatable workflows.
+- `StreamStartMsg{SessionID}` — signals a new response is beginning
+- `StreamChunkMsg{Text}` — incremental LLM output
+- `StreamReasoningChunkMsg{Text}` — reasoning/thinking output
+- `StreamCompleteMsg{}` — response finished normally
+- `StreamInterruptedMsg{PartialContent}` — cancelled by user
+- `StreamErrorMsg{Err}` — error occurred
+- `StreamDoneMsg{}` — all processing complete
+- `MinisterInvokingMsg` / `MinisterCompletedMsg` — minister dispatch tracking
+- `RitualStepMsg` — ritual step progress
+- `ZhengmingPendingMsg` — clarification needed from the Ruler
+- `EventMsg` — event fired from the event registry
+- `TabSwitchMsg{TabIndex}` — tab navigation
+- `EdictLinkMsg{EdictID, TabIndex}` — clickable edict cross-reference from Hunting
 
-3. **De** (德) - Virtue
-   The Censor ensures ethical behavior. Code must meet standards.
+---
 
-4. **Tian** (天) - Heaven
-   All actions are recorded. The ledger provides accountability.
+### VII. Constitutional Summary
 
-The metaphor isn't just aesthetic - it encodes a philosophy of careful, principled software development where clarity precedes action and quality is non-negotiable.
+| Concern | Prevention Mechanism |
+|---------|---------------------|
+| **Minister writes code it shouldn't** | Tool catalogs: only Forge and Judge get write/edit tools |
+| **Minister runs shell commands it shouldn't** | Shell tool only granted to Forge, Judge, Marshal |
+| **Intent drift** | Chancellor classifies edicts; Strategist plans before Forge implements |
+| **Ambiguity propagation** | Zhengming: any minister can halt and request clarification |
+| **Runaway minister** | 5-minute timeout on `invoke_minister`; context cancellation propagates |
+| **Tool call loops** | Session detects repeated identical tool calls after 3 attempts |
+| **Unauthorized file writes** | Write protection: file must be `read_file`'d before `write_file` |
+| **Ritual failure** | Step-level retry, goto, zhengming, abort; Censor can regress to Strategist |
+| **Precedent violation** | Censor logs all rulings to `censor_precedents` table as searchable case law |
+
+---
+
+## Part B — Future: Deep Realm Isolation
+
+The current system isolates ministers through tool catalogs at the application level. A future evolution would enforce isolation at the runtime level through the *San Cai* (三才) realm model:
+
+**Context severance**: Ceremony goroutines would start from `context.Background()` rather than inheriting parent context values, preventing covert data leakage between realms (Tian/Di/Ren).
+
+**Filesystem namespaces**: Each ceremony would operate in a chroot-isolated view — Forge sees the git repo but not test artifacts; Judge sees source as read-only plus ephemeral log space that is destroyed after a verdict.
+
+**Middleware sanitization**: Data flowing between ceremonies would pass through realm translators. Direct Tian-to-Di (test results to code) transfers would be forbidden; instead, test failures would flow through Ren (intent) as sanitized summaries stripped of stack traces and line numbers, preventing the Forge from "guessing" at fixes based on leaked test output.
+
+**Session continuity modes**: Each ceremony would declare whether its LLM session is `fresh` (new instance), `fork` (inherited with sanitization), or `continuation` (same session). The Royal Guard would reject `continuation` for cross-realm transitions.
+
+These mechanisms would make the constitutional metaphor enforceable at the OS and runtime level rather than relying solely on application-level tool selection.
