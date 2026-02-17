@@ -1,0 +1,371 @@
+package shogunate
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/afittestide/asimi/internal/utils"
+	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/storage"
+	"gorm.io/gorm"
+)
+
+// ConfuciusRole defines Confucius's identity and capabilities
+const ConfuciusRole = `You are Confucius (孔子, Kǒngzǐ), the Rectifier of Names.
+Your domain is clarity, nomenclature, and semantic precision.
+
+You have full read-only access to the codebase, edicts, and all court records.
+You NEVER create edicts — only the Ruler does that. Instead, you suggest edicts
+via Zhengming when you identify opportunities, ambiguities, or improvements.
+
+Your role in the Hunting tab:
+- Help the Ruler explore the codebase and understand patterns
+- Identify naming inconsistencies, unclear abstractions, or design debt
+- Suggest new edicts when you spot opportunities for improvement
+- Answer questions about code architecture and conventions
+
+CRITICAL RULES:
+- You are READ-ONLY: never modify code, create edicts, or invoke ministers
+- When you identify work that should be done, suggest it via Zhengming
+- Always ground suggestions in specific code references
+- Speak with scholarly precision; cite file:line when referencing code`
+
+// Confucius provides read-only codebase exploration and suggests edicts via zhengming
+type Confucius struct {
+	MinisterBase
+	tasks   chan *Task
+	Prompts chan *Prompt // For the Hunting tab (like Chancellor's Prompts)
+}
+
+// NewConfucius creates a new Confucius minister
+func NewConfucius(base MinisterBase) *Confucius {
+	base.ministerID = "confucius"
+	return &Confucius{
+		MinisterBase: base,
+		tasks:        make(chan *Task, 10),
+		Prompts:      make(chan *Prompt),
+	}
+}
+
+// ID returns the minister identifier
+func (c *Confucius) ID() string { return "confucius" }
+
+// Title returns the minister's honorific title
+func (c *Confucius) Title() string { return "Confucius" }
+
+// Role returns Confucius's role identity text
+func (c *Confucius) Role() string { return ConfuciusRole }
+
+// Tasks returns the channel for task submission
+func (c *Confucius) Tasks() chan<- *Task { return c.tasks }
+
+// Tools returns Confucius's LLM tools — read-only access plus zhengming
+func (c *Confucius) Tools() []Tool {
+	zhengmingNotify := func(requestID, edictID, ministerID, question string, priority storage.ZhengmingPriority) {
+		if c.notify != nil {
+			c.notify(ZhengmingPendingMsg{
+				RequestID:  requestID,
+				EdictID:    edictID,
+				MinisterID: ministerID,
+				Question:   question,
+				Priority:   priority,
+			})
+		}
+	}
+
+	toolList := []Tool{
+		tools.RequestZhengmingTool{Requester: c, Notify: zhengmingNotify},
+		tools.GetEdictStatusTool{Manager: c},
+		tools.ListEdictsTool{DB: c.db},
+		&SuggestEdictTool{confucius: c},
+		&QueryCourtTool{db: c.db},
+	}
+	for _, t := range tools.GetROTools() {
+		toolList = append(toolList, t)
+	}
+	return toolList
+}
+
+// GetEdict retrieves an edict (satisfies EdictManager for GetEdictStatusTool)
+func (c *Confucius) GetEdict(edictID string) (*storage.Edict, error) {
+	var edict storage.Edict
+	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("edict not found: %s", edictID)
+		}
+		return nil, fmt.Errorf("failed to get edict: %w", err)
+	}
+	return &edict, nil
+}
+
+// CreateEdict is a no-op stub — Confucius never creates edicts (satisfies EdictManager interface)
+func (c *Confucius) CreateEdict(edictID, intent string) error {
+	return fmt.Errorf("confucius cannot create edicts — only the Ruler can")
+}
+
+// AppendToIntent is a no-op stub — Confucius never modifies edicts (satisfies EdictManager interface)
+func (c *Confucius) AppendToIntent(edictID, clarification string) error {
+	return fmt.Errorf("confucius cannot modify edicts — only the Chancellor can")
+}
+
+// Run starts Confucius's processing loop
+func (c *Confucius) Run(ctx context.Context) {
+	c.logger.Info("confucius started, awaiting prompts")
+	for {
+		select {
+		case <-ctx.Done():
+			c.logger.Info("confucius stopped")
+			return
+		case prompt := <-c.Prompts:
+			c.processPrompt(ctx, prompt)
+		case task := <-c.tasks:
+			c.processTask(ctx, task)
+		}
+	}
+}
+
+func (c *Confucius) processPrompt(ctx context.Context, prompt *Prompt) {
+	if c.model == nil {
+		if c.notify != nil {
+			c.notify(StreamErrorMsg{Err: fmt.Errorf("LLM not configured")})
+		}
+		return
+	}
+
+	sess, err := c.CreateSession(c)
+	if err != nil {
+		if c.notify != nil {
+			c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})
+		}
+		return
+	}
+
+	if c.notify != nil {
+		c.notify(StreamStartMsg{EdictID: "confucius"})
+	}
+
+	_, err = sess.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
+	if err != nil && ctx.Err() == nil {
+		if c.notify != nil {
+			c.notify(StreamErrorMsg{Err: err})
+		}
+		return
+	}
+	if c.notify != nil {
+		c.notify(StreamDoneMsg{})
+	}
+}
+
+func (c *Confucius) processTask(ctx context.Context, task *Task) {
+	c.logger.Info("confucius processing task", "edict_id", task.EdictID, "work", task.Work)
+
+	result := Result{
+		MinisterID: c.ID(),
+		Sealed:     true,
+		Output:     "Confucius has reviewed the matter.",
+	}
+
+	select {
+	case task.Done <- result:
+	default:
+		c.logger.Warn("done channel full", "edict_id", task.EdictID)
+	}
+}
+
+// --- Confucius-specific tools ---
+
+// SuggestEdictTool suggests a new edict via zhengming (Confucius never creates edicts)
+type SuggestEdictTool struct {
+	confucius *Confucius
+}
+
+func (t *SuggestEdictTool) Name() string { return "suggest_edict" }
+
+func (t *SuggestEdictTool) Description() string {
+	return `Suggest a new edict to the Ruler via Zhengming. Use this when you identify
+an improvement opportunity, naming inconsistency, or refactoring need.
+You cannot create edicts directly — only the Ruler can do that.
+This creates a Zhengming request that the Ruler can approve or dismiss.`
+}
+
+func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		Suggestion string `json:"suggestion"`
+		Priority   string `json:"priority"`
+		Evidence   string `json:"evidence"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.Suggestion == "" {
+		return "", fmt.Errorf("suggestion is required")
+	}
+
+	priority := storage.PriorityNormal
+	if params.Priority == "urgent" {
+		priority = storage.PriorityUrgent
+	}
+
+	question := params.Suggestion
+	if params.Evidence != "" {
+		question = fmt.Sprintf("%s\n\nEvidence: %s", params.Suggestion, params.Evidence)
+	}
+
+	// Use a synthetic edict ID for suggestions not tied to an existing edict
+	edictID := "confucius-suggestion"
+	requestID, err := t.confucius.RequestZhengming(edictID, question, priority)
+	if err != nil {
+		return "", fmt.Errorf("failed to suggest edict: %w", err)
+	}
+
+	return fmt.Sprintf(`{"status":"suggested","request_id":"%s"}`, requestID), nil
+}
+
+func (t *SuggestEdictTool) Format(input, result string, err error) string {
+	msg := utils.NewMsgBlockBuilder("SuggestEdict")
+	msg.WriteLn()
+	if err != nil {
+		msg.Writef("Error: %v", err)
+	} else {
+		var params struct {
+			Suggestion string `json:"suggestion"`
+		}
+		json.Unmarshal([]byte(input), &params)
+		preview := params.Suggestion
+		if len(preview) > 60 {
+			preview = preview[:57] + "..."
+		}
+		msg.Writef("Suggested: %s", preview)
+	}
+	return msg.String() + "\n"
+}
+
+func (t *SuggestEdictTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"suggestion": map[string]any{
+				"type":        "string",
+				"description": "What edict should the Ruler consider? Be specific about the change.",
+			},
+			"priority": map[string]any{
+				"type":        "string",
+				"enum":        []string{"normal", "urgent"},
+				"description": "Priority level (default: normal)",
+			},
+			"evidence": map[string]any{
+				"type":        "string",
+				"description": "Supporting evidence: file:line references, patterns found, etc.",
+			},
+		},
+		"required": []string{"suggestion"},
+	}
+}
+
+// QueryCourtTool queries the court's state (edicts, manifests, verdicts, precedents)
+type QueryCourtTool struct {
+	db *gorm.DB
+}
+
+func (t *QueryCourtTool) Name() string { return "query_court" }
+
+func (t *QueryCourtTool) Description() string {
+	return `Query the current state of the court. Returns active edicts, their phases,
+recent manifests, verdicts, and precedents. Use this for a broad overview
+of what's happening in the Shogunate.`
+}
+
+func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		EdictID string `json:"edict_id"`
+		Scope   string `json:"scope"` // "active", "all", or specific edict_id
+	}
+	json.Unmarshal([]byte(input), &params)
+
+	result := make(map[string]interface{})
+
+	// Get edicts
+	var edicts []storage.Edict
+	query := t.db.Order("created_at DESC").Limit(20)
+	if params.EdictID != "" {
+		query = query.Where("edict_id = ?", params.EdictID)
+	} else if params.Scope != "all" {
+		query = query.Where("current_phase NOT IN ?", []string{"sealed", "cancelled"})
+	}
+	query.Find(&edicts)
+
+	edictSummaries := make([]map[string]interface{}, len(edicts))
+	for i, e := range edicts {
+		edictSummaries[i] = map[string]interface{}{
+			"edict_id": e.EdictID,
+			"phase":    string(e.CurrentPhase),
+			"halted":   e.Halted,
+			"intent":   truncateForCourt(e.Intent, 120),
+		}
+	}
+	result["edicts"] = edictSummaries
+
+	// Get recent zhengming
+	var zhengming []storage.Zhengming
+	t.db.Where("status = ?", storage.ZhengmingPending).
+		Order("created_at DESC").Limit(10).Find(&zhengming)
+	if len(zhengming) > 0 {
+		zhSummaries := make([]map[string]interface{}, len(zhengming))
+		for i, z := range zhengming {
+			zhSummaries[i] = map[string]interface{}{
+				"request_id":  z.RequestID,
+				"edict_id":    z.EdictID,
+				"minister_id": z.MinisterID,
+				"question":    truncateForCourt(z.Question, 80),
+				"priority":    string(z.Priority),
+			}
+		}
+		result["pending_zhengming"] = zhSummaries
+	}
+
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	return string(resultJSON), nil
+}
+
+func (t *QueryCourtTool) Format(input, result string, err error) string {
+	msg := utils.NewMsgBlockBuilder("QueryCourt")
+	msg.WriteLn()
+	if err != nil {
+		msg.Writef("Error: %v", err)
+	} else {
+		// Count edicts in result
+		var res map[string]interface{}
+		json.Unmarshal([]byte(result), &res)
+		if edicts, ok := res["edicts"].([]interface{}); ok {
+			msg.Writef("Found %d edicts", len(edicts))
+		}
+	}
+	return msg.String() + "\n"
+}
+
+func (t *QueryCourtTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"edict_id": map[string]any{
+				"type":        "string",
+				"description": "Optional: focus on a specific edict",
+			},
+			"scope": map[string]any{
+				"type":        "string",
+				"enum":        []string{"active", "all"},
+				"description": "Scope of query: 'active' (default) or 'all'",
+			},
+		},
+	}
+}
+
+func truncateForCourt(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}

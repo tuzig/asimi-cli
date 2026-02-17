@@ -132,6 +132,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ministers["judge"] = NewJudge(base, nil)
 	s.ministers["censor"] = NewCensor(base, nil)
 	s.ministers["marshal"] = NewMarshal(base, nil)
+	s.ministers["confucius"] = NewConfucius(base)
 
 	return s
 }
