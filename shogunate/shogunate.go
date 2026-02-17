@@ -325,6 +325,7 @@ func (s *Shogunate) GetCurrentSession(edictID string) *Session {
 	}
 	ch, ok := chancellor.(*Chancellor)
 	if !ok {
+		s.logger.Warn("Failed to get the chancellor in Shogunate.GetCurrentSession")
 		return nil
 	}
 	return ch.GetSession(edictID)
