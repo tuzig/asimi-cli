@@ -186,6 +186,21 @@ func (s *Shogunate) Start(ctx context.Context) error {
 		"ministers", s.ministerIDs(),
 		"rituals", s.ritualRegistry.List())
 
+	// Invoke wakeup ritual if registered
+	if s.ritualRunner != nil && s.ritualRegistry.Get("wakeup") != nil {
+		go func() {
+			inputs := map[string]string{}
+			exec, err := s.ritualRunner.Start(s.ctx, "wakeup", "", inputs, nil)
+			if err != nil {
+				s.logger.Warn("failed to start wakeup ritual", "error", err)
+				return
+			}
+			if err := s.ritualRunner.Run(s.ctx, exec); err != nil {
+				s.logger.Warn("wakeup ritual failed", "error", err)
+			}
+		}()
+	}
+
 	return nil
 }
 

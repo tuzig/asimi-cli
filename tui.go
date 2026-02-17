@@ -108,10 +108,10 @@ type TUIModel struct {
 	repoInfo            *repo.RepoInfo
 
 	// Tab system
-	tabs             []Tab
-	activeTab        int
-	streamingTab     int  // Which tab is receiving stream data
-	viTabPendingG    bool // Pending 'g' prefix for gt/gT tab navigation
+	tabs          []Tab
+	activeTab     int
+	streamingTab  int  // Which tab is receiving stream data
+	viTabPendingG bool // Pending 'g' prefix for gt/gT tab navigation
 }
 
 // ctrlCState represents the state machine for CTRL-C handling

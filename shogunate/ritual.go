@@ -652,6 +652,12 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	exec.State = RitualStateRunning
 	r.saveExecution(exec)
 
+	// Emit ritual_started Tian event
+	r.emitEvent(exec.EdictID, "ritual_started", storage.JSON{
+		"ritual":       exec.RitualName,
+		"execution_id": exec.ID,
+	})
+
 	for exec.CurrentStep < len(exec.def.Steps) {
 		select {
 		case <-ctx.Done():
@@ -679,11 +685,26 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 					Message:     err.Error(),
 				})
 			}
+			// Emit step_failed Tian event
+			r.emitEvent(exec.EdictID, "step_failed", storage.JSON{
+				"ritual":       exec.RitualName,
+				"execution_id": exec.ID,
+				"step":         step.Name,
+				"step_index":   exec.CurrentStep,
+				"error":        err.Error(),
+			})
 
 			// Handle failure action
 			if !r.handleFailure(ctx, exec, step, err) {
 				exec.State = RitualStateFailed
 				r.saveExecution(exec)
+				// Emit ritual_failed Tian event
+				r.emitEvent(exec.EdictID, "ritual_failed", storage.JSON{
+					"ritual":       exec.RitualName,
+					"execution_id": exec.ID,
+					"step":         step.Name,
+					"error":        err.Error(),
+				})
 				return err
 			}
 			continue
@@ -702,6 +723,13 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 				Message:     result,
 			})
 		}
+		// Emit step_completed Tian event
+		r.emitEvent(exec.EdictID, "step_completed", storage.JSON{
+			"ritual":       exec.RitualName,
+			"execution_id": exec.ID,
+			"step":         step.Name,
+			"step_index":   exec.CurrentStep,
+		})
 
 		// Update step state
 		exec.stepStates[exec.CurrentStep].Message = result
@@ -726,6 +754,11 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			Status:      "ritual_completed",
 		})
 	}
+	// Emit ritual_completed Tian event
+	r.emitEvent(exec.EdictID, "ritual_completed", storage.JSON{
+		"ritual":       exec.RitualName,
+		"execution_id": exec.ID,
+	})
 
 	r.logger.Info("ritual completed",
 		"ritual", exec.RitualName,
@@ -783,6 +816,13 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			Status:      "started",
 		})
 	}
+	// Emit step_started Tian event
+	r.emitEvent(exec.EdictID, "step_started", storage.JSON{
+		"ritual":       exec.RitualName,
+		"execution_id": exec.ID,
+		"step":         step.Name,
+		"step_index":   exec.CurrentStep,
+	})
 
 	// Check dependencies are complete (dependency step index must be less than current)
 	for _, dep := range step.DependsOn {
@@ -1108,6 +1148,8 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 				"attempt", exec.stepStates[exec.CurrentStep].RetryCount)
 			return true
 		}
+		// Retries exhausted — invoke report_failure ritual
+		r.invokeReportFailure(ctx, exec, step, err)
 		return false
 
 	case OnFailureZhengming:
@@ -1135,6 +1177,41 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 	default:
 		return false
 	}
+}
+
+// emitEvent records a Tian event from the ritual runner
+func (r *RitualRunner) emitEvent(edictID, eventType string, payload storage.JSON) {
+	event := storage.TianEvent{
+		EdictID:   edictID,
+		EventType: eventType,
+		Payload:   payload,
+	}
+	if err := r.db.Create(&event).Error; err != nil {
+		r.logger.Warn("failed to emit ritual event", "type", eventType, "error", err)
+	}
+}
+
+// invokeReportFailure triggers the report_failure ritual when retries are exhausted
+func (r *RitualRunner) invokeReportFailure(ctx context.Context, exec *RitualExecution, step RitualStep, err error) {
+	if r.registry.Get("report_failure") == nil {
+		return
+	}
+	inputs := map[string]string{
+		"edict_id":    exec.EdictID,
+		"ritual_name": exec.RitualName,
+		"step_name":   step.Name,
+		"error":       err.Error(),
+	}
+	go func() {
+		failExec, startErr := r.Start(ctx, "report_failure", exec.EdictID, inputs, nil)
+		if startErr != nil {
+			r.logger.Warn("failed to start report_failure ritual", "error", startErr)
+			return
+		}
+		if runErr := r.Run(ctx, failExec); runErr != nil {
+			r.logger.Warn("report_failure ritual failed", "error", runErr)
+		}
+	}()
 }
 
 // stepIndex returns the index of a step by name

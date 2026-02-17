@@ -696,6 +696,16 @@ func (c *Chancellor) HandleZhengmingResponse(ctx context.Context, requestID, ans
 		return fmt.Errorf("append clarification: %w", err)
 	}
 
+	// Resume the edict: clear halted flag if no more pending zhengming
+	if req.EdictID != "" {
+		pending, err := c.IsZhengmingPending(req.EdictID)
+		if err == nil && !pending {
+			c.db.Model(&storage.Edict{}).
+				Where("edict_id = ?", req.EdictID).
+				Update("halted", false)
+		}
+	}
+
 	return nil
 }
 

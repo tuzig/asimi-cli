@@ -319,6 +319,14 @@ func (m *MinisterBase) RequestZhengming(edictID, question string, priority stora
 	if err := m.db.Create(&req).Error; err != nil {
 		return "", fmt.Errorf("failed to create zhengming request: %w", err)
 	}
+
+	// Halt the edict while zhengming is pending
+	if edictID != "" {
+		m.db.Model(&storage.Edict{}).
+			Where("edict_id = ?", edictID).
+			Update("halted", true)
+	}
+
 	return requestID, nil
 }
 
