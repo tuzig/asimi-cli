@@ -317,7 +317,7 @@ type InvokeRitualTool struct {
 }
 
 func (t InvokeRitualTool) Name() string {
-	return "invoke_ritual"
+	return "enact_ritual"
 }
 
 func (t InvokeRitualTool) Description() string {
@@ -458,7 +458,7 @@ func (c *Chancellor) Tools() []Tool {
 
 	toolList := []Tool{
 		tools.AsimiSQLTool{DBPath: c.getDBPath()},
-		tools.CreateEdictTool{Manager: c},
+		tools.UpdateEdictTool{Manager: c},
 		tools.RequestZhengmingTool{Requester: c, Notify: zhengmingNotify},
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},

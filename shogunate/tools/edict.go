@@ -15,26 +15,28 @@ import (
 type EdictManager interface {
 	CreateEdict(edictID, intent string) error
 	GetEdict(edictID string) (*storage.Edict, error)
+	AppendToIntent(edictID, clarification string) error
 	EmitEvent(edictID, eventType string, payload storage.JSON) error
 }
 
-// CreateEdictTool creates a new edict from the user's request.
-type CreateEdictTool struct {
+// UpdateEdictTool refines an existing edict's intent (Chancellor only).
+// Only the Ruler creates edicts via SubmitEdict; the Chancellor refines them.
+type UpdateEdictTool struct {
 	Manager EdictManager
 }
 
-func (t CreateEdictTool) Name() string {
-	return "create_edict"
+func (t UpdateEdictTool) Name() string {
+	return "update_edict"
 }
 
-func (t CreateEdictTool) Description() string {
-	return "Creates a new edict (work order) from the user's request. Use this when the user asks you to implement a feature, fix a bug, or make changes to the codebase. The edict_id should be a unique identifier like 'issue-123' or 'feature-user-auth'."
+func (t UpdateEdictTool) Description() string {
+	return "Refine an existing edict's intent with additional context, clarification, or refined understanding. Use this after brewing to sharpen the edict before orchestrating ministers. Only the Ruler creates edicts; you refine them."
 }
 
-func (t CreateEdictTool) Call(ctx context.Context, input string) (string, error) {
+func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID string `json:"edict_id"`
-		Intent  string `json:"intent"`
+		EdictID       string `json:"edict_id"`
+		Clarification string `json:"clarification"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -43,53 +45,55 @@ func (t CreateEdictTool) Call(ctx context.Context, input string) (string, error)
 	if params.EdictID == "" {
 		return "", fmt.Errorf("edict_id is required")
 	}
-	if params.Intent == "" {
-		return "", fmt.Errorf("intent is required")
+	if params.Clarification == "" {
+		return "", fmt.Errorf("clarification is required")
 	}
 
-	if err := t.Manager.CreateEdict(params.EdictID, params.Intent); err != nil {
-		return "", fmt.Errorf("create edict: %w", err)
+	// Verify edict exists
+	if _, err := t.Manager.GetEdict(params.EdictID); err != nil {
+		return "", fmt.Errorf("get edict: %w", err)
 	}
 
-	// Emit event for edict assignment
-	t.Manager.EmitEvent(params.EdictID, "edict_assigned", storage.JSON{"source": "chancellor"})
+	if err := t.Manager.AppendToIntent(params.EdictID, params.Clarification); err != nil {
+		return "", fmt.Errorf("update edict: %w", err)
+	}
 
-	return fmt.Sprintf(`{"status":"created","edict_id":"%s"}`, params.EdictID), nil
+	return fmt.Sprintf(`{"status":"updated","edict_id":"%s"}`, params.EdictID), nil
 }
 
-func (t CreateEdictTool) Format(input, result string, err error) string {
+func (t UpdateEdictTool) Format(input, result string, err error) string {
 	var params struct {
 		EdictID string `json:"edict_id"`
 	}
 	json.Unmarshal([]byte(input), &params)
 
-	msg := utils.NewMsgBlockBuilder("CreateEdict")
+	msg := utils.NewMsgBlockBuilder("UpdateEdict")
 	msg.Writef(" %s", params.EdictID)
 	msg.WriteLn()
 
 	if err != nil {
 		msg.Writef("Error: %v", err)
 	} else {
-		msg.WriteString("Created")
+		msg.WriteString("Updated")
 	}
 
 	return msg.String() + "\n"
 }
 
-func (t CreateEdictTool) ParameterSchema() map[string]any {
+func (t UpdateEdictTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
 				"type":        "string",
-				"description": "Unique identifier for the edict (e.g., 'issue-123', 'feature-auth')",
+				"description": "The edict ID to refine",
 			},
-			"intent": map[string]any{
+			"clarification": map[string]any{
 				"type":        "string",
-				"description": "The user's intent - what they want to accomplish",
+				"description": "Additional context or refined understanding to append to the edict's intent",
 			},
 		},
-		"required": []string{"edict_id", "intent"},
+		"required": []string{"edict_id", "clarification"},
 	}
 }
 

@@ -77,24 +77,27 @@ Migrate from monolithic TUI with embedded DB to a client-server architecture whe
 User types prompt
        │
        ▼
-  SubmitEdict(intent)  →  edict_id
+  SubmitEdict(intent, ritual?)  →  edict_id
        │
        ▼
   ConnectTo(edict_id)  →  bidirectional stream
        │
-       ▼
-  ┌─────────────────────────────────────────────┐
-  │  BREWING                                    │
-  │  Chancellor distils edict name from prompt, │
-  │  asks zhengming if ambiguous, refines       │
-  │  intent until ready for assembly            │
-  ├─────────────────────────────────────────────┤
-  │  Chancellor classifies size (S/L) and       │
-  │  enacts ritual: swift-strike or             │
-  │  grand-campaign                             │
-  └─────────────────────────────────────────────┘
-       │
-       ▼
+       ├── ritual specified? ──────────────────────┐
+       │   NO                                      │ YES
+       ▼                                           ▼
+  ┌──────────────────────────────────┐    Skip brewing,
+  │  BREWING                        │    enact ritual directly
+  │  Chancellor distils edict name, │         │
+  │  asks zhengming if ambiguous,   │         │
+  │  refines intent                 │         │
+  ├──────────────────────────────────┤         │
+  │  Classifies size (S/L), enacts  │         │
+  │  ritual: swift-strike or        │         │
+  │  grand-campaign                 │         │
+  └──────────────────────────────────┘         │
+       │                                       │
+       └───────────────┬───────────────────────┘
+                       ▼
   planning → forging → judging → censoring → sealed
 ```
 
@@ -146,6 +149,8 @@ message SubmitEdictRequest {
   string intent = 1;                       // The Ruler's words
   string issue_ref = 2;                    // Optional: linked issue/ticket
   map<string, string> context_files = 3;   // Files loaded via @ references
+  string ritual = 4;                       // Optional: skip brewing, enact this ritual directly
+                                           // If empty, Chancellor brews and classifies
 }
 
 message EdictResponse {
@@ -208,6 +213,8 @@ message ConnectRequest {
     string minister_name = 2;           // Minister tab: observe + can interrupt/join
     string ritual_run_id = 3;           // Ritual tab: observe progress + can abort
   }
+  string since = 4;                    // Optional RFC3339 timestamp — replay missed events from this point
+                                       // If empty, stream starts live. Used for reconnection, tab resume, browser refresh.
 }
 
 message RulerPrompt {

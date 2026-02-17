@@ -27,6 +27,11 @@ type StatusComponent struct {
 	waitingForResponse bool
 	waitingSince       time.Time
 	ContainerID        string
+
+	// Stream rate tracking
+	streamCharsTotal int
+	streamStartTime  time.Time
+	streamRate       float64
 }
 
 // NewStatusComponent creates a new status component
@@ -65,6 +70,42 @@ func (s *StatusComponent) StartWaiting() {
 // StopWaiting clears the waiting indicator
 func (s *StatusComponent) StopWaiting() {
 	s.waitingForResponse = false
+}
+
+// AddStreamChars updates the stream rate with new characters received
+func (s *StatusComponent) AddStreamChars(n int) {
+	if s.streamCharsTotal == 0 {
+		s.streamStartTime = time.Now()
+	}
+	s.streamCharsTotal += n
+	elapsed := time.Since(s.streamStartTime).Seconds()
+	if elapsed > 0 {
+		s.streamRate = float64(s.streamCharsTotal) / elapsed
+	}
+}
+
+// ResetStreamRate clears the stream rate tracking
+func (s *StatusComponent) ResetStreamRate() {
+	s.streamCharsTotal = 0
+	s.streamStartTime = time.Time{}
+	s.streamRate = 0
+}
+
+// rateBar returns a block character representing the current stream rate
+func (s StatusComponent) rateBar() string {
+	if s.streamRate <= 0 {
+		return ""
+	}
+	blocks := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+	thresholds := []float64{25, 50, 75, 100, 150, 200, 300}
+	idx := len(blocks) - 1
+	for i, t := range thresholds {
+		if s.streamRate <= t {
+			idx = i
+			break
+		}
+	}
+	return string(blocks[idx])
 }
 
 // SetError marks the status component as having an error
@@ -338,6 +379,17 @@ func (s StatusComponent) renderMiddleSection() string {
 
 	// Format the output with icons
 	statusStr := fmt.Sprintf("🪣 %.0f%%", usagePercent)
+	if bar := s.rateBar(); bar != "" {
+		rate := int(s.streamRate)
+		avail := s.Width - 40 // rough estimate of space used by other sections
+		if avail > 20 {
+			statusStr += fmt.Sprintf("  %s %dc/s", bar, rate)
+		} else if avail > 15 {
+			statusStr += fmt.Sprintf("  %s %d", bar, rate)
+		} else {
+			statusStr += fmt.Sprintf("  %s", bar)
+		}
+	}
 	if s.waitingForResponse && !s.waitingSince.IsZero() {
 		waitSeconds := int(time.Since(s.waitingSince).Seconds())
 		if waitSeconds >= 3 {
