@@ -450,7 +450,7 @@ func containsString(s, substr string) bool {
 }
 
 // TestRitualStreamMessages tests that ritual execution sends all expected
-// typed messages through the stream channel (StreamChan).
+// typed messages through the notify callback.
 func TestRitualStreamMessages(t *testing.T) {
 	// Setup test database
 	db := setupRitualTestDB(t)

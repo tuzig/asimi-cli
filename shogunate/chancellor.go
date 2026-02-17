@@ -21,7 +21,7 @@ type Chancellor struct {
 	taskChan     chan *Task
 
 	// Run() loop fields
-	Edicts        chan *Edict         // Ruler speaks here
+	Prompts       chan *Prompt         // Ruler speaks here
 	edictSessions map[string]*Session // Per-edict sessions (edictID -> session)
 }
 
@@ -31,7 +31,7 @@ func NewChancellor(base MinisterBase) *Chancellor {
 	return &Chancellor{
 		MinisterBase:  base,
 		taskChan:      make(chan *Task, 10),
-		Edicts:        make(chan *Edict),
+		Prompts:       make(chan *Prompt),
 		edictSessions: make(map[string]*Session),
 	}
 }
@@ -521,15 +521,15 @@ func (c *Chancellor) getDBPath() string {
 
 // Run listens for prompts from the Ruler and tasks from ministers
 func (c *Chancellor) Run(ctx context.Context) {
-	c.logger.Info("chancellor started, awaiting ruler's edicts")
+	c.logger.Info("chancellor started, awaiting prompts")
 	for {
 		select {
 		case <-ctx.Done():
 			c.logger.Info("chancellor stopped")
 			return
-		case edict := <-c.Edicts:
-			c.logger.Debug("Processing prompt", "prompt", edict)
-			c.processPrompt(ctx, edict)
+		case prompt := <-c.Prompts:
+			c.logger.Debug("Processing prompt", "prompt", prompt)
+			c.processPrompt(ctx, prompt)
 		case task := <-c.taskChan:
 			// Process task and send result
 			if task.Done != nil {
@@ -790,25 +790,27 @@ func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID, cancel
 // --- Prompt Processing ---
 
 // processPrompt handles a single prompt from the Ruler
-func (c *Chancellor) processPrompt(ctx context.Context, edict *Edict) {
+func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 	// Determine: new edict or continue existing?
-	edictID := edict.EdictID
+	edictID := prompt.EdictID
 	if edictID == "" {
 		edictID = generateEdictID()
-		if err := c.CreateEdict(edictID, edict.Prompt); err != nil {
+		if err := c.CreateEdict(edictID, prompt.Message); err != nil {
 			c.notify(StreamErrorMsg{Err: fmt.Errorf("create edict: %w", err)})
-			close(edict.Stream)
 			return
 		}
 		c.logger.Info("new edict created", "edict_id", edictID)
 	} else {
-		if err := c.AppendToIntent(edictID, edict.Prompt); err != nil {
+		if err := c.AppendToIntent(edictID, prompt.Message); err != nil {
 			c.logger.Warn("failed to append to intent", "edict_id", edictID, "error", err)
 		}
 	}
 
-	// Brew the edict (call LLM with streaming)
-	c.brewWithStreaming(ctx, edictID, edict.Prompt, edict.ContextFiles)
+	// Notify TUI of edict ID before streaming begins
+	c.notify(StreamStartMsg{EdictID: edictID})
+
+	// Call LLM with streaming
+	c.brewWithStreaming(ctx, edictID, prompt.Message, prompt.ContextFiles)
 }
 
 // brewWithStreaming delegates to Session for LLM interaction

@@ -47,24 +47,17 @@ type EventEmitter interface {
 
 // === UNIFIED TYPES ===
 
-// StreamChan is a channel for streaming messages to the TUI.
-// Messages are typed structs that the TUI type-switches on.
-// Using `any` instead of `tea.Msg` avoids importing bubbletea in this package.
-type StreamChan = chan<- any
-
 // Prompt carries the user's message to the Chancellor
 type Prompt struct {
 	Message      string            // The Ruler's words
-	SessionID    string            // Empty = new session, set = continue existing
+	EdictID      string            // Empty = new edict, set = continue existing
 	ContextFiles map[string]string // Files loaded via @ references
-	Stream       StreamChan        // For streaming typed messages to TUI
 }
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
-	EdictID string        // The edict this task belongs to
-	Work    string        // Specific instructions for the minister (renamed from Task to avoid Task.Task)
-	Stream  StreamChan    // For streaming typed messages to TUI (may be nil)
+	EdictID string       // The edict this task belongs to
+	Work    string       // Specific instructions for the minister (renamed from Task to avoid Task.Task)
 	Done    chan<- Result // For completion signal
 }
 
@@ -90,8 +83,6 @@ type Minister interface {
 	Tools() []Tool
 	// Tasks returns the channel for submitting Tasks
 	Tasks() chan<- *Task
-	// Events returns the Shogunate events the minister listens to.
-	Events() []ShogunateEvent
 	// Run starts the minister's processing loop (blocks until context cancelled)
 	Run(ctx context.Context)
 }
@@ -227,11 +218,6 @@ func (m *MinisterBase) Logger() *slog.Logger {
 		return slog.Default()
 	}
 	return m.logger
-}
-
-// Events returns the Shogunate events the minister listens to.
-func (m *MinisterBase) Events() []ShogunateEvent {
-	return nil
 }
 
 // Scratchpad returns dynamic per-minister context. Default is empty.

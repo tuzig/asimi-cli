@@ -1147,6 +1147,7 @@ func (m *TUIModel) stopWaitingForResponse() {
 	}
 	m.waitingForResponse = false
 	m.status.StopWaiting()
+	m.status.ResetStreamRate()
 }
 
 func (m *TUIModel) cancelStreaming() {
@@ -1173,7 +1174,7 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		}
 	}
 
-	// Type assert to get the Chancellor with Edicts channel
+	// Type assert to get the Chancellor with Prompts channel
 	ch, ok := chancellor.(*shogunate.Chancellor)
 	if !ok {
 		return func() tea.Msg {
@@ -1181,20 +1182,16 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		}
 	}
 
-	// Create stream channel for streaming typed messages
-	streamChan := make(chan any, 100)
-
-	// Send edict to Chancellor
-	edict := &shogunate.Edict{
-		Prompt:       prompt,
+	// Send prompt to Chancellor
+	p := &shogunate.Prompt{
+		Message:      prompt,
 		EdictID:      m.currentEdictID, // Empty for new edict
 		ContextFiles: contextFiles,
-		Stream:       streamChan,
 	}
 
 	// Non-blocking send to Chancellor
 	go func() {
-		ch.Edicts <- edict
+		ch.Prompts <- p
 	}()
 
 	m.streamingActive = true
@@ -1670,9 +1667,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.content.Chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 
 	case shogunate.StreamStartMsg:
-		// Streaming has started
+		// Streaming has started — capture edict ID for multi-turn
+		if msg.EdictID != "" {
+			m.currentEdictID = msg.EdictID
+		}
 		m.content.Chat.AddToRawHistory("STREAM_START", "AI streaming response started")
-		slog.Debug("streamStartMsg", "starting_stream", true)
+		slog.Debug("streamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
 		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
 
@@ -1742,6 +1742,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Shogunate streaming message handlers
 	case shogunate.StreamChunkMsg:
 		// Handle text chunks from Shogunate
+		m.status.AddStreamChars(len(msg.Text))
 		m.content.Chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
 		if m.streamingActive {
 			m.waitingStart = time.Now()
@@ -1756,6 +1757,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shogunate.StreamReasoningChunkMsg:
 		// Handle thinking/reasoning chunks from Shogunate
+		m.status.AddStreamChars(len(msg.Text))
 		m.content.Chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
 		m.content.Chat.AddThinkingChunk(msg.Text)
 		return m, nil
@@ -2744,6 +2746,14 @@ func (m TUIModel) renderHomeView(width, height int) string {
 
 	subtitle := subtitleStyle.Render("🎂  Happy 50th Birthday to visual mode  🎂")
 
+	// Create a version display in muted color
+	versionStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")). // Muted gray color
+		Align(lipgloss.Center).
+		Width(width)
+
+	versionDisplay := versionStyle.Render("Version: " + version)
+
 	// Create a list of helpful commands
 	commands := []string{
 		"▶ Mode base UI, starting in INSERT",
@@ -2792,8 +2802,8 @@ func (m TUIModel) renderHomeView(width, height int) string {
 			configStyle.Render("📝 User's config file created at ~/.config/asimi/asimi.conf"))
 	}
 
-	// Add title and subtitle at the top (prepend)
-	contentParts = append([]string{title, "", subtitle, ""}, contentParts...)
+	// Add title, subtitle, and version at the top (prepend)
+	contentParts = append([]string{title, "", subtitle, "", versionDisplay, ""}, contentParts...)
 
 	content := lipgloss.JoinVertical(lipgloss.Center, contentParts...)
 

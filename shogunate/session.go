@@ -1072,10 +1072,6 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCal
 func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFiles map[string]string) (string, error) {
 	s.prepareUserMessage(prompt, contextFiles)
 
-	if s.notify != nil {
-		s.notify(StreamStartMsg{})
-	}
-
 	var finalText string
 	maxTurns := s.config.MaxTurns
 
