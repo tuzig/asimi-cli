@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/afittestide/asimi/internal/runners"
@@ -400,12 +401,16 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 		t.Fatalf("LoadEmbeddedRituals() error = %v", err)
 	}
 
-	if len(rituals) != 2 {
-		t.Errorf("expected 2 embedded rituals, got %d", len(rituals))
+	if len(rituals) != 5 {
+		names := make([]string, len(rituals))
+		for i, r := range rituals {
+			names[i] = r.Name
+		}
+		t.Errorf("expected 5 embedded rituals, got %d: %v", len(rituals), names)
 	}
 
-	// Check swift-strike exists
-	var foundSwift, foundGrand bool
+	// Check key rituals exist
+	var foundSwift, foundGrand, foundWakeup, foundOrchestration, foundReport bool
 	for _, r := range rituals {
 		switch r.Name {
 		case "swift-strike":
@@ -413,12 +418,19 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 			if len(r.Steps) != 2 {
 				t.Errorf("swift-strike: expected 2 steps, got %d", len(r.Steps))
 			}
-			// Should have forge and judge
 			if r.Steps[0].Minister != "forge" {
 				t.Errorf("swift-strike: expected first step minister 'forge', got %q", r.Steps[0].Minister)
 			}
 			if r.Steps[1].Minister != "judge" {
 				t.Errorf("swift-strike: expected second step minister 'judge', got %q", r.Steps[1].Minister)
+			}
+			// Verify AAA: steps should have arrange functions
+			if len(r.Steps[0].Arrange) == 0 {
+				t.Error("swift-strike forge step: expected arrange functions")
+			}
+			// Verify Act is used (not Task)
+			if r.Steps[0].Act == "" {
+				t.Error("swift-strike forge step: expected act field")
 			}
 
 		case "grand-campaign":
@@ -426,13 +438,23 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 			if len(r.Steps) != 4 {
 				t.Errorf("grand-campaign: expected 4 steps, got %d", len(r.Steps))
 			}
-			// Should have strategist, forge, judge, censor
 			expectedMinisters := []string{"strategist", "forge", "judge", "censor"}
 			for i, expected := range expectedMinisters {
 				if r.Steps[i].Minister != expected {
 					t.Errorf("grand-campaign: step %d expected minister %q, got %q", i, expected, r.Steps[i].Minister)
 				}
 			}
+			// Verify ritual-level defaults
+			if r.MaxRetries != 3 {
+				t.Errorf("grand-campaign: expected max_retries 3, got %d", r.MaxRetries)
+			}
+
+		case "wakeup":
+			foundWakeup = true
+		case "grand-orchestration":
+			foundOrchestration = true
+		case "report_failure":
+			foundReport = true
 		}
 	}
 
@@ -442,11 +464,20 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 	if !foundGrand {
 		t.Error("grand-campaign ritual not found")
 	}
+	if !foundWakeup {
+		t.Error("wakeup ritual not found")
+	}
+	if !foundOrchestration {
+		t.Error("grand-orchestration ritual not found")
+	}
+	if !foundReport {
+		t.Error("report_failure ritual not found")
+	}
 }
 
 // containsString checks if s contains substr
 func containsString(s, substr string) bool {
-	return findString(s, substr) != -1
+	return strings.Contains(s, substr)
 }
 
 // TestRitualStreamMessages tests that ritual execution sends all expected

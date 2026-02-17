@@ -1,12 +1,14 @@
 package shogunate
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
@@ -27,18 +29,20 @@ inputs:
   edict_id:
     type: string
     required: true
+max_retries: 3
 steps:
   - name: forge
     minister: forge
-    task: |
+    arrange: [get_edict]
+    act: |
       Implement the changes for edict {{ .edict_id }}.
       Focus on minimal, targeted changes to fulfill the intent.
     on_failure: retry
-    max_retries: 3
 
   - name: judge
     minister: judge
-    task: |
+    arrange: [get_edict, get_manifests]
+    act: |
       Run tests and validate the changes for edict {{ .edict_id }}.
       If tests fail, provide clear feedback for the Forge.
     depends_on: [forge]
@@ -55,10 +59,12 @@ inputs:
   edict_id:
     type: string
     required: true
+max_retries: 3
 steps:
   - name: strategist
     minister: strategist
-    task: |
+    arrange: [get_edict]
+    act: |
       Analyze edict {{ .edict_id }} and produce a technical Battle Plan.
       Break down the work into clear phases with dependencies.
       Identify risks and architectural decisions.
@@ -66,16 +72,17 @@ steps:
 
   - name: forge
     minister: forge
-    task: |
+    arrange: [get_edict, get_manifests]
+    act: |
       Execute the Battle Plan for edict {{ .edict_id }}.
       Implement changes according to the Strategist's design.
     depends_on: [strategist]
     on_failure: retry
-    max_retries: 3
 
   - name: judge
     minister: judge
-    task: |
+    arrange: [get_edict, get_manifests]
+    act: |
       Run the Trials for edict {{ .edict_id }}.
       Execute all tests and validate the Forge's work.
       If the Judge fails, the Forge must return to the anvil.
@@ -85,13 +92,99 @@ steps:
 
   - name: censor
     minister: censor
-    task: |
+    arrange: [get_edict, get_manifests, get_verdicts]
+    act: |
       Review the implemented code for edict {{ .edict_id }}.
       Verify it adheres to the Imperial Code (project standards).
       Veto if the code violates conventions or introduces risk.
     depends_on: [judge]
     on_failure: goto
     on_failure_target: strategist
+`,
+
+	"wakeup": `
+name: wakeup
+description: "Startup ritual - report court status on Shogunate boot"
+triggers:
+  - event: shogunate_started
+steps:
+  - name: report
+    type: prompt
+    arrange: [get_court_status]
+    act: |
+      The Shogunate has awoken. Report the current court status.
+      List any active edicts, their phases, and any pending zhengming.
+`,
+
+	"grand-orchestration": `
+name: grand-orchestration
+description: "Full lifecycle orchestration - strategize, forge, judge, censor, deploy"
+triggers:
+  - manual: true
+inputs:
+  edict_id:
+    type: string
+    required: true
+max_retries: 3
+steps:
+  - name: strategist
+    minister: strategist
+    arrange: [get_edict]
+    act: |
+      Produce a comprehensive Battle Plan for edict {{ .edict_id }}.
+      Decompose into lings with dependencies.
+    on_failure: zhengming
+
+  - name: forge
+    minister: forge
+    arrange: [get_edict, get_manifests]
+    act: |
+      Execute all lings for edict {{ .edict_id }}.
+      Implement each change and stage manifests.
+    depends_on: [strategist]
+    on_failure: retry
+
+  - name: judge
+    minister: judge
+    arrange: [get_edict, get_manifests]
+    act: |
+      Run the full trial suite for edict {{ .edict_id }}.
+    depends_on: [forge]
+    on_failure: goto
+    on_failure_target: forge
+
+  - name: censor
+    minister: censor
+    arrange: [get_edict, get_manifests, get_verdicts]
+    act: |
+      Full ethics and standards review for edict {{ .edict_id }}.
+    depends_on: [judge]
+    on_failure: goto
+    on_failure_target: strategist
+
+  - name: deploy
+    minister: marshal
+    arrange: [get_edict, get_manifests, get_verdicts, get_precedents]
+    act: |
+      Prepare deployment for edict {{ .edict_id }}.
+      Verify all seals are in place before proceeding.
+    depends_on: [censor]
+    on_failure: zhengming
+`,
+
+	"report_failure": `
+name: report_failure
+description: "Report ritual failure after retry exhaustion"
+triggers:
+  - event: ritual_failed
+steps:
+  - name: report
+    type: prompt
+    arrange: [get_edict, get_court_status]
+    act: |
+      A ritual has failed after exhausting all retries for edict {{ .edict_id }}.
+      Analyze the failure and suggest next steps.
+      Consider requesting zhengming if the path forward is unclear.
 `,
 }
 
@@ -123,6 +216,9 @@ type RitualDef struct {
 	Description string              `yaml:"description"`
 	Triggers    []RitualTrigger     `yaml:"triggers,omitempty"`
 	Inputs      map[string]InputDef `yaml:"inputs,omitempty"`
+	Arrange     []string            `yaml:"arrange,omitempty"`     // Ritual-level arrange functions (run before first step)
+	OnFailure   string              `yaml:"on_failure,omitempty"`  // Default on_failure for all steps
+	MaxRetries  int                 `yaml:"max_retries,omitempty"` // Default max_retries for all steps
 	Steps       []RitualStep        `yaml:"steps"`
 }
 
@@ -140,18 +236,25 @@ type InputDef struct {
 	Description string `yaml:"description,omitempty"`
 }
 
-// RitualStep defines a single step in a ritual
+// RitualStep defines a single step in a ritual (AAA model: Arrange → Act → Assert)
 type RitualStep struct {
 	Name            string   `yaml:"name"`
 	Type            string   `yaml:"type,omitempty"`              // minister, prompt, cmd, gate, confirm (default: minister if minister is set)
 	Minister        string   `yaml:"minister,omitempty"`          // For minister steps
-	Task            string   `yaml:"task,omitempty"`              // Task description/prompt
+	Arrange         []string `yaml:"arrange,omitempty"`           // Builtin arrange functions to run before act
+	Act             string   `yaml:"act,omitempty"`               // The action: task text, command, or prompt
+	Assert          string   `yaml:"assert,omitempty"`            // Post-act validation command
+	Task            string   `yaml:"task,omitempty"`              // Alias for Act (backward compat)
 	Command         string   `yaml:"command,omitempty"`           // For cmd steps
 	Condition       string   `yaml:"condition,omitempty"`         // For gate steps
 	DependsOn       []string `yaml:"depends_on,omitempty"`        // Steps that must complete first
 	OnFailure       string   `yaml:"on_failure,omitempty"`        // retry, zhengming, goto, abort
 	OnFailureTarget string   `yaml:"on_failure_target,omitempty"` // Target step for goto
 	MaxRetries      int      `yaml:"max_retries,omitempty"`       // Override default retries
+	Scope           string   `yaml:"scope,omitempty"`             // Execution scope (e.g., "edict", "global")
+	Model           string   `yaml:"model,omitempty"`             // LLM model override for this step
+	Temperature     float64  `yaml:"temperature,omitempty"`       // LLM temperature override
+	Env             map[string]string `yaml:"env,omitempty"`      // Environment variables for this step
 }
 
 // RitualRegistry stores loaded rituals
@@ -257,7 +360,11 @@ func ValidateRitual(def *RitualDef) error {
 		}
 
 		// Validate on_failure_target
-		if step.OnFailure == "goto" && step.OnFailureTarget != "" {
+		onFailure := step.OnFailure
+		if onFailure == "" {
+			onFailure = def.OnFailure
+		}
+		if onFailure == "goto" && step.OnFailureTarget != "" {
 			if !stepNames[step.OnFailureTarget] {
 				return fmt.Errorf("ritual %q: step %q on_failure_target references unknown step %q", def.Name, step.Name, step.OnFailureTarget)
 			}
@@ -269,10 +376,13 @@ func ValidateRitual(def *RitualDef) error {
 			stepType = "minister"
 		}
 
+		// act resolves Act or Task (backward compat)
+		hasAction := step.Act != "" || step.Task != ""
+
 		switch stepType {
 		case "minister", "":
-			if step.Minister == "" && step.Task == "" {
-				return fmt.Errorf("ritual %q: step %q requires minister or task", def.Name, step.Name)
+			if step.Minister == "" && !hasAction {
+				return fmt.Errorf("ritual %q: step %q requires minister or act/task", def.Name, step.Name)
 			}
 		case "cmd":
 			if step.Command == "" {
@@ -283,12 +393,12 @@ func ValidateRitual(def *RitualDef) error {
 				return fmt.Errorf("ritual %q: gate step %q requires condition", def.Name, step.Name)
 			}
 		case "confirm":
-			if step.Task == "" {
-				return fmt.Errorf("ritual %q: confirm step %q requires task (question)", def.Name, step.Name)
+			if !hasAction {
+				return fmt.Errorf("ritual %q: confirm step %q requires act/task (question)", def.Name, step.Name)
 			}
 		case "prompt":
-			if step.Task == "" {
-				return fmt.Errorf("ritual %q: prompt step %q requires task (prompt text)", def.Name, step.Name)
+			if !hasAction {
+				return fmt.Errorf("ritual %q: prompt step %q requires act/task (prompt text)", def.Name, step.Name)
 			}
 		default:
 			return fmt.Errorf("ritual %q: step %q has unknown type %q", def.Name, step.Name, stepType)
@@ -625,7 +735,34 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	return nil
 }
 
-// executeStep runs a single ritual step
+// resolveAct returns the action text for a step, preferring Act over Task (backward compat)
+func (step *RitualStep) resolveAct() string {
+	if step.Act != "" {
+		return step.Act
+	}
+	return step.Task
+}
+
+// resolveOnFailure returns the step's on_failure or the ritual-level default
+func (step *RitualStep) resolveOnFailure(def *RitualDef) string {
+	if step.OnFailure != "" {
+		return step.OnFailure
+	}
+	return def.OnFailure
+}
+
+// resolveMaxRetries returns the step's max_retries or the ritual-level default
+func (step *RitualStep) resolveMaxRetries(def *RitualDef) int {
+	if step.MaxRetries > 0 {
+		return step.MaxRetries
+	}
+	if def.MaxRetries > 0 {
+		return def.MaxRetries
+	}
+	return 0
+}
+
+// executeStep runs a single ritual step using the AAA model: Arrange → Act → Assert
 func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
 	r.saveExecution(exec)
 
@@ -658,26 +795,61 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		}
 	}
 
-	// Determine step type
+	// === ARRANGE ===
+	if len(step.Arrange) > 0 {
+		for _, fn := range step.Arrange {
+			result, err := r.runArrangeFunc(ctx, exec, fn)
+			if err != nil {
+				return "", fmt.Errorf("arrange %q failed: %w", fn, err)
+			}
+			// Store arrange result in execution data for template use
+			if exec.Data == nil {
+				exec.Data = storage.JSON{}
+			}
+			arrangeCtx, _ := exec.Data["arrange_context"].(map[string]interface{})
+			if arrangeCtx == nil {
+				arrangeCtx = make(map[string]interface{})
+			}
+			arrangeCtx[fn] = result
+			exec.Data["arrange_context"] = arrangeCtx
+		}
+	}
+
+	// === ACT ===
 	stepType := step.Type
 	if stepType == "" && step.Minister != "" {
 		stepType = "minister"
 	}
 
+	var actResult string
+	var err error
 	switch stepType {
 	case "minister", "":
-		return r.executeMinisterStep(ctx, exec, step)
+		actResult, err = r.executeMinisterStep(ctx, exec, step)
 	case "prompt":
-		return r.executePromptStep(ctx, exec, step)
+		actResult, err = r.executePromptStep(ctx, exec, step)
 	case "cmd":
-		return r.executeCmdStep(ctx, exec, step)
+		actResult, err = r.executeCmdStep(ctx, exec, step)
 	case "gate":
-		return r.executeGateStep(ctx, exec, step)
+		actResult, err = r.executeGateStep(ctx, exec, step)
 	case "confirm":
-		return r.executeConfirmStep(ctx, exec, step)
+		actResult, err = r.executeConfirmStep(ctx, exec, step)
 	default:
 		return "", fmt.Errorf("unknown step type: %s", stepType)
 	}
+	if err != nil {
+		return "", err
+	}
+
+	// === ASSERT ===
+	if step.Assert != "" {
+		assertCmd := r.expandTemplate(step.Assert, exec)
+		if err := r.runAssert(ctx, exec, assertCmd); err != nil {
+			return "", fmt.Errorf("assert failed: %w", err)
+		}
+	}
+
+	return actResult, nil
 }
 
 // executeMinisterStep invokes a minister for a task
@@ -687,8 +859,8 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		return "", fmt.Errorf("minister not found: %s", step.Minister)
 	}
 
-	// Expand template in work
-	work := r.expandTemplate(step.Task, exec)
+	// Expand template in work (Act or Task for backward compat)
+	work := r.expandTemplate(step.resolveAct(), exec)
 
 	// Create task
 	doneChan := make(chan Result, 1)
@@ -737,7 +909,7 @@ func (r *RitualRunner) executePromptStep(ctx context.Context, exec *RitualExecut
 		return "", fmt.Errorf("no session for edict %s", exec.EdictID)
 	}
 
-	prompt := r.expandTemplate(step.Task, exec)
+	prompt := r.expandTemplate(step.resolveAct(), exec)
 	response, err := sess.AskWithStreaming(ctx, prompt, nil)
 	if err != nil {
 		return "", err
@@ -782,16 +954,137 @@ func (r *RitualRunner) executeConfirmStep(ctx context.Context, exec *RitualExecu
 	return "confirmed", nil
 }
 
+// runArrangeFunc runs a builtin arrange function and returns the result
+func (r *RitualRunner) runArrangeFunc(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {
+	switch fn {
+	case "get_edict":
+		return r.arrangeGetEdict(exec.EdictID)
+	case "get_court_status":
+		return r.arrangeGetCourtStatus(exec.EdictID)
+	case "get_manifests":
+		return r.arrangeGetManifests(exec.EdictID)
+	case "get_verdicts":
+		return r.arrangeGetVerdicts(exec.EdictID)
+	case "get_precedents":
+		return r.arrangeGetPrecedents(exec.EdictID)
+	default:
+		return nil, fmt.Errorf("unknown arrange function: %s", fn)
+	}
+}
+
+func (r *RitualRunner) arrangeGetEdict(edictID string) (interface{}, error) {
+	var edict storage.Edict
+	if err := r.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"edict_id": edict.EdictID,
+		"intent":   edict.Intent,
+		"phase":    string(edict.CurrentPhase),
+		"halted":   edict.Halted,
+	}, nil
+}
+
+func (r *RitualRunner) arrangeGetCourtStatus(edictID string) (interface{}, error) {
+	var edicts []storage.Edict
+	if err := r.db.Where("current_phase NOT IN ?", []string{"sealed", "cancelled"}).Find(&edicts).Error; err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, len(edicts))
+	for i, e := range edicts {
+		result[i] = map[string]interface{}{
+			"edict_id": e.EdictID,
+			"phase":    string(e.CurrentPhase),
+			"halted":   e.Halted,
+		}
+	}
+	return result, nil
+}
+
+func (r *RitualRunner) arrangeGetManifests(edictID string) (interface{}, error) {
+	var manifests []storage.ForgeManifest
+	if err := r.db.Where("edict_id = ?", edictID).Find(&manifests).Error; err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, len(manifests))
+	for i, m := range manifests {
+		result[i] = map[string]interface{}{
+			"manifest_id": m.ManifestID,
+			"file_path":   m.FilePath,
+			"status":      string(m.Status),
+		}
+	}
+	return result, nil
+}
+
+func (r *RitualRunner) arrangeGetVerdicts(edictID string) (interface{}, error) {
+	var verdicts []storage.JudgeVerdict
+	err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = judge_verdicts.manifest_id").
+		Where("forge_manifests.edict_id = ?", edictID).
+		Find(&verdicts).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, len(verdicts))
+	for i, v := range verdicts {
+		result[i] = map[string]interface{}{
+			"verdict_id":  v.VerdictID,
+			"manifest_id": v.ManifestID,
+			"outcome":     string(v.Outcome),
+		}
+	}
+	return result, nil
+}
+
+func (r *RitualRunner) arrangeGetPrecedents(edictID string) (interface{}, error) {
+	var precedents []storage.CensorPrecedent
+	err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+		Where("forge_manifests.edict_id = ?", edictID).
+		Find(&precedents).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, len(precedents))
+	for i, p := range precedents {
+		result[i] = map[string]interface{}{
+			"precedent_id": p.PrecedentID,
+			"manifest_id":  p.ManifestID,
+			"ruling":       string(p.Ruling),
+			"principle":    p.Principle,
+		}
+	}
+	return result, nil
+}
+
+// runAssert runs an assertion command and returns error if it fails
+func (r *RitualRunner) runAssert(ctx context.Context, exec *RitualExecution, assertCmd string) error {
+	if r.runner == nil {
+		return fmt.Errorf("no runner configured for assert")
+	}
+	output, err := r.runner.Run(ctx, runners.Input{
+		Command:        assertCmd,
+		Description:    fmt.Sprintf("assert: ritual %s", exec.RitualName),
+		BypassApproval: true,
+	})
+	if err != nil {
+		return err
+	}
+	if output.ExitCode != "0" {
+		return fmt.Errorf("assertion failed (exit %s): %s", output.ExitCode, output.Output)
+	}
+	return nil
+}
+
 // handleFailure handles step failure based on on_failure action
 func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution, step RitualStep, err error) bool {
-	action := OnFailureAction(step.OnFailure)
+	action := OnFailureAction(step.resolveOnFailure(exec.def))
 	if action == "" {
 		action = OnFailureAbort
 	}
 
 	switch action {
 	case OnFailureRetry:
-		maxRetries := step.MaxRetries
+		maxRetries := step.resolveMaxRetries(exec.def)
 		if maxRetries == 0 {
 			maxRetries = r.maxRetries
 		}
@@ -854,43 +1147,40 @@ func (r *RitualRunner) stepIndex(def *RitualDef, name string) int {
 	return -1
 }
 
-// expandTemplate expands Go template syntax in a string
+// expandTemplate expands Go text/template syntax in a string
 func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string {
-	// Simple variable expansion for now (could use text/template)
-	// Replace {{ .edict_id }} with actual value
+	data := map[string]interface{}{
+		"edict_id": exec.EdictID,
+	}
+	// Merge inputs into template data
 	if exec.Data != nil {
 		if inputs, ok := exec.Data["inputs"].(map[string]interface{}); ok {
 			for k, v := range inputs {
-				placeholder := fmt.Sprintf("{{ .%s }}", k)
-				if str, ok := v.(string); ok {
-					text = replaceAll(text, placeholder, str)
-				}
+				data[k] = v
 			}
 		}
 	}
-	text = replaceAll(text, "{{ .edict_id }}", exec.EdictID)
-	return text
-}
-
-// replaceAll replaces all occurrences of old with new in s
-func replaceAll(s, old, new string) string {
-	for {
-		idx := findString(s, old)
-		if idx == -1 {
-			return s
-		}
-		s = s[:idx] + new + s[idx+len(old):]
-	}
-}
-
-// findString finds the first occurrence of substr in s
-func findString(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
+	// Merge arrange context into template data
+	if exec.Data != nil {
+		if arrangeCtx, ok := exec.Data["arrange_context"].(map[string]interface{}); ok {
+			for k, v := range arrangeCtx {
+				data[k] = v
+			}
 		}
 	}
-	return -1
+
+	tmpl, err := template.New("ritual").Parse(text)
+	if err != nil {
+		r.logger.Warn("failed to parse template", "error", err, "text", text)
+		return text
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		r.logger.Warn("failed to execute template", "error", err, "text", text)
+		return text
+	}
+	return buf.String()
 }
 
 // saveExecution persists execution state to database
