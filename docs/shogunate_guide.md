@@ -118,17 +118,17 @@ the entire lifecycle of a change from request to completion.
 Classifying → Planning → Forging → Judging → Censoring → Sealed
                                                     ↑
                                               (or Cancelled)
-                                              (or Halted)
 ```
 
-- `classifying` — Chancellor determines the scope and approach
+- `brewing` — Chancellor determines the scope and approach
 - `planning` — Strategist breaks down the work into Lings
 - `forging` — Forge implements the code changes
 - `judging` — Judge runs tests and validates changes
 - `censoring` — Censor reviews for quality and standards
 - `sealed` — Edict successfully completed (minister marks it sealed after successful completion)
 - `cancelled` — Edict was cancelled
-- `halted` — Edict paused waiting on user feedback (Zhengming pending)
+
+An edict can be **halted** at any phase (boolean flag), pausing work until the Ruler responds to a pending Zhengming.
 
 **Phase Transitions:** Ministers transition the edict through phases as they complete their work. The final minister in the ritual marks the edict as `sealed` upon successful completion.
 
@@ -706,7 +706,7 @@ Every minister embeds `MinisterBase`, which provides database access, session cr
 2. **`ConfigureModel(model, sessionConfig, repoInfo)`** — injects the LLM client and config into every minister via `SetMinisterConfig()`.
 3. **`Start(ctx)`** — loads rituals from embedded YAML + `.agents/rituals/`, launches each minister's `Run()` goroutine, starts the ritual guard polling loop, and invokes the `wakeup` ritual.
 4. **TUI sends a `Prompt`** to `chancellor.Prompts` channel.
-5. **Chancellor** creates an edict (`PhaseClassifying`), creates a `Session`, and streams the LLM response back to the TUI via notify callbacks.
+5. **Chancellor** creates an edict (`PhaseBrewing`), creates a `Session`, and streams the LLM response back to the TUI via notify callbacks.
 6. **LLM tool calls** (`enact_ritual`) dispatch work to ministers through ritual workflows.
 
 ### Threading Strategy

@@ -65,6 +65,41 @@ Migrate from monolithic TUI with embedded DB to a client-server architecture whe
 
 ## Daemon API (gRPC Service)
 
+### Design Principles
+
+1. **Edict sovereignty:** Only the Ruler (human) creates edicts via `SubmitEdict`. Ministers can refine/update edicts but never create them. Confucius can *suggest* edicts via zhengming, but creation is the Ruler's prerogative.
+2. **ConnectTo as primary interface:** The Ruler attaches to an edict's lifecycle via a bidirectional stream. Everything flows through it — court output, zhengming questions, ruler prompts. Like `tmux attach` for an edict.
+3. **LLM sessions are infrastructure:** Each minister manages its own LLM sessions internally. Observe them via `ConnectTo(minister_name)`, never manage them directly.
+
+### Edict Lifecycle Flow
+
+```
+User types prompt
+       │
+       ▼
+  SubmitEdict(intent)  →  edict_id
+       │
+       ▼
+  ConnectTo(edict_id)  →  bidirectional stream
+       │
+       ▼
+  ┌─────────────────────────────────────────────┐
+  │  BREWING                                    │
+  │  Chancellor distils edict name from prompt, │
+  │  asks zhengming if ambiguous, refines       │
+  │  intent until ready for assembly            │
+  ├─────────────────────────────────────────────┤
+  │  Chancellor classifies size (S/L) and       │
+  │  enacts ritual: swift-strike or             │
+  │  grand-campaign                             │
+  └─────────────────────────────────────────────┘
+       │
+       ▼
+  planning → forging → judging → censoring → sealed
+```
+
+Any phase can be **halted** (boolean flag) when zhengming is pending. Resumes when Ruler answers via the `ConnectTo` stream.
+
 ### Service Definition
 
 ```protobuf
@@ -72,101 +107,28 @@ syntax = "proto3";
 
 package asimi;
 
-service AsimiDaemon {
-  // === Session Management ===
-  
-  // Create a new session, returns session ID
-  rpc CreateSession(CreateSessionRequest) returns (SessionResponse);
-  
-  // Get session by ID
-  rpc GetSession(GetSessionRequest) returns (SessionResponse);
-  
-  // List sessions for current branch
-  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
-  
-  // Update session (messages, context files)
-  rpc UpdateSession(UpdateSessionRequest) returns (Empty);
-  
-  // Delete session
-  rpc DeleteSession(DeleteSessionRequest) returns (Empty);
-  
-  // === Conversation ===
-  
-  // Send a message and stream the response
-  rpc SendMessage(SendMessageRequest) returns (stream StreamChunk);
-  
-  // Cancel ongoing message generation
-  rpc CancelMessage(CancelMessageRequest) returns (Empty);
-  
-  // Get message history for session
-  rpc GetMessageHistory(GetMessageHistoryRequest) returns (MessageHistoryResponse);
-  
-  // === Prompt/Command History ===
-  
-  // Get prompt suggestions (autocomplete)
-  rpc GetPromptSuggestions(GetPromptSuggestionsRequest) returns (PromptSuggestionsResponse);
-  
-  // Add prompt to history
-  rpc AddPromptHistory(AddPromptHistoryRequest) returns (Empty);
-  
-  // Get command history
-  rpc GetCommandHistory(GetCommandHistoryRequest) returns (CommandHistoryResponse);
-  
-  // Add command to history
-  rpc AddCommandHistory(AddCommandHistoryRequest) returns (Empty);
-  
-  // === Edict Management ===
-  
-  // Create a new edict
-  rpc CreateEdict(CreateEdictRequest) returns (EdictResponse);
-  
-  // Get edict status
-  rpc GetEdict(GetEdictRequest) returns (EdictResponse);
-  
-  // List edicts with optional filter
+service Shogunate {
+  // === Primary Interface ===
+
+  // Ruler issues a new edict — the ONLY way edicts are created
+  rpc SubmitEdict(SubmitEdictRequest) returns (EdictResponse);
+
+  // Attach to any target — bidirectional stream, one primitive for all tabs
+  //   ConnectTo(edict_id)      → Ruling tab: full bidirectional (prompt, zhengming, cancel)
+  //   ConnectTo(minister_name) → Minister tab: observe + interrupt/join conversation
+  //   ConnectTo(ritual_run_id) → Ritual tab: observe progress + can abort
+  rpc ConnectTo(stream RulerMessage) returns (stream CourtMessage);
+
+  // === Browse & Inspect (read-only, no stream) ===
+
+  rpc GetEdict(GetEdictRequest) returns (EdictDetailResponse);
   rpc ListEdicts(ListEdictsRequest) returns (ListEdictsResponse);
-  
-  // Cancel edict
-  rpc CancelEdict(CancelEdictRequest) returns (Empty);
-  
-  // === Shogunate Events ===
-  
-  // Subscribe to shogunate events (edict phase changes, ritual progress, etc.)
-  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream ShogunateEvent);
-  
-  // Emit an event (for tools)
-  rpc EmitEvent(EmitEventRequest) returns (Empty);
-  
-  // === Zhengming (Clarification Requests) ===
-  
-  // Get pending clarification requests
-  rpc GetPendingZhengming(GetPendingZhengmingRequest) returns (ZhengmingListResponse);
-  
-  // Answer a clarification request
-  rpc AnswerZhengming(AnswerZhengmingRequest) returns (Empty);
-  
-  // === Rituals ===
-  
-  // List available rituals
+  rpc GetTianEvents(GetTianEventsRequest) returns (TianEventsResponse);
   rpc ListRituals(Empty) returns (ListRitualsResponse);
-  
-  // Get ritual execution status
-  rpc GetRitualExecution(GetRitualExecutionRequest) returns (RitualExecutionResponse);
-  
-  // === Repository/Branch ===
-  
-  // Get or create current repository/branch context
-  rpc GetContext(Empty) returns (ContextResponse);
-  
-  // Set current branch
-  rpc SetBranch(SetBranchRequest) returns (Empty);
-  
-  // === Health & Lifecycle ===
-  
-  // Check daemon health
+
+  // === Lifecycle ===
+
   rpc Health(Empty) returns (HealthResponse);
-  
-  // Graceful shutdown
   rpc Shutdown(Empty) returns (Empty);
 }
 ```
@@ -174,36 +136,49 @@ service AsimiDaemon {
 ### Message Definitions
 
 ```protobuf
-// === Common Types ===
+// === Common ===
 
 message Empty {}
 
-message Session {
-  string id = 1;
-  string created_at = 2;      // RFC3339 timestamp
-  string last_updated = 3;
-  string first_prompt = 4;
-  string provider = 5;
-  string model = 6;
-  string working_dir = 7;
-  string project_slug = 8;
-  int32 message_count = 9;
+// === Edict ===
+
+message SubmitEdictRequest {
+  string intent = 1;                       // The Ruler's words
+  string issue_ref = 2;                    // Optional: linked issue/ticket
+  map<string, string> context_files = 3;   // Files loaded via @ references
 }
 
-message Message {
-  string role = 1;            // "human", "ai", "system", "tool"
-  string content = 2;         // JSON-encoded content parts
-  int32 sequence = 3;
-}
-
-message Edict {
+message EdictResponse {
   string edict_id = 1;
-  string session_id = 2;
-  string issue_ref = 3;
-  string intent = 4;
-  string current_phase = 5;   // classifing, planning, forging, judging, censoring, deploying, sealed, cancelled
-  string created_at = 6;
-  string updated_at = 7;
+  string intent = 2;
+  string current_phase = 3;   // brewing, planning, forging, judging, censoring, sealed, cancelled
+  bool halted = 4;             // paused waiting on Zhengming (orthogonal to phase)
+  string created_at = 5;
+}
+
+message GetEdictRequest {
+  string edict_id = 1;
+}
+
+message EdictDetailResponse {
+  string edict_id = 1;
+  string intent = 2;
+  string current_phase = 3;   // brewing, planning, forging, judging, censoring, sealed, cancelled
+  bool halted = 4;             // paused waiting on Zhengming
+  string created_at = 5;
+  string updated_at = 6;
+  repeated Ling lings = 7;
+  RitualExecutionResponse active_ritual = 8;  // nil if none running
+  repeated Zhengming pending_zhengming = 9;
+}
+
+message ListEdictsRequest {
+  string phase = 1;           // optional filter
+  int32 limit = 2;
+}
+
+message ListEdictsResponse {
+  repeated EdictResponse edicts = 1;
 }
 
 message Ling {
@@ -214,207 +189,140 @@ message Ling {
   string status = 5;          // pending, in_progress, done, blocked
 }
 
+// === ConnectTo bidirectional stream ===
+
+// Ruler → Court
+message RulerMessage {
+  oneof message {
+    ConnectRequest connect = 1;         // Initial: what to attach to
+    RulerPrompt prompt = 2;             // Ruler speaks (new instruction, clarification)
+    ZhengmingAnswer zhengming_answer = 3; // Answer a minister's question
+    CancelSignal cancel = 4;            // Interrupt/abort current work
+  }
+}
+
+// One connect primitive — every TUI tab is a ConnectTo stream
+message ConnectRequest {
+  oneof target {
+    string edict_id = 1;               // Ruling tab: full bidirectional
+    string minister_name = 2;           // Minister tab: observe + can interrupt/join
+    string ritual_run_id = 3;           // Ritual tab: observe progress + can abort
+  }
+}
+
+message RulerPrompt {
+  string text = 1;
+  map<string, string> context_files = 2;
+}
+
+message ZhengmingAnswer {
+  string request_id = 1;
+  string answer = 2;
+}
+
+message CancelSignal {}
+
+// Court → Ruler
+message CourtMessage {
+  oneof message {
+    TextOutput text = 1;                // Minister's text output
+    ThoughtOutput thought = 2;          // Minister's reasoning/thinking
+    PhaseChange phase_change = 3;       // Edict phase transition
+    ZhengmingQuestion zhengming = 4;    // Minister needs clarification
+    ToolActivity tool_activity = 5;     // Tool call or result
+    MinisterEvent minister_event = 6;   // Minister started/completed work
+    RitualProgress ritual_progress = 7; // Ritual step progress
+    ErrorOutput error = 8;
+    EdictSealed sealed = 9;             // Edict completed
+  }
+}
+
+message TextOutput {
+  string minister_id = 1;
+  string text = 2;
+}
+
+message ThoughtOutput {
+  string minister_id = 1;
+  string text = 2;
+}
+
+message PhaseChange {
+  string from_phase = 1;
+  string to_phase = 2;
+}
+
+message ZhengmingQuestion {
+  string request_id = 1;
+  string minister_id = 2;
+  string question = 3;
+  string priority = 4;       // normal, urgent
+}
+
+message ToolActivity {
+  string minister_id = 1;
+  string tool_name = 2;
+  string arguments = 3;      // JSON (for call)
+  string result = 4;         // For result
+  bool is_error = 5;
+  bool is_call = 6;          // true = call, false = result
+}
+
+message MinisterEvent {
+  string minister_id = 1;
+  string event = 2;          // "started", "completed", "failed"
+  string detail = 3;
+}
+
+message RitualProgress {
+  string ritual_name = 1;
+  string step_name = 2;
+  string status = 3;         // running, completed, failed, retrying
+  int32 step_index = 4;
+  int32 total_steps = 5;
+}
+
+message ErrorOutput {
+  string message = 1;
+}
+
+message EdictSealed {
+  string summary = 1;
+}
+
+// === Zhengming ===
+
 message Zhengming {
   string request_id = 1;
   string edict_id = 2;
   string minister_id = 3;
   string question = 4;
   string answer = 5;
-  string priority = 6;        // normal, urgent
-  string status = 7;          // pending, answered, expired
-  string timeout_at = 8;
+  string priority = 6;
+  string status = 7;         // pending, answered, expired
 }
 
-// === Session Messages ===
+// === Tian Events ===
 
-message CreateSessionRequest {
-  string provider = 1;
-  string model = 2;
-  string working_dir = 3;
-  string system_prompt = 4;
-  map<string, string> context_files = 5;  // path -> content
-}
-
-message SessionResponse {
-  Session session = 1;
-}
-
-message GetSessionRequest {
-  string session_id = 1;
-}
-
-message ListSessionsRequest {
-  int32 limit = 1;
-  string branch_name = 2;     // optional, defaults to current
-}
-
-message ListSessionsResponse {
-  repeated Session sessions = 1;
-}
-
-message UpdateSessionRequest {
-  string session_id = 1;
-  repeated Message messages = 2;
-  map<string, string> context_files = 3;
-}
-
-message DeleteSessionRequest {
-  string session_id = 1;
-}
-
-// === Conversation Messages ===
-
-message SendMessageRequest {
-  string session_id = 1;
-  string prompt = 2;
-  map<string, string> context_files = 3;  // additional context for this message
-}
-
-message StreamChunk {
-  oneof chunk {
-    TextChunk text = 1;
-    ReasoningChunk reasoning = 2;
-    ToolCallChunk tool_call = 3;
-    ToolResultChunk tool_result = 4;
-    ErrorChunk error = 5;
-    DoneChunk done = 6;
-  }
-}
-
-message TextChunk {
-  string text = 1;
-}
-
-message ReasoningChunk {
-  string text = 1;
-}
-
-message ToolCallChunk {
-  string tool_name = 1;
-  string arguments = 2;       // JSON
-}
-
-message ToolResultChunk {
-  string tool_name = 1;
-  string result = 2;
-  bool is_error = 3;
-}
-
-message ErrorChunk {
-  string message = 1;
-}
-
-message DoneChunk {
-  string final_text = 1;      // complete response text
-}
-
-message CancelMessageRequest {
-  string session_id = 1;
-}
-
-message GetMessageHistoryRequest {
-  string session_id = 1;
-}
-
-message MessageHistoryResponse {
-  repeated Message messages = 1;
-}
-
-// === History Messages ===
-
-message GetPromptSuggestionsRequest {
-  string prefix = 1;
+message GetTianEventsRequest {
+  string edict_id = 1;
   int32 limit = 2;
+  int32 offset = 3;
 }
 
-message PromptSuggestionsResponse {
-  repeated string prompts = 1;
+message TianEventsResponse {
+  repeated TianEvent events = 1;
 }
 
-message AddPromptHistoryRequest {
-  string prompt = 1;
-}
-
-message GetCommandHistoryRequest {
-  int32 limit = 1;
-}
-
-message CommandHistoryResponse {
-  repeated string commands = 1;
-}
-
-message AddCommandHistoryRequest {
-  string command = 1;
-}
-
-// === Edict Messages ===
-
-message CreateEdictRequest {
-  string edict_id = 1;
-  string session_id = 2;
-  string issue_ref = 3;
-  string intent = 4;
-}
-
-message EdictResponse {
-  Edict edict = 1;
-}
-
-message GetEdictRequest {
-  string edict_id = 1;
-}
-
-message ListEdictsRequest {
-  string phase = 1;           // optional filter
-  int32 limit = 2;
-}
-
-message ListEdictsResponse {
-  repeated Edict edicts = 1;
-}
-
-message CancelEdictRequest {
-  string edict_id = 1;
-  string reason = 2;
-}
-
-// === Event Messages ===
-
-message SubscribeEventsRequest {
-  string edict_id = 1;        // optional, subscribe to specific edict
-  repeated string event_types = 2;  // optional filter
-}
-
-message ShogunateEvent {
-  string event_id = 1;
+message TianEvent {
+  uint64 id = 1;
   string edict_id = 2;
   string event_type = 3;
   string timestamp = 4;
   map<string, string> payload = 5;
 }
 
-message EmitEventRequest {
-  string edict_id = 1;
-  string event_type = 2;
-  map<string, string> payload = 3;
-}
-
-// === Zhengming Messages ===
-
-message GetPendingZhengmingRequest {
-  string edict_id = 1;        // optional
-}
-
-message ZhengmingListResponse {
-  repeated Zhengming requests = 1;
-}
-
-message AnswerZhengmingRequest {
-  string request_id = 1;
-  string answer = 2;
-}
-
-// === Ritual Messages ===
+// === Rituals ===
 
 message ListRitualsResponse {
   repeated RitualInfo rituals = 1;
@@ -435,48 +343,41 @@ message RitualExecutionResponse {
   string ritual_name = 2;
   string edict_id = 3;
   int32 current_step = 4;
-  string state = 5;           // pending, running, completed, failed
+  string state = 5;
   repeated StepState steps = 6;
 }
 
 message StepState {
   int32 index = 1;
   string name = 2;
-  string status = 3;          // pending, running, done, failed
+  string status = 3;
   int32 retry_count = 4;
   string message = 5;
 }
 
-// === Repository/Branch Messages ===
-
-message ContextResponse {
-  Repository repository = 1;
-  Branch branch = 2;
-}
-
-message Repository {
-  string host = 1;
-  string org = 2;
-  string project = 3;
-}
-
-message Branch {
-  string name = 1;
-}
-
-message SetBranchRequest {
-  string name = 1;
-}
-
-// === Health Messages ===
+// === Health ===
 
 message HealthResponse {
   string status = 1;          // "healthy", "degraded"
   string version = 2;
   int64 uptime_seconds = 3;
-  map<string, int64> db_stats = 4;  // table -> count
+  map<string, int64> db_stats = 4;
 }
 ```
+
+### Minister Tool Boundaries (Sovereignty Rule)
+
+| Minister | Can create edicts? | Key tools |
+|----------|-------------------|-----------|
+| Chancellor | **No** — can only `update_edict` (refine intent) | update_edict, enact_ritual, cancel_edict |
+| Strategist | No | insert_ling, list_ling, update_ling_status + read-only files |
+| Forge | No | create_manifest, update_manifest, commit_manifest + file tools + shell |
+| Judge | No | insert_verdict, update_manifest_status + shell + files |
+| Censor | No | record_precedent, query_precedents + read-only files |
+| Marshal | No | log_incident, approve_hotfix + read-only shell |
+| Confucius | **No** — can suggest via zhengming | request_zhengming + read-only files + asimisql (SELECT only) |
+
+Only `SubmitEdict` (Ruler → API) creates edicts. This is enforced by not giving any minister a `create_edict` tool.
 
 ## WebRTC Transport
 
@@ -559,55 +460,56 @@ func connect(addr string) (asimi.AsimiDaemonClient, error) {
 
 ## Migration Phases
 
-### Phase 1: API Layer Extraction (No Process Split Yet)
+### Phase 1: Edict-First Interface Extraction (No Process Split Yet)
 
-**Goal:** Create clean internal API that abstracts DB access, while keeping everything in one process.
+**Goal:** Create a Go `ShogunateService` interface matching the gRPC service, wire TUI to use it in-process. LLM sessions become internal — TUI never touches them directly.
 
-1. **Define service interface** matching the gRPC service above
-   - `internal/daemon/service.go` - `DaemonService` interface
-   - `internal/daemon/session_service.go` - session operations
-   - `internal/daemon/edict_service.go` - edict operations
+1. **Define service interface**
+   - `internal/daemon/service.go` — `ShogunateService` interface with `SubmitEdict`, `ConnectTo`, `GetEdict`, `ListEdicts`, etc.
+   - No session CRUD in the interface — sessions are minister-internal
 
-2. **Create repository layer** (unify DB access)
-   - Consolidate `storage.DB` and `gorm.DB` into single abstraction
-   - Use GORM for all tables (migrate away from raw SQL)
-   - `internal/repository/session_repo.go`
-   - `internal/repository/edict_repo.go`
-   - `internal/repository/history_repo.go`
+2. **Implement `ConnectTo` as an in-process stream**
+   - `internal/daemon/connect.go` — bidirectional channel bridge
+   - `RulerMessage` channel (TUI → Shogunate): prompts, zhengming answers, cancel
+   - `CourtMessage` channel (Shogunate → TUI): text, thoughts, phase changes, zhengming questions, tool activity
+   - Wire existing Chancellor prompt/result flow through this bridge
 
-3. **Refactor TUI to use service interface**
-   - Replace direct `storage.DB` calls with service calls
-   - Replace direct `gorm.DB` calls with service calls
-   - Keep in-process for now
+3. **Refactor TUI to use `ShogunateService`**
+   - Replace direct `shogunate.Shogunate` calls with service interface
+   - Replace direct `storage.DB` / `gorm.DB` calls with service queries
+   - Each TUI tab becomes a `ConnectTo` stream to an edict
 
-4. **Verify with tests**
+4. **Enforce edict sovereignty**
+   - Remove `create_edict` from all minister tool sets
+   - Chancellor keeps `update_edict` (refine intent based on classification)
+   - Confucius suggests edicts via zhengming, not creation
+
+5. **Verify with tests**
    - All existing tests pass
    - New service layer has unit tests
+   - Test: only `SubmitEdict` creates edicts, minister tools cannot
 
-### Phase 2: gRPC Service Implementation
+### Phase 2: gRPC + WebRTC Implementation
 
-**Goal:** Implement daemon as standalone gRPC server with WebRTC transport.
+**Goal:** Expose `ShogunateService` over gRPC with WebRTC transport.
 
 1. **Generate protobuf code**
-   - `api/proto/asimi.proto`
-   - `api/gen/grpc/` - generated Go code
+   - `api/proto/shogunate.proto` (from service definition above)
+   - `api/gen/grpc/` — generated Go code
 
 2. **Implement gRPC server with WebRTC transport**
-   - Use `go.viam.com/utils/rpc` for gRPC-over-WebRTC
-   - `daemon/server.go` - server setup with WebRTC listener
-   - Wire service layer to gRPC handlers
-   - Support both local (Unix socket) and remote (WebRTC) clients
+   - `daemon/server.go` — `go.viam.com/utils/rpc` server
+   - Map `ConnectTo` bidirectional stream to gRPC stream
+   - Support Unix socket (local) + WebRTC (remote)
 
 3. **Add daemon subcommand**
-   - `asimi daemon` - start daemon process
-   - `asimi daemon --webrtc` - enable WebRTC listener
-   - `asimi daemon --socket /path/to/socket` - local Unix socket
-   - Health check endpoint
+   - `asimi daemon` — start daemon process
+   - `asimi daemon --webrtc` — enable WebRTC listener
+   - `asimi daemon --socket /path/to/socket` — local Unix socket
 
-4. **Implement daemon client**
-   - `client.go` - implements `DaemonService` interface
-   - WebRTC connection for remote clients
-   - Unix socket for local TUI (lower latency)
+4. **Implement gRPC client**
+   - `client.go` — implements `ShogunateService` via gRPC
+   - Transparent to TUI: same interface, remote transport
 
 ### Phase 3: Process Split
 
@@ -620,19 +522,18 @@ func connect(addr string) (asimi.AsimiDaemonClient, error) {
 2. **Handle daemon lifecycle**
    - TUI can start daemon if not running (optional)
    - Signal handling for graceful shutdown
-   - Reconnection logic
+   - Reconnection logic for `ConnectTo` streams
 
 3. **Remove direct DB imports from TUI package**
-   - `main.go` should not import `storage` directly
-   - All DB access through client
+   - `main.go` should not import `storage` or `shogunate` directly
+   - All interaction through `ShogunateService` client
 
 ### Phase 4: Cleanup & Optimization
 
-1. **Remove `ShogunateSchema` DDL** - GORM AutoMigrate is the source of truth
-2. **Remove `storage.DB` abstraction** - GORM only
-3. **Add connection pooling** - gRPC client pool for TUI
-4. **Add request timeout/retry** - resilience patterns
-5. **Update documentation**
+1. **Remove `ShogunateSchema` DDL** — GORM AutoMigrate is the source of truth
+2. **Remove `storage.DB` abstraction** — GORM only
+3. **Add request timeout/retry** — resilience patterns
+4. **Update documentation**
 
 ## File Structure After Migration
 
@@ -640,57 +541,53 @@ func connect(addr string) (asimi.AsimiDaemonClient, error) {
 .
 ├── api/
 │   ├── proto/
-│   │   └── asimi.proto
+│   │   └── shogunate.proto   # Edict-first service definition
 │   └── gen/
 │       └── grpc/
 ├── cmd/
-│   ├── asimi/              # TUI entrypoint
+│   ├── asimi/                # TUI entrypoint
 │   │   └── main.go
-│   └── asimi-daemon/       # Daemon entrypoint
+│   └── asimi-daemon/         # Daemon entrypoint
 │       └── main.go
 ├── daemon/
-│   ├── server.go           # gRPC server (WebRTC + Unix socket)
-│   ├── webrtc.go           # WebRTC configuration & auth
-│   ├── service.go          # Service implementation
-│   ├── session.go          # Session operations
-│   ├── edict.go            # Edict operations
-│   ├── history.go          # Prompt/command history
-│   ├── db.go               # GORM setup
-│   ├── session_repo.go
-│   ├── edict_repo.go
-│   ├── history_repo.go
-│   └── shogunate/          # Moved from root (daemon-only)
+│   ├── server.go             # gRPC server (WebRTC + Unix socket)
+│   ├── webrtc.go             # WebRTC configuration & auth
+│   ├── service.go            # ShogunateService implementation
+│   ├── connect.go            # ConnectTo stream bridge
+│   ├── edict.go              # Edict operations
+│   ├── db.go                 # GORM setup
+│   └── shogunate/            # Moved from root (daemon-only)
 │       ├── shogunate.go
 │       ├── chancellor.go
-│       ├── minister.go
+│       ├── minister.go       # LLM sessions managed here (internal)
 │       ├── ritual.go
 │       └── ...
-├── chat.go                 # TUI - chat handling
-├── client.go               # TUI - daemon client (gRPC)
-├── commandline.go          # TUI - command line
-├── completion.go           # TUI - tab completion
-├── prompt.go               # TUI - prompt handling
-├── status.go               # TUI - status bar
-├── tui.go                  # TUI - main UI
-├── ...                     # TUI - other flat files
-├── web/                    # Browser client (optional)
+├── client.go                 # TUI - ShogunateService client (gRPC)
+├── tui.go                    # TUI - main UI + tab system
+├── status.go                 # TUI - status bar
+├── commandline.go            # TUI - command line
+├── ...                       # TUI - other flat files
+├── web/                      # Browser client (optional)
 │   ├── index.html
 │   ├── main.ts
 │   └── package.json
 ├── internal/
-│   ├── config/             # Shared config
-│   └── repo/               # Shared repo utilities
+│   ├── config/               # Shared config
+│   ├── daemon/               # ShogunateService interface (shared between client & server)
+│   │   └── service.go
+│   └── repo/                 # Shared repo utilities
 └── storage/
-    ├── models.go           # Shared GORM structs
-    └── migrations.go       # GORM AutoMigrate
+    ├── models.go             # Shared GORM structs (Edict, Ling, etc.)
+    └── migrations.go         # GORM AutoMigrate
 ```
 
 **Principles:**
-- `daemon/` = all daemon-only code (server, service, repos, shogunate)
-- Root level = flat TUI code (no subdirectories)
-- `internal/` = truly shared code only
-- `storage/` = shared types/models
-- `web/` = optional browser client for remote access
+- `daemon/` = all daemon-only code (server, service, shogunate, ministers, LLM sessions)
+- Root level = flat TUI code (thin client, no DB imports)
+- `internal/daemon/` = `ShogunateService` interface shared by client and server
+- `storage/` = shared GORM model types
+- LLM sessions live entirely inside `daemon/shogunate/` — never exposed as primary API
+- TUI interacts only through edicts via `ConnectTo` streams
 
 ## Risks & Mitigations
 

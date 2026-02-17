@@ -237,7 +237,7 @@ func (t ListEdictsTool) ParameterSchema() map[string]any {
 		"properties": map[string]any{
 			"phase": map[string]any{
 				"type":        "string",
-				"enum":        []string{"classifing", "planning", "forging", "judging", "censoring", "deploying", "sealed", "cancelled"},
+				"enum":        []string{"brewing", "planning", "forging", "judging", "censoring", "deploying", "sealed", "cancelled"},
 				"description": "Filter by phase (optional)",
 			},
 			"limit": map[string]any{

@@ -59,14 +59,14 @@ func (s *StringArray) Scan(value interface{}) error {
 type EdictPhase string
 
 const (
-	PhaseClassifing EdictPhase = "classifing"
-	PhasePlanning   EdictPhase = "planning"
-	PhaseForging    EdictPhase = "forging"
-	PhaseJudging    EdictPhase = "judging"
-	PhaseCensoring  EdictPhase = "censoring"
-	PhaseDeploying  EdictPhase = "deploying"
-	PhaseSealed     EdictPhase = "sealed"
-	PhaseCancelled  EdictPhase = "cancelled"
+	PhaseBrewing EdictPhase = "brewing"
+	PhasePlanning    EdictPhase = "planning"
+	PhaseForging     EdictPhase = "forging"
+	PhaseJudging     EdictPhase = "judging"
+	PhaseCensoring   EdictPhase = "censoring"
+	PhaseDeploying   EdictPhase = "deploying"
+	PhaseSealed      EdictPhase = "sealed"
+	PhaseCancelled   EdictPhase = "cancelled"
 )
 
 // Edict represents a high-level task/issue being processed by the Shogunate
@@ -77,6 +77,7 @@ type Edict struct {
 	IssueRef     string     `gorm:"column:issue_ref"`
 	Intent       string     `gorm:"column:intent"`
 	CurrentPhase EdictPhase `gorm:"column:current_phase"`
+	Halted       bool       `gorm:"column:halted"`
 	CreatedAt    time.Time  `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt    time.Time  `gorm:"column:updated_at;autoUpdateTime"`
 }
@@ -307,6 +308,7 @@ CREATE TABLE IF NOT EXISTS edicts (
     issue_ref TEXT NOT NULL,
     intent TEXT NOT NULL,
     current_phase TEXT NOT NULL DEFAULT 'brewing',
+    halted INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );

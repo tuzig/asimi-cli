@@ -570,13 +570,13 @@ func (c *Chancellor) GetEdict(edictID string) (*storage.Edict, error) {
 	return &edict, nil
 }
 
-// CreateEdict creates a new edict in the classifying phase
+// CreateEdict creates a new edict in the brewing phase
 func (c *Chancellor) CreateEdict(edictID, intent string) error {
 	edict := storage.Edict{
 		EdictID:      edictID,
 		IssueRef:     edictID,
 		Intent:       intent,
-		CurrentPhase: storage.PhaseClassifing,
+		CurrentPhase: storage.PhaseBrewing,
 	}
 	if err := c.db.Create(&edict).Error; err != nil {
 		return fmt.Errorf("failed to create edict: %w", err)

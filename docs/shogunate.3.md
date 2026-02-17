@@ -47,7 +47,7 @@ An **Edict** is a work order issued by the Ruler.
 It captures their intent and tracks the entire lifecycle of a task from request to completion.
 
 **Phases:**
-- `classifying` - Chancellor determines the scope and approach
+- `brewing` - Chancellor determines the scope and approach
 - `planning` - Strategist breaks down the work into Lings
 - `forging` - Forge implements the code changes
 - `judging` - Judge runs tests and validates changes
@@ -55,9 +55,10 @@ It captures their intent and tracks the entire lifecycle of a task from request 
 - `deploying` - Changes are deployed (future)
 - `sealed` - Edict successfully completed
 - `cancelled` - Edict was cancelled
-- **[NEW]** `halted` - Edict paused waiting on user feedback (Zhengming pending)
 
-> **Implementation Note:** Add `PhaseHalted EdictPhase = "halted"` to `storage/shogunate_schema.go` and update phase transition logic in Chancellor to set this phase when Zhengming is requested.
+An edict can be **halted** at any phase (boolean flag), pausing work until the Ruler responds to a pending Zhengming.
+
+> **Implementation Note:** Halted is a `bool` field on `Edict`, not a separate phase. Set `Halted = true` when Zhengming is requested, `Halted = false` when answered.
 
 ### Ministers
 
@@ -422,13 +423,13 @@ The metaphor isn't just aesthetic - it encodes a philosophy of careful, principl
 
 The following changes are marked with **[NEW]** in this document:
 
-### 1. Add `halted` Phase
+### 1. Add `Halted` Bool Flag
 **File:** `storage/shogunate_schema.go`
-- Add `PhaseHalted EdictPhase = "halted"`
+- Add `Halted bool` field to `Edict` struct
 
 **File:** `shogunate/chancellor.go`
-- Update `RequestZhengming` to transition edict to `halted` phase
-- Update `AnswerZhengming` to resume from `halted` phase
+- Update `RequestZhengming` to set `Halted = true`
+- Update `AnswerZhengming` to set `Halted = false`
 
 ### 2. Add Missing Chancellor Tools
 **File:** `shogunate/tools/chancellor_tools.go`

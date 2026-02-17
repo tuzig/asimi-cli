@@ -94,7 +94,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get edict: %v", err)
 	}
-	if edict.CurrentPhase != storage.PhaseClassifing {
+	if edict.CurrentPhase != storage.PhaseBrewing {
 		t.Errorf("Expected phase brewing, got %s", edict.CurrentPhase)
 	}
 
