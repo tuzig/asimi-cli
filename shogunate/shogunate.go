@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
@@ -14,8 +15,49 @@ import (
 	"gorm.io/gorm"
 )
 
-// ShogunateEvent represents an event emitted by the Shogunate lifecycle.
+// ShogunateEvent represents an event type emitted by the Shogunate lifecycle.
 type ShogunateEvent string
+
+// Event is a dispatched event carrying type, edict, and payload.
+type Event struct {
+	Type    ShogunateEvent
+	EdictID string
+	Payload map[string]interface{}
+}
+
+// EventHandler handles dispatched events.
+type EventHandler func(event Event)
+
+// EventRegistry manages event subscriptions and dispatch.
+type EventRegistry struct {
+	mu          sync.RWMutex
+	subscribers map[ShogunateEvent][]EventHandler
+}
+
+// NewEventRegistry creates a new event registry.
+func NewEventRegistry() *EventRegistry {
+	return &EventRegistry{
+		subscribers: make(map[ShogunateEvent][]EventHandler),
+	}
+}
+
+// Subscribe registers a handler for an event type.
+func (r *EventRegistry) Subscribe(eventType ShogunateEvent, handler EventHandler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.subscribers[eventType] = append(r.subscribers[eventType], handler)
+}
+
+// Dispatch sends an event to all registered handlers.
+func (r *EventRegistry) Dispatch(event Event) {
+	r.mu.RLock()
+	handlers := r.subscribers[event.Type]
+	r.mu.RUnlock()
+
+	for _, handler := range handlers {
+		handler(event)
+	}
+}
 
 const (
 	EventEdictAssigned     ShogunateEvent = "edict_assigned"
@@ -48,10 +90,11 @@ type Shogunate struct {
 	config *config.ShogunateConfig
 	runner runners.Runner
 
-	ministers      map[string]Minister
+	ministers       map[string]Minister
 	ritualGuard    RitualGuardRunner
 	ritualRegistry *RitualRegistry
 	ritualRunner   *RitualRunner
+	eventRegistry  *EventRegistry
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -64,8 +107,9 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		logger:         logger,
 		config:         cfg,
 		runner:         runner,
-		ministers:      make(map[string]Minister),
+		ministers:       make(map[string]Minister),
 		ritualRegistry: NewRitualRegistry(),
+		eventRegistry:  NewEventRegistry(),
 	}
 	s.ensureDefaults()
 
@@ -315,6 +359,43 @@ func (s *Shogunate) GetRitualRunner() *RitualRunner {
 		return nil
 	}
 	return s.ritualRunner
+}
+
+// GetEventRegistry returns the event registry
+func (s *Shogunate) GetEventRegistry() *EventRegistry {
+	if s == nil {
+		return nil
+	}
+	return s.eventRegistry
+}
+
+// DispatchEvent dispatches an event to all subscribers and triggers event-driven rituals.
+func (s *Shogunate) DispatchEvent(event Event) {
+	if s == nil || s.eventRegistry == nil {
+		return
+	}
+	s.eventRegistry.Dispatch(event)
+
+	// Trigger event-driven rituals
+	if s.ritualRegistry != nil && s.ritualRunner != nil {
+		rituals := s.ritualRegistry.GetByEvent(string(event.Type))
+		for _, ritual := range rituals {
+			edictID := event.EdictID
+			inputs := map[string]string{"edict_id": edictID}
+			go func(r *RitualDef) {
+				exec, err := s.ritualRunner.Start(context.Background(), r.Name, edictID, inputs, nil)
+				if err != nil {
+					s.logger.Warn("failed to start event-triggered ritual",
+						"ritual", r.Name, "event", event.Type, "error", err)
+					return
+				}
+				if err := s.ritualRunner.Run(context.Background(), exec); err != nil {
+					s.logger.Warn("event-triggered ritual failed",
+						"ritual", r.Name, "error", err)
+				}
+			}(ritual)
+		}
+	}
 }
 
 // GetCurrentSession returns the session for the specified edict ID.

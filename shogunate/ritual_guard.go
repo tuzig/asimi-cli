@@ -26,17 +26,19 @@ CRITICAL RULES:
 type RitualGuard struct {
 	MinisterBase // embedded base for database access and session creation
 	chancellor   *Chancellor
+	shogunate    *Shogunate
 	maxRetries   int
 	batchSize    int
 	flatlineAge  time.Duration
 }
 
 // NewRitualGuard creates a new Ritual Guard
-func NewRitualGuard(base MinisterBase, chancellor *Chancellor) *RitualGuard {
+func NewRitualGuard(base MinisterBase, chancellor *Chancellor, shogunate *Shogunate) *RitualGuard {
 	base.ministerID = "ritual_guard"
 	return &RitualGuard{
 		MinisterBase: base,
 		chancellor:   chancellor,
+		shogunate:    shogunate,
 		maxRetries:   3,
 		batchSize:    100,
 		flatlineAge:  5 * time.Minute,
@@ -182,51 +184,45 @@ func (r *RitualGuard) Run(ctx context.Context) error {
 	return nil
 }
 
-// processEvent handles a single event
+// processEvent handles a single event and dispatches to subscribers
 func (r *RitualGuard) processEvent(ctx context.Context, event storage.TianEvent) error {
 	r.logger.Debug("processing event",
 		"event_id", event.ID,
 		"type", event.EventType,
 		"edict_id", event.EdictID)
 
-	// Route event based on type
+	// Log based on event category
 	switch event.EventType {
-	// Edict lifecycle events
 	case "edict_assigned", "edict_created":
 		r.logger.Info("edict event", "type", event.EventType, "edict_id", event.EdictID)
-
-	case "phase_changed", "forge_committed":
-		r.logger.Info("phase event", "type", event.EventType, "edict_id", event.EdictID)
-
-	// Ritual/Workflow events
-	case "ritual_started":
-		r.logger.Info("ritual started", "edict_id", event.EdictID)
-
-	case "ritual_completed":
-		r.logger.Info("ritual completed", "edict_id", event.EdictID)
-
+	case "phase_changed", "forge_committed", "manifest_committed", "manifest_rejected":
+		r.logger.Info("lifecycle event", "type", event.EventType, "edict_id", event.EdictID)
+	case "ritual_started", "ritual_completed":
+		r.logger.Info("ritual event", "type", event.EventType, "edict_id", event.EdictID)
 	case "ritual_failed":
 		r.logger.Error("ritual failed", "edict_id", event.EdictID, "payload", event.Payload)
-
-	case "step_completed":
-		r.logger.Debug("step completed", "edict_id", event.EdictID, "payload", event.Payload)
-
-	// Ling events
+	case "step_started", "step_completed", "step_failed":
+		r.logger.Debug("step event", "type", event.EventType, "edict_id", event.EdictID, "payload", event.Payload)
 	case "ling_created":
-		r.logger.Debug("ling created", "edict_id", event.EdictID, "payload", event.Payload)
-
-	// Zhengming events
+		r.logger.Debug("ling created", "edict_id", event.EdictID)
 	case "zhengming_needed":
 		r.logger.Info("zhengming needed", "edict_id", event.EdictID)
-
 	case "zhengming_answered":
 		r.logger.Info("zhengming answered", "edict_id", event.EdictID)
-
 	case "edict_cancelled":
 		r.logger.Info("edict cancelled", "edict_id", event.EdictID)
-
 	default:
-		r.logger.Debug("unknown event type, skipping", "type", event.EventType)
+		r.logger.Debug("unknown event type", "type", event.EventType)
+	}
+
+	// Dispatch to event registry subscribers and trigger event-driven rituals
+	if r.shogunate != nil {
+		payload := map[string]interface{}(event.Payload)
+		r.shogunate.DispatchEvent(Event{
+			Type:    ShogunateEvent(event.EventType),
+			EdictID: event.EdictID,
+			Payload: payload,
+		})
 	}
 
 	return nil
