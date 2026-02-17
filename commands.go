@@ -87,6 +87,8 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("1", "Jump to the beginning of the chat history", handleScrollTopCommand)
 	registry.RegisterCommand("update", "Check for and install updates", handleUpdateCommand)
 	registry.RegisterCommand("logout", "Logout from current provider and clear credentials", handleLogoutCommand)
+	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [hunting|<minister>|ritual <run_id>])", handleTabNewCommand)
+	registry.RegisterCommand("tabclose", "Close the current tab", handleTabCloseCommand)
 
 	return registry
 }
@@ -760,4 +762,76 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 
 		return updateCompleteMsg{success: true}
 	}
+}
+
+func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
+	if len(args) == 0 {
+		// Default: open a Hunting tab
+		model.addTab("Hunting", TabHunting, "confucius")
+		model.commandLine.AddToast("Opened Hunting tab", "success", time.Second*2)
+		return nil
+	}
+
+	target := args[0]
+	switch target {
+	case "hunting":
+		model.addTab("Hunting", TabHunting, "confucius")
+		model.commandLine.AddToast("Opened Hunting tab", "success", time.Second*2)
+	case "ritual":
+		if len(args) < 2 {
+			model.commandLine.AddToast("Usage: :tabnew ritual <run_id>", "error", time.Second*3)
+			return nil
+		}
+		runID := args[1]
+		model.addTab("Ritual:"+runID, TabRitual, runID)
+		model.commandLine.AddToast(fmt.Sprintf("Opened Ritual tab: %s", runID), "success", time.Second*2)
+	default:
+		// Treat as minister name
+		if model.shogunate != nil && model.shogunate.GetMinister(target) != nil {
+			label := strings.ToUpper(target[:1]) + target[1:]
+			model.addTab(label, TabObserve, target)
+			model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
+		} else {
+			model.commandLine.AddToast(fmt.Sprintf("Unknown minister: %s", target), "error", time.Second*3)
+		}
+	}
+	return nil
+}
+
+func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
+	if len(model.tabs) <= 1 {
+		model.commandLine.AddToast("Cannot close the last tab", "error", time.Second*3)
+		return nil
+	}
+
+	// Don't close a tab that's actively streaming
+	if model.streamingActive && model.streamingTab == model.activeTab {
+		model.commandLine.AddToast("Cannot close tab while streaming", "error", time.Second*3)
+		return nil
+	}
+
+	closingIdx := model.activeTab
+	// Switch to adjacent tab before removing
+	if closingIdx > 0 {
+		model.switchToTab(closingIdx - 1)
+	} else {
+		model.switchToTab(closingIdx + 1)
+	}
+
+	// Remove the closed tab
+	model.tabs = append(model.tabs[:closingIdx], model.tabs[closingIdx+1:]...)
+
+	// Adjust activeTab index if needed
+	if model.activeTab > closingIdx {
+		model.activeTab--
+	}
+	// Adjust streamingTab index if needed
+	if model.streamingTab > closingIdx {
+		model.streamingTab--
+	} else if model.streamingTab == closingIdx {
+		model.streamingTab = model.activeTab
+	}
+
+	model.commandLine.AddToast("Tab closed", "success", time.Second*2)
+	return nil
 }

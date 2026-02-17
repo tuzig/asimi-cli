@@ -19,6 +19,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// TabType represents the type of tab connection
+type TabType string
+
+const (
+	TabRuling  TabType = "ruling"  // Default tab for edict conversation
+	TabHunting TabType = "hunting" // Confucius codebase exploration
+	TabObserve TabType = "observe" // Minister observation
+	TabRitual  TabType = "ritual"  // Ritual monitoring
+)
+
+// Tab represents a TUI tab with its own content buffer and stream target
+type Tab struct {
+	Label   string
+	Type    TabType
+	Target  string           // minister ID, edict ID, or ritual run ID
+	Content ContentComponent // Own content buffer per tab
+	EdictID string           // Current edict ID for this tab
+}
+
 // TUIModel represents the bubbletea model for the TUI
 type TUIModel struct {
 	config        *Config
@@ -87,6 +106,12 @@ type TUIModel struct {
 	// Host command approval state
 	pendingHostApproval *runners.ApprovalRequestMsg
 	repoInfo            *repo.RepoInfo
+
+	// Tab system
+	tabs             []Tab
+	activeTab        int
+	streamingTab     int  // Which tab is receiving stream data
+	viTabPendingG    bool // Pending 'g' prefix for gt/gT tab navigation
 }
 
 // ctrlCState represents the state machine for CTRL-C handling
@@ -183,6 +208,16 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 		persistentCommandHistory: commandHistory,
 	}
 
+	// Initialize tab system with default Ruling tab
+	model.tabs = []Tab{{
+		Label:   "Ruling",
+		Type:    TabRuling,
+		Target:  "chancellor",
+		Content: model.content,
+	}}
+	model.activeTab = 0
+	model.streamingTab = 0
+
 	// Set the GetStatus callback for the chat component
 	model.content.Chat.GetStatus = func() string { return model.Mode }
 
@@ -233,6 +268,105 @@ func (m *TUIModel) initHistory() {
 			slog.Debug("loaded command history", "count", len(entries))
 		}
 	}
+}
+
+// --- Tab management ---
+
+// streamingChat returns the ChatComponent that should receive stream data
+func (m *TUIModel) streamingChat() *ChatComponent {
+	if m.streamingTab >= 0 && m.streamingTab < len(m.tabs) {
+		return m.tabs[m.streamingTab].Content.Chat
+	}
+	return m.content.Chat
+}
+
+// switchToTab saves current tab state and restores the target tab
+func (m *TUIModel) switchToTab(index int) {
+	if index < 0 || index >= len(m.tabs) || index == m.activeTab {
+		return
+	}
+	// Save current tab state
+	m.tabs[m.activeTab].Content = m.content
+	m.tabs[m.activeTab].EdictID = m.currentEdictID
+
+	// Switch
+	m.activeTab = index
+
+	// Restore new tab state
+	m.content = m.tabs[m.activeTab].Content
+	m.currentEdictID = m.tabs[m.activeTab].EdictID
+}
+
+// addTab creates a new tab and switches to it
+func (m *TUIModel) addTab(label string, tabType TabType, target string) {
+	markdownEnabled := false
+	if m.config != nil {
+		markdownEnabled = m.config.UI.MarkdownEnabled
+	}
+	newContent := NewContentComponent(m.width-2, m.height-4, markdownEnabled)
+	newContent.Chat.GetStatus = func() string { return m.Mode }
+
+	tab := Tab{
+		Label:   label,
+		Type:    tabType,
+		Target:  target,
+		Content: newContent,
+	}
+	m.tabs = append(m.tabs, tab)
+	m.switchToTab(len(m.tabs) - 1)
+}
+
+// renderTabBar renders the tab bar at the top of the screen
+func (m TUIModel) renderTabBar() string {
+	if len(m.tabs) <= 1 {
+		return "" // No tab bar for single tab
+	}
+
+	var parts []string
+	for i, tab := range m.tabs {
+		label := tab.Label
+		if i == m.activeTab {
+			// Active tab: bold/highlighted
+			style := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(m.theme.PaneBackground).
+				Background(m.theme.TextColor).
+				Padding(0, 1)
+			parts = append(parts, style.Render(label))
+		} else {
+			// Inactive tab: dimmed
+			style := lipgloss.NewStyle().
+				Foreground(m.theme.DarkBorder).
+				Padding(0, 1)
+			parts = append(parts, style.Render(label))
+		}
+	}
+
+	tabBar := lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+	return lipgloss.NewStyle().Width(m.width).Render(tabBar)
+}
+
+// nextTab switches to the next tab
+func (m *TUIModel) nextTab() (tea.Model, tea.Cmd) {
+	if len(m.tabs) <= 1 {
+		return m, nil
+	}
+	next := (m.activeTab + 1) % len(m.tabs)
+	m.switchToTab(next)
+	return m, nil
+}
+
+// prevTab switches to the previous tab
+func (m *TUIModel) prevTab() (tea.Model, tea.Cmd) {
+	if len(m.tabs) <= 1 {
+		return m, nil
+	}
+	prev := m.activeTab - 1
+	if prev < 0 {
+		prev = len(m.tabs) - 1
+	}
+	m.switchToTab(prev)
+	return m, nil
 }
 
 // getCurrentSession returns the current shogunate session, or nil if not available
@@ -621,6 +755,25 @@ func (m TUIModel) handleScrollModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool)
 	}
 	chat := m.content.Chat
 
+	// Handle pending 'g' prefix in scroll mode
+	if m.viTabPendingG {
+		m.viTabPendingG = false
+		m.status.ViPendingOp = ""
+		switch msg.String() {
+		case "t":
+			newModel, cmd := m.nextTab()
+			return newModel, cmd, true
+		case "T":
+			newModel, cmd := m.prevTab()
+			return newModel, cmd, true
+		case "g":
+			// gg → scroll to top
+			chat.ScrollToTop()
+			return m, nil, true
+		}
+		return m, nil, true
+	}
+
 	switch msg.String() {
 	case "ctrl+f":
 		chat.ScrollPageDown()
@@ -636,6 +789,11 @@ func (m TUIModel) handleScrollModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool)
 		return m, nil, true
 	case "G":
 		chat.ScrollToBottom()
+		return m, nil, true
+	case "g":
+		// Start pending g-prefix for gt/gT/gg
+		m.viTabPendingG = true
+		m.status.ViPendingOp = "g"
 		return m, nil, true
 	case "j", "down":
 		chat.ScrollDownOneLine()
@@ -659,6 +817,27 @@ func (m TUIModel) handleScrollModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool)
 // handleViNormalMode handles key presses when in vi normal or visual mode
 func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+
+	// Handle pending 'g' prefix for tab navigation (gt/gT)
+	if m.viTabPendingG {
+		m.viTabPendingG = false
+		m.status.ViPendingOp = ""
+		switch key {
+		case "t":
+			return m.nextTab()
+		case "T":
+			return m.prevTab()
+		case "g":
+			// gg → scroll to top
+			if m.content.GetActiveView() == ViewChat {
+				m.content.Chat.ScrollToTop()
+			}
+			return m, nil
+		default:
+			// Unknown g-command, ignore
+			return m, nil
+		}
+	}
 
 	// Handle history navigation with arrow keys first
 	// When prompt is empty, always try history navigation
@@ -749,6 +928,9 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		helpText += "  A       - Insert mode at line end\n"
 		helpText += "  o       - Open new line below\n"
 		helpText += "  O       - Open new line above\n"
+		helpText += "  gt      - Next tab\n"
+		helpText += "  gT      - Previous tab\n"
+		helpText += "  gg      - Scroll to top\n"
 		helpText += "  ?       - Show this help\n\n"
 		m.modal = NewBaseModal("Shortcuts Help", helpText, 80, 30)
 		return m, nil
@@ -762,6 +944,11 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.prompt.Value() != "" {
 			return m, func() tea.Msg { return ChangeModeMsg{NewMode: "replace"} }
 		}
+		return m, nil
+	case "g":
+		// Start pending g-prefix for tab navigation (gt/gT) and gg
+		m.viTabPendingG = true
+		m.status.ViPendingOp = "g"
 		return m, nil
 	default:
 		// Pass other keys to the textarea for navigation
@@ -1167,32 +1354,49 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		}
 	}
 
-	chancellor := m.shogunate.GetMinister("chancellor")
-	if chancellor == nil {
-		return func() tea.Msg {
-			return shogunate.StreamErrorMsg{Err: fmt.Errorf("Chancellor not found")}
-		}
-	}
+	// Route prompt to the correct minister based on active tab type
+	tab := m.tabs[m.activeTab]
+	m.streamingTab = m.activeTab
 
-	// Type assert to get the Chancellor with Prompts channel
-	ch, ok := chancellor.(*shogunate.Chancellor)
-	if !ok {
-		return func() tea.Msg {
-			return shogunate.StreamErrorMsg{Err: fmt.Errorf("invalid Chancellor type")}
-		}
-	}
-
-	// Send prompt to Chancellor
 	p := &shogunate.Prompt{
 		Message:      prompt,
 		EdictID:      m.currentEdictID, // Empty for new edict
 		ContextFiles: contextFiles,
 	}
 
-	// Non-blocking send to Chancellor
-	go func() {
-		ch.Prompts <- p
-	}()
+	switch tab.Type {
+	case TabHunting:
+		// Route to Confucius for codebase exploration
+		minister := m.shogunate.GetMinister("confucius")
+		if minister == nil {
+			return func() tea.Msg {
+				return shogunate.StreamErrorMsg{Err: fmt.Errorf("Confucius not found")}
+			}
+		}
+		conf, ok := minister.(*shogunate.Confucius)
+		if !ok {
+			return func() tea.Msg {
+				return shogunate.StreamErrorMsg{Err: fmt.Errorf("invalid Confucius type")}
+			}
+		}
+		go func() { conf.Prompts <- p }()
+
+	default:
+		// Route to Chancellor (Ruling, Observe, Ritual tabs)
+		chancellor := m.shogunate.GetMinister("chancellor")
+		if chancellor == nil {
+			return func() tea.Msg {
+				return shogunate.StreamErrorMsg{Err: fmt.Errorf("Chancellor not found")}
+			}
+		}
+		ch, ok := chancellor.(*shogunate.Chancellor)
+		if !ok {
+			return func() tea.Msg {
+				return shogunate.StreamErrorMsg{Err: fmt.Errorf("invalid Chancellor type")}
+			}
+		}
+		go func() { ch.Prompts <- p }()
+	}
 
 	m.streamingActive = true
 	return nil
@@ -1634,55 +1838,65 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case responseMsg:
-		m.content.Chat.AddToRawHistory("AI_RESPONSE", string(msg))
+		chat := m.streamingChat()
+		chat.AddToRawHistory("AI_RESPONSE", string(msg))
 		m.stopStreaming()
 		// Use AddAIChunk for non-streaming AI responses
-		m.content.Chat.AddAIChunk(string(msg))
-		m.content.Chat.FinalizeLastAIMessage()
+		chat.AddAIChunk(string(msg))
+		chat.FinalizeLastAIMessage()
 		m.repoInfo.RefreshDiff()
 
 	case runners.ToolCallScheduledMsg:
-		m.content.Chat.AddToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
-		m.content.Chat.HandleToolCallScheduled(msg)
+		chat := m.streamingChat()
+		chat.AddToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		chat.HandleToolCallScheduled(msg)
 
 	case runners.ToolCallExecutingMsg:
-		m.content.Chat.AddToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
-		m.content.Chat.HandleToolCallExecuting(msg)
+		chat := m.streamingChat()
+		chat.AddToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		chat.HandleToolCallExecuting(msg)
 
 	case runners.ToolCallSuccessMsg:
-		m.content.Chat.AddToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
-		m.content.Chat.HandleToolCallSuccess(msg)
+		chat := m.streamingChat()
+		chat.AddToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
+		chat.HandleToolCallSuccess(msg)
 		m.repoInfo.RefreshDiff()
 
 	case runners.ToolCallErrorMsg:
-		m.content.Chat.AddToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
-		m.content.Chat.HandleToolCallError(msg)
+		chat := m.streamingChat()
+		chat.AddToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
+		chat.HandleToolCallError(msg)
 
 	case runners.ToolCallAbortedMsg:
-		m.content.Chat.AddToRawHistory("TOOL_ABORTED", fmt.Sprintf("%s\nInput: %s\nReason: sandbox restarted", msg.Call.Tool.Name(), msg.Call.Input))
-		m.content.Chat.HandleToolCallAborted(msg)
+		chat := m.streamingChat()
+		chat.AddToRawHistory("TOOL_ABORTED", fmt.Sprintf("%s\nInput: %s\nReason: sandbox restarted", msg.Call.Tool.Name(), msg.Call.Input))
+		chat.HandleToolCallAborted(msg)
 
 	case errMsg:
-		m.content.Chat.AddToRawHistory("ERROR", fmt.Sprintf("%v", msg.err))
-		m.content.Chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
+		chat := m.streamingChat()
+		chat.AddToRawHistory("ERROR", fmt.Sprintf("%v", msg.err))
+		chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 
 	case shogunate.StreamStartMsg:
 		// Streaming has started — capture edict ID for multi-turn
+		m.streamingTab = m.activeTab
 		if msg.EdictID != "" {
 			m.currentEdictID = msg.EdictID
+			m.tabs[m.activeTab].EdictID = msg.EdictID
 		}
-		m.content.Chat.AddToRawHistory("STREAM_START", "AI streaming response started")
+		m.streamingChat().AddToRawHistory("STREAM_START", "AI streaming response started")
 		slog.Debug("streamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
 		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
 
 	case shogunate.StreamCompleteMsg:
-		m.content.Chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
-		slog.Debug("streamCompleteMsg", "messages_count", len(m.content.Chat.Messages))
+		chat := m.streamingChat()
+		chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
+		slog.Debug("streamCompleteMsg", "messages_count", len(chat.Messages))
 		m.stopStreaming()
 
 		// Finalize the last AI message with success/failure prefix
-		isFailure := m.content.Chat.FinalizeLastAIMessage()
+		isFailure := chat.FinalizeLastAIMessage()
 		if isFailure {
 			slog.Debug("AI response marked as failure")
 		}
@@ -1702,7 +1916,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shogunate.StreamInterruptedMsg:
 		// Streaming was interrupted by user
-		m.content.Chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
+		m.streamingChat().AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on interrupt
@@ -1710,10 +1924,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shogunate.StreamErrorMsg:
 		fullError := fmt.Sprintf("Model Error: %v", msg.Err)
-		m.content.Chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.Err))
+		chat := m.streamingChat()
+		chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.Err))
 		slog.Error("shogunate.StreamErrorMsg", "error", msg.Err)
 		// Add full error message to chat for visibility
-		m.content.Chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
+		chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
 		// Toast will be automatically truncated by commandline component if needed
 		m.commandLine.AddToast(fullError, "error", time.Second*5)
 		m.status.SetError() // Update status icon to show error
@@ -1732,34 +1947,37 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		*/
 	case shogunate.StreamMaxTokensReachedMsg:
 		// Max tokens reached, mark session as inactive and show warning
-		m.content.Chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.Content))
+		chat := m.streamingChat()
+		chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.Content))
 		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.Content))
-		m.content.Chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
+		chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on max tokens
 		m.repoInfo.RefreshDiff()
 
 	// Shogunate streaming message handlers
 	case shogunate.StreamChunkMsg:
-		// Handle text chunks from Shogunate
+		// Handle text chunks from Shogunate — route to streaming tab
+		chat := m.streamingChat()
 		m.status.AddStreamChars(len(msg.Text))
-		m.content.Chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
+		chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
 		if m.streamingActive {
 			m.waitingStart = time.Now()
 			if !m.waitingForResponse {
 				waitCmd := m.startWaitingForResponse()
-				m.content.Chat.AddAIChunk(msg.Text)
+				chat.AddAIChunk(msg.Text)
 				return m, waitCmd
 			}
 		}
-		m.content.Chat.AddAIChunk(msg.Text)
+		chat.AddAIChunk(msg.Text)
 		return m, nil
 
 	case shogunate.StreamReasoningChunkMsg:
-		// Handle thinking/reasoning chunks from Shogunate
+		// Handle thinking/reasoning chunks from Shogunate — route to streaming tab
+		chat := m.streamingChat()
 		m.status.AddStreamChars(len(msg.Text))
-		m.content.Chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
-		m.content.Chat.AddThinkingChunk(msg.Text)
+		chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
+		chat.AddThinkingChunk(msg.Text)
 		return m, nil
 
 	case showHelpMsg:
@@ -2549,8 +2767,12 @@ func (m *TUIModel) updateComponentDimensions() {
 	// Account for borders (2 lines for top and bottom border)
 	promptWithBorder := promptHeight + 2
 
-	// Calculate chat height
-	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1
+	// Calculate chat height (account for tab bar when multiple tabs)
+	tabBarHeight := 0
+	if len(m.tabs) > 1 {
+		tabBarHeight = 1
+	}
+	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
@@ -2599,7 +2821,11 @@ func (m TUIModel) View() string {
 	commandLineHeight := 1
 	statusHeight := 1
 	promptWithBorder := promptHeight + 2
-	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1
+	tabBarHeight := 0
+	if len(m.tabs) > 1 {
+		tabBarHeight = 1
+	}
+	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
@@ -2638,7 +2864,11 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	commandLineHeight := 1
 	statusHeight := 1
 	promptWithBorder := m.prompt.Height + 2
-	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1 - modalHeight
+	tabBarHeight := 0
+	if len(m.tabs) > 1 {
+		tabBarHeight = 1
+	}
+	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1 - modalHeight
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
@@ -2661,35 +2891,24 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 }
 
 func (m TUIModel) composeBaseView(mainContent, promptView, commandLineView string) string {
-	// If help modal is active, insert it above the prompt
-	// TODO: we can probably remove this as there are no more modals
+	tabBar := m.renderTabBar()
+	statusView := m.status.View()
+
+	// Build layout parts
+	var layoutParts []string
+	if tabBar != "" {
+		layoutParts = append(layoutParts, tabBar)
+	}
+	layoutParts = append(layoutParts, mainContent)
+
 	if m.modal != nil {
 		modalRender := m.modal.Render()
-		statusView := m.status.View()
-		// Vi-like layout: Chat -> Modal -> Empty line -> Prompt -> Status -> Command line
-		emptyLine := ""
-		result := lipgloss.JoinVertical(
-			lipgloss.Left,
-			mainContent,
-			modalRender,
-			emptyLine,
-			promptView,
-			statusView,
-			commandLineView,
-		)
-		return result
+		layoutParts = append(layoutParts, modalRender, "")
 	}
 
-	statusView := m.status.View()
-	// Vi-like layout: Chat -> Empty line -> Prompt -> Status -> Command line
-	result := lipgloss.JoinVertical(
-		lipgloss.Left,
-		mainContent,
-		promptView,
-		statusView,
-		commandLineView,
-	)
-	return result
+	layoutParts = append(layoutParts, promptView, statusView, commandLineView)
+
+	return lipgloss.JoinVertical(lipgloss.Left, layoutParts...)
 }
 
 func (m TUIModel) overlayCompletionDialog(baseView, promptView, commandLineView string) string {
