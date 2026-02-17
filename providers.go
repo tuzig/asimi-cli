@@ -340,6 +340,8 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		&storage.MarshalIncident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
+		&shogunate.RitualExecution{},
+		&shogunate.RitualStepState{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to migrate Shogunate schema: %w", err)
 	}
