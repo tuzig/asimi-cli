@@ -50,7 +50,7 @@ func DefaultConfig() Config {
 		},
 		UI: UIConfig{
 			MarkdownEnabled:      true,
-			CtrlCDebounceTime:    120 * time.Millisecond, // Increased from 100ms for iOS compatibility
+			CtrlCDebounceTime:    200 * time.Millisecond, // Debounce for duplicate CTRL-C events from terminals
 			CtrlCWindowTime:      2000 * time.Millisecond,
 			PromptExpandedHeight: 10,
 		},

@@ -817,8 +817,8 @@ type showModelSelectionMsg struct{}
 // Command handler - now works with all providers
 func handleModelsCommand(model *TUIModel, args []string) tea.Cmd {
 	// Immediately show the models view with loading state
-	showModelsCmd := model.content.ShowUnifiedModels([]Model{}, model.config.LLM.Model)
-	model.content.models.SetLoading(true)
+	showModelsCmd := model.tabs.Content().ShowUnifiedModels([]Model{}, model.config.LLM.Model)
+	model.tabs.Content().models.SetLoading(true)
 
 	// Fetch models in the background
 	loadCmd := func() tea.Msg {

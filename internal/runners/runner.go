@@ -88,12 +88,19 @@ func (e SandboxMissingError) Error() string {
 func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	var runner Runner
 	runner = NewHostRunner()
+
+	// Resolve image name using same default as NewPodmanRunner
+	imageName := config.ImageName
+	if imageName == "" {
+		imageName = fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
+	}
+
 	// Auto-detect and assign shell runner
-	if IsPodmanAvailable(config.ImageName) {
-		slog.Info("using podman shell runner")
+	if IsPodmanAvailable(imageName) {
+		slog.Info("using podman shell runner", "image", imageName)
 		runner = NewPodmanRunner(config, repoInfo, runner)
 	} else {
-		slog.Info("using host shell runner (podman not available or image missing)")
+		slog.Info("using host shell runner (podman not available or image missing)", "image", imageName)
 	}
 	return runner
 }

@@ -240,7 +240,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session and streams the task through the LLM.
 func (f *Forge) streamTask(ctx context.Context, work, edictID string) (string, error) {
-	session, err := f.CreateSession(f)
+	session, err := f.CreateSession(f, edictID)
 	if err != nil {
 		return "", fmt.Errorf("failed to create forge session: %w", err)
 	}

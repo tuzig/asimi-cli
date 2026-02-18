@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/afittestide/asimi/shogunate"
@@ -8,6 +9,271 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// TabType represents the type of tab connection
+type TabType string
+
+const (
+	TabRuling  TabType = "ruling"  // Default tab for edict conversation
+	TabHunting TabType = "hunting" // Confucius codebase exploration
+	TabObserve TabType = "observe" // Minister observation
+	TabRitual  TabType = "ritual"  // Ritual monitoring
+)
+
+// Tab represents a TUI tab with its own content buffer and stream target
+type Tab struct {
+	Label   string
+	Type    TabType
+	Target  string           // minister ID, edict ID, or ritual run ID
+	Content ContentComponent // Own content buffer per tab
+	EdictID string           // Current edict ID for this tab
+}
+
+// TabManager manages multiple tabs, each wrapping a ContentComponent
+type TabManager struct {
+	tabs            []Tab
+	activeTab       int
+	streamingTab    int
+	pendingG        bool
+	width, height   int
+	markdownEnabled bool
+	getStatus       func() string
+}
+
+// NewTabManager creates a TabManager with a default Ruling tab
+func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager {
+	ruling := NewContentComponent(w, h, mdEnabled)
+	ruling.Chat.GetStatus = getStatus
+	hunting := NewContentComponent(w, h, mdEnabled)
+	hunting.Chat.GetStatus = getStatus
+	return TabManager{
+		tabs: []Tab{
+			{Label: "Ruling", Type: TabRuling, Target: "chancellor", Content: ruling},
+			{Label: "Hunting", Type: TabHunting, Target: "confucius", Content: hunting},
+		},
+		activeTab:       0,
+		streamingTab:    0,
+		width:           w,
+		height:          h,
+		markdownEnabled: mdEnabled,
+		getStatus:       getStatus,
+	}
+}
+
+// Content returns a pointer to the active tab's ContentComponent
+func (tm *TabManager) Content() *ContentComponent {
+	return &tm.tabs[tm.activeTab].Content
+}
+
+// StreamingChat returns the ChatComponent receiving stream data
+func (tm *TabManager) StreamingChat() *ChatComponent {
+	if tm.streamingTab == tm.activeTab {
+		return tm.tabs[tm.activeTab].Content.Chat
+	}
+	if tm.streamingTab >= 0 && tm.streamingTab < len(tm.tabs) {
+		return tm.tabs[tm.streamingTab].Content.Chat
+	}
+	return tm.tabs[tm.activeTab].Content.Chat
+}
+
+// SwitchTo saves current tab state and switches to the target index
+func (tm *TabManager) SwitchTo(index int) {
+	if index < 0 || index >= len(tm.tabs) || index == tm.activeTab {
+		return
+	}
+	tm.activeTab = index
+}
+
+// Add creates a new tab and switches to it
+func (tm *TabManager) Add(label string, tabType TabType, target string) {
+	newContent := NewContentComponent(tm.width, tm.height, tm.markdownEnabled)
+	newContent.Chat.GetStatus = tm.getStatus
+	tab := Tab{
+		Label:   label,
+		Type:    tabType,
+		Target:  target,
+		Content: newContent,
+	}
+	tm.tabs = append(tm.tabs, tab)
+	tm.SwitchTo(len(tm.tabs) - 1)
+}
+
+// Close closes the active tab if safe to do so
+func (tm *TabManager) Close(streamingActive bool) error {
+	if len(tm.tabs) <= 1 {
+		return errors.New("cannot close the last tab")
+	}
+	if streamingActive && tm.streamingTab == tm.activeTab {
+		return errors.New("cannot close tab while streaming")
+	}
+
+	closingIdx := tm.activeTab
+	// Switch to adjacent tab before removing
+	if closingIdx > 0 {
+		tm.SwitchTo(closingIdx - 1)
+	} else {
+		tm.SwitchTo(closingIdx + 1)
+	}
+
+	// Remove the closed tab
+	tm.tabs = append(tm.tabs[:closingIdx], tm.tabs[closingIdx+1:]...)
+
+	// Adjust activeTab index if needed
+	if tm.activeTab > closingIdx {
+		tm.activeTab--
+	}
+	// Adjust streamingTab index if needed
+	if tm.streamingTab > closingIdx {
+		tm.streamingTab--
+	} else if tm.streamingTab == closingIdx {
+		tm.streamingTab = tm.activeTab
+	}
+	return nil
+}
+
+// NextTab switches to the next tab (wraps around)
+func (tm *TabManager) NextTab() {
+	if len(tm.tabs) <= 1 {
+		return
+	}
+	next := (tm.activeTab + 1) % len(tm.tabs)
+	tm.SwitchTo(next)
+}
+
+// PrevTab switches to the previous tab (wraps around)
+func (tm *TabManager) PrevTab() {
+	if len(tm.tabs) <= 1 {
+		return
+	}
+	prev := tm.activeTab - 1
+	if prev < 0 {
+		prev = len(tm.tabs) - 1
+	}
+	tm.SwitchTo(prev)
+}
+
+// RenderTabBar renders the tab bar; returns "" for single tab
+func (tm *TabManager) RenderTabBar(width int) string {
+	if len(tm.tabs) <= 1 {
+		return ""
+	}
+	fillBg := lipgloss.Color("#333333")
+	var parts []string
+	for i, tab := range tm.tabs {
+		label := tab.Label
+		if i == tm.activeTab {
+			// Active tab: bold, bright foreground, stands out from the fill
+			style := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(globalTheme.TextColor).
+				Background(fillBg).
+				Padding(0, 1)
+			parts = append(parts, style.Render(label))
+		} else {
+			// Inactive tab: dimmer text on the same grey fill
+			style := lipgloss.NewStyle().
+				Foreground(globalTheme.DarkBorder).
+				Background(fillBg).
+				Padding(0, 1)
+			parts = append(parts, style.Render(label))
+		}
+	}
+	tabBar := lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+	// Fill the rest of the line with the same grey background
+	return lipgloss.NewStyle().Width(width).Background(fillBg).Render(tabBar)
+}
+
+// TabBarHeight returns 1 if multiple tabs, 0 otherwise
+func (tm *TabManager) TabBarHeight() int {
+	if len(tm.tabs) > 1 {
+		return 1
+	}
+	return 0
+}
+
+// SetSize updates dimensions for all tabs
+func (tm *TabManager) SetSize(w, h int) {
+	tm.width = w
+	tm.height = h
+	for i := range tm.tabs {
+		tm.tabs[i].Content.SetSize(w, h)
+	}
+}
+
+// ActiveTab returns a pointer to the active Tab
+func (tm *TabManager) ActiveTab() *Tab {
+	return &tm.tabs[tm.activeTab]
+}
+
+// TabCount returns the number of tabs
+func (tm *TabManager) TabCount() int {
+	return len(tm.tabs)
+}
+
+// ActiveEdictID returns the active tab's edict ID
+func (tm *TabManager) ActiveEdictID() string {
+	return tm.tabs[tm.activeTab].EdictID
+}
+
+// SetActiveEdictID sets the edict ID on the active tab
+func (tm *TabManager) SetActiveEdictID(id string) {
+	tm.tabs[tm.activeTab].EdictID = id
+}
+
+// SetStreamingTab marks the active tab as the streaming target
+func (tm *TabManager) SetStreamingTab() {
+	tm.streamingTab = tm.activeTab
+}
+
+// StreamingTabIndex returns the current streaming tab index
+func (tm *TabManager) StreamingTabIndex() int {
+	return tm.streamingTab
+}
+
+// HandlePendingG handles the g-prefix key sequence for gt/gT/gg
+// Returns (handled bool, cmd tea.Cmd)
+func (tm *TabManager) HandlePendingG(key string, scrollToTop func()) (bool, tea.Cmd) {
+	if !tm.pendingG {
+		return false, nil
+	}
+	tm.pendingG = false
+	switch key {
+	case "t":
+		tm.NextTab()
+		return true, nil
+	case "T":
+		tm.PrevTab()
+		return true, nil
+	case "g":
+		if scrollToTop != nil {
+			scrollToTop()
+		}
+		return true, nil
+	}
+	return true, nil // consumed the pending g, unknown follow-up
+}
+
+// SetPendingG sets the pending g-prefix flag
+func (tm *TabManager) SetPendingG() {
+	tm.pendingG = true
+}
+
+// IsPendingG returns whether g-prefix is pending
+func (tm *TabManager) IsPendingG() bool {
+	return tm.pendingG
+}
+
+// ClearPendingG clears the pending g-prefix flag
+func (tm *TabManager) ClearPendingG() {
+	tm.pendingG = false
+}
+
+// UpdateContent calls Update on the active tab's ContentComponent and writes back
+func (tm *TabManager) UpdateContent(msg tea.Msg) tea.Cmd {
+	updated, cmd := tm.tabs[tm.activeTab].Content.Update(msg)
+	tm.tabs[tm.activeTab].Content = updated
+	return cmd
+}
 
 // ViewType represents the active view
 type ViewType int

@@ -4,10 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 )
+
+// ReviewResult represents the outcome of a diff review
+type ReviewResult struct {
+	Approved  bool       `json:"approved"`
+	Findings  []Finding  `json:"findings"`
+	Reasoning string     `json:"reasoning"`
+}
+
+// Finding represents a single issue found during review
+type Finding struct {
+	File      string `json:"file"`
+	Line      int    `json:"line"`
+	Severity  string `json:"severity"`  // "error", "warning", "info"
+	Message   string `json:"message"`
+	Principle string `json:"principle"` // The principle violated (if any)
+}
 
 // Censor enforces code ethics and maintains precedent law
 type Censor struct {
@@ -77,6 +94,7 @@ func (c *Censor) Tools() []Tool {
 		&RecordPrecedentTool{censor: c},
 		&ListQuenchedManifestsTool{censor: c},
 		&QueryPrecedentsTool{censor: c},
+		&ReviewDiffTool{censor: c},
 	}
 	// Add read-only tools (read_file, list_files, grep)
 	for _, t := range tools.GetROTools() {
@@ -184,6 +202,171 @@ func (c *Censor) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	return edicts, nil
 }
 
+// --- Diff Review Methods ---
+
+// ReviewDiff reviews a diff string and returns structured findings.
+// This method can be used for ad-hoc reviews without requiring manifests or database writes.
+// The Censor's Role() prompt guides the review process.
+func (c *Censor) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, error) {
+	// If no LLM is configured, return a basic result
+	if c.model == nil {
+		return &ReviewResult{
+			Approved:  true,
+			Findings:  []Finding{},
+			Reasoning: "No LLM configured for diff review - auto-approved",
+		}, nil
+	}
+
+	// Create a session for the review
+	session, err := c.CreateSession(c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create censor session: %w", err)
+	}
+
+	// Build the review prompt
+	reviewPrompt := c.buildReviewPrompt(diff)
+
+	// Get the review from the LLM
+	response, err := session.AskWithStreaming(ctx, reviewPrompt, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get LLM review: %w", err)
+	}
+
+	// Parse the response into a structured result
+	result := c.parseReviewResponse(response)
+	return result, nil
+}
+
+// ReviewDiffWithManifests reviews a diff in the context of manifests and records precedents.
+// This is used during ritual workflows where the review outcome should be persisted.
+func (c *Censor) ReviewDiffWithManifests(ctx context.Context, diff string, manifests []storage.ForgeManifest) (*ReviewResult, error) {
+	// First, perform the diff review
+	result, err := c.ReviewDiff(ctx, diff)
+	if err != nil {
+		return nil, err
+	}
+
+	// Record precedents for each manifest based on findings
+	for _, manifest := range manifests {
+		for _, finding := range result.Findings {
+			ruling := storage.PrecedentApproved
+			if finding.Severity == "error" {
+				ruling = storage.PrecedentRejected
+			}
+
+			_, err := c.LogPrecedent(
+				manifest.ManifestID,
+				finding.Principle,
+				ruling,
+				finding.Message,
+			)
+			if err != nil {
+				c.logger.Warn("failed to log precedent",
+					"manifest_id", manifest.ManifestID,
+					"principle", finding.Principle,
+					"error", err)
+			}
+		}
+
+		// If any error-level findings, reject the manifest
+		hasErrors := false
+		for _, f := range result.Findings {
+			if f.Severity == "error" {
+				hasErrors = true
+				break
+			}
+		}
+
+		if hasErrors {
+			if err := c.RejectManifest(manifest.ManifestID); err != nil {
+				c.logger.Warn("failed to reject manifest",
+					"manifest_id", manifest.ManifestID,
+					"error", err)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// buildReviewPrompt constructs the prompt for diff review
+func (c *Censor) buildReviewPrompt(diff string) string {
+	return fmt.Sprintf(`Review the following code diff and provide your assessment.
+
+DIFF:
+%s
+
+INSTRUCTIONS:
+1. Analyze the diff for potential issues
+2. For each issue found, provide: file, line (if determinable), severity (error/warning/info), message, and principle violated
+3. Provide your overall reasoning and ruling (APPROVE/REJECT/WAIVE)
+
+Respond in JSON format:
+{
+  "approved": true/false,
+  "findings": [
+    {
+      "file": "path/to/file.go",
+      "line": 42,
+      "severity": "error|warning|info",
+      "message": "Description of the issue",
+      "principle": "The principle or standard violated"
+    }
+  ],
+  "reasoning": "Your detailed reasoning for the overall ruling"
+}
+
+If the diff is clean with no issues, return approved=true with empty findings and explain your reasoning.`, diff)
+}
+
+// parseReviewResponse parses the LLM response into a ReviewResult
+func (c *Censor) parseReviewResponse(response string) *ReviewResult {
+	result := &ReviewResult{
+		Approved:  true,
+		Findings:  []Finding{},
+		Reasoning: response, // Default to full response if parsing fails
+	}
+
+	// Try to extract JSON from the response
+	jsonStart := strings.Index(response, "{")
+	jsonEnd := strings.LastIndex(response, "}")
+	if jsonStart == -1 || jsonEnd == -1 || jsonEnd <= jsonStart {
+		// No valid JSON found, use the response as reasoning
+		result.Reasoning = response
+		// Check for approval keywords in the response
+		lowerResponse := strings.ToLower(response)
+		if strings.Contains(lowerResponse, "reject") || strings.Contains(lowerResponse, "error") {
+			result.Approved = false
+		}
+		return result
+	}
+
+	jsonStr := response[jsonStart : jsonEnd+1]
+
+	var parsed struct {
+		Approved  bool      `json:"approved"`
+		Findings  []Finding `json:"findings"`
+		Reasoning string    `json:"reasoning"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		c.logger.Warn("failed to parse review response as JSON", "error", err)
+		result.Reasoning = response
+		return result
+	}
+
+	result.Approved = parsed.Approved
+	result.Findings = parsed.Findings
+	result.Reasoning = parsed.Reasoning
+
+	// If reasoning is empty, use the full response
+	if result.Reasoning == "" {
+		result.Reasoning = response
+	}
+
+	return result
+}
+
 // --- Execute Logic ---
 
 // execute runs the Censor's ethics review for an edict (internal method)
@@ -228,22 +411,32 @@ func (c *Censor) execute(ctx context.Context, edictID string) (bool, error) {
 
 // reviewManifest runs ethics checks on a single manifest
 func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeManifest) error {
-	if c.linter == nil {
-		// No linter - auto-approve with precedent
-		_, err := c.LogPrecedent(
-			manifest.ManifestID,
-			"auto-approval",
-			storage.PrecedentApproved,
-			"No linter configured",
-		)
-		if err != nil {
-			return fmt.Errorf("log auto-approval precedent: %w", err)
-		}
-		c.logger.Info("manifest auto-approved", "manifest_id", manifest.ManifestID)
-		return nil
+	// If we have a linter, use it for static analysis
+	if c.linter != nil {
+		return c.reviewManifestWithLinter(ctx, manifest)
 	}
 
-	// Run linter
+	// If we have an LLM, use it for diff-based review
+	if c.model != nil {
+		return c.reviewManifestWithLLM(ctx, manifest)
+	}
+
+	// No linter or LLM - auto-approve with precedent
+	_, err := c.LogPrecedent(
+		manifest.ManifestID,
+		"auto-approval",
+		storage.PrecedentApproved,
+		"No linter or LLM configured",
+	)
+	if err != nil {
+		return fmt.Errorf("log auto-approval precedent: %w", err)
+	}
+	c.logger.Info("manifest auto-approved", "manifest_id", manifest.ManifestID)
+	return nil
+}
+
+// reviewManifestWithLinter uses the linter interface for static analysis
+func (c *Censor) reviewManifestWithLinter(ctx context.Context, manifest *storage.ForgeManifest) error {
 	violations, err := c.linter.Analyze(ctx, manifest.FilePath)
 	if err != nil {
 		return fmt.Errorf("linter analyze: %w", err)
@@ -282,6 +475,69 @@ func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeMani
 	}
 
 	return nil
+}
+
+// reviewManifestWithLLM uses the LLM for diff-based review
+func (c *Censor) reviewManifestWithLLM(ctx context.Context, manifest *storage.ForgeManifest) error {
+	// Get the diff for this manifest
+	diff, err := c.getManifestDiff(manifest)
+	if err != nil {
+		return fmt.Errorf("get manifest diff: %w", err)
+	}
+
+	// Review the diff
+	result, err := c.ReviewDiff(ctx, diff)
+	if err != nil {
+		return fmt.Errorf("review diff: %w", err)
+	}
+
+	// Record findings as precedents
+	for _, finding := range result.Findings {
+		ruling := storage.PrecedentApproved
+		if finding.Severity == "error" {
+			ruling = storage.PrecedentRejected
+		}
+
+		_, err := c.LogPrecedent(
+			manifest.ManifestID,
+			finding.Principle,
+			ruling,
+			finding.Message,
+		)
+		if err != nil {
+			c.logger.Warn("failed to log precedent",
+				"manifest_id", manifest.ManifestID,
+				"principle", finding.Principle,
+				"error", err)
+		}
+	}
+
+	// Reject manifest if not approved
+	if !result.Approved {
+		if err := c.RejectManifest(manifest.ManifestID); err != nil {
+			return fmt.Errorf("reject manifest: %w", err)
+		}
+		c.logger.Info("manifest rejected by censor",
+			"manifest_id", manifest.ManifestID,
+			"findings", len(result.Findings))
+	} else {
+		c.logger.Info("manifest approved by censor",
+			"manifest_id", manifest.ManifestID,
+			"findings", len(result.Findings))
+	}
+
+	return nil
+}
+
+// getManifestDiff retrieves the diff for a manifest
+// This is a placeholder - in a real implementation, this would use git to get the actual diff
+func (c *Censor) getManifestDiff(manifest *storage.ForgeManifest) (string, error) {
+	// If we have a commit hash, we could use git diff
+	// For now, return a placeholder that indicates the file was changed
+	if manifest.CommitHash != "" {
+		return fmt.Sprintf("File: %s (commit: %s)", manifest.FilePath, manifest.CommitHash), nil
+	}
+	return fmt.Sprintf("File: %s (staged, not yet committed)", manifest.FilePath), nil
 }
 
 // Run starts the Censor's task processing loop
@@ -518,4 +774,81 @@ func (t *QueryPrecedentsTool) Format(input, result string, err error) string {
 		return fmt.Sprintf("Query Precedents: Error: %v\n", err)
 	}
 	return fmt.Sprintf("Query Precedents: %s\n", result)
+}
+
+// ReviewDiffTool provides ad-hoc diff review capability for use in conversations
+type ReviewDiffTool struct {
+	censor *Censor
+}
+
+func (t *ReviewDiffTool) Name() string { return "review_diff" }
+
+func (t *ReviewDiffTool) Description() string {
+	return "Reviews a code diff for ethics and quality issues. Returns structured findings without recording precedents. Input: JSON with 'diff' (the diff string to review)."
+}
+
+func (t *ReviewDiffTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		Diff string `json:"diff"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.Diff == "" {
+		return "", fmt.Errorf("diff is required")
+	}
+
+	result, err := t.censor.ReviewDiff(ctx, params.Diff)
+	if err != nil {
+		return "", fmt.Errorf("review failed: %w", err)
+	}
+
+	// Format the result as a readable string
+	var output strings.Builder
+	if result.Approved {
+		output.WriteString("APPROVED\n\n")
+	} else {
+		output.WriteString("REJECTED\n\n")
+	}
+
+	if len(result.Findings) > 0 {
+		output.WriteString("Findings:\n")
+		for i, f := range result.Findings {
+			output.WriteString(fmt.Sprintf("%d. [%s] %s", i+1, f.Severity, f.Message))
+			if f.File != "" {
+				output.WriteString(fmt.Sprintf(" (%s", f.File))
+				if f.Line > 0 {
+					output.WriteString(fmt.Sprintf(":%d", f.Line))
+				}
+				output.WriteString(")")
+			}
+			if f.Principle != "" {
+				output.WriteString(fmt.Sprintf(" [%s]", f.Principle))
+			}
+			output.WriteString("\n")
+		}
+		output.WriteString("\n")
+	}
+
+	output.WriteString("Reasoning:\n")
+	output.WriteString(result.Reasoning)
+
+	return output.String(), nil
+}
+
+func (t *ReviewDiffTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"diff": map[string]any{"type": "string", "description": "The diff string to review"},
+		},
+		"required": []string{"diff"},
+	}
+}
+
+func (t *ReviewDiffTool) Format(input, result string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("Review Diff: Error: %v\n", err)
+	}
+	return fmt.Sprintf("Review Diff:\n%s\n", result)
 }

@@ -13,22 +13,22 @@ import (
 )
 
 // ConfuciusRole defines Confucius's identity and capabilities
-const ConfuciusRole = `You are Confucius (孔子, Kǒngzǐ), the Rectifier of Names.
+const ConfuciusRole = `You are Confucius (孔子, Kǒngzǐ), the Sage.
 Your domain is clarity, nomenclature, and semantic precision.
 
 You have full read-only access to the codebase, edicts, and all court records.
-You NEVER create edicts — only the Ruler does that. Instead, you suggest edicts
-via Zhengming when you identify opportunities, ambiguities, or improvements.
+When the conversation leads to a well defined edict, use the suggest_edict
+tool to suggest an edict to the ruler.
 
-Your role in the Hunting tab:
+The ruler converse with you in the Hunting tab where you will:
 - Help the Ruler explore the codebase and understand patterns
 - Identify naming inconsistencies, unclear abstractions, or design debt
 - Suggest new edicts when you spot opportunities for improvement
 - Answer questions about code architecture and conventions
 
 CRITICAL RULES:
-- You are READ-ONLY: never modify code, create edicts, or invoke ministers
-- When you identify work that should be done, suggest it via Zhengming
+- You are READ-ONLY: never modify code
+- When you identify work that should be done, suggest it via suggest_edict
 - Always ground suggestions in specific code references
 - Speak with scholarly precision; cite file:line when referencing code`
 
@@ -63,20 +63,7 @@ func (c *Confucius) Tasks() chan<- *Task { return c.tasks }
 
 // Tools returns Confucius's LLM tools — read-only access plus zhengming
 func (c *Confucius) Tools() []Tool {
-	zhengmingNotify := func(requestID, edictID, ministerID, question string, priority storage.ZhengmingPriority) {
-		if c.notify != nil {
-			c.notify(ZhengmingPendingMsg{
-				RequestID:  requestID,
-				EdictID:    edictID,
-				MinisterID: ministerID,
-				Question:   question,
-				Priority:   priority,
-			})
-		}
-	}
-
 	toolList := []Tool{
-		tools.RequestZhengmingTool{Requester: c, Notify: zhengmingNotify},
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
 		&SuggestEdictTool{confucius: c},
@@ -119,7 +106,14 @@ func (c *Confucius) Run(ctx context.Context) {
 			c.logger.Info("confucius stopped")
 			return
 		case prompt := <-c.Prompts:
-			c.processPrompt(ctx, prompt)
+			// Merge lifecycle ctx (shutdown) with per-prompt ctx (CTRL-C):
+			// cancel when either fires.
+			merged, mergedCancel := context.WithCancel(ctx)
+			if prompt.Ctx != nil {
+				context.AfterFunc(prompt.Ctx, func() { mergedCancel() })
+			}
+			c.processPrompt(merged, prompt)
+			mergedCancel()
 		case task := <-c.tasks:
 			c.processTask(ctx, task)
 		}
@@ -134,7 +128,7 @@ func (c *Confucius) processPrompt(ctx context.Context, prompt *Prompt) {
 		return
 	}
 
-	sess, err := c.CreateSession(c)
+	sess, err := c.CreateSession(c, prompt.EdictID)
 	if err != nil {
 		if c.notify != nil {
 			c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})

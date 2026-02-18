@@ -432,7 +432,7 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 		// Create the workflow
 		w := newInitWorkflow(model, clearMode, agentsFile)
 
-		model.content.Chat.Indent = 1
+		model.tabs.Content().Chat.Indent = 1
 
 		// Set up progress callback for step state changes and ad-hoc messages
 		w.SetOnProgress(func(stepIndex int, stepState StepState, message string) {
@@ -491,7 +491,7 @@ func runInitWorkflowAsync(model *TUIModel, clearMode bool, agentsFile string) te
 		err := w.Run(ctx)
 
 		// Reset indentation
-		model.content.Chat.Indent = 0
+		model.tabs.Content().Chat.Indent = 0
 		if err != nil {
 			return initWorkflowErrorMsg{err: err}
 		}

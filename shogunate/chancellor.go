@@ -21,7 +21,7 @@ type Chancellor struct {
 	taskChan     chan *Task
 
 	// Run() loop fields
-	Prompts       chan *Prompt         // Ruler speaks here
+	Prompts       chan *Prompt        // Ruler speaks here
 	edictSessions map[string]*Session // Per-edict sessions (edictID -> session)
 }
 
@@ -472,6 +472,9 @@ func (c *Chancellor) Tools() []Tool {
 	if c.shogunate != nil && c.shogunate.ritualRunner != nil {
 		toolList = append(toolList, InvokeRitualTool{chancellor: c})
 	}
+	if c.runner != nil {
+		toolList = append(toolList, tools.NewRunShellCommand(c.runner, c.runner, nil))
+	}
 	return toolList
 }
 
@@ -529,7 +532,14 @@ func (c *Chancellor) Run(ctx context.Context) {
 			return
 		case prompt := <-c.Prompts:
 			c.logger.Debug("Processing prompt", "prompt", prompt)
-			c.processPrompt(ctx, prompt)
+			// Merge lifecycle ctx (shutdown) with per-prompt ctx (CTRL-C):
+			// cancel when either fires.
+			merged, mergedCancel := context.WithCancel(ctx)
+			if prompt.Ctx != nil {
+				context.AfterFunc(prompt.Ctx, func() { mergedCancel() })
+			}
+			c.processPrompt(merged, prompt)
+			mergedCancel()
 		case task := <-c.taskChan:
 			// Process task and send result
 			if task.Done != nil {
@@ -835,7 +845,7 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 	sess, exists := c.edictSessions[edictID]
 	if !exists {
 		var err error
-		sess, err = c.CreateSession(c)
+		sess, err = c.CreateSession(c, edictID)
 		if err != nil {
 			c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})
 			return

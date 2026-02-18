@@ -190,7 +190,7 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	model.sessionActive = true
 
 	// Clear the chat instead of creating a new component to avoid re-initializing the markdown renderer
-	model.content.Chat.Clear()
+	model.tabs.Content().Chat.Clear()
 
 	// Use the generic startConversationMsg to reset the session
 	// The tryUpgradeToSandbox flag tells the handler to attempt upgrading
@@ -241,8 +241,8 @@ func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 	// Immediately show the resume view with loading state
-	showResumeCmd := model.content.ShowResume([]shogunate.Session{})
-	model.content.resume.SetLoading(true)
+	showResumeCmd := model.tabs.Content().ShowResume([]shogunate.Session{})
+	model.tabs.Content().resume.SetLoading(true)
 
 	// Load sessions in the background
 	loadCmd := func() tea.Msg {
@@ -704,10 +704,10 @@ func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleScrollTopCommand(model *TUIModel, args []string) tea.Cmd {
-	if model == nil || model.content.GetActiveView() != ViewChat {
+	if model == nil || model.tabs.Content().GetActiveView() != ViewChat {
 		return nil
 	}
-	model.content.Chat.ScrollToTop()
+	model.tabs.Content().Chat.ScrollToTop()
 	return nil
 }
 
@@ -767,7 +767,7 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 	if len(args) == 0 {
 		// Default: open a Hunting tab
-		model.addTab("Hunting", TabHunting, "confucius")
+		model.tabs.Add("Hunting", TabHunting, "confucius")
 		model.commandLine.AddToast("Opened Hunting tab", "success", time.Second*2)
 		return nil
 	}
@@ -775,7 +775,7 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 	target := args[0]
 	switch target {
 	case "hunting":
-		model.addTab("Hunting", TabHunting, "confucius")
+		model.tabs.Add("Hunting", TabHunting, "confucius")
 		model.commandLine.AddToast("Opened Hunting tab", "success", time.Second*2)
 	case "ritual":
 		if len(args) < 2 {
@@ -783,13 +783,13 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 			return nil
 		}
 		runID := args[1]
-		model.addTab("Ritual:"+runID, TabRitual, runID)
+		model.tabs.Add("Ritual:"+runID, TabRitual, runID)
 		model.commandLine.AddToast(fmt.Sprintf("Opened Ritual tab: %s", runID), "success", time.Second*2)
 	default:
 		// Treat as minister name
 		if model.shogunate != nil && model.shogunate.GetMinister(target) != nil {
 			label := strings.ToUpper(target[:1]) + target[1:]
-			model.addTab(label, TabObserve, target)
+			model.tabs.Add(label, TabObserve, target)
 			model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 		} else {
 			model.commandLine.AddToast(fmt.Sprintf("Unknown minister: %s", target), "error", time.Second*3)
@@ -799,39 +799,11 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
-	if len(model.tabs) <= 1 {
-		model.commandLine.AddToast("Cannot close the last tab", "error", time.Second*3)
+	err := model.tabs.Close(model.streamingActive)
+	if err != nil {
+		model.commandLine.AddToast(err.Error(), "error", time.Second*3)
 		return nil
 	}
-
-	// Don't close a tab that's actively streaming
-	if model.streamingActive && model.streamingTab == model.activeTab {
-		model.commandLine.AddToast("Cannot close tab while streaming", "error", time.Second*3)
-		return nil
-	}
-
-	closingIdx := model.activeTab
-	// Switch to adjacent tab before removing
-	if closingIdx > 0 {
-		model.switchToTab(closingIdx - 1)
-	} else {
-		model.switchToTab(closingIdx + 1)
-	}
-
-	// Remove the closed tab
-	model.tabs = append(model.tabs[:closingIdx], model.tabs[closingIdx+1:]...)
-
-	// Adjust activeTab index if needed
-	if model.activeTab > closingIdx {
-		model.activeTab--
-	}
-	// Adjust streamingTab index if needed
-	if model.streamingTab > closingIdx {
-		model.streamingTab--
-	} else if model.streamingTab == closingIdx {
-		model.streamingTab = model.activeTab
-	}
-
 	model.commandLine.AddToast("Tab closed", "success", time.Second*2)
 	return nil
 }

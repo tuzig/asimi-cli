@@ -633,7 +633,7 @@ func (m *TUIModel) completeAnthropicOAuth(authCode, verifier string) tea.Cmd {
 
 		// Exchange code for tokens
 		m.commandLine.AddToast("Exchanging authorization code for tokens...", "success", 3000)
-		m.content.Chat.AddMessage("")
+		m.tabs.Content().Chat.AddMessage("")
 		tokens, err := auth.exchange(authCode, verifier)
 		if err != nil {
 			return showOauthFailed{fmt.Sprintf("failed to exchange authorization code: %v", err)}

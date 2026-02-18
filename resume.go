@@ -293,7 +293,7 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	}
 
 	// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
-	m.content.Chat.Clear()
+	m.tabs.Content().Chat.Clear()
 
 	// Build a map of tool call IDs to their responses for matching
 	allMessages := session.GetMessages()
@@ -318,7 +318,7 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 		case llms.ChatMessageTypeHuman:
 			for _, part := range msgContent.Parts {
 				if textPart, ok := part.(llms.TextContent); ok {
-					m.content.Chat.AddUserMessage(textPart.Text)
+					m.tabs.Content().Chat.AddUserMessage(textPart.Text)
 				}
 			}
 
@@ -328,7 +328,7 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 				if thinkingPart, ok := part.(llms.ThinkingContent); ok {
 					text := strings.TrimSpace(thinkingPart.Thinking)
 					if text != "" {
-						m.content.Chat.AddThinkingChunk(text)
+						m.tabs.Content().Chat.AddThinkingChunk(text)
 					}
 				}
 			}
@@ -348,8 +348,8 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 			}
 			// Add as a single AI message if there's any non-empty text content
 			if textContent.Len() > 0 {
-				m.content.Chat.AddAIChunk(textContent.String())
-				m.content.Chat.FinalizeLastAIMessage()
+				m.tabs.Content().Chat.AddAIChunk(textContent.String())
+				m.tabs.Content().Chat.FinalizeLastAIMessage()
 			}
 			// Then add tool calls with their results
 			for _, part := range msgContent.Parts {
@@ -366,7 +366,7 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 					}
 					// Format the tool call with its result
 					formatted := formatToolCallByName(tc.FunctionCall.Name, checkPrefix, tc.FunctionCall.Arguments, result, toolErr)
-					m.content.Chat.AddMessage(formatted)
+					m.tabs.Content().Chat.AddMessage(formatted)
 				}
 			}
 

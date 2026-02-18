@@ -390,8 +390,8 @@ func TestHandleModelsCommandShowsHelpOption(t *testing.T) {
 	}
 
 	model := &TUIModel{
-		config:  config,
-		content: NewContentComponent(80, 24, false),
+		config: config,
+		tabs:   NewTabManager(80, 24, false, func() string { return "insert" }),
 	}
 
 	// Execute the models command

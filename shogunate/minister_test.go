@@ -730,6 +730,25 @@ func TestInvokeMinisterTool_Format(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPrompt_EdictID verifies the edict ID is injected into the scratchpad
+func TestBuildSystemPrompt_EdictID(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+
+	fake := &fakeMinister{MinisterBase: base, id: "test"}
+
+	// With edict ID — should appear in system prompt
+	prompt := base.buildSystemPrompt(fake, "edict-123456")
+	if !strings.Contains(prompt, "Current Edict: edict-123456") {
+		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
+	}
+
+	// Without edict ID — should not contain "Current Edict"
+	prompt = base.buildSystemPrompt(fake, "")
+	if strings.Contains(prompt, "Current Edict") {
+		t.Errorf("Expected no edict ID in system prompt, got:\n%s", prompt)
+	}
+}
+
 // fakeMinister is a minimal Minister implementation for testing
 type fakeMinister struct {
 	MinisterBase

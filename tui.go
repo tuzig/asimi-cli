@@ -19,25 +19,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// TabType represents the type of tab connection
-type TabType string
-
-const (
-	TabRuling  TabType = "ruling"  // Default tab for edict conversation
-	TabHunting TabType = "hunting" // Confucius codebase exploration
-	TabObserve TabType = "observe" // Minister observation
-	TabRitual  TabType = "ritual"  // Ritual monitoring
-)
-
-// Tab represents a TUI tab with its own content buffer and stream target
-type Tab struct {
-	Label   string
-	Type    TabType
-	Target  string           // minister ID, edict ID, or ritual run ID
-	Content ContentComponent // Own content buffer per tab
-	EdictID string           // Current edict ID for this tab
-}
-
 // TUIModel represents the bubbletea model for the TUI
 type TUIModel struct {
 	config        *Config
@@ -47,7 +28,7 @@ type TUIModel struct {
 	// UI Components
 	status         StatusComponent
 	prompt         PromptComponent
-	content        ContentComponent
+	tabs           TabManager
 	completions    CompletionDialog
 	commandLine    *CommandLineComponent
 	modal          *BaseModal
@@ -96,34 +77,12 @@ type TUIModel struct {
 	waitingForResponse bool
 	waitingStart       time.Time
 
-	// CTRL-C state machine for handling duplicate events from iOS/terminal
-	// See: https://github.com/anthropics/asimi/issues/115
-	ctrlCState          ctrlCState // Current state in the CTRL-C state machine
-	ctrlCLastEvent      time.Time  // Time of the last CTRL-C event received
-	ctrlCBurstSeq       int        // Sequence number to identify which burst a timeout belongs to
-	ctrlCFirstPressTime time.Time  // When the first press was completed (for window calculation)
+	ctrlCLastPress time.Time // Time of last Ctrl-C press for double-press detection
 
 	// Host command approval state
 	pendingHostApproval *runners.ApprovalRequestMsg
 	repoInfo            *repo.RepoInfo
-
-	// Tab system
-	tabs          []Tab
-	activeTab     int
-	streamingTab  int  // Which tab is receiving stream data
-	viTabPendingG bool // Pending 'g' prefix for gt/gT tab navigation
 }
-
-// ctrlCState represents the state machine for CTRL-C handling
-// This handles the "quiet period" detection to distinguish duplicate
-// CTRL-C events (from iOS/terminal) from intentional double-presses
-type ctrlCState int
-
-const (
-	ctrlCIdle          ctrlCState = iota // No pending CTRL-C
-	ctrlCInBurst                         // Receiving CTRL-C events, waiting for quiet period
-	ctrlCWaitingSecond                   // First press completed, waiting for second press
-)
 
 type promptHistoryEntry struct {
 	Prompt          string
@@ -132,14 +91,6 @@ type promptHistoryEntry struct {
 }
 
 type waitingTickMsg struct{}
-
-// ctrlCBurstTimeoutMsg is sent after the quiet period to check if a burst has ended
-type ctrlCBurstTimeoutMsg struct {
-	seq int // Sequence number to match against current burst
-}
-
-// ctrlCWindowExpiredMsg is sent when the window for the second press expires
-type ctrlCWindowExpiredMsg struct{}
 
 type shellCommandResultMsg struct {
 	command  string
@@ -172,15 +123,12 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 
 	model := &TUIModel{
 		config: cfg,
-		// width:  80, // Default width
-		// height: 24, // Default height
-		theme: theme,
+		theme:  theme,
 
 		repoInfo: repoInfo,
 		// Initialize components
 		status:         status,
 		prompt:         prompt,
-		content:        NewContentComponent(80, 18, markdownEnabled),
 		completions:    NewCompletionDialog(),
 		commandLine:    NewCommandLineComponent(),
 		modal:          nil,
@@ -209,17 +157,7 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 	}
 
 	// Initialize tab system with default Ruling tab
-	model.tabs = []Tab{{
-		Label:   "Ruling",
-		Type:    TabRuling,
-		Target:  "chancellor",
-		Content: model.content,
-	}}
-	model.activeTab = 0
-	model.streamingTab = 0
-
-	// Set the GetStatus callback for the chat component
-	model.content.Chat.GetStatus = func() string { return model.Mode }
+	model.tabs = NewTabManager(80, 18, markdownEnabled, func() string { return model.Mode })
 
 	// Set initial status info - show disconnected state initially
 	model.status.SetProvider(cfg.LLM.Provider, cfg.LLM.Model, false)
@@ -270,103 +208,9 @@ func (m *TUIModel) initHistory() {
 	}
 }
 
-// --- Tab management ---
-
 // streamingChat returns the ChatComponent that should receive stream data
 func (m *TUIModel) streamingChat() *ChatComponent {
-	if m.streamingTab >= 0 && m.streamingTab < len(m.tabs) {
-		return m.tabs[m.streamingTab].Content.Chat
-	}
-	return m.content.Chat
-}
-
-// switchToTab saves current tab state and restores the target tab
-func (m *TUIModel) switchToTab(index int) {
-	if index < 0 || index >= len(m.tabs) || index == m.activeTab {
-		return
-	}
-	// Save current tab state
-	m.tabs[m.activeTab].Content = m.content
-	m.tabs[m.activeTab].EdictID = m.currentEdictID
-
-	// Switch
-	m.activeTab = index
-
-	// Restore new tab state
-	m.content = m.tabs[m.activeTab].Content
-	m.currentEdictID = m.tabs[m.activeTab].EdictID
-}
-
-// addTab creates a new tab and switches to it
-func (m *TUIModel) addTab(label string, tabType TabType, target string) {
-	markdownEnabled := false
-	if m.config != nil {
-		markdownEnabled = m.config.UI.MarkdownEnabled
-	}
-	newContent := NewContentComponent(m.width-2, m.height-4, markdownEnabled)
-	newContent.Chat.GetStatus = func() string { return m.Mode }
-
-	tab := Tab{
-		Label:   label,
-		Type:    tabType,
-		Target:  target,
-		Content: newContent,
-	}
-	m.tabs = append(m.tabs, tab)
-	m.switchToTab(len(m.tabs) - 1)
-}
-
-// renderTabBar renders the tab bar at the top of the screen
-func (m TUIModel) renderTabBar() string {
-	if len(m.tabs) <= 1 {
-		return "" // No tab bar for single tab
-	}
-
-	var parts []string
-	for i, tab := range m.tabs {
-		label := tab.Label
-		if i == m.activeTab {
-			// Active tab: bold/highlighted
-			style := lipgloss.NewStyle().
-				Bold(true).
-				Foreground(m.theme.PaneBackground).
-				Background(m.theme.TextColor).
-				Padding(0, 1)
-			parts = append(parts, style.Render(label))
-		} else {
-			// Inactive tab: dimmed
-			style := lipgloss.NewStyle().
-				Foreground(m.theme.DarkBorder).
-				Padding(0, 1)
-			parts = append(parts, style.Render(label))
-		}
-	}
-
-	tabBar := lipgloss.JoinHorizontal(lipgloss.Top, parts...)
-	return lipgloss.NewStyle().Width(m.width).Render(tabBar)
-}
-
-// nextTab switches to the next tab
-func (m *TUIModel) nextTab() (tea.Model, tea.Cmd) {
-	if len(m.tabs) <= 1 {
-		return m, nil
-	}
-	next := (m.activeTab + 1) % len(m.tabs)
-	m.switchToTab(next)
-	return m, nil
-}
-
-// prevTab switches to the previous tab
-func (m *TUIModel) prevTab() (tea.Model, tea.Cmd) {
-	if len(m.tabs) <= 1 {
-		return m, nil
-	}
-	prev := m.activeTab - 1
-	if prev < 0 {
-		prev = len(m.tabs) - 1
-	}
-	m.switchToTab(prev)
-	return m, nil
+	return m.tabs.StreamingChat()
 }
 
 // getCurrentSession returns the current shogunate session, or nil if not available
@@ -481,19 +325,17 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		// Handle mouse wheel scrolling - switch to SCROLL mode when scrolling up
-		if msg.Type == tea.MouseWheelUp && m.Mode != "scroll" && m.content.GetActiveView() == ViewChat {
+		if msg.Type == tea.MouseWheelUp && m.Mode != "scroll" && m.tabs.Content().GetActiveView() == ViewChat {
 			// Only enter scroll mode if we're not already at the top
-			if !m.content.Chat.Viewport.AtTop() {
+			if !m.tabs.Content().Chat.Viewport.AtTop() {
 				// First, let the content handle the scroll
-				var contentCmd tea.Cmd
-				m.content, contentCmd = m.content.Update(msg)
+				contentCmd := m.tabs.UpdateContent(msg)
 				// Then enter scroll mode
 				enterScrollCmd := func() tea.Msg { return ChangeModeMsg{NewMode: "scroll"} }
 				return m, tea.Batch(contentCmd, enterScrollCmd)
 			}
 		}
-		var contentCmd tea.Cmd
-		m.content, contentCmd = m.content.Update(msg)
+		contentCmd := m.tabs.UpdateContent(msg)
 		return m, contentCmd
 
 	case tea.WindowSizeMsg:
@@ -542,11 +384,6 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCtrlC()
 	}
 
-	// Any other key resets the CTRL-C state machine
-	if m.ctrlCState != ctrlCIdle {
-		m.resetCtrlCState()
-	}
-
 	// Handle Ctrl+Z for background mode
 	if keyStr == "ctrl+z" {
 		return m.handleCtrlZ()
@@ -567,15 +404,15 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle non-chat views (help, models, resume)
-	if m.content.GetActiveView() != ViewChat {
+	if m.tabs.Content().GetActiveView() != ViewChat {
 		// Allow `:` to enter command line mode even in non-chat views
 		if keyStr == ":" {
 			m.prompt.Blur()
 			return m, m.commandLine.EnterCommandMode("")
 		}
-		m.content, cmd = m.content.Update(msg)
+		cmd = m.tabs.UpdateContent(msg)
 		// If view switched back to chat, restore focus to prompt
-		if m.content.GetActiveView() == ViewChat {
+		if m.tabs.Content().GetActiveView() == ViewChat {
 			m.prompt.Focus()
 		}
 		return m, cmd
@@ -721,10 +558,10 @@ func (m TUIModel) handleToggleRawMode() (tea.Model, tea.Cmd) {
 }
 
 func (m TUIModel) enterScrollMode() (tea.Model, tea.Cmd) {
-	if m.Mode == "scroll" || m.content.GetActiveView() != ViewChat {
+	if m.Mode == "scroll" || m.tabs.Content().GetActiveView() != ViewChat {
 		return m, nil
 	}
-	chat := m.content.Chat
+	chat := m.tabs.Content().Chat
 	if chat.Viewport.AtBottom() {
 		chat.ScrollHalfPageUp()
 	}
@@ -753,24 +590,12 @@ func (m TUIModel) handleScrollModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool)
 	if m.Mode != "scroll" {
 		return m, nil, false
 	}
-	chat := m.content.Chat
+	chat := m.tabs.Content().Chat
 
 	// Handle pending 'g' prefix in scroll mode
-	if m.viTabPendingG {
-		m.viTabPendingG = false
+	if m.tabs.IsPendingG() {
 		m.status.ViPendingOp = ""
-		switch msg.String() {
-		case "t":
-			newModel, cmd := m.nextTab()
-			return newModel, cmd, true
-		case "T":
-			newModel, cmd := m.prevTab()
-			return newModel, cmd, true
-		case "g":
-			// gg → scroll to top
-			chat.ScrollToTop()
-			return m, nil, true
-		}
+		m.tabs.HandlePendingG(msg.String(), func() { chat.ScrollToTop() })
 		return m, nil, true
 	}
 
@@ -792,7 +617,7 @@ func (m TUIModel) handleScrollModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool)
 		return m, nil, true
 	case "g":
 		// Start pending g-prefix for gt/gT/gg
-		m.viTabPendingG = true
+		m.tabs.SetPendingG()
 		m.status.ViPendingOp = "g"
 		return m, nil, true
 	case "j", "down":
@@ -819,24 +644,15 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// Handle pending 'g' prefix for tab navigation (gt/gT)
-	if m.viTabPendingG {
-		m.viTabPendingG = false
+	if m.tabs.IsPendingG() {
 		m.status.ViPendingOp = ""
-		switch key {
-		case "t":
-			return m.nextTab()
-		case "T":
-			return m.prevTab()
-		case "g":
-			// gg → scroll to top
-			if m.content.GetActiveView() == ViewChat {
-				m.content.Chat.ScrollToTop()
+		scrollToTop := func() {
+			if m.tabs.Content().GetActiveView() == ViewChat {
+				m.tabs.Content().Chat.ScrollToTop()
 			}
-			return m, nil
-		default:
-			// Unknown g-command, ignore
-			return m, nil
 		}
+		m.tabs.HandlePendingG(key, scrollToTop)
+		return m, nil
 	}
 
 	// Handle history navigation with arrow keys first
@@ -947,7 +763,7 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "g":
 		// Start pending g-prefix for tab navigation (gt/gT) and gg
-		m.viTabPendingG = true
+		m.tabs.SetPendingG()
 		m.status.ViPendingOp = "g"
 		return m, nil
 	default:
@@ -1010,7 +826,7 @@ func (m TUIModel) handleViCommandLineMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			parts := strings.Fields(content)
 			if len(parts) > 0 {
 				cmdName := parts[0]
-				m.content.Chat.AddToRawHistory("COMMAND", content)
+				m.tabs.Content().Chat.AddToRawHistory("COMMAND", content)
 				cmd, exists := m.commandRegistry.GetCommand(cmdName)
 				if exists {
 					command := cmd.Handler(&m, parts[1:])
@@ -1075,144 +891,38 @@ func (m TUIModel) handleCtrlZ() (tea.Model, tea.Cmd) {
 //	WaitingSecond -> InBurst: Second burst started
 //	InBurst (from WaitingSecond) -> Quit: Second press completed
 //	WaitingSecond -> Idle: Window expired without second press
+//
+// handleCtrlC: single press stops streaming, double press quits.
+// Debounce ignores duplicate events arriving within CtrlCDebounceTime (terminals
+// and iOS sometimes send multiple KeyCtrlC for a single physical press).
 func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 	now := time.Now()
-	quietPeriod := m.config.UI.CtrlCDebounceTime // Reuse existing config field as quiet period
+	debounce := m.config.UI.CtrlCDebounceTime
 	windowTime := m.config.UI.CtrlCWindowTime
 
-	slog.Debug("Got CTRL-C",
-		"state", m.ctrlCState,
-		"timeSinceLast", now.Sub(m.ctrlCLastEvent),
-		"burstSeq", m.ctrlCBurstSeq)
-
-	switch m.ctrlCState {
-	case ctrlCIdle:
-		// Start first burst
-		m.ctrlCState = ctrlCInBurst
-		m.ctrlCLastEvent = now
-		m.ctrlCBurstSeq++
-		seq := m.ctrlCBurstSeq
-
-		// Perform immediate actions on first CTRL-C of first burst
-		m.content.Chat.AddUserMessage("CTRL-C")
-		m.handleEscape()
-
-		slog.Debug("CTRL-C: Started first burst", "seq", seq)
-		return m, tea.Tick(quietPeriod, func(time.Time) tea.Msg {
-			return ctrlCBurstTimeoutMsg{seq: seq}
-		})
-
-	case ctrlCInBurst:
-		// Continue current burst - just update timestamp and reset timer
-		m.ctrlCLastEvent = now
-		m.ctrlCBurstSeq++
-		seq := m.ctrlCBurstSeq
-
-		slog.Debug("CTRL-C: Continuing burst", "seq", seq)
-		return m, tea.Tick(quietPeriod, func(time.Time) tea.Msg {
-			return ctrlCBurstTimeoutMsg{seq: seq}
-		})
-
-	case ctrlCWaitingSecond:
-		// Check if still within window
-		if now.Sub(m.ctrlCFirstPressTime) > windowTime {
-			// Window expired, treat as new first press
-			slog.Debug("CTRL-C: Window expired, starting new first burst")
-			m.ctrlCState = ctrlCInBurst
-			m.ctrlCLastEvent = now
-			m.ctrlCBurstSeq++
-			seq := m.ctrlCBurstSeq
-
-			m.content.Chat.AddUserMessage("CTRL-C")
-			m.handleEscape()
-
-			return m, tea.Tick(quietPeriod, func(time.Time) tea.Msg {
-				return ctrlCBurstTimeoutMsg{seq: seq}
-			})
-		}
-
-		// Start second burst (within window)
-		slog.Debug("CTRL-C: Starting second burst (within window)")
-		m.ctrlCState = ctrlCInBurst
-		m.ctrlCLastEvent = now
-		m.ctrlCBurstSeq++
-		seq := m.ctrlCBurstSeq
-
-		return m, tea.Tick(quietPeriod, func(time.Time) tea.Msg {
-			return ctrlCBurstTimeoutMsg{seq: seq}
-		})
+	// Ignore duplicate events within debounce window
+	if !m.ctrlCLastPress.IsZero() && now.Sub(m.ctrlCLastPress) < debounce {
+		return m, nil
 	}
 
+	// Double press within window — quit
+	if !m.ctrlCLastPress.IsZero() && now.Sub(m.ctrlCLastPress) <= windowTime {
+		slog.Info("CTRL-C: double press, quitting")
+		m.shutdown()
+		return m, tea.Quit
+	}
+
+	// Single press — cancel streaming / escape
+	m.ctrlCLastPress = now
+	m.tabs.Content().Chat.AddUserMessage("CTRL-C")
+	m.handleEscape()
+
+	m.commandLine.AddToast(
+		fmt.Sprintf("Press CTRL-C again within %.1fs to exit", windowTime.Seconds()),
+		"info",
+		windowTime,
+	)
 	return m, nil
-}
-
-// handleCtrlCBurstTimeout is called when the quiet period timer fires.
-// It checks if the burst has actually ended (no new events) and transitions
-// the state machine accordingly.
-func (m TUIModel) handleCtrlCBurstTimeout(msg ctrlCBurstTimeoutMsg) (tea.Model, tea.Cmd) {
-	// Ignore stale timeouts from previous bursts
-	if msg.seq != m.ctrlCBurstSeq {
-		slog.Debug("CTRL-C: Ignoring stale burst timeout", "msgSeq", msg.seq, "currentSeq", m.ctrlCBurstSeq)
-		return m, nil
-	}
-
-	// Only process if we're in a burst
-	if m.ctrlCState != ctrlCInBurst {
-		slog.Debug("CTRL-C: Burst timeout but not in burst state", "state", m.ctrlCState)
-		return m, nil
-	}
-
-	now := time.Now()
-	quietPeriod := m.config.UI.CtrlCDebounceTime
-
-	// Check if burst has actually ended (quiet period passed since last event)
-	if now.Sub(m.ctrlCLastEvent) < quietPeriod {
-		// Burst still active (more events came in), ignore this timeout
-		slog.Debug("CTRL-C: Burst still active", "timeSinceLast", now.Sub(m.ctrlCLastEvent))
-		return m, nil
-	}
-
-	// Burst has ended - determine if this was first or second press
-	if m.ctrlCFirstPressTime.IsZero() {
-		// This was the first press completing
-		m.ctrlCState = ctrlCWaitingSecond
-		m.ctrlCFirstPressTime = now
-		windowTime := m.config.UI.CtrlCWindowTime
-
-		slog.Debug("CTRL-C: First press completed, waiting for second")
-		m.commandLine.AddToast(
-			fmt.Sprintf("Press CTRL-C again within %.1fs to exit", windowTime.Seconds()),
-			"info",
-			windowTime,
-		)
-
-		// Schedule window expiry
-		return m, tea.Tick(windowTime, func(time.Time) tea.Msg {
-			return ctrlCWindowExpiredMsg{}
-		})
-	}
-
-	// This was the second press completing - quit!
-	slog.Info("CTRL-C: Second press completed, quitting")
-	m.shutdown()
-	return m, tea.Quit
-}
-
-// handleCtrlCWindowExpired is called when the window for the second press expires.
-func (m TUIModel) handleCtrlCWindowExpired() (tea.Model, tea.Cmd) {
-	if m.ctrlCState == ctrlCWaitingSecond {
-		slog.Debug("CTRL-C: Window expired, resetting state")
-		m.resetCtrlCState()
-	}
-	return m, nil
-}
-
-// resetCtrlCState resets the CTRL-C state machine to idle.
-func (m *TUIModel) resetCtrlCState() {
-	m.ctrlCState = ctrlCIdle
-	m.ctrlCLastEvent = time.Time{}
-	m.ctrlCFirstPressTime = time.Time{}
-	// Don't reset ctrlCBurstSeq - it's used to invalidate pending timeouts
 }
 
 // handleEscape handles the escape key and the first ctrl-c
@@ -1273,7 +983,7 @@ func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
 				m.commandLine.AddToast(fmt.Sprintf("Error reading file: %v", err), "error", time.Second*3)
 			} else if session := m.getCurrentSession(); session != nil {
 				session.AddContextFile(filePath, string(content))
-				m.content.Chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
+				m.tabs.Content().Chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
 			}
 			currentValue := m.prompt.Value()
 			lastAt := strings.LastIndex(currentValue, "@")
@@ -1355,10 +1065,11 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 	}
 
 	// Route prompt to the correct minister based on active tab type
-	tab := m.tabs[m.activeTab]
-	m.streamingTab = m.activeTab
+	tab := m.tabs.ActiveTab()
+	m.tabs.SetStreamingTab()
 
 	p := &shogunate.Prompt{
+		Ctx:          ctx,
 		Message:      prompt,
 		EdictID:      m.currentEdictID, // Empty for new edict
 		ContextFiles: contextFiles,
@@ -1412,7 +1123,7 @@ func (m *TUIModel) saveHistoryPresentState() {
 	} else {
 		m.historyPresentSessionSnapshot = 0
 	}
-	m.historyPresentChatSnapshot = len(m.content.Chat.Messages)
+	m.historyPresentChatSnapshot = len(m.tabs.Content().Chat.Messages)
 	m.historySaved = true
 }
 
@@ -1505,7 +1216,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 					m.commandLine.AddToast(fmt.Sprintf("Failed to write to %s: %v", agentsPath, err), "error", time.Second*3)
 				} else {
 					m.commandLine.AddToast(fmt.Sprintf("Added to %s", agentsPath), "success", time.Second*2)
-					m.content.Chat.AddMessage(fmt.Sprintf("📝 Learning added: %s", learningNote))
+					m.tabs.Content().Chat.AddMessage(fmt.Sprintf("📝 Learning added: %s", learningNote))
 					m.sessionActive = true
 				}
 			}
@@ -1521,7 +1232,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		parts := strings.Fields(content)
 		if len(parts) > 0 {
 			cmdName := parts[0]
-			m.content.Chat.AddToRawHistory("COMMAND", content)
+			m.tabs.Content().Chat.AddToRawHistory("COMMAND", content)
 			cmd, exists := m.commandRegistry.GetCommand(cmdName)
 			if exists {
 				command := cmd.Handler(&m, parts[1:])
@@ -1549,16 +1260,16 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			if session := m.getCurrentSession(); session != nil {
 				session.RollbackTo(entry.SessionSnapshot)
 			}
-			m.content.Chat.TruncateTo(entry.ChatSnapshot)
-			m.content.Chat.ClearToolCallMessageIndex()
+			m.tabs.Content().Chat.TruncateTo(entry.ChatSnapshot)
+			m.tabs.Content().Chat.ClearToolCallMessageIndex()
 
 			// Now continue with the normal flow from this rolled-back state
 			m.historySaved = false
 		}
 
 		// Add user input to raw history
-		m.content.Chat.AddToRawHistory("USER", content)
-		chatSnapshot := len(m.content.Chat.Messages)
+		m.tabs.Content().Chat.AddToRawHistory("USER", content)
+		chatSnapshot := len(m.tabs.Content().Chat.Messages)
 		var sessionSnapshot int
 		session := m.getCurrentSession()
 		if session != nil {
@@ -1567,7 +1278,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		if m.historyCursor < len(m.sessionPromptHistory) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
-		m.content.Chat.AddUserMessage(content)
+		m.tabs.Content().Chat.AddUserMessage(content)
 		if m.shogunate != nil {
 			// Check if we need to auto-compact before sending the prompt (#54)
 			if session != nil {
@@ -1576,7 +1287,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 				autoCompactThreshold := float64(info.TotalTokens) * 0.10
 				if float64(info.FreeTokens) < autoCompactThreshold && len(session.GetMessages()) > 2 {
 					slog.Info("auto-compacting conversation", "free_tokens", info.FreeTokens, "threshold", autoCompactThreshold)
-					m.content.Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
+					m.tabs.Content().Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
 
 					// Perform compaction synchronously before sending the prompt
 					ctx := context.Background()
@@ -1585,11 +1296,11 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 					_, err := session.CompactHistory(ctx, compactPrompt)
 					if err != nil {
 						slog.Warn("auto-compaction failed", "error", err)
-						m.content.Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
+						m.tabs.Content().Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
 					} else {
 						// Get updated context info
 						newInfo := session.GetContextInfo()
-						m.content.Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
+						m.tabs.Content().Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
 							formatTokenCount(newInfo.UsedTokens),
 							formatTokenCount(newInfo.TotalTokens),
 							percentage(newInfo.UsedTokens, newInfo.TotalTokens)))
@@ -1677,7 +1388,7 @@ func (m TUIModel) handleAtKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.completionMode = "file"
 	files, err := getFileTree(".")
 	if err != nil {
-		m.content.Chat.AddMessage(fmt.Sprintf("Error scanning files: %v", err))
+		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("Error scanning files: %v", err))
 	} else {
 		m.updateFileCompletions(files)
 	}
@@ -1695,13 +1406,13 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.content.Chat.AddToRawHistory("SHELL_COMMAND", shellCmd)
+	m.tabs.Content().Chat.AddToRawHistory("SHELL_COMMAND", shellCmd)
 
 	// Make session active so chat is visible (not welcome screen)
 	m.sessionActive = true
 
 	// Display the command in chat similar to a shell prompt
-	m.content.Chat.AddShellCommandInput(shellCmd)
+	m.tabs.Content().Chat.AddShellCommandInput(shellCmd)
 
 	// Execute the shell command using the current shell runner (sandbox or host)
 	return m, func() tea.Msg {
@@ -1764,13 +1475,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if session := m.getCurrentSession(); session != nil {
 				session.RollbackTo(entry.SessionSnapshot)
 			}
-			m.content.Chat.TruncateTo(entry.ChatSnapshot)
-			m.content.Chat.ClearToolCallMessageIndex()
+			m.tabs.Content().Chat.TruncateTo(entry.ChatSnapshot)
+			m.tabs.Content().Chat.ClearToolCallMessageIndex()
 			m.historySaved = false
 		}
 
-		m.content.Chat.AddToRawHistory("USER", content)
-		chatSnapshot := len(m.content.Chat.Messages)
+		m.tabs.Content().Chat.AddToRawHistory("USER", content)
+		chatSnapshot := len(m.tabs.Content().Chat.Messages)
 		var sessionSnapshot int
 		session := m.getCurrentSession()
 		if session != nil {
@@ -1779,22 +1490,22 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.historyCursor < len(m.sessionPromptHistory) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
-		m.content.Chat.AddUserMessage(content)
+		m.tabs.Content().Chat.AddUserMessage(content)
 		if m.shogunate != nil {
 			if session != nil {
 				info := session.GetContextInfo()
 				autoCompactThreshold := float64(info.TotalTokens) * 0.10
 				if float64(info.FreeTokens) < autoCompactThreshold && len(session.GetMessages()) > 2 {
 					slog.Info("auto-compacting conversation", "free_tokens", info.FreeTokens, "threshold", autoCompactThreshold)
-					m.content.Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
+					m.tabs.Content().Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
 					ctx := context.Background()
 					_, err := session.CompactHistory(ctx, compactPrompt)
 					if err != nil {
 						slog.Warn("auto-compaction failed", "error", err)
-						m.content.Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
+						m.tabs.Content().Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
 					} else {
 						newInfo := session.GetContextInfo()
-						m.content.Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
+						m.tabs.Content().Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
 							formatTokenCount(newInfo.UsedTokens),
 							formatTokenCount(newInfo.TotalTokens),
 							percentage(newInfo.UsedTokens, newInfo.TotalTokens)))
@@ -1879,10 +1590,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shogunate.StreamStartMsg:
 		// Streaming has started — capture edict ID for multi-turn
-		m.streamingTab = m.activeTab
+		m.tabs.SetStreamingTab()
 		if msg.EdictID != "" {
 			m.currentEdictID = msg.EdictID
-			m.tabs[m.activeTab].EdictID = msg.EdictID
+			m.tabs.SetActiveEdictID(msg.EdictID)
 		}
 		m.streamingChat().AddToRawHistory("STREAM_START", "AI streaming response started")
 		slog.Debug("streamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
@@ -1938,9 +1649,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		/* TODO: Add the message bellow
 		case streamMaxTurnsExceededMsg:
 			// Max turns exceeded, mark session as inactive and show warning
-			m.content.Chat.AddToRawHistory("STREAM_MAX_TURNS_EXCEEDED", fmt.Sprintf("AI streaming ended after reaching max turns limit: %d", msg.maxTurns))
+			m.tabs.Content().Chat.AddToRawHistory("STREAM_MAX_TURNS_EXCEEDED", fmt.Sprintf("AI streaming ended after reaching max turns limit: %d", msg.maxTurns))
 			slog.Warn("streamMaxTurnsExceededMsg", "max_turns", msg.maxTurns)
-			m.content.Chat.AddMessage(fmt.Sprintf("\n⚠️  Conversation ended after reaching maximum turn limit (%d turns)", msg.maxTurns))
+			m.tabs.Content().Chat.AddMessage(fmt.Sprintf("\n⚠️  Conversation ended after reaching maximum turn limit (%d turns)", msg.maxTurns))
 			m.stopStreaming()
 			m.streamCompleteCallback = nil // Clear callback on max turns
 			m.repoInfo.RefreshDiff()
@@ -1982,21 +1693,21 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case showHelpMsg:
 		// Show the help viewer with the requested topic
-		return m, m.content.ShowHelp(msg.topic)
+		return m, m.tabs.Content().ShowHelp(msg.topic)
 
 	case showContextMsg:
-		m.content.Chat.AddToRawHistory("CONTEXT", msg.content)
-		m.content.Chat.AddMessage(msg.content)
+		m.tabs.Content().Chat.AddToRawHistory("CONTEXT", msg.content)
+		m.tabs.Content().Chat.AddMessage(msg.content)
 		m.sessionActive = true
 
 	case updateCheckMsg:
 		if msg.err != nil {
-			m.content.Chat.AddMessage(fmt.Sprintf("%s❌ Failed to check for updates: %v", systemPrefix, msg.err))
+			m.tabs.Content().Chat.AddMessage(fmt.Sprintf("%s❌ Failed to check for updates: %v", systemPrefix, msg.err))
 			return m, nil
 		}
 
 		if !msg.hasUpdate {
-			m.content.Chat.AddMessage(fmt.Sprintf("%s✓ You're running the latest version (%s)", systemPrefix, msg.latest))
+			m.tabs.Content().Chat.AddMessage(fmt.Sprintf("%s✓ You're running the latest version (%s)", systemPrefix, msg.latest))
 			return m, nil
 		}
 
@@ -2017,10 +1728,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingHostApproval.ResponseChan <- msg.answer
 			if msg.answer {
 				// User approved - update the emoji to ⚙️ (executing)
-				m.content.Chat.UpdateLastToolCallEmoji(m.pendingHostApproval.Command, "⚙️")
+				m.tabs.Content().Chat.UpdateLastToolCallEmoji(m.pendingHostApproval.Command, "⚙️")
 			} else {
 				// User denied - update the emoji to ⛔︎
-				m.content.Chat.UpdateLastToolCallEmoji(m.pendingHostApproval.Command, "⛔︎")
+				m.tabs.Content().Chat.UpdateLastToolCallEmoji(m.pendingHostApproval.Command, "⛔︎")
 			}
 			m.pendingHostApproval = nil
 			return m, nil
@@ -2035,13 +1746,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cancelMsg := NewChatMsgBuilder(systemPrefix)
 		cancelMsg.WriteLn("Update cancelled.")
 		cancelMsg.WriteLn("Please run :update again when ready")
-		m.content.Chat.AddMessage(cancelMsg.String())
+		m.tabs.Content().Chat.AddMessage(cancelMsg.String())
 		return m, nil
 
 	case runners.ApprovalRequestMsg:
 		// Store the pending approval request
 		m.pendingHostApproval = &msg
-		m.content.Chat.UpdateLastToolCallEmoji(msg.Command, approvalPrefix)
+		m.tabs.Content().Chat.UpdateLastToolCallEmoji(msg.Command, approvalPrefix)
 		displayCmd := msg.Command
 		maxLen := 50
 		// TODO: truncate the middle
@@ -2055,14 +1766,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			errMsg := NewChatMsgBuilder(systemPrefix)
 			errMsg.WriteLnf("❌ Update failed: %v", msg.err)
 			errMsg.WriteLnf("Try updating manually with: %s", GetUpdateCommand())
-			m.content.Chat.AddMessage(errMsg.String())
+			m.tabs.Content().Chat.AddMessage(errMsg.String())
 			return m, nil
 		}
 
 		successMsg := NewChatMsgBuilder(systemPrefix)
 		successMsg.WriteLn("✓ Update successful!")
 		successMsg.WriteLn("Please restart asimi to use the new version.")
-		m.content.Chat.AddMessage(successMsg.String())
+		m.tabs.Content().Chat.AddMessage(successMsg.String())
 		return m, nil
 
 	case waitingTickMsg:
@@ -2070,12 +1781,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return waitingTickMsg{} })
 		}
 		return m, nil
-
-	case ctrlCBurstTimeoutMsg:
-		return m.handleCtrlCBurstTimeout(msg)
-
-	case ctrlCWindowExpiredMsg:
-		return m.handleCtrlCWindowExpired()
 
 	case providerSelectedMsg:
 		m.providerModal = nil
@@ -2108,10 +1813,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case showOauthFailed:
-		m.content.Chat.AddToRawHistory("OAUTH_ERROR", msg.err)
+		m.tabs.Content().Chat.AddToRawHistory("OAUTH_ERROR", msg.err)
 		errToast := fmt.Sprintf("OAuth failed: %s", msg.err)
 		m.commandLine.AddToast(errToast, "error", 4000)
-		m.content.Chat.AddMessage(errToast)
+		m.tabs.Content().Chat.AddMessage(errToast)
 		m.sessionActive = false
 
 	case modalCancelledMsg:
@@ -2119,7 +1824,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.codeInputModal = nil
 		// Return to chat view
 		m.commandLine.AddToast("Cancelled", "info", 2000)
-		return m, m.content.ShowChat()
+		return m, m.tabs.Content().ShowChat()
 
 	case authCodeEnteredMsg:
 		m.codeInputModal = nil
@@ -2177,17 +1882,17 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modelsLoadedMsg:
-		return m, m.content.ShowUnifiedModels(msg.models, m.config.LLM.Model)
+		return m, m.tabs.Content().ShowUnifiedModels(msg.models, m.config.LLM.Model)
 
 	case showModelSelectionMsg:
 		// Trigger model selection after login completes
 		return m, handleModelsCommand(&m, nil)
 
 	case modelsLoadErrorMsg:
-		m.content.SetModelsError(msg.error)
+		m.tabs.Content().SetModelsError(msg.error)
 
 	case sessionsLoadedMsg:
-		return m, m.content.ShowResume(msg.sessions)
+		return m, m.tabs.Content().ShowResume(msg.sessions)
 
 	case ChangeModeMsg:
 		// Centralized mode change handling
@@ -2204,9 +1909,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Handle scroll lock state changes
 		if oldMode == "scroll" && newMode != "scroll" {
-			m.content.Chat.SetScrollLock(false)
+			m.tabs.Content().Chat.SetScrollLock(false)
 		} else if oldMode != "scroll" && newMode == "scroll" {
-			m.content.Chat.SetScrollLock(true)
+			m.tabs.Content().Chat.SetScrollLock(true)
 		}
 
 		// Update prompt component based on new mode
@@ -2266,7 +1971,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		parts := strings.Fields(":" + msg.command)
 		if len(parts) > 0 {
 			cmdName := parts[0]
-			m.content.Chat.AddToRawHistory("COMMAND", ":"+msg.command)
+			m.tabs.Content().Chat.AddToRawHistory("COMMAND", ":"+msg.command)
 
 			// Use FindCommand for vim-style partial matching
 			cmd, matches, found := m.commandRegistry.FindCommand(cmdName)
@@ -2343,7 +2048,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionResumeErrorMsg:
 		m.commandLine.AddToast(fmt.Sprintf("Failed to resume session: %v", msg.err), "error", 4000)
-		return m, m.content.ShowChat()
+		return m, m.tabs.Content().ShowChat()
 
 	case llmInitSuccessMsg:
 		// LLM initialization completed - configure Shogunate with the model
@@ -2377,7 +2082,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.clearHistory {
 			m.sessionActive = true
 			// Clear the chat instead of creating a new component to avoid re-initializing the markdown renderer
-			m.content.Chat.Clear()
+			m.tabs.Content().Chat.Clear()
 
 			// Reset prompt history and waiting state
 			m.initHistory()
@@ -2392,7 +2097,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Display initial messages after clearing history (before streaming starts)
 		for _, initialMsg := range msg.initialMessages {
-			m.content.Chat.AddMessage(initialMsg)
+			m.tabs.Content().Chat.AddMessage(initialMsg)
 		}
 
 		// The rest of the operations require a shogunate
@@ -2465,9 +2170,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Info("successfully upgraded from host to sandbox runner")
 			m.commandLine.AddToast("🐳 Sandbox now available", "info", 3000)
 			// Refresh the first message to show the updated sandbox status
-			if len(m.content.Chat.Messages) > 0 {
-				m.content.Chat.Messages[0] = ChatMessage{Content: newSessionMessage(), Indent: 0}
-				m.content.Chat.UpdateContent()
+			if len(m.tabs.Content().Chat.Messages) > 0 {
+				m.tabs.Content().Chat.Messages[0] = ChatMessage{Content: newSessionMessage(), Indent: 0}
+				m.tabs.Content().Chat.UpdateContent()
 			}
 		}
 		return m, nil
@@ -2494,7 +2199,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Add a message to show we're compacting
 		compactMsg := NewChatMsgBuilder("🗜️  Compacting conversation history...")
 		compactMsg.WriteLn("This may take a moment as the model summarizes the chat.")
-		m.content.Chat.AddMessage(compactMsg.String())
+		m.tabs.Content().Chat.AddMessage(compactMsg.String())
 
 		// Perform the compaction in a goroutine
 		go func() {
@@ -2539,7 +2244,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (the shogunate session check is already done above)
 
 		// Add success message
-		m.content.Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted successfully!\n\nContext usage: %s/%s tokens (%.1f%%)",
+		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted successfully!\n\nContext usage: %s/%s tokens (%.1f%%)",
 			formatTokenCount(info.UsedTokens),
 			formatTokenCount(info.TotalTokens),
 			percentage(info.UsedTokens, info.TotalTokens)))
@@ -2549,7 +2254,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case compactErrorMsg:
 		// Compaction failed
 		slog.Warn("compaction failed", "error", msg.err)
-		m.content.Chat.AddMessage(fmt.Sprintf("❌ Failed to compact conversation: %v\n\nYour conversation context was left unchanged.", msg.err))
+		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("❌ Failed to compact conversation: %v\n\nYour conversation context was left unchanged.", msg.err))
 		m.commandLine.AddToast("Compaction failed - context unchanged", "error", 3000)
 
 	case runners.ContainerLaunchedMsg:
@@ -2562,7 +2267,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shellCommandResultMsg:
 		// Shell command execution completed
-		m.content.Chat.AddShellCommandResult(msg)
+		m.tabs.Content().Chat.AddShellCommandResult(msg)
 		m.repoInfo.RefreshDiff()
 		m.prompt.Focus()
 		return m, nil
@@ -2575,19 +2280,19 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case initWorkflowProgressMsg:
 		// Update UI with workflow progress
-		m.content.Chat.AddMessage(msg.message)
+		m.tabs.Content().Chat.AddMessage(msg.message)
 		return m, nil
 
 	case initWorkflowCompleteMsg:
 		// Workflow completed
 		if msg.success {
-			m.content.Chat.AddMessage(msg.message)
+			m.tabs.Content().Chat.AddMessage(msg.message)
 			m.commandLine.AddToast("Initialization complete!", "success", 3*time.Second)
 
 			// Start a fresh session without clearing the screen
 			m.saveSession()
 			m.sessionActive = true
-			m.content.Chat.Indent = 0
+			m.tabs.Content().Chat.Indent = 0
 			m.initHistory()
 			m.cancelStreaming()
 			m.stopStreaming()
@@ -2608,7 +2313,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case initWorkflowErrorMsg:
 		// Workflow failed
 		slog.Error("Init workflow failed", "error", msg.err)
-		m.content.Chat.AddMessage(fmt.Sprintf("%s❌ Initialization failed: %v", systemPrefix, msg.err))
+		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("%s❌ Initialization failed: %v", systemPrefix, msg.err))
 		m.commandLine.AddToast("Initialization failed", "error", 5*time.Second)
 		return m, nil
 
@@ -2617,13 +2322,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Restore focus to prompt if no modals are active and view is chat
 	if m.providerModal == nil && m.codeInputModal == nil &&
 		!m.commandLine.IsInCommandMode() &&
-		m.content.GetActiveView() == ViewChat {
+		m.tabs.Content().GetActiveView() == ViewChat {
 		m.prompt.Focus()
 	}
 
 	// Update content (which handles chat updates)
-	var contentCmd tea.Cmd
-	m.content, contentCmd = m.content.Update(msg)
+	contentCmd := m.tabs.UpdateContent(msg)
 	return m, contentCmd
 }
 
@@ -2768,10 +2472,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	promptWithBorder := promptHeight + 2
 
 	// Calculate chat height (account for tab bar when multiple tabs)
-	tabBarHeight := 0
-	if len(m.tabs) > 1 {
-		tabBarHeight = 1
-	}
+	tabBarHeight := m.tabs.TabBarHeight()
 	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1
 	if contentHeight < 0 {
 		contentHeight = 0
@@ -2782,7 +2483,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	m.commandLine.SetWidth(width + 2)
 
 	// Full width layout - content handles chat and other views
-	m.content.SetSize(width, contentHeight)
+	m.tabs.SetSize(width, contentHeight)
 
 	m.prompt.SetWidth(width)
 	m.prompt.SetHeight(promptHeight)
@@ -2821,15 +2522,12 @@ func (m TUIModel) View() string {
 	commandLineHeight := 1
 	statusHeight := 1
 	promptWithBorder := promptHeight + 2
-	tabBarHeight := 0
-	if len(m.tabs) > 1 {
-		tabBarHeight = 1
-	}
+	tabBarHeight := m.tabs.TabBarHeight()
 	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
-	m.content.SetSize(m.width-2, contentHeight)
+	m.tabs.SetSize(m.width-2, contentHeight)
 
 	modalHeight := 0
 	if m.modal != nil {
@@ -2864,18 +2562,15 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	commandLineHeight := 1
 	statusHeight := 1
 	promptWithBorder := m.prompt.Height + 2
-	tabBarHeight := 0
-	if len(m.tabs) > 1 {
-		tabBarHeight = 1
-	}
+	tabBarHeight := m.tabs.TabBarHeight()
 	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1 - modalHeight
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
 
 	// First check if we're viewing help/models/resume - these take precedence
-	if m.content.GetActiveView() != ViewChat {
-		return m.content.View()
+	if m.tabs.Content().GetActiveView() != ViewChat {
+		return m.tabs.Content().View()
 	}
 
 	// Then check for special modes
@@ -2886,12 +2581,12 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 		return m.renderHomeView(m.width, contentHeight)
 	default:
 		// Use content component which handles chat view
-		return m.content.View()
+		return m.tabs.Content().View()
 	}
 }
 
 func (m TUIModel) composeBaseView(mainContent, promptView, commandLineView string) string {
-	tabBar := m.renderTabBar()
+	tabBar := m.tabs.RenderTabBar(m.width)
 	statusView := m.status.View()
 
 	// Build layout parts
@@ -3038,7 +2733,7 @@ func (m TUIModel) renderHomeView(width, height int) string {
 
 // renderRawSessionView renders the raw session view showing complete unfiltered history
 func (m TUIModel) renderRawSessionView(width, height int) string {
-	rawHistory := m.content.Chat.GetRawHistory()
+	rawHistory := m.tabs.Content().Chat.GetRawHistory()
 	if len(rawHistory) == 0 {
 		// Show empty state
 		emptyStyle := lipgloss.NewStyle().

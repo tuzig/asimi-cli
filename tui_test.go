@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,9 +17,16 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/fake"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/storage"
+
+	_ "modernc.org/sqlite"
 )
 
 // mockConfig returns a mock configuration for testing
@@ -97,163 +107,67 @@ func TestCommandCompletionOrderDefaultsToHelp(t *testing.T) {
 	require.Equal(t, ":help", model.completions.Options[0])
 }
 
-// TestTUIModelKeyMsg tests quitting the application with 'q' and Ctrl+C
-func TestTUIModelKeyMsg(t *testing.T) {
-	testCases := []struct {
-		name          string
-		key           tea.KeyMsg
-		expectQuit    bool
-		expectCommand bool
-	}{
-		{
-			name:          "Quit with 'q'",
-			key:           tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")},
-			expectQuit:    false,
-			expectCommand: true, // Textarea returns a command for text input
-		},
-		{
-			name:          "First 'ctrl+c' does not quit",
-			key:           tea.KeyMsg{Type: tea.KeyCtrlC},
-			expectQuit:    false,
-			expectCommand: true, // Returns tick command for quiet period detection
-		},
-	}
+// TestSingleCtrlCDoesNotQuit tests that a single Ctrl-C does not quit
+func TestSingleCtrlCDoesNotQuit(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	require.Nil(t, cmd, "Single CTRL-C should not return a command")
 
-			// Send a quit key message
-			newModel, cmd := model.Update(tc.key)
-
-			if tc.expectCommand {
-				require.NotNil(t, cmd)
-			} else {
-				require.Nil(t, cmd)
-			}
-
-			if tc.expectQuit {
-				// Execute the command to verify it's a quit command
-				result := cmd()
-				_, ok := result.(tea.QuitMsg)
-				require.True(t, ok)
-			} else if cmd != nil {
-				// If we got a command but don't expect quit, verify it's NOT a quit command
-				result := cmd()
-				_, ok := result.(tea.QuitMsg)
-				require.False(t, ok, "Should not be a quit command")
-			}
-
-			// Model should be unchanged
-			_, ok := newModel.(TUIModel)
-			require.True(t, ok)
-		})
-	}
+	tuiModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	require.False(t, tuiModel.ctrlCLastPress.IsZero(), "Should record last press time")
 }
 
 func TestDoubleCtrlCToQuit(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
-	// First CTRL-C starts first burst
+	// First CTRL-C
 	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	require.NotNil(t, cmd, "First CTRL-C should return tick command")
+	require.Nil(t, cmd, "First CTRL-C should not quit")
 	tuiModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
-	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "Should be in burst state")
-	require.Equal(t, 1, tuiModel.ctrlCBurstSeq, "Burst sequence should be 1")
 
-	// Wait for quiet period to pass, then process burst timeout
-	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
-	newModel, cmd = tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: 1})
-	tuiModel, ok = newModel.(TUIModel)
-	require.True(t, ok)
-	require.Equal(t, ctrlCWaitingSecond, tuiModel.ctrlCState, "Should be waiting for second press")
-	require.NotNil(t, cmd, "Should return window expiry tick")
+	// Move last press past the debounce window but within the quit window
+	tuiModel.ctrlCLastPress = time.Now().Add(-500 * time.Millisecond)
 
-	// Second CTRL-C starts second burst
+	// Second CTRL-C — should quit
 	newModel, cmd = tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	require.NotNil(t, cmd, "Second CTRL-C should return tick command")
-	tuiModel, ok = newModel.(TUIModel)
-	require.True(t, ok)
-	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "Should be in burst state again")
-	require.Equal(t, 2, tuiModel.ctrlCBurstSeq, "Burst sequence should be 2")
-
-	// Wait for quiet period to pass, then process second burst timeout - should quit
-	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
-	newModel, cmd = tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: 2})
-	require.NotNil(t, cmd, "Second burst timeout should return quit command")
+	require.NotNil(t, cmd, "Double CTRL-C should return quit command")
 	result := cmd()
 	_, ok = result.(tea.QuitMsg)
 	require.True(t, ok, "Should be a quit message")
 }
 
-func TestCtrlCDuplicateEventsIgnored(t *testing.T) {
-	// Test that rapid duplicate CTRL-C events (like from iOS) are treated as one press
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-
-	// Simulate rapid CTRL-C events (like iOS sends)
-	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tuiModel, _ := newModel.(TUIModel)
-	seq1 := tuiModel.ctrlCBurstSeq
-
-	// Second rapid CTRL-C (within quiet period) should increment seq
-	newModel, _ = tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tuiModel, _ = newModel.(TUIModel)
-	require.Equal(t, seq1+1, tuiModel.ctrlCBurstSeq, "Burst sequence should increment")
-	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "Should still be in same burst")
-
-	// Third rapid CTRL-C
-	newModel, _ = tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tuiModel, _ = newModel.(TUIModel)
-	require.Equal(t, seq1+2, tuiModel.ctrlCBurstSeq, "Burst sequence should increment again")
-	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "Should still be in same burst")
-
-	// Old timeout messages should be ignored
-	newModel, cmd := tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: seq1})
-	tuiModel, _ = newModel.(TUIModel)
-	require.Nil(t, cmd, "Stale timeout should be ignored")
-	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState, "State should not change from stale timeout")
-
-	// Wait for quiet period, then latest timeout should work
-	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
-	newModel, cmd = tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: tuiModel.ctrlCBurstSeq})
-	tuiModel, _ = newModel.(TUIModel)
-	require.NotNil(t, cmd, "Current timeout should work")
-	require.Equal(t, ctrlCWaitingSecond, tuiModel.ctrlCState, "Should transition to waiting for second")
-}
-
-func TestCtrlCWindowExpiry(t *testing.T) {
-	// Test that window expiry resets state
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-
-	// First CTRL-C and complete first burst
-	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tuiModel, _ := newModel.(TUIModel)
-
-	time.Sleep(tuiModel.config.UI.CtrlCDebounceTime + 10*time.Millisecond)
-	newModel, _ = tuiModel.handleCtrlCBurstTimeout(ctrlCBurstTimeoutMsg{seq: tuiModel.ctrlCBurstSeq})
-	tuiModel, _ = newModel.(TUIModel)
-	require.Equal(t, ctrlCWaitingSecond, tuiModel.ctrlCState)
-
-	// Window expires
-	newModel, _ = tuiModel.handleCtrlCWindowExpired()
-	tuiModel, _ = newModel.(TUIModel)
-	require.Equal(t, ctrlCIdle, tuiModel.ctrlCState, "Should reset to idle after window expires")
-}
-
-func TestCtrlCOtherKeyResets(t *testing.T) {
-	// Test that any other key resets CTRL-C state
+func TestCtrlCDuplicateDebounced(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// First CTRL-C
 	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	tuiModel, _ := newModel.(TUIModel)
-	require.Equal(t, ctrlCInBurst, tuiModel.ctrlCState)
 
-	// Press another key
-	newModel, _ = tuiModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	// Immediate duplicate (within debounce) — should be ignored
+	newModel, cmd := tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	require.Nil(t, cmd, "Duplicate CTRL-C within debounce should be ignored")
+	_, ok := newModel.(TUIModel)
+	require.True(t, ok)
+}
+
+func TestCtrlCWindowExpiry(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+
+	// First CTRL-C
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tuiModel, _ := newModel.(TUIModel)
+
+	// Wait longer than the window
+	tuiModel.ctrlCLastPress = time.Now().Add(-3 * time.Second)
+
+	// Second CTRL-C after window expired — treated as new first press, not quit
+	newModel, cmd := tuiModel.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	require.Nil(t, cmd, "CTRL-C after expired window should not quit")
 	tuiModel, _ = newModel.(TUIModel)
-	require.Equal(t, ctrlCIdle, tuiModel.ctrlCState, "Other key should reset CTRL-C state")
+	require.False(t, tuiModel.ctrlCLastPress.IsZero(), "Should update last press time")
 }
 
 func TestTUIModelSubmit(t *testing.T) {
@@ -298,7 +212,7 @@ func TestTUIModelSubmit(t *testing.T) {
 				require.Nil(t, cmd)
 			}
 
-			chat := model.content.Chat
+			chat := model.tabs.Content().Chat
 			require.Equal(t, tc.expectedMessageCount, len(chat.Messages))
 			require.Contains(t, chat.Messages[len(chat.Messages)-1], tc.expectedLastMessage, "prompt", tc.name)
 		})
@@ -363,8 +277,8 @@ func TestTUIModelKeyboardInteraction(t *testing.T) {
 			},
 			verify: func(t *testing.T, model *TUIModel, cmd tea.Cmd) {
 				require.Nil(t, cmd)
-				require.Equal(t, ViewHelp, model.content.GetActiveView())
-				require.Equal(t, "index", model.content.help.GetTopic())
+				require.Equal(t, ViewHelp, model.tabs.Content().GetActiveView())
+				require.Equal(t, "index", model.tabs.Content().help.GetTopic())
 			},
 		},
 	}
@@ -480,16 +394,16 @@ func TestMouseWheelScrollEntersScrollMode(t *testing.T) {
 	// Add enough messages to make the chat scrollable
 	updatedModel.sessionActive = true
 	for i := 0; i < 50; i++ {
-		updatedModel.content.Chat.AddAIChunk("This is a test message to fill the chat")
-		updatedModel.content.Chat.FinalizeLastAIMessage()
+		updatedModel.tabs.Content().Chat.AddAIChunk("This is a test message to fill the chat")
+		updatedModel.tabs.Content().Chat.FinalizeLastAIMessage()
 	}
 
 	// Verify we start in insert mode
 	require.Equal(t, "insert", updatedModel.Mode)
 
 	// Scroll to bottom first to ensure we're not at top
-	updatedModel.content.Chat.ScrollToBottom()
-	require.True(t, updatedModel.content.Chat.Viewport.AtBottom())
+	updatedModel.tabs.Content().Chat.ScrollToBottom()
+	require.True(t, updatedModel.tabs.Content().Chat.Viewport.AtBottom())
 
 	// Simulate mouse wheel up scroll
 	mouseMsg := tea.MouseMsg{
@@ -543,8 +457,8 @@ func TestMouseWheelScrollDoesNotEnterScrollModeWhenAtTop(t *testing.T) {
 	require.Equal(t, "insert", updatedModel.Mode)
 
 	// Ensure we're at the top (default state with minimal content)
-	updatedModel.content.Chat.ScrollToTop()
-	require.True(t, updatedModel.content.Chat.Viewport.AtTop())
+	updatedModel.tabs.Content().Chat.ScrollToTop()
+	require.True(t, updatedModel.tabs.Content().Chat.Viewport.AtTop())
 
 	// Simulate mouse wheel up scroll when at top
 	mouseMsg := tea.MouseMsg{
@@ -578,13 +492,13 @@ func TestMouseWheelScrollDoesNotEnterScrollModeWhenAlreadyInScrollMode(t *testin
 	// Add enough messages to make scrollable
 	updatedModel.sessionActive = true
 	for i := 0; i < 50; i++ {
-		updatedModel.content.Chat.AddAIChunk("Test message")
-		updatedModel.content.Chat.FinalizeLastAIMessage()
+		updatedModel.tabs.Content().Chat.AddAIChunk("Test message")
+		updatedModel.tabs.Content().Chat.FinalizeLastAIMessage()
 	}
 
 	// Set mode to scroll
 	updatedModel.Mode = "scroll"
-	updatedModel.content.Chat.ScrollToBottom()
+	updatedModel.tabs.Content().Chat.ScrollToBottom()
 
 	// Simulate mouse wheel up scroll
 	mouseMsg := tea.MouseMsg{
@@ -963,13 +877,13 @@ func TestColonInNormalModeActivatesCommandLine(t *testing.T) {
 
 func TestShowHelpMsgDisplaysRequestedTopic(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	require.Equal(t, ViewChat, model.content.GetActiveView())
+	require.Equal(t, ViewChat, model.tabs.Content().GetActiveView())
 
 	newModel, _ := model.handleCustomMessages(showHelpMsg{topic: "modes"})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
-	require.Equal(t, ViewHelp, updatedModel.content.GetActiveView())
-	require.Equal(t, "modes", updatedModel.content.help.GetTopic())
+	require.Equal(t, ViewHelp, updatedModel.tabs.Content().GetActiveView())
+	require.Equal(t, "modes", updatedModel.tabs.Content().help.GetTopic())
 }
 
 // Tests from tui_history_test.go
@@ -1235,9 +1149,9 @@ func TestStartConversationMsg_InitialMessages(t *testing.T) {
 	model := newTestModel(t)
 
 	// Add some messages to the chat
-	model.content.Chat.AddMessage("existing message 1")
-	model.content.Chat.AddMessage("existing message 2")
-	require.Len(t, model.content.Chat.Messages, 3) // Welcome + 2 messages
+	model.tabs.Content().Chat.AddMessage("existing message 1")
+	model.tabs.Content().Chat.AddMessage("existing message 2")
+	require.Len(t, model.tabs.Content().Chat.Messages, 3) // Welcome + 2 messages
 
 	// Create a startConversationMsg with initialMessages
 	msg := startConversationMsg{
@@ -1255,9 +1169,9 @@ func TestStartConversationMsg_InitialMessages(t *testing.T) {
 
 	// Verify that the chat was cleared and initialMessages were added
 	// The chat should have: Welcome message + 2 initial messages
-	require.Len(t, updatedModelValue.content.Chat.Messages, 3)
-	require.Contains(t, updatedModelValue.content.Chat.Messages[1].Content, "Initial message 1")
-	require.Contains(t, updatedModelValue.content.Chat.Messages[2].Content, "Initial message 2")
+	require.Len(t, updatedModelValue.tabs.Content().Chat.Messages, 3)
+	require.Contains(t, updatedModelValue.tabs.Content().Chat.Messages[1].Content, "Initial message 1")
+	require.Contains(t, updatedModelValue.tabs.Content().Chat.Messages[2].Content, "Initial message 2")
 }
 
 // TestHistoryNavigation_WithArrowKeys tests arrow key handling
@@ -1338,7 +1252,7 @@ func TestCancelActiveStreaming_NotActive(t *testing.T) {
 func TestSaveHistoryPresentState(t *testing.T) {
 	model := newTestModel(t)
 	model.prompt.SetValue("current prompt")
-	chat := model.content.Chat
+	chat := model.tabs.Content().Chat
 	chat.AddMessage("message 1")
 	chat.AddMessage("message 2")
 
@@ -1560,7 +1474,7 @@ func TestSessionResume_ResetsHistoryState(t *testing.T) {
 	require.True(t, updatedModel.sessionActive)
 
 	// Verify chat was rebuilt with resumed messages
-	chat := updatedModel.content.Chat
+	chat := updatedModel.tabs.Content().Chat
 	require.True(t, containsMessage(chat.Messages, "hello"), "Chat should contain resumed human message")
 	require.True(t, containsMessage(chat.Messages, "hi there"), "Chat should contain resumed AI message")
 }
@@ -1715,7 +1629,7 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// ===== Cleanup: Quit the application =====
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	time.Sleep(160 * time.Millisecond) // Wait longer than CtrlCDebounceTime (150ms)
+	time.Sleep(200 * time.Millisecond) // Wait past debounce (150ms) so second press is recognized
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	// Get the final model and verify final state
@@ -1731,8 +1645,8 @@ func TestHappyFlowE2E(t *testing.T) {
 	// Note: If shogunate session isn't set up in this test, context files check is skipped
 
 	// Verify help view is shown
-	require.Equal(t, ViewHelp, tuiModel.content.GetActiveView())
-	require.Equal(t, "index", tuiModel.content.help.GetTopic())
+	require.Equal(t, ViewHelp, tuiModel.tabs.Content().GetActiveView())
+	require.Equal(t, "index", tuiModel.tabs.Content().help.GetTopic())
 }
 
 func TestLiveAgentE2E(t *testing.T) {
@@ -1966,4 +1880,141 @@ func TestIsModelSelectable(t *testing.T) {
 			require.Equal(t, tt.expected, IsModelSelectable(model))
 		})
 	}
+}
+
+// --- E2E: CTRL-C cancels streaming ---
+
+// slowStreamingLLM blocks during GenerateContent until context is cancelled.
+// Used to simulate a long-running LLM response for CTRL-C testing.
+type slowStreamingLLM struct {
+	llms.Model
+	started chan struct{} // closed when streaming begins
+}
+
+func (m *slowStreamingLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	callOpts := &llms.CallOptions{}
+	for _, opt := range options {
+		opt(callOpts)
+	}
+
+	// Signal that streaming has started
+	close(m.started)
+
+	// Stream an initial chunk so the TUI knows we're active
+	if callOpts.StreamingFunc != nil {
+		callOpts.StreamingFunc(ctx, []byte("thinking"))
+	}
+
+	// Block until context is cancelled (simulates slow LLM)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// setupTestGormDB creates an in-memory gorm.DB with shogunate tables for testing.
+func setupTestGormDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { sqlDB.Close() })
+
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
+		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
+	})
+	require.NoError(t, err)
+
+	err = db.AutoMigrate(
+		&storage.Edict{},
+		&storage.Zhengming{},
+		&storage.TianEvent{},
+		&storage.TianEventDLQ{},
+		&storage.Ling{},
+		&storage.ForgeManifest{},
+		&storage.JudgeVerdict{},
+		&storage.CensorPrecedent{},
+		&storage.MarshalIncident{},
+		&storage.RulerCouncil{},
+		&storage.RitualGuardCheckpoint{},
+	)
+	require.NoError(t, err)
+
+	// Create ritual tables needed by Shogunate startup
+	db.Exec(`CREATE TABLE IF NOT EXISTS ritual_executions (
+		id TEXT PRIMARY KEY, ritual_name TEXT, edict_id TEXT, status TEXT,
+		current_step INTEGER, inputs TEXT, outputs TEXT,
+		created_at DATETIME, updated_at DATETIME, completed_at DATETIME, error TEXT
+	)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS ritual_step_states (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, execution_id TEXT, step_name TEXT,
+		status TEXT, output TEXT, error TEXT, created_at DATETIME
+	)`)
+
+	return db
+}
+
+// TestCtrlCStopsStreamingE2E verifies that pressing CTRL-C during an active
+// LLM stream actually cancels the stream end-to-end: TUI → Shogunate → Session → LLM.
+// This is a regression test for the bug where the per-prompt context was not
+// passed through to the ministers, so CTRL-C cancelled a context nobody listened to.
+func TestCtrlCStopsStreamingE2E(t *testing.T) {
+	// 1. Set up infrastructure
+	db := setupTestGormDB(t)
+	slowLLM := &slowStreamingLLM{started: make(chan struct{})}
+
+	// 2. Create and start Shogunate
+	shog := shogunate.NewShogunate(db, nil, nil, slog.Default())
+	require.NoError(t, shog.Start(context.Background()))
+	t.Cleanup(func() { shog.Stop() })
+
+	// 3. Configure model on the Shogunate so Chancellor can create sessions
+	cfg := &shogunate.SessionConfig{
+		LLM: config.LLMConfig{MaxTurns: 1},
+	}
+	shog.ConfigureModel(slowLLM, cfg, repo.RepoInfo{})
+
+	// 4. Create TUI model wired to the Shogunate
+	tuiConfig := mockConfig()
+	ri := &repo.RepoInfo{}
+	model := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, shog)
+	model.persistentPromptHistory = nil
+	model.initHistory()
+
+	// 5. Launch teatest program
+	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 50))
+
+	// 6. Wire Shogunate notifications to the Bubble Tea program
+	shog.SetNotify(func(msg any) { tm.Send(msg) })
+
+	// 7. Submit a prompt — this flows through Chancellor → Session → slowStreamingLLM
+	tm.Type("hello world")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// 8. Wait for the LLM to actually start streaming (proves the full path works)
+	select {
+	case <-slowLLM.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for LLM streaming to start")
+	}
+
+	// Small delay to let StreamStartMsg propagate to TUI
+	time.Sleep(100 * time.Millisecond)
+
+	// 9. Press CTRL-C to cancel the stream
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	// 10. Wait for the CTRL-C toast to appear (proves CTRL-C was handled)
+	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		return strings.Contains(string(bts), "Press CTRL-C again")
+	}, teatest.WithCheckInterval(100*time.Millisecond), teatest.WithDuration(5*time.Second))
+
+	// 11. Double-press CTRL-C to quit (past debounce window)
+	time.Sleep(200 * time.Millisecond)
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	// 12. Verify final state
+	finalModel := tm.FinalModel(t)
+	tuiModel, ok := finalModel.(TUIModel)
+	require.True(t, ok)
+
+	assert.False(t, tuiModel.streamingActive, "streaming should be stopped after CTRL-C")
+	assert.False(t, tuiModel.waitingForResponse, "should not be waiting for response after CTRL-C")
 }

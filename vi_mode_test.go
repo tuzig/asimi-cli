@@ -244,7 +244,7 @@ func TestViNormalModeEnterSubmitsPrompt(t *testing.T) {
 	assert.Equal(t, "", updatedModel.prompt.Value(), "Prompt should be cleared after sending message")
 
 	// Check that the user message was added to chat
-	chat := updatedModel.content.Chat
+	chat := updatedModel.tabs.Content().Chat
 	assert.NotEmpty(t, chat.Messages)
 	lastMsg := chat.Messages[len(chat.Messages)-1]
 	assert.Equal(t, "ship it", lastMsg.Content)
@@ -260,7 +260,7 @@ func TestViNormalModeEnterWithEmptyPrompt(t *testing.T) {
 	model.prompt.EnterViNormalMode()
 	model.Mode = "normal"
 
-	initialMessageCount := len(model.content.Chat.Messages)
+	initialMessageCount := len(model.tabs.Content().Chat.Messages)
 
 	// Enter with empty prompt should do nothing
 	newModel, cmd := model.handleViNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -271,5 +271,77 @@ func TestViNormalModeEnterWithEmptyPrompt(t *testing.T) {
 	assert.Nil(t, cmd, "No command should be returned for empty prompt")
 
 	// No new messages should be added
-	assert.Equal(t, initialMessageCount, len(updatedModel.content.Chat.Messages))
+	assert.Equal(t, initialMessageCount, len(updatedModel.tabs.Content().Chat.Messages))
+}
+
+func TestViNormalModeGtSwitchesTab(t *testing.T) {
+	config := &Config{}
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+
+	// App starts with 2 tabs (Ruling, Hunting), active tab 0
+	assert.Equal(t, 2, model.tabs.TabCount(), "Should start with 2 tabs")
+	assert.Equal(t, 0, model.tabs.activeTab, "Should start on first tab")
+
+	// Enter normal mode
+	model.prompt.EnterViNormalMode()
+	model.Mode = "normal"
+
+	// Press 'g' to set pending g-prefix
+	newModel, _ := model.handleViNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.True(t, updatedModel.tabs.IsPendingG(), "PendingG should be set after pressing 'g'")
+
+	// Press 't' to complete gt (next tab)
+	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	updatedModel, ok = newModel.(TUIModel)
+	require.True(t, ok)
+	assert.False(t, updatedModel.tabs.IsPendingG(), "PendingG should be cleared after gt")
+	assert.Equal(t, 1, updatedModel.tabs.activeTab, "Active tab should switch to 1 after gt")
+}
+
+func TestViNormalModeGTSwitchesPrevTab(t *testing.T) {
+	config := &Config{}
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+
+	// Start on second tab
+	model.tabs.SwitchTo(1)
+	model.prompt.EnterViNormalMode()
+	model.Mode = "normal"
+
+	// Press 'g' then 'T' (previous tab)
+	newModel, _ := model.handleViNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	updatedModel, ok = newModel.(TUIModel)
+	require.True(t, ok)
+	assert.Equal(t, 0, updatedModel.tabs.activeTab, "Active tab should switch to 0 after gT")
+}
+
+func TestScrollModeGtSwitchesTab(t *testing.T) {
+	config := &Config{}
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+	model.Mode = "scroll"
+
+	// App starts with 2 tabs, active tab 0
+	assert.Equal(t, 0, model.tabs.activeTab)
+
+	// Press 'g' to set pending g-prefix in scroll mode
+	result, _, handled := model.handleScrollModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	assert.True(t, handled)
+	updatedModel, ok := result.(TUIModel)
+	require.True(t, ok)
+	assert.True(t, updatedModel.tabs.IsPendingG(), "PendingG should be set")
+
+	// Press 't' to complete gt
+	result, _, handled = updatedModel.handleScrollModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	assert.True(t, handled)
+	updatedModel, ok = result.(TUIModel)
+	require.True(t, ok)
+	assert.Equal(t, 1, updatedModel.tabs.activeTab, "Active tab should switch to 1 after gt in scroll mode")
 }

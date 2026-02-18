@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 	isatty "github.com/mattn/go-isatty"
@@ -134,6 +135,17 @@ func runInteractiveMode() error {
 	tuiProgram := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	// TODO: simplify by refactoring internal.NotifyFunc to func(msg tea.Msg)
 	tuiModel.shogunate.SetNotify(func(msg any) { tuiProgram.Send(msg) })
+
+	// Connect the shell runner's message channel to the TUI for approval requests
+	if runner := tuiModel.shogunate.GetRunner(); runner != nil {
+		runnerMsgChan := make(chan runners.Msg, 10)
+		runner.SetMessageChannel(runnerMsgChan)
+		go func() {
+			for msg := range runnerMsgChan {
+				tuiProgram.Send(msg)
+			}
+		}()
+	}
 	defer app.Stop(ctx)
 
 	slog.Debug("[TIMING] fx app initialized", "duration", time.Since(startTime))

@@ -49,6 +49,7 @@ type EventEmitter interface {
 
 // Prompt carries the user's message to the Chancellor
 type Prompt struct {
+	Ctx          context.Context   // Per-prompt context for cancellation (CTRL-C)
 	Message      string            // The Ruler's words
 	EdictID      string            // Empty = new edict, set = continue existing
 	ContextFiles map[string]string // Files loaded via @ references
@@ -228,25 +229,37 @@ func (m *MinisterBase) Scratchpad() string {
 
 // CreateSession creates a session for a minister with composed system prompt.
 // The system prompt is built from the shared template with the minister's role injected.
-func (m *MinisterBase) CreateSession(minister Minister) (*Session, error) {
+// edictID is optional — when provided, it's included in the scratchpad context.
+func (m *MinisterBase) CreateSession(minister Minister, edictID ...string) (*Session, error) {
 	tools := minister.Tools()
-	systemPrompt := m.buildSystemPrompt(minister)
+	eid := ""
+	if len(edictID) > 0 {
+		eid = edictID[0]
+	}
+	systemPrompt := m.buildSystemPrompt(minister, eid)
 
 	return NewSession(m.model, m.config, m.repoInfo, tools, nil, m.notify, systemPrompt)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
 // with the minister's Role, Scratchpad, and project context from AGENTS.md.
-func (m *MinisterBase) buildSystemPrompt(minister Minister) string {
+// If edictID is non-empty, it's prepended to the scratchpad.
+func (m *MinisterBase) buildSystemPrompt(minister Minister, edictID string) string {
 	agentsFile := "AGENTS.md"
 	if m.config != nil && m.config.AgentsFile != "" {
 		agentsFile = m.config.AgentsFile
 	}
+
+	scratchpad := minister.Scratchpad()
+	if edictID != "" {
+		scratchpad = fmt.Sprintf("# Current Edict: %s\n\n%s", edictID, scratchpad)
+	}
+
 	tmpl := template.Must(template.New("minister").Parse(ministerSystemPromptTemplate))
 	var buf bytes.Buffer
 	tmpl.Execute(&buf, map[string]string{
 		"Role":           minister.Role(),
-		"Scratchpad":     minister.Scratchpad(),
+		"Scratchpad":     scratchpad,
 		"ProjectContext": readProjectContext(agentsFile),
 		"AgentsFile":     agentsFile,
 	})
