@@ -16,7 +16,7 @@ import (
 )
 
 //go:embed context/chancellor.md
-var chancellorTmpl string
+var role string
 
 // Chancellor harmonizes all ministers and manages edict lifecycle
 type Chancellor struct {
@@ -50,7 +50,7 @@ func (c *Chancellor) Title() string { return "Chancellor" }
 
 // SystemPrompt returns the Chancellor's system prompt template.
 func (c *Chancellor) SystemPrompt() string {
-	return chancellorTmpl
+	return role
 }
 
 // Scratchpad returns dynamic context for the Chancellor including available rituals and rules

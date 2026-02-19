@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -736,10 +737,16 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
-	// With edict ID — should appear in system prompt
+	// With edict ID — should appear in system prompt alongside Realm and role text
 	prompt := buildSystemPrompt(fake, nil, "edict-123456")
 	if !strings.Contains(prompt, "Current Edict: edict-123456") {
 		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "You are a test minister.") {
+		t.Errorf("Expected role text in system prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "幕府") {
+		t.Errorf("Expected Realm (幕府) in system prompt, got:\n%s", prompt)
 	}
 
 	// Without edict ID — should not contain "Current Edict"
@@ -749,6 +756,35 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPrompt_Scratchpad verifies scratchpad is included with minister ID heading
+func TestBuildSystemPrompt_Scratchpad(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+
+	fake := &fakeMinisterWithScratchpad{
+		fakeMinister: fakeMinister{MinisterBase: base, id: "strategist"},
+		scratchpad:   "# Available Rituals\n- implement: Run implementation",
+	}
+
+	prompt := buildSystemPrompt(fake, nil, "")
+	if !regexp.MustCompile(`--- .* Scratchpad ---`).MatchString(prompt) {
+		t.Errorf("Expected scratchpad heading matching '--- .* Scratchpad ---', got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Available Rituals") {
+		t.Errorf("Expected scratchpad content in system prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "--- End of scratchpad ---") {
+		t.Errorf("Expected scratchpad end marker, got:\n%s", prompt)
+	}
+}
+
+// fakeMinisterWithScratchpad extends fakeMinister with a non-empty scratchpad
+type fakeMinisterWithScratchpad struct {
+	fakeMinister
+	scratchpad string
+}
+
+func (f *fakeMinisterWithScratchpad) Scratchpad() string { return f.scratchpad }
+
 // fakeMinister is a minimal Minister implementation for testing
 type fakeMinister struct {
 	MinisterBase
@@ -756,18 +792,46 @@ type fakeMinister struct {
 	tasks chan *Task
 }
 
-func (f *fakeMinister) ID() string              { return f.id }
-func (f *fakeMinister) SystemPrompt() string      { return `{{.Realm}}
-{{.Scratchpad}}
-{{- if .ProjectContext}}
---- Project specific directions from: {{.AgentsFile}} ---
-{{.ProjectContext}}
---- End of Directions from: {{.AgentsFile}} ---
-{{- end}}` }
-func (f *fakeMinister) Title() string            { return "Fake" }
-func (f *fakeMinister) Tools() []Tool            { return nil }
-func (f *fakeMinister) Tasks() chan<- *Task       { return f.tasks }
-func (f *fakeMinister) Run(ctx context.Context)  {}
+func (f *fakeMinister) ID() string             { return f.id }
+func (f *fakeMinister) SystemPrompt() string    { return "You are a test minister." }
+func (f *fakeMinister) Title() string           { return "Fake" }
+func (f *fakeMinister) Tools() []Tool           { return nil }
+func (f *fakeMinister) Tasks() chan<- *Task      { return f.tasks }
+func (f *fakeMinister) Run(ctx context.Context) {}
+
+// TestChancellor_ScratchpadIncludesRituals verifies the Chancellor's system prompt
+// contains ritual names and descriptions from the registry.
+func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	chancellor := NewChancellor(base)
+
+	registry := NewRitualRegistry()
+	registry.Register(&RitualDef{Name: "swift-strike", Description: "The Swift Strike (S)"})
+	registry.Register(&RitualDef{Name: "grand-campaign", Description: "The Grand Campaign (L)"})
+
+	shogunate := &Shogunate{
+		db:             db,
+		ministers:       map[string]Minister{chancellor.ID(): chancellor},
+		ritualRegistry: registry,
+	}
+	chancellor.SetShogunate(shogunate)
+
+	prompt := buildSystemPrompt(chancellor, nil, "")
+
+	if !strings.Contains(prompt, "swift-strike") {
+		t.Errorf("Expected ritual name 'swift-strike' in system prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "The Swift Strike (S)") {
+		t.Errorf("Expected ritual description in system prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "grand-campaign") {
+		t.Errorf("Expected ritual name 'grand-campaign' in system prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "The Grand Campaign (L)") {
+		t.Errorf("Expected ritual description in system prompt, got:\n%s", prompt)
+	}
+}
 
 // TestChancellor_GetDBPath tests that getDBPath correctly extracts the database path from gorm.DB
 func TestChancellor_GetDBPath(t *testing.T) {

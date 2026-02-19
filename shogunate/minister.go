@@ -24,6 +24,10 @@ import (
 //go:embed context/realm.md
 var realm string
 
+//go:embed context/system_base.tmpl
+var systemBase string
+var ministerTmpl = template.Must(template.New("minister").Parse(systemBase))
+
 // ZhengmingConn provides clarification request capabilities (behavioral interface)
 type ZhengmingConn interface {
 	RequestZhengming(edictID, question string, priority storage.ZhengmingPriority) (requestID string, err error)
@@ -252,10 +256,11 @@ func buildSystemPrompt(minister Minister, config *SessionConfig, edictID string)
 		scratchpad = fmt.Sprintf("# Current Edict: %s\n\n%s", edictID, scratchpad)
 	}
 
-	tmpl := template.Must(template.New(minister.ID()).Parse(minister.SystemPrompt()))
 	var buf bytes.Buffer
-	tmpl.Execute(&buf, map[string]string{
+	ministerTmpl.Execute(&buf, map[string]string{
 		"Realm":          realm,
+		"Role":           minister.SystemPrompt(),
+		"MinisterID":     minister.ID(),
 		"Scratchpad":     scratchpad,
 		"ProjectContext": readProjectContext(agentsFile),
 		"AgentsFile":     agentsFile,
