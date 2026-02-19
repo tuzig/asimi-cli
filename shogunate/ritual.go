@@ -587,11 +587,31 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			r.saveExecution(exec)
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
+		if exec.notify != nil {
+			exec.notify(RitualStepMsg{
+				RitualName:  exec.RitualName,
+				ExecutionID: exec.ID,
+				EdictID:     exec.EdictID,
+				StepName:    entry.Key,
+				Status:      "cmd_running",
+				Message:     raw,
+			})
+		}
 		result, err := r.runGivenStep(ctx, exec, entry)
 		if err != nil {
 			exec.State = RitualStateFailed
 			r.saveExecution(exec)
 			return fmt.Errorf("background given %q failed: %w", raw, err)
+		}
+		if exec.notify != nil {
+			exec.notify(RitualStepMsg{
+				RitualName:  exec.RitualName,
+				ExecutionID: exec.ID,
+				EdictID:     exec.EdictID,
+				StepName:    entry.Key,
+				Status:      "cmd_done",
+				Message:     raw,
+			})
 		}
 		if exec.Data == nil {
 			exec.Data = storage.JSON{}
@@ -837,8 +857,28 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		if err != nil {
 			return "", fmt.Errorf("then %q failed: %w", raw, err)
 		}
+		if exec.notify != nil {
+			exec.notify(RitualStepMsg{
+				RitualName:  exec.RitualName,
+				ExecutionID: exec.ID,
+				EdictID:     exec.EdictID,
+				StepName:    entry.Key,
+				Status:      "cmd_running",
+				Message:     raw,
+			})
+		}
 		if err := r.runThenStep(ctx, exec, entry); err != nil {
 			return "", fmt.Errorf("then %q failed: %w", raw, err)
+		}
+		if exec.notify != nil {
+			exec.notify(RitualStepMsg{
+				RitualName:  exec.RitualName,
+				ExecutionID: exec.ID,
+				EdictID:     exec.EdictID,
+				StepName:    entry.Key,
+				Status:      "cmd_done",
+				Message:     raw,
+			})
 		}
 	}
 

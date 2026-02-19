@@ -74,6 +74,8 @@ const (
 	failureToken          = "[[FAILURE]]"
 	systemPrefix          = "🛠️  "
 	checkPrefix           = "✓"
+	cmdRunningPrefix      = "⚡"
+	cmdDonePrefix         = "✅"
 	treeFinalPrefix       = " ╰ "
 	treeMidPrefix         = " │ "
 )

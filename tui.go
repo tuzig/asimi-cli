@@ -1749,6 +1749,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "retrying":
 			chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s retrying",
 				systemPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+		case "cmd_running":
+			chat.AddMessage(fmt.Sprintf("%s Running: %s", cmdRunningPrefix, msg.Message))
+		case "cmd_done":
+			chat.AddMessage(fmt.Sprintf("%s %s done", cmdDonePrefix, msg.Message))
 		case "ritual_completed":
 			chat.AddMessage(fmt.Sprintf("%sRitual %s completed", systemPrefix, msg.RitualName))
 			chat.Indent = 0

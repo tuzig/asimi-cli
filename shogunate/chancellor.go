@@ -308,7 +308,7 @@ type RitualStepMsg struct {
 	StepName    string
 	StepIndex   int
 	TotalSteps  int
-	Status      string // "started", "completed", "failed", "retrying"
+	Status      string // "started", "completed", "failed", "retrying", "cmd_running", "cmd_done"
 	Message     string
 }
 
@@ -322,7 +322,7 @@ func (t InvokeRitualTool) Name() string {
 }
 
 func (t InvokeRitualTool) Description() string {
-	return `Start a YAML-defined ritual workflow for an edict.
+	return `Execute a YAML-defined ritual workflow for an edict. Blocks until the ritual completes or fails.
 Rituals are predefined workflows that orchestrate ministers through a series of steps.
 Use list_rituals to see available rituals, or specify a ritual name directly.
 Common rituals: implement, fix, refactor, review.`
@@ -356,39 +356,39 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		logger = slog.Default()
 	}
 
-	executionID, err := t.chancellor.StartRitual(ctx, params.RitualName, params.EdictID, params.Inputs)
+	// Block until ritual completes (or fails/cancels)
+	exec, err := t.chancellor.RunRitual(ctx, params.RitualName, params.EdictID, params.Inputs)
 	if err != nil {
-		// Notify: failed
-		if t.chancellor.notify != nil {
-			t.chancellor.notify(RitualStepMsg{
-				RitualName: params.RitualName,
-				EdictID:    params.EdictID,
-				Status:     "failed",
-				Message:    fmt.Sprintf("Failed: %s", err),
-			})
+		// Return failure details as tool output so the LLM can reason about it
+		result := map[string]any{
+			"status":      "failed",
+			"ritual_name": params.RitualName,
+			"edict_id":    params.EdictID,
+			"error":       err.Error(),
 		}
-		return "", fmt.Errorf("failed to start ritual: %w", err)
+		if exec != nil {
+			result["execution_id"] = exec.ID
+			result["step_results"] = collectStepResults(exec)
+		}
+		resultJSON, _ := json.Marshal(result)
+		logger.Error("ritual failed",
+			"ritual", params.RitualName,
+			"edict_id", params.EdictID,
+			"error", err)
+		return string(resultJSON), nil
 	}
 
-	if t.chancellor.notify != nil {
-		t.chancellor.notify(RitualStepMsg{
-			RitualName:  params.RitualName,
-			EdictID:     params.EdictID,
-			ExecutionID: executionID,
-			Status:      "started",
-		})
-	}
-
-	logger.Info("ritual started",
+	logger.Info("ritual completed",
 		"ritual", params.RitualName,
-		"execution_id", executionID,
+		"execution_id", exec.ID,
 		"edict_id", params.EdictID)
 
 	result := map[string]any{
-		"status":       "started",
-		"execution_id": executionID,
+		"status":       "completed",
+		"execution_id": exec.ID,
 		"ritual_name":  params.RitualName,
 		"edict_id":     params.EdictID,
+		"step_results": collectStepResults(exec),
 	}
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil
@@ -408,6 +408,7 @@ func (t InvokeRitualTool) Format(input, result string, err error) string {
 		msg.Writef("Error: %v", err)
 	} else {
 		var res struct {
+			Status      string `json:"status"`
 			ExecutionID string `json:"execution_id"`
 		}
 		json.Unmarshal([]byte(result), &res)
@@ -415,7 +416,14 @@ func (t InvokeRitualTool) Format(input, result string, err error) string {
 		if len(execID) > 8 {
 			execID = execID[:8]
 		}
-		msg.Writef("Started [%s]", execID)
+		switch res.Status {
+		case "completed":
+			msg.Writef("Completed [%s]", execID)
+		case "failed":
+			msg.Writef("Failed [%s]", execID)
+		default:
+			msg.Writef("%s [%s]", res.Status, execID)
+		}
 	}
 
 	return msg.String() + "\n"
@@ -479,31 +487,43 @@ func (c *Chancellor) Tools() []Tool {
 	return toolList
 }
 
+// collectStepResults extracts step output summaries from a RitualExecution for LLM tool responses.
+// Truncates long outputs to 2000 chars to avoid blowing up context.
+func collectStepResults(exec *RitualExecution) []map[string]any {
+	results := make([]map[string]any, 0, len(exec.stepStates))
+	for _, ss := range exec.stepStates {
+		msg := ss.Message
+		if len(msg) > 2000 {
+			msg = msg[:2000] + "...(truncated)"
+		}
+		results = append(results, map[string]any{
+			"step":    ss.Name,
+			"output":  msg,
+			"retries": ss.RetryCount,
+		})
+	}
+	return results
+}
+
 // --- Interface implementations for tools package ---
 
-// StartRitual starts a ritual and runs it asynchronously
-func (c *Chancellor) StartRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (string, error) {
+// RunRitual runs a ritual synchronously, blocking until completion or failure.
+// Uses the caller's ctx so CTRL-C propagates properly.
+func (c *Chancellor) RunRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (*RitualExecution, error) {
 	if c.shogunate == nil || c.shogunate.ritualRunner == nil {
-		return "", fmt.Errorf("ritual runner not available")
+		return nil, fmt.Errorf("ritual runner not available")
 	}
 
-	// Start the ritual
 	exec, err := c.shogunate.ritualRunner.Start(ctx, ritualName, edictID, inputs, c.notify)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	// Run the ritual asynchronously
-	go func() {
-		if err := c.shogunate.ritualRunner.Run(context.Background(), exec); err != nil {
-			c.logger.Error("ritual failed",
-				"ritual", ritualName,
-				"execution_id", exec.ID,
-				"error", err)
-		}
-	}()
-
-	return exec.ID, nil
+	// Run synchronously — blocks until completion/failure/cancellation
+	if err := c.shogunate.ritualRunner.Run(ctx, exec); err != nil {
+		return exec, fmt.Errorf("ritual %s failed: %w", ritualName, err)
+	}
+	return exec, nil
 }
 
 // getDBPath extracts the database file path from gorm.DB using PRAGMA database_list

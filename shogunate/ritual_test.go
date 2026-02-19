@@ -3,6 +3,8 @@ package shogunate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -983,7 +985,7 @@ func TestBackgroundGiven(t *testing.T) {
 
 	// Ritual with background given (bash) and a cmd step
 	ritual := &RitualDef{
-		Name:  "bg-test",
+		Name:       "bg-test",
 		Background: []string{"!echo background-data"},
 		Steps: []RitualStep{
 			{Name: "work", Type: "cmd", Command: "echo step-done"},
@@ -996,13 +998,20 @@ func TestBackgroundGiven(t *testing.T) {
 	mockRunner := &mockCallCountRunner{
 		results: []runners.Output{
 			{Output: "background-data\n", ExitCode: "0"}, // background given
-			{Output: "step-done\n", ExitCode: "0"},        // cmd step
+			{Output: "step-done\n", ExitCode: "0"},       // cmd step
 		},
 	}
 	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
 
+	var messages []RitualStepMsg
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			messages = append(messages, stepMsg)
+		}
+	}
+
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "bg-test", "edict-bg", nil, nil)
+	exec, err := runner.Start(ctx, "bg-test", "edict-bg", nil, notify)
 	if err != nil {
 		t.Fatalf("Start error: %v", err)
 	}
@@ -1019,6 +1028,29 @@ func TestBackgroundGiven(t *testing.T) {
 	}
 	if _, ok := givenCtx["echo"]; !ok {
 		t.Errorf("expected 'echo' key in given_context, got keys: %v", givenCtx)
+	}
+
+	// Verify cmd_running and cmd_done notifications were emitted for background
+	var cmdRunning, cmdDone int
+	for _, m := range messages {
+		switch m.Status {
+		case "cmd_running":
+			cmdRunning++
+			if m.Message != "!echo background-data" {
+				t.Errorf("expected cmd_running message '!echo background-data', got %q", m.Message)
+			}
+		case "cmd_done":
+			cmdDone++
+			if m.Message != "!echo background-data" {
+				t.Errorf("expected cmd_done message '!echo background-data', got %q", m.Message)
+			}
+		}
+	}
+	if cmdRunning != 1 {
+		t.Errorf("expected 1 cmd_running message for background, got %d", cmdRunning)
+	}
+	if cmdDone != 1 {
+		t.Errorf("expected 1 cmd_done message for background, got %d", cmdDone)
 	}
 }
 
@@ -1072,6 +1104,125 @@ func setupRitualTestDB(t *testing.T) *gorm.DB {
 	}
 
 	return db
+}
+
+// TestInvokeRitualTool_Blocking verifies that enact_ritual blocks until the ritual completes
+// and returns full results with step_results.
+func TestInvokeRitualTool_Blocking(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name:        "test-blocking",
+		Description: "A test ritual for blocking behavior",
+		Steps: []RitualStep{
+			{Name: "echo", Type: "cmd", Command: "echo hello"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	mockRunner := &mockCmdRunner{output: "hello\n", exitCode: "0"}
+	ritualRunner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+
+	// Wire up a minimal Chancellor + Shogunate
+	shogunate := &Shogunate{
+		ritualRunner: ritualRunner,
+	}
+	chanc := &Chancellor{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		shogunate:    shogunate,
+	}
+
+	tool := InvokeRitualTool{chancellor: chanc}
+	input := `{"ritual_name":"test-blocking","edict_id":"edict-block-1"}`
+
+	result, err := tool.Call(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Call() returned error: %v", err)
+	}
+
+	// Parse result
+	var res map[string]any
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("Failed to parse result JSON: %v", err)
+	}
+
+	if res["status"] != "completed" {
+		t.Errorf("expected status 'completed', got %q", res["status"])
+	}
+	if res["ritual_name"] != "test-blocking" {
+		t.Errorf("expected ritual_name 'test-blocking', got %q", res["ritual_name"])
+	}
+	if res["execution_id"] == nil || res["execution_id"] == "" {
+		t.Error("expected non-empty execution_id")
+	}
+
+	// Verify step_results are present
+	stepResults, ok := res["step_results"].([]any)
+	if !ok {
+		t.Fatalf("expected step_results array, got %T", res["step_results"])
+	}
+	if len(stepResults) != 1 {
+		t.Errorf("expected 1 step result, got %d", len(stepResults))
+	}
+}
+
+// TestInvokeRitualTool_BlockingFailure verifies that a failed ritual returns failure details
+// as tool output (not a Go error) so the LLM can reason about it.
+func TestInvokeRitualTool_BlockingFailure(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "test-fail-blocking",
+		Steps: []RitualStep{
+			{Name: "fail", Type: "cmd", Command: "exit 1", OnFailure: "abort"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	mockRunner := &mockCmdRunner{output: "error!", exitCode: "1"}
+	ritualRunner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+
+	shogunate := &Shogunate{
+		ritualRunner: ritualRunner,
+	}
+	chanc := &Chancellor{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		shogunate:    shogunate,
+	}
+
+	tool := InvokeRitualTool{chancellor: chanc}
+	input := `{"ritual_name":"test-fail-blocking","edict_id":"edict-fail-1"}`
+
+	result, err := tool.Call(context.Background(), input)
+	// Should NOT return a Go error — failure is returned as tool output
+	if err != nil {
+		t.Fatalf("Call() returned Go error (should return failure as tool output): %v", err)
+	}
+
+	var res map[string]any
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("Failed to parse result JSON: %v", err)
+	}
+
+	if res["status"] != "failed" {
+		t.Errorf("expected status 'failed', got %q", res["status"])
+	}
+	if res["error"] == nil || res["error"] == "" {
+		t.Error("expected non-empty error field")
+	}
+
+	// Verify step_results are present even on failure
+	stepResults, ok := res["step_results"].([]any)
+	if !ok {
+		t.Fatalf("expected step_results array, got %T", res["step_results"])
+	}
+	if len(stepResults) != 1 {
+		t.Errorf("expected 1 step result, got %d", len(stepResults))
+	}
 }
 
 // mockCmdRunner implements runners.Runner for testing
