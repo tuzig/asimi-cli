@@ -65,12 +65,6 @@ github.com/Azure/go-ansiterm/winterm
 ## explicit; go 1.18
 github.com/BurntSushi/toml
 github.com/BurntSushi/toml/internal
-# github.com/Masterminds/goutils v1.1.1
-## explicit
-# github.com/Masterminds/semver/v3 v3.3.1
-## explicit; go 1.21
-# github.com/Masterminds/sprig/v3 v3.3.0
-## explicit; go 1.21
 # github.com/Microsoft/go-winio v0.6.2
 ## explicit; go 1.21
 github.com/Microsoft/go-winio
@@ -468,6 +462,9 @@ github.com/coreos/go-systemd/v22/dbus
 github.com/coreos/go-systemd/v22/internal/dlopen
 github.com/coreos/go-systemd/v22/journal
 github.com/coreos/go-systemd/v22/sdjournal
+# github.com/cucumber/cucumber-expressions/go/v19 v19.0.0
+## explicit; go 1.19
+github.com/cucumber/cucumber-expressions/go/v19
 # github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 ## explicit
 github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer
@@ -566,10 +563,6 @@ github.com/felixge/httpsnoop
 ## explicit; go 1.17
 github.com/fsnotify/fsnotify
 github.com/fsnotify/fsnotify/internal
-# github.com/glebarez/go-sqlite v1.21.2
-## explicit; go 1.17
-# github.com/glebarez/sqlite v1.11.0
-## explicit; go 1.18
 # github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376
 ## explicit; go 1.13
 github.com/go-git/gcfg
@@ -721,8 +714,6 @@ github.com/googleapis/gax-go/v2/internallog
 github.com/googleapis/gax-go/v2/internallog/grpclog
 github.com/googleapis/gax-go/v2/internallog/internal
 github.com/googleapis/gax-go/v2/iterator
-# github.com/goph/emperror v0.17.2
-## explicit; go 1.12
 # github.com/gorilla/css v1.0.1
 ## explicit; go 1.20
 github.com/gorilla/css/scanner
@@ -738,8 +729,6 @@ github.com/hashicorp/errwrap
 # github.com/hashicorp/go-multierror v1.1.1
 ## explicit; go 1.13
 github.com/hashicorp/go-multierror
-# github.com/huandu/xstrings v1.5.0
-## explicit; go 1.12
 # github.com/inconshreveable/go-update v0.0.0-20160112193335-8152e7eb6ccf
 ## explicit
 github.com/inconshreveable/go-update
@@ -803,8 +792,6 @@ github.com/lucasb-eyer/go-colorful
 github.com/manifoldco/promptui
 github.com/manifoldco/promptui/list
 github.com/manifoldco/promptui/screenbuf
-# github.com/mattn/go-colorable v0.1.14
-## explicit; go 1.18
 # github.com/mattn/go-isatty v0.0.20
 ## explicit; go 1.15
 github.com/mattn/go-isatty
@@ -880,8 +867,6 @@ github.com/muesli/termenv
 # github.com/ncruces/go-strftime v0.1.9
 ## explicit; go 1.17
 github.com/ncruces/go-strftime
-# github.com/nikolalohinski/gonja v1.5.3
-## explicit; go 1.20
 # github.com/nxadm/tail v1.4.11
 ## explicit; go 1.13
 github.com/nxadm/tail
@@ -968,8 +953,6 @@ github.com/secure-systems-lab/go-securesystemslib/encrypted
 # github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3
 ## explicit; go 1.13
 github.com/sergi/go-diff/diffmatchpatch
-# github.com/shopspring/decimal v1.4.0
-## explicit; go 1.10
 # github.com/sigstore/fulcio v1.8.5
 ## explicit; go 1.25.0
 github.com/sigstore/fulcio/pkg/certificate
@@ -992,8 +975,6 @@ github.com/skeema/knownhosts
 ## explicit; go 1.14
 github.com/smallstep/pkcs7
 github.com/smallstep/pkcs7/internal/legacy/x509
-# github.com/spf13/cast v1.7.1
-## explicit; go 1.19
 # github.com/spf13/pflag v1.0.10
 ## explicit; go 1.12
 github.com/spf13/pflag
@@ -1119,8 +1100,6 @@ go.opentelemetry.io/otel/trace
 go.opentelemetry.io/otel/trace/embedded
 go.opentelemetry.io/otel/trace/internal/telemetry
 go.opentelemetry.io/otel/trace/noop
-# go.starlark.net v0.0.0-20230302034142-4b1e35fe2254
-## explicit; go 1.16
 # go.uber.org/dig v1.19.0
 ## explicit; go 1.20
 go.uber.org/dig

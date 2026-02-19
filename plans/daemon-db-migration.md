@@ -70,35 +70,38 @@ Migrate from monolithic TUI with embedded DB to a client-server architecture whe
 1. **Edict sovereignty:** Only the Ruler (human) creates edicts via `SubmitEdict`. Ministers can refine/update edicts but never create them. Confucius can *suggest* edicts via zhengming, but creation is the Ruler's prerogative.
 2. **ConnectTo as primary interface:** The Ruler attaches to an edict's lifecycle via a bidirectional stream. Everything flows through it — court output, zhengming questions, ruler prompts. Like `tmux attach` for an edict.
 3. **LLM sessions are infrastructure:** Each minister manages its own LLM sessions internally. Observe them via `ConnectTo(minister_name)`, never manage them directly.
+4. **Edicts & Hunts replace sessions:** `:resume` is replaced by `:edicts` and `:hunts`. A Hunt is a Confucius dialogue that clarifies intent before creating an edict.
 
 ### Edict Lifecycle Flow
 
 ```
 User types prompt
        │
-       ▼
-  SubmitEdict(intent, ritual?)  →  edict_id
-       │
-       ▼
-  ConnectTo(edict_id)  →  bidirectional stream
-       │
-       ├── ritual specified? ──────────────────────┐
+       ├── Clear intent? ─────────────────────────┐
        │   NO                                      │ YES
        ▼                                           ▼
-  ┌──────────────────────────────────┐    Skip brewing,
-  │  BREWING                        │    enact ritual directly
-  │  Chancellor distils edict name, │         │
-  │  asks zhengming if ambiguous,   │         │
-  │  refines intent                 │         │
-  ├──────────────────────────────────┤         │
-  │  Classifies size (S/L), enacts  │         │
-  │  ritual: swift-strike or        │         │
-  │  grand-campaign                 │         │
-  └──────────────────────────────────┘         │
-       │                                       │
-       └───────────────┬───────────────────────┘
-                       ▼
-  planning → forging → judging → censoring → sealed
+  StartHunt()  →  hunt_id                   SubmitEdict(intent, ritual?)  →  edict_id
+       │                                           │
+       ▼                                           ▼
+  ConnectTo(hunt_id)                        ConnectTo(edict_id)  →  bidirectional stream
+  Confucius dialogue                               │
+  clarifies intent                          ├── ritual specified? ──────────────────────┐
+       │                                    │   NO                                      │ YES
+       ▼                                    ▼                                           ▼
+  Hunt completes →              ┌──────────────────────────────────┐    Skip brewing,
+  SubmitEdict(refined intent)   │  BREWING                        │    enact ritual directly
+       │                        │  Chancellor distils edict name, │         │
+       └──────────────────────► │  asks zhengming if ambiguous,   │         │
+                                │  refines intent                 │         │
+                                ├──────────────────────────────────┤         │
+                                │  Classifies size (S/L), enacts  │         │
+                                │  ritual: swift-strike or        │         │
+                                │  grand-campaign                 │         │
+                                └──────────────────────────────────┘         │
+                                     │                                       │
+                                     └───────────────┬───────────────────────┘
+                                                     ▼
+  planning → forging → judging → censoring → deploying → sealed
 ```
 
 Any phase can be **halted** (boolean flag) when zhengming is pending. Resumes when Ruler answers via the `ConnectTo` stream.
@@ -122,12 +125,24 @@ service Shogunate {
   //   ConnectTo(ritual_run_id) → Ritual tab: observe progress + can abort
   rpc ConnectTo(stream RulerMessage) returns (stream CourtMessage);
 
+  // === Hunts (Confucius conversations → edict creation) ===
+
+  // Start a Hunt — a dialogue with Confucius to clarify intent before creating an edict
+  rpc StartHunt(StartHuntRequest) returns (HuntResponse);
+  rpc ListHunts(ListHuntsRequest) returns (ListHuntsResponse);
+
   // === Browse & Inspect (read-only, no stream) ===
 
   rpc GetEdict(GetEdictRequest) returns (EdictDetailResponse);
   rpc ListEdicts(ListEdictsRequest) returns (ListEdictsResponse);
   rpc GetTianEvents(GetTianEventsRequest) returns (TianEventsResponse);
   rpc ListRituals(Empty) returns (ListRitualsResponse);
+  rpc ListManifests(ListManifestsRequest) returns (ListManifestsResponse);
+  rpc ListVerdicts(ListVerdictsRequest) returns (ListVerdictsResponse);
+
+  // === History ===
+
+  rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse);
 
   // === Lifecycle ===
 
@@ -145,18 +160,26 @@ message Empty {}
 
 // === Edict ===
 
+// Identifies the repository and branch context for scoping edicts, history, etc.
+message RepoContext {
+  string username = 1;    // e.g., "daonb"
+  string repo = 2;        // e.g., "asimi-cli"
+  string branch = 3;      // e.g., "shogunate2"
+}
+
 message SubmitEdictRequest {
   string intent = 1;                       // The Ruler's words
   string issue_ref = 2;                    // Optional: linked issue/ticket
   map<string, string> context_files = 3;   // Files loaded via @ references
   string ritual = 4;                       // Optional: skip brewing, enact this ritual directly
                                            // If empty, Chancellor brews and classifies
+  RepoContext context = 5;                 // Repository and branch scope
 }
 
 message EdictResponse {
   string edict_id = 1;
   string intent = 2;
-  string current_phase = 3;   // brewing, planning, forging, judging, censoring, sealed, cancelled
+  string current_phase = 3;   // EdictPhase enum
   bool halted = 4;             // paused waiting on Zhengming (orthogonal to phase)
   string created_at = 5;
 }
@@ -168,7 +191,7 @@ message GetEdictRequest {
 message EdictDetailResponse {
   string edict_id = 1;
   string intent = 2;
-  string current_phase = 3;   // brewing, planning, forging, judging, censoring, sealed, cancelled
+  string current_phase = 3;   // EdictPhase enum
   bool halted = 4;             // paused waiting on Zhengming
   string created_at = 5;
   string updated_at = 6;
@@ -263,7 +286,7 @@ message ZhengmingQuestion {
   string request_id = 1;
   string minister_id = 2;
   string question = 3;
-  string priority = 4;       // normal, urgent
+  string priority = 4;
 }
 
 message ToolActivity {
@@ -297,7 +320,77 @@ message EdictSealed {
   string summary = 1;
 }
 
+// === Hunts (Confucius conversations → edict creation) ===
+
+message StartHuntRequest {
+  string initial_question = 1;
+  RepoContext context = 2;               // Repository and branch scope
+}
+
+message HuntResponse {
+  string hunt_id = 1;
+  string status = 2;      // active, completed (edict created), abandoned
+  string edict_id = 3;    // set when hunt completes with an edict
+  string created_at = 4;
+}
+
+message ListHuntsRequest {
+  int32 limit = 1;
+}
+
+message ListHuntsResponse {
+  repeated HuntResponse hunts = 1;
+}
+
+// === Manifests & Verdicts (read-only inspection) ===
+
+message ListManifestsRequest {
+  string edict_id = 1;
+}
+
+message ListManifestsResponse {
+  repeated ManifestInfo manifests = 1;
+}
+
+message ManifestInfo {
+  string manifest_id = 1;
+  string edict_id = 2;
+  string ling_id = 3;
+  string file_path = 4;
+  string func_name = 5;
+  string status = 6;       // staged, live, quenched, rejected
+  string created_at = 7;
+}
+
+message ListVerdictsRequest {
+  string manifest_id = 1;
+}
+
+message ListVerdictsResponse {
+  repeated VerdictInfo verdicts = 1;
+}
+
+message VerdictInfo {
+  string verdict_id = 1;
+  string manifest_id = 2;
+  string test_suite = 3;
+  string outcome = 4;      // passed, failed
+  string created_at = 5;
+}
+
+// === Prompt History ===
+
+message ListPromptsRequest {
+  int32 limit = 1;
+}
+
+message ListPromptsResponse {
+  repeated string prompts = 1;
+}
+
 // === Zhengming ===
+// Note: RulerCouncil (human approval) merges with zhengming.
+// Council approval requests use priority = "council" to distinguish from normal clarifications.
 
 message Zhengming {
   string request_id = 1;
@@ -535,12 +628,18 @@ func connect(addr string) (asimi.AsimiDaemonClient, error) {
    - `main.go` should not import `storage` or `shogunate` directly
    - All interaction through `ShogunateService` client
 
+4. **Command history stays client-local**
+   - Stored in `.agents/command.history` (bash-style format)
+   - Not part of the daemon API
+
 ### Phase 4: Cleanup & Optimization
 
 1. **Remove `ShogunateSchema` DDL** — GORM AutoMigrate is the source of truth
 2. **Remove `storage.DB` abstraction** — GORM only
-3. **Add request timeout/retry** — resilience patterns
-4. **Update documentation**
+3. **Drop old `workflows`/`workflow_steps` tables** — rituals replace them, no backward compatibility needed
+4. **Daemon handles cleanup automatically** — periodic old-edict pruning and vacuum, no maintenance RPC needed
+5. **Add request timeout/retry** — resilience patterns
+6. **Update documentation**
 
 ## File Structure After Migration
 

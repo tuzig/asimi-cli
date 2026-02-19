@@ -1,0 +1,209 @@
+- name: swift-strike
+  description: "The Swift Strike (S) - A tight loop of creation and validation"
+  triggers:
+    - manual: true
+  inputs:
+    edict_id:
+      type: string
+      required: true
+  max_retries: 3
+  background:
+    - the edict details
+  steps:
+    - name: forge
+      minister: forge
+      act: |
+        Implement the changes for edict {{ .edict_id }}.
+        Focus on minimal, targeted changes to fulfill the intent.
+      on_failure: retry
+
+    - name: judge
+      minister: judge
+      given:
+        - the manifests
+      act: |
+        Run tests and validate the changes for edict {{ .edict_id }}.
+        If tests fail, provide clear feedback for the Forge.
+      then:
+        - "!just test"
+      depends_on: [forge]
+      on_failure: goto
+      on_failure_target: forge
+
+- name: grand-campaign
+  description: "The Grand Campaign (L) - Architecture-first with strict gatekeeping"
+  triggers:
+    - manual: true
+  inputs:
+    edict_id:
+      type: string
+      required: true
+  max_retries: 3
+  background:
+    - the edict details
+  steps:
+    - name: strategist
+      minister: strategist
+      act: |
+        Analyze edict {{ .edict_id }} and produce a technical Battle Plan.
+        Break down the work into clear phases with dependencies.
+        Identify risks and architectural decisions.
+      on_failure: zhengming
+
+    - name: forge
+      minister: forge
+      given:
+        - the manifests
+      act: |
+        Execute the Battle Plan for edict {{ .edict_id }}.
+        Implement changes according to the Strategist's design.
+      depends_on: [strategist]
+      on_failure: retry
+
+    - name: judge
+      minister: judge
+      given:
+        - the manifests
+      act: |
+        Run the Trials for edict {{ .edict_id }}.
+        Execute all tests and validate the Forge's work.
+        If the Judge fails, the Forge must return to the anvil.
+      then:
+        - "!just test"
+      depends_on: [forge]
+      on_failure: goto
+      on_failure_target: forge
+
+    - name: censor
+      minister: censor
+      given:
+        - the manifests
+        - the verdicts
+      act: |
+        Review the implemented code for edict {{ .edict_id }}.
+        Verify it adheres to the Imperial Code (project standards).
+        Veto if the code violates conventions or introduces risk.
+      depends_on: [judge]
+      on_failure: goto
+      on_failure_target: strategist
+
+- name: wakeup
+  description: "Startup ritual - report court status on Shogunate boot"
+  triggers:
+    - event: shogunate_started
+  background:
+    - the court status
+  steps:
+    - name: report
+      type: prompt
+      act: |
+        The Shogunate has awoken. Report the current court status.
+        List any active edicts, their phases, and any pending zhengming.
+
+- name: grand-orchestration
+  description: "Full lifecycle orchestration - strategize, forge, judge, censor, deploy"
+  triggers:
+    - manual: true
+  inputs:
+    edict_id:
+      type: string
+      required: true
+  max_retries: 3
+  background:
+    - the edict details
+  steps:
+    - name: strategist
+      minister: strategist
+      act: |
+        Produce a comprehensive Battle Plan for edict {{ .edict_id }}.
+        Decompose into lings with dependencies.
+      on_failure: zhengming
+
+    - name: forge
+      minister: forge
+      given:
+        - the manifests
+      act: |
+        Execute all lings for edict {{ .edict_id }}.
+        Implement each change and stage manifests.
+      depends_on: [strategist]
+      on_failure: retry
+
+    - name: judge
+      minister: judge
+      given:
+        - the manifests
+      act: |
+        Run the full trial suite for edict {{ .edict_id }}.
+      then:
+        - "!just test"
+      depends_on: [forge]
+      on_failure: goto
+      on_failure_target: forge
+
+    - name: censor
+      minister: censor
+      given:
+        - the manifests
+        - the verdicts
+      act: |
+        Full ethics and standards review for edict {{ .edict_id }}.
+      depends_on: [judge]
+      on_failure: goto
+      on_failure_target: strategist
+
+    - name: deploy
+      minister: marshal
+      given:
+        - the manifests
+        - the verdicts
+        - the precedents
+      act: |
+        Prepare deployment for edict {{ .edict_id }}.
+        Verify all seals are in place before proceeding.
+      depends_on: [censor]
+      on_failure: zhengming
+
+- name: review
+  description: "Code review - judge and censor review current changes before producing a report"
+  triggers:
+    - manual: true
+  background:
+    - "!git diff"
+    - "!just test"
+  steps:
+    - name: judge
+      minister: judge
+      act: |
+        Review the code changes. Run tests and identify any issues,
+        bugs, or missing test coverage.
+
+    - name: censor
+      minister: censor
+      act: |
+        Review the code changes for quality and standards compliance.
+        Check for style violations, security concerns, and architectural issues.
+      depends_on: [judge]
+
+    - name: report
+      type: prompt
+      act: |
+        Produce a comprehensive code review report.
+        Summarize the findings from the judge and censor.
+        Highlight any blocking issues and suggest improvements.
+      depends_on: [censor]
+
+- name: report_failure
+  description: "Report ritual failure after retry exhaustion"
+  triggers:
+    - event: ritual_failed
+  background:
+    - the edict details
+    - the court status
+  steps:
+    - name: report
+      type: prompt
+      act: |
+        A ritual has failed after exhausting all retries for edict {{ .edict_id }}.
+        Analyze the failure and suggest next steps.
+        Consider requesting zhengming if the path forward is unclear.

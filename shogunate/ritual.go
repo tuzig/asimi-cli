@@ -7,9 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
+
+	cucumberexpressions "github.com/cucumber/cucumber-expressions/go/v19"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/runners"
@@ -17,176 +20,6 @@ import (
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
-
-// Embedded basic rituals - loaded by default
-var embeddedRituals = map[string]string{
-	"swift-strike": `
-name: swift-strike
-description: "The Swift Strike (S) - A tight loop of creation and validation"
-triggers:
-  - manual: true
-inputs:
-  edict_id:
-    type: string
-    required: true
-max_retries: 3
-steps:
-  - name: forge
-    minister: forge
-    arrange: [get_edict]
-    act: |
-      Implement the changes for edict {{ .edict_id }}.
-      Focus on minimal, targeted changes to fulfill the intent.
-    on_failure: retry
-
-  - name: judge
-    minister: judge
-    arrange: [get_edict, get_manifests]
-    act: |
-      Run tests and validate the changes for edict {{ .edict_id }}.
-      If tests fail, provide clear feedback for the Forge.
-    depends_on: [forge]
-    on_failure: goto
-    on_failure_target: forge
-`,
-
-	"grand-campaign": `
-name: grand-campaign
-description: "The Grand Campaign (L) - Architecture-first with strict gatekeeping"
-triggers:
-  - manual: true
-inputs:
-  edict_id:
-    type: string
-    required: true
-max_retries: 3
-steps:
-  - name: strategist
-    minister: strategist
-    arrange: [get_edict]
-    act: |
-      Analyze edict {{ .edict_id }} and produce a technical Battle Plan.
-      Break down the work into clear phases with dependencies.
-      Identify risks and architectural decisions.
-    on_failure: zhengming
-
-  - name: forge
-    minister: forge
-    arrange: [get_edict, get_manifests]
-    act: |
-      Execute the Battle Plan for edict {{ .edict_id }}.
-      Implement changes according to the Strategist's design.
-    depends_on: [strategist]
-    on_failure: retry
-
-  - name: judge
-    minister: judge
-    arrange: [get_edict, get_manifests]
-    act: |
-      Run the Trials for edict {{ .edict_id }}.
-      Execute all tests and validate the Forge's work.
-      If the Judge fails, the Forge must return to the anvil.
-    depends_on: [forge]
-    on_failure: goto
-    on_failure_target: forge
-
-  - name: censor
-    minister: censor
-    arrange: [get_edict, get_manifests, get_verdicts]
-    act: |
-      Review the implemented code for edict {{ .edict_id }}.
-      Verify it adheres to the Imperial Code (project standards).
-      Veto if the code violates conventions or introduces risk.
-    depends_on: [judge]
-    on_failure: goto
-    on_failure_target: strategist
-`,
-
-	"wakeup": `
-name: wakeup
-description: "Startup ritual - report court status on Shogunate boot"
-triggers:
-  - event: shogunate_started
-steps:
-  - name: report
-    type: prompt
-    arrange: [get_court_status]
-    act: |
-      The Shogunate has awoken. Report the current court status.
-      List any active edicts, their phases, and any pending zhengming.
-`,
-
-	"grand-orchestration": `
-name: grand-orchestration
-description: "Full lifecycle orchestration - strategize, forge, judge, censor, deploy"
-triggers:
-  - manual: true
-inputs:
-  edict_id:
-    type: string
-    required: true
-max_retries: 3
-steps:
-  - name: strategist
-    minister: strategist
-    arrange: [get_edict]
-    act: |
-      Produce a comprehensive Battle Plan for edict {{ .edict_id }}.
-      Decompose into lings with dependencies.
-    on_failure: zhengming
-
-  - name: forge
-    minister: forge
-    arrange: [get_edict, get_manifests]
-    act: |
-      Execute all lings for edict {{ .edict_id }}.
-      Implement each change and stage manifests.
-    depends_on: [strategist]
-    on_failure: retry
-
-  - name: judge
-    minister: judge
-    arrange: [get_edict, get_manifests]
-    act: |
-      Run the full trial suite for edict {{ .edict_id }}.
-    depends_on: [forge]
-    on_failure: goto
-    on_failure_target: forge
-
-  - name: censor
-    minister: censor
-    arrange: [get_edict, get_manifests, get_verdicts]
-    act: |
-      Full ethics and standards review for edict {{ .edict_id }}.
-    depends_on: [judge]
-    on_failure: goto
-    on_failure_target: strategist
-
-  - name: deploy
-    minister: marshal
-    arrange: [get_edict, get_manifests, get_verdicts, get_precedents]
-    act: |
-      Prepare deployment for edict {{ .edict_id }}.
-      Verify all seals are in place before proceeding.
-    depends_on: [censor]
-    on_failure: zhengming
-`,
-
-	"report_failure": `
-name: report_failure
-description: "Report ritual failure after retry exhaustion"
-triggers:
-  - event: ritual_failed
-steps:
-  - name: report
-    type: prompt
-    arrange: [get_edict, get_court_status]
-    act: |
-      A ritual has failed after exhausting all retries for edict {{ .edict_id }}.
-      Analyze the failure and suggest next steps.
-      Consider requesting zhengming if the path forward is unclear.
-`,
-}
 
 // RitualState represents the current state of a ritual execution
 type RitualState string
@@ -216,7 +49,7 @@ type RitualDef struct {
 	Description string              `yaml:"description"`
 	Triggers    []RitualTrigger     `yaml:"triggers,omitempty"`
 	Inputs      map[string]InputDef `yaml:"inputs,omitempty"`
-	Arrange     []string            `yaml:"arrange,omitempty"`     // Ritual-level arrange functions (run before first step)
+	Background  []string            `yaml:"background,omitempty"`  // Shared given steps that run before every execution
 	OnFailure   string              `yaml:"on_failure,omitempty"`  // Default on_failure for all steps
 	MaxRetries  int                 `yaml:"max_retries,omitempty"` // Default max_retries for all steps
 	Steps       []RitualStep        `yaml:"steps"`
@@ -236,25 +69,131 @@ type InputDef struct {
 	Description string `yaml:"description,omitempty"`
 }
 
-// RitualStep defines a single step in a ritual (AAA model: Arrange → Act → Assert)
+// RitualStep defines a single step in a ritual (Given → Act → Then)
 type RitualStep struct {
-	Name            string   `yaml:"name"`
-	Type            string   `yaml:"type,omitempty"`              // minister, prompt, cmd, gate, confirm (default: minister if minister is set)
-	Minister        string   `yaml:"minister,omitempty"`          // For minister steps
-	Arrange         []string `yaml:"arrange,omitempty"`           // Builtin arrange functions to run before act
-	Act             string   `yaml:"act,omitempty"`               // The action: task text, command, or prompt
-	Assert          string   `yaml:"assert,omitempty"`            // Post-act validation command
-	Task            string   `yaml:"task,omitempty"`              // Alias for Act (backward compat)
-	Command         string   `yaml:"command,omitempty"`           // For cmd steps
-	Condition       string   `yaml:"condition,omitempty"`         // For gate steps
-	DependsOn       []string `yaml:"depends_on,omitempty"`        // Steps that must complete first
-	OnFailure       string   `yaml:"on_failure,omitempty"`        // retry, zhengming, goto, abort
-	OnFailureTarget string   `yaml:"on_failure_target,omitempty"` // Target step for goto
-	MaxRetries      int      `yaml:"max_retries,omitempty"`       // Override default retries
-	Scope           string   `yaml:"scope,omitempty"`             // Execution scope (e.g., "edict", "global")
-	Model           string   `yaml:"model,omitempty"`             // LLM model override for this step
-	Temperature     float64  `yaml:"temperature,omitempty"`       // LLM temperature override
-	Env             map[string]string `yaml:"env,omitempty"`      // Environment variables for this step
+	Name            string            `yaml:"name"`
+	Type            string            `yaml:"type,omitempty"`              // minister, prompt, cmd, gate, confirm (default: minister if minister is set)
+	Minister        string            `yaml:"minister,omitempty"`          // For minister steps
+	Given           []string          `yaml:"given,omitempty"`             // Given steps: "!" prefix = bash, else matched via step registry
+	Act             string            `yaml:"act,omitempty"`               // The action: task text, command, or prompt
+	Then            []string          `yaml:"then,omitempty"`              // Then steps: "!" prefix = bash, else matched via step registry
+	Task            string            `yaml:"task,omitempty"`              // Alias for Act (backward compat)
+	Command         string            `yaml:"command,omitempty"`           // For cmd steps
+	Condition       string            `yaml:"condition,omitempty"`         // For gate steps
+	DependsOn       []string          `yaml:"depends_on,omitempty"`        // Steps that must complete first
+	OnFailure       string            `yaml:"on_failure,omitempty"`        // retry, zhengming, goto, abort
+	OnFailureTarget string            `yaml:"on_failure_target,omitempty"` // Target step for goto
+	MaxRetries      int               `yaml:"max_retries,omitempty"`       // Override default retries
+	Scope           string            `yaml:"scope,omitempty"`             // Execution scope (e.g., "edict", "global")
+	Model           string            `yaml:"model,omitempty"`             // LLM model override for this step
+	Temperature     float64           `yaml:"temperature,omitempty"`       // LLM temperature override
+	Env             map[string]string `yaml:"env,omitempty"`               // Environment variables for this step
+}
+
+// StepDefKind distinguishes bash commands from builtin handlers
+type StepDefKind int
+
+const (
+	StepDefBash    StepDefKind = iota // "!" prefix — inline bash command
+	StepDefBuiltin                    // matched via cucumber-expressions registry
+)
+
+// StepDefEntry is a resolved step definition ready for execution
+type StepDefEntry struct {
+	Kind    StepDefKind
+	Key     string // output key for given context (e.g. "edict", "manifests", or sanitized command)
+	Command string // for bash: the raw command; for builtin: the handler name
+}
+
+// StepDef maps a cucumber expression pattern to a handler
+type StepDef struct {
+	Pattern    string // cucumber expression pattern
+	HandlerKey string // key used to dispatch to runBuiltinGiven/runBuiltinThen
+	OutputKey  string // key stored in given_context
+	expression cucumberexpressions.Expression
+}
+
+// StepDefRegistry holds registered step definitions matched via cucumber-expressions
+type StepDefRegistry struct {
+	paramRegistry *cucumberexpressions.ParameterTypeRegistry
+	defs          []StepDef
+}
+
+// NewStepDefRegistry creates a registry with built-in given step definitions
+func NewStepDefRegistry() *StepDefRegistry {
+	r := &StepDefRegistry{
+		paramRegistry: cucumberexpressions.NewParameterTypeRegistry(),
+	}
+	// Register built-in given steps
+	builtins := []struct {
+		pattern    string
+		handlerKey string
+		outputKey  string
+	}{
+		{"the edict details", "get_edict", "edict"},
+		{"the court status", "get_court_status", "court_status"},
+		{"the manifests", "get_manifests", "manifests"},
+		{"the verdicts", "get_verdicts", "verdicts"},
+		{"the precedents", "get_precedents", "precedents"},
+	}
+	for _, b := range builtins {
+		_ = r.Register(b.pattern, b.handlerKey, b.outputKey) // builtin patterns are known-good
+	}
+	return r
+}
+
+// Register adds a step definition to the registry
+func (r *StepDefRegistry) Register(pattern, handlerKey, outputKey string) error {
+	expr, err := cucumberexpressions.NewCucumberExpression(pattern, r.paramRegistry)
+	if err != nil {
+		return fmt.Errorf("invalid cucumber expression %q: %w", pattern, err)
+	}
+	r.defs = append(r.defs, StepDef{
+		Pattern:    pattern,
+		HandlerKey: handlerKey,
+		OutputKey:  outputKey,
+		expression: expr,
+	})
+	return nil
+}
+
+// Match finds the first step definition that matches the given text
+func (r *StepDefRegistry) Match(text string) (*StepDef, error) {
+	for i := range r.defs {
+		args, err := r.defs[i].expression.Match(text)
+		if err != nil {
+			return nil, err
+		}
+		if args != nil {
+			return &r.defs[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// LoadStepDefsFromFile loads user-defined step definitions from a YAML file
+func (r *StepDefRegistry) LoadStepDefsFromFile(path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading step definitions: %w", err)
+	}
+	var defs []struct {
+		Pattern string `yaml:"pattern"`
+		Command string `yaml:"command"`
+		Key     string `yaml:"key"`
+	}
+	if err := yaml.Unmarshal(data, &defs); err != nil {
+		return fmt.Errorf("parsing step definitions: %w", err)
+	}
+	for _, d := range defs {
+		if err := r.Register(d.Pattern, d.Command, d.Key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RitualRegistry stores loaded rituals
@@ -455,26 +394,6 @@ func checkCircularDeps(def *RitualDef) error {
 	return nil
 }
 
-// LoadEmbeddedRituals loads the built-in default rituals
-func LoadEmbeddedRituals() ([]*RitualDef, error) {
-	var rituals []*RitualDef
-
-	for name, content := range embeddedRituals {
-		ritual, err := ParseRitual([]byte(content))
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse embedded ritual %s: %w", name, err)
-		}
-
-		if err := ValidateRitual(ritual); err != nil {
-			return nil, fmt.Errorf("invalid embedded ritual %s: %w", name, err)
-		}
-
-		rituals = append(rituals, ritual)
-	}
-
-	return rituals, nil
-}
-
 // LoadRitualsFromDir loads all .yaml/.yml files from a directory
 func LoadRitualsFromDir(dir string) ([]*RitualDef, error) {
 	var rituals []*RitualDef
@@ -521,6 +440,7 @@ func LoadRitualsFromDir(dir string) ([]*RitualDef, error) {
 // RitualRunner executes rituals
 type RitualRunner struct {
 	registry   *RitualRegistry
+	stepDefs   *StepDefRegistry
 	shogunate  *Shogunate
 	db         *gorm.DB
 	runner     runners.Runner
@@ -535,6 +455,7 @@ func NewRitualRunner(registry *RitualRegistry, shogunate *Shogunate, db *gorm.DB
 	}
 	return &RitualRunner{
 		registry:   registry,
+		stepDefs:   NewStepDefRegistry(),
 		shogunate:  shogunate,
 		db:         db,
 		runner:     runner,
@@ -657,6 +578,31 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 	})
+
+	// === BACKGROUND ===
+	for _, raw := range exec.def.Background {
+		entry, err := r.resolveStepDef(raw)
+		if err != nil {
+			exec.State = RitualStateFailed
+			r.saveExecution(exec)
+			return fmt.Errorf("background given %q failed: %w", raw, err)
+		}
+		result, err := r.runGivenStep(ctx, exec, entry)
+		if err != nil {
+			exec.State = RitualStateFailed
+			r.saveExecution(exec)
+			return fmt.Errorf("background given %q failed: %w", raw, err)
+		}
+		if exec.Data == nil {
+			exec.Data = storage.JSON{}
+		}
+		givenCtx, _ := exec.Data["given_context"].(map[string]interface{})
+		if givenCtx == nil {
+			givenCtx = make(map[string]interface{})
+		}
+		givenCtx[entry.Key] = result
+		exec.Data["given_context"] = givenCtx
+	}
 
 	for exec.CurrentStep < len(exec.def.Steps) {
 		select {
@@ -795,7 +741,7 @@ func (step *RitualStep) resolveMaxRetries(def *RitualDef) int {
 	return 0
 }
 
-// executeStep runs a single ritual step using the AAA model: Arrange → Act → Assert
+// executeStep runs a single ritual step using the Given → Act → Then model
 func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
 	r.saveExecution(exec)
 
@@ -835,23 +781,27 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		}
 	}
 
-	// === ARRANGE ===
-	if len(step.Arrange) > 0 {
-		for _, fn := range step.Arrange {
-			result, err := r.runArrangeFunc(ctx, exec, fn)
+	// === GIVEN ===
+	if len(step.Given) > 0 {
+		for _, raw := range step.Given {
+			entry, err := r.resolveStepDef(raw)
 			if err != nil {
-				return "", fmt.Errorf("arrange %q failed: %w", fn, err)
+				return "", fmt.Errorf("given %q failed: %w", raw, err)
 			}
-			// Store arrange result in execution data for template use
+			result, err := r.runGivenStep(ctx, exec, entry)
+			if err != nil {
+				return "", fmt.Errorf("given %q failed: %w", raw, err)
+			}
+			// Store given result in execution data for template use
 			if exec.Data == nil {
 				exec.Data = storage.JSON{}
 			}
-			arrangeCtx, _ := exec.Data["arrange_context"].(map[string]interface{})
-			if arrangeCtx == nil {
-				arrangeCtx = make(map[string]interface{})
+			givenCtx, _ := exec.Data["given_context"].(map[string]interface{})
+			if givenCtx == nil {
+				givenCtx = make(map[string]interface{})
 			}
-			arrangeCtx[fn] = result
-			exec.Data["arrange_context"] = arrangeCtx
+			givenCtx[entry.Key] = result
+			exec.Data["given_context"] = givenCtx
 		}
 	}
 
@@ -881,11 +831,14 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		return "", err
 	}
 
-	// === ASSERT ===
-	if step.Assert != "" {
-		assertCmd := r.expandTemplate(step.Assert, exec)
-		if err := r.runAssert(ctx, exec, assertCmd); err != nil {
-			return "", fmt.Errorf("assert failed: %w", err)
+	// === THEN ===
+	for _, raw := range step.Then {
+		entry, err := r.resolveStepDef(raw)
+		if err != nil {
+			return "", fmt.Errorf("then %q failed: %w", raw, err)
+		}
+		if err := r.runThenStep(ctx, exec, entry); err != nil {
+			return "", fmt.Errorf("then %q failed: %w", raw, err)
 		}
 	}
 
@@ -994,8 +947,8 @@ func (r *RitualRunner) executeConfirmStep(ctx context.Context, exec *RitualExecu
 	return "confirmed", nil
 }
 
-// runArrangeFunc runs a builtin arrange function and returns the result
-func (r *RitualRunner) runArrangeFunc(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {
+// runBuiltinGiven runs a builtin given function and returns the result
+func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {
 	switch fn {
 	case "get_edict":
 		return r.arrangeGetEdict(exec.EdictID)
@@ -1008,7 +961,7 @@ func (r *RitualRunner) runArrangeFunc(ctx context.Context, exec *RitualExecution
 	case "get_precedents":
 		return r.arrangeGetPrecedents(exec.EdictID)
 	default:
-		return nil, fmt.Errorf("unknown arrange function: %s", fn)
+		return nil, fmt.Errorf("unknown given function: %s", fn)
 	}
 }
 
@@ -1096,23 +1049,89 @@ func (r *RitualRunner) arrangeGetPrecedents(edictID string) (interface{}, error)
 	return result, nil
 }
 
-// runAssert runs an assertion command and returns error if it fails
-func (r *RitualRunner) runAssert(ctx context.Context, exec *RitualExecution, assertCmd string) error {
-	if r.runner == nil {
-		return fmt.Errorf("no runner configured for assert")
+// runBuiltinThen runs a builtin then function (extensible via step registry)
+func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution, fn string) error {
+	return fmt.Errorf("unknown then function: %s", fn)
+}
+
+// resolveStepDef resolves a raw step string into a StepDefEntry.
+// "!" prefix → bash command, else matched via cucumber-expressions registry.
+func (r *RitualRunner) resolveStepDef(raw string) (StepDefEntry, error) {
+	if strings.HasPrefix(raw, "!") {
+		cmd := strings.TrimPrefix(raw, "!")
+		// Sanitize command into a key: take first word
+		key := strings.Fields(cmd)[0]
+		key = strings.ReplaceAll(key, "/", "_")
+		return StepDefEntry{
+			Kind:    StepDefBash,
+			Key:     key,
+			Command: cmd,
+		}, nil
 	}
-	output, err := r.runner.Run(ctx, runners.Input{
-		Command:        assertCmd,
-		Description:    fmt.Sprintf("assert: ritual %s", exec.RitualName),
-		BypassApproval: true,
-	})
+
+	def, err := r.stepDefs.Match(raw)
 	if err != nil {
-		return err
+		return StepDefEntry{}, fmt.Errorf("step matching error: %w", err)
 	}
-	if output.ExitCode != "0" {
-		return fmt.Errorf("assertion failed (exit %s): %s", output.ExitCode, output.Output)
+	if def == nil {
+		return StepDefEntry{}, fmt.Errorf("no step definition matches %q", raw)
 	}
-	return nil
+	return StepDefEntry{
+		Kind:    StepDefBuiltin,
+		Key:     def.OutputKey,
+		Command: def.HandlerKey,
+	}, nil
+}
+
+// runGivenStep executes a single given step and returns its result
+func (r *RitualRunner) runGivenStep(ctx context.Context, exec *RitualExecution, entry StepDefEntry) (interface{}, error) {
+	switch entry.Kind {
+	case StepDefBash:
+		if r.runner == nil {
+			return nil, fmt.Errorf("no runner configured for bash given step")
+		}
+		cmd := r.expandTemplate(entry.Command, exec)
+		output, err := r.runner.Run(ctx, runners.Input{
+			Command:        cmd,
+			Description:    fmt.Sprintf("given: %s", entry.Command),
+			BypassApproval: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return output.Output, nil
+	case StepDefBuiltin:
+		return r.runBuiltinGiven(ctx, exec, entry.Command)
+	default:
+		return nil, fmt.Errorf("unknown step kind: %d", entry.Kind)
+	}
+}
+
+// runThenStep executes a single then step and returns an error if it fails
+func (r *RitualRunner) runThenStep(ctx context.Context, exec *RitualExecution, entry StepDefEntry) error {
+	switch entry.Kind {
+	case StepDefBash:
+		if r.runner == nil {
+			return fmt.Errorf("no runner configured for bash then step")
+		}
+		cmd := r.expandTemplate(entry.Command, exec)
+		output, err := r.runner.Run(ctx, runners.Input{
+			Command:        cmd,
+			Description:    fmt.Sprintf("then: %s", entry.Command),
+			BypassApproval: true,
+		})
+		if err != nil {
+			return err
+		}
+		if output.ExitCode != "0" {
+			return fmt.Errorf("then failed (exit %s): %s", output.ExitCode, output.Output)
+		}
+		return nil
+	case StepDefBuiltin:
+		return r.runBuiltinThen(ctx, exec, entry.Command)
+	default:
+		return fmt.Errorf("unknown step kind: %d", entry.Kind)
+	}
 }
 
 // handleFailure handles step failure based on on_failure action
@@ -1237,10 +1256,10 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 			}
 		}
 	}
-	// Merge arrange context into template data
+	// Merge given context into template data
 	if exec.Data != nil {
-		if arrangeCtx, ok := exec.Data["arrange_context"].(map[string]interface{}); ok {
-			for k, v := range arrangeCtx {
+		if givenCtx, ok := exec.Data["given_context"].(map[string]interface{}); ok {
+			for k, v := range givenCtx {
 				data[k] = v
 			}
 		}

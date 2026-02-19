@@ -118,6 +118,40 @@ steps:
 			},
 		},
 		{
+			name: "ritual with given and then",
+			yaml: `
+name: gherkin-ritual
+steps:
+  - name: step1
+    minister: forge
+    given:
+      - the edict details
+      - "!git diff HEAD"
+    act: |
+      Implement changes.
+    then:
+      - "!just test"
+`,
+			wantErr: false,
+			check: func(t *testing.T, r *RitualDef) {
+				if len(r.Steps[0].Given) != 2 {
+					t.Errorf("expected 2 given entries, got %d", len(r.Steps[0].Given))
+				}
+				if r.Steps[0].Given[0] != "the edict details" {
+					t.Errorf("expected first given 'the edict details', got %q", r.Steps[0].Given[0])
+				}
+				if r.Steps[0].Given[1] != "!git diff HEAD" {
+					t.Errorf("expected second given '!git diff HEAD', got %q", r.Steps[0].Given[1])
+				}
+				if len(r.Steps[0].Then) != 1 {
+					t.Errorf("expected 1 then entry, got %d", len(r.Steps[0].Then))
+				}
+				if r.Steps[0].Then[0] != "!just test" {
+					t.Errorf("expected then '!just test', got %q", r.Steps[0].Then[0])
+				}
+			},
+		},
+		{
 			name:    "invalid yaml",
 			yaml:    `{{{invalid yaml`,
 			wantErr: true,
@@ -401,16 +435,16 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 		t.Fatalf("LoadEmbeddedRituals() error = %v", err)
 	}
 
-	if len(rituals) != 5 {
+	if len(rituals) != 6 {
 		names := make([]string, len(rituals))
 		for i, r := range rituals {
 			names[i] = r.Name
 		}
-		t.Errorf("expected 5 embedded rituals, got %d: %v", len(rituals), names)
+		t.Errorf("expected 6 embedded rituals, got %d: %v", len(rituals), names)
 	}
 
 	// Check key rituals exist
-	var foundSwift, foundGrand, foundWakeup, foundOrchestration, foundReport bool
+	var foundSwift, foundGrand, foundWakeup, foundOrchestration, foundReport, foundReview bool
 	for _, r := range rituals {
 		switch r.Name {
 		case "swift-strike":
@@ -424,9 +458,16 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 			if r.Steps[1].Minister != "judge" {
 				t.Errorf("swift-strike: expected second step minister 'judge', got %q", r.Steps[1].Minister)
 			}
-			// Verify AAA: steps should have arrange functions
-			if len(r.Steps[0].Arrange) == 0 {
-				t.Error("swift-strike forge step: expected arrange functions")
+			// Verify Background
+			if len(r.Background) == 0 {
+				t.Error("swift-strike: expected background")
+			}
+			if r.Background[0] != "the edict details" {
+				t.Errorf("swift-strike: expected background 'the edict details', got %q", r.Background[0])
+			}
+			// Forge step should have no step-level given (hoisted to background)
+			if len(r.Steps[0].Given) != 0 {
+				t.Errorf("swift-strike forge: expected no step-level given (hoisted), got %v", r.Steps[0].Given)
 			}
 			// Verify Act is used (not Task)
 			if r.Steps[0].Act == "" {
@@ -449,6 +490,31 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 				t.Errorf("grand-campaign: expected max_retries 3, got %d", r.MaxRetries)
 			}
 
+		case "review":
+			foundReview = true
+			if len(r.Steps) != 3 {
+				t.Errorf("review: expected 3 steps, got %d", len(r.Steps))
+			}
+			// Background: git diff and just test at ritual level
+			if len(r.Background) != 2 || r.Background[0] != "!git diff" || r.Background[1] != "!just test" {
+				t.Errorf("review: expected background ['!git diff', '!just test'], got %v", r.Background)
+			}
+			// Judge step should have no then and no step-level given
+			if len(r.Steps[0].Given) != 0 {
+				t.Errorf("review judge: expected no step-level given, got %v", r.Steps[0].Given)
+			}
+			if len(r.Steps[0].Then) != 0 {
+				t.Errorf("review judge: expected no then entries, got %v", r.Steps[0].Then)
+			}
+			// Censor depends on judge
+			if len(r.Steps[1].DependsOn) != 1 || r.Steps[1].DependsOn[0] != "judge" {
+				t.Errorf("review censor: expected depends_on [judge], got %v", r.Steps[1].DependsOn)
+			}
+			// Report step is a prompt
+			if r.Steps[2].Type != "prompt" {
+				t.Errorf("review report: expected type 'prompt', got %q", r.Steps[2].Type)
+			}
+
 		case "wakeup":
 			foundWakeup = true
 		case "grand-orchestration":
@@ -463,6 +529,9 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 	}
 	if !foundGrand {
 		t.Error("grand-campaign ritual not found")
+	}
+	if !foundReview {
+		t.Error("review ritual not found")
 	}
 	if !foundWakeup {
 		t.Error("wakeup ritual not found")
@@ -496,10 +565,10 @@ func TestRitualStreamMessages(t *testing.T) {
 		},
 		Steps: []RitualStep{
 			{
-				Name:     "echo",
-				Type:     "cmd",
-				Command:  "echo hello",
-				Task:     "Echo hello",
+				Name:    "echo",
+				Type:    "cmd",
+				Command: "echo hello",
+				Task:    "Echo hello",
 			},
 		},
 	}
@@ -688,6 +757,295 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 	}
 }
 
+func TestStepDefRegistry(t *testing.T) {
+	reg := NewStepDefRegistry()
+
+	// Test matching built-in patterns
+	tests := []struct {
+		text    string
+		wantKey string
+		wantNil bool
+	}{
+		{"the edict details", "edict", false},
+		{"the court status", "court_status", false},
+		{"the manifests", "manifests", false},
+		{"the verdicts", "verdicts", false},
+		{"the precedents", "precedents", false},
+		{"something unknown", "", true},
+	}
+
+	for _, tt := range tests {
+		def, err := reg.Match(tt.text)
+		if err != nil {
+			t.Fatalf("Match(%q) error: %v", tt.text, err)
+		}
+		if tt.wantNil {
+			if def != nil {
+				t.Errorf("Match(%q) expected nil, got key=%q", tt.text, def.OutputKey)
+			}
+		} else {
+			if def == nil {
+				t.Errorf("Match(%q) expected key=%q, got nil", tt.text, tt.wantKey)
+			} else if def.OutputKey != tt.wantKey {
+				t.Errorf("Match(%q) expected key=%q, got %q", tt.text, tt.wantKey, def.OutputKey)
+			}
+		}
+	}
+}
+
+func TestResolveStepDef(t *testing.T) {
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, db, nil, nil)
+
+	// Test bash command resolution
+	entry, err := runner.resolveStepDef("!just test")
+	if err != nil {
+		t.Fatalf("resolveStepDef('!just test') error: %v", err)
+	}
+	if entry.Kind != StepDefBash {
+		t.Errorf("expected StepDefBash, got %d", entry.Kind)
+	}
+	if entry.Command != "just test" {
+		t.Errorf("expected command 'just test', got %q", entry.Command)
+	}
+
+	// Test builtin resolution
+	entry, err = runner.resolveStepDef("the edict details")
+	if err != nil {
+		t.Fatalf("resolveStepDef('the edict details') error: %v", err)
+	}
+	if entry.Kind != StepDefBuiltin {
+		t.Errorf("expected StepDefBuiltin, got %d", entry.Kind)
+	}
+	if entry.Command != "get_edict" {
+		t.Errorf("expected handler 'get_edict', got %q", entry.Command)
+	}
+	if entry.Key != "edict" {
+		t.Errorf("expected key 'edict', got %q", entry.Key)
+	}
+
+	// Test unknown pattern
+	_, err = runner.resolveStepDef("something that does not match")
+	if err == nil {
+		t.Error("expected error for unknown pattern")
+	}
+}
+
+func TestRunGivenStep_Bash(t *testing.T) {
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+	mockRunner := &mockCmdRunner{output: "diff output\n", exitCode: "0"}
+	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+
+	exec := &RitualExecution{
+		ID:         "test-exec",
+		RitualName: "test",
+		EdictID:    "test-edict",
+	}
+
+	entry := StepDefEntry{
+		Kind:    StepDefBash,
+		Key:     "git",
+		Command: "git diff HEAD",
+	}
+
+	result, err := runner.runGivenStep(context.Background(), exec, entry)
+	if err != nil {
+		t.Fatalf("runGivenStep error: %v", err)
+	}
+	if result != "diff output\n" {
+		t.Errorf("expected 'diff output\\n', got %q", result)
+	}
+}
+
+func TestRunThenStep_Bash(t *testing.T) {
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+
+	// Success case
+	mockRunner := &mockCmdRunner{output: "ok\n", exitCode: "0"}
+	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+
+	exec := &RitualExecution{
+		ID:         "test-exec",
+		RitualName: "test",
+		EdictID:    "test-edict",
+	}
+
+	entry := StepDefEntry{
+		Kind:    StepDefBash,
+		Key:     "just",
+		Command: "just test",
+	}
+
+	err := runner.runThenStep(context.Background(), exec, entry)
+	if err != nil {
+		t.Fatalf("runThenStep success case: %v", err)
+	}
+
+	// Failure case
+	failRunner := &mockCmdRunner{output: "FAIL\n", exitCode: "1"}
+	runner = NewRitualRunner(registry, nil, db, failRunner, nil)
+
+	err = runner.runThenStep(context.Background(), exec, entry)
+	if err == nil {
+		t.Error("expected error for failing then step")
+	}
+	if !strings.Contains(err.Error(), "exit 1") {
+		t.Errorf("expected exit code in error, got: %v", err)
+	}
+}
+
+func TestRunThenStep_Multiple(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Create ritual with multiple then steps, second one fails
+	ritual := &RitualDef{
+		Name: "multi-then",
+		Steps: []RitualStep{
+			{
+				Name:    "build",
+				Type:    "cmd",
+				Command: "echo build",
+				Then:    []string{"!echo check1", "!exit 1"},
+			},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	callCount := 0
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "build\n", ExitCode: "0"}, // cmd step
+			{Output: "ok\n", ExitCode: "0"},    // first then
+			{Output: "FAIL\n", ExitCode: "1"},  // second then
+		},
+	}
+	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	_ = callCount
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "multi-then", "edict-test", nil, nil)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err == nil {
+		t.Error("expected error from failing then step")
+	}
+	if !strings.Contains(err.Error(), "then") {
+		t.Errorf("expected 'then' in error message, got: %v", err)
+	}
+}
+
+func TestLoadBuiltinRituals(t *testing.T) {
+	rituals, err := LoadEmbeddedRituals()
+	if err != nil {
+		t.Fatalf("LoadBuiltinRituals() error = %v", err)
+	}
+
+	if len(rituals) != 6 {
+		names := make([]string, len(rituals))
+		for i, r := range rituals {
+			names[i] = r.Name
+		}
+		t.Errorf("expected 6 builtin rituals, got %d: %v", len(rituals), names)
+	}
+
+	// Verify swift-strike uses ritual-level background given
+	for _, r := range rituals {
+		if r.Name == "swift-strike" {
+			// Background given at ritual level
+			if len(r.Background) == 0 || r.Background[0] != "the edict details" {
+				t.Errorf("swift-strike: expected background given 'the edict details', got %v", r.Background)
+			}
+			// Forge step should have no step-level given (hoisted)
+			if len(r.Steps[0].Given) != 0 {
+				t.Errorf("swift-strike forge: expected no step-level given, got %v", r.Steps[0].Given)
+			}
+			// Judge step should have Then
+			if len(r.Steps[1].Then) == 0 {
+				t.Error("swift-strike judge step: expected then entries")
+			}
+			if r.Steps[1].Then[0] != "!just test" {
+				t.Errorf("swift-strike judge then: expected '!just test', got %q", r.Steps[1].Then[0])
+			}
+		}
+	}
+}
+
+func TestBackgroundGiven(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Ritual with background given (bash) and a cmd step
+	ritual := &RitualDef{
+		Name:  "bg-test",
+		Background: []string{"!echo background-data"},
+		Steps: []RitualStep{
+			{Name: "work", Type: "cmd", Command: "echo step-done"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "background-data\n", ExitCode: "0"}, // background given
+			{Output: "step-done\n", ExitCode: "0"},        // cmd step
+		},
+	}
+	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "bg-test", "edict-bg", nil, nil)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	// Verify background given result is in context
+	givenCtx, ok := exec.Data["given_context"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected given_context in exec.Data")
+	}
+	if _, ok := givenCtx["echo"]; !ok {
+		t.Errorf("expected 'echo' key in given_context, got keys: %v", givenCtx)
+	}
+}
+
+// mockCallCountRunner returns sequential results for successive calls
+type mockCallCountRunner struct {
+	results []runners.Output
+	idx     int
+}
+
+func (m *mockCallCountRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
+	if m.idx >= len(m.results) {
+		return runners.Output{Output: "", ExitCode: "0"}, nil
+	}
+	result := m.results[m.idx]
+	m.idx++
+	if result.ExitCode != "0" {
+		return result, nil
+	}
+	return result, nil
+}
+
+func (m *mockCallCountRunner) Restart(ctx context.Context) error    { return nil }
+func (m *mockCallCountRunner) Close(ctx context.Context) error      { return nil }
+func (m *mockCallCountRunner) AllowFallback(bool)                   {}
+func (m *mockCallCountRunner) RunnerType() string                   { return "mock" }
+func (m *mockCallCountRunner) SetMessageChannel(chan<- runners.Msg) {}
+
 // setupRitualTestDB creates a test database with ritual tables
 func setupRitualTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -739,8 +1097,8 @@ func (m *mockCmdRunner) Run(ctx context.Context, input runners.Input) (runners.O
 	}, nil
 }
 
-func (m *mockCmdRunner) Restart(ctx context.Context) error       { return nil }
-func (m *mockCmdRunner) Close(ctx context.Context) error         { return nil }
-func (m *mockCmdRunner) AllowFallback(bool)                      {}
-func (m *mockCmdRunner) RunnerType() string                      { return "mock" }
-func (m *mockCmdRunner) SetMessageChannel(chan<- runners.Msg)     {}
+func (m *mockCmdRunner) Restart(ctx context.Context) error    { return nil }
+func (m *mockCmdRunner) Close(ctx context.Context) error      { return nil }
+func (m *mockCmdRunner) AllowFallback(bool)                   {}
+func (m *mockCmdRunner) RunnerType() string                   { return "mock" }
+func (m *mockCmdRunner) SetMessageChannel(chan<- runners.Msg) {}

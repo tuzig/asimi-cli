@@ -198,9 +198,8 @@ For small, focused changes. A tight loop between Forge and Judge:
 swift-strike:
     on_failure: retry
     max_retries: 3
-    arrange:
-        # calling a predefined bash function that outputs the edict in markdown
-        get_edict {{ .edict_id}}
+    background:
+      - the edict details
     steps:
       - name: forge
         minister: forge
@@ -210,24 +209,27 @@ swift-strike:
 
       - name: judge
         minister: judge
+        given:
+          - the manifests
         act: |
           - Ensure new code is covered by tests
-          - Ensure the test assert the code will always work
-        assert: just test
+          - Ensure the tests assert the code will always work
+        then:
+          - "!just test"
         depends_on: [forge]
         on_failure: "forge"
 ```
 
-#### Grand Campaign (M-size edicts)
+#### Complex Change (Medium sized edicts)
 
 For medium-complexity work with planning and review:
 
 ```yaml
-grand-campaign:
+complex-change:
     on_failure: retry
     max_retries: 3
-    arrange:
-        get_edict {{ .edict_id }}
+    background:
+      - the edict details
     steps:
       - name: strategist
         minister: strategist
@@ -235,27 +237,35 @@ grand-campaign:
 
       - name: forge
         minister: forge
+        given:
+          - the manifests
         act: Implement the Battle Plan.
         depends_on: [strategist]
 
       - name: judge
         minister: judge
+        given:
+          - the manifests
         act: |
           - Ensure new code is covered by tests
           - Ensure the tests assert the code will always work
-        assert: just test
+        then:
+          - "!just test"
         depends_on: [forge]
         on_failure: "forge"
 
       - name: censor
         minister: censor
+        given:
+          - the manifests
+          - the verdicts
         act: |
           Review the changes for quality and standards compliance.
         depends_on: [judge]
         on_failure: "strategist"
 ```
 
-#### Grand Orchestration (L-size edicts)
+#### Complicated Change (The largest edicts)
 
 For complicated architectural work requiring custom workflow design. The Strategist first designs an ad-hoc ritual tailored to the edict's complexity, then the court executes it:
 
@@ -263,8 +273,8 @@ For complicated architectural work requiring custom workflow design. The Strateg
 grand-orchestration:
     on_failure: retry
     max_retries: 3
-    arrange:
-        get_edict {{ .edict_id }}
+    background:
+      - the edict details
     steps:
       - name: architect
         minister: strategist
@@ -287,8 +297,8 @@ Invoked as the last step of `Start()`, orients the court before the Ruler speaks
 
 ```yaml
 wakeup:
-    arrange:
-        get_court_status
+    background:
+      - the court status
     steps:
       - name: orient
         minister: strategist
@@ -299,9 +309,9 @@ wakeup:
           Return them as a numbered list, each with a one-line description.
 ```
 
-**Step AAA pattern:**
+**Background/Given/Act/Then pattern:**
 
-Each step follows Arrange-Act-Assert. `arrange` and `assert` are optional shell commands that wrap the minister's `act`:
+Rituals follow a Gherkin-inspired pattern. `background` at the ritual level runs once and provides shared context to all steps. At the step level, `given` gathers step-specific context before the minister acts, and `then` validates the result:
 
 ```yaml
 steps:
@@ -313,9 +323,13 @@ steps:
     env:                      # Environment variables
       GOOS: linux
       GOARCH: amd64
-    arrange: "git stash"           # Shell: setup before minister executes
+    given:
+      - the edict details          # Builtin: matched via step definitions
+      - "!git stash"               # Bash: "!" prefix runs inline command
     act: Implement feature X       # LLM: minister instruction
-    assert: "just fmt && just lint" # Shell: must pass or step fails
+    then:
+      - "!just fmt && just lint"   # Bash: must pass or step fails
+      - no lint errors             # Builtin: matched via step definitions
 ```
 
 - `scope` — controls context inheritance:
@@ -324,35 +338,38 @@ steps:
   - `<step_name>` — fork from a specific step's context
 - `model` — override the model for this step (e.g., use a faster model for simple tasks)
 - `temperature` — LLM temperature override (0.0-1.0); lower for precise work, higher for creative exploration
-- `env` — environment variables available to `arrange`, `act`, and `assert`
-- `arrange` — runs before the minister, gathers context. Variables it exports become template inputs for `act`.
+- `env` — environment variables available to `given`, `act`, and `then`
+- `given` — runs before the minister. Each entry is either a `!` bash command or a step definition match. Results are stored in context and available as template variables in `act`.
 - `act` — the minister's instruction (LLM call).
-- `assert` — runs after the minister completes. Non-zero exit fails the step.
+- `then` — runs after the minister completes. Each entry is either a `!` bash command (non-zero exit fails) or a step definition match.
 
-At the ritual level, `arrange` sets up shared context for all steps (e.g., `get_edict`, `get_court_status`).
+**Step definition resolution:** The `!` prefix denotes a bash command. Everything else is matched via cucumber-expressions step definitions (built-in Go functions + user-extensible YAML in `.agents/step_definitions.yaml`).
 
 **Creating custom rituals:**
 
-Place YAML file in `.agents/rituals.yaml to define project-specific rituals:
+Place YAML file in `.agents/rituals.yaml` to define project-specific rituals:
 
 ```yaml
-# .agents/rituals/my-ritual.yaml
-my-ritual:
-    description: "Custom workflow for my project"
-    arrange:
-        get_edict {{ .edict_id }}
-    on_failure: retry
-    max_retries: 2
-    steps:
-      - name: step-1
-        minister: forge
-        act: |
-          Do something for the edict.
+# .agents/rituals.yaml
+- name: my-ritual
+  description: "Custom workflow for my project"
+  on_failure: retry
+  max_retries: 2
+  steps:
+    - name: step-1
+      minister: forge
+      given:
+        - the edict details
+        - "!git diff HEAD"
+      act: |
+        Do something for the edict.
+      then:
+        - "!just test"
 ```
 
 **Template Variables:**
 
-Ritual `arrange` and `act` fields support template expansion using `{{ .variable }}` syntax:
+Ritual `background`, `given`, and `act` fields support template expansion using `{{ .variable }}` syntax:
 
 | Variable | Description | Available In |
 |----------|-------------|--------------|
@@ -365,17 +382,25 @@ Ritual `arrange` and `act` fields support template expansion using `{{ .variable
 | `.step_name` | Name of the current step | Step `act` only |
 | `.minister_id` | ID of the executing minister | Step `act` only |
 
-**Builtin Arrange Functions:**
+**Builtin Given Step Definitions:**
 
-The `arrange` field can reference builtin shell functions that output structured data:
+The `given` field matches entries against registered step definitions (cucumber-expressions). Built-in definitions:
 
-| Function | Output | Description |
-|----------|--------|-------------|
-| `get_edict {{ .edict_id }}` | Markdown | Full edict details including intent, scope, phase, lings |
-| `get_court_status` | Markdown | Current state of all ministers and active edicts |
-| `get_manifests {{ .edict_id }}` | Markdown | List of forge manifests for the edict |
-| `get_verdicts {{ .edict_id }}` | Markdown | Judge verdicts for the edict |
-| `get_precedents` | Markdown | Recent censor precedents |
+| Pattern | Output Key | Description |
+|---------|-----------|-------------|
+| `the edict details` | `edict` | Full edict details including intent, scope, phase, lings |
+| `the court status` | `court_status` | Current state of all ministers and active edicts |
+| `the manifests` | `manifests` | List of forge manifests for the edict |
+| `the verdicts` | `verdicts` | Judge verdicts for the edict |
+| `the precedents` | `precedents` | Recent censor precedents |
+
+User-defined step definitions can be added in `.agents/step_definitions.yaml`:
+
+```yaml
+- pattern: "the branch diff"
+  command: "git diff main...HEAD"
+  key: "branch_diff"
+```
 
 **Failure handling:**
 - `retry` — Retry the step up to `max_retries` (default when set at ritual level)
@@ -388,10 +413,9 @@ The `arrange` field can reference builtin shell functions that output structured
 
 ```yaml
 report_failure:
-    arrange:
-        get_edict {{ .edict_id }}
-        get_manifests {{ .edict_id }}
-        get_verdicts {{ .edict_id }}
+    background:
+      - the edict details
+      - the court status
     steps:
       - name: summarize
         minister: strategist

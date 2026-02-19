@@ -90,7 +90,7 @@ type Shogunate struct {
 	config *config.ShogunateConfig
 	runner runners.Runner
 
-	ministers       map[string]Minister
+	ministers      map[string]Minister
 	ritualGuard    RitualGuardRunner
 	ritualRegistry *RitualRegistry
 	ritualRunner   *RitualRunner
@@ -107,7 +107,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		logger:         logger,
 		config:         cfg,
 		runner:         runner,
-		ministers:       make(map[string]Minister),
+		ministers:      make(map[string]Minister),
 		ritualRegistry: NewRitualRegistry(),
 		eventRegistry:  NewEventRegistry(),
 	}

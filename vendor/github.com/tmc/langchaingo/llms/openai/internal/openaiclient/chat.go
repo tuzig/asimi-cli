@@ -515,7 +515,13 @@ type StreamedChatResponsePayload struct {
 	// When present, it contains a null value except for the last chunk which contains the token usage statistics
 	// for the entire request.
 	Usage *Usage `json:"usage,omitempty"`
-	Error error  `json:"-"` // use for error handling only
+	// APIError captures provider-level errors returned inline in SSE chunks
+	// (e.g., OpenRouter's {"error":{"code":400,"message":"Provider returned error"}})
+	APIError *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+	Error error `json:"-"` // use for error handling only
 }
 
 // FunctionDefinition is a definition of a function that can be called by the model.
@@ -709,6 +715,12 @@ func combineStreamingChatResponse(
 	for streamResponse := range responseChan {
 		if streamResponse.Error != nil {
 			return nil, streamResponse.Error
+		}
+
+		// Check for provider-level errors embedded in SSE chunks (e.g., OpenRouter 400s)
+		if streamResponse.APIError != nil {
+			return nil, fmt.Errorf("provider error (HTTP %d): %s",
+				streamResponse.APIError.Code, streamResponse.APIError.Message)
 		}
 
 		if streamResponse.Usage != nil {
