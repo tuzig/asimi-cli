@@ -55,8 +55,8 @@ func (c *Confucius) ID() string { return "confucius" }
 // Title returns the minister's honorific title
 func (c *Confucius) Title() string { return "Confucius" }
 
-// Role returns Confucius's role identity text
-func (c *Confucius) Role() string { return ConfuciusRole }
+// SystemPrompt returns Confucius's system prompt template.
+func (c *Confucius) SystemPrompt() string { return ConfuciusRole }
 
 // Tasks returns the channel for task submission
 func (c *Confucius) Tasks() chan<- *Task { return c.tasks }
@@ -128,7 +128,7 @@ func (c *Confucius) processPrompt(ctx context.Context, prompt *Prompt) {
 		return
 	}
 
-	sess, err := c.CreateSession(c, prompt.EdictID)
+	sess, err := CreateSession(c, c.model, c.config, c.notify, prompt.EdictID)
 	if err != nil {
 		if c.notify != nil {
 			c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})

@@ -799,7 +799,7 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
-	err := model.tabs.Close(model.streamingActive)
+	err := model.tabs.Close()
 	if err != nil {
 		model.commandLine.AddToast(err.Error(), "error", time.Second*3)
 		return nil

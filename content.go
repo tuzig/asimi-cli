@@ -22,18 +22,18 @@ const (
 
 // Tab represents a TUI tab with its own content buffer and stream target
 type Tab struct {
-	Label   string
-	Type    TabType
-	Target  string           // minister ID, edict ID, or ritual run ID
-	Content ContentComponent // Own content buffer per tab
-	EdictID string           // Current edict ID for this tab
+	Label     string
+	Type      TabType
+	Target    string           // minister ID, edict ID, or ritual run ID
+	Content   ContentComponent // Own content buffer per tab
+	EdictID   string           // Current edict ID for this tab
+	Streaming bool             // True when this tab is actively receiving stream data
 }
 
 // TabManager manages multiple tabs, each wrapping a ContentComponent
 type TabManager struct {
 	tabs            []Tab
 	activeTab       int
-	streamingTab    int
 	pendingG        bool
 	width, height   int
 	markdownEnabled bool
@@ -52,7 +52,6 @@ func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager
 			{Label: "Hunting", Type: TabHunting, Target: "confucius", Content: hunting},
 		},
 		activeTab:       0,
-		streamingTab:    0,
 		width:           w,
 		height:          h,
 		markdownEnabled: mdEnabled,
@@ -65,15 +64,33 @@ func (tm *TabManager) Content() *ContentComponent {
 	return &tm.tabs[tm.activeTab].Content
 }
 
-// StreamingChat returns the ChatComponent receiving stream data
+// StreamingChat returns the ChatComponent receiving stream data.
+// If the active tab is streaming, return it. Otherwise find any streaming tab.
+// Falls back to the active tab if nothing is streaming.
 func (tm *TabManager) StreamingChat() *ChatComponent {
-	if tm.streamingTab == tm.activeTab {
+	if tm.tabs[tm.activeTab].Streaming {
 		return tm.tabs[tm.activeTab].Content.Chat
 	}
-	if tm.streamingTab >= 0 && tm.streamingTab < len(tm.tabs) {
-		return tm.tabs[tm.streamingTab].Content.Chat
+	for i := range tm.tabs {
+		if tm.tabs[i].Streaming {
+			return tm.tabs[i].Content.Chat
+		}
 	}
 	return tm.tabs[tm.activeTab].Content.Chat
+}
+
+// StreamingChatByOrigin returns the ChatComponent for a specific origin tab.
+// Matches by tab.Target == originID && tab.Streaming.
+// Falls back to StreamingChat() if no match is found.
+func (tm *TabManager) StreamingChatByOrigin(originID string) *ChatComponent {
+	if originID != "" {
+		for i := range tm.tabs {
+			if tm.tabs[i].Target == originID && tm.tabs[i].Streaming {
+				return tm.tabs[i].Content.Chat
+			}
+		}
+	}
+	return tm.StreamingChat()
 }
 
 // SwitchTo saves current tab state and switches to the target index
@@ -99,11 +116,11 @@ func (tm *TabManager) Add(label string, tabType TabType, target string) {
 }
 
 // Close closes the active tab if safe to do so
-func (tm *TabManager) Close(streamingActive bool) error {
+func (tm *TabManager) Close() error {
 	if len(tm.tabs) <= 1 {
 		return errors.New("cannot close the last tab")
 	}
-	if streamingActive && tm.streamingTab == tm.activeTab {
+	if tm.tabs[tm.activeTab].Streaming {
 		return errors.New("cannot close tab while streaming")
 	}
 
@@ -121,12 +138,6 @@ func (tm *TabManager) Close(streamingActive bool) error {
 	// Adjust activeTab index if needed
 	if tm.activeTab > closingIdx {
 		tm.activeTab--
-	}
-	// Adjust streamingTab index if needed
-	if tm.streamingTab > closingIdx {
-		tm.streamingTab--
-	} else if tm.streamingTab == closingIdx {
-		tm.streamingTab = tm.activeTab
 	}
 	return nil
 }
@@ -220,14 +231,36 @@ func (tm *TabManager) SetActiveEdictID(id string) {
 	tm.tabs[tm.activeTab].EdictID = id
 }
 
-// SetStreamingTab marks the active tab as the streaming target
+// SetStreamingTab marks the active tab as streaming
 func (tm *TabManager) SetStreamingTab() {
-	tm.streamingTab = tm.activeTab
+	tm.tabs[tm.activeTab].Streaming = true
 }
 
-// StreamingTabIndex returns the current streaming tab index
+// ClearStreaming clears the streaming flag on all tabs
+func (tm *TabManager) ClearStreaming() {
+	for i := range tm.tabs {
+		tm.tabs[i].Streaming = false
+	}
+}
+
+// StreamingTabIndex returns the index of a streaming tab, or -1 if none
 func (tm *TabManager) StreamingTabIndex() int {
-	return tm.streamingTab
+	for i := range tm.tabs {
+		if tm.tabs[i].Streaming {
+			return i
+		}
+	}
+	return -1
+}
+
+// AnyStreaming returns true if any tab is currently streaming
+func (tm *TabManager) AnyStreaming() bool {
+	for i := range tm.tabs {
+		if tm.tabs[i].Streaming {
+			return true
+		}
+	}
+	return false
 }
 
 // HandlePendingG handles the g-prefix key sequence for gt/gT/gg

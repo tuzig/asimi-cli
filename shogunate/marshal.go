@@ -64,8 +64,8 @@ func (m *Marshal) ID() string {
 	return "marshal"
 }
 
-// Role returns the Marshal's role identity text
-func (m *Marshal) Role() string {
+// SystemPrompt returns the Marshal's system prompt template.
+func (m *Marshal) SystemPrompt() string {
 	return MarshalPrompt
 }
 

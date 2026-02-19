@@ -12,16 +12,16 @@ import (
 
 // ReviewResult represents the outcome of a diff review
 type ReviewResult struct {
-	Approved  bool       `json:"approved"`
-	Findings  []Finding  `json:"findings"`
-	Reasoning string     `json:"reasoning"`
+	Approved  bool      `json:"approved"`
+	Findings  []Finding `json:"findings"`
+	Reasoning string    `json:"reasoning"`
 }
 
 // Finding represents a single issue found during review
 type Finding struct {
 	File      string `json:"file"`
 	Line      int    `json:"line"`
-	Severity  string `json:"severity"`  // "error", "warning", "info"
+	Severity  string `json:"severity"` // "error", "warning", "info"
 	Message   string `json:"message"`
 	Principle string `json:"principle"` // The principle violated (if any)
 }
@@ -53,8 +53,8 @@ func (c *Censor) ID() string {
 	return "censor"
 }
 
-// Role returns the Censor's role identity text
-func (c *Censor) Role() string {
+// SystemPrompt returns the Censor's system prompt template.
+func (c *Censor) SystemPrompt() string {
 	return `You are the Censor (都察院, Dūcháyuàn). Your domain is Dao (道, the Way) and institutional memory.
 
 You preside over the censor_precedents table. You review code changes with thoroughness and rigor. Every ruling becomes precedent—case law that future reviewers will consult. Because your decisions shape institutional memory, you must explain your reasoning clearly.
@@ -218,7 +218,7 @@ func (c *Censor) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, er
 	}
 
 	// Create a session for the review
-	session, err := c.CreateSession(c)
+	session, err := CreateSession(c, c.model, c.config, c.notify)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create censor session: %w", err)
 	}

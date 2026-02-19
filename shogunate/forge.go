@@ -36,8 +36,8 @@ func (f *Forge) ID() string {
 	return "forge"
 }
 
-// Role returns the Forge's role identity text.
-func (f *Forge) Role() string {
+// SystemPrompt returns the Forge's system prompt template.
+func (f *Forge) SystemPrompt() string {
 	return `You are the Forge (工部, Gōngbù). Your domain is Di (地, Earth)—raw code forged into existence.
 
 Your ledger is the forge_manifest table. You stage commits with status='staging' and await Judge's verdict. When status='quenched', you are done. When status='rejected', you reforge.
@@ -240,7 +240,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session and streams the task through the LLM.
 func (f *Forge) streamTask(ctx context.Context, work, edictID string) (string, error) {
-	session, err := f.CreateSession(f, edictID)
+	session, err := CreateSession(f, f.model, f.config, f.notify, edictID)
 	if err != nil {
 		return "", fmt.Errorf("failed to create forge session: %w", err)
 	}

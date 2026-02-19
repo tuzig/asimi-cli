@@ -50,8 +50,8 @@ func (r *RitualGuard) ID() string {
 	return "ritual_guard"
 }
 
-// Role returns the RitualGuard's system prompt
-func (r *RitualGuard) Role() string {
+// SystemPrompt returns the RitualGuard's system prompt template.
+func (r *RitualGuard) SystemPrompt() string {
 	return RitualGuardPrompt
 }
 

@@ -31,6 +31,7 @@ func (t RequestZhengmingTool) Description() string {
 	return "Request clarification from the user (Zhengming - 正名) when requirements are ambiguous. Use this when you need more information before proceeding with an edict. The edict will be halted until the user responds."
 }
 
+// TODO: It should lock and wait for the ruler response
 func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID  string `json:"edict_id"`
@@ -90,6 +91,9 @@ func (t RequestZhengmingTool) Format(input, result string, err error) string {
 	return msg.String() + "\n"
 }
 
+// TODO: update the schema so it can contain multiple questions and every
+// question contains 2-4 possible answers with the recommended one in the
+// first stop
 func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",

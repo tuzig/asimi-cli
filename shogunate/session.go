@@ -16,7 +16,6 @@ import (
 
 	"github.com/afittestide/asimi/internal"
 	internalconfig "github.com/afittestide/asimi/internal/config"
-	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/tmc/langchaingo/llms"
 )
@@ -69,7 +68,6 @@ type Session struct {
 
 	model        llms.Model
 	config       *internalconfig.LLMConfig
-	repoInfo     repo.RepoInfo
 	tools        []Tool
 	messages     []llms.MessageContent
 	notify       internal.NotifyFunc
@@ -110,7 +108,6 @@ type Session struct {
 func NewSession(
 	model llms.Model,
 	cfg *SessionConfig,
-	repoInfo repo.RepoInfo,
 	tools []Tool,
 	scheduler *runners.CoreToolScheduler,
 	notify internal.NotifyFunc,
@@ -125,7 +122,6 @@ func NewSession(
 		LastUpdated:  now,
 		WorkingDir:   workingDir,
 		model:        model,
-		repoInfo:     repoInfo,
 		tools:        tools,
 		messages:     []llms.MessageContent{},
 		notify:       notify,

@@ -58,7 +58,8 @@ type TUIModel struct {
 	shogunate    *shogunate.Shogunate
 
 	// Shogunate integration
-	currentEdictID string // Tracks current edict for multi-turn conversations
+	currentEdictID  string // Tracks current edict for multi-turn conversations
+	currentOriginID string // OriginID from last OriginMsg for stream routing
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -210,7 +211,7 @@ func (m *TUIModel) initHistory() {
 
 // streamingChat returns the ChatComponent that should receive stream data
 func (m *TUIModel) streamingChat() *ChatComponent {
-	return m.tabs.StreamingChat()
+	return m.tabs.StreamingChatByOrigin(m.currentOriginID)
 }
 
 // getCurrentSession returns the current shogunate session, or nil if not available
@@ -320,6 +321,11 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.commandLine.Update()
 
 	switch msg := msg.(type) {
+	case shogunate.OriginMsg:
+		// Unwrap origin-tagged message and re-dispatch with routing context
+		m.currentOriginID = msg.OriginID
+		return m.Update(msg.Msg.(tea.Msg))
+
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 
@@ -1072,6 +1078,7 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		Ctx:          ctx,
 		Message:      prompt,
 		EdictID:      m.currentEdictID, // Empty for new edict
+		OriginID:     tab.Target,       // Tab target for stream routing
 		ContextFiles: contextFiles,
 	}
 
@@ -1689,6 +1696,68 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status.AddStreamChars(len(msg.Text))
 		chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
 		chat.AddThinkingChunk(msg.Text)
+		return m, nil
+
+	case shogunate.MinisterInvokingMsg:
+		chat := m.streamingChat()
+		chat.AddToRawHistory("MINISTER_INVOKING",
+			fmt.Sprintf("Minister %s invoked for edict %s", msg.MinisterID, msg.EdictID))
+		chat.Indent++
+		taskPreview := msg.Task
+		if len(taskPreview) > 60 {
+			taskPreview = taskPreview[:57] + "..."
+		}
+		chat.AddMessage(fmt.Sprintf("%s%s: %s", systemPrefix, msg.MinisterID, taskPreview))
+		return m, nil
+
+	case shogunate.MinisterCompletedMsg:
+		chat := m.streamingChat()
+		if msg.Error != nil {
+			chat.AddToRawHistory("MINISTER_FAILED",
+				fmt.Sprintf("Minister %s failed: %v", msg.MinisterID, msg.Error))
+			chat.AddMessage(fmt.Sprintf("%s%s %s failed: %v", systemPrefix, completeFailurePrefix, msg.MinisterID, msg.Error))
+		} else {
+			chat.AddToRawHistory("MINISTER_COMPLETED",
+				fmt.Sprintf("Minister %s completed", msg.MinisterID))
+			chat.AddMessage(fmt.Sprintf("%s%s %s completed", systemPrefix, checkPrefix, msg.MinisterID))
+		}
+		if chat.Indent > 0 {
+			chat.Indent--
+		}
+		return m, nil
+
+	case shogunate.RitualStepMsg:
+		chat := m.streamingChat()
+		chat.AddToRawHistory("RITUAL_STEP",
+			fmt.Sprintf("Ritual %s step %s [%d/%d] %s",
+				msg.RitualName, msg.StepName, msg.StepIndex+1, msg.TotalSteps, msg.Status))
+		switch msg.Status {
+		case "started":
+			if msg.StepName == "" {
+				chat.Indent = 1
+				chat.AddMessage(fmt.Sprintf("%sRitual %s started", systemPrefix, msg.RitualName))
+			} else {
+				chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s",
+					systemPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+			}
+		case "completed":
+			chat.AddMessage(fmt.Sprintf("%s%s Step %d/%d: %s done",
+				systemPrefix, checkPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+		case "failed":
+			chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s failed: %s",
+				systemPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName, msg.Message))
+		case "retrying":
+			chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s retrying",
+				systemPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+		case "ritual_completed":
+			chat.AddMessage(fmt.Sprintf("%sRitual %s completed", systemPrefix, msg.RitualName))
+			chat.Indent = 0
+		}
+		return m, nil
+
+	case shogunate.StreamDoneMsg:
+		chat := m.streamingChat()
+		chat.Indent = 0
 		return m, nil
 
 	case showHelpMsg:
@@ -2612,13 +2681,9 @@ func (m TUIModel) overlayCompletionDialog(baseView, promptView, commandLineView 
 		return baseView
 	}
 
-	// 2 is tor the command and status lines
+	// 1 is for the status line
 	// TODO: bring it down and cover part of the prompt. Need to wait for bubbletea 2.0
 	bottomOffset := 2 + lipgloss.Height(promptView)
-	if m.completionMode == "file" {
-		// File completion needs extra spacing
-		bottomOffset++
-	}
 
 	dialogHeight := lipgloss.Height(dialog)
 	yPos := m.height - bottomOffset - dialogHeight
@@ -2811,6 +2876,7 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 func (m *TUIModel) stopStreaming() {
 	m.streamingActive = false
 	m.streamingCancel = nil
+	m.tabs.ClearStreaming()
 	m.stopWaitingForResponse()
 }
 

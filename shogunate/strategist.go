@@ -51,8 +51,8 @@ func (s *Strategist) ID() string {
 	return "strategist"
 }
 
-// Role returns the Strategist's role identity text
-func (s *Strategist) Role() string {
+// SystemPrompt returns the Strategist's system prompt template.
+func (s *Strategist) SystemPrompt() string {
 	return StrategistRole
 }
 

@@ -62,8 +62,8 @@ func (j *Judge) ID() string {
 	return "judge"
 }
 
-// Role returns the Judge's role identity text
-func (j *Judge) Role() string {
+// SystemPrompt returns the Judge's system prompt template.
+func (j *Judge) SystemPrompt() string {
 	return JudgePrompt
 }
 

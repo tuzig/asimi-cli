@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -20,19 +21,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// ministerSystemPromptTemplate is the shared template for all minister system prompts.
-// Ministers provide their Role (identity text) and optional Scratchpad (dynamic context).
-const ministerSystemPromptTemplate = `You are a minister in the Shogunate.
-
-{{.Role}}
-
-{{.Scratchpad}}
-{{- if .ProjectContext}}
-
---- Project specific directions from: {{.AgentsFile}} ---
-{{.ProjectContext}}
---- End of Directions from: {{.AgentsFile}} ---
-{{- end}}`
+//go:embed context/realm.md
+var realm string
 
 // ZhengmingConn provides clarification request capabilities (behavioral interface)
 type ZhengmingConn interface {
@@ -52,13 +42,20 @@ type Prompt struct {
 	Ctx          context.Context   // Per-prompt context for cancellation (CTRL-C)
 	Message      string            // The Ruler's words
 	EdictID      string            // Empty = new edict, set = continue existing
+	OriginID     string            // Tab target for stream routing
 	ContextFiles map[string]string // Files loaded via @ references
+}
+
+// OriginMsg wraps a message with its origin tab ID for stream routing
+type OriginMsg struct {
+	OriginID string
+	Msg      any
 }
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
-	EdictID string       // The edict this task belongs to
-	Work    string       // Specific instructions for the minister (renamed from Task to avoid Task.Task)
+	EdictID string        // The edict this task belongs to
+	Work    string        // Specific instructions for the minister (renamed from Task to avoid Task.Task)
 	Done    chan<- Result // For completion signal
 }
 
@@ -76,8 +73,8 @@ type Minister interface {
 	ID() string
 	// Logger returns the minister's logger with scoped metadata.
 	Logger() *slog.Logger
-	// Role returns the minister's role identity text (injected into system prompt template)
-	Role() string
+	// SystemPrompt returns the minister's system prompt template string.
+	SystemPrompt() string
 	// Scratchpad returns dynamic per-minister context (e.g., available rituals, rules)
 	Scratchpad() string
 	// Tools returns the minister's LLM tools for interactive sessions
@@ -230,24 +227,24 @@ func (m *MinisterBase) Scratchpad() string {
 // CreateSession creates a session for a minister with composed system prompt.
 // The system prompt is built from the shared template with the minister's role injected.
 // edictID is optional — when provided, it's included in the scratchpad context.
-func (m *MinisterBase) CreateSession(minister Minister, edictID ...string) (*Session, error) {
+func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, edictID ...string) (*Session, error) {
 	tools := minister.Tools()
 	eid := ""
 	if len(edictID) > 0 {
 		eid = edictID[0]
 	}
-	systemPrompt := m.buildSystemPrompt(minister, eid)
+	systemPrompt := buildSystemPrompt(minister, config, eid)
 
-	return NewSession(m.model, m.config, m.repoInfo, tools, nil, m.notify, systemPrompt)
+	return NewSession(model, config, tools, nil, notify, systemPrompt)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
 // with the minister's Role, Scratchpad, and project context from AGENTS.md.
 // If edictID is non-empty, it's prepended to the scratchpad.
-func (m *MinisterBase) buildSystemPrompt(minister Minister, edictID string) string {
+func buildSystemPrompt(minister Minister, config *SessionConfig, edictID string) string {
 	agentsFile := "AGENTS.md"
-	if m.config != nil && m.config.AgentsFile != "" {
-		agentsFile = m.config.AgentsFile
+	if config != nil && config.AgentsFile != "" {
+		agentsFile = config.AgentsFile
 	}
 
 	scratchpad := minister.Scratchpad()
@@ -255,10 +252,10 @@ func (m *MinisterBase) buildSystemPrompt(minister Minister, edictID string) stri
 		scratchpad = fmt.Sprintf("# Current Edict: %s\n\n%s", edictID, scratchpad)
 	}
 
-	tmpl := template.Must(template.New("minister").Parse(ministerSystemPromptTemplate))
+	tmpl := template.Must(template.New(minister.ID()).Parse(minister.SystemPrompt()))
 	var buf bytes.Buffer
 	tmpl.Execute(&buf, map[string]string{
-		"Role":           minister.Role(),
+		"Realm":          realm,
 		"Scratchpad":     scratchpad,
 		"ProjectContext": readProjectContext(agentsFile),
 		"AgentsFile":     agentsFile,

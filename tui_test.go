@@ -92,7 +92,7 @@ func newTestModel(t *testing.T) *TUIModel {
 	model.persistentPromptHistory = nil
 	model.initHistory()
 	// Use shogunate session for tests.
-	sess, err := shogunate.NewSession(llm, nil, repo.RepoInfo{}, nil, nil, func(any) {}, "")
+	sess, err := shogunate.NewSession(llm, nil, nil, nil, func(any) {}, "")
 	require.NoError(t, err)
 	model.SetSession(sess)
 	return model
@@ -1525,7 +1525,7 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// Set up a mock session for the test
 	llm := fake.NewFakeLLM([]string{})
-	sess, err := shogunate.NewSession(llm, nil, repo.RepoInfo{}, nil, nil, func(any) {}, "")
+	sess, err := shogunate.NewSession(llm, nil, nil, nil, func(any) {}, "")
 	require.NoError(t, err)
 	model.SetSession(sess)
 

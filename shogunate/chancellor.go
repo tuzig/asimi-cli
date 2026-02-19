@@ -2,6 +2,7 @@ package shogunate
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,9 @@ import (
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/gorm"
 )
+
+//go:embed context/chancellor.md
+var chancellorTmpl string
 
 // Chancellor harmonizes all ministers and manages edict lifecycle
 type Chancellor struct {
@@ -44,12 +48,9 @@ func (c *Chancellor) ID() string {
 // Title returns the minister's honorific title
 func (c *Chancellor) Title() string { return "Chancellor" }
 
-// Role returns the Chancellor's role identity text
-func (c *Chancellor) Role() string {
-	return `You are the Chancellor (宰相, Zǎixiàng).
-You communicate with the ruler, accepting edicts, classifying them and orchestrating workflows.
-You wield Zhengming (正名) when ambiguity threatens: post the question, halt the edict, await the Ruler's word.
-Your decisions are bound by Dao (道, the Way). Command the ministries; they report to you, not the Ruler.`
+// SystemPrompt returns the Chancellor's system prompt template.
+func (c *Chancellor) SystemPrompt() string {
+	return chancellorTmpl
 }
 
 // Scratchpad returns dynamic context for the Chancellor including available rituals and rules
@@ -845,7 +846,7 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 	sess, exists := c.edictSessions[edictID]
 	if !exists {
 		var err error
-		sess, err = c.CreateSession(c, edictID)
+		sess, err = CreateSession(c, c.model, c.config, c.notify, edictID)
 		if err != nil {
 			c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})
 			return

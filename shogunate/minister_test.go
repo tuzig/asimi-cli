@@ -737,13 +737,13 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
 	// With edict ID — should appear in system prompt
-	prompt := base.buildSystemPrompt(fake, "edict-123456")
+	prompt := buildSystemPrompt(fake, nil, "edict-123456")
 	if !strings.Contains(prompt, "Current Edict: edict-123456") {
 		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
 	}
 
 	// Without edict ID — should not contain "Current Edict"
-	prompt = base.buildSystemPrompt(fake, "")
+	prompt = buildSystemPrompt(fake, nil, "")
 	if strings.Contains(prompt, "Current Edict") {
 		t.Errorf("Expected no edict ID in system prompt, got:\n%s", prompt)
 	}
@@ -757,7 +757,13 @@ type fakeMinister struct {
 }
 
 func (f *fakeMinister) ID() string              { return f.id }
-func (f *fakeMinister) Role() string             { return "fake minister" }
+func (f *fakeMinister) SystemPrompt() string      { return `{{.Realm}}
+{{.Scratchpad}}
+{{- if .ProjectContext}}
+--- Project specific directions from: {{.AgentsFile}} ---
+{{.ProjectContext}}
+--- End of Directions from: {{.AgentsFile}} ---
+{{- end}}` }
 func (f *fakeMinister) Title() string            { return "Fake" }
 func (f *fakeMinister) Tools() []Tool            { return nil }
 func (f *fakeMinister) Tasks() chan<- *Task       { return f.tasks }
