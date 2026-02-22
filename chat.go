@@ -78,6 +78,12 @@ const (
 	cmdDonePrefix         = "✅"
 	treeFinalPrefix       = " ╰ "
 	treeMidPrefix         = " │ "
+
+	// Shogunate court branding
+	courtPrefix    = "🏯  "  // Court in session
+	edictPrefix    = "📜  "  // Edict received
+	ministerPrefix = "⚔️  " // Minister invoked
+	ritualPrefix   = "⛩️  " // Ritual enacted
 )
 
 // ChatMsgBuilder builds multi-line messages with tree prefixes.
@@ -171,7 +177,7 @@ func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
 // NewChatComponentWithStatus creates a new chat component with a status callback
 // newSessionMessage builds the initial "New session at" message with sandbox status
 func newSessionMessage() string {
-	msg := NewChatMsgBuilder(systemPrefix + " New session at " + time.Now().Format("2 January, 3:04 PM MST"))
+	msg := NewChatMsgBuilder(courtPrefix + " Shogunate session at " + time.Now().Format("2 January, 3:04 PM MST"))
 	msg.WriteLn()
 
 	/* TODO: figure our a way to get the shell runner info

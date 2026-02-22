@@ -1584,10 +1584,15 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.currentEdictID = msg.EdictID
 			m.tabs.SetActiveEdictID(msg.EdictID)
 		}
-		m.streamingChat().AddToRawHistory("STREAM_START", "AI streaming response started")
+		chat := m.streamingChat()
+		chat.AddToRawHistory("STREAM_START", "AI streaming response started")
 		slog.Debug("streamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
 		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
+		// Show court branding when edict is received
+		if msg.EdictID != "" {
+			chat.AddMessage(fmt.Sprintf("%sEdict %s", edictPrefix, msg.EdictID))
+		}
 
 	case shogunate.StreamCompleteMsg:
 		chat := m.streamingChat()
@@ -1689,7 +1694,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(taskPreview) > 60 {
 			taskPreview = taskPreview[:57] + "..."
 		}
-		chat.AddMessage(fmt.Sprintf("%s%s: %s", systemPrefix, msg.MinisterID, taskPreview))
+		chat.AddMessage(fmt.Sprintf("%s%s: %s", ministerPrefix, msg.MinisterID, taskPreview))
 		return m, nil
 
 	case shogunate.MinisterCompletedMsg:
@@ -1717,26 +1722,26 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "started":
 			if msg.StepName == "" {
 				chat.Indent = 1
-				chat.AddMessage(fmt.Sprintf("%sRitual %s started", systemPrefix, msg.RitualName))
+				chat.AddMessage(fmt.Sprintf("%sRitual %s started", ritualPrefix, msg.RitualName))
 			} else {
 				chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s",
-					systemPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+					ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
 			}
 		case "completed":
 			chat.AddMessage(fmt.Sprintf("%s%s Step %d/%d: %s done",
-				systemPrefix, checkPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+				ritualPrefix, checkPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
 		case "failed":
 			chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s failed: %s",
-				systemPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName, msg.Message))
+				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName, msg.Message))
 		case "retrying":
 			chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s retrying",
-				systemPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
 		case "cmd_running":
 			chat.AddMessage(fmt.Sprintf("%s Running: %s", cmdRunningPrefix, msg.Message))
 		case "cmd_done":
 			chat.AddMessage(fmt.Sprintf("%s %s done", cmdDonePrefix, msg.Message))
 		case "ritual_completed":
-			chat.AddMessage(fmt.Sprintf("%sRitual %s completed", systemPrefix, msg.RitualName))
+			chat.AddMessage(fmt.Sprintf("%sRitual %s completed", ritualPrefix, msg.RitualName))
 			chat.Indent = 0
 		}
 		return m, nil

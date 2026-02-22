@@ -347,7 +347,7 @@ func TestChatComponent(t *testing.T) {
 
 	// Should have initial title message
 	require.Equal(t, 1, len(chat.Messages))
-	require.Contains(t, chat.Messages[0].Content, "New session")
+	require.Contains(t, chat.Messages[0].Content, "Shogunate session")
 
 	// Test adding a message
 	testMessage := "Test message"
