@@ -167,9 +167,8 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 		defer notifyMu.Unlock()
 		if m, ok := msg.(ZhengmingPendingMsg); ok {
 			notifiedMsg = m
-			// Resolve the waiter with "Let me expand the requirements"
-			// so execute() returns false, nil (user will expand)
-			go strategist.ResolveZhengmingWaiter(m.RequestID, "Let me expand the requirements")
+			// Answer via the full DB path (HandleZhengmingResponse)
+			go strategist.HandleZhengmingResponse(ctx, m.RequestID, "Let me expand the requirements")
 		}
 	})
 
@@ -178,15 +177,17 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, sealed, "expected not sealed for ambiguous intent")
 
-	// Check zhengming was requested
-	pending, _ := strategist.IsZhengmingPending("test/repo#3")
-	assert.True(t, pending, "expected pending zhengming")
-
 	// Verify notification was sent with structured questions
 	notifyMu.Lock()
 	defer notifyMu.Unlock()
 	assert.NotEmpty(t, notifiedMsg.RequestID, "expected zhengming notification")
 	assert.NotEmpty(t, notifiedMsg.Questions, "expected structured questions")
+
+	// Verify the DB was updated with answer and answered_at
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", notifiedMsg.RequestID).Error)
+	assert.Equal(t, storage.ZhengmingAnswered, req.Status)
+	assert.NotNil(t, req.AnsweredAt, "answered_at should be set")
 }
 
 func TestJudge_VerdictFlow(t *testing.T) {

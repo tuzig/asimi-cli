@@ -150,6 +150,7 @@ type Zhengming struct {
 	Priority   ZhengmingPriority   `gorm:"column:priority"`
 	Status     ZhengmingStatus     `gorm:"column:status"`
 	TimeoutAt  time.Time           `gorm:"column:timeout_at"`
+	AnsweredAt *time.Time          `gorm:"column:answered_at"`
 	CreatedAt  time.Time           `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt  time.Time           `gorm:"column:updated_at;autoUpdateTime"`
 }
@@ -362,6 +363,7 @@ CREATE TABLE IF NOT EXISTS zhengming_requests (
     priority TEXT NOT NULL DEFAULT 'normal',
     status TEXT NOT NULL DEFAULT 'pending',
     timeout_at INTEGER NOT NULL,
+    answered_at INTEGER,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
     FOREIGN KEY (edict_id) REFERENCES edicts(edict_id) ON DELETE CASCADE
