@@ -144,13 +144,43 @@ func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) 
 
 	// Check for ambiguity
 	if s.isAmbiguous(edict.Intent) {
-		_, err := s.RequestZhengming(edictID,
-			"The requirements are ambiguous. Please clarify the expected behavior.",
-			storage.PriorityUrgent)
+		questions := storage.ZhengmingQuestions{{
+			Text:    fmt.Sprintf("The edict \"%s\" is too brief. What should it do?", edict.Intent),
+			Options: []string{"Let me expand the requirements", "Proceed with best guess", "Cancel this edict"},
+		}}
+
+		requestID, err := s.RequestZhengming(edictID, questions, storage.PriorityUrgent)
 		if err != nil {
 			return false, fmt.Errorf("request zhengming: %w", err)
 		}
-		return false, nil
+
+		// Notify TUI
+		// TODO: Check if this can move to RequestZhengming?
+		if s.notify != nil {
+			s.notify(ZhengmingPendingMsg{
+				RequestID:  requestID,
+				EdictID:    edictID,
+				MinisterID: "strategist",
+				Questions:  questions,
+				Priority:   storage.PriorityUrgent,
+			})
+		}
+
+		// Block until user answers
+		answer, err := s.WaitForAnswer(ctx, requestID)
+		if err != nil {
+			return false, fmt.Errorf("waiting for answer: %w", err)
+		}
+
+		switch answer {
+		case "Cancel this edict":
+			return false, fmt.Errorf("edict cancelled by user")
+		case "Proceed with best guess":
+			// Fall through to decomposition
+		default:
+			// User will expand requirements; halt for now
+			return false, nil
+		}
 	}
 
 	// Decompose into ling

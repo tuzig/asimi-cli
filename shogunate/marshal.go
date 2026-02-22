@@ -212,7 +212,10 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 	// Request Zhengming for hotfix approval
 	if edictID != "" {
 		_, err := m.RequestZhengming(edictID,
-			fmt.Sprintf("Production incident %s requires hotfix approval.\n\nRCA: %s", incidentID, rcaSummary),
+			storage.ZhengmingQuestions{{
+				Text:    fmt.Sprintf("Production incident %s requires hotfix approval.\n\nRCA: %s", incidentID, rcaSummary),
+				Options: []string{"Approve hotfix", "Reject hotfix"},
+			}},
 			storage.PriorityUrgent)
 		if err != nil {
 			return fmt.Errorf("request zhengming: %w", err)

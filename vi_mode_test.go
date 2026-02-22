@@ -99,13 +99,13 @@ func TestViReplaceModeUsesAbsoluteCursorOnWrappedLine(t *testing.T) {
 	model := newTestModel(t)
 
 	// Force soft wrapping in the prompt textarea.
-	model.prompt.SetWidth(12) // textarea width = 10
-	model.prompt.SetHeight(2)
+	model.prompt().SetWidth(12) // textarea width = 10
+	model.prompt().SetHeight(2)
 
-	model.prompt.SetValue("0123456789abcdef")
-	model.prompt.TextArea.SetCursor(12) // wraps to second segment
+	model.prompt().SetValue("0123456789abcdef")
+	model.prompt().TextArea.SetCursor(12) // wraps to second segment
 
-	lineInfo := model.prompt.TextArea.LineInfo()
+	lineInfo := model.prompt().TextArea.LineInfo()
 	require.Greater(t, lineInfo.StartColumn, 0, "expected cursor on wrapped segment")
 
 	model.Mode = "replace"
@@ -113,8 +113,8 @@ func TestViReplaceModeUsesAbsoluteCursorOnWrappedLine(t *testing.T) {
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
-	require.Equal(t, "0123456789abXdef", updatedModel.prompt.Value())
-	updatedLineInfo := updatedModel.prompt.TextArea.LineInfo()
+	require.Equal(t, "0123456789abXdef", updatedModel.prompt().Value())
+	updatedLineInfo := updatedModel.prompt().TextArea.LineInfo()
 	require.Equal(t, 12, updatedLineInfo.StartColumn+updatedLineInfo.ColumnOffset)
 }
 
@@ -149,46 +149,46 @@ func TestViModeHistoryNavigation(t *testing.T) {
 		{Prompt: "third command", SessionSnapshot: 3, ChatSnapshot: 2},
 	}
 	model.historyCursor = len(model.sessionPromptHistory)
-	model.prompt.SetValue("current input")
+	model.prompt().SetValue("current input")
 
 	// Switch to vi normal mode
-	model.prompt.EnterViNormalMode()
-	assert.True(t, model.prompt.IsViNormalMode(), "Should be in vi normal mode")
+	model.prompt().EnterViNormalMode()
+	assert.True(t, model.prompt().IsViNormalMode(), "Should be in vi normal mode")
 
 	// Simulate pressing up arrow in normal mode
-	model.prompt.TextArea.CursorStart() // Ensure we're on first line
+	model.prompt().TextArea.CursorStart() // Ensure we're on first line
 	newModel, _ := model.handleViNormalMode(tea.KeyMsg{Type: tea.KeyUp})
 	updatedModel, ok := newModel.(TUIModel)
 	assert.True(t, ok)
 
 	// Should navigate to previous history entry
 	assert.Equal(t, 2, updatedModel.historyCursor, "Should move to previous history entry")
-	assert.Equal(t, "third command", updatedModel.prompt.Value(), "Should show third command")
+	assert.Equal(t, "third command", updatedModel.prompt().Value(), "Should show third command")
 	assert.True(t, updatedModel.historySaved, "Should save present state")
 
 	// Press up again
-	updatedModel.prompt.TextArea.CursorStart()
+	updatedModel.prompt().TextArea.CursorStart()
 	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyUp})
 	updatedModel, ok = newModel.(TUIModel)
 	assert.True(t, ok)
 	assert.Equal(t, 1, updatedModel.historyCursor, "Should move to second command")
-	assert.Equal(t, "second command", updatedModel.prompt.Value())
+	assert.Equal(t, "second command", updatedModel.prompt().Value())
 
 	// Press down to go forward in history
-	updatedModel.prompt.TextArea.CursorEnd()
+	updatedModel.prompt().TextArea.CursorEnd()
 	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyDown})
 	updatedModel, ok = newModel.(TUIModel)
 	assert.True(t, ok)
 	assert.Equal(t, 2, updatedModel.historyCursor, "Should move forward to third command")
-	assert.Equal(t, "third command", updatedModel.prompt.Value())
+	assert.Equal(t, "third command", updatedModel.prompt().Value())
 
 	// Press down again to return to present
-	updatedModel.prompt.TextArea.CursorEnd()
+	updatedModel.prompt().TextArea.CursorEnd()
 	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyDown})
 	updatedModel, ok = newModel.(TUIModel)
 	assert.True(t, ok)
 	assert.Equal(t, 3, updatedModel.historyCursor, "Should return to present")
-	assert.Equal(t, "current input", updatedModel.prompt.Value(), "Should restore current input")
+	assert.Equal(t, "current input", updatedModel.prompt().Value(), "Should restore current input")
 	assert.False(t, updatedModel.historySaved, "Should clear saved state")
 }
 
@@ -203,26 +203,26 @@ func TestViModeHistoryNavigationWithKJ(t *testing.T) {
 		{Prompt: "second", SessionSnapshot: 2, ChatSnapshot: 1},
 	}
 	model.historyCursor = len(model.sessionPromptHistory)
-	model.prompt.SetValue("current")
+	model.prompt().SetValue("current")
 
 	// Switch to vi normal mode
-	model.prompt.EnterViNormalMode()
+	model.prompt().EnterViNormalMode()
 
 	// Press k (up in vi)
-	model.prompt.TextArea.CursorStart()
+	model.prompt().TextArea.CursorStart()
 	newModel, _ := model.handleViNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	updatedModel, ok := newModel.(TUIModel)
 	assert.True(t, ok)
 	assert.Equal(t, 1, updatedModel.historyCursor)
-	assert.Equal(t, "second", updatedModel.prompt.Value())
+	assert.Equal(t, "second", updatedModel.prompt().Value())
 
 	// Press j (down in vi)
-	updatedModel.prompt.TextArea.CursorEnd()
+	updatedModel.prompt().TextArea.CursorEnd()
 	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	updatedModel, ok = newModel.(TUIModel)
 	assert.True(t, ok)
 	assert.Equal(t, 2, updatedModel.historyCursor)
-	assert.Equal(t, "current", updatedModel.prompt.Value())
+	assert.Equal(t, "current", updatedModel.prompt().Value())
 }
 
 func TestViNormalModeEnterSubmitsPrompt(t *testing.T) {
@@ -231,8 +231,8 @@ func TestViNormalModeEnterSubmitsPrompt(t *testing.T) {
 	model := NewTUIModel(config, ri, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true // Ensure chat view is active
 
-	model.prompt.SetValue("ship it")
-	model.prompt.EnterViNormalMode()
+	model.prompt().SetValue("ship it")
+	model.prompt().EnterViNormalMode()
 	model.Mode = "normal"
 
 	// In normal mode, Enter key calls handleEnterKey() directly which processes the prompt
@@ -241,7 +241,7 @@ func TestViNormalModeEnterSubmitsPrompt(t *testing.T) {
 	assert.True(t, ok, "Should return TUIModel")
 
 	// The prompt should be cleared after submission
-	assert.Equal(t, "", updatedModel.prompt.Value(), "Prompt should be cleared after sending message")
+	assert.Equal(t, "", updatedModel.prompt().Value(), "Prompt should be cleared after sending message")
 
 	// Check that the user message was added to chat
 	chat := updatedModel.tabs.Content().Chat
@@ -256,8 +256,8 @@ func TestViNormalModeEnterWithEmptyPrompt(t *testing.T) {
 	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true
 
-	model.prompt.SetValue("")
-	model.prompt.EnterViNormalMode()
+	model.prompt().SetValue("")
+	model.prompt().EnterViNormalMode()
 	model.Mode = "normal"
 
 	initialMessageCount := len(model.tabs.Content().Chat.Messages)
@@ -284,7 +284,7 @@ func TestViNormalModeGtSwitchesTab(t *testing.T) {
 	assert.Equal(t, 0, model.tabs.activeTab, "Should start on first tab")
 
 	// Enter normal mode
-	model.prompt.EnterViNormalMode()
+	model.prompt().EnterViNormalMode()
 	model.Mode = "normal"
 
 	// Press 'g' to set pending g-prefix
@@ -308,7 +308,7 @@ func TestViNormalModeGTSwitchesPrevTab(t *testing.T) {
 
 	// Start on second tab
 	model.tabs.SwitchTo(1)
-	model.prompt.EnterViNormalMode()
+	model.prompt().EnterViNormalMode()
 	model.Mode = "normal"
 
 	// Press 'g' then 'T' (previous tab)

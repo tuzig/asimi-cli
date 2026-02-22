@@ -35,8 +35,7 @@ CRITICAL RULES:
 // Confucius provides read-only codebase exploration and suggests edicts via zhengming
 type Confucius struct {
 	MinisterBase
-	tasks   chan *Task
-	Prompts chan *Prompt // For the Hunting tab (like Chancellor's Prompts)
+	tasks chan *Task
 }
 
 // NewConfucius creates a new Confucius minister
@@ -45,7 +44,6 @@ func NewConfucius(base MinisterBase) *Confucius {
 	return &Confucius{
 		MinisterBase: base,
 		tasks:        make(chan *Task, 10),
-		Prompts:      make(chan *Prompt),
 	}
 }
 
@@ -66,7 +64,7 @@ func (c *Confucius) Tools() []Tool {
 	toolList := []Tool{
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
-		&SuggestEdictTool{confucius: c},
+		&SuggestEdictTool{confucius: c, waiter: c},
 		&QueryCourtTool{db: c.db},
 	}
 	for _, t := range tools.GetROTools() {
@@ -93,10 +91,6 @@ func (c *Confucius) CreateEdict(edictID, intent string) error {
 }
 
 // AppendToIntent is a no-op stub — Confucius never modifies edicts (satisfies EdictManager interface)
-func (c *Confucius) AppendToIntent(edictID, clarification string) error {
-	return fmt.Errorf("confucius cannot modify edicts — only the Chancellor can")
-}
-
 // Run starts Confucius's processing loop
 func (c *Confucius) Run(ctx context.Context) {
 	c.logger.Info("confucius started, awaiting prompts")
@@ -105,7 +99,7 @@ func (c *Confucius) Run(ctx context.Context) {
 		case <-ctx.Done():
 			c.logger.Info("confucius stopped")
 			return
-		case prompt := <-c.Prompts:
+		case prompt := <-c.PromptsChan():
 			// Merge lifecycle ctx (shutdown) with per-prompt ctx (CTRL-C):
 			// cancel when either fires.
 			merged, mergedCancel := context.WithCancel(ctx)
@@ -173,6 +167,7 @@ func (c *Confucius) processTask(ctx context.Context, task *Task) {
 // SuggestEdictTool suggests a new edict via zhengming (Confucius never creates edicts)
 type SuggestEdictTool struct {
 	confucius *Confucius
+	waiter    storage.ZhengmingWaiter
 }
 
 func (t *SuggestEdictTool) Name() string { return "suggest_edict" }
@@ -202,16 +197,40 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 		priority = storage.PriorityUrgent
 	}
 
-	question := params.Suggestion
+	// Build structured question with options
+	questionText := params.Suggestion
 	if params.Evidence != "" {
-		question = fmt.Sprintf("%s\n\nEvidence: %s", params.Suggestion, params.Evidence)
+		questionText = fmt.Sprintf("%s\n\nEvidence: %s", params.Suggestion, params.Evidence)
 	}
+	questions := storage.ZhengmingQuestions{{
+		Text:    questionText,
+		Options: []string{"Approve edict", "Dismiss suggestion"},
+	}}
 
-	// Use a synthetic edict ID for suggestions not tied to an existing edict
 	edictID := "confucius-suggestion"
-	requestID, err := t.confucius.RequestZhengming(edictID, question, priority)
+	requestID, err := t.confucius.RequestZhengming(edictID, questions, priority)
 	if err != nil {
 		return "", fmt.Errorf("failed to suggest edict: %w", err)
+	}
+
+	// Notify TUI
+	if t.confucius.notify != nil {
+		t.confucius.notify(ZhengmingPendingMsg{
+			RequestID:  requestID,
+			EdictID:    edictID,
+			MinisterID: t.confucius.ministerID,
+			Questions:  questions,
+			Priority:   priority,
+		})
+	}
+
+	// Block until user answers
+	if t.waiter != nil {
+		answer, err := t.waiter.WaitForAnswer(ctx, requestID)
+		if err != nil {
+			return "", fmt.Errorf("waiting for answer: %w", err)
+		}
+		return fmt.Sprintf(`{"status":"answered","request_id":"%s","answer":%s}`, requestID, utils.MustJSON(answer)), nil
 	}
 
 	return fmt.Sprintf(`{"status":"suggested","request_id":"%s"}`, requestID), nil
@@ -312,7 +331,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 				"request_id":  z.RequestID,
 				"edict_id":    z.EdictID,
 				"minister_id": z.MinisterID,
-				"question":    truncateForCourt(z.Question, 80),
+				"questions":   z.Questions,
 				"priority":    string(z.Priority),
 			}
 		}

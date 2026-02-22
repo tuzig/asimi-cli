@@ -25,7 +25,6 @@ type Chancellor struct {
 	taskChan     chan *Task
 
 	// Run() loop fields
-	Prompts       chan *Prompt        // Ruler speaks here
 	edictSessions map[string]*Session // Per-edict sessions (edictID -> session)
 }
 
@@ -35,7 +34,6 @@ func NewChancellor(base MinisterBase) *Chancellor {
 	return &Chancellor{
 		MinisterBase:  base,
 		taskChan:      make(chan *Task, 10),
-		Prompts:       make(chan *Prompt),
 		edictSessions: make(map[string]*Session),
 	}
 }
@@ -453,14 +451,13 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 // Tools returns the Chancellor's LLM tools for interactive sessions
 func (c *Chancellor) Tools() []Tool {
 	// Create zhengming notify wrapper
-	// TODO: Simplify the zhendming notifications
 	var zhengmingNotify tools.ZhengmingNotifyFunc
-	zhengmingNotify = func(requestID, edictID, ministerID, question string, priority storage.ZhengmingPriority) {
+	zhengmingNotify = func(requestID, edictID, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
 		c.notify(ZhengmingPendingMsg{
 			RequestID:  requestID,
 			EdictID:    edictID,
 			MinisterID: ministerID,
-			Question:   question,
+			Questions:  questions,
 			Priority:   priority,
 		})
 	}
@@ -468,7 +465,7 @@ func (c *Chancellor) Tools() []Tool {
 	toolList := []Tool{
 		tools.AsimiSQLTool{DBPath: c.getDBPath()},
 		tools.UpdateEdictTool{Manager: c},
-		tools.RequestZhengmingTool{Requester: c, Notify: zhengmingNotify},
+		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, Notify: zhengmingNotify, Waiter: c},
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
 		InvokeMinisterTool{chancellor: c},
@@ -551,7 +548,7 @@ func (c *Chancellor) Run(ctx context.Context) {
 		case <-ctx.Done():
 			c.logger.Info("chancellor stopped")
 			return
-		case prompt := <-c.Prompts:
+		case prompt := <-c.PromptsChan():
 			c.logger.Debug("Processing prompt", "prompt", prompt)
 			// Merge lifecycle ctx (shutdown) with per-prompt ctx (CTRL-C):
 			// cancel when either fires.
@@ -670,74 +667,6 @@ func (c *Chancellor) GetPendingZhengming(edictID string) ([]storage.Zhengming, e
 		return nil, fmt.Errorf("failed to get pending zhengming: %w", err)
 	}
 	return requests, nil
-}
-
-// AnswerZhengming marks a clarification request as answered
-func (c *Chancellor) AnswerZhengming(requestID, answer string) error {
-	now := time.Now()
-	result := c.db.Model(&storage.Zhengming{}).
-		Where("request_id = ?", requestID).
-		Updates(map[string]interface{}{
-			"answer":      answer,
-			"status":      storage.ZhengmingAnswered,
-			"answered_at": &now,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("failed to answer zhengming: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("zhengming request not found: %s", requestID)
-	}
-	return nil
-}
-
-// AppendToIntent appends clarification to the edict's intent
-func (c *Chancellor) AppendToIntent(edictID, clarification string) error {
-	var edict storage.Edict
-	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
-		return fmt.Errorf("failed to get edict: %w", err)
-	}
-
-	newIntent := edict.Intent + "\n\n---\n**Clarification:**\n" + clarification
-
-	result := c.db.Model(&storage.Edict{}).
-		Where("edict_id = ?", edictID).
-		Update("intent", newIntent)
-	if result.Error != nil {
-		return fmt.Errorf("failed to append to intent: %w", result.Error)
-	}
-	return nil
-}
-
-// HandleZhengmingResponse processes a clarification response
-func (c *Chancellor) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
-	// Answer the zhengming
-	if err := c.AnswerZhengming(requestID, answer); err != nil {
-		return fmt.Errorf("answer zhengming: %w", err)
-	}
-
-	// Get the request to find the edict
-	var req storage.Zhengming
-	if err := c.db.First(&req, "request_id = ?", requestID).Error; err != nil {
-		return fmt.Errorf("get request: %w", err)
-	}
-
-	// Append clarification to edict
-	if err := c.AppendToIntent(req.EdictID, answer); err != nil {
-		return fmt.Errorf("append clarification: %w", err)
-	}
-
-	// Resume the edict: clear halted flag if no more pending zhengming
-	if req.EdictID != "" {
-		pending, err := c.IsZhengmingPending(req.EdictID)
-		if err == nil && !pending {
-			c.db.Model(&storage.Edict{}).
-				Where("edict_id = ?", req.EdictID).
-				Update("halted", false)
-		}
-	}
-
-	return nil
 }
 
 // --- Manifest and Ling Management ---

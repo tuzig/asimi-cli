@@ -11,16 +11,18 @@ import (
 
 // ZhengmingRequester provides clarification request capabilities
 type ZhengmingRequester interface {
-	RequestZhengming(edictID, question string, priority storage.ZhengmingPriority) (requestID string, err error)
+	RequestZhengming(edictID string, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
 }
 
 // ZhengmingNotifyFunc is a callback for notifying about zhengming requests
-type ZhengmingNotifyFunc func(requestID, edictID, ministerID, question string, priority storage.ZhengmingPriority)
+type ZhengmingNotifyFunc func(requestID, edictID, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority)
 
 // RequestZhengmingTool requests clarification from the user.
 type RequestZhengmingTool struct {
-	Requester ZhengmingRequester
-	Notify    ZhengmingNotifyFunc
+	MinisterID string
+	Requester  ZhengmingRequester
+	Notify     ZhengmingNotifyFunc
+	Waiter     storage.ZhengmingWaiter
 }
 
 func (t RequestZhengmingTool) Name() string {
@@ -28,15 +30,14 @@ func (t RequestZhengmingTool) Name() string {
 }
 
 func (t RequestZhengmingTool) Description() string {
-	return "Request clarification from the user (Zhengming - 正名) when requirements are ambiguous. Use this when you need more information before proceeding with an edict. The edict will be halted until the user responds."
+	return "Request clarification from the user (Zhengming - 正名) when requirements are ambiguous. Use this when you need more information before proceeding with an edict. The tool blocks until the user responds."
 }
 
-// TODO: It should lock and wait for the ruler response
 func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID  string `json:"edict_id"`
-		Question string `json:"question"`
-		Priority string `json:"priority"` // "low", "normal", "urgent"
+		EdictID   string              `json:"edict_id"`
+		Questions []storage.ZhengmingQuestion `json:"questions"`
+		Priority  string              `json:"priority"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -45,24 +46,40 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 	if params.EdictID == "" {
 		return "", fmt.Errorf("edict_id is required")
 	}
-	if params.Question == "" {
-		return "", fmt.Errorf("question is required")
+	if len(params.Questions) == 0 {
+		return "", fmt.Errorf("questions array is required and must not be empty")
+	}
+	for i, q := range params.Questions {
+		if q.Text == "" {
+			return "", fmt.Errorf("question %d: text is required", i)
+		}
+		if len(q.Options) < 2 || len(q.Options) > 4 {
+			return "", fmt.Errorf("question %d: must have 2-4 options, got %d", i, len(q.Options))
+		}
 	}
 
-	// Default priority
 	priority := storage.PriorityNormal
 	if params.Priority != "" {
 		priority = storage.ZhengmingPriority(params.Priority)
 	}
 
-	requestID, err := t.Requester.RequestZhengming(params.EdictID, params.Question, priority)
+	requestID, err := t.Requester.RequestZhengming(params.EdictID, storage.ZhengmingQuestions(params.Questions), priority)
 	if err != nil {
 		return "", fmt.Errorf("request zhengming: %w", err)
 	}
 
-	// Notify if callback is set
+	// Notify TUI with structured questions
 	if t.Notify != nil {
-		t.Notify(requestID, params.EdictID, "chancellor", params.Question, priority)
+		t.Notify(requestID, params.EdictID, t.MinisterID, params.Questions, priority)
+	}
+
+	// Block until user answers
+	if t.Waiter != nil {
+		answer, err := t.Waiter.WaitForAnswer(ctx, requestID)
+		if err != nil {
+			return "", fmt.Errorf("waiting for answer: %w", err)
+		}
+		return fmt.Sprintf(`{"status":"answered","request_id":"%s","answer":%s}`, requestID, utils.MustJSON(answer)), nil
 	}
 
 	return fmt.Sprintf(`{"status":"pending","request_id":"%s"}`, requestID), nil
@@ -70,7 +87,7 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 
 func (t RequestZhengmingTool) Format(input, result string, err error) string {
 	var params struct {
-		Question string `json:"question"`
+		Questions []storage.ZhengmingQuestion `json:"questions"`
 	}
 	json.Unmarshal([]byte(input), &params)
 
@@ -80,20 +97,21 @@ func (t RequestZhengmingTool) Format(input, result string, err error) string {
 	if err != nil {
 		msg.Writef("Error: %v", err)
 	} else {
-		// Truncate question if too long
-		q := params.Question
-		if len(q) > 50 {
-			q = q[:47] + "..."
+		for _, q := range params.Questions {
+			text := q.Text
+			if len(text) > 50 {
+				text = text[:47] + "..."
+			}
+			msg.WriteString(text)
 		}
-		msg.WriteString(q)
+		if len(params.Questions) == 0 {
+			msg.WriteString("(no questions)")
+		}
 	}
 
 	return msg.String() + "\n"
 }
 
-// TODO: update the schema so it can contain multiple questions and every
-// question contains 2-4 possible answers with the recommended one in the
-// first stop
 func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -102,9 +120,26 @@ func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 				"type":        "string",
 				"description": "The edict ID this question relates to",
 			},
-			"question": map[string]any{
-				"type":        "string",
-				"description": "The clarification question to ask the user",
+			"questions": map[string]any{
+				"type":        "array",
+				"description": "Array of questions to ask the user, each with 2-4 predefined answer options (recommended answer first)",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text": map[string]any{
+							"type":        "string",
+							"description": "The question text",
+						},
+						"options": map[string]any{
+							"type":        "array",
+							"description": "2-4 predefined answer options, recommended first",
+							"items":       map[string]any{"type": "string"},
+							"minItems":    2,
+							"maxItems":    4,
+						},
+					},
+					"required": []string{"text", "options"},
+				},
 			},
 			"priority": map[string]any{
 				"type":        "string",
@@ -112,6 +147,7 @@ func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 				"description": "Priority of the clarification request",
 			},
 		},
-		"required": []string{"edict_id", "question"},
+		"required": []string{"edict_id", "questions"},
 	}
 }
+

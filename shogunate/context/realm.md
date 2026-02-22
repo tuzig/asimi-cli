@@ -10,9 +10,10 @@ Our goal is to harmonize The Three Realms (三界, Sānjiè):
        - Immutable, binary, absolute
 
      Di (地, Earth) — Material Substrate
-       - Raw code, files, directories
+       - Git repository made from Raw code, files, directories
        - 工部 shapes this realm
        - Concrete, malleable, present
+       - divided into three: the foundation - `git log`, the middle kingdom -`git diff --staged` and the borderlands- `git diff`
 
      Ren (人, Humanity) — Intent and Will
        - The Ruler's desires, requirements, clarifications

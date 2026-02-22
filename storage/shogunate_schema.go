@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
@@ -87,6 +88,41 @@ func (Edict) TableName() string {
 	return "edicts"
 }
 
+// ZhengmingQuestion represents a single question with predefined answer options
+type ZhengmingQuestion struct {
+	Text    string   `json:"text"`
+	Options []string `json:"options"`
+}
+
+// ZhengmingQuestions is a slice of ZhengmingQuestion stored as JSON in the database
+type ZhengmingQuestions []ZhengmingQuestion
+
+// Value implements driver.Valuer for ZhengmingQuestions
+func (q ZhengmingQuestions) Value() (driver.Value, error) {
+	if q == nil {
+		return nil, nil
+	}
+	return json.Marshal(q)
+}
+
+// Scan implements sql.Scanner for ZhengmingQuestions
+func (q *ZhengmingQuestions) Scan(value interface{}) error {
+	if value == nil {
+		*q = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("failed to unmarshal ZhengmingQuestions value: %v", value)
+	}
+	return json.Unmarshal(bytes, q)
+}
+
+// ZhengmingWaiter blocks a tool goroutine until the user answers
+type ZhengmingWaiter interface {
+	WaitForAnswer(ctx context.Context, requestID string) (string, error)
+}
+
 // ZhengmingPriority represents the priority of a clarification request
 type ZhengmingPriority string
 
@@ -106,16 +142,16 @@ const (
 
 // Zhengming represents a clarification request from a minister
 type Zhengming struct {
-	RequestID  string            `gorm:"primaryKey;column:request_id"`
-	EdictID    string            `gorm:"column:edict_id;index"`
-	MinisterID string            `gorm:"column:minister_id"`
-	Question   string            `gorm:"column:question"`
-	Answer     string            `gorm:"column:answer"`
-	Priority   ZhengmingPriority `gorm:"column:priority"`
-	Status     ZhengmingStatus   `gorm:"column:status"`
-	TimeoutAt  time.Time         `gorm:"column:timeout_at"`
-	CreatedAt  time.Time         `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt  time.Time         `gorm:"column:updated_at;autoUpdateTime"`
+	RequestID  string              `gorm:"primaryKey;column:request_id"`
+	EdictID    string              `gorm:"column:edict_id;index"`
+	MinisterID string              `gorm:"column:minister_id"`
+	Questions  ZhengmingQuestions  `gorm:"column:question;type:text"`
+	Answer     string              `gorm:"column:answer"`
+	Priority   ZhengmingPriority   `gorm:"column:priority"`
+	Status     ZhengmingStatus     `gorm:"column:status"`
+	TimeoutAt  time.Time           `gorm:"column:timeout_at"`
+	CreatedAt  time.Time           `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt  time.Time           `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName returns the table name for Zhengming

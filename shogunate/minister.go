@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"text/template"
 	"time"
 
@@ -30,7 +31,7 @@ var ministerTmpl = template.Must(template.New("minister").Parse(systemBase))
 
 // ZhengmingConn provides clarification request capabilities (behavioral interface)
 type ZhengmingConn interface {
-	RequestZhengming(edictID, question string, priority storage.ZhengmingPriority) (requestID string, err error)
+	RequestZhengming(edictID string, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
 	IsZhengmingPending(edictID string) (bool, error)
 }
 
@@ -85,6 +86,8 @@ type Minister interface {
 	Tools() []Tool
 	// Tasks returns the channel for submitting Tasks
 	Tasks() chan<- *Task
+	// SubmitPrompt sends a prompt to the minister
+	SubmitPrompt(p *Prompt)
 	// Run starts the minister's processing loop (blocks until context cancelled)
 	Run(ctx context.Context)
 }
@@ -168,7 +171,7 @@ type ZhengmingPendingMsg struct {
 	RequestID  string
 	EdictID    string
 	MinisterID string
-	Question   string
+	Questions  storage.ZhengmingQuestions
 	Priority   storage.ZhengmingPriority
 }
 
@@ -192,21 +195,34 @@ type MinisterBase struct {
 	runner     runners.Runner
 	logger     *slog.Logger
 	notify     internal.NotifyFunc
+	prompts    chan *Prompt
+
+	zhengmingWaiters map[string]chan string
+	zhengmingMu      sync.Mutex
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
-func NewMinisterBase(db *gorm.DB, model llms.Model, config *SessionConfig, repoInfo repo.RepoInfo, runner runners.Runner, logger *slog.Logger) MinisterBase {
+func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger) MinisterBase {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return MinisterBase{
-		db:       db,
-		model:    model,
-		config:   config,
-		repoInfo: repoInfo,
-		runner:   runner,
-		logger:   logger,
+		db:               db,
+		runner:           runner,
+		logger:           logger,
+		prompts:          make(chan *Prompt),
+		zhengmingWaiters: make(map[string]chan string),
 	}
+}
+
+// SubmitPrompt sends a prompt to the minister's channel.
+func (m *MinisterBase) SubmitPrompt(p *Prompt) {
+	m.prompts <- p
+}
+
+// PromptsChan returns the receive end of the prompts channel for Run() loops.
+func (m *MinisterBase) PromptsChan() <-chan *Prompt {
+	return m.prompts
 }
 
 // Runner returns the shell runner (may be nil)
@@ -294,6 +310,45 @@ func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 	m.notify = notify
 }
 
+// RegisterZhengmingWaiter creates a channel for the given request ID and returns it.
+func (m *MinisterBase) RegisterZhengmingWaiter(requestID string) <-chan string {
+	m.zhengmingMu.Lock()
+	defer m.zhengmingMu.Unlock()
+	if m.zhengmingWaiters == nil {
+		m.zhengmingWaiters = make(map[string]chan string)
+	}
+	ch := make(chan string, 1)
+	m.zhengmingWaiters[requestID] = ch
+	return ch
+}
+
+// ResolveZhengmingWaiter sends the answer to the waiting tool goroutine.
+func (m *MinisterBase) ResolveZhengmingWaiter(requestID, answer string) bool {
+	m.zhengmingMu.Lock()
+	defer m.zhengmingMu.Unlock()
+	ch, ok := m.zhengmingWaiters[requestID]
+	if !ok {
+		return false
+	}
+	ch <- answer
+	delete(m.zhengmingWaiters, requestID)
+	return true
+}
+
+// WaitForAnswer registers a waiter and blocks until the user answers or the context is cancelled.
+func (m *MinisterBase) WaitForAnswer(ctx context.Context, requestID string) (string, error) {
+	ch := m.RegisterZhengmingWaiter(requestID)
+	select {
+	case answer := <-ch:
+		return answer, nil
+	case <-ctx.Done():
+		m.zhengmingMu.Lock()
+		delete(m.zhengmingWaiters, requestID)
+		m.zhengmingMu.Unlock()
+		return "", ctx.Err()
+	}
+}
+
 // GenerateID creates a unique ID using SHA256.
 // Exported for use by session.go envelope pattern.
 func GenerateID(parts ...string) string {
@@ -314,14 +369,14 @@ func generateIdempotencyKey(parts ...string) string {
 }
 
 // RequestZhengming creates a clarification request
-func (m *MinisterBase) RequestZhengming(edictID, question string, priority storage.ZhengmingPriority) (string, error) {
-	requestID := GenerateID("zhengming", edictID, m.ministerID, question, time.Now().String())
+func (m *MinisterBase) RequestZhengming(edictID string, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (string, error) {
+	requestID := GenerateID("zhengming", edictID, m.ministerID, fmt.Sprintf("%v", questions), time.Now().String())
 
 	req := storage.Zhengming{
 		RequestID:  requestID,
 		EdictID:    edictID,
 		MinisterID: m.ministerID,
-		Question:   question,
+		Questions:  questions,
 		Priority:   priority,
 		Status:     storage.ZhengmingPending,
 		TimeoutAt:  time.Now().Add(24 * time.Hour), // Default 24h timeout
@@ -355,6 +410,72 @@ func (m *MinisterBase) IsZhengmingPending(edictID string) (bool, error) {
 		return false, fmt.Errorf("failed to check pending zhengming: %w", err)
 	}
 	return count > 0, nil
+}
+
+// AnswerZhengming records the answer for a zhengming request
+func (m *MinisterBase) AnswerZhengming(requestID, answer string) error {
+	now := time.Now()
+	result := m.db.Model(&storage.Zhengming{}).
+		Where("request_id = ?", requestID).
+		Updates(map[string]interface{}{
+			"answer":      answer,
+			"status":      storage.ZhengmingAnswered,
+			"answered_at": &now,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to answer zhengming: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("zhengming request not found: %s", requestID)
+	}
+	return nil
+}
+
+// AppendToIntent appends clarification to the edict's intent
+func (m *MinisterBase) AppendToIntent(edictID, clarification string) error {
+	var edict storage.Edict
+	if err := m.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+		return fmt.Errorf("failed to get edict: %w", err)
+	}
+
+	newIntent := edict.Intent + "\n\n---\n**Clarification:**\n" + clarification
+
+	result := m.db.Model(&storage.Edict{}).
+		Where("edict_id = ?", edictID).
+		Update("intent", newIntent)
+	if result.Error != nil {
+		return fmt.Errorf("failed to append to intent: %w", result.Error)
+	}
+	return nil
+}
+
+// HandleZhengmingResponse processes a clarification response
+func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
+	if err := m.AnswerZhengming(requestID, answer); err != nil {
+		return fmt.Errorf("answer zhengming: %w", err)
+	}
+
+	var req storage.Zhengming
+	if err := m.db.First(&req, "request_id = ?", requestID).Error; err != nil {
+		return fmt.Errorf("get request: %w", err)
+	}
+
+	if err := m.AppendToIntent(req.EdictID, answer); err != nil {
+		return fmt.Errorf("append clarification: %w", err)
+	}
+
+	if req.EdictID != "" {
+		pending, err := m.IsZhengmingPending(req.EdictID)
+		if err == nil && !pending {
+			m.db.Model(&storage.Edict{}).
+				Where("edict_id = ?", req.EdictID).
+				Update("halted", false)
+		}
+	}
+
+	m.ResolveZhengmingWaiter(requestID, answer)
+
+	return nil
 }
 
 // EmitEvent records an event in the Tian ledger

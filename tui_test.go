@@ -100,7 +100,7 @@ func newTestModel(t *testing.T) *TUIModel {
 
 func TestCommandCompletionOrderDefaultsToHelp(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	model.prompt.SetValue(":")
+	model.prompt().SetValue(":")
 	model.completionMode = "command"
 	model.updateCommandCompletions()
 	require.NotEmpty(t, model.completions.Options)
@@ -199,7 +199,7 @@ func TestTUIModelSubmit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			model := newTestModel(t)
 
-			model.prompt.SetValue(tc.initialEditorValue)
+			model.prompt().SetValue(tc.initialEditorValue)
 
 			newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -768,13 +768,13 @@ func TestTUIModelUpdateFileCompletions(t *testing.T) {
 	}
 
 	// Test single file completion
-	model.prompt.SetValue("@mai")
+	model.prompt().SetValue("@mai")
 	model.updateFileCompletions(files)
 	require.Equal(t, 1, len(model.completions.Options))
 	require.Contains(t, model.completions.Options[0], "main.go")
 
 	// Test multiple matching files
-	model.prompt.SetValue("@util")
+	model.prompt().SetValue("@util")
 	model.updateFileCompletions(files)
 	require.Equal(t, 2, len(model.completions.Options))
 	require.True(t,
@@ -782,7 +782,7 @@ func TestTUIModelUpdateFileCompletions(t *testing.T) {
 			(strings.Contains(model.completions.Options[1], "utils.go") && strings.Contains(model.completions.Options[0], "utils_test.go")))
 
 	// Test multiple file references in one input
-	model.prompt.SetValue("Check these files: @main.go and @config")
+	model.prompt().SetValue("Check these files: @main.go and @config")
 	model.updateFileCompletions(files)
 	require.Equal(t, 1, len(model.completions.Options))
 	require.Contains(t, model.completions.Options[0], "config.json")
@@ -819,7 +819,7 @@ func TestColonCommandCompletion(t *testing.T) {
 	model := newTestModel(t)
 
 	// Test initial colon shows all commands with colon prefix
-	model.prompt.SetValue(":")
+	model.prompt().SetValue(":")
 	model.completionMode = "command"
 	model.updateCommandCompletions()
 	require.NotEmpty(t, model.completions.Options)
@@ -829,13 +829,13 @@ func TestColonCommandCompletion(t *testing.T) {
 	}
 
 	// Test filtering with partial command
-	model.prompt.SetValue(":he")
+	model.prompt().SetValue(":he")
 	model.updateCommandCompletions()
 	require.NotEmpty(t, model.completions.Options)
 	require.Contains(t, model.completions.Options, ":help")
 
 	// Test filtering with more specific command
-	model.prompt.SetValue(":new")
+	model.prompt().SetValue(":new")
 	model.updateCommandCompletions()
 	require.NotEmpty(t, model.completions.Options)
 	require.Contains(t, model.completions.Options, ":new")
@@ -872,7 +872,7 @@ func TestColonInNormalModeActivatesCommandLine(t *testing.T) {
 	require.True(t, updatedModel.commandLine.IsInCommandMode(), "command line should enter command mode")
 	require.False(t, updatedModel.showCompletionDialog, "completion dialog should not be shown automatically")
 	require.Equal(t, "", updatedModel.commandLine.GetCommand(), "command buffer should be empty")
-	require.False(t, updatedModel.prompt.TextArea.Focused(), "prompt should lose focus while command line active")
+	require.False(t, updatedModel.prompt().TextArea.Focused(), "prompt should lose focus while command line active")
 }
 
 func TestShowHelpMsgDisplaysRequestedTopic(t *testing.T) {
@@ -915,7 +915,7 @@ func TestHistoryNavigation_SingleEntry(t *testing.T) {
 	handled := model.handleHistoryNavigation(-1)
 	require.True(t, handled)
 	require.Equal(t, 0, model.historyCursor)
-	require.Equal(t, "first prompt", model.prompt.Value())
+	require.Equal(t, "first prompt", model.prompt().Value())
 	require.True(t, model.historySaved, "Should save present state")
 
 	// Try to navigate up again (should stay at first entry)
@@ -933,7 +933,7 @@ func TestHistoryNavigation_SingleEntry(t *testing.T) {
 // TestHistoryNavigation_MultipleEntries tests navigation through multiple entries
 func TestHistoryNavigation_MultipleEntries(t *testing.T) {
 	model := newTestModel(t)
-	model.prompt.SetValue("current input")
+	model.prompt().SetValue("current input")
 
 	// Add multiple history entries
 	model.sessionPromptHistory = []promptHistoryEntry{
@@ -947,7 +947,7 @@ func TestHistoryNavigation_MultipleEntries(t *testing.T) {
 	handled := model.handleHistoryNavigation(-1)
 	require.True(t, handled)
 	require.Equal(t, 2, model.historyCursor)
-	require.Equal(t, "third prompt", model.prompt.Value())
+	require.Equal(t, "third prompt", model.prompt().Value())
 	require.True(t, model.historySaved)
 	require.Equal(t, "current input", model.historyPendingPrompt)
 
@@ -955,37 +955,37 @@ func TestHistoryNavigation_MultipleEntries(t *testing.T) {
 	handled = model.handleHistoryNavigation(-1)
 	require.True(t, handled)
 	require.Equal(t, 1, model.historyCursor)
-	require.Equal(t, "second prompt", model.prompt.Value())
+	require.Equal(t, "second prompt", model.prompt().Value())
 
 	// Navigate up to first
 	handled = model.handleHistoryNavigation(-1)
 	require.True(t, handled)
 	require.Equal(t, 0, model.historyCursor)
-	require.Equal(t, "first prompt", model.prompt.Value())
+	require.Equal(t, "first prompt", model.prompt().Value())
 
 	// Try to navigate up past first (should stay at first)
 	handled = model.handleHistoryNavigation(-1)
 	require.True(t, handled)
 	require.Equal(t, 0, model.historyCursor)
-	require.Equal(t, "first prompt", model.prompt.Value())
+	require.Equal(t, "first prompt", model.prompt().Value())
 
 	// Navigate down
 	handled = model.handleHistoryNavigation(1)
 	require.True(t, handled)
 	require.Equal(t, 1, model.historyCursor)
-	require.Equal(t, "second prompt", model.prompt.Value())
+	require.Equal(t, "second prompt", model.prompt().Value())
 
 	// Navigate down to third
 	handled = model.handleHistoryNavigation(1)
 	require.True(t, handled)
 	require.Equal(t, 2, model.historyCursor)
-	require.Equal(t, "third prompt", model.prompt.Value())
+	require.Equal(t, "third prompt", model.prompt().Value())
 
 	// Navigate down to present
 	handled = model.handleHistoryNavigation(1)
 	require.True(t, handled)
 	require.Equal(t, 3, model.historyCursor)
-	require.Equal(t, "current input", model.prompt.Value())
+	require.Equal(t, "current input", model.prompt().Value())
 	require.False(t, model.historySaved)
 }
 
@@ -1007,7 +1007,7 @@ func TestHistoryNavigation_DownWithoutSavedState(t *testing.T) {
 // TestHistoryNavigation_CursorInitialization tests cursor initialization from present
 func TestHistoryNavigation_CursorInitialization(t *testing.T) {
 	model := newTestModel(t)
-	model.prompt.SetValue("current")
+	model.prompt().SetValue("current")
 
 	model.sessionPromptHistory = []promptHistoryEntry{
 		{Prompt: "first", SessionSnapshot: 1, ChatSnapshot: 0},
@@ -1019,7 +1019,7 @@ func TestHistoryNavigation_CursorInitialization(t *testing.T) {
 	handled := model.handleHistoryNavigation(-1)
 	require.True(t, handled)
 	require.Equal(t, 1, model.historyCursor)
-	require.Equal(t, "second", model.prompt.Value())
+	require.Equal(t, "second", model.prompt().Value())
 }
 
 // TestWaitingIndicator_StartStop tests the waiting indicator lifecycle
@@ -1186,32 +1186,32 @@ func TestHistoryNavigation_WithArrowKeys(t *testing.T) {
 		{Prompt: "second", SessionSnapshot: 3, ChatSnapshot: 2},
 	}
 	model.historyCursor = 2
-	model.prompt.SetValue("current")
+	model.prompt().SetValue("current")
 
 	// Ensure we're in insert mode
-	model.prompt.EnterViInsertMode()
+	model.prompt().EnterViInsertMode()
 	model.Mode = ViModeInsert
 
 	// In insert mode, up arrow should NOT navigate history, just move cursor
-	model.prompt.TextArea.CursorStart()
+	model.prompt().TextArea.CursorStart()
 	newModel, _ := model.handleKeyMsg(tea.KeyMsg{Type: tea.KeyUp})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 	// History cursor should remain unchanged (no navigation)
 	require.Equal(t, 2, updatedModel.historyCursor, "Insert mode should not navigate history with arrow keys")
-	require.Equal(t, "current", updatedModel.prompt.Value(), "Prompt value should remain unchanged")
+	require.Equal(t, "current", updatedModel.prompt().Value(), "Prompt value should remain unchanged")
 
 	// Switch to normal mode - now arrow keys should navigate history
-	updatedModel.prompt.EnterViNormalMode()
+	updatedModel.prompt().EnterViNormalMode()
 	updatedModel.Mode = ViModeNormal
-	updatedModel.prompt.TextArea.CursorStart()
+	updatedModel.prompt().TextArea.CursorStart()
 
 	// Use handleViNormalMode for normal mode keys
 	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyUp})
 	updatedModel, ok = newModel.(TUIModel)
 	require.True(t, ok)
 	require.Equal(t, 1, updatedModel.historyCursor, "Normal mode should navigate history with arrow keys")
-	require.Equal(t, "second", updatedModel.prompt.Value())
+	require.Equal(t, "second", updatedModel.prompt().Value())
 }
 
 // TestCancelActiveStreaming tests the streaming cancellation helper
@@ -1251,7 +1251,7 @@ func TestCancelActiveStreaming_NotActive(t *testing.T) {
 // TestSaveHistoryPresentState tests saving the present state
 func TestSaveHistoryPresentState(t *testing.T) {
 	model := newTestModel(t)
-	model.prompt.SetValue("current prompt")
+	model.prompt().SetValue("current prompt")
 	chat := model.tabs.Content().Chat
 	chat.AddMessage("message 1")
 	chat.AddMessage("message 2")
@@ -1268,7 +1268,7 @@ func TestSaveHistoryPresentState(t *testing.T) {
 	require.Equal(t, 0, model.historyPresentSessionSnapshot)
 
 	// Try to save again (should not change)
-	model.prompt.SetValue("different")
+	model.prompt().SetValue("different")
 	model.saveHistoryPresentState()
 	require.Equal(t, "current prompt", model.historyPendingPrompt, "Should not update when already saved")
 }
@@ -1276,21 +1276,21 @@ func TestSaveHistoryPresentState(t *testing.T) {
 // TestRestoreHistoryPresent tests restoring the present state
 func TestRestoreHistoryPresent(t *testing.T) {
 	model := newTestModel(t)
-	model.prompt.SetValue("current")
+	model.prompt().SetValue("current")
 	model.historyPendingPrompt = "pending"
 	model.historySaved = true
 
 	// Restore present
 	model.restoreHistoryPresent()
 
-	require.Equal(t, "pending", model.prompt.Value())
+	require.Equal(t, "pending", model.prompt().Value())
 	require.False(t, model.historySaved)
 }
 
 // TestApplyHistoryEntry tests applying a history entry
 func TestApplyHistoryEntry(t *testing.T) {
 	model := newTestModel(t)
-	model.prompt.SetValue("current")
+	model.prompt().SetValue("current")
 
 	entry := promptHistoryEntry{
 		Prompt:          "historical prompt",
@@ -1301,7 +1301,7 @@ func TestApplyHistoryEntry(t *testing.T) {
 	// Apply entry
 	model.applyHistoryEntry(entry)
 
-	require.Equal(t, "historical prompt", model.prompt.Value())
+	require.Equal(t, "historical prompt", model.prompt().Value())
 }
 
 // TestStatusComponent_WaitingIndicator tests the status component waiting indicator
@@ -1492,21 +1492,21 @@ func TestHistoryNavigation_RapidNavigation(t *testing.T) {
 		})
 	}
 	model.historyCursor = len(model.sessionPromptHistory)
-	model.prompt.SetValue("current")
+	model.prompt().SetValue("current")
 
 	// Rapidly navigate up
 	for i := 0; i < 10; i++ {
 		model.handleHistoryNavigation(-1)
 	}
 	require.Equal(t, 0, model.historyCursor)
-	require.Equal(t, "prompt 0", model.prompt.Value())
+	require.Equal(t, "prompt 0", model.prompt().Value())
 
 	// Rapidly navigate down
 	for i := 0; i < 10; i++ {
 		model.handleHistoryNavigation(1)
 	}
 	require.Equal(t, 10, model.historyCursor)
-	require.Equal(t, "current", model.prompt.Value())
+	require.Equal(t, "current", model.prompt().Value())
 	require.False(t, model.historySaved)
 }
 
@@ -1934,19 +1934,10 @@ func setupTestGormDB(t *testing.T) *gorm.DB {
 		&storage.MarshalIncident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
+		&shogunate.RitualExecution{},
+		&shogunate.RitualStepState{},
 	)
 	require.NoError(t, err)
-
-	// Create ritual tables needed by Shogunate startup
-	db.Exec(`CREATE TABLE IF NOT EXISTS ritual_executions (
-		id TEXT PRIMARY KEY, ritual_name TEXT, edict_id TEXT, status TEXT,
-		current_step INTEGER, inputs TEXT, outputs TEXT,
-		created_at DATETIME, updated_at DATETIME, completed_at DATETIME, error TEXT
-	)`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS ritual_step_states (
-		id INTEGER PRIMARY KEY AUTOINCREMENT, execution_id TEXT, step_name TEXT,
-		status TEXT, output TEXT, error TEXT, created_at DATETIME
-	)`)
 
 	return db
 }
@@ -1986,7 +1977,8 @@ func TestCtrlCStopsStreamingE2E(t *testing.T) {
 
 	// 7. Submit a prompt — this flows through Chancellor → Session → slowStreamingLLM
 	tm.Type("hello world")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(ChangeModeMsg{NewMode: "normal"}) // Switch to normal mode
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})   // Submit prompt in normal mode
 
 	// 8. Wait for the LLM to actually start streaming (proves the full path works)
 	select {

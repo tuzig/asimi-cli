@@ -216,6 +216,16 @@ func (tm *TabManager) ActiveTab() *Tab {
 	return &tm.tabs[tm.activeTab]
 }
 
+// TabByTarget returns the tab whose Target matches, or nil
+func (tm *TabManager) TabByTarget(target string) *Tab {
+	for i := range tm.tabs {
+		if tm.tabs[i].Target == target {
+			return &tm.tabs[i]
+		}
+	}
+	return nil
+}
+
 // TabCount returns the number of tabs
 func (tm *TabManager) TabCount() int {
 	return len(tm.tabs)

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,6 +20,7 @@ const (
 	ViModeScroll      = "scroll"
 	ViModeCommandLine = "command"
 	ViModeLearning    = "learning"
+	ViModeAnswering   = "answering"
 )
 
 // Placeholder text constants
@@ -39,11 +42,40 @@ type PromptComponent struct {
 	viPendingOp    string // Track pending operation (e.g., "d" or "c")
 	viNormalKeyMap textarea.KeyMap
 	viInsertKeyMap textarea.KeyMap
+	answering      *AnsweringState // non-nil when in answering mode
 }
 
 // SubmitPromptMsg is a message sent when the user submits a prompt
 type SubmitPromptMsg struct {
 	Prompt string
+}
+
+// AnsweredMsg is emitted when the user finishes answering all questions
+type AnsweredMsg struct {
+	RequestID string
+	Answers   []string // option text or free-text per question
+}
+
+// AnsweringCancelMsg is emitted when the user cancels answering
+type AnsweringCancelMsg struct {
+	RequestID string
+}
+
+// AnsweringState holds state for the answering mode UI
+type AnsweringState struct {
+	RequestID string
+	Title     string
+	Questions []AnsweringQuestion
+	Answers   []string // collected answers
+	Current   int      // index of current question being answered
+	Typing    bool     // true when user picked "Other..." and is typing
+}
+
+// AnsweringQuestion holds a single question with selectable options
+type AnsweringQuestion struct {
+	Text     string
+	Options  []string // 2-4 options from LLM; "Other..." appended automatically
+	Selected int      // cursor position (includes "Other..." entry)
 }
 
 // NewPromptComponent creates a new prompt component
@@ -180,12 +212,26 @@ func (p *PromptComponent) SetExpandedHeight(height int) {
 // When user input is more than one line (including wrapped lines), grows to ExpandedHeight lines (if screen allows)
 // Goes back to 2-line height when in scroll mode or when prompt is cleared
 func (p *PromptComponent) CalculateDesiredHeight() int {
+	// Scroll mode always minimizes to 2 lines
+	if p.ViCurrentMode == ViModeScroll {
+		return 2
+	}
+
+	// In answering mode, size for: title + question + options + Other... + padding
+	if p.answering != nil && p.answering.Current < len(p.answering.Questions) {
+		q := p.answering.Questions[p.answering.Current]
+		// 1 title + 1 blank + question lines + option count + 1 (Other...) + 1 padding
+		h := 3 + len(q.Options) + 1 + 1
+		if p.MaxHeight > 0 && h > p.MaxHeight {
+			return p.MaxHeight
+		}
+		return h
+	}
+
 	value := p.TextArea.Value()
 
-	// Return to minimum height (2 lines) when:
-	// 1. Prompt is cleared (empty)
-	// 2. In scroll mode
-	if value == "" || p.ViCurrentMode == ViModeScroll {
+	// Return to minimum height (2 lines) when prompt is cleared (empty)
+	if value == "" {
 		return 2
 	}
 
@@ -321,6 +367,41 @@ func (p PromptComponent) IsViScrollMode() bool {
 // ViModeStatus returns current vi mode status for display components
 func (p PromptComponent) ViModeStatus() (enabled bool, mode string, pending string) {
 	return true, p.ViCurrentMode, p.viPendingOp
+}
+
+// HandleZhengmingPending parses a ZhengmingPendingMsg and enters answering mode
+func (p *PromptComponent) HandleZhengmingPending(msg shogunate.ZhengmingPendingMsg) {
+	aq := make([]AnsweringQuestion, len(msg.Questions))
+	for i, q := range msg.Questions {
+		aq[i] = AnsweringQuestion{
+			Text:    q.Text,
+			Options: q.Options,
+		}
+	}
+
+	state := &AnsweringState{
+		RequestID: msg.RequestID,
+		Title:     fmt.Sprintf("Zhengming: %s asks", msg.MinisterID),
+		Questions: aq,
+		Answers:   make([]string, len(aq)),
+	}
+	p.EnterAnsweringMode(state)
+}
+
+// EnterAnsweringMode switches to answering mode with the given state
+func (p *PromptComponent) EnterAnsweringMode(state *AnsweringState) {
+	p.answering = state
+	p.ViCurrentMode = ViModeAnswering
+	p.viPendingOp = ""
+	p.TextArea.Blur()
+	p.Style = p.Style.BorderForeground(globalTheme.PromptOnBorder)
+}
+
+// ExitAnsweringMode leaves answering mode and returns to insert mode
+func (p *PromptComponent) ExitAnsweringMode() {
+	p.answering = nil
+	p.EnterViInsertMode()
+	p.TextArea.Focus()
 }
 
 // updateViModeStyle updates the border color based on vi mode state
@@ -554,6 +635,10 @@ func (p PromptComponent) Update(msg interface{}) (PromptComponent, tea.Cmd) {
 	var cmd tea.Cmd
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		// Answering mode: intercept all keys
+		if p.answering != nil {
+			return p.updateAnswering(keyMsg)
+		}
 		if p.IsViInsertMode() || p.IsViNormalMode() {
 			// Shift+Enter inserts a newline instead of submitting
 			if keyMsg.Type == tea.KeyEnter && keyMsg.Alt {
@@ -625,7 +710,121 @@ func (p PromptComponent) Update(msg interface{}) (PromptComponent, tea.Cmd) {
 
 // View renders the prompt component
 func (p PromptComponent) View() string {
+	if p.answering != nil {
+		return p.viewAnswering()
+	}
 	content := p.TextArea.View()
-
 	return p.Style.Render(wordwrap.String(content, p.Width))
+}
+
+// viewAnswering renders the answering mode UI
+func (p PromptComponent) viewAnswering() string {
+	a := p.answering
+	if a.Current >= len(a.Questions) {
+		return p.Style.Render("Submitting answers...")
+	}
+	q := a.Questions[a.Current]
+
+	var b strings.Builder
+	// Title
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render(a.Title))
+	b.WriteByte('\n')
+	// Question text
+	b.WriteString(q.Text)
+	b.WriteByte('\n')
+
+	if a.Typing {
+		// Show textarea for free-text input
+		b.WriteByte('\n')
+		b.WriteString(p.TextArea.View())
+	} else {
+		// Render options + "Other..."
+		allOptions := append(q.Options, "Other...")
+		for i, opt := range allOptions {
+			if i == q.Selected {
+				b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptOnBorder).Render(fmt.Sprintf("  ▶ %s", opt)))
+			} else {
+				b.WriteString(fmt.Sprintf("    %s", opt))
+			}
+			if i < len(allOptions)-1 {
+				b.WriteByte('\n')
+			}
+		}
+	}
+
+	return p.Style.Render(b.String())
+}
+
+// updateAnswering handles key input in answering mode
+func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, tea.Cmd) {
+	a := p.answering
+	if a == nil || a.Current >= len(a.Questions) {
+		return p, nil
+	}
+	q := &a.Questions[a.Current]
+
+	// When typing free-text ("Other..." selected)
+	if a.Typing {
+		switch keyMsg.Type {
+		case tea.KeyEscape:
+			// Go back to option selection
+			a.Typing = false
+			p.TextArea.SetValue("")
+			p.TextArea.Blur()
+			return p, nil
+		case tea.KeyEnter:
+			if !keyMsg.Alt {
+				text := strings.TrimSpace(p.TextArea.Value())
+				if text == "" {
+					return p, nil
+				}
+				p.TextArea.SetValue("")
+				p.TextArea.Blur()
+				a.Typing = false
+				return p.advanceAnswer(text)
+			}
+		}
+		// Delegate to textarea for typing
+		p.TextArea, _ = p.TextArea.Update(keyMsg)
+		return p, nil
+	}
+
+	// Option selection mode
+	totalOptions := len(q.Options) + 1 // +1 for "Other..."
+	switch keyMsg.String() {
+	case "j", "down":
+		q.Selected = (q.Selected + 1) % totalOptions
+	case "k", "up":
+		q.Selected = (q.Selected - 1 + totalOptions) % totalOptions
+	case "enter":
+		if q.Selected == len(q.Options) {
+			// "Other..." selected — switch to typing mode
+			a.Typing = true
+			p.TextArea.SetValue("")
+			p.TextArea.Placeholder = "Type your answer..."
+			p.TextArea.Focus()
+		} else {
+			return p.advanceAnswer(q.Options[q.Selected])
+		}
+	case "esc":
+		return p, func() tea.Msg { return AnsweringCancelMsg{RequestID: a.RequestID} }
+	}
+	return p, nil
+}
+
+// advanceAnswer records the answer and moves to the next question or completes
+func (p PromptComponent) advanceAnswer(answer string) (PromptComponent, tea.Cmd) {
+	a := p.answering
+	a.Answers[a.Current] = answer
+	a.Current++
+
+	if a.Current >= len(a.Questions) {
+		answers := make([]string, len(a.Answers))
+		copy(answers, a.Answers)
+		requestID := a.RequestID
+		return p, func() tea.Msg {
+			return AnsweredMsg{RequestID: requestID, Answers: answers}
+		}
+	}
+	return p, nil
 }

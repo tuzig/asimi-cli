@@ -14,8 +14,9 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal"
-	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -81,7 +82,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Create chancellor
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create an edict (starts in brewing phase)
@@ -120,7 +121,7 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 	ctx := context.Background()
 
 	// Create edict
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#2", "Implement user authentication with login and logout")
 
@@ -151,27 +152,41 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 	ctx := context.Background()
 
 	// Create edict with ambiguous intent
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
-	chancellor.CreateEdict("test/repo#3", "Fix it")
+	require.NoError(t, chancellor.CreateEdict("test/repo#3", "Fix it"))
 
 	// Create strategist
 	strategist := NewStrategist(base)
 
-	// Execute - should request zhengming (internal method)
+	// Capture notifications to get the requestID
+	var notifiedMsg ZhengmingPendingMsg
+	var notifyMu sync.Mutex
+	strategist.SetNotify(func(msg any) {
+		notifyMu.Lock()
+		defer notifyMu.Unlock()
+		if m, ok := msg.(ZhengmingPendingMsg); ok {
+			notifiedMsg = m
+			// Resolve the waiter with "Let me expand the requirements"
+			// so execute() returns false, nil (user will expand)
+			go strategist.ResolveZhengmingWaiter(m.RequestID, "Let me expand the requirements")
+		}
+	})
+
+	// Execute - should request zhengming and block until resolved
 	sealed, err := strategist.execute(ctx, "test/repo#3")
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
-	}
-	if sealed {
-		t.Error("Expected not sealed for ambiguous intent")
-	}
+	require.NoError(t, err)
+	assert.False(t, sealed, "expected not sealed for ambiguous intent")
 
 	// Check zhengming was requested
 	pending, _ := strategist.IsZhengmingPending("test/repo#3")
-	if !pending {
-		t.Error("Expected pending zhengming")
-	}
+	assert.True(t, pending, "expected pending zhengming")
+
+	// Verify notification was sent with structured questions
+	notifyMu.Lock()
+	defer notifyMu.Unlock()
+	assert.NotEmpty(t, notifiedMsg.RequestID, "expected zhengming notification")
+	assert.NotEmpty(t, notifiedMsg.Questions, "expected structured questions")
 }
 
 func TestJudge_VerdictFlow(t *testing.T) {
@@ -179,7 +194,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create edict and manifest
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#4", "Test feature")
 
@@ -211,7 +226,7 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create quenched manifest
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#5", "Review feature")
 
@@ -247,7 +262,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create edict and manifest
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 	chancellor.CreateEdict("test/repo#6", "Production feature")
 
@@ -278,7 +293,7 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create and cancel edict
@@ -335,7 +350,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	defer cancel()
 
 	// Create Chancellor and Shogunate
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create a simple Shogunate with just Forge for this test
@@ -409,7 +424,7 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 	shogunate := &Shogunate{
 		db:        db,
@@ -434,7 +449,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	tool := InvokeMinisterTool{chancellor: chancellor}
@@ -449,7 +464,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 
 // TestInvokeMinisterTool_InvalidJSON tests error handling for malformed JSON input
 func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(nil, nil, nil)
 	chancellor := NewChancellor(base)
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
@@ -464,7 +479,7 @@ func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
 
 // TestInvokeMinisterTool_MissingMinisterID tests error handling for missing minister_id
 func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(nil, nil, nil)
 	chancellor := NewChancellor(base)
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
@@ -479,7 +494,7 @@ func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
 
 // TestInvokeMinisterTool_MissingEdictID tests error handling for missing edict_id
 func TestInvokeMinisterTool_MissingEdictID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(nil, nil, nil)
 	chancellor := NewChancellor(base)
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
@@ -498,7 +513,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister that returns an error in Result
@@ -532,7 +547,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister with a full task channel (buffer 0, no reader)
@@ -561,7 +576,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister that accepts but never replies
@@ -598,7 +613,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Collect notifications
@@ -663,7 +678,7 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	var mu sync.Mutex
@@ -733,7 +748,7 @@ func TestInvokeMinisterTool_Format(t *testing.T) {
 
 // TestBuildSystemPrompt_EdictID verifies the edict ID is injected into the scratchpad
 func TestBuildSystemPrompt_EdictID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(nil, nil, nil)
 
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
@@ -758,7 +773,7 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 
 // TestBuildSystemPrompt_Scratchpad verifies scratchpad is included with minister ID heading
 func TestBuildSystemPrompt_Scratchpad(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(nil, nil, nil)
 
 	fake := &fakeMinisterWithScratchpad{
 		fakeMinister: fakeMinister{MinisterBase: base, id: "strategist"},
@@ -803,7 +818,7 @@ func (f *fakeMinister) Run(ctx context.Context) {}
 // contains ritual names and descriptions from the registry.
 func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	registry := NewRitualRegistry()
@@ -837,7 +852,7 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 func TestChancellor_GetDBPath(t *testing.T) {
 	db, expectedPath := setupMinisterTestDBWithPath(t)
 
-	base := NewMinisterBase(db, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Call getDBPath and verify it returns the correct path
@@ -854,11 +869,65 @@ func TestChancellor_GetDBPath(t *testing.T) {
 
 // TestChancellor_GetDBPath_NilDB tests getDBPath returns empty string when db is nil
 func TestChancellor_GetDBPath_NilDB(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, repo.RepoInfo{}, nil, nil)
+	base := NewMinisterBase(nil, nil, nil)
 	chancellor := NewChancellor(base)
 
 	gotPath := chancellor.getDBPath()
 	if gotPath != "" {
 		t.Errorf("getDBPath() with nil db = %q, want empty string", gotPath)
 	}
+}
+
+func TestZhengmingWaitForAnswer(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil)
+
+	// Resolve from another goroutine
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		ok := base.ResolveZhengmingWaiter("req-1", "Yes")
+		assert.True(t, ok, "ResolveZhengmingWaiter should return true")
+	}()
+
+	answer, err := base.WaitForAnswer(context.Background(), "req-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Yes", answer)
+}
+
+func TestZhengmingWaitForAnswer_ContextCancelled(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := base.WaitForAnswer(ctx, "req-2")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	// Verify waiter was cleaned up
+	base.zhengmingMu.Lock()
+	_, exists := base.zhengmingWaiters["req-2"]
+	base.zhengmingMu.Unlock()
+	assert.False(t, exists, "waiter should be cleaned up after context cancellation")
+}
+
+func TestZhengmingMultipleQuestions(t *testing.T) {
+	questions := []storage.ZhengmingQuestion{
+		{Text: "What should it do?", Options: []string{"Option A", "Option B"}},
+		{Text: "How urgent?", Options: []string{"Now", "Later", "Never"}},
+	}
+
+	data, err := json.Marshal(questions)
+	require.NoError(t, err)
+
+	var parsed []storage.ZhengmingQuestion
+	require.NoError(t, json.Unmarshal(data, &parsed))
+
+	require.Len(t, parsed, 2)
+	assert.Equal(t, "What should it do?", parsed[0].Text)
+	assert.Len(t, parsed[0].Options, 2)
+	assert.Equal(t, "How urgent?", parsed[1].Text)
+	assert.Len(t, parsed[1].Options, 3)
 }

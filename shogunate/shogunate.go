@@ -116,23 +116,21 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	// Create ritual runner with shell runner for cmd steps
 	s.ritualRunner = NewRitualRunner(s.ritualRegistry, s, db, runner, s.logger)
 
-	// Create all ministers with minimal base (model/config/repoInfo/notify set later)
-	base := MinisterBase{
-		db:     db,
-		runner: runner,
-		logger: logger,
+	// Create all ministers — each needs its own base (channels/maps are reference types)
+	newBase := func() MinisterBase {
+		return NewMinisterBase(db, runner, logger)
 	}
 
-	chancellor := NewChancellor(base)
+	chancellor := NewChancellor(newBase())
 	chancellor.SetShogunate(s)
 	s.ministers[chancellor.ID()] = chancellor
 
-	s.ministers["strategist"] = NewStrategist(base)
-	s.ministers["forge"] = NewForge(base)
-	s.ministers["judge"] = NewJudge(base, nil)
-	s.ministers["censor"] = NewCensor(base, nil)
-	s.ministers["marshal"] = NewMarshal(base, nil)
-	s.ministers["confucius"] = NewConfucius(base)
+	s.ministers["strategist"] = NewStrategist(newBase())
+	s.ministers["forge"] = NewForge(newBase())
+	s.ministers["judge"] = NewJudge(newBase(), nil)
+	s.ministers["censor"] = NewCensor(newBase(), nil)
+	s.ministers["marshal"] = NewMarshal(newBase(), nil)
+	s.ministers["confucius"] = NewConfucius(newBase())
 
 	return s
 }
@@ -412,6 +410,19 @@ func (s *Shogunate) DispatchEvent(event Event) {
 			}(ritual)
 		}
 	}
+}
+
+// SubmitPrompt routes a prompt to the specified minister by ID.
+func (s *Shogunate) SubmitPrompt(targetID string, p *Prompt) error {
+	if s == nil {
+		return fmt.Errorf("shogunate not initialized")
+	}
+	minister := s.GetMinister(targetID)
+	if minister == nil {
+		return fmt.Errorf("minister not found: %s", targetID)
+	}
+	go minister.SubmitPrompt(p)
+	return nil
 }
 
 // GetCurrentSession returns the session for the specified edict ID.
