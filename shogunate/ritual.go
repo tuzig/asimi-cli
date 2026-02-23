@@ -73,14 +73,11 @@ type InputDef struct {
 // RitualStep defines a single step in a ritual (Given → Act → Then)
 type RitualStep struct {
 	Name            string            `yaml:"name"`
-	Type            string            `yaml:"type,omitempty"`              // minister, prompt, cmd, gate, confirm (default: minister if minister is set)
-	Minister        string            `yaml:"minister,omitempty"`          // For minister steps
+	Minister        string            `yaml:"minister,omitempty"`          // Minister to dispatch to
 	Given           []string          `yaml:"given,omitempty"`             // Given steps: "!" prefix = bash, else matched via step registry
 	Act             string            `yaml:"act,omitempty"`               // The action: task text, command, or prompt
 	Then            []string          `yaml:"then,omitempty"`              // Then steps: "!" prefix = bash, else matched via step registry
 	Task            string            `yaml:"task,omitempty"`              // Alias for Act (backward compat)
-	Command         string            `yaml:"command,omitempty"`           // For cmd steps
-	Condition       string            `yaml:"condition,omitempty"`         // For gate steps
 	DependsOn       []string          `yaml:"depends_on,omitempty"`        // Steps that must complete first
 	OnFailure       string            `yaml:"on_failure,omitempty"`        // retry, zhengming, goto, abort
 	OnFailureTarget string            `yaml:"on_failure_target,omitempty"` // Target step for goto
@@ -313,38 +310,12 @@ func ValidateRitual(def *RitualDef) error {
 			}
 		}
 
-		// Validate step type and required fields
-		stepType := step.Type
-		if stepType == "" && step.Minister != "" {
-			stepType = "minister"
+		// Validate minister and act
+		if step.Minister == "" {
+			return fmt.Errorf("ritual %q: step %q requires minister", def.Name, step.Name)
 		}
-
-		// act resolves Act or Task (backward compat)
-		hasAction := step.Act != "" || step.Task != ""
-
-		switch stepType {
-		case "minister", "":
-			if step.Minister == "" && !hasAction {
-				return fmt.Errorf("ritual %q: step %q requires minister or act/task", def.Name, step.Name)
-			}
-		case "cmd":
-			if step.Command == "" {
-				return fmt.Errorf("ritual %q: cmd step %q requires command", def.Name, step.Name)
-			}
-		case "gate":
-			if step.Condition == "" {
-				return fmt.Errorf("ritual %q: gate step %q requires condition", def.Name, step.Name)
-			}
-		case "confirm":
-			if !hasAction {
-				return fmt.Errorf("ritual %q: confirm step %q requires act/task (question)", def.Name, step.Name)
-			}
-		case "prompt":
-			if !hasAction {
-				return fmt.Errorf("ritual %q: prompt step %q requires act/task (prompt text)", def.Name, step.Name)
-			}
-		default:
-			return fmt.Errorf("ritual %q: step %q has unknown type %q", def.Name, step.Name, stepType)
+		if step.Act == "" && step.Task == "" {
+			return fmt.Errorf("ritual %q: step %q requires act or task", def.Name, step.Name)
 		}
 	}
 
@@ -784,7 +755,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	r.logger.Debug("executing ritual step",
 		"ritual", exec.RitualName,
 		"step", step.Name,
-		"type", step.Type)
+		"minister", step.Minister)
 
 	// Notify: step started
 	if exec.notify != nil {
@@ -842,27 +813,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	}
 
 	// === ACT ===
-	stepType := step.Type
-	if stepType == "" && step.Minister != "" {
-		stepType = "minister"
-	}
-
-	var actResult string
-	var err error
-	switch stepType {
-	case "minister", "":
-		actResult, err = r.executeMinisterStep(ctx, exec, step)
-	case "prompt":
-		actResult, err = r.executePromptStep(ctx, exec, step)
-	case "cmd":
-		actResult, err = r.executeCmdStep(ctx, exec, step)
-	case "gate":
-		actResult, err = r.executeGateStep(ctx, exec, step)
-	case "confirm":
-		actResult, err = r.executeConfirmStep(ctx, exec, step)
-	default:
-		return "", fmt.Errorf("unknown step type: %s", stepType)
-	}
+	actResult, err := r.executeMinisterStep(ctx, exec, step)
 	if err != nil {
 		return "", err
 	}
@@ -949,68 +900,6 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	}
 }
 
-// executePromptStep sends a prompt to the LLM
-func (r *RitualRunner) executePromptStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
-	// Get chancellor's session for LLM access
-	chancellor := r.shogunate.GetMinister("chancellor")
-	if chancellor == nil {
-		return "", fmt.Errorf("chancellor not available")
-	}
-
-	chanc, ok := chancellor.(*Chancellor)
-	if !ok {
-		return "", fmt.Errorf("invalid chancellor type")
-	}
-
-	sess := chanc.GetSession(exec.EdictID)
-	if sess == nil {
-		return "", fmt.Errorf("no session for edict %s", exec.EdictID)
-	}
-
-	prompt := r.expandTemplate(step.resolveAct(), exec)
-	response, err := sess.AskWithStreaming(ctx, prompt, nil)
-	if err != nil {
-		return "", err
-	}
-
-	return response, nil
-}
-
-// executeCmdStep runs a shell command
-func (r *RitualRunner) executeCmdStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
-	if r.runner == nil {
-		return "", fmt.Errorf("no runner configured for cmd steps")
-	}
-
-	command := r.expandTemplate(step.Command, exec)
-	output, err := r.runner.Run(ctx, runners.Input{
-		Command:        command,
-		Description:    fmt.Sprintf("ritual %s step %s", exec.RitualName, step.Name),
-		BypassApproval: true,
-	})
-	if err != nil {
-		return "", err
-	}
-	if output.ExitCode != "0" {
-		return "", fmt.Errorf("exit code %s: %s", output.ExitCode, output.Output)
-	}
-	return output.Output, nil
-}
-
-// executeGateStep waits for a condition
-func (r *RitualRunner) executeGateStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
-	// Gate conditions would be evaluated here
-	// For now, just pass through
-	return "gate passed", nil
-}
-
-// executeConfirmStep requires user confirmation
-func (r *RitualRunner) executeConfirmStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
-	// This would integrate with the TUI for user confirmation
-	// For now, auto-approve
-	r.logger.Info("confirm step auto-approved (not implemented)", "step", step.Name)
-	return "confirmed", nil
-}
 
 // runBuiltinGiven runs a builtin given function and returns the result
 func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {

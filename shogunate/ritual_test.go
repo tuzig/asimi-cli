@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -195,7 +196,7 @@ func TestValidateRitual(t *testing.T) {
 			name: "missing name",
 			ritual: &RitualDef{
 				Steps: []RitualStep{
-					{Name: "step1", Task: "do something"},
+					{Name: "step1", Minister: "forge", Task: "do something"},
 				},
 			},
 			wantErr: true,
@@ -245,26 +246,26 @@ func TestValidateRitual(t *testing.T) {
 			errMsg:  "unknown step",
 		},
 		{
-			name: "cmd step without command",
+			name: "missing minister",
 			ritual: &RitualDef{
-				Name: "bad-cmd",
+				Name: "no-minister",
 				Steps: []RitualStep{
-					{Name: "step1", Type: "cmd"},
+					{Name: "step1", Task: "do something"},
 				},
 			},
 			wantErr: true,
-			errMsg:  "requires command",
+			errMsg:  "requires minister",
 		},
 		{
-			name: "gate step without condition",
+			name: "missing act",
 			ritual: &RitualDef{
-				Name: "bad-gate",
+				Name: "no-act",
 				Steps: []RitualStep{
-					{Name: "step1", Type: "gate"},
+					{Name: "step1", Minister: "forge"},
 				},
 			},
 			wantErr: true,
-			errMsg:  "requires condition",
+			errMsg:  "requires act or task",
 		},
 		{
 			name: "circular dependency - self reference",
@@ -377,7 +378,7 @@ steps:
 name: another-ritual
 steps:
   - name: step1
-    type: prompt
+    minister: chancellor
     task: Ask something
 `
 	if err := os.WriteFile(filepath.Join(dir, "another.yml"), []byte(anotherRitual), 0644); err != nil {
@@ -417,7 +418,6 @@ func TestLoadRitualsFromDir_Invalid(t *testing.T) {
 name: invalid
 steps:
   - name: step1
-    type: unknown_type
     task: Do something
 `
 	if err := os.WriteFile(filepath.Join(dir, "invalid.yaml"), []byte(invalidRitual), 0644); err != nil {
@@ -497,9 +497,9 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 			if len(r.Steps) != 3 {
 				t.Errorf("review: expected 3 steps, got %d", len(r.Steps))
 			}
-			// Background: git diff and just test at ritual level
-			if len(r.Background) != 2 || r.Background[0] != "!git diff" || r.Background[1] != "!just test" {
-				t.Errorf("review: expected background ['!git diff', '!just test'], got %v", r.Background)
+			// Background: git diff, git diff --cached, and just test at ritual level
+			if len(r.Background) != 3 || r.Background[0] != "!git diff" || r.Background[1] != "!git diff --cached" || r.Background[2] != "!just test" {
+				t.Errorf("review: expected background ['!git diff', '!git diff --cached', '!just test'], got %v", r.Background)
 			}
 			// Judge step should have no then and no step-level given
 			if len(r.Steps[0].Given) != 0 {
@@ -512,9 +512,9 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 			if len(r.Steps[1].DependsOn) != 1 || r.Steps[1].DependsOn[0] != "judge" {
 				t.Errorf("review censor: expected depends_on [judge], got %v", r.Steps[1].DependsOn)
 			}
-			// Report step is a prompt
-			if r.Steps[2].Type != "prompt" {
-				t.Errorf("review report: expected type 'prompt', got %q", r.Steps[2].Type)
+			// Report step dispatches to chancellor
+			if r.Steps[2].Minister != "chancellor" {
+				t.Errorf("review report: expected minister 'chancellor', got %q", r.Steps[2].Minister)
 			}
 
 		case "wakeup":
@@ -567,10 +567,9 @@ func TestRitualStreamMessages(t *testing.T) {
 		},
 		Steps: []RitualStep{
 			{
-				Name:    "echo",
-				Type:    "cmd",
-				Command: "echo hello",
-				Task:    "Echo hello",
+				Name:     "echo",
+				Minister: "forge",
+				Task:     "Echo hello",
 			},
 		},
 	}
@@ -581,11 +580,11 @@ func TestRitualStreamMessages(t *testing.T) {
 		t.Fatalf("Failed to register ritual: %v", err)
 	}
 
-	// Create a mock runner that succeeds
-	mockRunner := &mockCmdRunner{output: "hello\n", exitCode: "0"}
+	// Create mock shogunate with ministers that return "hello\n"
+	shogunate := newRitualTestShogunate(t, "hello\n", nil)
 
-	// Create ritual runner (no shogunate needed for cmd steps)
-	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	// Create ritual runner
+	runner := NewRitualRunner(registry, shogunate, db, nil, nil)
 
 	// Collect messages from the stream
 	var messages []any
@@ -659,17 +658,17 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 		Name:        "multi-step",
 		Description: "Multi-step ritual",
 		Steps: []RitualStep{
-			{Name: "step1", Type: "cmd", Command: "echo one"},
-			{Name: "step2", Type: "cmd", Command: "echo two", DependsOn: []string{"step1"}},
-			{Name: "step3", Type: "cmd", Command: "echo three", DependsOn: []string{"step2"}},
+			{Name: "step1", Minister: "forge", Task: "do one"},
+			{Name: "step2", Minister: "judge", Task: "do two", DependsOn: []string{"step1"}},
+			{Name: "step3", Minister: "censor", Task: "do three", DependsOn: []string{"step2"}},
 		},
 	}
 
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	mockRunner := &mockCmdRunner{output: "ok\n", exitCode: "0"}
-	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	shogunate := newRitualTestShogunate(t, "ok\n", nil)
+	runner := NewRitualRunner(registry, shogunate, db, nil, nil)
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -715,16 +714,16 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 	ritual := &RitualDef{
 		Name: "fail-ritual",
 		Steps: []RitualStep{
-			{Name: "fail-step", Type: "cmd", Command: "exit 1", OnFailure: "abort"},
+			{Name: "fail-step", Minister: "forge", Task: "do something", OnFailure: "abort"},
 		},
 	}
 
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	// Mock runner that fails
-	mockRunner := &mockCmdRunner{output: "error!", exitCode: "1", err: nil}
-	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	// Mock shogunate where ministers return errors
+	shogunate := newRitualTestShogunate(t, "", fmt.Errorf("minister failed"))
+	runner := NewRitualRunner(registry, shogunate, db, nil, nil)
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -907,10 +906,10 @@ func TestRunThenStep_Multiple(t *testing.T) {
 		Name: "multi-then",
 		Steps: []RitualStep{
 			{
-				Name:    "build",
-				Type:    "cmd",
-				Command: "echo build",
-				Then:    []string{"!echo check1", "!exit 1"},
+				Name:     "build",
+				Minister: "forge",
+				Task:     "build something",
+				Then:     []string{"!echo check1", "!exit 1"},
 			},
 		},
 	}
@@ -918,16 +917,14 @@ func TestRunThenStep_Multiple(t *testing.T) {
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	callCount := 0
+	shogunate := newRitualTestShogunate(t, "build\n", nil)
 	mockRunner := &mockCallCountRunner{
 		results: []runners.Output{
-			{Output: "build\n", ExitCode: "0"}, // cmd step
-			{Output: "ok\n", ExitCode: "0"},    // first then
-			{Output: "FAIL\n", ExitCode: "1"},  // second then
+			{Output: "ok\n", ExitCode: "0"},   // first then
+			{Output: "FAIL\n", ExitCode: "1"}, // second then
 		},
 	}
-	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
-	_ = callCount
+	runner := NewRitualRunner(registry, shogunate, db, mockRunner, nil)
 
 	ctx := context.Background()
 	exec, err := runner.Start(ctx, "multi-then", "edict-test", nil, nil)
@@ -983,25 +980,25 @@ func TestLoadBuiltinRituals(t *testing.T) {
 func TestBackgroundGiven(t *testing.T) {
 	db := setupRitualTestDB(t)
 
-	// Ritual with background given (bash) and a cmd step
+	// Ritual with background given (bash) and a minister step
 	ritual := &RitualDef{
 		Name:       "bg-test",
 		Background: []string{"!echo background-data"},
 		Steps: []RitualStep{
-			{Name: "work", Type: "cmd", Command: "echo step-done"},
+			{Name: "work", Minister: "forge", Task: "do work"},
 		},
 	}
 
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
+	shogunate := newRitualTestShogunate(t, "step-done\n", nil)
 	mockRunner := &mockCallCountRunner{
 		results: []runners.Output{
 			{Output: "background-data\n", ExitCode: "0"}, // background given
-			{Output: "step-done\n", ExitCode: "0"},       // cmd step
 		},
 	}
-	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, shogunate, db, mockRunner, nil)
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -1052,6 +1049,52 @@ func TestBackgroundGiven(t *testing.T) {
 	if cmdDone != 1 {
 		t.Errorf("expected 1 cmd_done message for background, got %d", cmdDone)
 	}
+}
+
+// ritualTestMinister is a Minister that auto-completes tasks with a configured result.
+type ritualTestMinister struct {
+	MinisterBase
+	id      string
+	tasksCh chan *Task
+	result  string
+	err     error
+}
+
+func (m *ritualTestMinister) ID() string          { return m.id }
+func (m *ritualTestMinister) SystemPrompt() string { return "" }
+func (m *ritualTestMinister) Title() string        { return m.id }
+func (m *ritualTestMinister) Tools() []Tool        { return nil }
+func (m *ritualTestMinister) Tasks() chan<- *Task   { return m.tasksCh }
+func (m *ritualTestMinister) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-m.tasksCh:
+			t.Done <- Result{Output: m.result, Err: m.err}
+		}
+	}
+}
+
+// newRitualTestShogunate creates a Shogunate with mock ministers for ritual tests.
+// All ministers return the given output. Start a goroutine for each minister's Run.
+func newRitualTestShogunate(t *testing.T, output string, err error) *Shogunate {
+	t.Helper()
+	ministers := map[string]Minister{}
+	for _, id := range []string{"forge", "judge", "censor", "strategist", "chancellor", "marshal"} {
+		m := &ritualTestMinister{
+			MinisterBase: MinisterBase{logger: slog.Default()},
+			id:           id,
+			tasksCh:      make(chan *Task, 1),
+			result:       output,
+			err:          err,
+		}
+		ministers[id] = m
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		go m.Run(ctx)
+	}
+	return &Shogunate{ministers: ministers}
 }
 
 // mockCallCountRunner returns sequential results for successive calls
@@ -1115,20 +1158,17 @@ func TestInvokeRitualTool_Blocking(t *testing.T) {
 		Name:        "test-blocking",
 		Description: "A test ritual for blocking behavior",
 		Steps: []RitualStep{
-			{Name: "echo", Type: "cmd", Command: "echo hello"},
+			{Name: "echo", Minister: "forge", Task: "echo hello"},
 		},
 	}
 
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	mockRunner := &mockCmdRunner{output: "hello\n", exitCode: "0"}
-	ritualRunner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	shogunate := newRitualTestShogunate(t, "hello\n", nil)
+	ritualRunner := NewRitualRunner(registry, shogunate, db, nil, nil)
+	shogunate.ritualRunner = ritualRunner
 
-	// Wire up a minimal Chancellor + Shogunate
-	shogunate := &Shogunate{
-		ritualRunner: ritualRunner,
-	}
 	chanc := &Chancellor{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		shogunate:    shogunate,
@@ -1176,19 +1216,17 @@ func TestInvokeRitualTool_BlockingFailure(t *testing.T) {
 	ritual := &RitualDef{
 		Name: "test-fail-blocking",
 		Steps: []RitualStep{
-			{Name: "fail", Type: "cmd", Command: "exit 1", OnFailure: "abort"},
+			{Name: "fail", Minister: "forge", Task: "do something", OnFailure: "abort"},
 		},
 	}
 
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	mockRunner := &mockCmdRunner{output: "error!", exitCode: "1"}
-	ritualRunner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	shogunate := newRitualTestShogunate(t, "", fmt.Errorf("minister failed"))
+	ritualRunner := NewRitualRunner(registry, shogunate, db, nil, nil)
+	shogunate.ritualRunner = ritualRunner
 
-	shogunate := &Shogunate{
-		ritualRunner: ritualRunner,
-	}
 	chanc := &Chancellor{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		shogunate:    shogunate,
