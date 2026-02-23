@@ -218,7 +218,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 	// If LLM is configured, use a session to process the task
 	if f.model != nil {
-		output, taskErr = f.streamTask(ctx, task.Work, task.EdictID)
+		output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad)
 	} else {
 		// No LLM configured - just acknowledge
 		output = "forge task acknowledged (no LLM configured)"
@@ -239,8 +239,11 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 }
 
 // streamTask creates a session and streams the task through the LLM.
-func (f *Forge) streamTask(ctx context.Context, work, edictID string) (string, error) {
-	session, err := CreateSession(f, f.model, f.config, f.notify, edictID)
+func (f *Forge) streamTask(ctx context.Context, work, edictID, scratchpad string) (string, error) {
+	session, err := CreateSessionWithOpts(f, f.model, f.config, f.notify, CreateSessionOpts{
+		EdictID:    edictID,
+		Scratchpad: scratchpad,
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create forge session: %w", err)
 	}

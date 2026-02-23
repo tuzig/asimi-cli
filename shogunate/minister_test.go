@@ -932,3 +932,91 @@ func TestZhengmingMultipleQuestions(t *testing.T) {
 	assert.Equal(t, "How urgent?", parsed[1].Text)
 	assert.Len(t, parsed[1].Options, 3)
 }
+
+// TestFormatGivenContext verifies edict details are rendered as readable markdown
+func TestFormatGivenContext(t *testing.T) {
+	ctx := map[string]interface{}{
+		"edict": map[string]interface{}{
+			"edict_id": "edict-abc123",
+			"intent":   "Add user authentication with OAuth2",
+			"phase":    "forging",
+			"halted":   false,
+		},
+		"manifests": []map[string]interface{}{
+			{"manifest_id": "m-1", "file_path": "auth.go", "status": "staged"},
+		},
+	}
+
+	result := formatScratchpad(ctx)
+
+	// Should contain both section headings (sorted alphabetically)
+	if !strings.Contains(result, "## edict") {
+		t.Errorf("Expected '## edict' heading, got:\n%s", result)
+	}
+	if !strings.Contains(result, "## manifests") {
+		t.Errorf("Expected '## manifests' heading, got:\n%s", result)
+	}
+	// Should contain the edict intent
+	if !strings.Contains(result, "Add user authentication with OAuth2") {
+		t.Errorf("Expected edict intent in output, got:\n%s", result)
+	}
+	// Should contain JSON formatting
+	if !strings.Contains(result, "```json") {
+		t.Errorf("Expected JSON code block, got:\n%s", result)
+	}
+	// Nil/empty context should return empty string
+	if formatScratchpad(nil) != "" {
+		t.Error("Expected empty string for nil context")
+	}
+	if formatScratchpad(map[string]interface{}{}) != "" {
+		t.Error("Expected empty string for empty context")
+	}
+}
+
+// TestFormatGivenContext_StringValues verifies plain strings are rendered without JSON wrapping
+func TestFormatGivenContext_StringValues(t *testing.T) {
+	ctx := map[string]interface{}{
+		"notes": "some plain text output",
+	}
+	result := formatScratchpad(ctx)
+	if !strings.Contains(result, "some plain text output") {
+		t.Errorf("Expected plain text, got:\n%s", result)
+	}
+	if strings.Contains(result, "```json") {
+		t.Errorf("Plain strings should not be wrapped in JSON code blocks, got:\n%s", result)
+	}
+}
+
+// TestBuildSystemPrompt_GivenContext verifies that pre-formatted given context
+// from a ritual is included in the system prompt when passed to buildSystemPrompt.
+func TestBuildSystemPrompt_GivenContext(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil)
+	fake := &fakeMinister{MinisterBase: base, id: "forge"}
+
+	// Simulate what the ritual does: format given context map → markdown string
+	scratchpad := formatScratchpad(map[string]interface{}{
+		"edict": map[string]interface{}{
+			"edict_id": "edict-xyz",
+			"intent":   "Implement dark mode for the dashboard",
+			"phase":    "forging",
+		},
+	})
+
+	// With scratchpad — edict intent should appear in system prompt
+	prompt := buildSystemPrompt(fake, nil, "edict-xyz", scratchpad)
+	if !strings.Contains(prompt, "Implement dark mode for the dashboard") {
+		t.Errorf("Expected edict intent in system prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "# Given Context") {
+		t.Errorf("Expected '# Given Context' heading, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Current Edict: edict-xyz") {
+		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
+	}
+
+	// Without given context — should not contain "Given Context"
+	prompt = buildSystemPrompt(fake, nil, "edict-xyz")
+	if strings.Contains(prompt, "# Given Context") {
+		t.Errorf("Expected no scratchpad without scratchpad param, got:\n%s", prompt)
+	}
+}

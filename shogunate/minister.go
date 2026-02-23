@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"text/template"
 	"time"
@@ -59,9 +61,10 @@ type OriginMsg struct {
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
-	EdictID string        // The edict this task belongs to
-	Work    string        // Specific instructions for the minister (renamed from Task to avoid Task.Task)
-	Done    chan<- Result // For completion signal
+	EdictID    string        // The edict this task belongs to
+	Work       string        // Specific instructions for the minister (renamed from Task to avoid Task.Task)
+	Scratchpad string        // Pre-formatted markdown added to the context
+	Done       chan<- Result // For completion signal
 }
 
 // Result signals a Minister has completed a Task
@@ -244,24 +247,35 @@ func (m *MinisterBase) Scratchpad() string {
 	return ""
 }
 
+// CreateSessionOpts holds optional parameters for CreateSession.
+type CreateSessionOpts struct {
+	EdictID    string
+	Scratchpad string // Pre-formatted markdown context from ritual
+}
+
 // CreateSession creates a session for a minister with composed system prompt.
 // The system prompt is built from the shared template with the minister's role injected.
 // edictID is optional — when provided, it's included in the scratchpad context.
 func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, edictID ...string) (*Session, error) {
-	tools := minister.Tools()
 	eid := ""
 	if len(edictID) > 0 {
 		eid = edictID[0]
 	}
 	systemPrompt := buildSystemPrompt(minister, config, eid)
+	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt)
+}
 
-	return NewSession(model, config, tools, nil, notify, systemPrompt)
+// CreateSessionWithOpts creates a session with extended options including given context.
+func CreateSessionWithOpts(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
+	systemPrompt := buildSystemPrompt(minister, config, opts.EdictID, opts.Scratchpad)
+	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
 // with the minister's Role, Scratchpad, and project context from AGENTS.md.
 // If edictID is non-empty, it's prepended to the scratchpad.
-func buildSystemPrompt(minister Minister, config *SessionConfig, edictID string) string {
+// Optional args, when provided, is appended to the scratchpad.
+func buildSystemPrompt(minister Minister, config *SessionConfig, edictID string, args ...string) string {
 	agentsFile := "AGENTS.md"
 	if config != nil && config.AgentsFile != "" {
 		agentsFile = config.AgentsFile
@@ -270,6 +284,9 @@ func buildSystemPrompt(minister Minister, config *SessionConfig, edictID string)
 	scratchpad := minister.Scratchpad()
 	if edictID != "" {
 		scratchpad = fmt.Sprintf("# Current Edict: %s\n\n%s", edictID, scratchpad)
+	}
+	if len(args) > 0 && args[0] != "" {
+		scratchpad += "\n\n" + args[0]
 	}
 
 	var buf bytes.Buffer
@@ -281,6 +298,43 @@ func buildSystemPrompt(minister Minister, config *SessionConfig, edictID string)
 		"ProjectContext": readProjectContext(agentsFile),
 		"AgentsFile":     agentsFile,
 	})
+	return buf.String()
+}
+
+// formatScratchpad renders a given context map as readable markdown sections.
+func formatScratchpad(ctx map[string]interface{}) string {
+	if len(ctx) == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	buf.WriteString("# Given Context\n\n")
+
+	// Sort keys for deterministic output
+	keys := make([]string, 0, len(ctx))
+	for k := range ctx {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		buf.WriteString("## ")
+		buf.WriteString(key)
+		buf.WriteString("\n\n")
+		switch v := ctx[key].(type) {
+		case string:
+			buf.WriteString(v)
+		default:
+			b, err := json.MarshalIndent(v, "", "  ")
+			if err != nil {
+				buf.WriteString(fmt.Sprintf("%v", v))
+			} else {
+				buf.WriteString("```json\n")
+				buf.Write(b)
+				buf.WriteString("\n```")
+			}
+		}
+		buf.WriteString("\n\n")
+	}
 	return buf.String()
 }
 

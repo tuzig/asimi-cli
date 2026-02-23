@@ -616,12 +616,12 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		if exec.Data == nil {
 			exec.Data = storage.JSON{}
 		}
-		givenCtx, _ := exec.Data["given_context"].(map[string]interface{})
-		if givenCtx == nil {
-			givenCtx = make(map[string]interface{})
+		given, _ := exec.Data["given_context"].(map[string]interface{})
+		if given == nil {
+			given = make(map[string]interface{})
 		}
-		givenCtx[entry.Key] = result
-		exec.Data["given_context"] = givenCtx
+		given[entry.Key] = result
+		exec.Data["given_context"] = given
 	}
 
 	for exec.CurrentStep < len(exec.def.Steps) {
@@ -816,12 +816,12 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			if exec.Data == nil {
 				exec.Data = storage.JSON{}
 			}
-			givenCtx, _ := exec.Data["given_context"].(map[string]interface{})
-			if givenCtx == nil {
-				givenCtx = make(map[string]interface{})
+			given, _ := exec.Data["given_context"].(map[string]interface{})
+			if given == nil {
+				given = make(map[string]interface{})
 			}
-			givenCtx[entry.Key] = result
-			exec.Data["given_context"] = givenCtx
+			given[entry.Key] = result
+			exec.Data["given_context"] = given
 		}
 	}
 
@@ -895,12 +895,21 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	// Expand template in work (Act or Task for backward compat)
 	work := r.expandTemplate(step.resolveAct(), exec)
 
+	// Format given context as markdown scratchpad for the minister
+	var scratchpad string
+	if exec.Data != nil {
+		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok {
+			scratchpad = formatScratchpad(given)
+		}
+	}
+
 	// Create task
 	doneChan := make(chan Result, 1)
 	t := &Task{
-		EdictID: exec.EdictID,
-		Work:    work,
-		Done:    doneChan,
+		EdictID:    exec.EdictID,
+		Work:       work,
+		Scratchpad: scratchpad,
+		Done:       doneChan,
 	}
 
 	// Send task to minister
@@ -1298,8 +1307,8 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 	}
 	// Merge given context into template data
 	if exec.Data != nil {
-		if givenCtx, ok := exec.Data["given_context"].(map[string]interface{}); ok {
-			for k, v := range givenCtx {
+		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok {
+			for k, v := range given {
 				data[k] = v
 			}
 		}

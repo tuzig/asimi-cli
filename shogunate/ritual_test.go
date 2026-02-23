@@ -1022,12 +1022,12 @@ func TestBackgroundGiven(t *testing.T) {
 	}
 
 	// Verify background given result is in context
-	givenCtx, ok := exec.Data["given_context"].(map[string]interface{})
+	given, ok := exec.Data["given_context"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected given_context in exec.Data")
 	}
-	if _, ok := givenCtx["echo"]; !ok {
-		t.Errorf("expected 'echo' key in given_context, got keys: %v", givenCtx)
+	if _, ok := given["echo"]; !ok {
+		t.Errorf("expected 'echo' key in given_context, got keys: %v", given)
 	}
 
 	// Verify cmd_running and cmd_done notifications were emitted for background
