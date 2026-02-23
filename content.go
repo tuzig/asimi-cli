@@ -183,7 +183,7 @@ func (tm *TabManager) RenderTabBar(width int) string {
 		} else {
 			// Inactive tab: dimmer text on the same grey fill
 			style := lipgloss.NewStyle().
-				Foreground(globalTheme.DarkBorder).
+				Foreground(lipgloss.Color("#999999")).
 				Background(fillBg).
 				Padding(0, 1)
 			parts = append(parts, style.Render(label))
