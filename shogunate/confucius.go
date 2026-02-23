@@ -305,7 +305,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 	if params.EdictID != "" {
 		query = query.Where("edict_id = ?", params.EdictID)
 	} else if params.Scope != "all" {
-		query = query.Where("current_phase NOT IN ?", []string{"sealed", "cancelled"})
+		query = query.Where("status NOT IN ?", []string{"sealed", "cancelled"})
 	}
 	query.Find(&edicts)
 
@@ -313,8 +313,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 	for i, e := range edicts {
 		edictSummaries[i] = map[string]interface{}{
 			"edict_id": e.EdictID,
-			"phase":    string(e.CurrentPhase),
-			"halted":   e.Halted,
+			"status":   string(e.Status),
 			"intent":   truncateForCourt(e.Intent, 120),
 		}
 	}

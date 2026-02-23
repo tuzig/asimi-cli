@@ -162,8 +162,8 @@ func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := j.db.Distinct("edicts.*").
 		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
-		Where("forge_manifests.status = ? AND edicts.current_phase = ?",
-			storage.ManifestLive, storage.PhaseJudging).
+		Where("forge_manifests.status = ? AND edicts.status = ?",
+			storage.ManifestLive, storage.EdictActive).
 		Find(&edicts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edicts with pending manifests: %w", err)

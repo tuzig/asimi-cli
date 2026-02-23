@@ -444,11 +444,11 @@ func (m *MinisterBase) RequestZhengming(edictID string, questions storage.Zhengm
 		return "", fmt.Errorf("failed to create zhengming request: %w", err)
 	}
 
-	// Halt the edict while zhengming is pending
+	// Block the edict while zhengming is pending
 	if edictID != "" {
 		m.db.Model(&storage.Edict{}).
-			Where("edict_id = ?", edictID).
-			Update("halted", true)
+			Where("edict_id = ? AND status = ?", edictID, storage.EdictActive).
+			Update("status", storage.EdictBlocked)
 	}
 
 	return requestID, nil
@@ -522,8 +522,8 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 		pending, err := m.IsZhengmingPending(req.EdictID)
 		if err == nil && !pending {
 			m.db.Model(&storage.Edict{}).
-				Where("edict_id = ?", req.EdictID).
-				Update("halted", false)
+				Where("edict_id = ? AND status = ?", req.EdictID, storage.EdictBlocked).
+				Update("status", storage.EdictActive)
 		}
 	}
 
@@ -541,20 +541,6 @@ func (m *MinisterBase) EmitEvent(edictID, eventType string, payload storage.JSON
 	}
 	if err := m.db.Create(&event).Error; err != nil {
 		return fmt.Errorf("failed to emit event: %w", err)
-	}
-	return nil
-}
-
-// UpdatePhase transitions an edict to a new phase
-func (m *MinisterBase) UpdatePhase(edictID string, phase storage.EdictPhase) error {
-	result := m.db.Model(&storage.Edict{}).
-		Where("edict_id = ?", edictID).
-		Update("current_phase", phase)
-	if result.Error != nil {
-		return fmt.Errorf("failed to update phase: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %s", edictID)
 	}
 	return nil
 }

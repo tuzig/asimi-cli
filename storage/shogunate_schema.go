@@ -56,31 +56,25 @@ func (s *StringArray) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, s)
 }
 
-// EdictPhase represents the current phase of an edict
-type EdictPhase string
+// EdictStatus represents the current status of an edict
+type EdictStatus string
 
 const (
-	PhaseBrewing EdictPhase = "brewing"
-	PhasePlanning    EdictPhase = "planning"
-	PhaseForging     EdictPhase = "forging"
-	PhaseJudging     EdictPhase = "judging"
-	PhaseCensoring   EdictPhase = "censoring"
-	PhaseDeploying   EdictPhase = "deploying"
-	PhaseSealed      EdictPhase = "sealed"
-	PhaseCancelled   EdictPhase = "cancelled"
+	EdictActive    EdictStatus = "active"
+	EdictBlocked   EdictStatus = "blocked"
+	EdictSealed    EdictStatus = "sealed"
+	EdictCancelled EdictStatus = "cancelled"
 )
 
 // Edict represents a high-level task/issue being processed by the Shogunate
 type Edict struct {
-	EdictID string `gorm:"primaryKey;column:edict_id"`
-	// TODO: ensure this is a link to SessionData
-	SessionID    string     `gorm:"column:session_id;index"`
-	IssueRef     string     `gorm:"column:issue_ref"`
-	Intent       string     `gorm:"column:intent"`
-	CurrentPhase EdictPhase `gorm:"column:current_phase"`
-	Halted       bool       `gorm:"column:halted"`
-	CreatedAt    time.Time  `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt    time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+	EdictID   string      `gorm:"primaryKey;column:edict_id"`
+	SessionID string      `gorm:"column:session_id;index"`
+	IssueRef  string      `gorm:"column:issue_ref"`
+	Intent    string      `gorm:"column:intent"`
+	Status    EdictStatus `gorm:"column:status"`
+	CreatedAt time.Time   `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt time.Time   `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName returns the table name for Edict
@@ -344,13 +338,12 @@ CREATE TABLE IF NOT EXISTS edicts (
     session_id TEXT NOT NULL DEFAULT '',
     issue_ref TEXT NOT NULL,
     intent TEXT NOT NULL,
-    current_phase TEXT NOT NULL DEFAULT 'brewing',
-    halted INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
-CREATE INDEX IF NOT EXISTS idx_edicts_phase ON edicts(current_phase);
+CREATE INDEX IF NOT EXISTS idx_edicts_status ON edicts(status);
 CREATE INDEX IF NOT EXISTS idx_edicts_session ON edicts(session_id);
 
 -- Zhengming requests table (clarification requests)

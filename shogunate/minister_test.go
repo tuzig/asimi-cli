@@ -91,29 +91,14 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 		t.Fatalf("Failed to create edict: %v", err)
 	}
 
-	// Verify edict was created in brewing phase
+	// Verify edict was created with active status
 	edict, err := chancellor.GetEdict("test/repo#1")
 	if err != nil {
 		t.Fatalf("Failed to get edict: %v", err)
 	}
-	if edict.CurrentPhase != storage.PhaseBrewing {
-		t.Errorf("Expected phase brewing, got %s", edict.CurrentPhase)
+	if edict.Status != storage.EdictActive {
+		t.Errorf("Expected status active, got %s", edict.Status)
 	}
-
-	// Transition to planning
-	err = chancellor.UpdatePhase("test/repo#1", storage.PhasePlanning)
-	if err != nil {
-		t.Fatalf("Failed to update phase to planning: %v", err)
-	}
-
-	// Verify phase transition
-	edict, _ = chancellor.GetEdict("test/repo#1")
-	if edict.CurrentPhase != storage.PhasePlanning {
-		t.Errorf("Expected phase planning, got %s", edict.CurrentPhase)
-	}
-
-	// Chancellor doesn't have an Execute method anymore - it receives tasks
-	// The test now just verifies edict creation and phase transitions
 }
 
 func TestStrategist_DecomposeEdict(t *testing.T) {
@@ -306,8 +291,8 @@ func TestChancellor_CancelEdict(t *testing.T) {
 
 	// Check cancelled
 	edict, _ := chancellor.GetEdict("test/repo#7")
-	if edict.CurrentPhase != storage.PhaseCancelled {
-		t.Errorf("Expected phase cancelled, got %s", edict.CurrentPhase)
+	if edict.Status != storage.EdictCancelled {
+		t.Errorf("Expected status cancelled, got %s", edict.Status)
 	}
 }
 
@@ -939,8 +924,7 @@ func TestFormatGivenContext(t *testing.T) {
 		"edict": map[string]interface{}{
 			"edict_id": "edict-abc123",
 			"intent":   "Add user authentication with OAuth2",
-			"phase":    "forging",
-			"halted":   false,
+			"status":   "active",
 		},
 		"manifests": []map[string]interface{}{
 			{"manifest_id": "m-1", "file_path": "auth.go", "status": "staged"},
@@ -998,7 +982,7 @@ func TestBuildSystemPrompt_GivenContext(t *testing.T) {
 		"edict": map[string]interface{}{
 			"edict_id": "edict-xyz",
 			"intent":   "Implement dark mode for the dashboard",
-			"phase":    "forging",
+			"status":   "active",
 		},
 	})
 

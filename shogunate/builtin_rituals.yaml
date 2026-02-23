@@ -1,3 +1,21 @@
+- name: new
+  description: "Session startup - review current state and await commands"
+  triggers:
+    - manual: true
+  background:
+    - "!echo '**The Borderlands**'"
+    - "!git diff"
+    - "!echo '**The middle kingdom**'"
+    - "!git diff --cached"
+  steps:
+    - name: review
+      type: prompt
+      act: |
+        Review the diff in the scratchpad:
+        - If there are changes in progress, help the user resolve them
+        (rename the current edict to: "committing ..." and invoke the fitting ritual).
+        - If there are no changes, Welcome the ruler
+ 
 - name: swift-strike
   description: "The Swift Strike (S) - A tight loop of creation and validation"
   triggers:
@@ -29,6 +47,8 @@
       depends_on: [forge]
       on_failure: goto
       on_failure_target: forge
+  then:
+    - the edict is sealed
 
 - name: grand-campaign
   description: "The Grand Campaign (L) - Architecture-first with strict gatekeeping"
@@ -86,6 +106,8 @@
       depends_on: [judge]
       on_failure: goto
       on_failure_target: strategist
+  then:
+    - the edict is sealed
 
 - name: wakeup
   description: "Startup ritual - report court status on Shogunate boot"
@@ -163,6 +185,8 @@
         Verify all seals are in place before proceeding.
       depends_on: [censor]
       on_failure: zhengming
+  then:
+    - the edict is sealed
 
 - name: review
   description: "Code review - judge and censor review current changes before producing a report"

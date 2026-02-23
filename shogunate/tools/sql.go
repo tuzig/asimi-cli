@@ -27,10 +27,10 @@ func (t AsimiSQLTool) Name() string {
 }
 
 func (t AsimiSQLTool) Description() string {
-	return `Execute SQL against the Shogunate database. Use for edict phase transitions:
-- UPDATE edicts SET current_phase = 'sealed' WHERE edict_id = '...';
-- UPDATE edicts SET current_phase = 'planning' WHERE edict_id = '...';
-Phases: brewing, planning, forging, judging, censoring, deploying, sealed, cancelled`
+	return `Execute SQL against the Shogunate database. Use for edict status transitions:
+- UPDATE edicts SET status = 'sealed' WHERE edict_id = '...';
+- UPDATE edicts SET status = 'active' WHERE edict_id = '...';
+Statuses: active, blocked, sealed, cancelled`
 }
 
 func (t AsimiSQLTool) Call(ctx context.Context, input string) (string, error) {

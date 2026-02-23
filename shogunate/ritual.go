@@ -53,6 +53,7 @@ type RitualDef struct {
 	OnFailure   string              `yaml:"on_failure,omitempty"`  // Default on_failure for all steps
 	MaxRetries  int                 `yaml:"max_retries,omitempty"` // Default max_retries for all steps
 	Steps       []RitualStep        `yaml:"steps"`
+	Then        []string            `yaml:"then,omitempty"`        // Ritual-level then steps (run after all steps succeed)
 }
 
 // RitualTrigger defines when a ritual can be invoked
@@ -135,6 +136,9 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the manifests", "get_manifests", "manifests"},
 		{"the verdicts", "get_verdicts", "verdicts"},
 		{"the precedents", "get_precedents", "precedents"},
+		{"the edict is sealed", "seal_edict", "sealed"},
+		{"the edict is blocked", "block_edict", "blocked"},
+		{"the edict is unblocked", "unblock_edict", "unblocked"},
 	}
 	for _, b := range builtins {
 		_ = r.Register(b.pattern, b.handlerKey, b.outputKey) // builtin patterns are known-good
@@ -708,6 +712,18 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	exec.State = RitualStateCompleted
 	r.saveExecution(exec)
 
+	// === RITUAL-LEVEL THEN ===
+	for _, raw := range exec.def.Then {
+		entry, err := r.resolveStepDef(raw)
+		if err != nil {
+			r.logger.Warn("ritual-level then failed to resolve", "raw", raw, "error", err)
+			continue
+		}
+		if err := r.runThenStep(ctx, exec, entry); err != nil {
+			r.logger.Warn("ritual-level then step failed", "raw", raw, "error", err)
+		}
+	}
+
 	// Notify: ritual completed
 	if exec.notify != nil {
 		exec.notify(RitualStepMsg{
@@ -1022,22 +1038,20 @@ func (r *RitualRunner) arrangeGetEdict(edictID string) (interface{}, error) {
 	return map[string]interface{}{
 		"edict_id": edict.EdictID,
 		"intent":   edict.Intent,
-		"phase":    string(edict.CurrentPhase),
-		"halted":   edict.Halted,
+		"status":   string(edict.Status),
 	}, nil
 }
 
 func (r *RitualRunner) arrangeGetCourtStatus(edictID string) (interface{}, error) {
 	var edicts []storage.Edict
-	if err := r.db.Where("current_phase NOT IN ?", []string{"sealed", "cancelled"}).Find(&edicts).Error; err != nil {
+	if err := r.db.Where("status NOT IN ?", []string{"sealed", "cancelled"}).Find(&edicts).Error; err != nil {
 		return nil, err
 	}
 	result := make([]map[string]interface{}, len(edicts))
 	for i, e := range edicts {
 		result[i] = map[string]interface{}{
 			"edict_id": e.EdictID,
-			"phase":    string(e.CurrentPhase),
-			"halted":   e.Halted,
+			"status":   string(e.Status),
 		}
 	}
 	return result, nil
@@ -1100,7 +1114,22 @@ func (r *RitualRunner) arrangeGetPrecedents(edictID string) (interface{}, error)
 
 // runBuiltinThen runs a builtin then function (extensible via step registry)
 func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution, fn string) error {
-	return fmt.Errorf("unknown then function: %s", fn)
+	switch fn {
+	case "seal_edict":
+		return r.db.Model(&storage.Edict{}).
+			Where("edict_id = ? AND status = ?", exec.EdictID, storage.EdictActive).
+			Update("status", storage.EdictSealed).Error
+	case "block_edict":
+		return r.db.Model(&storage.Edict{}).
+			Where("edict_id = ? AND status = ?", exec.EdictID, storage.EdictActive).
+			Update("status", storage.EdictBlocked).Error
+	case "unblock_edict":
+		return r.db.Model(&storage.Edict{}).
+			Where("edict_id = ? AND status = ?", exec.EdictID, storage.EdictBlocked).
+			Update("status", storage.EdictActive).Error
+	default:
+		return fmt.Errorf("unknown then function: %s", fn)
+	}
 }
 
 // resolveStepDef resolves a raw step string into a StepDefEntry.

@@ -193,8 +193,8 @@ func (c *Censor) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := c.db.Distinct("edicts.*").
 		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
-		Where("forge_manifests.status = ? AND edicts.current_phase = ?",
-			storage.ManifestQuenched, storage.PhaseCensoring).
+		Where("forge_manifests.status = ? AND edicts.status = ?",
+			storage.ManifestQuenched, storage.EdictActive).
 		Find(&edicts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edicts with quenched manifests: %w", err)

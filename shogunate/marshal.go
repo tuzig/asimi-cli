@@ -168,8 +168,8 @@ func (m *Marshal) execute(ctx context.Context, edictID string) (bool, error) {
 	}
 
 	// Check if this is a hotfix edict created by an incident
-	if edict.CurrentPhase == storage.PhasePlanning {
-		// Hotfix needs expedited processing - auto-seal planning phase
+	if edict.Status == storage.EdictActive {
+		// Hotfix needs expedited processing
 		m.logger.Info("marshal expediting hotfix", "edict_id", edictID)
 		return true, nil
 	}

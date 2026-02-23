@@ -129,7 +129,7 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 
 	result := map[string]any{
 		"edict_id": edict.EdictID,
-		"phase":    string(edict.CurrentPhase),
+		"status":   string(edict.Status),
 		"intent":   edict.Intent,
 	}
 
@@ -151,10 +151,10 @@ func (t GetEdictStatusTool) Format(input, result string, err error) string {
 		msg.Writef("Error: %v", err)
 	} else {
 		var res struct {
-			Phase string `json:"phase"`
+			Status string `json:"status"`
 		}
 		json.Unmarshal([]byte(result), &res)
-		msg.Writef("[%s]", res.Phase)
+		msg.Writef("[%s]", res.Status)
 	}
 
 	return msg.String() + "\n"
@@ -183,13 +183,13 @@ func (t ListEdictsTool) Name() string {
 }
 
 func (t ListEdictsTool) Description() string {
-	return "Lists all edicts, optionally filtered by phase. Use this to see what work orders exist."
+	return "Lists all edicts, optionally filtered by status. Use this to see what work orders exist."
 }
 
 func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		Phase string `json:"phase"`
-		Limit int    `json:"limit"`
+		Status string `json:"status"`
+		Limit  int    `json:"limit"`
 	}
 	json.Unmarshal([]byte(input), &params)
 
@@ -199,8 +199,8 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 
 	var edicts []storage.Edict
 	query := t.DB.Order("created_at DESC").Limit(params.Limit)
-	if params.Phase != "" {
-		query = query.Where("current_phase = ?", params.Phase)
+	if params.Status != "" {
+		query = query.Where("status = ?", params.Status)
 	}
 
 	if err := query.Find(&edicts).Error; err != nil {
@@ -211,7 +211,7 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 	for _, e := range edicts {
 		results = append(results, map[string]any{
 			"edict_id": e.EdictID,
-			"phase":    string(e.CurrentPhase),
+			"status":   string(e.Status),
 			"intent":   truncateString(e.Intent, 100),
 		})
 	}
@@ -239,10 +239,10 @@ func (t ListEdictsTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"phase": map[string]any{
+			"status": map[string]any{
 				"type":        "string",
-				"enum":        []string{"brewing", "planning", "forging", "judging", "censoring", "deploying", "sealed", "cancelled"},
-				"description": "Filter by phase (optional)",
+				"enum":        []string{"active", "blocked", "sealed", "cancelled"},
+				"description": "Filter by status (optional)",
 			},
 			"limit": map[string]any{
 				"type":        "integer",

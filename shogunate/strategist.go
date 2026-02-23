@@ -110,18 +110,6 @@ func (s *Strategist) LingExistsForEdict(edictID string) (bool, error) {
 	return count > 0, nil
 }
 
-// GetEdictsInPlanningPhase returns edicts that need planning
-func (s *Strategist) GetEdictsInPlanningPhase() ([]storage.Edict, error) {
-	var edicts []storage.Edict
-	err := s.db.Where("current_phase = ?", storage.PhasePlanning).
-		Order("created_at ASC").
-		Find(&edicts).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get planning edicts: %w", err)
-	}
-	return edicts, nil
-}
-
 // --- Execute Logic ---
 
 // execute runs the Strategist's planning logic for an edict (internal method)
@@ -323,10 +311,6 @@ func (s *Strategist) processTask(ctx context.Context, task *Task) {
 
 	if sealed {
 		result.Output = "planning complete"
-		// Transition to forging phase
-		if phaseErr := s.UpdatePhase(task.EdictID, storage.PhaseForging); phaseErr != nil {
-			s.logger.Error("failed to transition to forging", "edict_id", task.EdictID, "error", phaseErr)
-		}
 	}
 
 	// Send result (non-blocking)

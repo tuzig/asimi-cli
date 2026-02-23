@@ -598,13 +598,13 @@ func (c *Chancellor) GetEdict(edictID string) (*storage.Edict, error) {
 	return &edict, nil
 }
 
-// CreateEdict creates a new edict in the brewing phase
+// CreateEdict creates a new active edict
 func (c *Chancellor) CreateEdict(edictID, intent string) error {
 	edict := storage.Edict{
-		EdictID:      edictID,
-		IssueRef:     edictID,
-		Intent:       intent,
-		CurrentPhase: storage.PhaseBrewing,
+		EdictID:  edictID,
+		IssueRef: edictID,
+		Intent:   intent,
+		Status:   storage.EdictActive,
 	}
 	if err := c.db.Create(&edict).Error; err != nil {
 		return fmt.Errorf("failed to create edict: %w", err)
@@ -644,7 +644,7 @@ func (c *Chancellor) SetCensorSeal(edictID string, sealed bool) error {
 func (c *Chancellor) CancelEdict(edictID, cancelledBy, reason string) error {
 	result := c.db.Model(&storage.Edict{}).
 		Where("edict_id = ?", edictID).
-		Update("current_phase", storage.PhaseCancelled)
+		Update("status", storage.EdictCancelled)
 	if result.Error != nil {
 		return fmt.Errorf("failed to cancel edict: %w", result.Error)
 	}
@@ -706,24 +706,6 @@ func (c *Chancellor) ResetLingStatus(lingID string, status storage.LingStatus) e
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("ling not found: %s", lingID)
 	}
-	return nil
-}
-
-// RegressToForging moves an edict back to forging phase (for rejections)
-func (c *Chancellor) RegressToForging(ctx context.Context, edictID string, rejectedLingIDs []string) error {
-	// Reset ling status
-	for _, lingID := range rejectedLingIDs {
-		if err := c.ResetLingStatus(lingID, storage.LingPending); err != nil {
-			c.logger.Warn("failed to reset ling status", "ling_id", lingID, "error", err)
-		}
-	}
-
-	// Update phase
-	if err := c.UpdatePhase(edictID, storage.PhaseForging); err != nil {
-		return fmt.Errorf("regress phase: %w", err)
-	}
-
-	c.logger.Info("regressed to forging", "edict_id", edictID, "rejected_ling", rejectedLingIDs)
 	return nil
 }
 

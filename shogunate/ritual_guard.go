@@ -195,7 +195,7 @@ func (r *RitualGuard) processEvent(ctx context.Context, event storage.TianEvent)
 	switch event.EventType {
 	case "edict_assigned", "edict_created":
 		r.logger.Info("edict event", "type", event.EventType, "edict_id", event.EdictID)
-	case "phase_changed", "forge_committed", "manifest_committed", "manifest_rejected":
+	case "forge_committed", "manifest_committed", "manifest_rejected":
 		r.logger.Info("lifecycle event", "type", event.EventType, "edict_id", event.EdictID)
 	case "ritual_started", "ritual_completed":
 		r.logger.Info("ritual event", "type", event.EventType, "edict_id", event.EdictID)
