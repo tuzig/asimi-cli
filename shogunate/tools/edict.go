@@ -13,7 +13,6 @@ import (
 
 // EdictManager provides edict management capabilities
 type EdictManager interface {
-	CreateEdict(edictID, intent string) error
 	GetEdict(edictID string) (*storage.Edict, error)
 	AppendToIntent(edictID, clarification string) error
 	EmitEvent(edictID, eventType string, payload storage.JSON) error

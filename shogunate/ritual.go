@@ -21,6 +21,18 @@ import (
 	"gorm.io/gorm"
 )
 
+// RitualStepMsg notifies the UI of ritual step progress
+type RitualStepMsg struct {
+	RitualName  string
+	ExecutionID string
+	EdictID     string
+	StepName    string
+	StepIndex   int
+	TotalSteps  int
+	Status      string
+	Message     string
+}
+
 // RitualState represents the current state of a ritual execution
 type RitualState string
 
@@ -53,7 +65,7 @@ type RitualDef struct {
 	OnFailure   string              `yaml:"on_failure,omitempty"`  // Default on_failure for all steps
 	MaxRetries  int                 `yaml:"max_retries,omitempty"` // Default max_retries for all steps
 	Steps       []RitualStep        `yaml:"steps"`
-	Then        []string            `yaml:"then,omitempty"`        // Ritual-level then steps (run after all steps succeed)
+	Then        []string            `yaml:"then,omitempty"` // Ritual-level then steps (run after all steps succeed)
 }
 
 // RitualTrigger defines when a ritual can be invoked
@@ -245,6 +257,14 @@ func (r *RitualRegistry) GetByEvent(event string) []*RitualDef {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.byEvent[event]
+}
+
+// Clear removes all registered rituals.
+func (r *RitualRegistry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rituals = make(map[string]*RitualDef)
+	r.byEvent = make(map[string][]*RitualDef)
 }
 
 // List returns all registered ritual names
@@ -533,6 +553,22 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		"execution_id", exec.ID,
 		"edict_id", edictID)
 
+	steps := 0
+	if exec.def != nil {
+		steps = len(exec.def.Steps)
+	}
+
+	if exec.notify != nil {
+		exec.notify(RitualStepMsg{
+			RitualName:  exec.RitualName,
+			ExecutionID: exec.ID,
+			EdictID:     exec.EdictID,
+			TotalSteps:  steps,
+			Status:      "started",
+		})
+	} else {
+		r.logger.Warn("Can't notify a ritual has started", "name", exec.RitualName)
+	}
 	return exec, nil
 }
 
@@ -721,14 +757,6 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	return nil
 }
 
-// resolveAct returns the action text for a step, preferring Act over Task (backward compat)
-func (step *RitualStep) resolveAct() string {
-	if step.Act != "" {
-		return step.Act
-	}
-	return step.Task
-}
-
 // resolveOnFailure returns the step's on_failure or the ritual-level default
 func (step *RitualStep) resolveOnFailure(def *RitualDef) string {
 	if step.OnFailure != "" {
@@ -860,15 +888,10 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	}
 
 	// Expand template in work (Act or Task for backward compat)
-	work := r.expandTemplate(step.resolveAct(), exec)
+	work := r.expandTemplate(step.Act, exec)
 
-	// Format given context as markdown scratchpad for the minister
-	var scratchpad string
-	if exec.Data != nil {
-		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok {
-			scratchpad = formatScratchpad(given)
-		}
-	}
+	// Build enhanced scratchpad with ritual context, edict details, and previous results
+	scratchpad := r.buildEnhancedScratchpad(ctx, exec, step)
 
 	// Create task
 	doneChan := make(chan Result, 1)
@@ -900,6 +923,82 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	}
 }
 
+// buildEnhancedScratchpad creates a unified scratchpad with ritual context, edict details, and previous step results
+func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *RitualExecution, step RitualStep) string {
+	var buf bytes.Buffer
+
+	// 1. Ritual context
+	stepNum := exec.CurrentStep + 1
+	totalSteps := len(exec.def.Steps)
+	fmt.Fprintf(&buf, "# Ritual Context\n\n")
+	fmt.Fprintf(&buf, "**Ritual:** %s\n", exec.RitualName)
+	fmt.Fprintf(&buf, "**Step:** %s (%d/%d)\n\n", step.Name, stepNum, totalSteps)
+
+	// 2. Full edict details
+	edict, clarifications, err := r.getEdictDetails(ctx, exec.EdictID)
+	if err == nil && edict != nil {
+		fmt.Fprintf(&buf, "# Edict\n\n")
+		fmt.Fprintf(&buf, "```json\n")
+		fmt.Fprintf(&buf, "{\n")
+		fmt.Fprintf(&buf, "  \"edict_id\": %q,\n", edict.EdictID)
+		fmt.Fprintf(&buf, "  \"status\": %q\n", edict.Status)
+		fmt.Fprintf(&buf, "}\n")
+		fmt.Fprintf(&buf, "```\n\n")
+		fmt.Fprintf(&buf, "## Intent\n\n%s\n\n", edict.Intent)
+
+		// Include clarification history
+		if len(clarifications) > 0 {
+			fmt.Fprintf(&buf, "## Clarification History\n\n")
+			for i, c := range clarifications {
+				fmt.Fprintf(&buf, "### Clarification %d\n\n", i+1)
+				for _, q := range c.Questions {
+					fmt.Fprintf(&buf, "**Q:** %s\n\n", q.Text)
+				}
+				if c.Answer != "" {
+					fmt.Fprintf(&buf, "**A:** %s\n\n", c.Answer)
+				}
+			}
+		}
+	}
+
+	// 3. Previous step results
+	if exec.CurrentStep > 0 {
+		fmt.Fprintf(&buf, "# Previous Step Results\n\n")
+		for i := 0; i < exec.CurrentStep; i++ {
+			prevStep := exec.def.Steps[i]
+			prevState := exec.stepStates[i]
+			fmt.Fprintf(&buf, "## Step %d: %s\n\n", i+1, prevStep.Name)
+			if prevState.Message != "" {
+				fmt.Fprintf(&buf, "**Result:** %s\n\n", prevState.Message)
+			}
+		}
+	}
+
+	// 4. Given context (existing)
+	if exec.Data != nil {
+		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok && len(given) > 0 {
+			buf.WriteString(formatScratchpad(given))
+		}
+	}
+
+	return buf.String()
+}
+
+// getEdictDetails retrieves full edict information including clarification history
+func (r *RitualRunner) getEdictDetails(ctx context.Context, edictID string) (*storage.Edict, []storage.Zhengming, error) {
+	var edict storage.Edict
+	if err := r.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+		return nil, nil, err
+	}
+
+	// Get clarification history
+	var clarifications []storage.Zhengming
+	r.db.Where("edict_id = ? AND status = ?", edictID, storage.ZhengmingAnswered).
+		Order("created_at ASC").
+		Find(&clarifications)
+
+	return &edict, clarifications, nil
+}
 
 // runBuiltinGiven runs a builtin given function and returns the result
 func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {
@@ -1165,8 +1264,14 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 	}
 }
 
-// emitEvent records a Tian event from the ritual runner
+// emitEvent records a Tian event from the ritual runner.
+// Routes through Shogunate's PublishEvent for channel delivery when available.
 func (r *RitualRunner) emitEvent(edictID, eventType string, payload storage.JSON) {
+	if r.shogunate != nil {
+		r.shogunate.PublishEvent(edictID, eventType, payload)
+		return
+	}
+	// Fallback: DB-only (for tests without shogunate)
 	event := storage.TianEvent{
 		EdictID:   edictID,
 		EventType: eventType,

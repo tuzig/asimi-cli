@@ -296,20 +296,6 @@ func (t InvokeMinisterTool) ParameterSchema() map[string]any {
 	}
 }
 
-// --- InvokeRitualTool ---
-
-// RitualStepMsg notifies the UI of ritual step progress
-type RitualStepMsg struct {
-	RitualName  string
-	ExecutionID string
-	EdictID     string
-	StepName    string
-	StepIndex   int
-	TotalSteps  int
-	Status      string // "started", "completed", "failed", "retrying", "cmd_running", "cmd_done"
-	Message     string
-}
-
 // InvokeRitualTool starts a YAML-defined ritual workflow
 type InvokeRitualTool struct {
 	chancellor *Chancellor
@@ -559,14 +545,7 @@ func (c *Chancellor) Run(ctx context.Context) {
 			c.processPrompt(merged, prompt)
 			mergedCancel()
 		case task := <-c.taskChan:
-			// Process task and send result
-			if task.Done != nil {
-				task.Done <- Result{
-					MinisterID: c.ID(),
-					Sealed:     true,
-					Output:     "Task acknowledged",
-				}
-			}
+			c.processTask(ctx, task)
 		}
 	}
 }
@@ -596,20 +575,6 @@ func (c *Chancellor) GetEdict(edictID string) (*storage.Edict, error) {
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
 	return &edict, nil
-}
-
-// CreateEdict creates a new active edict
-func (c *Chancellor) CreateEdict(edictID, intent string) error {
-	edict := storage.Edict{
-		EdictID:  edictID,
-		IssueRef: edictID,
-		Intent:   intent,
-		Status:   storage.EdictActive,
-	}
-	if err := c.db.Create(&edict).Error; err != nil {
-		return fmt.Errorf("failed to create edict: %w", err)
-	}
-	return nil
 }
 
 // SetChancellorSeal sets or clears the Chancellor's seal on an edict
@@ -709,21 +674,6 @@ func (c *Chancellor) ResetLingStatus(lingID string, status storage.LingStatus) e
 	return nil
 }
 
-// --- Context-Aware Operations ---
-
-// CreateEdictFromIssue creates a new edict from a GitHub issue
-func (c *Chancellor) CreateEdictFromIssue(ctx context.Context, edictID, issueBody string) error {
-	if err := c.CreateEdict(edictID, issueBody); err != nil {
-		return fmt.Errorf("create edict: %w", err)
-	}
-
-	// Emit edict created event
-	c.EmitEvent(edictID, "edict_assigned", storage.JSON{"source": "github_issue"})
-
-	c.logger.Info("edict created", "edict_id", edictID)
-	return nil
-}
-
 // CancelEdictWithContext cancels an edict (context-aware variant)
 func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID, cancelledBy, reason string) error {
 	if err := c.CancelEdict(edictID, cancelledBy, reason); err != nil {
@@ -746,12 +696,14 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 	// Determine: new edict or continue existing?
 	edictID := prompt.EdictID
 	if edictID == "" {
-		edictID = generateEdictID()
-		if err := c.CreateEdict(edictID, prompt.Message); err != nil {
+		// TODO: Need to report the new edictID to the TUI
+		edict, err := CreateEdict(c.db, edictID, prompt.Message)
+		if err != nil {
 			c.notify(StreamErrorMsg{Err: fmt.Errorf("create edict: %w", err)})
 			return
 		}
-		c.logger.Info("new edict created", "edict_id", edictID)
+		edictID = edict.EdictID
+		c.logger.Info("new edict created", "edict_id", edict.EdictID)
 	} else {
 		if err := c.AppendToIntent(edictID, prompt.Message); err != nil {
 			c.logger.Warn("failed to append to intent", "edict_id", edictID, "error", err)
@@ -797,6 +749,64 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 		return
 	}
 	c.notify(StreamDoneMsg{})
+}
+
+// processTask handles a task from the ritual runner or other ministers.
+func (c *Chancellor) processTask(ctx context.Context, task *Task) {
+	c.logger.Info("chancellor processing task",
+		"edict_id", task.EdictID,
+		"work", truncateString(task.Work, 50))
+
+	var output string
+	var taskErr error
+
+	if c.model != nil {
+		output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad)
+	} else {
+		output = "chancellor task acknowledged (no LLM configured)"
+	}
+
+	result := Result{
+		MinisterID: c.ID(),
+		Sealed:     true,
+		Output:     output,
+		Err:        taskErr,
+	}
+
+	if task.Done != nil {
+		select {
+		case task.Done <- result:
+		default:
+			c.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
+		}
+	}
+}
+
+// streamTask creates a session and streams the task through the LLM.
+func (c *Chancellor) streamTask(ctx context.Context, work, edictID, scratchpad string) (string, error) {
+	notify := c.notify
+	if notify == nil {
+		notify = func(any) {} // no-op when notify not yet wired
+	}
+	notify(StreamStartMsg{EdictID: edictID})
+
+	session, err := CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
+		EdictID:    edictID,
+		Scratchpad: scratchpad,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create chancellor task session: %w", err)
+	}
+
+	_, err = session.AskWithStreaming(ctx, work, nil)
+	if err != nil {
+		notify(StreamDoneMsg{})
+		return "", err
+	}
+
+	notify(StreamDoneMsg{})
+	c.logger.Info("chancellor task completed", "edict_id", edictID)
+	return "", nil
 }
 
 // generateEdictID creates a unique edict ID

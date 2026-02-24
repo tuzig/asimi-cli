@@ -35,7 +35,8 @@ CRITICAL RULES:
 // Confucius provides read-only codebase exploration and suggests edicts via zhengming
 type Confucius struct {
 	MinisterBase
-	tasks chan *Task
+	shogunate *Shogunate
+	tasks     chan *Task
 }
 
 // NewConfucius creates a new Confucius minister
@@ -83,11 +84,6 @@ func (c *Confucius) GetEdict(edictID string) (*storage.Edict, error) {
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
 	return &edict, nil
-}
-
-// CreateEdict is a no-op stub — Confucius never creates edicts (satisfies EdictManager interface)
-func (c *Confucius) CreateEdict(edictID, intent string) error {
-	return fmt.Errorf("confucius cannot create edicts — only the Ruler can")
 }
 
 // AppendToIntent is a no-op stub — Confucius never modifies edicts (satisfies EdictManager interface)

@@ -1956,6 +1956,9 @@ func TestCtrlCStopsStreamingE2E(t *testing.T) {
 	require.NoError(t, shog.Start(context.Background()))
 	t.Cleanup(func() { shog.Stop() })
 
+	// Clear rituals so wakeup doesn't monopolize the chancellor with slowLLM
+	shog.GetRitualRegistry().Clear()
+
 	// 3. Configure model on the Shogunate so Chancellor can create sessions
 	cfg := &shogunate.SessionConfig{
 		LLM: config.LLMConfig{MaxTurns: 1},

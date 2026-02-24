@@ -607,22 +607,29 @@ func TestRitualStreamMessages(t *testing.T) {
 
 	// Verify we received the expected message types
 	var (
-		startedCount   int
+		ritualStarted  int // ritual-level "started" (empty StepName)
+		stepStarted    int // step-level "started"
 		completedCount int
 		ritualComplete int
 	)
 
 	for _, msg := range messages {
 		if stepMsg, ok := msg.(RitualStepMsg); ok {
-			t.Logf("Received RitualStepMsg: ritual=%s step=%s status=%s", stepMsg.RitualName, stepMsg.StepName, stepMsg.Status)
 			switch stepMsg.Status {
 			case "started":
-				startedCount++
-				if stepMsg.StepName != "echo" {
-					t.Errorf("Expected step name 'echo', got %q", stepMsg.StepName)
-				}
-				if stepMsg.RitualName != "test-stream" {
-					t.Errorf("Expected ritual name 'test-stream', got %q", stepMsg.RitualName)
+				if stepMsg.StepName == "" {
+					ritualStarted++
+					if stepMsg.RitualName != "test-stream" {
+						t.Errorf("Expected ritual name 'test-stream', got %q", stepMsg.RitualName)
+					}
+				} else {
+					stepStarted++
+					if stepMsg.StepName != "echo" {
+						t.Errorf("Expected step name 'echo', got %q", stepMsg.StepName)
+					}
+					if stepMsg.RitualName != "test-stream" {
+						t.Errorf("Expected ritual name 'test-stream', got %q", stepMsg.RitualName)
+					}
 				}
 			case "completed":
 				completedCount++
@@ -633,8 +640,11 @@ func TestRitualStreamMessages(t *testing.T) {
 	}
 
 	// Verify message counts
-	if startedCount != 1 {
-		t.Errorf("Expected 1 'started' message, got %d", startedCount)
+	if ritualStarted != 1 {
+		t.Errorf("Expected 1 ritual-level 'started' message, got %d", ritualStarted)
+	}
+	if stepStarted != 1 {
+		t.Errorf("Expected 1 step-level 'started' message, got %d", stepStarted)
 	}
 	if completedCount != 1 {
 		t.Errorf("Expected 1 'completed' message, got %d", completedCount)
@@ -688,8 +698,8 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 		t.Fatalf("Run failed: %v", err)
 	}
 
-	// Should have: started(3) + completed(3) + ritual_completed(1) = 7 messages
-	expectedCount := 7
+	// Should have: ritual_started(1) + started(3) + completed(3) + ritual_completed(1) = 8 messages
+	expectedCount := 8
 	if len(messages) != expectedCount {
 		t.Errorf("Expected %d messages, got %d", expectedCount, len(messages))
 		for i, m := range messages {
@@ -1060,11 +1070,11 @@ type ritualTestMinister struct {
 	err     error
 }
 
-func (m *ritualTestMinister) ID() string          { return m.id }
+func (m *ritualTestMinister) ID() string           { return m.id }
 func (m *ritualTestMinister) SystemPrompt() string { return "" }
 func (m *ritualTestMinister) Title() string        { return m.id }
 func (m *ritualTestMinister) Tools() []Tool        { return nil }
-func (m *ritualTestMinister) Tasks() chan<- *Task   { return m.tasksCh }
+func (m *ritualTestMinister) Tasks() chan<- *Task  { return m.tasksCh }
 func (m *ritualTestMinister) Run(ctx context.Context) {
 	for {
 		select {
@@ -1094,7 +1104,12 @@ func newRitualTestShogunate(t *testing.T, output string, err error) *Shogunate {
 		t.Cleanup(cancel)
 		go m.Run(ctx)
 	}
-	return &Shogunate{ministers: ministers}
+	return &Shogunate{
+		ministers:     ministers,
+		eventRegistry: NewEventRegistry(),
+		eventCh:       make(chan Event, 256),
+		logger:        slog.Default(),
+	}
 }
 
 // mockCallCountRunner returns sequential results for successive calls

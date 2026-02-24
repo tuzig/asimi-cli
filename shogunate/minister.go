@@ -199,6 +199,7 @@ type MinisterBase struct {
 	logger     *slog.Logger
 	notify     internal.NotifyFunc
 	prompts    chan *Prompt
+	publish    func(edictID, eventType string, payload storage.JSON) string // routes events through Shogunate when set
 
 	zhengmingWaiters map[string]chan string
 	zhengmingMu      sync.Mutex
@@ -532,8 +533,14 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 	return nil
 }
 
-// EmitEvent records an event in the Tian ledger
+// EmitEvent records an event in the Tian ledger and delivers it via channel when available.
 func (m *MinisterBase) EmitEvent(edictID, eventType string, payload storage.JSON) error {
+	if m.publish != nil {
+		_ = m.publish(edictID, eventType, payload)
+		return nil
+	}
+	// TODO: remove the fallback, test should pass a publish stub
+	// Fallback: DB-only (for tests/standalone)
 	event := storage.TianEvent{
 		EdictID:   edictID,
 		EventType: eventType,

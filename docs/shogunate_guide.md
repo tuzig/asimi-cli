@@ -190,123 +190,230 @@ through a series of steps. They provide reusable patterns for common tasks.
 
 **Built-in rituals:**
 
+#### New (Session startup)
+
+Invoked when starting a new session. Reviews the current state of the working tree:
+
+```yaml
+- name: new
+  description: "Session startup - review current state and await commands"
+  background:
+    - "!echo '**The Borderlands**'"
+    - "!git diff"
+    - "!echo '**The middle kingdom**'"
+    - "!git diff --cached"
+  steps:
+    - name: review
+      minister: chancellor
+      act: |
+        Review the diff in the scratchpad:
+        - If there are changes in progress, help the user resolve them
+        - If there are no changes, Welcome the ruler
+```
+
 #### Swift Strike (S-size edicts)
 
 For small, focused changes. A tight loop between Forge and Judge:
 
 ```yaml
-swift-strike:
-    on_failure: retry
-    max_retries: 3
-    background:
-      - the edict details
-    steps:
-      - name: forge
-        minister: forge
-        act: |
-          Implement the changes for the edict.
-          Focus on minimal, targeted changes.
+- name: swift-strike
+  max_retries: 3
+  background:
+    - the edict details
+  steps:
+    - name: forge
+      minister: forge
+      act: |
+        Implement the changes for edict {{ .edict_id }}.
+        Focus on minimal, targeted changes to fulfill the intent.
+      on_failure: retry
 
-      - name: judge
-        minister: judge
-        given:
-          - the manifests
-        act: |
-          - Ensure new code is covered by tests
-          - Ensure the tests assert the code will always work
-        then:
-          - "!just test"
-        depends_on: [forge]
-        on_failure: "forge"
+    - name: judge
+      minister: judge
+      given:
+        - the manifests
+      act: |
+        Run tests and validate the changes for edict {{ .edict_id }}.
+        If tests fail, provide clear feedback for the Forge.
+      then:
+        - "!just test"
+      depends_on: [forge]
+      on_failure: goto
+      on_failure_target: forge
+  then:
+    - the edict is sealed
 ```
 
-#### Complex Change (Medium sized edicts)
+#### Grand Campaign (L-size edicts)
 
-For medium-complexity work with planning and review:
+For large-complexity work with planning and review:
 
 ```yaml
-complex-change:
-    on_failure: retry
-    max_retries: 3
-    background:
-      - the edict details
-    steps:
-      - name: strategist
-        minister: strategist
-        act: Analyze the edict and produce a Battle Plan.
+- name: grand-campaign
+  max_retries: 3
+  background:
+    - the edict details
+  steps:
+    - name: strategist
+      minister: strategist
+      act: |
+        Analyze edict {{ .edict_id }} and produce a technical Battle Plan.
+        Break down the work into clear phases with dependencies.
+        Identify risks and architectural decisions.
+      on_failure: zhengming
 
-      - name: forge
-        minister: forge
-        given:
-          - the manifests
-        act: Implement the Battle Plan.
-        depends_on: [strategist]
+    - name: forge
+      minister: forge
+      given:
+        - the manifests
+      act: |
+        Execute the Battle Plan for edict {{ .edict_id }}.
+        Implement changes according to the Strategist's design.
+      depends_on: [strategist]
+      on_failure: retry
 
-      - name: judge
-        minister: judge
-        given:
-          - the manifests
-        act: |
-          - Ensure new code is covered by tests
-          - Ensure the tests assert the code will always work
-        then:
-          - "!just test"
-        depends_on: [forge]
-        on_failure: "forge"
+    - name: judge
+      minister: judge
+      given:
+        - the manifests
+      act: |
+        Run the Trials for edict {{ .edict_id }}.
+        Execute all tests and validate the Forge's work.
+      then:
+        - "!just test"
+      depends_on: [forge]
+      on_failure: goto
+      on_failure_target: forge
 
-      - name: censor
-        minister: censor
-        given:
-          - the manifests
-          - the verdicts
-        act: |
-          Review the changes for quality and standards compliance.
-        depends_on: [judge]
-        on_failure: "strategist"
+    - name: censor
+      minister: censor
+      given:
+        - the manifests
+        - the verdicts
+      act: |
+        Review the implemented code for edict {{ .edict_id }}.
+        Verify it adheres to the Imperial Code (project standards).
+      depends_on: [judge]
+      on_failure: goto
+      on_failure_target: strategist
+  then:
+    - the edict is sealed
 ```
 
-#### Complicated Change (The largest edicts)
+#### Grand Orchestration (XL-size edicts)
 
-For complicated architectural work requiring custom workflow design. The Strategist first designs an ad-hoc ritual tailored to the edict's complexity, then the court executes it:
+Full lifecycle orchestration with deployment:
 
 ```yaml
-grand-orchestration:
-    on_failure: retry
-    max_retries: 3
-    background:
-      - the edict details
-    steps:
-      - name: architect
-        minister: strategist
-        act: |
-          Analyze the edict and design a custom ritual workflow.
-          Create the ritual definition as a YAML document.
-          This ritual will be enacted for this specific edict.
+- name: grand-orchestration
+  max_retries: 3
+  background:
+    - the edict details
+  steps:
+    - name: strategist
+      minister: strategist
+      act: |
+        Produce a comprehensive Battle Plan for edict {{ .edict_id }}.
+        Decompose into lings with dependencies.
+      on_failure: zhengming
 
-      - name: ratify
-        minister: chancellor
-        act: |
-          Review the proposed ritual for feasibility and safety.
-          If approved, create the ad-hoc ritual and enact it.
-        depends_on: [architect]
+    - name: forge
+      minister: forge
+      given:
+        - the manifests
+      act: |
+        Execute all lings for edict {{ .edict_id }}.
+        Implement each change and stage manifests.
+      depends_on: [strategist]
+      on_failure: retry
+
+    - name: judge
+      minister: judge
+      given:
+        - the manifests
+      act: |
+        Run the full trial suite for edict {{ .edict_id }}.
+      then:
+        - "!just test"
+      depends_on: [forge]
+      on_failure: goto
+      on_failure_target: forge
+
+    - name: censor
+      minister: censor
+      given:
+        - the manifests
+        - the verdicts
+      act: |
+        Full ethics and standards review for edict {{ .edict_id }}.
+      depends_on: [judge]
+      on_failure: goto
+      on_failure_target: strategist
+
+    - name: deploy
+      minister: marshal
+      given:
+        - the manifests
+        - the verdicts
+        - the precedents
+      act: |
+        Prepare deployment for edict {{ .edict_id }}.
+        Verify all seals are in place before proceeding.
+      depends_on: [censor]
+      on_failure: zhengming
+  then:
+    - the edict is sealed
+```
+
+#### Review (Code review)
+
+Judge and Censor review changes in the working tree:
+
+```yaml
+- name: review
+  background:
+    - "!git diff"
+    - "!git diff --cached"
+    - "!just test"
+  steps:
+    - name: judge
+      minister: judge
+      act: |
+        Review the code changes. Run tests and identify any issues,
+        bugs, or missing test coverage.
+
+    - name: censor
+      minister: censor
+      act: |
+        Review the code changes for quality and standards compliance.
+        Check for style violations, security concerns, and architectural issues.
+      depends_on: [judge]
+
+    - name: report
+      minister: chancellor
+      act: |
+        Produce a comprehensive code review report.
+        Summarize the findings from the judge and censor.
+        Highlight any blocking issues and suggest improvements.
+      depends_on: [censor]
 ```
 
 #### Wakeup
 
-Invoked as the last step of `Start()`, orients the court before the Ruler speaks:
+Triggered on `shogunate_started` event, reports court status:
 
 ```yaml
-wakeup:
-    background:
-      - the court status
-    steps:
-      - name: orient
-        minister: strategist
-        act: |
-          Court is now in session.
-          Help the Ruler start his day by raising zhengming.
-          Suggest 2-3 actionable options for the Ruler to pursue.
-          Return them as a numbered list, each with a one-line description.
+- name: wakeup
+  triggers:
+    - event: shogunate_started
+  background:
+    - the court status
+  steps:
+    - name: report
+      minister: chancellor
+      act: |
+        The Shogunate has awoken. Report the current court status.
+        List any active edicts, their phases, and any pending zhengming.
 ```
 
 **Background/Given/Act/Then pattern:**
@@ -369,30 +476,28 @@ Place YAML file in `.agents/rituals.yaml` to define project-specific rituals:
 
 **Template Variables:**
 
-Ritual `background`, `given`, and `act` fields support template expansion using `{{ .variable }}` syntax:
+Ritual `background`, `given`, and `act` fields support template expansion using `{{ .variable }}` syntax. The template data is built from three sources:
 
-| Variable | Description | Available In |
-|----------|-------------|--------------|
-| `.edict_id` | Unique identifier for the current edict | All rituals |
-| `.session_id` | Current session identifier | All rituals |
-| `.intent` | The edict's intent text | All rituals |
-| `.scope` | Classified scope (S, M, L) | All rituals |
-| `.phase` | Current edict phase | All rituals |
-| `.ritual_name` | Name of the running ritual | All rituals |
-| `.step_name` | Name of the current step | Step `act` only |
-| `.minister_id` | ID of the executing minister | Step `act` only |
+| Source | Description | Example |
+|--------|-------------|---------|
+| `.edict_id` | Always available — the current edict ID | `{{ .edict_id }}` |
+| Ritual inputs | Keys from the `inputs` map passed to `Start()` | `{{ .edict_id }}` (when passed as input) |
+| Given context | Results from `given` steps, keyed by their output key | `{{ .edict }}`, `{{ .manifests }}` |
 
-**Builtin Given Step Definitions:**
+**Builtin Step Definitions:**
 
-The `given` field matches entries against registered step definitions (cucumber-expressions). Built-in definitions:
+Both `given` and `then` fields match entries against registered step definitions (cucumber-expressions). Built-in definitions:
 
-| Pattern | Output Key | Description |
-|---------|-----------|-------------|
-| `the edict details` | `edict` | Full edict details including intent, scope, phase, lings |
-| `the court status` | `court_status` | Current state of all ministers and active edicts |
-| `the manifests` | `manifests` | List of forge manifests for the edict |
-| `the verdicts` | `verdicts` | Judge verdicts for the edict |
-| `the precedents` | `precedents` | Recent censor precedents |
+| Pattern | Handler Key | Output Key | Usable In | Description |
+|---------|------------|-----------|-----------|-------------|
+| `the edict details` | `get_edict` | `edict` | `given` | Full edict details including intent, scope, phase |
+| `the court status` | `get_court_status` | `court_status` | `given` | Current state of all active edicts |
+| `the manifests` | `get_manifests` | `manifests` | `given` | List of forge manifests for the edict |
+| `the verdicts` | `get_verdicts` | `verdicts` | `given` | Judge verdicts for the edict |
+| `the precedents` | `get_precedents` | `precedents` | `given` | Censor precedents for the edict |
+| `the edict is sealed` | `seal_edict` | `sealed` | `then` | Mark the edict as sealed |
+| `the edict is blocked` | `block_edict` | `blocked` | `then` | Mark the edict as blocked |
+| `the edict is unblocked` | `unblock_edict` | `unblocked` | `then` | Mark the edict as unblocked |
 
 User-defined step definitions can be added in `.agents/step_definitions.yaml`:
 
@@ -402,27 +507,30 @@ User-defined step definitions can be added in `.agents/step_definitions.yaml`:
   key: "branch_diff"
 ```
 
-**Failure handling:**
+**Failure handling (`on_failure`):**
 - `retry` — Retry the step up to `max_retries` (default when set at ritual level)
-- `"step_name"` — Jump to a named step (e.g., `on_failure: "forge"`)
-- `abort` — Stop the ritual entirely
+- `zhengming` — Request clarification from the Ruler
+- `goto` — Jump to a named step (requires separate `on_failure_target` field, e.g., `on_failure: goto` + `on_failure_target: forge`)
+- `abort` — Stop the ritual entirely (default if unset)
 
 `on_failure` and `max_retries` can be set at the ritual level as defaults, and overridden per step.
 
 **When all retries are exhausted**, the Shogunate invokes the `report_failure` ritual:
 
 ```yaml
-report_failure:
-    background:
-      - the edict details
-      - the court status
-    steps:
-      - name: summarize
-        minister: strategist
-        act: |
-          Summarize the work completed and the failure that occurred.
-          Identify what was attempted and where it went wrong.
-          Distill a zhengming question for the Ruler to guide next steps.
+- name: report_failure
+  triggers:
+    - event: ritual_failed
+  background:
+    - the edict details
+    - the court status
+  steps:
+    - name: report
+      minister: chancellor
+      act: |
+        A ritual has failed after exhausting all retries for edict {{ .edict_id }}.
+        Analyze the failure and suggest next steps.
+        Consider requesting zhengming if the path forward is unclear.
 ```
 
 **Loop exhaustion recovery:**

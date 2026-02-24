@@ -138,92 +138,16 @@ func (r *RitualGuard) MoveToDLQ(event storage.TianEvent, errMsg string, retryCou
 	return nil
 }
 
-// --- Execute Logic ---
-
-// Run processes events from the Tian ledger
-func (r *RitualGuard) Run(ctx context.Context) error {
-	// Get last acknowledged event
-	lastEventID, err := r.GetLastAcknowledgedEvent()
-	if err != nil {
-		return fmt.Errorf("get last acknowledged: %w", err)
-	}
-
-	// Get events to process
-	events, err := r.GetEventsFrom(lastEventID, r.batchSize)
-	if err != nil {
-		return fmt.Errorf("get events: %w", err)
-	}
-
-	if len(events) == 0 {
-		return nil
-	}
-
-	// Process each event
-	for _, event := range events {
-		if err := r.processEvent(ctx, event); err != nil {
-			r.logger.Error("event processing failed",
-				"event_id", event.ID,
-				"error", err)
-			// Continue processing other events
-		}
-
-		// Acknowledge event
-		if err := r.AcknowledgeEvent(event.ID); err != nil {
-			r.logger.Error("failed to acknowledge event",
-				"event_id", event.ID,
-				"error", err)
-		}
-
-		// Save checkpoint periodically
-		if err := r.SaveCheckpoint(event.ID); err != nil {
-			r.logger.Warn("failed to save checkpoint", "error", err)
+// Run consumes events from the Shogunate's event channel and dispatches them.
+func (r *RitualGuard) Run(ctx context.Context) {
+	r.logger.Info("ritual guard started (channel mode)")
+	for {
+		select {
+		case <-ctx.Done():
+			r.logger.Info("ritual guard stopped")
+			return
+		case event := <-r.shogunate.eventCh:
+			r.shogunate.DispatchEvent(event)
 		}
 	}
-
-	r.logger.Info("event batch processed", "count", len(events))
-	return nil
-}
-
-// processEvent handles a single event and dispatches to subscribers
-func (r *RitualGuard) processEvent(ctx context.Context, event storage.TianEvent) error {
-	r.logger.Debug("processing event",
-		"event_id", event.ID,
-		"type", event.EventType,
-		"edict_id", event.EdictID)
-
-	// Log based on event category
-	switch event.EventType {
-	case "edict_assigned", "edict_created":
-		r.logger.Info("edict event", "type", event.EventType, "edict_id", event.EdictID)
-	case "forge_committed", "manifest_committed", "manifest_rejected":
-		r.logger.Info("lifecycle event", "type", event.EventType, "edict_id", event.EdictID)
-	case "ritual_started", "ritual_completed":
-		r.logger.Info("ritual event", "type", event.EventType, "edict_id", event.EdictID)
-	case "ritual_failed":
-		r.logger.Error("ritual failed", "edict_id", event.EdictID, "payload", event.Payload)
-	case "step_started", "step_completed", "step_failed":
-		r.logger.Debug("step event", "type", event.EventType, "edict_id", event.EdictID, "payload", event.Payload)
-	case "ling_created":
-		r.logger.Debug("ling created", "edict_id", event.EdictID)
-	case "zhengming_needed":
-		r.logger.Info("zhengming needed", "edict_id", event.EdictID)
-	case "zhengming_answered":
-		r.logger.Info("zhengming answered", "edict_id", event.EdictID)
-	case "edict_cancelled":
-		r.logger.Info("edict cancelled", "edict_id", event.EdictID)
-	default:
-		r.logger.Debug("unknown event type", "type", event.EventType)
-	}
-
-	// Dispatch to event registry subscribers and trigger event-driven rituals
-	if r.shogunate != nil {
-		payload := map[string]interface{}(event.Payload)
-		r.shogunate.DispatchEvent(Event{
-			Type:    ShogunateEvent(event.EventType),
-			EdictID: event.EdictID,
-			Payload: payload,
-		})
-	}
-
-	return nil
 }

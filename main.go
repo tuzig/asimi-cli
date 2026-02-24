@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/storage"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 	isatty "github.com/mattn/go-isatty"
@@ -137,6 +138,7 @@ func runInteractiveMode() error {
 	tuiModel.shogunate.SetNotify(func(msg any) { tuiProgram.Send(msg) })
 
 	// Connect the shell runner's message channel to the TUI for approval requests
+	// TODO: refactor the request approval to zhengming
 	if runner := tuiModel.shogunate.GetRunner(); runner != nil {
 		runnerMsgChan := make(chan runners.Msg, 10)
 		runner.SetMessageChannel(runnerMsgChan)
@@ -168,6 +170,8 @@ func runInteractiveMode() error {
 		}()
 	}
 
+	// start the wakeup ceremony
+	tuiModel.raiseShogunateEvent("shogunate_started", storage.JSON{"trigger": "model_configured"})
 	_, runErr := tuiProgram.Run()
 
 	if runErr != nil {

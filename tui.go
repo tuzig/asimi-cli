@@ -1589,10 +1589,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Debug("streamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
 		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
-		// Show court branding when edict is received
-		if msg.EdictID != "" {
-			chat.AddMessage(fmt.Sprintf("%sEdict %s", edictPrefix, msg.EdictID))
-		}
 
 	case shogunate.StreamCompleteMsg:
 		chat := m.streamingChat()
@@ -1721,8 +1717,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Status {
 		case "started":
 			if msg.StepName == "" {
-				chat.Indent = 1
-				chat.AddMessage(fmt.Sprintf("%sRitual %s started", ritualPrefix, msg.RitualName))
+				chat.Indent++
+				chat.AddMessage(fmt.Sprintf("%sRitual %s started for %s",
+					ritualPrefix, msg.RitualName, msg.EdictID))
 			} else {
 				chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s",
 					ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
@@ -1742,13 +1739,25 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			chat.AddMessage(fmt.Sprintf("%s %s done", cmdDonePrefix, msg.Message))
 		case "ritual_completed":
 			chat.AddMessage(fmt.Sprintf("%sRitual %s completed", ritualPrefix, msg.RitualName))
-			chat.Indent = 0
+			chat.Indent--
 		}
 		return m, nil
 
 	case shogunate.StreamDoneMsg:
 		chat := m.streamingChat()
 		chat.Indent = 0
+		return m, nil
+
+	case shogunate.EventsDrainedMsg:
+		chat := m.streamingChat()
+		chat.AddMessage(fmt.Sprintf("%sRecovered %d event(s) from previous session:", systemPrefix, len(msg.Events)))
+		for _, ev := range msg.Events {
+			detail := fmt.Sprintf("%s  %s", systemPrefix, ev.EventType)
+			if ev.EdictID != "" {
+				detail += fmt.Sprintf(" [edict:%s]", ev.EdictID)
+			}
+			chat.AddMessage(detail)
+		}
 		return m, nil
 
 	case shogunate.ZhengmingPendingMsg:
@@ -2655,8 +2664,10 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	switch {
 	case m.rawMode:
 		return m.renderRawSessionView(m.width, contentHeight)
-	case !m.sessionActive:
-		return m.renderHomeView(m.width, contentHeight)
+		/* TOOO: get some data, like version and update available from renderHomeView
+		case !m.sessionActive:
+			return m.renderHomeView(m.width, contentHeight)
+		*/
 	default:
 		// Use content component which handles chat view
 		return m.tabs.Content().View()
@@ -2921,6 +2932,10 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 			}
 		}
 	}
+}
+
+func (m *TUIModel) raiseShogunateEvent(event string, params storage.JSON) {
+	m.currentEdictID = m.shogunate.PublishEvent(m.currentEdictID, event, params)
 }
 
 // jsonEscape escapes a string for use in JSON

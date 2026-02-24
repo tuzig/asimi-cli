@@ -79,26 +79,20 @@ func setupMinisterTestDBWithPath(t *testing.T) (*gorm.DB, string) {
 
 func TestChancellor_EdictLifecycle(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	ctx := context.Background()
 
 	// Create chancellor
 	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
 	// Create an edict (starts in brewing phase)
-	err := chancellor.CreateEdictFromIssue(ctx, "test/repo#1", "Add a simple hello world function")
-	if err != nil {
-		t.Fatalf("Failed to create edict: %v", err)
-	}
+	edict, err := CreateEdict(db, "test/repo#1", "Add a simple hello world function")
+	assert.NoError(t, err)
+	assert.NotNil(t, edict)
 
 	// Verify edict was created with active status
-	edict, err := chancellor.GetEdict("test/repo#1")
-	if err != nil {
-		t.Fatalf("Failed to get edict: %v", err)
-	}
-	if edict.Status != storage.EdictActive {
-		t.Errorf("Expected status active, got %s", edict.Status)
-	}
+	edict2, err := chancellor.GetEdict("test/repo#1")
+	assert.NoError(t, err)
+	assert.Equal(t, edict2.Status, storage.EdictActive)
 }
 
 func TestStrategist_DecomposeEdict(t *testing.T) {
@@ -107,8 +101,9 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 
 	// Create edict
 	base := NewMinisterBase(db, nil, nil)
-	chancellor := NewChancellor(base)
-	chancellor.CreateEdict("test/repo#2", "Implement user authentication with login and logout")
+	edict, err := CreateEdict(db, "test/repo#2", "Implement user authentication with login and logout")
+	assert.NoError(t, err)
+	assert.NotNil(t, edict)
 
 	// Create strategist
 	strategist := NewStrategist(base)
@@ -138,8 +133,9 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 
 	// Create edict with ambiguous intent
 	base := NewMinisterBase(db, nil, nil)
-	chancellor := NewChancellor(base)
-	require.NoError(t, chancellor.CreateEdict("test/repo#3", "Fix it"))
+	edict, err := CreateEdict(db, "test/repo#3", "Fix it")
+	assert.NoError(t, err)
+	assert.NotNil(t, edict)
 
 	// Create strategist
 	strategist := NewStrategist(base)
@@ -181,8 +177,9 @@ func TestJudge_VerdictFlow(t *testing.T) {
 
 	// Setup: create edict and manifest
 	base := NewMinisterBase(db, nil, nil)
-	chancellor := NewChancellor(base)
-	chancellor.CreateEdict("test/repo#4", "Test feature")
+	edict, err := CreateEdict(db, "test/repo#4", "Test feature")
+	assert.NoError(t, err)
+	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#4", "", "test.go", "TestFunc", "hash1")
@@ -213,8 +210,9 @@ func TestCensor_ReviewFlow(t *testing.T) {
 
 	// Setup: create quenched manifest
 	base := NewMinisterBase(db, nil, nil)
-	chancellor := NewChancellor(base)
-	chancellor.CreateEdict("test/repo#5", "Review feature")
+	edict, err := CreateEdict(db, "test/repo#5", "Review feature")
+	assert.NoError(t, err)
+	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#5", "", "review.go", "ReviewFunc", "hash2")
@@ -249,8 +247,9 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 
 	// Setup: create edict and manifest
 	base := NewMinisterBase(db, nil, nil)
-	chancellor := NewChancellor(base)
-	chancellor.CreateEdict("test/repo#6", "Production feature")
+	edict, err := CreateEdict(db, "test/repo#6", "Production feature")
+	assert.NoError(t, err)
+	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
 	manifestID, _ := forge.StageManifest("test/repo#6", "", "prod.go", "ProdFunc", "hash3")
@@ -260,7 +259,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	marshal := NewMarshal(base, nil)
 
 	// Report incident
-	err := marshal.OnIncident(ctx, "sentry-456", "prodcommit789")
+	err = marshal.OnIncident(ctx, "sentry-456", "prodcommit789")
 	if err != nil {
 		t.Fatalf("Failed to handle incident: %v", err)
 	}
@@ -282,15 +281,16 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
-	// Create and cancel edict
-	chancellor.CreateEdictFromIssue(ctx, "test/repo#7", "Feature to cancel")
-	err := chancellor.CancelEdictWithContext(ctx, "test/repo#7", "@user", "No longer needed")
+	edict, err := CreateEdict(db, "test/repo#7", "Feature to cancel")
+	assert.NoError(t, err)
+	assert.NotNil(t, edict)
+	err = chancellor.CancelEdictWithContext(ctx, "test/repo#7", "@user", "No longer needed")
 	if err != nil {
 		t.Fatalf("Failed to cancel: %v", err)
 	}
 
 	// Check cancelled
-	edict, _ := chancellor.GetEdict("test/repo#7")
+	edict, _ = chancellor.GetEdict("test/repo#7")
 	if edict.Status != storage.EdictCancelled {
 		t.Errorf("Expected status cancelled, got %s", edict.Status)
 	}
@@ -342,7 +342,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	// Create a simple Shogunate with just Forge for this test
 	forge := NewForge(base)
 	shogunate := &Shogunate{
-		db:        db,
+		db: db,
 		ministers: map[string]Minister{
 			chancellor.ID(): chancellor,
 			forge.ID():      forge,
@@ -352,11 +352,9 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// Create an edict for the test
 	edictID := "test-e2e-edict"
-	err := chancellor.CreateEdict(edictID, "E2E test edict")
-	if err != nil {
-		t.Fatalf("Failed to create edict: %v", err)
-	}
-
+	edict, err := CreateEdict(db, edictID, "E2E test edict")
+	assert.NoError(t, err)
+	assert.NotNil(t, edict)
 	// Start the Forge's Run loop in a goroutine
 	go forge.Run(ctx)
 
@@ -413,7 +411,7 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 	shogunate := &Shogunate{
-		db:        db,
+		db: db,
 		ministers: map[string]Minister{
 			chancellor.ID(): chancellor,
 		},
@@ -793,11 +791,11 @@ type fakeMinister struct {
 	tasks chan *Task
 }
 
-func (f *fakeMinister) ID() string             { return f.id }
+func (f *fakeMinister) ID() string              { return f.id }
 func (f *fakeMinister) SystemPrompt() string    { return "You are a test minister." }
 func (f *fakeMinister) Title() string           { return "Fake" }
 func (f *fakeMinister) Tools() []Tool           { return nil }
-func (f *fakeMinister) Tasks() chan<- *Task      { return f.tasks }
+func (f *fakeMinister) Tasks() chan<- *Task     { return f.tasks }
 func (f *fakeMinister) Run(ctx context.Context) {}
 
 // TestChancellor_ScratchpadIncludesRituals verifies the Chancellor's system prompt
@@ -813,7 +811,7 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 
 	shogunate := &Shogunate{
 		db:             db,
-		ministers:       map[string]Minister{chancellor.ID(): chancellor},
+		ministers:      map[string]Minister{chancellor.ID(): chancellor},
 		ritualRegistry: registry,
 	}
 	chancellor.SetShogunate(shogunate)
