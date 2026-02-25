@@ -508,6 +508,10 @@ func (m *MinisterBase) AppendToIntent(edictID, clarification string) error {
 
 // HandleZhengmingResponse processes a clarification response
 func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
+	// Always resolve the waiter so blocking tools like suggest_edict unblock,
+	// even if DB operations below fail.
+	defer m.ResolveZhengmingWaiter(requestID, answer)
+
 	if err := m.AnswerZhengming(requestID, answer); err != nil {
 		return fmt.Errorf("answer zhengming: %w", err)
 	}
@@ -517,11 +521,11 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 		return fmt.Errorf("get request: %w", err)
 	}
 
-	if err := m.AppendToIntent(req.EdictID, answer); err != nil {
-		return fmt.Errorf("append clarification: %w", err)
-	}
-
 	if req.EdictID != "" {
+		if err := m.AppendToIntent(req.EdictID, answer); err != nil {
+			slog.Warn("failed to append clarification to edict", "edict_id", req.EdictID, "error", err)
+		}
+
 		pending, err := m.IsZhengmingPending(req.EdictID)
 		if err == nil && !pending {
 			m.db.Model(&storage.Edict{}).
@@ -529,8 +533,6 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 				Update("status", storage.EdictActive)
 		}
 	}
-
-	m.ResolveZhengmingWaiter(requestID, answer)
 
 	return nil
 }

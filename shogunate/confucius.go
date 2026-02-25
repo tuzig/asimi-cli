@@ -207,7 +207,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 		Options: []string{"Approve edict", "Dismiss suggestion"},
 	}}
 
-	edictID := "confucius-suggestion"
+	edictID := ""
 	requestID, err := t.confucius.RequestZhengming(edictID, questions, priority)
 	if err != nil {
 		return "", fmt.Errorf("failed to suggest edict: %w", err)
@@ -230,7 +230,14 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 		if err != nil {
 			return "", fmt.Errorf("waiting for answer: %w", err)
 		}
-		return fmt.Sprintf(`{"status":"answered","request_id":"%s","answer":%s}`, requestID, utils.MustJSON(answer)), nil
+		if answer == "Approve edict" {
+			edict, err := CreateEdict(t.confucius.db, "", params.Suggestion)
+			if err != nil {
+				return "", fmt.Errorf("create edict from suggestion: %w", err)
+			}
+			return fmt.Sprintf(`{"status":"approved","edict_id":"%s","request_id":"%s"}`, edict.EdictID, requestID), nil
+		}
+		return fmt.Sprintf(`{"status":"dismissed","request_id":"%s","answer":%s}`, requestID, utils.MustJSON(answer)), nil
 	}
 
 	return fmt.Sprintf(`{"status":"suggested","request_id":"%s"}`, requestID), nil
