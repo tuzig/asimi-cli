@@ -145,6 +145,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the manifests", "get_manifests", "manifests"},
 		{"the verdicts", "get_verdicts", "verdicts"},
 		{"the precedents", "get_precedents", "precedents"},
+		{"the earth status", "get_earth_status", "earth_status"},
 		{"the edict is sealed", "seal_edict", "sealed"},
 		{"the edict is blocked", "block_edict", "blocked"},
 		{"the edict is unblocked", "unblock_edict", "unblocked"},
@@ -858,6 +859,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	if err != nil {
 		return actResult, err
 	}
+	// TODO: Add the actResult as input to the then step below
 
 	// === THEN ===
 	for _, raw := range step.Then {
@@ -905,7 +907,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 
 	// Check for re-invocation after goto
 	if failure := exec.lastFailure; failure != nil {
-		r.logger.Debug("Step is running after a failure", failure)
+		r.logger.Debug("step re-invoked after failure", "from_step", failure.StepName, "error", failure.Error)
 		if failure.Output != "" {
 			work = fmt.Sprintf("Step '%s' failed.\n\nOutput:\n%s\n\nError: %s\n\nPlease revise your work accordingly.",
 				failure.StepName, failure.Output, failure.Error)
@@ -940,17 +942,19 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	}
 
 	// Wait for result
+	stepIdx := exec.CurrentStep
 	select {
 	case result := <-doneChan:
 		// Store session for potential reuse
 		if result.Session != nil {
-			exec.stepStates[exec.CurrentStep].Session = result.Session
+			exec.stepStates[stepIdx].Session = result.Session
 		}
 		if result.Err != nil {
 			return result.Output, result.Err
 		}
 		return result.Output, nil
 	case <-time.After(5 * time.Minute):
+		// TODO: improve timeout handling - retry the step
 		return "", fmt.Errorf("minister %s timeout", step.Minister)
 	case <-ctx.Done():
 		return "", ctx.Err()
@@ -997,6 +1001,7 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 
 	// 3. Previous step results
 	if exec.CurrentStep > 0 {
+		// TODO: make sure this gets passed down
 		fmt.Fprintf(&buf, "# Previous Step Results\n\n")
 		for i := 0; i < exec.CurrentStep; i++ {
 			prevStep := exec.def.Steps[i]
@@ -1047,6 +1052,8 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 		return r.arrangeGetVerdicts(exec.EdictID)
 	case "get_precedents":
 		return r.arrangeGetPrecedents(exec.EdictID)
+	case "get_earth_status":
+		return r.getEarthStatus(ctx)
 	default:
 		return nil, fmt.Errorf("unknown given function: %s", fn)
 	}
@@ -1131,6 +1138,52 @@ func (r *RitualRunner) arrangeGetPrecedents(edictID string) (interface{}, error)
 			"principle":    p.Principle,
 		}
 	}
+	return result, nil
+}
+
+// getEarthStatus captures the three parts of the Earth realm:
+// the capital (git log), the middle kingdom (git diff --staged), and the borderlands (git diff).
+func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) {
+	result := map[string]interface{}{
+		"capital":        "",
+		"middle_kingdom": "",
+		"borderlands":    "",
+	}
+
+	if r.runner == nil {
+		return result, nil // Return empty values if no runner available
+	}
+
+	// The capital: git log (recent commits)
+	capitalOutput, err := r.runner.Run(ctx, runners.Input{
+		Command:        "git log --oneline -20",
+		Description:    "get earth status: capital (git log)",
+		BypassApproval: true,
+	})
+	if err == nil {
+		result["capital"] = capitalOutput.Output
+	}
+
+	// The middle kingdom: git diff --staged
+	middleKingdomOutput, err := r.runner.Run(ctx, runners.Input{
+		Command:        "git diff --staged",
+		Description:    "get earth status: middle kingdom (git diff --staged)",
+		BypassApproval: true,
+	})
+	if err == nil {
+		result["middle_kingdom"] = middleKingdomOutput.Output
+	}
+
+	// The borderlands: git diff
+	borderlandsOutput, err := r.runner.Run(ctx, runners.Input{
+		Command:        "git diff",
+		Description:    "get earth status: borderlands (git diff)",
+		BypassApproval: true,
+	})
+	if err == nil {
+		result["borderlands"] = borderlandsOutput.Output
+	}
+
 	return result, nil
 }
 

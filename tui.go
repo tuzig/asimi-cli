@@ -1717,9 +1717,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Status {
 		case "started":
 			if msg.StepName == "" {
-				chat.Indent++
-				chat.AddMessage(fmt.Sprintf("%sRitual %s started for %s",
+				chat.AddMessage(fmt.Sprintf("%sRitual %s started for edict %s",
 					ritualPrefix, msg.RitualName, msg.EdictID))
+				chat.Indent++
 			} else {
 				chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s",
 					ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
@@ -1744,8 +1744,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shogunate.StreamDoneMsg:
-		chat := m.streamingChat()
-		chat.Indent = 0
+		// TODO: old handling, descided what to do with the message
+		// chat := m.streamingChat()
+		// chat.Indent = 0
 		return m, nil
 
 	case shogunate.EventsDrainedMsg:

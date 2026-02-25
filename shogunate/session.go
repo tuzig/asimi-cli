@@ -1141,6 +1141,16 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			return responseContent + "\n\n[Response truncated due to length limit]", nil
 		}
 
+		// Check if LLM returned an error stop reason
+		if choice.StopReason == "error" || choice.StopReason == "content_filter" {
+			err := fmt.Errorf("LLM generation failed: stop_reason=%s", choice.StopReason)
+			slog.Warn("LLM returned error stop reason", "stop_reason", choice.StopReason)
+			if s.notify != nil {
+				s.notify(StreamErrorMsg{Err: err})
+			}
+			return "", err
+		}
+
 		if strings.TrimSpace(responseContent) != "" {
 			finalText = responseContent
 		}

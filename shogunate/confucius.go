@@ -37,6 +37,7 @@ type Confucius struct {
 	MinisterBase
 	shogunate *Shogunate
 	tasks     chan *Task
+	session   *Session
 }
 
 // NewConfucius creates a new Confucius minister
@@ -118,19 +119,22 @@ func (c *Confucius) processPrompt(ctx context.Context, prompt *Prompt) {
 		return
 	}
 
-	sess, err := CreateSession(c, c.model, c.config, c.notify, prompt.EdictID)
-	if err != nil {
-		if c.notify != nil {
-			c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})
+	if c.session == nil {
+		var err error
+		c.session, err = CreateSession(c, c.model, c.config, c.notify, prompt.EdictID)
+		if err != nil {
+			if c.notify != nil {
+				c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})
+			}
+			return
 		}
-		return
 	}
 
 	if c.notify != nil {
 		c.notify(StreamStartMsg{EdictID: "confucius"})
 	}
 
-	_, err = sess.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
+	_, err := c.session.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
 	if err != nil && ctx.Err() == nil {
 		if c.notify != nil {
 			c.notify(StreamErrorMsg{Err: err})

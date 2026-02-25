@@ -1103,6 +1103,51 @@ func TestSession_AskWithStreaming_MaxTokens(t *testing.T) {
 	assert.True(t, maxTokensNotified)
 }
 
+// mockLLMErrorStopReason returns a response with "error" stop reason (e.g. OpenRouter abort)
+type mockLLMErrorStopReason struct {
+	llms.Model
+	stopReason string
+}
+
+func (m *mockLLMErrorStopReason) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	callOpts := &llms.CallOptions{}
+	for _, opt := range options {
+		opt(callOpts)
+	}
+	return &llms.ContentResponse{
+		Choices: []*llms.ContentChoice{{
+			Content:    "",
+			StopReason: m.stopReason,
+		}},
+	}, nil
+}
+
+func TestSession_AskWithStreaming_ErrorStopReason(t *testing.T) {
+	t.Parallel()
+
+	for _, stopReason := range []string{"error", "content_filter"} {
+		t.Run(stopReason, func(t *testing.T) {
+			t.Parallel()
+
+			var errorNotified bool
+			notify := func(msg any) {
+				if _, ok := msg.(StreamErrorMsg); ok {
+					errorNotified = true
+				}
+			}
+
+			sess, err := NewSession(&mockLLMErrorStopReason{stopReason: stopReason}, &SessionConfig{}, nil, nil, notify, "")
+			require.NoError(t, err)
+
+			out, err := sess.AskWithStreaming(context.Background(), "test", nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "stop_reason="+stopReason)
+			assert.Empty(t, out)
+			assert.True(t, errorNotified)
+		})
+	}
+}
+
 func TestSession_ProcessToolCalls_LoopDetected(t *testing.T) {
 	t.Parallel()
 
