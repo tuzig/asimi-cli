@@ -64,6 +64,7 @@ type Task struct {
 	EdictID    string        // The edict this task belongs to
 	Work       string        // Specific instructions for the minister (renamed from Task to avoid Task.Task)
 	Scratchpad string        // Pre-formatted markdown added to the context
+	Session    *Session      // Existing session for multi-turn (nil = create new)
 	Done       chan<- Result // For completion signal
 }
 
@@ -72,6 +73,7 @@ type Result struct {
 	MinisterID string
 	Sealed     bool // phase complete
 	Output     string
+	Session    *Session // Return session for reuse by ritual runner
 	Err        error
 }
 

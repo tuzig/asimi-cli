@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/afittestide/asimi/internal/runners"
@@ -765,6 +766,371 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 
 	if exec.State != RitualStateFailed {
 		t.Errorf("Expected state 'failed', got %s", exec.State)
+	}
+}
+
+// TestRitualGotoPassesErrorMessage tests that when step2 fails and gotos back to step1,
+// step1 receives the error message from step2 in its Work field (not scratchpad).
+func TestRitualGotoPassesErrorMessage(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "goto-error-test",
+		Steps: []RitualStep{
+			{Name: "report", Minister: "forge", Act: "report status"},
+			{Name: "review", Minister: "judge", Act: "review code",
+				OnFailure: "goto", OnFailureTarget: "report"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Track Works received by forge across invocations
+	var mu sync.Mutex
+	var forgeWorks []string
+	forgeCallCount := 0
+
+	forgeCh := make(chan *Task, 1)
+	judgeCh := make(chan *Task, 1)
+
+	// forge: captures Work, returns it as output
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case task := <-forgeCh:
+				mu.Lock()
+				forgeWorks = append(forgeWorks, task.Work)
+				forgeCallCount++
+				count := forgeCallCount
+				mu.Unlock()
+				task.Done <- Result{Output: task.Work}
+				if count >= 2 {
+					cancel()
+				}
+			}
+		}
+	}()
+
+	// judge: always fails
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case task := <-judgeCh:
+				task.Done <- Result{Err: fmt.Errorf("Here goes the error message")}
+			}
+		}
+	}()
+
+	// Build shogunate with custom ministers (don't start their Run methods)
+	forgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      forgeCh,
+	}
+	judgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "judge",
+		tasksCh:      judgeCh,
+	}
+	shog := &Shogunate{
+		ministers:     map[string]Minister{"forge": forgeM, "judge": judgeM},
+		eventRegistry: NewEventRegistry(),
+		eventCh:       make(chan Event, 256),
+		logger:        slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, shog, db, nil, nil)
+
+	exec, err := runner.Start(ctx, "goto-error-test", "edict-goto", nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to start ritual: %v", err)
+	}
+
+	// Run will loop: step1 ok -> step2 fail -> goto step1 -> step1 ok -> cancel
+	_ = runner.Run(ctx, exec)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(forgeWorks) < 2 {
+		t.Fatalf("Expected forge to be called at least 2 times, got %d", len(forgeWorks))
+	}
+
+	// Second invocation Work should contain the error from step2
+	if !strings.Contains(forgeWorks[1], "Here goes the error message") {
+		t.Errorf("Expected second invocation Work to contain error, got: %s", forgeWorks[1])
+	}
+}
+
+// TestRitualGotoPassesOutputAndError tests that when a step fails with both output and error,
+// both are passed to the goto target step's Work.
+func TestRitualGotoPassesOutputAndError(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "goto-output-error-test",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Act: "implement feature"},
+			{Name: "step2", Minister: "judge", Act: "review code",
+				OnFailure: "goto", OnFailureTarget: "step1"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var forgeWorks []string
+	forgeCallCount := 0
+
+	forgeCh := make(chan *Task, 1)
+	judgeCh := make(chan *Task, 1)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case task := <-forgeCh:
+				mu.Lock()
+				forgeWorks = append(forgeWorks, task.Work)
+				forgeCallCount++
+				count := forgeCallCount
+				mu.Unlock()
+				task.Done <- Result{Output: task.Work}
+				if count >= 2 {
+					cancel()
+				}
+			}
+		}
+	}()
+
+	// judge: fails with both output and error
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case task := <-judgeCh:
+				task.Done <- Result{
+					Output: "Rejection 1: unsafe code\nRejection 2: missing tests",
+					Err:    fmt.Errorf("review failed"),
+				}
+			}
+		}
+	}()
+
+	forgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      forgeCh,
+	}
+	judgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "judge",
+		tasksCh:      judgeCh,
+	}
+	shog := &Shogunate{
+		ministers:      map[string]Minister{"forge": forgeM, "judge": judgeM},
+		eventRegistry: NewEventRegistry(),
+		eventCh:       make(chan Event, 256),
+		logger:        slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, shog, db, nil, nil)
+
+	exec, err := runner.Start(ctx, "goto-output-error-test", "edict-goto-out", nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to start ritual: %v", err)
+	}
+
+	_ = runner.Run(ctx, exec)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(forgeWorks) < 2 {
+		t.Fatalf("Expected forge to be called at least 2 times, got %d", len(forgeWorks))
+	}
+
+	// Second invocation should contain BOTH the output and the error
+	if !strings.Contains(forgeWorks[1], "Rejection 1: unsafe code") {
+		t.Errorf("Expected second invocation Work to contain output, got: %s", forgeWorks[1])
+	}
+	if !strings.Contains(forgeWorks[1], "review failed") {
+		t.Errorf("Expected second invocation Work to contain error, got: %s", forgeWorks[1])
+	}
+}
+
+// TestRitualGotoSessionReuse tests that the session returned by a minister is stored
+// and passed back on goto re-invocation.
+func TestRitualGotoSessionReuse(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "goto-session-test",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Act: "implement feature"},
+			{Name: "step2", Minister: "judge", Act: "review code",
+				OnFailure: "goto", OnFailureTarget: "step1"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var forgeSessionsReceived []*Session
+	forgeCallCount := 0
+
+	// Create a dummy session to return from forge
+	dummySession := &Session{ID: "test-session-123"}
+
+	forgeCh := make(chan *Task, 1)
+	judgeCh := make(chan *Task, 1)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case task := <-forgeCh:
+				mu.Lock()
+				forgeSessionsReceived = append(forgeSessionsReceived, task.Session)
+				forgeCallCount++
+				count := forgeCallCount
+				mu.Unlock()
+				task.Done <- Result{Output: task.Work, Session: dummySession}
+				if count >= 2 {
+					cancel()
+				}
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case task := <-judgeCh:
+				task.Done <- Result{Err: fmt.Errorf("review failed")}
+			}
+		}
+	}()
+
+	forgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      forgeCh,
+	}
+	judgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "judge",
+		tasksCh:      judgeCh,
+	}
+	shog := &Shogunate{
+		ministers:      map[string]Minister{"forge": forgeM, "judge": judgeM},
+		eventRegistry: NewEventRegistry(),
+		eventCh:       make(chan Event, 256),
+		logger:        slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, shog, db, nil, nil)
+
+	exec, err := runner.Start(ctx, "goto-session-test", "edict-session", nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to start ritual: %v", err)
+	}
+
+	_ = runner.Run(ctx, exec)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(forgeSessionsReceived) < 2 {
+		t.Fatalf("Expected forge to be called at least 2 times, got %d", len(forgeSessionsReceived))
+	}
+
+	// First invocation: no existing session
+	if forgeSessionsReceived[0] != nil {
+		t.Error("Expected first invocation to have nil session")
+	}
+
+	// Second invocation: should receive the session returned earlier
+	if forgeSessionsReceived[1] == nil {
+		t.Error("Expected second invocation to have non-nil session")
+	} else if forgeSessionsReceived[1].ID != "test-session-123" {
+		t.Errorf("Expected session ID 'test-session-123', got %q", forgeSessionsReceived[1].ID)
+	}
+}
+
+// TestRitualGotoPreservesOutputOnFailure tests that executeMinisterStep preserves output on error.
+func TestRitualGotoPreservesOutputOnFailure(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "preserve-output-test",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Act: "do work", OnFailure: "abort"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	ctx := context.Background()
+
+	forgeCh := make(chan *Task, 1)
+
+	// forge: returns both output and error
+	go func() {
+		task := <-forgeCh
+		task.Done <- Result{Output: "partial output", Err: fmt.Errorf("something went wrong")}
+	}()
+
+	forgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      forgeCh,
+	}
+	shog := &Shogunate{
+		ministers:      map[string]Minister{"forge": forgeM},
+		eventRegistry: NewEventRegistry(),
+		eventCh:       make(chan Event, 256),
+		logger:        slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, shog, db, nil, nil)
+
+	exec, err := runner.Start(ctx, "preserve-output-test", "edict-preserve", nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to start ritual: %v", err)
+	}
+
+	_ = runner.Run(ctx, exec)
+
+	// Verify output is preserved in step state
+	if exec.stepStates[0].Output != "partial output" {
+		t.Errorf("Expected step output 'partial output', got %q", exec.stepStates[0].Output)
+	}
+	// Verify error message is stored
+	if !strings.Contains(exec.stepStates[0].Message, "something went wrong") {
+		t.Errorf("Expected step message to contain error, got %q", exec.stepStates[0].Message)
 	}
 }
 

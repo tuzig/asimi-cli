@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -215,12 +214,18 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 	var output string
 	var taskErr error
+	var session *Session
 
-	// If LLM is configured, use a session to process the task
 	if f.model != nil {
-		output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad)
+		if task.Session != nil {
+			// Multi-turn: continue existing session
+			session = task.Session
+			_, taskErr = session.AskWithStreaming(ctx, task.Work, nil)
+		} else {
+			// First invocation: create new session
+			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad)
+		}
 	} else {
-		// No LLM configured - just acknowledge
 		output = "forge task acknowledged (no LLM configured)"
 	}
 
@@ -228,6 +233,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 		MinisterID: f.ID(),
 		Sealed:     true,
 		Output:     output,
+		Session:    session,
 		Err:        taskErr,
 	}
 
@@ -239,24 +245,23 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 }
 
 // streamTask creates a session and streams the task through the LLM.
-func (f *Forge) streamTask(ctx context.Context, work, edictID, scratchpad string) (string, error) {
+// Returns the session for potential reuse in multi-turn conversations.
+func (f *Forge) streamTask(ctx context.Context, work, edictID, scratchpad string) (*Session, string, error) {
 	session, err := CreateSessionWithOpts(f, f.model, f.config, f.notify, CreateSessionOpts{
 		EdictID:    edictID,
 		Scratchpad: scratchpad,
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create forge session: %w", err)
+		return nil, "", fmt.Errorf("failed to create forge session: %w", err)
 	}
-
-	var response strings.Builder
 
 	_, err = session.AskWithStreaming(ctx, work, nil)
 	if err != nil {
-		return response.String(), err
+		return session, "", err
 	}
 
-	f.logger.Info("forge task completed", "response_length", response.Len())
-	return response.String(), nil
+	f.logger.Info("forge task completed")
+	return session, "", nil
 }
 
 // --- Forge Specialized Tools ---

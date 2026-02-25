@@ -471,9 +471,17 @@ type RitualExecution struct {
 	UpdatedAt   time.Time    `gorm:"column:updated_at;autoUpdateTime"`
 
 	// Runtime (not persisted)
-	def        *RitualDef
-	stepStates []RitualStepState
-	notify     internal.NotifyFunc
+	def         *RitualDef
+	stepStates  []RitualStepState
+	lastFailure *stepFailure // Failure context from goto
+	notify      internal.NotifyFunc
+}
+
+// stepFailure carries context from a failed step to the goto target
+type stepFailure struct {
+	StepName string
+	Output   string // Full minister output (e.g., censor's rejection list)
+	Error    string // The error message
 }
 
 // TableName returns the table name for RitualExecution
@@ -489,6 +497,10 @@ type RitualStepState struct {
 	Name        string `gorm:"column:name"`
 	RetryCount  int    `gorm:"column:retry_count"`
 	Message     string `gorm:"column:message"`
+
+	// Runtime only (not persisted)
+	Session *Session `gorm:"-"` // LLM session for multi-turn
+	Output  string   `gorm:"-"` // Step output (preserved on failure)
 }
 
 // TableName returns the table name for RitualStepState
@@ -648,6 +660,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		result, err := r.executeStep(ctx, exec, step)
 		if err != nil {
 			exec.stepStates[exec.CurrentStep].Message = err.Error()
+			exec.stepStates[exec.CurrentStep].Output = result
 
 			// Notify: step failed
 			if exec.notify != nil {
@@ -843,7 +856,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	// === ACT ===
 	actResult, err := r.executeMinisterStep(ctx, exec, step)
 	if err != nil {
-		return "", err
+		return actResult, err
 	}
 
 	// === THEN ===
@@ -887,18 +900,35 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		return "", fmt.Errorf("minister not found: %s", step.Minister)
 	}
 
-	// Expand template in work (Act or Task for backward compat)
 	work := r.expandTemplate(step.Act, exec)
+	var session *Session
 
-	// Build enhanced scratchpad with ritual context, edict details, and previous results
-	scratchpad := r.buildEnhancedScratchpad(ctx, exec, step)
+	// Check for re-invocation after goto
+	if failure := exec.lastFailure; failure != nil {
+		r.logger.Debug("Step is running after a failure", failure)
+		if failure.Output != "" {
+			work = fmt.Sprintf("Step '%s' failed.\n\nOutput:\n%s\n\nError: %s\n\nPlease revise your work accordingly.",
+				failure.StepName, failure.Output, failure.Error)
+		} else {
+			work = fmt.Sprintf("Step '%s' failed with error: %s\nPlease revise your work accordingly.",
+				failure.StepName, failure.Error)
+		}
+		exec.lastFailure = nil // consumed
+		session = exec.stepStates[exec.CurrentStep].Session
+	}
 
-	// Create task
+	// Build scratchpad only for first invocation (no existing session)
+	scratchpad := ""
+	if session == nil {
+		scratchpad = r.buildEnhancedScratchpad(ctx, exec, step)
+	}
+
 	doneChan := make(chan Result, 1)
 	t := &Task{
 		EdictID:    exec.EdictID,
 		Work:       work,
 		Scratchpad: scratchpad,
+		Session:    session,
 		Done:       doneChan,
 	}
 
@@ -912,8 +942,12 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	// Wait for result
 	select {
 	case result := <-doneChan:
+		// Store session for potential reuse
+		if result.Session != nil {
+			exec.stepStates[exec.CurrentStep].Session = result.Session
+		}
 		if result.Err != nil {
-			return "", result.Err
+			return result.Output, result.Err
 		}
 		return result.Output, nil
 	case <-time.After(5 * time.Minute):
@@ -1247,6 +1281,12 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 		if step.OnFailureTarget != "" {
 			targetIdx := r.stepIndex(exec.def, step.OnFailureTarget)
 			if targetIdx != -1 {
+				state := exec.stepStates[exec.CurrentStep]
+				exec.lastFailure = &stepFailure{
+					StepName: step.Name,
+					Output:   state.Output,
+					Error:    err.Error(),
+				}
 				exec.CurrentStep = targetIdx
 				r.logger.Info("jumping to step on failure",
 					"from", step.Name,

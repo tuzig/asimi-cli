@@ -759,9 +759,17 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 
 	var output string
 	var taskErr error
+	var session *Session
 
 	if c.model != nil {
-		output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad)
+		if task.Session != nil {
+			// Multi-turn: continue existing session
+			session = task.Session
+			_, taskErr = session.AskWithStreaming(ctx, task.Work, nil)
+		} else {
+			// First invocation: create new session
+			session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad)
+		}
 	} else {
 		output = "chancellor task acknowledged (no LLM configured)"
 	}
@@ -770,6 +778,7 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 		MinisterID: c.ID(),
 		Sealed:     true,
 		Output:     output,
+		Session:    session,
 		Err:        taskErr,
 	}
 
@@ -783,7 +792,9 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 }
 
 // streamTask creates a session and streams the task through the LLM.
-func (c *Chancellor) streamTask(ctx context.Context, work, edictID, scratchpad string) (string, error) {
+// Returns the session for potential reuse in multi-turn conversations.
+func (c *Chancellor) streamTask(ctx context.Context, work, edictID,
+	scratchpad string) (*Session, string, error) {
 	notify := c.notify
 	if notify == nil {
 		notify = func(any) {} // no-op when notify not yet wired
@@ -795,18 +806,18 @@ func (c *Chancellor) streamTask(ctx context.Context, work, edictID, scratchpad s
 		Scratchpad: scratchpad,
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create chancellor task session: %w", err)
+		return nil, "", fmt.Errorf("failed to create chancellor task session: %w", err)
 	}
 
 	_, err = session.AskWithStreaming(ctx, work, nil)
 	if err != nil {
 		notify(StreamDoneMsg{})
-		return "", err
+		return session, "", err
 	}
 
 	notify(StreamDoneMsg{})
 	c.logger.Info("chancellor task completed", "edict_id", edictID)
-	return "", nil
+	return session, "", nil
 }
 
 // generateEdictID creates a unique edict ID
