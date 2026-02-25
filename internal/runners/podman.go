@@ -128,7 +128,7 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 			// Notify that container was launched
 			if r.msgChan != nil {
 				// TODO: add the process ID to the message
-				r.msgChan <- ContainerLaunchedMsg{Message: "Container launched"}
+				r.msgChan <- ContainerLaunchedMsg{Message: "🐳 Container launched"}
 			}
 		}
 	} else {
