@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -1838,5 +1839,186 @@ func TestRitualTimeoutWithoutZhengming(t *testing.T) {
 	err = runner.Run(cancelCtx, exec)
 	if err == nil {
 		t.Fatal("Expected error from context cancellation or timeout, got nil")
+	}
+}
+
+func TestExpandTemplate_ActResult(t *testing.T) {
+	runner := &RitualRunner{logger: slog.Default()}
+	exec := &RitualExecution{
+		EdictID:     "edict-1",
+		CurrentStep: 1,
+		Data: storage.JSON{
+			"act_result": "step0 produced this output",
+		},
+		stepStates: []RitualStepState{
+			{Name: "step0", Message: "done"},
+		},
+	}
+
+	result := runner.expandTemplate("Previous result: {{ .act_result }}", exec)
+	expected := "Previous result: step0 produced this output"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestExpandTemplate_StepResults(t *testing.T) {
+	runner := &RitualRunner{logger: slog.Default()}
+	exec := &RitualExecution{
+		EdictID:     "edict-1",
+		CurrentStep: 2,
+		stepStates: []RitualStepState{
+			{Name: "plan", Message: "the plan output"},
+			{Name: "implement", Message: "the impl output"},
+			{Name: "review", Message: "should be excluded (current step)"},
+		},
+	}
+
+	result := runner.expandTemplate(`Plan said: {{ index .step_results "plan" }}`, exec)
+	expected := "Plan said: the plan output"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+
+	// Current step (index 2) should NOT appear in step_results
+	result2 := runner.expandTemplate("{{ .step_results }}", exec)
+	if strings.Contains(result2, "should be excluded") {
+		t.Error("current step should not appear in step_results")
+	}
+}
+
+func TestBuildWorkPrompt(t *testing.T) {
+	runner := &RitualRunner{logger: slog.Default()}
+
+	t.Run("with step results and given context", func(t *testing.T) {
+		exec := &RitualExecution{
+			CurrentStep: 1,
+			Data: storage.JSON{
+				"given_context": map[string]interface{}{
+					"branch": "feature-x",
+				},
+			},
+			stepStates: []RitualStepState{
+				{Name: "plan", Message: "the plan"},
+				{Name: "implement", Message: ""},
+			},
+		}
+
+		result := runner.buildWorkPrompt(exec, "Do the implementation")
+		if !strings.Contains(result, "# Previous Step Results") {
+			t.Error("expected previous step results section")
+		}
+		if !strings.Contains(result, "## plan") {
+			t.Error("expected plan step result")
+		}
+		if !strings.Contains(result, "the plan") {
+			t.Error("expected plan result content")
+		}
+		if !strings.Contains(result, "# Given Context") {
+			t.Error("expected given context section")
+		}
+		if !strings.Contains(result, "## branch") {
+			t.Error("expected branch context key")
+		}
+		if !strings.Contains(result, "# Task") {
+			t.Error("expected task section")
+		}
+		if !strings.Contains(result, "Do the implementation") {
+			t.Error("expected act content")
+		}
+	})
+
+	t.Run("empty sections omitted", func(t *testing.T) {
+		exec := &RitualExecution{
+			CurrentStep: 0,
+			stepStates:  []RitualStepState{},
+		}
+
+		result := runner.buildWorkPrompt(exec, "Just do it")
+		if strings.Contains(result, "# Previous Step Results") {
+			t.Error("should not include empty step results section")
+		}
+		if strings.Contains(result, "# Given Context") {
+			t.Error("should not include empty given context section")
+		}
+		if !strings.Contains(result, "# Task") {
+			t.Error("expected task section")
+		}
+		if !strings.Contains(result, "Just do it") {
+			t.Error("expected act content")
+		}
+	})
+}
+
+func TestBuildWorkPrompt_GotoFreshContext(t *testing.T) {
+	runner := &RitualRunner{logger: slog.Default()}
+
+	exec := &RitualExecution{
+		CurrentStep: 1,
+		stepStates: []RitualStepState{
+			{Name: "plan", Message: "initial plan"},
+			{Name: "implement", Message: ""},
+		},
+	}
+
+	// First invocation
+	result1 := runner.buildWorkPrompt(exec, "implement the feature")
+	if !strings.Contains(result1, "initial plan") {
+		t.Error("first invocation should contain initial plan")
+	}
+
+	// Simulate goto: step 0 re-ran and produced updated output
+	exec.stepStates[0].Message = "revised plan after failure"
+
+	// Second invocation (goto re-invocation) — should see updated results
+	result2 := runner.buildWorkPrompt(exec, "implement the feature")
+	if !strings.Contains(result2, "revised plan after failure") {
+		t.Error("goto re-invocation should contain updated plan")
+	}
+	if strings.Contains(result2, "initial plan") {
+		t.Error("goto re-invocation should NOT contain stale initial plan")
+	}
+}
+
+func TestBuildWorkPrompt_GotoIncludesLaterSteps(t *testing.T) {
+	runner := &RitualRunner{logger: slog.Default()}
+
+	// Simulate: steps 0→1→2 ran, step 2 failed and goto back to step 1
+	exec := &RitualExecution{
+		CurrentStep: 1,
+		stepStates: []RitualStepState{
+			{Name: "plan", Message: "the plan"},
+			{Name: "implement", Message: ""},           // current step, re-invoked
+			{Name: "review", Message: "review feedback"}, // ran before goto
+		},
+	}
+
+	result := runner.buildWorkPrompt(exec, "redo implementation")
+	if !strings.Contains(result, "## review") {
+		t.Error("should include step after CurrentStep that already ran")
+	}
+	if !strings.Contains(result, "review feedback") {
+		t.Error("should include review step's message")
+	}
+}
+
+func TestExpandTemplate_GotoIncludesLaterSteps(t *testing.T) {
+	runner := &RitualRunner{logger: slog.Default()}
+
+	// Simulate: steps 0→1→2 ran, step 2 failed and goto back to step 0
+	exec := &RitualExecution{
+		EdictID:     "edict-1",
+		CurrentStep: 0,
+		stepStates: []RitualStepState{
+			{Name: "plan", Message: ""},                   // current step
+			{Name: "implement", Message: "impl output"},   // ran before goto
+			{Name: "review", Message: "review output"},    // ran before goto
+		},
+	}
+
+	result := runner.expandTemplate(`impl: {{ index .step_results "implement" }}`, exec)
+	expected := "impl: impl output"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
 	}
 }

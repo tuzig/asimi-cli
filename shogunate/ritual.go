@@ -859,7 +859,10 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	if err != nil {
 		return actResult, err
 	}
-	// TODO: Add the actResult as input to the then step below
+	if exec.Data == nil {
+		exec.Data = storage.JSON{}
+	}
+	exec.Data["act_result"] = actResult
 
 	// === THEN ===
 	for _, raw := range step.Then {
@@ -902,24 +905,27 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		return "", fmt.Errorf("minister not found: %s", step.Minister)
 	}
 
-	work := r.expandTemplate(step.Act, exec)
+	act := r.expandTemplate(step.Act, exec)
 	var session *Session
 
 	// Check for re-invocation after goto
 	if failure := exec.lastFailure; failure != nil {
 		r.logger.Debug("step re-invoked after failure", "from_step", failure.StepName, "error", failure.Error)
 		if failure.Output != "" {
-			work = fmt.Sprintf("Step '%s' failed.\n\nOutput:\n%s\n\nError: %s\n\nPlease revise your work accordingly.",
+			act = fmt.Sprintf("Step '%s' failed.\n\nOutput:\n%s\n\nError: %s\n\nPlease revise.",
 				failure.StepName, failure.Output, failure.Error)
 		} else {
-			work = fmt.Sprintf("Step '%s' failed with error: %s\nPlease revise your work accordingly.",
+			act = fmt.Sprintf("Step '%s' failed with error: %s\nPlease revise.",
 				failure.StepName, failure.Error)
 		}
 		exec.lastFailure = nil // consumed
 		session = exec.stepStates[exec.CurrentStep].Session
 	}
 
-	// Build scratchpad only for first invocation (no existing session)
+	// Dynamic work prompt — rebuilt every invocation (fresh context)
+	work := r.buildWorkPrompt(exec, act)
+
+	// Immutable scratchpad — only for session creation
 	scratchpad := ""
 	if session == nil {
 		scratchpad = r.buildEnhancedScratchpad(ctx, exec, step)
@@ -956,7 +962,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 
 	// Wait for result with pausable timeout
 	stepIdx := exec.CurrentStep
-	timer := time.NewTimer(5 * time.Minute)
+	timer := time.NewTimer(15 * time.Minute)
 	defer timer.Stop()
 
 	for {
@@ -1032,27 +1038,50 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 		}
 	}
 
-	// 3. Previous step results
-	if exec.CurrentStep > 0 {
-		// TODO: make sure this gets passed down
-		fmt.Fprintf(&buf, "# Previous Step Results\n\n")
-		for i := 0; i < exec.CurrentStep; i++ {
-			prevStep := exec.def.Steps[i]
-			prevState := exec.stepStates[i]
-			fmt.Fprintf(&buf, "## Step %d: %s\n\n", i+1, prevStep.Name)
-			if prevState.Message != "" {
-				fmt.Fprintf(&buf, "**Result:** %s\n\n", prevState.Message)
+	return buf.String()
+}
+
+// workPromptTmpl is the template for building dynamic work messages.
+// It includes previous step results and given context before the task.
+var workPromptTmpl = template.Must(template.New("work").Parse(
+	`{{ if .step_results }}# Previous Step Results
+{{ range $name, $result := .step_results }}
+## {{ $name }}
+{{ $result }}
+{{ end }}{{ end }}{{ if .given_context }}# Given Context
+{{ range $key, $val := .given_context }}
+## {{ $key }}
+{{ $val }}
+{{ end }}{{ end }}# Task
+{{ .Act }}
+`))
+
+// buildWorkPrompt builds the dynamic work message from step results, given context, and the act.
+// This is rebuilt on every invocation so goto re-invocations get fresh context.
+func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string {
+	data := map[string]interface{}{
+		"Act": act,
+	}
+	// Previous step results (use != to include steps after CurrentStep that ran before a goto)
+	for i, ss := range exec.stepStates {
+		if ss.Message != "" && i != exec.CurrentStep {
+			if data["step_results"] == nil {
+				data["step_results"] = map[string]string{}
 			}
+			data["step_results"].(map[string]string)[ss.Name] = ss.Message
 		}
 	}
-
-	// 4. Given context (existing)
+	// Given context
 	if exec.Data != nil {
-		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok && len(given) > 0 {
-			buf.WriteString(formatScratchpad(given))
+		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok {
+			data["given_context"] = given
 		}
 	}
-
+	var buf bytes.Buffer
+	if err := workPromptTmpl.Execute(&buf, data); err != nil {
+		r.logger.Warn("failed to execute work prompt template", "error", err)
+		return act
+	}
 	return buf.String()
 }
 
@@ -1461,6 +1490,22 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 				data[k] = v
 			}
 		}
+	}
+	// Merge act result
+	if exec.Data != nil {
+		if ar, ok := exec.Data["act_result"]; ok {
+			data["act_result"] = ar
+		}
+	}
+	// Build step_results from completed steps
+	stepResults := map[string]interface{}{}
+	for i, ss := range exec.stepStates {
+		if ss.Message != "" && i != exec.CurrentStep {
+			stepResults[ss.Name] = ss.Message
+		}
+	}
+	if len(stepResults) > 0 {
+		data["step_results"] = stepResults
 	}
 
 	tmpl, err := template.New("ritual").Parse(text)
