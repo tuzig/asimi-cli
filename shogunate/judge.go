@@ -275,7 +275,12 @@ func (j *Judge) Run(ctx context.Context) {
 			j.logger.Info("judge stopped")
 			return
 		case task := <-j.tasks:
-			j.processTask(ctx, task)
+			merged, mergedCancel := context.WithCancel(ctx)
+			if task.Ctx != nil {
+				context.AfterFunc(task.Ctx, func() { mergedCancel() })
+			}
+			j.processTask(merged, task)
+			mergedCancel()
 		}
 	}
 }

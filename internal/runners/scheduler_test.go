@@ -73,7 +73,7 @@ func TestCoreToolScheduler(t *testing.T) {
 		},
 	}
 
-	resultChan := scheduler.Schedule(tool, "test-input")
+	resultChan := scheduler.Schedule(context.Background(), tool, "test-input")
 
 	// Wait for the result
 	result := <-resultChan
@@ -120,15 +120,15 @@ func TestCoreToolScheduler_ClearQueue(t *testing.T) {
 	}
 
 	// Schedule the slow tool first (it will start executing)
-	slowResult := scheduler.Schedule(slowTool, "slow-input")
+	slowResult := scheduler.Schedule(context.Background(), slowTool, "slow-input")
 
 	// Give it a moment to start executing
 	time.Sleep(10 * time.Millisecond)
 
 	// Schedule multiple fast tools (they will be queued)
-	fastResult1 := scheduler.Schedule(fastTool, "fast-input-1")
-	fastResult2 := scheduler.Schedule(fastTool, "fast-input-2")
-	fastResult3 := scheduler.Schedule(fastTool, "fast-input-3")
+	fastResult1 := scheduler.Schedule(context.Background(), fastTool, "fast-input-1")
+	fastResult2 := scheduler.Schedule(context.Background(), fastTool, "fast-input-2")
+	fastResult3 := scheduler.Schedule(context.Background(), fastTool, "fast-input-3")
 
 	// Clear the queue - this should abort the queued tool calls but not the executing one
 	abortedCount := scheduler.ClearQueue()

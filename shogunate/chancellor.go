@@ -545,7 +545,12 @@ func (c *Chancellor) Run(ctx context.Context) {
 			c.processPrompt(merged, prompt)
 			mergedCancel()
 		case task := <-c.taskChan:
-			c.processTask(ctx, task)
+			merged, mergedCancel := context.WithCancel(ctx)
+			if task.Ctx != nil {
+				context.AfterFunc(task.Ctx, func() { mergedCancel() })
+			}
+			c.processTask(merged, task)
+			mergedCancel()
 		}
 	}
 }

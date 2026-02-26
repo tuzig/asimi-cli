@@ -113,18 +113,19 @@
   description: "Startup ritual - report court status on Shogunate boot"
   max_retries: 2
   triggers:
-    # - event: shogunate_started
+    - event: shogunate_started
   background:
     - the earth status
     - the court status
   steps:
-    - name: report
+    - name: start-brewing
       minister: chancellor
       on_failure: retry
       act: |
-        The Shogunate has awoken. Report the current court status.
-        List any active edicts, their phases, and any pending zhengming.
-        Raise a zhengming when done, asking the ruler to choose the path forward
+        The Shogunate has awoken and you lead it in resolving open issues. 
+        Start by reporting the current 三界 status.
+        List any active edicts, rituals and manifests.
+        Raise a zhengming when done, porosing to the ruler some paths forward
 
 - name: grand-orchestration
   description: "Full lifecycle orchestration - strategize, forge, judge, censor, deploy"

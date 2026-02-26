@@ -199,7 +199,12 @@ func (f *Forge) Run(ctx context.Context) {
 			f.logger.Info("forge stopped")
 			return
 		case task := <-f.tasks:
-			f.processTask(ctx, task)
+			merged, mergedCancel := context.WithCancel(ctx)
+			if task.Ctx != nil {
+				context.AfterFunc(task.Ctx, func() { mergedCancel() })
+			}
+			f.processTask(merged, task)
+			mergedCancel()
 		}
 	}
 }

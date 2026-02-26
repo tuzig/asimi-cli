@@ -35,6 +35,7 @@ const (
 // ToolCall represents a single tool call task
 type ToolCall struct {
 	ID     string
+	Ctx    context.Context
 	Tool   Tool
 	Input  string
 	Status ToolCallStatus
@@ -78,7 +79,7 @@ func (s *CoreToolScheduler) SetNotify(notify func(any)) {
 }
 
 // Schedule adds a new tool call to the scheduler and returns a channel for the result
-func (s *CoreToolScheduler) Schedule(tool Tool, input string) <-chan ToolCallResult {
+func (s *CoreToolScheduler) Schedule(ctx context.Context, tool Tool, input string) <-chan ToolCallResult {
 	slog.Debug("scheduler.enqueue", "tool", tool.Name())
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -86,6 +87,7 @@ func (s *CoreToolScheduler) Schedule(tool Tool, input string) <-chan ToolCallRes
 	id := uuid.New().String()
 	call := &ToolCall{
 		ID:     id,
+		Ctx:    ctx,
 		Tool:   tool,
 		Input:  input,
 		Status: StatusScheduled,
@@ -124,7 +126,7 @@ func (s *CoreToolScheduler) processQueue() {
 		// The toolWrapper's Call method is what schedules the tool.
 		// This means the tool passed to Schedule should be the unwrapped tool.
 		slog.Debug("scheduler.exec", "tool", call.Tool.Name())
-		output, err := call.Tool.Call(context.Background(), call.Input)
+		output, err := call.Tool.Call(call.Ctx, call.Input)
 
 		s.mu.Lock()
 		defer s.mu.Unlock()

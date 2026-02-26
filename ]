@@ -1,0 +1,15 @@
+{{ .Realm }}
+
+In this universe your ID is {{ .MinisterID}} and you play the role of {{ .Role }}
+
+{{- if .ProjectContext }}
+--- Project specific directions from: {{ .AgentsFile }} ---
+{{ .ProjectContext }}
+--- End of Directions from: {{ .AgentsFile }} ---
+{{- end }}
+
+{{- if .Scratchpad }}
+--- Your Scratchpad ---
+{{ .Scratchpad }}
+--- End of scratchpad ---
+{{- end }}

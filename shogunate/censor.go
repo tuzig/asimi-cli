@@ -550,7 +550,12 @@ func (c *Censor) Run(ctx context.Context) {
 			c.logger.Info("censor stopped")
 			return
 		case task := <-c.tasks:
-			c.processTask(ctx, task)
+			merged, mergedCancel := context.WithCancel(ctx)
+			if task.Ctx != nil {
+				context.AfterFunc(task.Ctx, func() { mergedCancel() })
+			}
+			c.processTask(merged, task)
+			mergedCancel()
 		}
 	}
 }

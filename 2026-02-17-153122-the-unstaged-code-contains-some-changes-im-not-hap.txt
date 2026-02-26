@@ -1,0 +1,1921 @@
+
+           Claude Code v2.1.44
+ ▐▛███▜▌   Opus 4.6 · Claude Max
+▝▜█████▛▘  ~/src/asimi-cli/worktrees/shogunate2
+  ▘▘ ▝▝    Opus 4.6 is here · $50 free extra usage · /extra-usage to enable
+
+❯ The unstaged code contains some changes Im not happy with 
+  ⎿  Found 11 new diagnostic issues in 2 files (ctrl+o to expand)
+
+⏺ Let me look at the unstaged changes.
+
+⏺ Bash(git diff)
+  ⎿  diff --git a/plans/daemon-db-migration.md b/plans/daemon-db-migration.
+     md
+     index 3281c3f4..2b01d8ed 100644
+     … +381 lines (ctrl+o to expand)
+
+⏺ Here are the unstaged changes across 3 files:
+
+  1. plans/daemon-db-migration.md — Major rewrite of the gRPC API plan: renamed
+  service to Shogunate, replaced session-centric CRUD with edict-first design
+  (SubmitEdict, ConnectTo bidirectional stream), added sovereignty rules,
+  simplified message definitions, updated migration phases.
+  2. status.go — Added stream rate tracking to StatusComponent: new fields
+  (streamCharsTotal, streamStartTime, streamRate), methods (AddStreamChars,
+  ResetStreamRate, rateBar), and display logic showing a block-bar + chars/sec
+  in the middle section.
+  3. storage/shogunate_schema.go — Fixed typo PhaseClassifing →
+  PhaseClassifying, added PhaseHalted, added PriorPhase field to Edict struct,
+  updated DDL default from 'brewing' to 'classifying', added prior_phase column.
+
+  What are you unhappy with? Would you like to discard specific changes, or
+  would you like me to look more closely at something?
+
+❯ Adding PriorPhase and the halt phase. It looks like a dding a bool like   
+  'halted' is cleaner                                                       
+
+⏺ Agreed — a Halted bool is cleaner than a separate phase + prior_phase
+  tracking. Let me read the current file and make the changes.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Now let me make the three changes:
+
+⏺ Update(storage/shogunate_schema.go)
+  ⎿  Removed 1 line
+      67    PhaseDeploying   EdictPhase = "deploying"
+      68    PhaseSealed      EdictPhase = "sealed"
+      69    PhaseCancelled   EdictPhase = "cancelled"
+      70 -  PhaseHalted      EdictPhase = "halted"                       
+      70  )
+      71  
+      72  // Edict represents a high-level task/issue being processed by 
+          the Shogunate
+
+⏺ Update(storage/shogunate_schema.go)
+  ⎿  Added 1 line, removed 1 line
+      77    IssueRef     string     `gorm:"column:issue_ref"`
+      78    Intent       string     `gorm:"column:intent"`
+      79    CurrentPhase EdictPhase `gorm:"column:current_phase"`
+      80 -  PriorPhase   EdictPhase `gorm:"column:prior_phase"` // Phase 
+         -before halt, for resume                                        
+      80 +  Halted       bool       `gorm:"column:halted"`               
+      81    CreatedAt    time.Time  `gorm:"column:created_at;autoCreateTi
+          me"`
+      82    UpdatedAt    time.Time  `gorm:"column:updated_at;autoUpdateTi
+          me"`
+      83  }
+
+⏺ Update(storage/shogunate_schema.go)
+  ⎿  Added 1 line, removed 1 line
+      308      issue_ref TEXT NOT NULL,
+      309      intent TEXT NOT NULL,
+      310      current_phase TEXT NOT NULL DEFAULT 'classifying',
+      311 -    prior_phase TEXT NOT NULL DEFAULT '',                     
+      311 +    halted INTEGER NOT NULL DEFAULT 0,                        
+      312      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      313      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      314  );
+
+⏺ Now let me fix the test that references the old PhaseClassifing constant.
+
+⏺ Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+⏺ Update(shogunate/minister_test.go)
+  ⎿  Added 1 line, removed 1 line
+       94    if err != nil {
+       95      t.Fatalf("Failed to get edict: %v", err)
+       96    }
+       97 -  if edict.CurrentPhase != storage.PhaseClassifing {          
+       97 +  if edict.CurrentPhase != storage.PhaseClassifying {         
+       98      t.Errorf("Expected phase brewing, got %s", edict.CurrentPh
+           ase)
+       99    }
+      100  
+
+⏺ Also need to check for any references to PhaseHalted or PriorPhase.
+
+⏺ Searched for 1 pattern (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ If we're already doing that I don't like the name - PhaseClassifying.     
+  It's too restrictive. How about PhaseBrewing ?                            
+
+⏺ Good call — PhaseBrewing is more open-ended for that initial phase. Let me
+  update all references.
+
+⏺ Searched for 1 pattern (ctrl+o to expand)
+
+⏺ Update(storage/shogunate_schema.go)
+  ⎿  Added 1 line, removed 1 line
+      59  type EdictPhase string
+      60  
+      61  const (
+      62 -  PhaseClassifying EdictPhase = "classifying"                  
+      62 +  PhaseBrewing EdictPhase = "brewing"                          
+      63    PhasePlanning    EdictPhase = "planning"
+      64    PhaseForging     EdictPhase = "forging"
+      65    PhaseJudging     EdictPhase = "judging"
+
+⏺ Update(storage/shogunate_schema.go)
+  ⎿  Added 1 line, removed 1 line
+      307      session_id TEXT NOT NULL DEFAULT '',
+      308      issue_ref TEXT NOT NULL,
+      309      intent TEXT NOT NULL,
+      310 -    current_phase TEXT NOT NULL DEFAULT 'classifying',        
+      310 +    current_phase TEXT NOT NULL DEFAULT 'brewing',            
+      311      halted INTEGER NOT NULL DEFAULT 0,
+      312      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      313      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+
+⏺ Update(shogunate/chancellor.go)
+  ⎿  File must be read first
+
+⏺ Update(shogunate/minister_test.go)
+  ⎿  Error editing file
+  ⎿  Found 2 new diagnostic issues in 2 files (ctrl+o to expand)
+
+⏺ Read 2 files (ctrl+o to expand)
+
+⏺ Update(shogunate/chancellor.go)
+  ⎿  Added 2 lines, removed 2 lines
+      570    return &edict, nil
+      571  }
+      572  
+      573 -// CreateEdict creates a new edict in the classifying phase   
+      573 +// CreateEdict creates a new edict in the brewing phase       
+      574  func (c *Chancellor) CreateEdict(edictID, intent string) error
+            {
+      575    edict := storage.Edict{
+      576      EdictID:      edictID,
+      577      IssueRef:     edictID,
+      578      Intent:       intent,
+      579 -    CurrentPhase: storage.PhaseClassifying,                   
+      579 +    CurrentPhase: storage.PhaseBrewing,                       
+      580    }
+      581    if err := c.db.Create(&edict).Error; err != nil {
+      582      return fmt.Errorf("failed to create edict: %w", err)
+
+⏺ Update(shogunate/minister_test.go)
+  ⎿  Added 1 line, removed 1 line
+       94    if err != nil {
+       95      t.Fatalf("Failed to get edict: %v", err)
+       96    }
+       97 -  if edict.CurrentPhase != storage.PhaseClassifying {         
+       97 +  if edict.CurrentPhase != storage.PhaseBrewing {             
+       98      t.Errorf("Expected phase brewing, got %s", edict.CurrentPh
+           ase)
+       99    }
+      100  
+
+⏺ Done. Changes across the unstaged code:
+
+  - PhaseClassifying → PhaseBrewing (value "brewing")
+  - PhaseHalted removed, PriorPhase replaced with Halted bool
+  - DDL default updated to 'brewing', prior_phase → halted INTEGER
+  - chancellor.go and minister_test.go updated to use PhaseBrewing
+
+  The docs (shogunate_guide.md, shogunate.3.md, daemon-db-migration.md) still
+  reference "classifying" — want me to update those too?
+
+❯ yes update the docs too 
+
+⏺ Read 4 files (ctrl+o to expand)
+
+⏺ Now let me also check the proto comment in the daemon migration plan.
+
+⏺ Read 2 files (ctrl+o to expand)
+
+⏺ Now I have all the context. Let me make all the edits.
+
+⏺ Update(docs/shogunate.3.md)
+  ⎿  Added 3 lines, removed 2 lines
+      47  It captures their intent and tracks the entire lifecycle of a t
+          ask from request to completion.
+      48  
+      49  **Phases:**
+      50 -- `classifying` - Chancellor determines the scope and approach 
+      50 +- `brewing` - Chancellor determines the scope and approach     
+      51  - `planning` - Strategist breaks down the work into Lings
+      52  - `forging` - Forge implements the code changes
+      53  - `judging` - Judge runs tests and validates changes
+     ...
+      55  - `deploying` - Changes are deployed (future)
+      56  - `sealed` - Edict successfully completed
+      57  - `cancelled` - Edict was cancelled
+      58 -- **[NEW]** `halted` - Edict paused waiting on user feedback (Z
+         -hengming pending)                                              
+      58  
+      59 +An edict can be **halted** at any phase (boolean flag), pausing
+         + work until the Ruler responds to a pending Zhengming.         
+      60 +                                                               
+      61  > **Implementation Note:** Add `PhaseHalted EdictPhase = "halte
+          d"` to `storage/shogunate_schema.go` and update phase transitio
+          n logic in Chancellor to set this phase when Zhengming is reque
+          sted.
+      62  
+      63  ### Ministers
+
+⏺ Update(docs/shogunate_guide.md)
+  ⎿  Added 3 lines, removed 3 lines
+      118  Classifying → Planning → Forging → Judging → Censoring → Seale
+           d
+      119                                                      ↑
+      120                                                (or Cancelled)
+      121 -                                              (or Halted)     
+      121  ```
+      122  
+      124 -- `classifying` — Chancellor determines the scope and approach
+      123 +- `brewing` — Chancellor determines the scope and approach    
+      124  - `planning` — Strategist breaks down the work into Lings
+      125  - `forging` — Forge implements the code changes
+      126  - `judging` — Judge runs tests and validates changes
+      127  - `censoring` — Censor reviews for quality and standards
+      128  - `sealed` — Edict successfully completed (minister marks it s
+           ealed after successful completion)
+      129  - `cancelled` — Edict was cancelled
+      131 -- `halted` — Edict paused waiting on user feedback (Zhengming 
+          -pending)                                                      
+      130  
+      131 +An edict can be **halted** at any phase (boolean flag), pausin
+          +g work until the Ruler responds to a pending Zhengming.       
+      132 +                                                              
+      133  **Phase Transitions:** Ministers transition the edict through 
+           phases as they complete their work. The final minister in the 
+           ritual marks the edict as `sealed` upon successful completion.
+      134  
+      135  ### Ministers
+
+⏺ Update(docs/shogunate_guide.md)
+  ⎿  Added 1 line, removed 1 line
+      706  2. **`ConfigureModel(model, sessionConfig, repoInfo)`** — inje
+           cts the LLM client and config into every minister via `SetMini
+           sterConfig()`.
+      707  3. **`Start(ctx)`** — loads rituals from embedded YAML + `.age
+           nts/rituals/`, launches each minister's `Run()` goroutine, sta
+           rts the ritual guard polling loop, and invokes the `wakeup` ri
+           tual.
+      708  4. **TUI sends a `Prompt`** to `chancellor.Prompts` channel.
+      709 -5. **Chancellor** creates an edict (`PhaseClassifying`), creat
+          -es a `Session`, and streams the LLM response back to the TUI v
+          -ia notify callbacks.                                          
+      709 +5. **Chancellor** creates an edict (`PhaseBrewing`), creates a
+          + `Session`, and streams the LLM response back to the TUI via n
+          +otify callbacks.                                              
+      710  6. **LLM tool calls** (`enact_ritual`) dispatch work to minist
+           ers through ritual workflows.
+      711  
+      712  ### Threading Strategy
+
+⏺ Update(plans/daemon-db-migration.md)
+  ⎿  Error editing file
+
+⏺ Update(plans/shogunate-ddd.md)
+  ⎿  Error editing file
+
+⏺ Read 2 files (ctrl+o to expand)
+
+⏺ Update(plans/daemon-db-migration.md)
+  ⎿  Added 7 lines, removed 6 lines
+      133  message EdictDetailResponse {
+      134    string edict_id = 1;
+      135    string intent = 2;
+      136 -  string current_phase = 3;   // classifying, planning, forgin
+          -g, judging, censoring, sealed, halted, cancelled              
+      137 -  string created_at = 4;                                      
+      138 -  string updated_at = 5;                                      
+      139 -  repeated Ling lings = 6;                                    
+      140 -  RitualExecutionResponse active_ritual = 7;  // nil if none r
+          -unning                                                        
+      141 -  repeated Zhengming pending_zhengming = 8;                   
+      136 +  string current_phase = 3;   // brewing, planning, forging, j
+          +udging, censoring, sealed, cancelled                          
+      137 +  bool halted = 4;             // paused waiting on Zhengming 
+      138 +  string created_at = 5;                                      
+      139 +  string updated_at = 6;                                      
+      140 +  repeated Ling lings = 7;                                    
+      141 +  RitualExecutionResponse active_ritual = 8;  // nil if none r
+          +unning                                                        
+      142 +  repeated Zhengming pending_zhengming = 9;                   
+      143  }
+      144  
+      145  message ListEdictsRequest {
+
+⏺ Update(plans/shogunate-ddd.md)
+  ⎿  Added 2 lines, removed 3 lines
+      16  
+      17  **Status:** Largely built. Storage types, phase transitions, an
+          d Zhengming all work.
+      18  **Gaps:**
+      19 -- `PhaseHalted` missing from `EdictPhase` enum (`storage/shogun
+         -ate_schema.go:61`)                                             
+      20 -- Zhengming doesn't halt/resume the edict phase — needs prior_p
+         -hase tracking                                                  
+      21 -- Guide spells it `classifying`, code has `classifing` (typo at
+         - line 62)                                                      
+      19 +- Typo `classifing` fixed → `brewing` (renamed phase)          
+      20 +- Halted is now a boolean flag on the edict, not a separate pha
+         +se                                                             
+      21  
+      22  ### BC2: Forge & Artifacts (Earth/Di)
+      23  **Aggregate Root:** `ForgeManifest`
+
+⏺ Now let me also check for the classifying reference in the shogunate_guide.md
+  phase diagram itself.
+
+⏺ Searched for 1 pattern (ctrl+o to expand)
+
+⏺ There are more references — the tool enum and SQL tool description still use
+  classifing. Let me fix those.
+
+⏺ Read 3 files (ctrl+o to expand)
+
+⏺ Update(shogunate/tools/sql.go)
+  ⎿  Added 1 line, removed 1 line
+      30    return `Execute SQL against the Shogunate database. Use for e
+          dict phase transitions:
+      31  - UPDATE edicts SET current_phase = 'sealed' WHERE edict_id = '
+          ...';
+      32  - UPDATE edicts SET current_phase = 'planning' WHERE edict_id =
+           '...';
+      33 -Phases: classifing, planning, forging, judging, censoring, depl
+         -oying, sealed, cancelled`                                      
+      33 +Phases: brewing, planning, forging, judging, censoring, deployi
+         +ng, sealed, cancelled`                                         
+      34  }
+      35  
+      36  func (t AsimiSQLTool) Call(ctx context.Context, input string) (
+          string, error) {
+
+⏺ Update(shogunate/tools/edict.go)
+  ⎿  Added 1 line, removed 1 line
+      237      "properties": map[string]any{
+      238        "phase": map[string]any{
+      239          "type":        "string",
+      240 -        "enum":        []string{"classifing", "planning", "for
+          -ging", "judging", "censoring", "deploying", "sealed", "cancell
+          -ed"},                                                         
+      240 +        "enum":        []string{"brewing", "planning", "forgin
+          +g", "judging", "censoring", "deploying", "sealed", "cancelled"
+          +},                                                            
+      241          "description": "Filter by phase (optional)",
+      242        },
+      243        "limit": map[string]any{
+
+⏺ Update(plans/shogunate-ddd.md)
+  ⎿  Added 1 line, removed 1 line
+      73  
+      74  | Deliverable | File |
+      75  |---|---|
+      76 -| Add `PhaseHalted` to enum, fix `classifing` → `classifying` |
+         - `storage/shogunate_schema.go` |                               
+      76 +| Rename `PhaseClassifing` → `PhaseBrewing`, add `Halted` bool 
+         +flag | `storage/shogunate_schema.go` |                         
+      77  | Add missing event constants (`manifest_committed`, `manifest_
+          rejected`, step events) | `shogunate/shogunate.go` |
+      78  | Rename `invoke_ritual` → `enact_ritual` in Chancellor tools |
+           `shogunate/chancellor.go` |
+      79  
+
+⏺ Let me do a final sweep to make sure nothing was missed.
+
+⏺ Searched for 1 pattern (ctrl+o to expand)
+
+⏺ Two more in shogunate.3.md.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Update(docs/shogunate.3.md)
+  ⎿  Added 1 line, removed 1 line
+      58  
+      59  An edict can be **halted** at any phase (boolean flag), pausing
+           work until the Ruler responds to a pending Zhengming.
+      60  
+      61 -> **Implementation Note:** Add `PhaseHalted EdictPhase = "halte
+         -d"` to `storage/shogunate_schema.go` and update phase transitio
+         -n logic in Chancellor to set this phase when Zhengming is reque
+         -sted.                                                          
+      61 +> **Implementation Note:** Halted is a `bool` field on `Edict`,
+         + not a separate phase. Set `Halted = true` when Zhengming is re
+         +quested, `Halted = false` when answered.                       
+      62  
+      63  ### Ministers
+      64  
+
+⏺ Update(docs/shogunate.3.md)
+  ⎿  Added 4 lines, removed 4 lines
+      423  
+      424  The following changes are marked with **[NEW]** in this docume
+           nt:
+      425  
+      426 -### 1. Add `halted` Phase                                     
+      426 +### 1. Add `Halted` Bool Flag                                 
+      427  **File:** `storage/shogunate_schema.go`
+      428 -- Add `PhaseHalted EdictPhase = "halted"`                     
+      428 +- Add `Halted bool` field to `Edict` struct                   
+      429  
+      430  **File:** `shogunate/chancellor.go`
+      431 -- Update `RequestZhengming` to transition edict to `halted` ph
+          -ase                                                           
+      432 -- Update `AnswerZhengming` to resume from `halted` phase      
+      431 +- Update `RequestZhengming` to set `Halted = true`            
+      432 +- Update `AnswerZhengming` to set `Halted = false`            
+      433  
+      434  ### 2. Add Missing Chancellor Tools
+      435  **File:** `shogunate/tools/chancellor_tools.go`
+
+⏺ All done. Here's the summary of changes across all files:
+
+  Code:
+  - storage/shogunate_schema.go — PhaseBrewing, Halted bool, DDL updated
+  - shogunate/chancellor.go — uses PhaseBrewing
+  - shogunate/minister_test.go — uses PhaseBrewing
+  - shogunate/tools/edict.go — enum list updated to "brewing"
+  - shogunate/tools/sql.go — description updated to brewing
+
+  Docs:
+  - docs/shogunate.3.md — phase list, implementation notes, changelog section
+  - docs/shogunate_guide.md — phase list, phase diagram, startup flow
+  - plans/daemon-db-migration.md — proto comment + added halted bool field
+  - plans/shogunate-ddd.md — gaps section + Phase 0 deliverable table
+
+✻ Crunched for 1m 22s
+
+! just test 
+  ⎿  === RUN   TestChatComponent_UpdateLastToolCallEmoji
+     === RUN
+     TestChatComponent_UpdateLastToolCallEmoji/update_emoji_for_matching_command
+     === RUN   TestChatComponent_UpdateLastToolCallEmoji/update_emoji_for_last_m
+     atching_command_when_multiple_exist
+     === RUN
+     TestChatComponent_UpdateLastToolCallEmoji/no_update_when_command_not_found
+     === RUN
+     TestChatComponent_UpdateLastToolCallEmoji/no_update_when_messages_are_empty
+     === RUN   TestChatComponent_UpdateLastToolCallEmoji/update_to_denied_emoji
+     --- PASS: TestChatComponent_UpdateLastToolCallEmoji (0.00s)
+         --- PASS:
+     TestChatComponent_UpdateLastToolCallEmoji/update_emoji_for_matching_command
+      (0.00s)
+         --- PASS: TestChatComponent_UpdateLastToolCallEmoji/update_emoji_for_la
+     st_matching_command_when_multiple_exist (0.00s)
+         --- PASS:
+     TestChatComponent_UpdateLastToolCallEmoji/no_update_when_command_not_found
+     (0.00s)
+         --- PASS:
+     TestChatComponent_UpdateLastToolCallEmoji/no_update_when_messages_are_empty
+      (0.00s)
+         --- PASS:
+     TestChatComponent_UpdateLastToolCallEmoji/update_to_denied_emoji (0.00s)
+     === RUN   TestFindCommand
+     === RUN   TestFindCommand/exact_match_with_colon
+     === RUN   TestFindCommand/partial_match_single_-_q
+     === RUN   TestFindCommand/partial_match_single_-_qu
+     === RUN   TestFindCommand/partial_match_single_-_qui
+     === RUN   TestFindCommand/partial_match_single_-_h
+     === RUN   TestFindCommand/partial_match_single_-_n
+     === RUN   TestFindCommand/ambiguous_match_-_c
+     === RUN   TestFindCommand/ambiguous_match_-_co
+     === RUN   TestFindCommand/partial_disambiguated_-_com
+     === RUN   TestFindCommand/partial_disambiguated_-_con
+     === RUN   TestFindCommand/no_match
+     === RUN   TestFindCommand/empty_input
+     --- PASS: TestFindCommand (0.00s)
+         --- PASS: TestFindCommand/exact_match_with_colon (0.00s)
+         --- PASS: TestFindCommand/partial_match_single_-_q (0.00s)
+         --- PASS: TestFindCommand/partial_match_single_-_qu (0.00s)
+         --- PASS: TestFindCommand/partial_match_single_-_qui (0.00s)
+         --- PASS: TestFindCommand/partial_match_single_-_h (0.00s)
+         --- PASS: TestFindCommand/partial_match_single_-_n (0.00s)
+         --- PASS: TestFindCommand/ambiguous_match_-_c (0.00s)
+         --- PASS: TestFindCommand/ambiguous_match_-_co (0.00s)
+         --- PASS: TestFindCommand/partial_disambiguated_-_com (0.00s)
+         --- PASS: TestFindCommand/partial_disambiguated_-_con (0.00s)
+         --- PASS: TestFindCommand/no_match (0.00s)
+         --- PASS: TestFindCommand/empty_input (0.00s)
+     === RUN   TestNormalizeCommandName
+     === RUN   TestNormalizeCommandName/:help
+     === RUN   TestNormalizeCommandName/:quit
+     === RUN   TestNormalizeCommandName/#00
+     === RUN   TestNormalizeCommandName/:new
+     === RUN   TestNormalizeCommandName/help
+     === RUN   TestNormalizeCommandName/quit
+     --- PASS: TestNormalizeCommandName (0.00s)
+         --- PASS: TestNormalizeCommandName/:help (0.00s)
+         --- PASS: TestNormalizeCommandName/:quit (0.00s)
+         --- PASS: TestNormalizeCommandName/#00 (0.00s)
+         --- PASS: TestNormalizeCommandName/:new (0.00s)
+         --- PASS: TestNormalizeCommandName/help (0.00s)
+         --- PASS: TestNormalizeCommandName/quit (0.00s)
+     === RUN   TestHandleInitCommand
+         commands_test.go:146: Skipping git-altering test (set CI=true to run)
+     --- SKIP: TestHandleInitCommand (0.00s)
+     === RUN   TestRunInitGuardrails
+         commands_test.go:199: Skipping git-altering test (set CI=true to run)
+     --- SKIP: TestRunInitGuardrails (0.00s)
+     === RUN   TestTruncateOutput
+     --- PASS: TestTruncateOutput (0.00s)
+     === RUN   TestCalculateBarSegments
+     === RUN   TestCalculateBarSegments/zero
+     === RUN   TestCalculateBarSegments/small_remainder
+     === RUN   TestCalculateBarSegments/two_segments
+     === RUN   TestCalculateBarSegments/over_capacity
+     --- PASS: TestCalculateBarSegments (0.00s)
+         --- PASS: TestCalculateBarSegments/zero (0.00s)
+         --- PASS: TestCalculateBarSegments/small_remainder (0.00s)
+         --- PASS: TestCalculateBarSegments/two_segments (0.00s)
+         --- PASS: TestCalculateBarSegments/over_capacity (0.00s)
+     === RUN   TestRenderContextBar
+     --- PASS: TestRenderContextBar (0.00s)
+     === RUN   TestRenderContextInfoIncludesSections
+     --- PASS: TestRenderContextInfoIncludesSections (0.00s)
+     === RUN   TestHandleContextCommand
+     === RUN   TestHandleContextCommand/no_session
+     --- PASS: TestHandleContextCommand (0.00s)
+         --- PASS: TestHandleContextCommand/no_session (0.00s)
+     === RUN   TestExportShowsToolCalls
+     === RUN
+     TestExportShowsToolCalls/Full_export_includes_tool_calls_with_stdout
+     === RUN   TestExportShowsToolCalls/Conversation_export_includes_tool_calls_
+     without_stdout
+     === RUN
+     TestExportShowsToolCalls/Conversation_export_does_not_skip_tool_messages
+     --- PASS: TestExportShowsToolCalls (0.00s)
+         --- PASS:
+     TestExportShowsToolCalls/Full_export_includes_tool_calls_with_stdout
+     (0.00s)
+         --- PASS: TestExportShowsToolCalls/Conversation_export_includes_tool_ca
+     lls_without_stdout (0.00s)
+         --- PASS:
+     TestExportShowsToolCalls/Conversation_export_does_not_skip_tool_messages
+     (0.00s)
+     === RUN   TestFormatMessagesNumberingSkipsToolMessages
+     --- PASS: TestFormatMessagesNumberingSkipsToolMessages (0.00s)
+     === RUN   TestExportToolResultWithStderr
+     === RUN   TestExportToolResultWithStderr/Full_export_shows_stderr
+     === RUN   TestExportToolResultWithStderr/Conversation_export_shows_stderr_b
+     ut_not_stdout
+     --- PASS: TestExportToolResultWithStderr (0.00s)
+         --- PASS: TestExportToolResultWithStderr/Full_export_shows_stderr
+     (0.00s)
+         --- PASS: TestExportToolResultWithStderr/Conversation_export_shows_stde
+     rr_but_not_stdout (0.00s)
+     === RUN   TestExportNonShellToolCalls
+     === RUN
+     TestExportNonShellToolCalls/Non-shell_tools_show_full_result_in_both_modes
+     --- PASS: TestExportNonShellToolCalls (0.00s)
+         --- PASS:
+     TestExportNonShellToolCalls/Non-shell_tools_show_full_result_in_both_modes
+     (0.00s)
+     === RUN   TestFormatToolOutput
+     === RUN   TestFormatToolOutput/Shell_command_with_stdout_in_full_mode
+     === RUN
+     TestFormatToolOutput/Shell_command_with_long_output_in_conversation_mode
+     === RUN
+     TestFormatToolOutput/Shell_command_with_short_output_in_conversation_mode
+     === RUN   TestFormatToolOutput/Shell_command_with_stderr
+     === RUN   TestFormatToolOutput/Non-JSON_tool_result
+     --- PASS: TestFormatToolOutput (0.00s)
+         --- PASS: TestFormatToolOutput/Shell_command_with_stdout_in_full_mode
+     (0.00s)
+         --- PASS:
+     TestFormatToolOutput/Shell_command_with_long_output_in_conversation_mode
+     (0.00s)
+         --- PASS:
+     TestFormatToolOutput/Shell_command_with_short_output_in_conversation_mode
+     (0.00s)
+         --- PASS: TestFormatToolOutput/Shell_command_with_stderr (0.00s)
+         --- PASS: TestFormatToolOutput/Non-JSON_tool_result (0.00s)
+     === RUN   TestFormatToolCallWithResult
+     === RUN   TestFormatToolCallWithResult/Valid_JSON_arguments
+     === RUN   TestFormatToolCallWithResult/Invalid_JSON_arguments
+     --- PASS: TestFormatToolCallWithResult (0.00s)
+         --- PASS: TestFormatToolCallWithResult/Valid_JSON_arguments (0.00s)
+         --- PASS: TestFormatToolCallWithResult/Invalid_JSON_arguments (0.00s)
+     === RUN   TestExportMetadata
+     === RUN   TestExportMetadata/Full_export_includes_metadata
+     === RUN   TestExportMetadata/Conversation_export_includes_metadata
+     --- PASS: TestExportMetadata (0.00s)
+         --- PASS: TestExportMetadata/Full_export_includes_metadata (0.00s)
+         --- PASS: TestExportMetadata/Conversation_export_includes_metadata
+     (0.00s)
+     === RUN   TestPromptHistoryStore_CreateAndLoad
+     --- PASS: TestPromptHistoryStore_CreateAndLoad (0.21s)
+     === RUN   TestPromptHistoryStore_AppendAndLoad
+     --- PASS: TestPromptHistoryStore_AppendAndLoad (0.06s)
+     === RUN   TestPromptHistoryStore_Clear
+     --- PASS: TestPromptHistoryStore_Clear (0.06s)
+     === RUN   TestPromptHistoryStore_Save
+     --- PASS: TestPromptHistoryStore_Save (0.05s)
+     === RUN   TestCommandHistoryStore_AppendAndLoad
+     --- PASS: TestCommandHistoryStore_AppendAndLoad (0.06s)
+     === RUN   TestHistoryStore_IsolatedByProject
+     --- PASS: TestHistoryStore_IsolatedByProject (0.06s)
+     === RUN   TestHistoryStore_EmptyPrompt
+     --- PASS: TestHistoryStore_EmptyPrompt (0.05s)
+     === RUN   TestHistoryStore_LongPrompt
+     --- PASS: TestHistoryStore_LongPrompt (0.06s)
+     === RUN   TestHistoryStore_SpecialCharacters
+     --- PASS: TestHistoryStore_SpecialCharacters (0.06s)
+     === RUN   TestHistoryStore_NilDatabase
+     --- PASS: TestHistoryStore_NilDatabase (0.00s)
+     === RUN   TestHistoryStore_ConcurrentAccess
+     --- PASS: TestHistoryStore_ConcurrentAccess (0.07s)
+     === RUN   TestIsTokenExpired
+     === RUN   TestIsTokenExpired/nil_token_is_expired
+     === RUN   TestIsTokenExpired/token_expired_1_hour_ago
+     === RUN   TestIsTokenExpired/token_expires_in_1_hour
+     === RUN   TestIsTokenExpired/token_expires_in_3_minutes_(within_buffer)
+     === RUN   TestIsTokenExpired/token_expires_in_10_minutes_(outside_buffer)
+     === RUN   TestIsTokenExpired/token_expires_exactly_at_buffer_boundary
+     --- PASS: TestIsTokenExpired (0.00s)
+         --- PASS: TestIsTokenExpired/nil_token_is_expired (0.00s)
+         --- PASS: TestIsTokenExpired/token_expired_1_hour_ago (0.00s)
+         --- PASS: TestIsTokenExpired/token_expires_in_1_hour (0.00s)
+         --- PASS: TestIsTokenExpired/token_expires_in_3_minutes_(within_buffer)
+      (0.00s)
+         --- PASS:
+     TestIsTokenExpired/token_expires_in_10_minutes_(outside_buffer) (0.00s)
+         --- PASS: TestIsTokenExpired/token_expires_exactly_at_buffer_boundary
+     (0.00s)
+     === RUN   TestTokenDataStructure
+     === RUN   TestTokenDataStructure/create_token_data
+     === RUN   TestTokenDataStructure/token_data_with_empty_refresh_token
+     --- PASS: TestTokenDataStructure (0.00s)
+         --- PASS: TestTokenDataStructure/create_token_data (0.00s)
+         --- PASS: TestTokenDataStructure/token_data_with_empty_refresh_token
+     (0.00s)
+     === RUN   TestKeyringIntegration
+         keyring_test.go:122: Skipping keyring integration tests. Set
+     ASIMI_TEST_KEYRING=1 to run these tests manually.
+     --- SKIP: TestKeyringIntegration (0.00s)
+     === RUN   TestGetOauthTokenFormats
+     === RUN   TestGetOauthTokenFormats/valid_JSON_format
+     === RUN   TestGetOauthTokenFormats/base64_encoded_JSON
+     === RUN   TestGetOauthTokenFormats/raw_access_token_string
+     --- PASS: TestGetOauthTokenFormats (0.00s)
+         --- PASS: TestGetOauthTokenFormats/valid_JSON_format (0.00s)
+         --- PASS: TestGetOauthTokenFormats/base64_encoded_JSON (0.00s)
+         --- PASS: TestGetOauthTokenFormats/raw_access_token_string (0.00s)
+     === RUN   TestTokenDataJSON
+     === RUN   TestTokenDataJSON/marshal_and_unmarshal_token_data
+     === RUN   TestTokenDataJSON/token_data_with_special_characters
+     --- PASS: TestTokenDataJSON (0.00s)
+         --- PASS: TestTokenDataJSON/marshal_and_unmarshal_token_data (0.00s)
+         --- PASS: TestTokenDataJSON/token_data_with_special_characters (0.00s)
+     === RUN   TestKeyringErrorHandling
+     === RUN   TestKeyringErrorHandling/retrieve_non-existent_token_returns_nil
+         keyring_test.go:290: GetTokenFromKeyring should return (nil, nil) for
+     non-existent tokens
+     === RUN
+     TestKeyringErrorHandling/delete_non-existent_token_should_not_error
+         keyring_test.go:295: DeleteTokenFromKeyring should not error for
+     non-existent tokens
+     === RUN   TestKeyringErrorHandling/reject_empty_access_token
+     --- PASS: TestKeyringErrorHandling (0.00s)
+         --- PASS:
+     TestKeyringErrorHandling/retrieve_non-existent_token_returns_nil (0.00s)
+         --- PASS:
+     TestKeyringErrorHandling/delete_non-existent_token_should_not_error (0.00s)
+         --- PASS: TestKeyringErrorHandling/reject_empty_access_token (0.00s)
+     === RUN   TestCodeInputModal_NewCodeInputModal
+     --- PASS: TestCodeInputModal_NewCodeInputModal (0.00s)
+     === RUN   TestCodeInputModal_Navigation
+     --- PASS: TestCodeInputModal_Navigation (0.00s)
+     === RUN   TestCodeInputModal_TextInput
+     --- PASS: TestCodeInputModal_TextInput (0.00s)
+     === RUN   TestCodeInputModal_TextInputOnlyWhenTokenSelected
+     --- PASS: TestCodeInputModal_TextInputOnlyWhenTokenSelected (0.00s)
+     === RUN   TestCodeInputModal_EnterOnToken
+     --- PASS: TestCodeInputModal_EnterOnToken (0.00s)
+     === RUN   TestCodeInputModal_EnterOnCopyURL
+     --- PASS: TestCodeInputModal_EnterOnCopyURL (0.01s)
+     === RUN   TestCodeInputModal_Escape
+     --- PASS: TestCodeInputModal_Escape (0.00s)
+     === RUN   TestCodeInputModal_Render
+     --- PASS: TestCodeInputModal_Render (0.00s)
+     === RUN   TestGetOAuthConfig
+     === RUN   TestGetOAuthConfig/googleai_with_defaults
+     === RUN   TestGetOAuthConfig/googleai_with_custom_scopes
+     === RUN   TestGetOAuthConfig/openai_with_configuration
+     === RUN   TestGetOAuthConfig/unsupported_provider
+     === RUN   TestGetOAuthConfig/missing_client_ID
+     --- PASS: TestGetOAuthConfig (0.00s)
+         --- PASS: TestGetOAuthConfig/googleai_with_defaults (0.00s)
+         --- PASS: TestGetOAuthConfig/googleai_with_custom_scopes (0.00s)
+         --- PASS: TestGetOAuthConfig/openai_with_configuration (0.00s)
+         --- PASS: TestGetOAuthConfig/unsupported_provider (0.00s)
+         --- PASS: TestGetOAuthConfig/missing_client_ID (0.00s)
+     === RUN   TestUpdateUserLLMAuthIntegration
+         login_test.go:343: Skipping UpdateUserLLMAuth test. Set
+     ASIMI_TEST_KEYRING=1 to run this test manually.
+     --- SKIP: TestUpdateUserLLMAuthIntegration (0.00s)
+     === RUN   TestFetchAllModels_ReturnsEmptyWithoutAuth
+     --- PASS: TestFetchAllModels_ReturnsEmptyWithoutAuth (0.10s)
+     === RUN   TestFetchAllModels_WithAPIKey
+     2026/02/17 15:30:44 WARN failed to fetch OpenAI models error="API returned
+     status 404"
+     --- PASS: TestFetchAllModels_WithAPIKey (0.75s)
+     === RUN   TestCheckProviderAuth
+     --- PASS: TestCheckProviderAuth (0.06s)
+     === RUN   TestFetchAnthropicModels_LoadsFromKeyring
+     --- PASS: TestFetchAnthropicModels_LoadsFromKeyring (0.33s)
+     === RUN   TestFetchAnthropicModels_LoadsAPIKeyFromKeyring
+     --- PASS: TestFetchAnthropicModels_LoadsAPIKeyFromKeyring (0.28s)
+     === RUN   TestFetchAnthropicModels_NoCredentials
+     --- PASS: TestFetchAnthropicModels_NoCredentials (0.06s)
+     === RUN   TestModelsHelpOption
+     --- PASS: TestModelsHelpOption (0.09s)
+     === RUN   TestModelsHelpIcon
+     --- PASS: TestModelsHelpIcon (0.00s)
+     === RUN   TestHelpModelsTopicExists
+     --- PASS: TestHelpModelsTopicExists (0.00s)
+     === RUN   TestHandleModelsCommandShowsHelpOption
+     --- PASS: TestHandleModelsCommandShowsHelpOption (0.00s)
+     === RUN   TestNewModelsWindowDefaults
+     --- PASS: TestNewModelsWindowDefaults (0.00s)
+     === RUN   TestModelsWindowSetSizeAdjustsVisibleSlots
+     --- PASS: TestModelsWindowSetSizeAdjustsVisibleSlots (0.00s)
+     === RUN   TestModelsWindowSetModels
+     --- PASS: TestModelsWindowSetModels (0.00s)
+     === RUN   TestModelsWindowSetLoading
+     --- PASS: TestModelsWindowSetLoading (0.00s)
+     === RUN   TestModelsWindowSetError
+     --- PASS: TestModelsWindowSetError (0.00s)
+     === RUN   TestModelsWindowGetInitialSelection
+     --- PASS: TestModelsWindowGetInitialSelection (0.00s)
+     === RUN   TestModelsWindowGetSelectedModel
+     --- PASS: TestModelsWindowGetSelectedModel (0.00s)
+     === RUN   TestModelsWindowRenderList
+     --- PASS: TestModelsWindowRenderList (0.00s)
+     === RUN   TestGetProviderIcon
+     --- PASS: TestGetProviderIcon (0.00s)
+     === RUN   TestGetStatusIcon
+     --- PASS: TestGetStatusIcon (0.00s)
+     === RUN   TestModelsWindowRenderList_ScrollingAndGrouping
+     --- PASS: TestModelsWindowRenderList_ScrollingAndGrouping (0.00s)
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput/empty_prompt_retu
+     rns_2_lines
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput/single_line_conte
+     nt_returns_2_lines
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput/two_lines_of_cont
+     ent_grows_to_10_lines
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput/multiple_lines_of
+     _content_grows_to_10_lines
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput/scroll_mode_retur
+     ns_2_lines_regardless_of_content
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput/scroll_mode_with_
+     empty_content_returns_2_lines
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput/normal_mode_with_
+     multiline_grows_to_10_lines
+     === RUN   TestPromptHeightGrowsTo10LinesForMultilineInput/long_text_that_wr
+     aps_grows_to_10_lines
+     --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput (0.00s)
+         --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput/empty_prompt_
+     returns_2_lines (0.00s)
+         --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput/single_line_c
+     ontent_returns_2_lines (0.00s)
+         --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput/two_lines_of_
+     content_grows_to_10_lines (0.00s)
+         --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput/multiple_line
+     s_of_content_grows_to_10_lines (0.00s)
+         --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput/scroll_mode_r
+     eturns_2_lines_regardless_of_content (0.00s)
+         --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput/scroll_mode_w
+     ith_empty_content_returns_2_lines (0.00s)
+         --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput/normal_mode_w
+     ith_multiline_grows_to_10_lines (0.00s)
+         --- PASS: TestPromptHeightGrowsTo10LinesForMultilineInput/long_text_tha
+     t_wraps_grows_to_10_lines (0.00s)
+     === RUN   TestPromptHeightRespectsMaxHeight
+     --- PASS: TestPromptHeightRespectsMaxHeight (0.00s)
+     === RUN   TestPromptHeightConfigurableExpandedHeight
+     --- PASS: TestPromptHeightConfigurableExpandedHeight (0.00s)
+     === RUN   TestPromptHeightClearedReturnsToMinimum
+     --- PASS: TestPromptHeightClearedReturnsToMinimum (0.00s)
+     === RUN   TestArrowKeysInViNormalMode
+     --- PASS: TestArrowKeysInViNormalMode (0.00s)
+     === RUN   TestViMovementKeys
+     --- PASS: TestViMovementKeys (0.00s)
+     === RUN   TestTextInputBlockedInNormalMode
+     --- PASS: TestTextInputBlockedInNormalMode (0.00s)
+     === RUN   TestArrowKeysInInsertMode
+     --- PASS: TestArrowKeysInInsertMode (0.00s)
+     === RUN   TestNewResumeWindowDefaults
+     --- PASS: TestNewResumeWindowDefaults (0.00s)
+     === RUN   TestResumeWindowSetSizeAdjustsVisibleSlots
+     --- PASS: TestResumeWindowSetSizeAdjustsVisibleSlots (0.00s)
+     === RUN   TestResumeWindowSetSessionsAndRender
+     --- PASS: TestResumeWindowSetSessionsAndRender (0.00s)
+     === RUN   TestResumeWindowLoadingAndErrorStates
+     --- PASS: TestResumeWindowLoadingAndErrorStates (0.00s)
+     === RUN   TestResumeWindowEmptyState
+     --- PASS: TestResumeWindowEmptyState (0.00s)
+     === RUN   TestResumeWindowScrollInfo
+     --- PASS: TestResumeWindowScrollInfo (0.00s)
+     === RUN   TestResumeWindowGetSelectedSession
+     --- PASS: TestResumeWindowGetSelectedSession (0.00s)
+     === RUN   TestSessionTitlePreviewFallbacks
+     --- PASS: TestSessionTitlePreviewFallbacks (0.00s)
+     === RUN   TestSessionStoreCloseWithTimeout
+     --- PASS: TestSessionStoreCloseWithTimeout (0.06s)
+     === RUN   TestTUIModelShutdown
+     --- PASS: TestTUIModelShutdown (0.06s)
+     === RUN   TestShortenProviderModel
+     === RUN   TestShortenProviderModel/Claude_Haiku_4.5
+     === RUN   TestShortenProviderModel/Claude_3.5_Sonnet
+     === RUN   TestShortenProviderModel/claude-3-5-sonnet-20241022
+     === RUN   TestShortenProviderModel/claude-3-haiku-20240307
+     === RUN   TestShortenProviderModel/claude-3-5-haiku-latest
+     === RUN   TestShortenProviderModel/GPT-4_Turbo
+     === RUN   TestShortenProviderModel/GPT-3.5
+     === RUN   TestShortenProviderModel/Gemini_Pro
+     === RUN   TestShortenProviderModel/Gemini_Flash
+     --- PASS: TestShortenProviderModel (0.00s)
+         --- PASS: TestShortenProviderModel/Claude_Haiku_4.5 (0.00s)
+         --- PASS: TestShortenProviderModel/Claude_3.5_Sonnet (0.00s)
+         --- PASS: TestShortenProviderModel/claude-3-5-sonnet-20241022 (0.00s)
+         --- PASS: TestShortenProviderModel/claude-3-haiku-20240307 (0.00s)
+         --- PASS: TestShortenProviderModel/claude-3-5-haiku-latest (0.00s)
+         --- PASS: TestShortenProviderModel/GPT-4_Turbo (0.00s)
+         --- PASS: TestShortenProviderModel/GPT-3.5 (0.00s)
+         --- PASS: TestShortenProviderModel/Gemini_Pro (0.00s)
+         --- PASS: TestShortenProviderModel/Gemini_Flash (0.00s)
+     === RUN   TestTUIModelInit
+     --- PASS: TestTUIModelInit (0.00s)
+     === RUN   TestTUIModelWindowSizeMsg
+     --- PASS: TestTUIModelWindowSizeMsg (0.00s)
+     === RUN   TestCommandCompletionOrderDefaultsToHelp
+     --- PASS: TestCommandCompletionOrderDefaultsToHelp (0.00s)
+     === RUN   TestTUIModelKeyMsg
+     === RUN   TestTUIModelKeyMsg/Quit_with_'q'
+     === RUN   TestTUIModelKeyMsg/First_'ctrl+c'_does_not_quit
+     --- PASS: TestTUIModelKeyMsg (0.69s)
+         --- PASS: TestTUIModelKeyMsg/Quit_with_'q' (0.53s)
+         --- PASS: TestTUIModelKeyMsg/First_'ctrl+c'_does_not_quit (0.15s)
+     === RUN   TestDoubleCtrlCToQuit
+     2026/02/17 15:30:46 INFO CTRL-C: Second press completed, quitting
+     --- PASS: TestDoubleCtrlCToQuit (0.32s)
+     === RUN   TestCtrlCDuplicateEventsIgnored
+     --- PASS: TestCtrlCDuplicateEventsIgnored (0.16s)
+     === RUN   TestCtrlCWindowExpiry
+     --- PASS: TestCtrlCWindowExpiry (0.16s)
+     === RUN   TestCtrlCOtherKeyResets
+     --- PASS: TestCtrlCOtherKeyResets (0.00s)
+     === RUN   TestTUIModelSubmit
+         tui_test.go:260: TODO: fix this test
+     --- SKIP: TestTUIModelSubmit (0.00s)
+     === RUN   TestTUIModelKeyboardInteraction
+     === RUN   TestTUIModelKeyboardInteraction/Escape_key
+     === RUN   TestTUIModelKeyboardInteraction/Down_arrow_in_completion_dialog
+     === RUN   TestTUIModelKeyboardInteraction/Up_arrow_in_completion_dialog
+     === RUN
+     TestTUIModelKeyboardInteraction/Tab_to_select_in_completion_dialog
+     --- PASS: TestTUIModelKeyboardInteraction (0.00s)
+         --- PASS: TestTUIModelKeyboardInteraction/Escape_key (0.00s)
+         --- PASS:
+     TestTUIModelKeyboardInteraction/Down_arrow_in_completion_dialog (0.00s)
+         --- PASS: TestTUIModelKeyboardInteraction/Up_arrow_in_completion_dialog
+      (0.00s)
+         --- PASS:
+     TestTUIModelKeyboardInteraction/Tab_to_select_in_completion_dialog (0.00s)
+     === RUN   TestTUIModelView
+     --- PASS: TestTUIModelView (0.00s)
+     === RUN   TestPromptComponent
+     --- PASS: TestPromptComponent (0.00s)
+     === RUN   TestChatComponent
+     --- PASS: TestChatComponent (0.00s)
+     === RUN   TestChatComponentScrollLock
+     --- PASS: TestChatComponentScrollLock (0.00s)
+     === RUN   TestMouseWheelScrollEntersScrollMode
+     --- PASS: TestMouseWheelScrollEntersScrollMode (0.05s)
+     === RUN   TestMouseWheelScrollDoesNotEnterScrollModeWhenAtTop
+     --- PASS: TestMouseWheelScrollDoesNotEnterScrollModeWhenAtTop (0.00s)
+     === RUN   TestMouseWheelScrollDoesNotEnterScrollModeWhenAlreadyInScrollMode
+     --- PASS: TestMouseWheelScrollDoesNotEnterScrollModeWhenAlreadyInScrollMode
+      (0.04s)
+     === RUN   TestCompletionDialog
+     --- PASS: TestCompletionDialog (0.00s)
+     === RUN   TestCompletionDialogScrolling
+     --- PASS: TestCompletionDialogScrolling (0.00s)
+     === RUN   TestStatusComponent
+     --- PASS: TestStatusComponent (0.00s)
+     === RUN   TestBaseModal
+     --- PASS: TestBaseModal (0.00s)
+     === RUN   TestCommandLine
+     --- PASS: TestCommandLine (0.00s)
+     === RUN   TestCommandLineBackspaceAtLineStartExitsCommandMode
+     --- PASS: TestCommandLineBackspaceAtLineStartExitsCommandMode (0.00s)
+     === RUN   TestTUIModelUpdateFileCompletions
+     --- PASS: TestTUIModelUpdateFileCompletions (0.00s)
+     === RUN   TestRenderHomeView
+     --- PASS: TestRenderHomeView (0.00s)
+     === RUN   TestRenderHomeViewWithUpdateAvailable
+     --- PASS: TestRenderHomeViewWithUpdateAvailable (0.00s)
+     === RUN   TestColonCommandCompletion
+     --- PASS: TestColonCommandCompletion (0.00s)
+     === RUN   TestColonInNormalModeActivatesCommandLine
+     --- PASS: TestColonInNormalModeActivatesCommandLine (0.00s)
+     === RUN   TestShowHelpMsgDisplaysRequestedTopic
+     --- PASS: TestShowHelpMsgDisplaysRequestedTopic (0.00s)
+     === RUN   TestHistoryNavigation_EmptyHistory
+     --- PASS: TestHistoryNavigation_EmptyHistory (0.00s)
+     === RUN   TestHistoryNavigation_SingleEntry
+     --- PASS: TestHistoryNavigation_SingleEntry (0.00s)
+     === RUN   TestHistoryNavigation_MultipleEntries
+     --- PASS: TestHistoryNavigation_MultipleEntries (0.00s)
+     === RUN   TestHistoryNavigation_DownWithoutSavedState
+     --- PASS: TestHistoryNavigation_DownWithoutSavedState (0.00s)
+     === RUN   TestHistoryNavigation_CursorInitialization
+     --- PASS: TestHistoryNavigation_CursorInitialization (0.00s)
+     === RUN   TestWaitingIndicator_StartStop
+     --- PASS: TestWaitingIndicator_StartStop (0.00s)
+     === RUN   TestWaitingIndicator_DoubleStart
+     --- PASS: TestWaitingIndicator_DoubleStart (0.00s)
+     === RUN   TestWaitingIndicator_DoubleStop
+     --- PASS: TestWaitingIndicator_DoubleStop (0.00s)
+     === RUN   TestWaitingTickMsg_WhileWaiting
+     --- PASS: TestWaitingTickMsg_WhileWaiting (0.00s)
+     === RUN   TestWaitingTickMsg_NotWaiting
+     --- PASS: TestWaitingTickMsg_NotWaiting (0.00s)
+     === RUN   TestHistoryRollback_OnSubmit
+         tui_test.go:1191: Requires shogunate session setup - see integration
+     tests
+     --- SKIP: TestHistoryRollback_OnSubmit (0.00s)
+     === RUN   TestNewSessionCommand_ResetsHistory
+     --- PASS: TestNewSessionCommand_ResetsHistory (0.00s)
+     === RUN   TestStartConversationMsg_InitialMessages
+     --- PASS: TestStartConversationMsg_InitialMessages (0.00s)
+     === RUN   TestHistoryNavigation_WithArrowKeys
+     --- PASS: TestHistoryNavigation_WithArrowKeys (0.00s)
+     === RUN   TestCancelActiveStreaming
+     --- PASS: TestCancelActiveStreaming (0.00s)
+     === RUN   TestCancelActiveStreaming_NotActive
+     --- PASS: TestCancelActiveStreaming_NotActive (0.00s)
+     === RUN   TestSaveHistoryPresentState
+     --- PASS: TestSaveHistoryPresentState (0.00s)
+     === RUN   TestRestoreHistoryPresent
+     --- PASS: TestRestoreHistoryPresent (0.00s)
+     === RUN   TestApplyHistoryEntry
+     --- PASS: TestApplyHistoryEntry (0.00s)
+     === RUN   TestStatusComponent_WaitingIndicator
+     --- PASS: TestStatusComponent_WaitingIndicator (0.00s)
+     === RUN   TestStatusComponent_WaitingIndicatorView
+     --- PASS: TestStatusComponent_WaitingIndicatorView (0.00s)
+     === RUN   TestEscapeDuringStreaming_StopsWaiting
+     2026/02/17 15:30:47 INFO escape_during_streaming cancelling_context=true
+     --- PASS: TestEscapeDuringStreaming_StopsWaiting (0.00s)
+     === RUN   TestStreamChunkMsg_StopsWaiting
+     --- PASS: TestStreamChunkMsg_StopsWaiting (0.01s)
+     === RUN   TestStreamCompleteMsg_StopsWaiting
+     --- PASS: TestStreamCompleteMsg_StopsWaiting (0.00s)
+     === RUN   TestStreamErrorMsg_StopsWaiting
+     2026/02/17 15:30:47 ERROR shogunate.StreamErrorMsg error="test error"
+     --- PASS: TestStreamErrorMsg_StopsWaiting (0.00s)
+     === RUN   TestSessionResume_ResetsHistoryState
+     --- PASS: TestSessionResume_ResetsHistoryState (0.00s)
+     === RUN   TestHistoryNavigation_RapidNavigation
+     --- PASS: TestHistoryNavigation_RapidNavigation (0.00s)
+     === RUN   TestHappyFlowE2E
+         tui_test.go:1622: Step 1: Testing prompt height growth for multiline
+     input
+     2026/02/17 15:30:47 INFO connecting to LLM provider=fake
+     2026/02/17 15:30:47 INFO LLM client connected
+         tui_test.go:1652: Step 2: Testing file completion
+         tui_test.go:1692: Step 3: Testing colon command completion
+     2026/02/17 15:30:48 INFO CTRL-C: Second press completed, quitting
+     --- PASS: TestHappyFlowE2E (1.04s)
+     === RUN   TestLiveAgentE2E
+         tui_test.go:1740: GEMINI_API_KEY not set, skipping live agent test
+     --- SKIP: TestLiveAgentE2E (0.00s)
+     === RUN   TestYesNoMode
+     --- PASS: TestYesNoMode (0.00s)
+     === RUN   TestYesNoModeView
+     --- PASS: TestYesNoModeView (0.00s)
+     === RUN   TestYesNoModePriority
+     --- PASS: TestYesNoModePriority (0.00s)
+     === RUN   TestSelectWindowNavigationHelpers
+     === RUN   TestSelectWindowNavigationHelpers/NextSelectableIndex
+     === RUN   TestSelectWindowNavigationHelpers/PrevSelectableIndex
+     === RUN   TestSelectWindowNavigationHelpers/FirstSelectableIndex
+     === RUN   TestSelectWindowNavigationHelpers/LastSelectableIndex
+     === RUN   TestSelectWindowNavigationHelpers/CountSelectableItems
+     === RUN   TestSelectWindowNavigationHelpers/EmptyWindow
+     --- PASS: TestSelectWindowNavigationHelpers (0.00s)
+         --- PASS: TestSelectWindowNavigationHelpers/NextSelectableIndex (0.00s)
+         --- PASS: TestSelectWindowNavigationHelpers/PrevSelectableIndex (0.00s)
+         --- PASS: TestSelectWindowNavigationHelpers/FirstSelectableIndex
+     (0.00s)
+         --- PASS: TestSelectWindowNavigationHelpers/LastSelectableIndex (0.00s)
+         --- PASS: TestSelectWindowNavigationHelpers/CountSelectableItems
+     (0.00s)
+         --- PASS: TestSelectWindowNavigationHelpers/EmptyWindow (0.00s)
+     === RUN   TestIsModelSelectable
+     === RUN   TestIsModelSelectable/active
+     === RUN   TestIsModelSelectable/ready
+     === RUN   TestIsModelSelectable/login_required
+     === RUN   TestIsModelSelectable/error
+     === RUN   TestIsModelSelectable/unknown
+     --- PASS: TestIsModelSelectable (0.00s)
+         --- PASS: TestIsModelSelectable/active (0.00s)
+         --- PASS: TestIsModelSelectable/ready (0.00s)
+         --- PASS: TestIsModelSelectable/login_required (0.00s)
+         --- PASS: TestIsModelSelectable/error (0.00s)
+         --- PASS: TestIsModelSelectable/unknown (0.00s)
+     === RUN   TestParseVersion
+     === RUN   TestParseVersion/version_with_v_prefix
+     === RUN   TestParseVersion/version_without_v_prefix
+     === RUN   TestParseVersion/invalid_version
+     === RUN   TestParseVersion/empty_version
+     --- PASS: TestParseVersion (0.00s)
+         --- PASS: TestParseVersion/version_with_v_prefix (0.00s)
+         --- PASS: TestParseVersion/version_without_v_prefix (0.00s)
+         --- PASS: TestParseVersion/invalid_version (0.00s)
+         --- PASS: TestParseVersion/empty_version (0.00s)
+     === RUN   TestGetUpdateCommand
+     --- PASS: TestGetUpdateCommand (0.00s)
+     === RUN   TestAutoCheckForUpdates
+     === RUN   TestAutoCheckForUpdates/dev_version_skips_check
+     === RUN   TestAutoCheckForUpdates/empty_version_skips_check
+     --- PASS: TestAutoCheckForUpdates (0.00s)
+         --- PASS: TestAutoCheckForUpdates/dev_version_skips_check (0.00s)
+         --- PASS: TestAutoCheckForUpdates/empty_version_skips_check (0.00s)
+     === RUN   TestEnsureOllamaConfiguredMissingBinary
+     --- PASS: TestEnsureOllamaConfiguredMissingBinary (0.00s)
+     === RUN   TestEnsureOllamaConfiguredSuccess
+     --- PASS: TestEnsureOllamaConfiguredSuccess (0.00s)
+     === RUN   TestEnsureOllamaConfiguredServerError
+     --- PASS: TestEnsureOllamaConfiguredServerError (0.00s)
+     === RUN   TestTruncateMiddle
+     === PAUSE TestTruncateMiddle
+     === RUN   TestViModeAlwaysEnabled
+     --- PASS: TestViModeAlwaysEnabled (0.00s)
+     === RUN   TestViModeTransitions
+     --- PASS: TestViModeTransitions (0.00s)
+     === RUN   TestViModeCommandNormalization
+     === RUN   TestViModeCommandNormalization/:help
+     === RUN   TestViModeCommandNormalization/:new
+     === RUN   TestViModeCommandNormalization/:quit
+     === RUN   TestViModeCommandNormalization/:vi
+     === RUN   TestViModeCommandNormalization//help
+     --- PASS: TestViModeCommandNormalization (0.00s)
+         --- PASS: TestViModeCommandNormalization/:help (0.00s)
+         --- PASS: TestViModeCommandNormalization/:new (0.00s)
+         --- PASS: TestViModeCommandNormalization/:quit (0.00s)
+         --- PASS: TestViModeCommandNormalization/:vi (0.00s)
+         --- PASS: TestViModeCommandNormalization//help (0.00s)
+     === RUN   TestViCommandLineModeUsesInsertKeymap
+     --- PASS: TestViCommandLineModeUsesInsertKeymap (0.00s)
+     === RUN   TestViReplaceModeUsesAbsoluteCursorOnWrappedLine
+     --- PASS: TestViReplaceModeUsesAbsoluteCursorOnWrappedLine (0.00s)
+     === RUN   TestViModePlaceholderText
+     --- PASS: TestViModePlaceholderText (0.00s)
+     === RUN   TestViModeHistoryNavigation
+     --- PASS: TestViModeHistoryNavigation (0.00s)
+     === RUN   TestViModeHistoryNavigationWithKJ
+     --- PASS: TestViModeHistoryNavigationWithKJ (0.00s)
+     === RUN   TestViNormalModeEnterSubmitsPrompt
+     --- PASS: TestViNormalModeEnterSubmitsPrompt (0.00s)
+     === RUN   TestViNormalModeEnterWithEmptyPrompt
+     --- PASS: TestViNormalModeEnterWithEmptyPrompt (0.00s)
+     === RUN   TestInitWorkflowPreChecks
+         workflow_init_e2e_test.go:23: Skipping git-altering test (set CI=true
+     to run)
+     --- SKIP: TestInitWorkflowPreChecks (0.00s)
+     === RUN   TestInitWorkflowDirectorySetup
+         workflow_init_e2e_test.go:121: Skipping git-altering test (set CI=true
+     to run)
+     --- SKIP: TestInitWorkflowDirectorySetup (0.00s)
+     === RUN   TestInitWorkflowGoToNavigation
+         workflow_init_e2e_test.go:169: Skipping git-altering test (set CI=true
+     to run)
+     --- SKIP: TestInitWorkflowGoToNavigation (0.00s)
+     === RUN   TestInitWorkflowRetryLoops
+         workflow_init_e2e_test.go:267: Skipping git-altering test (set CI=true
+     to run)
+     --- SKIP: TestInitWorkflowRetryLoops (0.00s)
+     === RUN   TestInitWorkflowProgress
+         workflow_init_e2e_test.go:360: Skipping git-altering test (set CI=true
+     to run)
+     --- SKIP: TestInitWorkflowProgress (0.00s)
+     === RUN   TestMissingInfraFiles
+         workflow_init_e2e_test.go:409: Skipping git-altering test (set CI=true
+     to run)
+     --- SKIP: TestMissingInfraFiles (0.00s)
+     === RUN   TestInitWorkflowWithMockedRunner
+         workflow_init_mock_test.go:140: Skipping git-altering test (set CI=true
+      to run)
+     --- SKIP: TestInitWorkflowWithMockedRunner (0.00s)
+     === RUN   TestWorkflowDataStorage
+         workflow_init_mock_test.go:304: Skipping git-altering test (set CI=true
+      to run)
+     --- SKIP: TestWorkflowDataStorage (0.00s)
+     === RUN   TestWorkflowStepStates
+         workflow_init_mock_test.go:380: Skipping git-altering test (set CI=true
+      to run)
+     --- SKIP: TestWorkflowStepStates (0.00s)
+     === RUN   TestWorkflowAbortE2E
+         workflow_init_mock_test.go:456: Skipping git-altering test (set CI=true
+      to run)
+     --- SKIP: TestWorkflowAbortE2E (0.00s)
+     === RUN   TestWorkflowContextCancellationE2E
+         workflow_init_mock_test.go:502: Skipping git-altering test (set CI=true
+      to run)
+     --- SKIP: TestWorkflowContextCancellationE2E (0.00s)
+     === RUN   TestInitWorkflowRetryBehavior
+         workflow_init_test.go:12: Skipping git-altering test (set CI=true to
+     run)
+     --- SKIP: TestInitWorkflowRetryBehavior (0.00s)
+     === RUN   TestWorkflowBasicExecution
+     --- PASS: TestWorkflowBasicExecution (0.00s)
+     === RUN   TestWorkflowRetry
+     --- PASS: TestWorkflowRetry (0.00s)
+     === RUN   TestWorkflowMaxRetriesExceeded
+     --- PASS: TestWorkflowMaxRetriesExceeded (0.00s)
+     === RUN   TestWorkflowSkipSteps
+     --- PASS: TestWorkflowSkipSteps (0.00s)
+     === RUN   TestWorkflowGoBack
+     --- PASS: TestWorkflowGoBack (0.00s)
+     === RUN   TestWorkflowAbort
+     --- PASS: TestWorkflowAbort (0.00s)
+     === RUN   TestWorkflowContextCancellation
+     --- PASS: TestWorkflowContextCancellation (0.10s)
+     === RUN   TestWorkflowDataPersistence
+     --- PASS: TestWorkflowDataPersistence (0.00s)
+     === RUN   TestWorkflowProgress
+     --- PASS: TestWorkflowProgress (0.00s)
+     === RUN   TestWorkflowGetProgress
+     --- PASS: TestWorkflowGetProgress (0.00s)
+     === RUN   TestStepResultHelpers
+     === RUN   TestStepResultHelpers/Next
+     === RUN   TestStepResultHelpers/Retry
+     === RUN   TestStepResultHelpers/GoTo
+     === RUN   TestStepResultHelpers/Back
+     === RUN   TestStepResultHelpers/BackN(2)
+     === RUN   TestStepResultHelpers/BackN(0)_clamps_to_1
+     === RUN   TestStepResultHelpers/Skip(2)
+     === RUN   TestStepResultHelpers/Skip(0)_clamps_to_1
+     --- PASS: TestStepResultHelpers (0.00s)
+         --- PASS: TestStepResultHelpers/Next (0.00s)
+         --- PASS: TestStepResultHelpers/Retry (0.00s)
+         --- PASS: TestStepResultHelpers/GoTo (0.00s)
+         --- PASS: TestStepResultHelpers/Back (0.00s)
+         --- PASS: TestStepResultHelpers/BackN(2) (0.00s)
+         --- PASS: TestStepResultHelpers/BackN(0)_clamps_to_1 (0.00s)
+         --- PASS: TestStepResultHelpers/Skip(2) (0.00s)
+         --- PASS: TestStepResultHelpers/Skip(0)_clamps_to_1 (0.00s)
+     === RUN   TestBackNAtStep0
+     --- PASS: TestBackNAtStep0 (0.00s)
+     === RUN   TestRetryAtStep0WithNoPrompt
+     --- PASS: TestRetryAtStep0WithNoPrompt (0.00s)
+     === RUN   TestAddPrompt
+     --- PASS: TestAddPrompt (0.00s)
+     === RUN   TestAddCmd
+         workflow_test.go:536: TestAddCmd requires shell runner infrastructure
+     (podman or host approval)
+     --- SKIP: TestAddCmd (0.00s)
+     === RUN   TestAddCmdFailure
+         workflow_test.go:541: TestAddCmdFailure requires shell runner
+     infrastructure (podman or host approval)
+     --- SKIP: TestAddCmdFailure (0.00s)
+     === RUN   TestAddGate
+     --- PASS: TestAddGate (0.00s)
+     === RUN   TestAddConfirm
+     === RUN   TestAddConfirm/approved
+     === RUN   TestAddConfirm/denied
+     --- PASS: TestAddConfirm (0.00s)
+         --- PASS: TestAddConfirm/approved (0.00s)
+         --- PASS: TestAddConfirm/denied (0.00s)
+     === RUN   TestAddIf
+     === RUN   TestAddIf/condition_true
+     === RUN   TestAddIf/condition_false
+     --- PASS: TestAddIf (0.00s)
+         --- PASS: TestAddIf/condition_true (0.00s)
+         --- PASS: TestAddIf/condition_false (0.00s)
+     === RUN   TestStepHelpersWithWorkflowData
+     --- PASS: TestStepHelpersWithWorkflowData (0.00s)
+     === RUN   TestMethodChaining
+     --- PASS: TestMethodChaining (0.00s)
+     === RUN   TestAddRun
+     === RUN   TestAddRun/success
+     === RUN   TestAddRun/failure
+     --- PASS: TestAddRun (0.00s)
+         --- PASS: TestAddRun/success (0.00s)
+         --- PASS: TestAddRun/failure (0.00s)
+     === RUN   TestAddCheck
+     --- PASS: TestAddCheck (0.00s)
+     === RUN   TestGoToSkipForward
+     --- PASS: TestGoToSkipForward (0.00s)
+     === RUN   TestGoToGoBack
+     --- PASS: TestGoToGoBack (0.00s)
+     === RUN   TestGoToUnknownStep
+     --- PASS: TestGoToUnknownStep (0.00s)
+     === RUN   TestGoToSameStep
+     --- PASS: TestGoToSameStep (0.00s)
+     === RUN   TestGoToHelper
+     --- PASS: TestGoToHelper (0.00s)
+     === RUN   TestWorkflowGoToForward
+     --- PASS: TestWorkflowGoToForward (0.00s)
+     === RUN   TestWorkflowGoToBackward
+     --- PASS: TestWorkflowGoToBackward (0.00s)
+     === RUN   TestWorkflowGoToUnknownStep
+     --- PASS: TestWorkflowGoToUnknownStep (0.00s)
+     === RUN   TestWorkflowGoToSameStep
+     --- PASS: TestWorkflowGoToSameStep (0.00s)
+     === CONT  TestTruncateMiddle
+     === RUN   TestTruncateMiddle/short_message_fits
+     === PAUSE TestTruncateMiddle/short_message_fits
+     === RUN   TestTruncateMiddle/exact_fit
+     === PAUSE TestTruncateMiddle/exact_fit
+     === RUN   TestTruncateMiddle/truncate_long_message
+     === PAUSE TestTruncateMiddle/truncate_long_message
+     === RUN   TestTruncateMiddle/truncate_with_1/3_beginning
+     === PAUSE TestTruncateMiddle/truncate_with_1/3_beginning
+     === RUN   TestTruncateMiddle/very_short_maxWidth
+     === PAUSE TestTruncateMiddle/very_short_maxWidth
+     === RUN   TestTruncateMiddle/maxWidth_of_3
+     === PAUSE TestTruncateMiddle/maxWidth_of_3
+     === RUN   TestTruncateMiddle/maxWidth_of_0
+     === PAUSE TestTruncateMiddle/maxWidth_of_0
+     === RUN   TestTruncateMiddle/empty_message
+     === PAUSE TestTruncateMiddle/empty_message
+     === RUN   TestTruncateMiddle/unicode_characters
+     === PAUSE TestTruncateMiddle/unicode_characters
+     === RUN   TestTruncateMiddle/model_error_message
+     === PAUSE TestTruncateMiddle/model_error_message
+     === CONT  TestTruncateMiddle/short_message_fits
+     === CONT  TestTruncateMiddle/maxWidth_of_3
+     === CONT  TestTruncateMiddle/truncate_long_message
+     === CONT  TestTruncateMiddle/truncate_with_1/3_beginning
+     === CONT  TestTruncateMiddle/model_error_message
+     === CONT  TestTruncateMiddle/unicode_characters
+     === CONT  TestTruncateMiddle/maxWidth_of_0
+     === CONT  TestTruncateMiddle/exact_fit
+     === CONT  TestTruncateMiddle/very_short_maxWidth
+     === CONT  TestTruncateMiddle/empty_message
+     --- PASS: TestTruncateMiddle (0.00s)
+         --- PASS: TestTruncateMiddle/short_message_fits (0.00s)
+         --- PASS: TestTruncateMiddle/truncate_long_message (0.00s)
+         --- PASS: TestTruncateMiddle/truncate_with_1/3_beginning (0.00s)
+         --- PASS: TestTruncateMiddle/model_error_message (0.00s)
+         --- PASS: TestTruncateMiddle/maxWidth_of_3 (0.00s)
+         --- PASS: TestTruncateMiddle/maxWidth_of_0 (0.00s)
+         --- PASS: TestTruncateMiddle/unicode_characters (0.00s)
+         --- PASS: TestTruncateMiddle/very_short_maxWidth (0.00s)
+         --- PASS: TestTruncateMiddle/exact_fit (0.00s)
+         --- PASS: TestTruncateMiddle/empty_message (0.00s)
+     PASS
+     ok         github.com/afittestide/asimi    6.642s
+     ?          github.com/afittestide/asimi/internal   [no test files]
+     === RUN   TestEscapeTOMLString
+     === RUN   TestEscapeTOMLString/no_escaping_needed
+     === RUN   TestEscapeTOMLString/escape_quotes
+     === RUN   TestEscapeTOMLString/escape_backslashes
+     === RUN   TestEscapeTOMLString/escape_both_quotes_and_backslashes
+     === RUN   TestEscapeTOMLString/empty_string
+     --- PASS: TestEscapeTOMLString (0.00s)
+         --- PASS: TestEscapeTOMLString/no_escaping_needed (0.00s)
+         --- PASS: TestEscapeTOMLString/escape_quotes (0.00s)
+         --- PASS: TestEscapeTOMLString/escape_backslashes (0.00s)
+         --- PASS: TestEscapeTOMLString/escape_both_quotes_and_backslashes
+     (0.00s)
+         --- PASS: TestEscapeTOMLString/empty_string (0.00s)
+     === RUN   TestGetEnv
+     === RUN   TestGetEnv/environment_variable_exists
+     === RUN   TestGetEnv/environment_variable_does_not_exist
+     === RUN   TestGetEnv/empty_environment_variable
+     --- PASS: TestGetEnv (0.00s)
+         --- PASS: TestGetEnv/environment_variable_exists (0.00s)
+         --- PASS: TestGetEnv/environment_variable_does_not_exist (0.00s)
+         --- PASS: TestGetEnv/empty_environment_variable (0.00s)
+     === RUN   TestLoadConfig
+         loader_test.go:113: Skipping test that modifies HOME (set CI=1 or
+     ASIMI_TEST_CI=1 to run)
+     --- SKIP: TestLoadConfig (0.00s)
+     === RUN   TestSaveConfig
+         loader_test.go:221: Skipping test that modifies HOME (set CI=1 or
+     ASIMI_TEST_CI=1 to run)
+     --- SKIP: TestSaveConfig (0.00s)
+     === RUN   TestSetProjectConfig
+         loader_test.go:342: Skipping test that modifies HOME (set CI=1 or
+     ASIMI_TEST_CI=1 to run)
+     --- SKIP: TestSetProjectConfig (0.00s)
+     === RUN   TestEnsureUserConfigExists
+     === RUN   TestEnsureUserConfigExists/creates_config_file_on_first_run
+     2026/02/16 17:50:29 INFO Created user config file
+     path=/tmp/TestEnsureUserConfigExistscreates_config_file_on_first_run2878571
+     533/001/.config/asimi/asimi.conf
+     === RUN
+     TestEnsureUserConfigExists/returns_false_when_config_already_exists
+     === RUN   TestEnsureUserConfigExists/creates_directory_if_it_doesn't_exist
+     2026/02/16 17:50:29 INFO Created user config file
+     path=/tmp/TestEnsureUserConfigExistscreates_directory_if_it_doesnt_exist190
+     8691363/001/.config/asimi/asimi.conf
+     --- PASS: TestEnsureUserConfigExists (0.00s)
+         --- PASS: TestEnsureUserConfigExists/creates_config_file_on_first_run
+     (0.00s)
+         --- PASS:
+     TestEnsureUserConfigExists/returns_false_when_config_already_exists (0.00s)
+         --- PASS:
+     TestEnsureUserConfigExists/creates_directory_if_it_doesn't_exist (0.00s)
+     === RUN   TestFindTOMLSectionBounds
+     === RUN   TestFindTOMLSectionBounds/find_section_in_middle
+     === RUN   TestFindTOMLSectionBounds/find_first_section
+     === RUN   TestFindTOMLSectionBounds/find_last_section
+     === RUN   TestFindTOMLSectionBounds/section_not_found
+     === RUN   TestFindTOMLSectionBounds/empty_content
+     --- PASS: TestFindTOMLSectionBounds (0.00s)
+         --- PASS: TestFindTOMLSectionBounds/find_section_in_middle (0.00s)
+         --- PASS: TestFindTOMLSectionBounds/find_first_section (0.00s)
+         --- PASS: TestFindTOMLSectionBounds/find_last_section (0.00s)
+         --- PASS: TestFindTOMLSectionBounds/section_not_found (0.00s)
+         --- PASS: TestFindTOMLSectionBounds/empty_content (0.00s)
+     === RUN   TestUpdateTOMLValue
+     === RUN   TestUpdateTOMLValue/update_existing_value
+     === RUN   TestUpdateTOMLValue/preserve_inline_comment
+     === RUN   TestUpdateTOMLValue/preserve_full-line_comments
+     === RUN   TestUpdateTOMLValue/key_not_found_in_section
+     === RUN   TestUpdateTOMLValue/section_not_found
+     === RUN   TestUpdateTOMLValue/update_value_with_special_characters
+     --- PASS: TestUpdateTOMLValue (0.00s)
+         --- PASS: TestUpdateTOMLValue/update_existing_value (0.00s)
+         --- PASS: TestUpdateTOMLValue/preserve_inline_comment (0.00s)
+         --- PASS: TestUpdateTOMLValue/preserve_full-line_comments (0.00s)
+         --- PASS: TestUpdateTOMLValue/key_not_found_in_section (0.00s)
+         --- PASS: TestUpdateTOMLValue/section_not_found (0.00s)
+         --- PASS: TestUpdateTOMLValue/update_value_with_special_characters
+     (0.00s)
+     === RUN   TestInsertTOMLValue
+     === RUN   TestInsertTOMLValue/insert_into_existing_section
+     === RUN   TestInsertTOMLValue/insert_preserves_comments
+     === RUN   TestInsertTOMLValue/section_not_found_returns_unchanged
+     --- PASS: TestInsertTOMLValue (0.00s)
+         --- PASS: TestInsertTOMLValue/insert_into_existing_section (0.00s)
+         --- PASS: TestInsertTOMLValue/insert_preserves_comments (0.00s)
+         --- PASS: TestInsertTOMLValue/section_not_found_returns_unchanged
+     (0.00s)
+     === RUN   TestRemoveTOMLKey
+     === RUN   TestRemoveTOMLKey/remove_existing_key
+     === RUN   TestRemoveTOMLKey/remove_preserves_surrounding_comments
+     === RUN   TestRemoveTOMLKey/key_not_found_returns_unchanged
+     --- PASS: TestRemoveTOMLKey (0.00s)
+         --- PASS: TestRemoveTOMLKey/remove_existing_key (0.00s)
+         --- PASS: TestRemoveTOMLKey/remove_preserves_surrounding_comments
+     (0.00s)
+         --- PASS: TestRemoveTOMLKey/key_not_found_returns_unchanged (0.00s)
+     === RUN   TestEnsureTOMLSection
+     === RUN   TestEnsureTOMLSection/section_already_exists
+     === RUN   TestEnsureTOMLSection/add_new_section_to_empty_content
+     === RUN   TestEnsureTOMLSection/add_new_section_to_existing_content
+     --- PASS: TestEnsureTOMLSection (0.00s)
+         --- PASS: TestEnsureTOMLSection/section_already_exists (0.00s)
+         --- PASS: TestEnsureTOMLSection/add_new_section_to_empty_content
+     (0.00s)
+         --- PASS: TestEnsureTOMLSection/add_new_section_to_existing_content
+     (0.00s)
+     === RUN   TestUpdateOrInsertTOMLValue
+     === RUN   TestUpdateOrInsertTOMLValue/update_existing_key
+     === RUN   TestUpdateOrInsertTOMLValue/insert_new_key_in_existing_section
+     === RUN   TestUpdateOrInsertTOMLValue/create_section_and_insert_key
+     --- PASS: TestUpdateOrInsertTOMLValue (0.00s)
+         --- PASS: TestUpdateOrInsertTOMLValue/update_existing_key (0.00s)
+         --- PASS:
+     TestUpdateOrInsertTOMLValue/insert_new_key_in_existing_section (0.00s)
+         --- PASS: TestUpdateOrInsertTOMLValue/create_section_and_insert_key
+     (0.00s)
+     === RUN   TestSaveConfigPreservesComments
+         loader_test.go:925: Skipping test that modifies HOME (set CI=1 or
+     ASIMI_TEST_CI=1 to run)
+     --- SKIP: TestSaveConfigPreservesComments (0.00s)
+     PASS
+     ok         github.com/afittestide/asimi/internal/config    (cached)
+     === RUN   TestIsMainBranch
+     === RUN   TestIsMainBranch/main_branch
+     === RUN   TestIsMainBranch/master_branch
+     === RUN   TestIsMainBranch/feature_branch
+     === RUN   TestIsMainBranch/develop_branch
+     === RUN   TestIsMainBranch/empty_branch
+     --- PASS: TestIsMainBranch (0.00s)
+         --- PASS: TestIsMainBranch/main_branch (0.00s)
+         --- PASS: TestIsMainBranch/master_branch (0.00s)
+         --- PASS: TestIsMainBranch/feature_branch (0.00s)
+         --- PASS: TestIsMainBranch/develop_branch (0.00s)
+         --- PASS: TestIsMainBranch/empty_branch (0.00s)
+     === RUN   TestSummarizeStatus
+     === RUN   TestSummarizeStatus/empty_status
+     === RUN   TestSummarizeStatus/mixed_indicators
+     --- PASS: TestSummarizeStatus (0.00s)
+         --- PASS: TestSummarizeStatus/empty_status (0.00s)
+         --- PASS: TestSummarizeStatus/mixed_indicators (0.00s)
+     === RUN   TestDiffLines
+     === RUN   TestDiffLines/no_changes
+     === RUN   TestDiffLines/only_additions
+     === RUN   TestDiffLines/only_deletions
+     === RUN   TestDiffLines/balanced_changes_(should_be_modifications)
+     === RUN   TestDiffLines/more_additions_than_deletions
+     === RUN   TestDiffLines/more_deletions_than_additions
+     --- PASS: TestDiffLines (0.00s)
+         --- PASS: TestDiffLines/no_changes (0.00s)
+         --- PASS: TestDiffLines/only_additions (0.00s)
+         --- PASS: TestDiffLines/only_deletions (0.00s)
+         --- PASS: TestDiffLines/balanced_changes_(should_be_modifications)
+     (0.00s)
+         --- PASS: TestDiffLines/more_additions_than_deletions (0.00s)
+         --- PASS: TestDiffLines/more_deletions_than_additions (0.00s)
+     === RUN   TestParseGitNumstat
+     === PAUSE TestParseGitNumstat
+     === CONT  TestParseGitNumstat
+     === RUN   TestParseGitNumstat/mixed_changes
+     === PAUSE TestParseGitNumstat/mixed_changes
+     === RUN   TestParseGitNumstat/binary_files_ignored
+     === PAUSE TestParseGitNumstat/binary_files_ignored
+     === RUN   TestParseGitNumstat/unbalanced_changes_stay_separate
+     === PAUSE TestParseGitNumstat/unbalanced_changes_stay_separate
+     === CONT  TestParseGitNumstat/mixed_changes
+     === CONT  TestParseGitNumstat/unbalanced_changes_stay_separate
+     === CONT  TestParseGitNumstat/binary_files_ignored
+     --- PASS: TestParseGitNumstat (0.00s)
+         --- PASS: TestParseGitNumstat/mixed_changes (0.00s)
+         --- PASS: TestParseGitNumstat/unbalanced_changes_stay_separate (0.00s)
+         --- PASS: TestParseGitNumstat/binary_files_ignored (0.00s)
+     PASS
+     ok         github.com/afittestide/asimi/internal/repo      (cached)
+     === RUN   TestHostRunner
+     --- PASS: TestHostRunner (0.00s)
+     === RUN   TestHostRunnerRunWithBypassApproval
+     --- PASS: TestHostRunnerRunWithBypassApproval (0.01s)
+     === RUN   TestHostRunnerRunExitCode
+     --- PASS: TestHostRunnerRunExitCode (0.01s)
+     === RUN   TestHostRunnerRunWithStderr
+     --- PASS: TestHostRunnerRunWithStderr (0.01s)
+     === RUN   TestHostRunnerApprovalRequest
+     --- PASS: TestHostRunnerApprovalRequest (0.01s)
+     === RUN   TestHostRunnerApprovalDenied
+     --- PASS: TestHostRunnerApprovalDenied (0.00s)
+     === RUN   TestHostRunnerNoMsgChannel
+     2026/02/16 17:50:29 WARN Host command approval requested but no message
+     channel configured command="echo hello"
+     --- PASS: TestHostRunnerNoMsgChannel (0.00s)
+     === RUN   TestHostRunnerRestart
+     --- PASS: TestHostRunnerRestart (0.00s)
+     === RUN   TestHostRunnerClose
+     --- PASS: TestHostRunnerClose (0.00s)
+     === RUN   TestHostRunnerContextCancellation
+     --- PASS: TestHostRunnerContextCancellation (0.10s)
+     === RUN   TestNewPodmanRunner
+     --- PASS: TestNewPodmanRunner (0.00s)
+     === RUN   TestNewPodmanRunnerCustomImage
+     --- PASS: TestNewPodmanRunnerCustomImage (0.00s)
+     === RUN   TestPodmanRunnerWithFallback
+     2026/02/16 17:50:29 ERROR failed to initialize error="failed to create
+     container: no such image:
+     localhost/asimi-sandbox-test/nonexistent-image:latest: image not known"
+     --- PASS: TestPodmanRunnerWithFallback (0.02s)
+     === RUN   TestPodmanRunnerIntegration
+         podman_test.go:93: Skipping Podman integration test. Set
+     ASIMI_TEST_PODMAN=1 to run this test (requires podman and sandbox image)
+     --- SKIP: TestPodmanRunnerIntegration (0.00s)
+     === RUN   TestPodmanRunnerContainerLaunchMessage
+         podman_test.go:140: Skipping Podman integration test. Set
+     ASIMI_TEST_PODMAN=1 to run this test
+     --- SKIP: TestPodmanRunnerContainerLaunchMessage (0.00s)
+     === RUN   TestCoreToolScheduler
+     --- PASS: TestCoreToolScheduler (0.01s)
+     === RUN   TestCoreToolScheduler_ClearQueue
+     2026/02/16 17:50:29 INFO scheduler.clear_queue aborting=3
+     2026/02/16 17:50:29 INFO scheduler.queue_cleared aborted_count=3
+     --- PASS: TestCoreToolScheduler_ClearQueue (0.50s)
+     === RUN   TestCoreToolScheduler_ClearQueue_EmptyQueue
+     --- PASS: TestCoreToolScheduler_ClearQueue_EmptyQueue (0.00s)
+     PASS
+     ok         github.com/afittestide/asimi/internal/runners   (cached)
+     ?          github.com/afittestide/asimi/internal/utils     [no test files]
+     === RUN   TestChancellor_EdictLifecycle
+     2026/02/17 15:30:42 INFO edict created edict_id=test/repo#1
+     --- PASS: TestChancellor_EdictLifecycle (0.02s)
+     === RUN   TestStrategist_DecomposeEdict
+     2026/02/17 15:30:42 INFO planning complete edict_id=test/repo#2
+     ling_count=1
+     --- PASS: TestStrategist_DecomposeEdict (0.01s)
+     === RUN   TestStrategist_AmbiguousIntent
+     --- PASS: TestStrategist_AmbiguousIntent (0.01s)
+     === RUN   TestJudge_VerdictFlow
+     --- PASS: TestJudge_VerdictFlow (0.01s)
+     === RUN   TestCensor_ReviewFlow
+     2026/02/17 15:30:42 INFO manifest auto-approved
+     manifest_id=4d4f47e60b70873c
+     --- PASS: TestCensor_ReviewFlow (0.01s)
+     === RUN   TestMarshal_IncidentFlow
+     2026/02/17 15:30:42 INFO incident logged incident_id=sentry-456
+     commit_hash=prodcommit789 edict_id=test/repo#6
+     --- PASS: TestMarshal_IncidentFlow (0.01s)
+     === RUN   TestChancellor_CancelEdict
+     2026/02/17 15:30:42 INFO edict created edict_id=test/repo#7
+     2026/02/17 15:30:42 INFO edict cancelled edict_id=test/repo#7 by=@user
+     --- PASS: TestChancellor_CancelEdict (0.01s)
+     === RUN   TestStrategist_CircularDependencyDetection
+     --- PASS: TestStrategist_CircularDependencyDetection (0.00s)
+     === RUN   TestStrategist_ValidDependencies
+     --- PASS: TestStrategist_ValidDependencies (0.00s)
+     === RUN   TestHappyFlowE2E
+     2026/02/17 15:30:42 INFO forge started, processing tasks
+     2026/02/17 15:30:42 INFO task sent to minister minister=forge
+     edict_id=test-e2e-edict work="please reply with 'hello world'"
+     2026/02/17 15:30:42 INFO forge processing task edict_id=test-e2e-edict
+     work="please reply with 'hello world'"
+     2026/02/17 15:30:42 INFO task completed minister=forge
+     edict_id=test-e2e-edict sealed=true output_len=43
+         minister_test.go:376: invoke_minister result:
+     {"edict_id":"test-e2e-edict","minister_id":"forge","output":"forge task
+     acknowledged (no LLM configured)","sealed":true,"status":"completed"}
+         minister_test.go:402: Received response: minister=forge,
+     edict=test-e2e-edict, sealed=true, output=forge task acknowledged (no LLM
+     configured)
+     2026/02/17 15:30:42 INFO forge stopped
+     --- PASS: TestHappyFlowE2E (0.01s)
+     === RUN   TestInvokeMinisterTool_InvalidMinister
+     --- PASS: TestInvokeMinisterTool_InvalidMinister (0.01s)
+     === RUN   TestInvokeMinisterTool_MissingTask
+     --- PASS: TestInvokeMinisterTool_MissingTask (0.01s)
+     === RUN   TestInvokeMinisterTool_InvalidJSON
+     --- PASS: TestInvokeMinisterTool_InvalidJSON (0.00s)
+     === RUN   TestInvokeMinisterTool_MissingMinisterID
+     --- PASS: TestInvokeMinisterTool_MissingMinisterID (0.00s)
+     === RUN   TestInvokeMinisterTool_MissingEdictID
+     --- PASS: TestInvokeMinisterTool_MissingEdictID (0.00s)
+     === RUN   TestInvokeMinisterTool_MinisterReturnsError
+     2026/02/17 15:30:42 INFO task sent to minister minister=failing edict_id=e1
+      work=break
+     2026/02/17 15:30:42 ERROR task returned error minister=failing edict_id=e1
+     error="something broke"
+     --- PASS: TestInvokeMinisterTool_MinisterReturnsError (0.01s)
+     === RUN   TestInvokeMinisterTool_ContextCancelledDuringSend
+     --- PASS: TestInvokeMinisterTool_ContextCancelledDuringSend (0.01s)
+     === RUN   TestInvokeMinisterTool_ContextCancelledDuringWait
+     2026/02/17 15:30:42 INFO task sent to minister minister=slow edict_id=e1
+     work=wait
+     --- PASS: TestInvokeMinisterTool_ContextCancelledDuringWait (0.08s)
+     === RUN   TestInvokeMinisterTool_Notifications
+     2026/02/17 15:30:42 INFO task sent to minister minister=notifier
+     edict_id=e1 work="notify me"
+     2026/02/17 15:30:42 INFO task completed minister=notifier edict_id=e1
+     sealed=true output_len=4
+     --- PASS: TestInvokeMinisterTool_Notifications (0.01s)
+     === RUN   TestInvokeMinisterTool_NotificationsOnError
+     --- PASS: TestInvokeMinisterTool_NotificationsOnError (0.01s)
+     === RUN   TestInvokeMinisterTool_Format
+     --- PASS: TestInvokeMinisterTool_Format (0.00s)
+     === RUN   TestChancellor_GetDBPath
+     --- PASS: TestChancellor_GetDBPath (0.01s)
+     === RUN   TestChancellor_GetDBPath_NilDB
+     --- PASS: TestChancellor_GetDBPath_NilDB (0.00s)
+     === RUN   TestParseRitual
+     === RUN   TestParseRitual/basic_ritual
+     === RUN   TestParseRitual/ritual_with_triggers_and_inputs
+     === RUN   TestParseRitual/ritual_with_dependencies_and_failure_handling
+     === RUN   TestParseRitual/invalid_yaml
+     --- PASS: TestParseRitual (0.00s)
+         --- PASS: TestParseRitual/basic_ritual (0.00s)
+         --- PASS: TestParseRitual/ritual_with_triggers_and_inputs (0.00s)
+         --- PASS: TestParseRitual/ritual_with_dependencies_and_failure_handling
+      (0.00s)
+         --- PASS: TestParseRitual/invalid_yaml (0.00s)
+     === RUN   TestValidateRitual
+     === RUN   TestValidateRitual/valid_ritual
+     === RUN   TestValidateRitual/missing_name
+     === RUN   TestValidateRitual/no_steps
+     === RUN   TestValidateRitual/duplicate_step_names
+     === RUN   TestValidateRitual/unknown_dependency
+     === RUN   TestValidateRitual/unknown_on_failure_target
+     === RUN   TestValidateRitual/cmd_step_without_command
+     === RUN   TestValidateRitual/gate_step_without_condition
+     === RUN   TestValidateRitual/circular_dependency_-_self_reference
+     === RUN   TestValidateRitual/circular_dependency_-_chain
+     --- PASS: TestValidateRitual (0.00s)
+         --- PASS: TestValidateRitual/valid_ritual (0.00s)
+         --- PASS: TestValidateRitual/missing_name (0.00s)
+         --- PASS: TestValidateRitual/no_steps (0.00s)
+         --- PASS: TestValidateRitual/duplicate_step_names (0.00s)
+         --- PASS: TestValidateRitual/unknown_dependency (0.00s)
+         --- PASS: TestValidateRitual/unknown_on_failure_target (0.00s)
+         --- PASS: TestValidateRitual/cmd_step_without_command (0.00s)
+         --- PASS: TestValidateRitual/gate_step_without_condition (0.00s)
+         --- PASS: TestValidateRitual/circular_dependency_-_self_reference
+     (0.00s)
+         --- PASS: TestValidateRitual/circular_dependency_-_chain (0.00s)
+     === RUN   TestRitualRegistry
+     --- PASS: TestRitualRegistry (0.00s)
+     === RUN   TestLoadRitualsFromDir
+     --- PASS: TestLoadRitualsFromDir (0.00s)
+     === RUN   TestLoadRitualsFromDir_Invalid
+     --- PASS: TestLoadRitualsFromDir_Invalid (0.00s)
+     === RUN   TestLoadEmbeddedRituals
+     --- PASS: TestLoadEmbeddedRituals (0.00s)
+     === RUN   TestRitualStreamMessages
+     2026/02/17 15:30:42 INFO ritual started ritual=test-stream
+     execution_id=f2d20264ea8e632d edict_id=test-edict-1
+     2026/02/17 15:30:42 INFO ritual completed ritual=test-stream
+     execution_id=f2d20264ea8e632d edict_id=test-edict-1
+         ritual_test.go:516: Received RitualStepMsg: ritual=test-stream
+     step=echo status=started
+         ritual_test.go:516: Received RitualStepMsg: ritual=test-stream
+     step=echo status=completed
+         ritual_test.go:516: Received RitualStepMsg: ritual=test-stream step=
+     status=ritual_completed
+     --- PASS: TestRitualStreamMessages (0.01s)
+     === RUN   TestRitualStreamMessages_MultiStep
+     2026/02/17 15:30:42 INFO ritual started ritual=multi-step
+     execution_id=059e556a228f1fa8 edict_id=edict-multi
+     2026/02/17 15:30:42 INFO ritual completed ritual=multi-step
+     execution_id=059e556a228f1fa8 edict_id=edict-multi
+     --- PASS: TestRitualStreamMessages_MultiStep (0.01s)
+     === RUN   TestRitualStreamMessages_Failure
+     2026/02/17 15:30:42 INFO ritual started ritual=fail-ritual
+     execution_id=85eee413281c62e3 edict_id=edict-fail
+     --- PASS: TestRitualStreamMessages_Failure (0.00s)
+     === RUN   TestNewSession
+     === PAUSE TestNewSession
+     === RUN   TestNewSession_DefaultMaxTurns
+     === PAUSE TestNewSession_DefaultMaxTurns
+     === RUN   TestNewSession_WithTools
+     === PAUSE TestNewSession_WithTools
+     === RUN   TestSession_AskWithStreaming_NoTools
+     === PAUSE TestSession_AskWithStreaming_NoTools
+     === RUN   TestSession_AskWithStreaming_WithResponse
+     === PAUSE TestSession_AskWithStreaming_WithResponse
+     === RUN   TestSession_AskWithStreaming_StreamsChunks
+     === PAUSE TestSession_AskWithStreaming_StreamsChunks
+     === RUN   TestSession_AskWithStreaming_WithToolExecution
+     === PAUSE TestSession_AskWithStreaming_WithToolExecution
+     === RUN   TestSession_AskWithStreaming_WithContextFiles
+     === PAUSE TestSession_AskWithStreaming_WithContextFiles
+     === RUN   TestSession_SanitizeMessages_RemovesUnmatchedToolCalls
+     === PAUSE TestSession_SanitizeMessages_RemovesUnmatchedToolCalls
+     === RUN   TestSession_SanitizeMessages_KeepsMatchedToolCalls
+     === PAUSE TestSession_SanitizeMessages_KeepsMatchedToolCalls
+     === RUN   TestSession_SanitizeMessages_DisabledByConfig
+     === PAUSE TestSession_SanitizeMessages_DisabledByConfig
+     === RUN   TestSession_CheckToolCallLoop
+     === PAUSE TestSession_CheckToolCallLoop
+     === RUN   TestSession_CheckToolCallLoop_DifferentCalls
+     === PAUSE TestSession_CheckToolCallLoop_DifferentCalls
+     === RUN   TestSession_RegisterShogunateTools
+     === PAUSE TestSession_RegisterShogunateTools
+     === RUN   TestSession_Messages
+     === PAUSE TestSession_Messages
+     === RUN   TestSession_AddMessage
+     === PAUSE TestSession_AddMessage
+     === RUN   TestBuildPromptWithContext_NoContext
+     === PAUSE TestBuildPromptWithContext_NoContext
+     === RUN   TestBuildPromptWithContext_WithContext
+     === PAUSE TestBuildPromptWithContext_WithContext
+     === RUN   TestCoreToolScheduler_Schedule
+     === PAUSE TestCoreToolScheduler_Schedule
+     === RUN   TestSession_StreamBufferMethods
+     === PAUSE TestSession_StreamBufferMethods
+     === RUN   TestSession_ProcessToolCalls_UnknownTool
+     === PAUSE TestSession_ProcessToolCalls_UnknownTool
+     === RUN   TestSession_ProcessToolCalls_ContextCancellation
+     === PAUSE TestSession_ProcessToolCalls_ContextCancellation
+     === RUN   TestSession_AddTools
+     === PAUSE TestSession_AddTools
+     === RUN   TestSession_SetNotify_UpdatesScheduler
+     === PAUSE TestSession_SetNotify_UpdatesScheduler
+     === RUN   TestSession_ToolCallNotifications
+     === PAUSE TestSession_ToolCallNotifications
+     === RUN   TestEnsureToolCallID_ExistingID
+     === PAUSE TestEnsureToolCallID_ExistingID
+     === RUN   TestEnsureToolCallID_GeneratesSyntheticID
+     === PAUSE TestEnsureToolCallID_GeneratesSyntheticID
+     === RUN   TestHasToolCallResponse_Found
+     === PAUSE TestHasToolCallResponse_Found
+     === RUN   TestHasToolCallResponse_NotFound
+     === PAUSE TestHasToolCallResponse_NotFound
+     === RUN   TestHasToolCallResponse_EmptyMessages
+     === PAUSE TestHasToolCallResponse_EmptyMessages
+     === RUN   TestHasToolCallResponse_NonToolMessage
+     === PAUSE TestHasToolCallResponse_NonToolMessage
+     === RUN   TestSession_SanitizeMessages_EmptyMessages
+     === PAUSE TestSession_SanitizeMessages_EmptyMessages
+     === RUN   TestSession_SanitizeMessages_OrphanToolResponse
+     === PAUSE TestSession_SanitizeMessages_OrphanToolResponse
+     === RUN   TestSession_SanitizeMessages_ToolResponseWithMismatchedID
+     === PAUSE TestSession_SanitizeMessages_ToolResponseWithMismatchedID
+     === RUN   TestSession_SanitizeMessages_ToolResponseWithEmptyID
+     === PAUSE TestSession_SanitizeMessages_ToolResponseWithEmptyID
+     === RUN   TestSession_AppendMessage_NilChoice
+     === PAUSE TestSession_AppendMessage_NilChoice
+     === RUN   TestSession_AppendMessage_EmptyContent
+     === PAUSE TestSession_AppendMessage_EmptyContent
+     === RUN   TestSession_AppendMessage_WithToolCalls
+     === PAUSE TestSession_AppendMessage_WithToolCalls
+     === RUN   TestSession_AppendMessage_SkipsEmptyToolCalls
+     === PAUSE TestSession_AppendMessage_SkipsEmptyToolCalls
+     === RUN   TestNewSession_WithProvidedScheduler
+     === PAUSE TestNewSession_WithProvidedScheduler
+     === RUN   TestSession_AskWithStreaming_LLMError
+     === PAUSE TestSession_AskWithStreaming_LLMError
+     === RUN   TestSession_GenerateLLMResponse_EmptyChoices
+     === PAUSE TestSession_GenerateLLMResponse_EmptyChoices
+     === RUN   TestSession_AskWithStreaming_Cancellation
+     === PAUSE TestSession_AskWithStreaming_Cancellation
+     === RUN   TestSession_AskWithStreaming_MaxTokens
+     === PAUSE TestSession_AskWithStreaming_MaxTokens
+     === RUN   TestSession_ProcessToolCalls_LoopDetected
+     === PAUSE TestSession_ProcessToolCalls_LoopDetected
+     === RUN   TestSession_ProcessToolCalls_SkipsEmptyName
+     === PAUSE TestSession_ProcessToolCalls_SkipsEmptyName
+     === RUN   TestSession_ExecuteToolCall_WithScheduler
+     === PAUSE TestSession_ExecuteToolCall_WithScheduler
+     === RUN   TestSession_ExecuteToolCall_WithoutScheduler
+     === PAUSE TestSession_ExecuteToolCall_WithoutScheduler
+     === RUN   TestSession_ExecuteToolCall_Error
+     === PAUSE TestSession_ExecuteToolCall_Error
+     === RUN   TestCoreToolScheduler_Schedule_Error
+     === PAUSE TestCoreToolScheduler_Schedule_Error
+     === RUN   TestCoreToolScheduler_Schedule_NoNotify
+     === PAUSE TestCoreToolScheduler_Schedule_NoNotify
+     === RUN   TestBuildLLMTools_Empty
+     === PAUSE TestBuildLLMTools_Empty
+     === RUN   TestBuildLLMTools_Multiple
+     === PAUSE TestBuildLLMTools_Multiple
+     === RUN   TestSession_AskWithStreaming_RepeatingResponse
+     === PAUSE TestSession_AskWithStreaming_RepeatingResponse
+     === RUN   TestSession_AskWithStreaming_MultiTurnToolExecution
+     === PAUSE TestSession_AskWithStreaming_MultiTurnToolExecution
+     === RUN   TestSession_AskWithStreaming_NoNotify
+     === PAUSE TestSession_AskWithStreaming_NoNotify
+     === RUN   TestSession_SanitizeMessages_ToolResponseAtIndexZero
+     === PAUSE TestSession_SanitizeMessages_ToolResponseAtIndexZero
+     === RUN   TestSession_SanitizeMessages_ToolResponseAfterNonAIMessage
+     === PAUSE TestSession_SanitizeMessages_ToolResponseAfterNonAIMessage
+     === RUN   TestSession_SanitizeMessages_AIMessageWithNoToolCalls
+     === PAUSE TestSession_SanitizeMessages_AIMessageWithNoToolCalls
+     === RUN   TestSession_AskWithStreaming_CancelDuringStreaming
+     === PAUSE TestSession_AskWithStreaming_CancelDuringStreaming
+     === RUN   TestSession_AskWithStreaming_AfterToolCall_NoMoreToolMessages
+     === PAUSE TestSession_AskWithStreaming_AfterToolCall_NoMoreToolMessages
+     === RUN   TestSession_ProcessToolCalls_MultipleToolsOneAborted
+     === PAUSE TestSession_ProcessToolCalls_MultipleToolsOneAborted
+     === RUN   TestSession_GetContextInfo_Anthropic
+     === PAUSE TestSession_GetContextInfo_Anthropic
+     === RUN   TestSession_GetContextInfo_OpenAI
+     === PAUSE TestSession_GetContextInfo_OpenAI
+     === RUN   TestSession_GetContextInfo_WithContextFiles
+     === PAUSE TestSession_GetContextInfo_WithContextFiles
+     === RUN   TestSession_GetContextInfo_UnknownModel
+     === PAUSE TestSession_GetContextInfo_UnknownModel
+     === CONT  TestNewSession
+     === CONT  TestSession_GetContextInfo_OpenAI
+     === CONT  TestSession_SanitizeMessages_ToolResponseAfterNonAIMessage
+     --- PASS: TestSession_SanitizeMessages_ToolResponseAfterNonAIMessage
+     (0.00s)
+     === CONT  TestSession_GetContextInfo_UnknownModel
+     === CONT  TestSession_AskWithStreaming_MultiTurnToolExecution
+     === CONT  TestBuildLLMTools_Multiple
+     === CONT  TestBuildLLMTools_Empty
+     === CONT  TestSession_AskWithStreaming_RepeatingResponse
+     === CONT  TestCoreToolScheduler_Schedule_Error
+     === CONT  TestSession_ExecuteToolCall_Error
+     === CONT  TestHasToolCallResponse_EmptyMessages
+     === CONT  TestSession_ExecuteToolCall_WithoutScheduler
+     === CONT  TestSession_SanitizeMessages_ToolResponseAtIndexZero
+     === CONT  TestSession_ExecuteToolCall_WithScheduler
+     === CONT  TestSession_AskWithStreaming_NoNotify
+     === CONT  TestSession_ProcessToolCalls_SkipsEmptyName
+     === CONT  TestSession_ProcessToolCalls_LoopDetected
+     --- PASS: TestNewSession (0.00s)
+     === CONT  TestCoreToolScheduler_Schedule_NoNotify
+     === CONT  TestSession_GetContextInfo_WithContextFiles
+     === CONT  TestSession_GenerateLLMResponse_EmptyChoices
+     === CONT  TestSession_AskWithStreaming_LLMError
+     === CONT  TestNewSession_WithProvidedScheduler
+     === CONT  TestSession_AppendMessage_SkipsEmptyToolCalls
+     === CONT  TestSession_AppendMessage_WithToolCalls
+     === CONT  TestSession_AppendMessage_EmptyContent
+     === CONT  TestSession_AppendMessage_NilChoice
+     === CONT  TestSession_SanitizeMessages_ToolResponseWithEmptyID
+     === CONT  TestSession_SanitizeMessages_ToolResponseWithMismatchedID
+     === CONT  TestSession_SanitizeMessages_OrphanToolResponse
+     === CONT  TestSession_SanitizeMessages_EmptyMessages
+     === CONT  TestSession_AskWithStreaming_AfterToolCall_NoMoreToolMessages
+     === CONT  TestSession_AskWithStreaming_MaxTokens
+     === CONT  TestHasToolCallResponse_NonToolMessage
+     === CONT  TestSession_GetContextInfo_Anthropic
+     --- PASS: TestSession_GetContextInfo_OpenAI (0.00s)
+     --- PASS: TestBuildLLMTools_Multiple (0.00s)
+     --- PASS: TestSession_GetContextInfo_UnknownModel (0.00s)
+     --- PASS: TestBuildLLMTools_Empty (0.00s)
+     === CONT  TestSession_ProcessToolCalls_MultipleToolsOneAborted
+     --- PASS: TestSession_AskWithStreaming_RepeatingResponse (0.00s)
+     --- PASS: TestHasToolCallResponse_EmptyMessages (0.00s)
+     --- PASS: TestSession_SanitizeMessages_ToolResponseAtIndexZero (0.00s)
+     --- PASS: TestSession_AskWithStreaming_NoNotify (0.00s)
+     --- PASS: TestSession_ProcessToolCalls_SkipsEmptyName (0.00s)
+     --- PASS: TestCoreToolScheduler_Schedule_Error (0.00s)
+     --- PASS: TestSession_ExecuteToolCall_Error (0.00s)
+     --- PASS: TestCoreToolScheduler_Schedule_NoNotify (0.00s)
+     --- PASS: TestSession_AskWithStreaming_MultiTurnToolExecution (0.00s)
+     --- PASS: TestSession_GenerateLLMResponse_EmptyChoices (0.00s)
+     --- PASS: TestSession_GetContextInfo_WithContextFiles (0.00s)
+     --- PASS: TestSession_AskWithStreaming_LLMError (0.00s)
+     --- PASS: TestSession_AppendMessage_SkipsEmptyToolCalls (0.00s)
+     --- PASS: TestSession_AppendMessage_WithToolCalls (0.00s)
+     --- PASS: TestNewSession_WithProvidedScheduler (0.00s)
+     --- PASS: TestSession_AppendMessage_EmptyContent (0.00s)
+     --- PASS: TestSession_AppendMessage_NilChoice (0.00s)
+     --- PASS: TestSession_SanitizeMessages_ToolResponseWithEmptyID (0.00s)
+     --- PASS: TestSession_SanitizeMessages_ToolResponseWithMismatchedID (0.00s)
+     --- PASS: TestSession_SanitizeMessages_OrphanToolResponse (0.00s)
+     --- PASS: TestSession_SanitizeMessages_EmptyMessages (0.00s)
+     --- PASS: TestHasToolCallResponse_NonToolMessage (0.00s)
+     --- PASS: TestSession_AskWithStreaming_AfterToolCall_NoMoreToolMessages
+     (0.00s)
+     --- PASS: TestSession_ExecuteToolCall_WithoutScheduler (0.00s)
+     --- PASS: TestSession_ExecuteToolCall_WithScheduler (0.00s)
+     --- PASS: TestSession_AskWithStreaming_MaxTokens (0.00s)
+     === CONT  TestEnsureToolCallID_GeneratesSyntheticID
+     --- PASS: TestSession_GetContextInfo_Anthropic (0.00s)
+     2026/02/17 15:30:42 WARN provider returned empty tool_call_id, using
+     synthetic ID index=0 tool=test synthetic_id=synthetic_1771335042817872000_1
+     === CONT  TestSession_AskWithStreaming_Cancellation
+     2026/02/17 15:30:42 WARN tool call loop detected tool=loop_tool count=3
+     === CONT  TestSession_SetNotify_UpdatesScheduler
+     === CONT  TestSession_ToolCallNotifications
+     === CONT  TestSession_ProcessToolCalls_ContextCancellation
+     === CONT  TestSession_ProcessToolCalls_UnknownTool
+     === CONT  TestSession_AddMessage
+     === CONT  TestSession_AddTools
+     === CONT  TestSession_StreamBufferMethods
+     === CONT  TestHasToolCallResponse_NotFound
+     === CONT  TestBuildPromptWithContext_NoContext
+     2026/02/17 15:30:42 INFO adding shogunate tools to session count=1
+     === CONT  TestCoreToolScheduler_Schedule
+     2026/02/17 15:30:42 INFO session tools after adding toolDefs=1
+     toolCatalog=1
+     === CONT  TestSession_Messages
+     === CONT  TestSession_RegisterShogunateTools
+     === CONT  TestSession_CheckToolCallLoop_DifferentCalls
+     === CONT  TestSession_CheckToolCallLoop
+     === CONT  TestBuildPromptWithContext_WithContext
+     === CONT  TestSession_SanitizeMessages_DisabledByConfig
+     2026/02/17 15:30:42 WARN tool call loop detected tool=read_file count=3
+     === CONT  TestSession_AskWithStreaming_CancelDuringStreaming
+     === CONT  TestSession_SanitizeMessages_KeepsMatchedToolCalls
+     === CONT  TestSession_AskWithStreaming_WithContextFiles
+     === CONT  TestSession_AskWithStreaming_WithToolExecution
+     === CONT  TestSession_AskWithStreaming_StreamsChunks
+     === CONT  TestNewSession_WithTools
+     === CONT  TestSession_AskWithStreaming_NoTools
+     === CONT  TestNewSession_DefaultMaxTurns
+     --- PASS: TestSession_ProcessToolCalls_MultipleToolsOneAborted (0.00s)
+     --- PASS: TestEnsureToolCallID_GeneratesSyntheticID (0.00s)
+     --- PASS: TestSession_AskWithStreaming_Cancellation (0.00s)
+     --- PASS: TestSession_SetNotify_UpdatesScheduler (0.00s)
+     --- PASS: TestNewSession_DefaultMaxTurns (0.00s)
+     === CONT  TestEnsureToolCallID_ExistingID
+     --- PASS: TestSession_AskWithStreaming_WithContextFiles (0.00s)
+     === CONT  TestSession_SanitizeMessages_RemovesUnmatchedToolCalls
+     === CONT  TestSession_AskWithStreaming_WithResponse
+     === CONT  TestSession_SanitizeMessages_AIMessageWithNoToolCalls
+     === CONT  TestHasToolCallResponse_Found
+     --- PASS: TestSession_ProcessToolCalls_LoopDetected (0.00s)
+     --- PASS: TestEnsureToolCallID_ExistingID (0.00s)
+     --- PASS: TestSession_AddMessage (0.00s)
+     --- PASS: TestSession_ProcessToolCalls_UnknownTool (0.00s)
+     --- PASS: TestSession_ProcessToolCalls_ContextCancellation (0.00s)
+     --- PASS: TestHasToolCallResponse_NotFound (0.00s)
+     --- PASS: TestBuildPromptWithContext_NoContext (0.00s)
+     --- PASS: TestSession_StreamBufferMethods (0.00s)
+     --- PASS: TestSession_AddTools (0.00s)
+     --- PASS: TestSession_Messages (0.00s)
+     --- PASS: TestCoreToolScheduler_Schedule (0.00s)
+     --- PASS: TestSession_RegisterShogunateTools (0.00s)
+     --- PASS: TestSession_CheckToolCallLoop_DifferentCalls (0.00s)
+     --- PASS: TestBuildPromptWithContext_WithContext (0.00s)
+     --- PASS: TestSession_CheckToolCallLoop (0.00s)
+     --- PASS: TestSession_SanitizeMessages_DisabledByConfig (0.00s)
+     --- PASS: TestSession_AskWithStreaming_CancelDuringStreaming (0.00s)
+     --- PASS: TestSession_SanitizeMessages_KeepsMatchedToolCalls (0.00s)
+     --- PASS: TestSession_ToolCallNotifications (0.00s)
+     --- PASS: TestSession_AskWithStreaming_StreamsChunks (0.00s)
+     --- PASS: TestSession_AskWithStreaming_WithToolExecution (0.00s)
+     --- PASS: TestNewSession_WithTools (0.00s)
+     --- PASS: TestSession_AskWithStreaming_NoTools (0.00s)
+     --- PASS: TestSession_SanitizeMessages_RemovesUnmatchedToolCalls (0.00s)
+     --- PASS: TestSession_AskWithStreaming_WithResponse (0.00s)
+     --- PASS: TestSession_SanitizeMessages_AIMessageWithNoToolCalls (0.00s)
+     --- PASS: TestHasToolCallResponse_Found (0.00s)
+     PASS
+     ok         github.com/afittestide/asimi/shogunate  1.077s
+     ?          github.com/afittestide/asimi/shogunate/tools    [no test files]
+     === RUN   TestWorkflowStore
+     --- PASS: TestWorkflowStore (0.01s)
+     === RUN   TestWorkflowStoreUpdateData
+     --- PASS: TestWorkflowStoreUpdateData (0.01s)
+     === RUN   TestSchemaMigration
+     --- PASS: TestSchemaMigration (0.01s)
+     PASS
+     ok         github.com/afittestide/asimi/storage    (cached)
+     go test -timeout 1m -v ./...

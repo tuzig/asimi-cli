@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go test:*)",
+      "Bash(just test:*)",
+      "Bash(go build:*)",
+      "Bash(grep:*)",
+      "Bash(python3:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:docs.getbifrost.ai)",
+      "Bash(find:*)",
+      "Bash(wc:*)"
+    ]
+  }
+}

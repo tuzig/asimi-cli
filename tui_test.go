@@ -1225,8 +1225,8 @@ func TestCancelActiveStreaming(t *testing.T) {
 		cancelCalled = true
 	}
 
-	// Cancel streaming
-	model.cancelStreaming()
+	// Stop streaming (which now also cancels)
+	model.stopStreaming()
 
 	require.True(t, cancelCalled, "Cancel function should be called")
 	require.False(t, model.streamingActive)
@@ -1242,7 +1242,7 @@ func TestCancelActiveStreaming_NotActive(t *testing.T) {
 	model.streamingCancel = nil
 
 	// Should not panic
-	model.cancelStreaming()
+	model.stopStreaming()
 
 	require.False(t, model.streamingActive)
 	require.Nil(t, model.streamingCancel)
@@ -1967,6 +1967,7 @@ func TestCtrlCStopsStreamingE2E(t *testing.T) {
 
 	// 4. Create TUI model wired to the Shogunate
 	tuiConfig := mockConfig()
+	tuiConfig.LLM.Provider = "none" // Prevent Init() from overwriting test's slowStreamingLLM
 	ri := &repo.RepoInfo{}
 	model := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, shog)
 	model.persistentPromptHistory = nil
@@ -1980,8 +1981,7 @@ func TestCtrlCStopsStreamingE2E(t *testing.T) {
 
 	// 7. Submit a prompt — this flows through Chancellor → Session → slowStreamingLLM
 	tm.Type("hello world")
-	tm.Send(ChangeModeMsg{NewMode: "normal"}) // Switch to normal mode
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})   // Submit prompt in normal mode
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Submit prompt in normal mode
 
 	// 8. Wait for the LLM to actually start streaming (proves the full path works)
 	select {

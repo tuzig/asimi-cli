@@ -1,0 +1,35 @@
+   Issue                             │ Location       │ Impact                                  
+───────────────────────────────────┼────────────────┼─────────────────────────────────────────  
+   Act result not stored             │ Line 858-860   │ Then phase cannot template Act output   
+   Previous results not in templates │ Line 1409-1433 │ Then steps cannot reference prior step  
+outputs                                                                                         
+   Stale scratchpad on goto          │ Line 920-923   │ Re-invoked steps have outdated context  
+  Shall I suggest an edict to fix these three information flow issues?                          
+
+## Changes
+Fix information flow bugs in ritual system:
+
+1. **Store Act result in exec.Data** (ritual.go:858-860)
+   - After `executeMinisterStep`, store `actResult` in `exec.Data[\\\"act_result\\\"]`
+   - Update `expandTemplate` to include `act_result` in template data
+   - This allows Then steps to reference `{{ .act_result }}`
+
+2. **Add previous step results to expandTemplate** (ritual.go:1409-1433)
+   - Add a new key `step_results` to template data
+   - Build a map of step name → result from `exec.stepStates`
+   - This allows Then steps to reference `{{ .step_results.step1 }}`
+
+3. **Rebuild scratchpad on goto re-invocation** (ritual.go:920-923)
+   - Always build scratchpad, even when session exists
+   - The session provides conversation continuity, but scratchpad must reflect current state
+   - Minister needs fresh context: current given_context, current Earth status, updated previous results,
+
+## Evidence
+
+shogunate/ritual.go:858-860 - actResult returned but not stored
+shogunate/ritual.go:862-893 - Then phase uses expandTemplate which lacks act_result
+shogunate/ritual.go:1409-1433 - expandTemplate only has edict_id, inputs, given_context
+shogunate/ritual.go:920-923 - scratchpad only built if session == nil
+shogunate/ritual.go:907-918 - goto re-invocation reuses old session, skips scratchpad build
+shogunate/ritual.go:1003-1010 - buildEnhancedScratchpad includes previous results (but not used on goto)\
+

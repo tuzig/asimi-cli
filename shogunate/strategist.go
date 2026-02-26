@@ -288,7 +288,12 @@ func (s *Strategist) Run(ctx context.Context) {
 			s.logger.Info("strategist stopped")
 			return
 		case task := <-s.tasks:
-			s.processTask(ctx, task)
+			merged, mergedCancel := context.WithCancel(ctx)
+			if task.Ctx != nil {
+				context.AfterFunc(task.Ctx, func() { mergedCancel() })
+			}
+			s.processTask(merged, task)
+			mergedCancel()
 		}
 	}
 }

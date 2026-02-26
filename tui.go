@@ -932,7 +932,10 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 	// Single press — cancel streaming / escape
 	m.ctrlCLastPress = now
 	m.tabs.Content().Chat.AddUserMessage("CTRL-C")
-	m.handleEscape()
+	if m.streamingActive {
+		slog.Info("ctrl_c_during_streaming", "cancelling_context", true)
+		m.stopStreaming()
+	}
 
 	m.commandLine.AddToast(
 		fmt.Sprintf("Press CTRL-C again within %.1fs to exit", windowTime.Seconds()),
@@ -944,9 +947,8 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 
 // handleEscape handles the escape key and the first ctrl-c
 func (m TUIModel) handleEscape() (tea.Model, tea.Cmd) {
-	if m.streamingActive && m.streamingCancel != nil {
+	if m.streamingActive {
 		slog.Info("escape_during_streaming", "cancelling_context", true)
-		m.streamingCancel()
 		m.stopStreaming()
 		return m, nil
 	}
@@ -1062,14 +1064,6 @@ func (m *TUIModel) stopWaitingForResponse() {
 	m.waitingForResponse = false
 	m.status.StopWaiting()
 	m.status.ResetStreamRate()
-}
-
-func (m *TUIModel) cancelStreaming() {
-	if m.streamingActive && m.streamingCancel != nil {
-		m.streamingCancel()
-	}
-	m.streamingActive = false
-	m.streamingCancel = nil
 }
 
 // submitToShogunate sends a prompt to the appropriate minister based on active tab
@@ -1244,7 +1238,6 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
 			// User is submitting a historical prompt - rollback to that state
 			entry := m.sessionPromptHistory[m.historyCursor]
-			m.cancelStreaming()
 			m.stopStreaming()
 			if session := m.getCurrentSession(); session != nil {
 				session.RollbackTo(entry.SessionSnapshot)
@@ -1459,7 +1452,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
 			entry := m.sessionPromptHistory[m.historyCursor]
-			m.cancelStreaming()
 			m.stopStreaming()
 			if session := m.getCurrentSession(); session != nil {
 				session.RollbackTo(entry.SessionSnapshot)
@@ -2174,7 +2166,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Reset prompt history and waiting state
 			m.initHistory()
-			m.cancelStreaming()
 			m.stopStreaming()
 
 			// Reset session conversation history
@@ -2382,7 +2373,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionActive = true
 			m.tabs.Content().Chat.Indent = 0
 			m.initHistory()
-			m.cancelStreaming()
 			m.stopStreaming()
 			if session := m.getCurrentSession(); session != nil {
 				session.ClearHistory()
@@ -2895,6 +2885,9 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 	return container
 }
 func (m *TUIModel) stopStreaming() {
+	if m.streamingActive && m.streamingCancel != nil {
+		m.streamingCancel()
+	}
 	m.streamingActive = false
 	m.streamingCancel = nil
 	m.tabs.ClearStreaming()

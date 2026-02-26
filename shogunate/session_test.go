@@ -503,7 +503,7 @@ func TestCoreToolScheduler_Schedule(t *testing.T) {
 	scheduler := runners.NewCoreToolScheduler(notify)
 	tool := &mockTool{name: "test", output: "result"}
 
-	ch := scheduler.Schedule(tool, "{}")
+	ch := scheduler.Schedule(context.Background(), tool, "{}")
 	result := <-ch
 
 	assert.NoError(t, result.Error)
@@ -1290,7 +1290,7 @@ func TestCoreToolScheduler_Schedule_Error(t *testing.T) {
 	scheduler := runners.NewCoreToolScheduler(notify)
 	tool := &mockToolError{name: "error_tool"}
 
-	ch := scheduler.Schedule(tool, "{}")
+	ch := scheduler.Schedule(context.Background(), tool, "{}")
 	result := <-ch
 
 	assert.Error(t, result.Error)
@@ -1303,7 +1303,7 @@ func TestCoreToolScheduler_Schedule_NoNotify(t *testing.T) {
 	scheduler := runners.NewCoreToolScheduler(nil) // No notify function
 	tool := &mockTool{name: "test", output: "result"}
 
-	ch := scheduler.Schedule(tool, "{}")
+	ch := scheduler.Schedule(context.Background(), tool, "{}")
 	result := <-ch
 
 	assert.NoError(t, result.Error)

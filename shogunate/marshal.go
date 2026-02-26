@@ -240,7 +240,12 @@ func (m *Marshal) Run(ctx context.Context) {
 			m.logger.Info("marshal stopped")
 			return
 		case task := <-m.tasks:
-			m.processTask(ctx, task)
+			merged, mergedCancel := context.WithCancel(ctx)
+			if task.Ctx != nil {
+				context.AfterFunc(task.Ctx, func() { mergedCancel() })
+			}
+			m.processTask(merged, task)
+			mergedCancel()
 		}
 	}
 }

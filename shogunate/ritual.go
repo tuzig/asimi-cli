@@ -927,6 +927,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 
 	doneChan := make(chan Result, 1)
 	t := &Task{
+		Ctx:        ctx,
 		EdictID:    exec.EdictID,
 		Work:       work,
 		Scratchpad: scratchpad,

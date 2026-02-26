@@ -958,7 +958,7 @@ func (s *Session) executeToolCall(ctx context.Context, tool Tool, tc llms.ToolCa
 	var callErr error
 
 	if s.scheduler != nil {
-		ch := s.scheduler.Schedule(tool, argsJSON)
+		ch := s.scheduler.Schedule(ctx, tool, argsJSON)
 		res := <-ch
 		out, callErr = res.Output, res.Error
 	} else {
