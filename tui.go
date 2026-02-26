@@ -58,8 +58,8 @@ type TUIModel struct {
 	shogunate    *shogunate.Shogunate
 
 	// Shogunate integration
-	currentEdictID  string // Tracks current edict for multi-turn conversations
-	currentTabID string // TabID from last TabbedMsg for stream routing
+	currentEdictID string // Tracks current edict for multi-turn conversations
+	currentTabID   string // TabID from last TabbedMsg for stream routing
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback

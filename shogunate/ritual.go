@@ -474,15 +474,7 @@ type RitualExecution struct {
 	// Runtime (not persisted)
 	def         *RitualDef
 	stepStates  []RitualStepState
-	lastFailure *stepFailure // Failure context from goto
-	notify      internal.NotifyFunc
-}
-
-// stepFailure carries context from a failed step to the goto target
-type stepFailure struct {
-	StepName string
-	Output   string // Full minister output (e.g., censor's rejection list)
-	Error    string // The error message
+	notify internal.NotifyFunc
 }
 
 // TableName returns the table name for RitualExecution
@@ -915,24 +907,12 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	}
 
 	act := r.expandTemplate(step.Act, exec)
-	var session *Session
-
-	// Check for re-invocation after goto
-	if failure := exec.lastFailure; failure != nil {
-		r.logger.Debug("step re-invoked after failure", "from_step", failure.StepName, "error", failure.Error)
-		if failure.Output != "" {
-			act = fmt.Sprintf("Step '%s' failed.\n\nOutput:\n%s\n\nError: %s\n\nPlease revise.",
-				failure.StepName, failure.Output, failure.Error)
-		} else {
-			act = fmt.Sprintf("Step '%s' failed with error: %s\nPlease revise.",
-				failure.StepName, failure.Error)
-		}
-		exec.lastFailure = nil // consumed
-		session = exec.stepStates[exec.CurrentStep].Session
-	}
 
 	// Dynamic work prompt — rebuilt every invocation (fresh context)
 	work := r.buildWorkPrompt(exec, act)
+
+	// Reuse session if step was already invoked (e.g., goto re-invocation)
+	session := exec.stepStates[exec.CurrentStep].Session
 
 	// Immutable scratchpad — only for session creation
 	scratchpad := ""
@@ -1406,11 +1386,13 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 		if step.OnFailureTarget != "" {
 			targetIdx := r.stepIndex(exec.def, step.OnFailureTarget)
 			if targetIdx != -1 {
-				state := exec.stepStates[exec.CurrentStep]
-				exec.lastFailure = &stepFailure{
-					StepName: step.Name,
-					Output:   state.Output,
-					Error:    err.Error(),
+				state := &exec.stepStates[exec.CurrentStep]
+				if state.Output != "" {
+					state.Message = fmt.Sprintf("Step '%s' failed.\n\nOutput:\n%s\n\nError: %s",
+						step.Name, state.Output, err.Error())
+				} else {
+					state.Message = fmt.Sprintf("Step '%s' failed with error: %s",
+						step.Name, err.Error())
 				}
 				exec.CurrentStep = targetIdx
 				r.logger.Info("jumping to step on failure",
