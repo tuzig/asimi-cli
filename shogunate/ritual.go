@@ -935,6 +935,18 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		Done:       doneChan,
 	}
 
+	// Set up zhengming signal so we can pause the timeout
+	zhengmingSig := make(chan struct{}, 1)
+	if setter, ok := minister.(interface{ SetOnZhengmingRaised(func()) }); ok {
+		setter.SetOnZhengmingRaised(func() {
+			select {
+			case zhengmingSig <- struct{}{}:
+			default:
+			}
+		})
+		defer setter.SetOnZhengmingRaised(nil)
+	}
+
 	// Send task to minister
 	select {
 	case minister.Tasks() <- t:
@@ -942,23 +954,43 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		return "", ctx.Err()
 	}
 
-	// Wait for result
+	// Wait for result with pausable timeout
 	stepIdx := exec.CurrentStep
-	select {
-	case result := <-doneChan:
-		// Store session for potential reuse
-		if result.Session != nil {
-			exec.stepStates[stepIdx].Session = result.Session
+	timer := time.NewTimer(5 * time.Minute)
+	defer timer.Stop()
+
+	for {
+		select {
+		case result := <-doneChan:
+			// Store session for potential reuse
+			if result.Session != nil {
+				exec.stepStates[stepIdx].Session = result.Session
+			}
+			if result.Err != nil {
+				return result.Output, result.Err
+			}
+			return result.Output, nil
+		case <-zhengmingSig:
+			// Zhengming raised — pause timeout, wait only for completion or cancellation
+			timer.Stop()
+			r.logger.Debug("zhengming raised, pausing step timeout", "step", step.Name)
+			select {
+			case result := <-doneChan:
+				if result.Session != nil {
+					exec.stepStates[stepIdx].Session = result.Session
+				}
+				if result.Err != nil {
+					return result.Output, result.Err
+				}
+				return result.Output, nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		case <-timer.C:
+			return "", fmt.Errorf("minister %s timeout", step.Minister)
+		case <-ctx.Done():
+			return "", ctx.Err()
 		}
-		if result.Err != nil {
-			return result.Output, result.Err
-		}
-		return result.Output, nil
-	case <-time.After(5 * time.Minute):
-		// TODO: improve timeout handling - retry the step
-		return "", fmt.Errorf("minister %s timeout", step.Minister)
-	case <-ctx.Done():
-		return "", ctx.Err()
 	}
 }
 

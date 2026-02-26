@@ -204,8 +204,9 @@ type MinisterBase struct {
 	prompts    chan *Prompt
 	publish    func(edictID, eventType string, payload storage.JSON) string // routes events through Shogunate when set
 
-	zhengmingWaiters map[string]chan string
-	zhengmingMu      sync.Mutex
+	zhengmingWaiters    map[string]chan string
+	zhengmingMu         sync.Mutex
+	onZhengmingRaised   func()
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
@@ -368,6 +369,14 @@ func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 	m.notify = notify
 }
 
+// SetOnZhengmingRaised sets a callback invoked when RequestZhengming is called.
+// The ritual runner uses this to pause the step timeout while waiting for an answer.
+func (m *MinisterBase) SetOnZhengmingRaised(cb func()) {
+	m.zhengmingMu.Lock()
+	defer m.zhengmingMu.Unlock()
+	m.onZhengmingRaised = cb
+}
+
 // RegisterZhengmingWaiter creates a channel for the given request ID and returns it.
 func (m *MinisterBase) RegisterZhengmingWaiter(requestID string) <-chan string {
 	m.zhengmingMu.Lock()
@@ -446,6 +455,14 @@ func (m *MinisterBase) RequestZhengming(edictID string, questions storage.Zhengm
 
 	if err := m.db.Create(&req).Error; err != nil {
 		return "", fmt.Errorf("failed to create zhengming request: %w", err)
+	}
+
+	// Notify ritual runner so it can pause the step timeout
+	m.zhengmingMu.Lock()
+	cb := m.onZhengmingRaised
+	m.zhengmingMu.Unlock()
+	if cb != nil {
+		cb()
 	}
 
 	// Block the edict while zhengming is pending
