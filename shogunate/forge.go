@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 )
@@ -217,6 +218,12 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 		"edict_id", task.EdictID,
 		"work", task.Work)
 
+	// Use task-level notify override for routing (e.g., ritual → Ruling tab)
+	notify := f.notify
+	if task.Notify != nil {
+		notify = task.Notify
+	}
+
 	var output string
 	var taskErr error
 	var session *Session
@@ -225,10 +232,11 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 		if task.Session != nil {
 			// Multi-turn: continue existing session
 			session = task.Session
+			session.SetNotify(notify)
 			_, taskErr = session.AskWithStreaming(ctx, task.Work, nil)
 		} else {
 			// First invocation: create new session
-			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad)
+			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify)
 		}
 	} else {
 		output = "forge task acknowledged (no LLM configured)"
@@ -251,8 +259,8 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (f *Forge) streamTask(ctx context.Context, work, edictID, scratchpad string) (*Session, string, error) {
-	session, err := CreateSessionWithOpts(f, f.model, f.config, f.notify, CreateSessionOpts{
+func (f *Forge) streamTask(ctx context.Context, work, edictID, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
+	session, err := CreateSessionWithOpts(f, f.model, f.config, notify, CreateSessionOpts{
 		EdictID:    edictID,
 		Scratchpad: scratchpad,
 	})

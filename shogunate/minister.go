@@ -49,24 +49,25 @@ type Prompt struct {
 	Ctx          context.Context   // Per-prompt context for cancellation (CTRL-C)
 	Message      string            // The Ruler's words
 	EdictID      string            // Empty = new edict, set = continue existing
-	OriginID     string            // Tab target for stream routing
+	TabID        string            // Tab target for stream routing
 	ContextFiles map[string]string // Files loaded via @ references
 }
 
-// OriginMsg wraps a message with its origin tab ID for stream routing
-type OriginMsg struct {
-	OriginID string
-	Msg      any
+// TabbedMsg wraps a message with its target tab ID for stream routing
+type TabbedMsg struct {
+	TabID string
+	Msg   any
 }
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
-	Ctx        context.Context // Per-task cancellation (e.g. CTRL-C)
-	EdictID    string          // The edict this task belongs to
-	Work       string          // Specific instructions for the minister (renamed from Task to avoid Task.Task)
-	Scratchpad string          // Pre-formatted markdown added to the context
-	Session    *Session        // Existing session for multi-turn (nil = create new)
-	Done       chan<- Result   // For completion signal
+	Ctx        context.Context    // Per-task cancellation (e.g. CTRL-C)
+	EdictID    string             // The edict this task belongs to
+	Work       string             // Specific instructions for the minister (renamed from Task to avoid Task.Task)
+	Scratchpad string             // Pre-formatted markdown added to the context
+	Session    *Session           // Existing session for multi-turn (nil = create new)
+	Done       chan<- Result      // For completion signal
+	Notify     internal.NotifyFunc // Routing-aware notify override (nil = use minister's default)
 }
 
 // Result signals a Minister has completed a Task

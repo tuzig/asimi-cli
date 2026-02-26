@@ -617,28 +617,30 @@ func TestRitualStreamMessages(t *testing.T) {
 	)
 
 	for _, msg := range messages {
-		if stepMsg, ok := msg.(RitualStepMsg); ok {
-			switch stepMsg.Status {
-			case "started":
-				if stepMsg.StepName == "" {
-					ritualStarted++
-					if stepMsg.RitualName != "test-stream" {
-						t.Errorf("Expected ritual name 'test-stream', got %q", stepMsg.RitualName)
-					}
-				} else {
-					stepStarted++
-					if stepMsg.StepName != "echo" {
-						t.Errorf("Expected step name 'echo', got %q", stepMsg.StepName)
-					}
-					if stepMsg.RitualName != "test-stream" {
-						t.Errorf("Expected ritual name 'test-stream', got %q", stepMsg.RitualName)
-					}
+		stepMsg, ok := unwrapRitualStepMsg(msg)
+		if !ok {
+			continue
+		}
+		switch stepMsg.Status {
+		case "started":
+			if stepMsg.StepName == "" {
+				ritualStarted++
+				if stepMsg.RitualName != "test-stream" {
+					t.Errorf("Expected ritual name 'test-stream', got %q", stepMsg.RitualName)
 				}
-			case "completed":
-				completedCount++
-			case "ritual_completed":
-				ritualComplete++
+			} else {
+				stepStarted++
+				if stepMsg.StepName != "echo" {
+					t.Errorf("Expected step name 'echo', got %q", stepMsg.StepName)
+				}
+				if stepMsg.RitualName != "test-stream" {
+					t.Errorf("Expected ritual name 'test-stream', got %q", stepMsg.RitualName)
+				}
 			}
+		case "completed":
+			completedCount++
+		case "ritual_completed":
+			ritualComplete++
 		}
 	}
 
@@ -685,7 +687,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := msg.(RitualStepMsg); ok {
+		if stepMsg, ok := unwrapRitualStepMsg(msg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -740,7 +742,7 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := msg.(RitualStepMsg); ok {
+		if stepMsg, ok := unwrapRitualStepMsg(msg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -1380,7 +1382,7 @@ func TestBackgroundGiven(t *testing.T) {
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := msg.(RitualStepMsg); ok {
+		if stepMsg, ok := unwrapRitualStepMsg(msg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -1427,6 +1429,19 @@ func TestBackgroundGiven(t *testing.T) {
 	if cmdDone != 1 {
 		t.Errorf("expected 1 cmd_done message for background, got %d", cmdDone)
 	}
+}
+
+// unwrapRitualStepMsg extracts a RitualStepMsg from either a bare message or a TabbedMsg wrapper.
+func unwrapRitualStepMsg(msg any) (RitualStepMsg, bool) {
+	if stepMsg, ok := msg.(RitualStepMsg); ok {
+		return stepMsg, true
+	}
+	if tabbed, ok := msg.(TabbedMsg); ok {
+		if stepMsg, ok := tabbed.Msg.(RitualStepMsg); ok {
+			return stepMsg, true
+		}
+	}
+	return RitualStepMsg{}, false
 }
 
 // ritualTestMinister is a Minister that auto-completes tasks with a configured result.

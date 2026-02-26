@@ -59,7 +59,7 @@ type TUIModel struct {
 
 	// Shogunate integration
 	currentEdictID  string // Tracks current edict for multi-turn conversations
-	currentOriginID string // OriginID from last OriginMsg for stream routing
+	currentTabID string // TabID from last TabbedMsg for stream routing
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -222,7 +222,7 @@ func (m *TUIModel) initHistory() {
 
 // streamingChat returns the ChatComponent that should receive stream data
 func (m *TUIModel) streamingChat() *ChatComponent {
-	return m.tabs.StreamingChatByOrigin(m.currentOriginID)
+	return m.tabs.StreamingChatByTab(m.currentTabID)
 }
 
 // getCurrentSession returns the current shogunate session, or nil if not available
@@ -332,9 +332,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.commandLine.Update()
 
 	switch msg := msg.(type) {
-	case shogunate.OriginMsg:
-		// Unwrap origin-tagged message and re-dispatch with routing context
-		m.currentOriginID = msg.OriginID
+	case shogunate.TabbedMsg:
+		// Unwrap tab-tagged message and re-dispatch with routing context
+		m.currentTabID = msg.TabID
 		return m.Update(msg.Msg.(tea.Msg))
 
 	case tea.KeyMsg:
@@ -1082,7 +1082,7 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		Ctx:          ctx,
 		Message:      prompt,
 		EdictID:      m.currentEdictID,
-		OriginID:     tab.Target,
+		TabID:        tab.Target,
 		ContextFiles: contextFiles,
 	}
 
@@ -1571,7 +1571,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shogunate.StreamStartMsg:
 		// Streaming has started — capture edict ID for multi-turn
-		m.tabs.SetStreamingTab()
+		if m.currentTabID != "" {
+			m.tabs.SetStreamingTabByTab(m.currentTabID)
+		} else {
+			m.tabs.SetStreamingTab()
+		}
 		if msg.EdictID != "" {
 			m.currentEdictID = msg.EdictID
 			m.tabs.SetActiveEdictID(msg.EdictID)
@@ -1586,7 +1590,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat := m.streamingChat()
 		chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(chat.Messages))
-		m.stopStreaming()
+		if m.currentTabID != "" {
+			m.tabs.ClearStreamingByTab(m.currentTabID)
+		} else {
+			m.stopStreaming()
+		}
 
 		// Finalize the last AI message with success/failure prefix
 		isFailure := chat.FinalizeLastAIMessage()
@@ -1702,7 +1710,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shogunate.RitualStepMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.Ruling()
 		chat.AddToRawHistory("RITUAL_STEP",
 			fmt.Sprintf("Ritual %s step %s [%d/%d] %s",
 				msg.RitualName, msg.StepName, msg.StepIndex+1, msg.TotalSteps, msg.Status))

@@ -79,18 +79,44 @@ func (tm *TabManager) StreamingChat() *ChatComponent {
 	return tm.tabs[tm.activeTab].Content.Chat
 }
 
-// StreamingChatByOrigin returns the ChatComponent for a specific origin tab.
-// Matches by tab.Target == originID && tab.Streaming.
+// StreamingChatByTab returns the ChatComponent for a specific tab.
+// Matches by tab.Target == tabID && tab.Streaming.
 // Falls back to StreamingChat() if no match is found.
-func (tm *TabManager) StreamingChatByOrigin(originID string) *ChatComponent {
-	if originID != "" {
+func (tm *TabManager) StreamingChatByTab(tabID string) *ChatComponent {
+	if tabID != "" {
 		for i := range tm.tabs {
-			if tm.tabs[i].Target == originID && tm.tabs[i].Streaming {
+			if tm.tabs[i].Target == tabID && tm.tabs[i].Streaming {
 				return tm.tabs[i].Content.Chat
 			}
 		}
 	}
 	return tm.StreamingChat()
+}
+
+// Ruling returns the Ruling tab's ChatComponent (always index 0)
+func (tm *TabManager) Ruling() *ChatComponent {
+	return tm.tabs[0].Content.Chat
+}
+
+// SetStreamingTabByTab marks the tab with matching Target as streaming
+func (tm *TabManager) SetStreamingTabByTab(tabID string) {
+	for i := range tm.tabs {
+		if tm.tabs[i].Target == tabID {
+			tm.tabs[i].Streaming = true
+			return
+		}
+	}
+	tm.tabs[tm.activeTab].Streaming = true // fallback
+}
+
+// ClearStreamingByTab clears the streaming flag on the tab with matching Target
+func (tm *TabManager) ClearStreamingByTab(tabID string) {
+	for i := range tm.tabs {
+		if tm.tabs[i].Target == tabID {
+			tm.tabs[i].Streaming = false
+			return
+		}
+	}
 }
 
 // SwitchTo saves current tab state and switches to the target index

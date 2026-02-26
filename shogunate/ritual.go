@@ -528,6 +528,15 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		}
 	}
 
+	// Wrap notify to route all ritual output to the Ruling tab
+	var tabbedNotify internal.NotifyFunc
+	if notify != nil {
+		rawNotify := notify
+		tabbedNotify = func(msg any) {
+			rawNotify(TabbedMsg{TabID: "chancellor", Msg: msg})
+		}
+	}
+
 	// Create execution record
 	exec := &RitualExecution{
 		ID:          GenerateID("ritual", ritualName, edictID, time.Now().String()),
@@ -537,7 +546,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		State:       RitualStatePending,
 		Data:        storage.JSON{"inputs": inputs},
 		def:         def,
-		notify:      notify,
+		notify:      tabbedNotify,
 	}
 
 	// Initialize step states
@@ -939,6 +948,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		Scratchpad: scratchpad,
 		Session:    session,
 		Done:       doneChan,
+		Notify:     exec.notify, // Route minister output to Ruling tab
 	}
 
 	// Set up zhengming signal so we can pause the timeout
