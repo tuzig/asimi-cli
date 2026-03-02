@@ -440,16 +440,16 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 		t.Fatalf("LoadEmbeddedRituals() error = %v", err)
 	}
 
-	if len(rituals) != 7 {
+	if len(rituals) != 6 {
 		names := make([]string, len(rituals))
 		for i, r := range rituals {
 			names[i] = r.Name
 		}
-		t.Errorf("expected 7 embedded rituals, got %d: %v", len(rituals), names)
+		t.Errorf("expected 6 embedded rituals, got %d: %v", len(rituals), names)
 	}
 
 	// Check key rituals exist
-	var foundSwift, foundGrand, foundWakeup, foundOrchestration, foundReport, foundReview bool
+	var foundSwift, foundGrand, foundWakeup, foundReport, foundReview bool
 	for _, r := range rituals {
 		switch r.Name {
 		case "swift-strike":
@@ -522,8 +522,6 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 
 		case "wakeup":
 			foundWakeup = true
-		case "grand-orchestration":
-			foundOrchestration = true
 		case "report_failure":
 			foundReport = true
 		}
@@ -540,9 +538,6 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 	}
 	if !foundWakeup {
 		t.Error("wakeup ritual not found")
-	}
-	if !foundOrchestration {
-		t.Error("grand-orchestration ritual not found")
 	}
 	if !foundReport {
 		t.Error("report_failure ritual not found")
@@ -946,7 +941,7 @@ func TestRitualGotoPassesOutputAndError(t *testing.T) {
 		tasksCh:      judgeCh,
 	}
 	shog := &Shogunate{
-		ministers:      map[string]Minister{"forge": forgeM, "judge": judgeM},
+		ministers:     map[string]Minister{"forge": forgeM, "judge": judgeM},
 		eventRegistry: NewEventRegistry(),
 		eventCh:       make(chan Event, 256),
 		logger:        slog.Default(),
@@ -1048,7 +1043,7 @@ func TestRitualGotoSessionReuse(t *testing.T) {
 		tasksCh:      judgeCh,
 	}
 	shog := &Shogunate{
-		ministers:      map[string]Minister{"forge": forgeM, "judge": judgeM},
+		ministers:     map[string]Minister{"forge": forgeM, "judge": judgeM},
 		eventRegistry: NewEventRegistry(),
 		eventCh:       make(chan Event, 256),
 		logger:        slog.Default(),
@@ -1113,7 +1108,7 @@ func TestRitualGotoPreservesOutputOnFailure(t *testing.T) {
 		tasksCh:      forgeCh,
 	}
 	shog := &Shogunate{
-		ministers:      map[string]Minister{"forge": forgeM},
+		ministers:     map[string]Minister{"forge": forgeM},
 		eventRegistry: NewEventRegistry(),
 		eventCh:       make(chan Event, 256),
 		logger:        slog.Default(),
@@ -1327,7 +1322,7 @@ func TestLoadBuiltinRituals(t *testing.T) {
 		t.Fatalf("LoadBuiltinRituals() error = %v", err)
 	}
 
-	if len(rituals) != 7 {
+	if len(rituals) != 6 {
 		names := make([]string, len(rituals))
 		for i, r := range rituals {
 			names[i] = r.Name
@@ -1702,7 +1697,7 @@ func (m *zhengmingTestMinister) ID() string           { return m.id }
 func (m *zhengmingTestMinister) SystemPrompt() string { return "" }
 func (m *zhengmingTestMinister) Title() string        { return m.id }
 func (m *zhengmingTestMinister) Tools() []Tool        { return nil }
-func (m *zhengmingTestMinister) Tasks() chan<- *Task   { return m.tasksCh }
+func (m *zhengmingTestMinister) Tasks() chan<- *Task  { return m.tasksCh }
 func (m *zhengmingTestMinister) Run(ctx context.Context) {
 	for {
 		select {
@@ -1752,7 +1747,7 @@ func TestRitualZhengmingPausesTimeout(t *testing.T) {
 	go zm.Run(ctx)
 
 	shogunate := &Shogunate{
-		ministers:      ministers,
+		ministers:     ministers,
 		eventRegistry: NewEventRegistry(),
 		eventCh:       make(chan Event, 256),
 		logger:        slog.Default(),
@@ -1830,7 +1825,7 @@ func TestRitualTimeoutWithoutZhengming(t *testing.T) {
 	}()
 
 	shogunate := &Shogunate{
-		ministers:      ministers,
+		ministers:     ministers,
 		eventRegistry: NewEventRegistry(),
 		eventCh:       make(chan Event, 256),
 		logger:        slog.Default(),
@@ -2003,7 +1998,7 @@ func TestBuildWorkPrompt_GotoIncludesLaterSteps(t *testing.T) {
 		CurrentStep: 1,
 		stepStates: []RitualStepState{
 			{Name: "plan", Message: "the plan"},
-			{Name: "implement", Message: ""},           // current step, re-invoked
+			{Name: "implement", Message: ""},             // current step, re-invoked
 			{Name: "review", Message: "review feedback"}, // ran before goto
 		},
 	}
@@ -2025,9 +2020,9 @@ func TestExpandTemplate_GotoIncludesLaterSteps(t *testing.T) {
 		EdictID:     "edict-1",
 		CurrentStep: 0,
 		stepStates: []RitualStepState{
-			{Name: "plan", Message: ""},                   // current step
-			{Name: "implement", Message: "impl output"},   // ran before goto
-			{Name: "review", Message: "review output"},    // ran before goto
+			{Name: "plan", Message: ""},                 // current step
+			{Name: "implement", Message: "impl output"}, // ran before goto
+			{Name: "review", Message: "review output"},  // ran before goto
 		},
 	}
 

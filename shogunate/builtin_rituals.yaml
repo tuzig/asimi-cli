@@ -17,7 +17,7 @@
         - If there are no changes, Welcome the ruler
  
 - name: swift-strike
-  description: "The Swift Strike (S) - A tight loop of creation and validation"
+  description: "The Swift Strike - A tight loop of creation and validation for small changes"
   triggers:
     - manual: true
   inputs:
@@ -118,80 +118,14 @@
     - the earth status
     - the court status
   steps:
-    - name: start-brewing
+    - name: survey
       minister: chancellor
       on_failure: retry
       act: |
-        The Shogunate has awoken and you lead it in resolving open issues. 
+        The Shogunate is starting up.
         Start by reporting the current 三界 status.
         List any active edicts, rituals and manifests.
         Raise a zhengming when done, porosing to the ruler some paths forward
-
-- name: grand-orchestration
-  description: "Full lifecycle orchestration - strategize, forge, judge, censor, deploy"
-  triggers:
-    - manual: true
-  inputs:
-    edict_id:
-      type: string
-      required: true
-  max_retries: 3
-  background:
-    - the edict details
-  steps:
-    - name: strategist
-      minister: strategist
-      act: |
-        Produce a comprehensive Battle Plan for edict {{ .edict_id }}.
-        Decompose into lings with dependencies.
-      on_failure: zhengming
-
-    - name: forge
-      minister: forge
-      given:
-        - the manifests
-      act: |
-        Execute all lings for edict {{ .edict_id }}.
-        Implement each change and stage manifests.
-      depends_on: [strategist]
-      on_failure: retry
-
-    - name: judge
-      minister: judge
-      given:
-        - the manifests
-      act: |
-        Run the full trial suite for edict {{ .edict_id }}.
-      then:
-        - "!just test"
-      depends_on: [forge]
-      on_failure: goto
-      on_failure_target: forge
-
-    - name: censor
-      minister: censor
-      given:
-        - the manifests
-        - the verdicts
-      act: |
-        Full ethics and standards review for edict {{ .edict_id }}.
-      depends_on: [judge]
-      on_failure: goto
-      on_failure_target: strategist
-
-    - name: deploy
-      minister: marshal
-      given:
-        - the manifests
-        - the verdicts
-        - the precedents
-      act: |
-        Prepare deployment for edict {{ .edict_id }}.
-        Verify all seals are in place before proceeding.
-      depends_on: [censor]
-      on_failure: zhengming
-  then:
-    - the edict is sealed
 
 - name: review
   description: |
