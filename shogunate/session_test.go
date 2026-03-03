@@ -144,7 +144,7 @@ func TestNewSession(t *testing.T) {
 		},
 	}
 
-	sess, err := NewSession(llm, cfg, nil, nil, func(any) {}, "You are a test assistant")
+	sess, err := NewSession(llm, cfg, nil, nil, func(any) {}, "You are a test assistant", "")
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, sess.ID)
@@ -159,7 +159,7 @@ func TestNewSession(t *testing.T) {
 func TestNewSession_DefaultMaxTurns(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, nil, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, nil, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	assert.Equal(t, 999, sess.config.MaxTurns)
@@ -172,7 +172,7 @@ func TestNewSession_WithTools(t *testing.T) {
 		&mockTool{name: "test_tool", output: "tool output"},
 	}
 
-	sess, err := NewSession(&mockLLMNoTools{}, nil, tools, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, nil, tools, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	assert.Len(t, sess.toolDefs, 1)
@@ -184,7 +184,7 @@ func TestSession_AskWithStreaming_NoTools(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLMNoTools{}
-	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "say hi", nil)
@@ -196,7 +196,7 @@ func TestSession_AskWithStreaming_WithResponse(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLM{response: "Hello from the model"}
-	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "say hello", nil)
@@ -215,7 +215,7 @@ func TestSession_AskWithStreaming_StreamsChunks(t *testing.T) {
 		}
 	}
 
-	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, notify, "")
+	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, notify, "", "")
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "stream test", nil)
@@ -239,7 +239,7 @@ func TestSession_AskWithStreaming_WithToolExecution(t *testing.T) {
 		}},
 	}
 
-	sess, err := NewSession(llm, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "")
+	sess, err := NewSession(llm, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "read test.txt", nil)
@@ -253,7 +253,7 @@ func TestSession_AskWithStreaming_WithContextFiles(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLM{response: "I see the context"}
-	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	contextFiles := map[string]string{
@@ -282,7 +282,7 @@ func TestSession_AskWithStreaming_WithContextFiles(t *testing.T) {
 func TestSession_SanitizeMessages_RemovesUnmatchedToolCalls(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	// Add a user message
@@ -316,7 +316,7 @@ func TestSession_SanitizeMessages_RemovesUnmatchedToolCalls(t *testing.T) {
 func TestSession_SanitizeMessages_KeepsMatchedToolCalls(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	// Add user message
@@ -367,7 +367,7 @@ func TestSession_SanitizeMessages_DisabledByConfig(t *testing.T) {
 			DisableContextSanitization: true,
 		},
 	}
-	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	// Add unmatched tool call
@@ -395,7 +395,7 @@ func TestSession_SanitizeMessages_DisabledByConfig(t *testing.T) {
 func TestSession_CheckToolCallLoop(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	args := `{"path":"test.txt"}`
@@ -416,7 +416,7 @@ func TestSession_CheckToolCallLoop(t *testing.T) {
 func TestSession_CheckToolCallLoop_DifferentCalls(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	// Different calls should reset the counter
@@ -431,7 +431,7 @@ func TestSession_CheckToolCallLoop_DifferentCalls(t *testing.T) {
 func TestSession_RegisterShogunateTools(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	initialToolCount := len(sess.toolDefs)
@@ -450,7 +450,7 @@ func TestSession_RegisterShogunateTools(t *testing.T) {
 func TestSession_Messages(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system prompt")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system prompt", "")
 	require.NoError(t, err)
 
 	messages := sess.Messages()
@@ -461,7 +461,7 @@ func TestSession_Messages(t *testing.T) {
 func TestSession_AddMessage(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	initialLen := len(sess.messages)
@@ -515,7 +515,7 @@ func TestCoreToolScheduler_Schedule(t *testing.T) {
 func TestSession_StreamBufferMethods(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	// Initially empty
@@ -534,7 +534,7 @@ func TestSession_StreamBufferMethods(t *testing.T) {
 func TestSession_ProcessToolCalls_UnknownTool(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	toolCalls := []llms.ToolCall{{
@@ -559,7 +559,7 @@ func TestSession_ProcessToolCalls_UnknownTool(t *testing.T) {
 func TestSession_ProcessToolCalls_ContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	// Create cancelled context
@@ -590,7 +590,7 @@ func TestSession_ProcessToolCalls_ContextCancellation(t *testing.T) {
 func TestSession_AddTools(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	tools := []Tool{&mockTool{name: "added_tool"}}
@@ -605,7 +605,7 @@ func TestSession_SetNotify_UpdatesScheduler(t *testing.T) {
 	t.Parallel()
 
 	// Create session with nil notify
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, nil, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, nil, "", "")
 	require.NoError(t, err)
 
 	// Verify both start as nil
@@ -655,7 +655,7 @@ func TestSession_ToolCallNotifications(t *testing.T) {
 	}
 
 	// Create session with the notify function
-	sess, err := NewSession(mockLLM, &SessionConfig{}, []Tool{tool}, nil, notify, "")
+	sess, err := NewSession(mockLLM, &SessionConfig{}, []Tool{tool}, nil, notify, "", "")
 	require.NoError(t, err)
 
 	// Execute a prompt that triggers tool use
@@ -808,7 +808,7 @@ func TestHasToolCallResponse_NonToolMessage(t *testing.T) {
 func TestSession_SanitizeMessages_EmptyMessages(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	sess.messages = []llms.MessageContent{}
@@ -819,7 +819,7 @@ func TestSession_SanitizeMessages_EmptyMessages(t *testing.T) {
 func TestSession_SanitizeMessages_OrphanToolResponse(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	// Add orphan tool response without prior AI message
@@ -844,7 +844,7 @@ func TestSession_SanitizeMessages_OrphanToolResponse(t *testing.T) {
 func TestSession_SanitizeMessages_ToolResponseWithMismatchedID(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	// Add AI message with tool call
@@ -881,7 +881,7 @@ func TestSession_SanitizeMessages_ToolResponseWithMismatchedID(t *testing.T) {
 func TestSession_SanitizeMessages_ToolResponseWithEmptyID(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	// Add AI message with tool call
@@ -918,7 +918,7 @@ func TestSession_SanitizeMessages_ToolResponseWithEmptyID(t *testing.T) {
 func TestSession_AppendMessage_NilChoice(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	initialLen := len(sess.messages)
@@ -931,7 +931,7 @@ func TestSession_AppendMessage_NilChoice(t *testing.T) {
 func TestSession_AppendMessage_EmptyContent(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	initialLen := len(sess.messages)
@@ -944,7 +944,7 @@ func TestSession_AppendMessage_EmptyContent(t *testing.T) {
 func TestSession_AppendMessage_WithToolCalls(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	initialLen := len(sess.messages)
@@ -967,7 +967,7 @@ func TestSession_AppendMessage_WithToolCalls(t *testing.T) {
 func TestSession_AppendMessage_SkipsEmptyToolCalls(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	initialLen := len(sess.messages)
@@ -990,7 +990,7 @@ func TestNewSession_WithProvidedScheduler(t *testing.T) {
 	t.Parallel()
 
 	customScheduler := runners.NewCoreToolScheduler(func(any) {})
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, customScheduler, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, customScheduler, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	assert.Equal(t, customScheduler, sess.scheduler)
@@ -1013,7 +1013,7 @@ func TestSession_AskWithStreaming_LLMError(t *testing.T) {
 		}
 	}
 
-	sess, err := NewSession(&mockLLMError{}, &SessionConfig{}, nil, nil, notify, "")
+	sess, err := NewSession(&mockLLMError{}, &SessionConfig{}, nil, nil, notify, "", "")
 	require.NoError(t, err)
 
 	_, err = sess.AskWithStreaming(context.Background(), "test", nil)
@@ -1031,7 +1031,7 @@ func (m *mockLLMEmpty) GenerateContent(ctx context.Context, messages []llms.Mess
 func TestSession_GenerateLLMResponse_EmptyChoices(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMEmpty{}, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMEmpty{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	sess.messages = append(sess.messages, llms.MessageContent{
@@ -1054,7 +1054,7 @@ func TestSession_AskWithStreaming_Cancellation(t *testing.T) {
 		}
 	}
 
-	sess, err := NewSession(&mockLLM{response: "long response"}, &SessionConfig{}, nil, nil, notify, "")
+	sess, err := NewSession(&mockLLM{response: "long response"}, &SessionConfig{}, nil, nil, notify, "", "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1094,7 +1094,7 @@ func TestSession_AskWithStreaming_MaxTokens(t *testing.T) {
 		}
 	}
 
-	sess, err := NewSession(&mockLLMMaxTokens{}, &SessionConfig{}, nil, nil, notify, "")
+	sess, err := NewSession(&mockLLMMaxTokens{}, &SessionConfig{}, nil, nil, notify, "", "")
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "test", nil)
@@ -1136,7 +1136,7 @@ func TestSession_AskWithStreaming_ErrorStopReason(t *testing.T) {
 				}
 			}
 
-			sess, err := NewSession(&mockLLMErrorStopReason{stopReason: stopReason}, &SessionConfig{}, nil, nil, notify, "")
+			sess, err := NewSession(&mockLLMErrorStopReason{stopReason: stopReason}, &SessionConfig{}, nil, nil, notify, "", "")
 			require.NoError(t, err)
 
 			out, err := sess.AskWithStreaming(context.Background(), "test", nil)
@@ -1152,7 +1152,7 @@ func TestSession_ProcessToolCalls_LoopDetected(t *testing.T) {
 	t.Parallel()
 
 	tool := &mockTool{name: "loop_tool", output: "result"}
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	toolCall := llms.ToolCall{
@@ -1178,7 +1178,7 @@ func TestSession_ProcessToolCalls_LoopDetected(t *testing.T) {
 func TestSession_ProcessToolCalls_SkipsEmptyName(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	toolCalls := []llms.ToolCall{
@@ -1206,7 +1206,7 @@ func TestSession_ExecuteToolCall_WithScheduler(t *testing.T) {
 	tool := &mockTool{name: "scheduled_tool", output: "scheduled result"}
 	scheduler := runners.NewCoreToolScheduler(func(any) {})
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, scheduler, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, scheduler, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	tc := llms.ToolCall{
@@ -1226,7 +1226,7 @@ func TestSession_ExecuteToolCall_WithoutScheduler(t *testing.T) {
 
 	tool := &mockTool{name: "direct_tool", output: "direct result"}
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 	sess.scheduler = nil // Force no scheduler
 
@@ -1262,7 +1262,7 @@ func TestSession_ExecuteToolCall_Error(t *testing.T) {
 
 	tool := &mockToolError{name: "error_tool"}
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 	sess.scheduler = nil
 
@@ -1357,7 +1357,7 @@ func TestSession_AskWithStreaming_RepeatingResponse(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLMRepeating{}
-	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "test", nil)
@@ -1404,7 +1404,7 @@ func TestSession_AskWithStreaming_MultiTurnToolExecution(t *testing.T) {
 
 	tool := &mockTool{name: "test_tool", output: "tool output"}
 	llm := &mockLLMMultiTurn{}
-	sess, err := NewSession(llm, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "")
+	sess, err := NewSession(llm, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "test", nil)
@@ -1418,7 +1418,7 @@ func TestSession_AskWithStreaming_NoNotify(t *testing.T) {
 	t.Parallel()
 
 	llm := &mockLLM{response: "response"}
-	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, nil, "") // nil notify
+	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, nil, "", "") // nil notify
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "test", nil)
@@ -1429,7 +1429,7 @@ func TestSession_AskWithStreaming_NoNotify(t *testing.T) {
 func TestSession_SanitizeMessages_ToolResponseAtIndexZero(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	// Start with only a tool response (no prior messages)
@@ -1449,7 +1449,7 @@ func TestSession_SanitizeMessages_ToolResponseAtIndexZero(t *testing.T) {
 func TestSession_SanitizeMessages_ToolResponseAfterNonAIMessage(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	// Add human message then tool response (no AI message in between)
@@ -1473,7 +1473,7 @@ func TestSession_SanitizeMessages_ToolResponseAfterNonAIMessage(t *testing.T) {
 func TestSession_SanitizeMessages_AIMessageWithNoToolCalls(t *testing.T) {
 	t.Parallel()
 
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	// Add AI message with only text (no tool calls)
@@ -1486,6 +1486,65 @@ func TestSession_SanitizeMessages_AIMessageWithNoToolCalls(t *testing.T) {
 	sess.SanitizeMessages()
 
 	// Should keep the message (no unmatched tool calls)
+	assert.Equal(t, initialLen, len(sess.messages))
+}
+
+func TestSession_SanitizeMessages_KeepsSecondToolCallResult(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	// Human message
+	sess.messages = append(sess.messages, llms.MessageContent{
+		Role:  llms.ChatMessageTypeHuman,
+		Parts: []llms.ContentPart{llms.TextContent{Text: "run ritual"}},
+	})
+
+	// First AI tool call
+	sess.messages = append(sess.messages, llms.MessageContent{
+		Role: llms.ChatMessageTypeAI,
+		Parts: []llms.ContentPart{
+			llms.TextContent{Text: "Enacting ritual:"},
+			llms.ToolCall{
+				ID: "tc1", Type: "function",
+				FunctionCall: &llms.FunctionCall{Name: "enact_ritual", Arguments: "{}"},
+			},
+		},
+	})
+
+	// First tool result (failed)
+	sess.messages = append(sess.messages, llms.MessageContent{
+		Role: llms.ChatMessageTypeTool,
+		Parts: []llms.ContentPart{
+			llms.ToolCallResponse{ToolCallID: "tc1", Name: "enact_ritual", Content: `{"status":"failed"}`},
+		},
+	})
+
+	// Second AI tool call (retry)
+	sess.messages = append(sess.messages, llms.MessageContent{
+		Role: llms.ChatMessageTypeAI,
+		Parts: []llms.ContentPart{
+			llms.TextContent{Text: "Retrying:"},
+			llms.ToolCall{
+				ID: "tc2", Type: "function",
+				FunctionCall: &llms.FunctionCall{Name: "enact_ritual", Arguments: "{}"},
+			},
+		},
+	})
+
+	// Second tool result (completed) — this MUST survive sanitization
+	sess.messages = append(sess.messages, llms.MessageContent{
+		Role: llms.ChatMessageTypeTool,
+		Parts: []llms.ContentPart{
+			llms.ToolCallResponse{ToolCallID: "tc2", Name: "enact_ritual", Content: `{"status":"completed"}`},
+		},
+	})
+
+	initialLen := len(sess.messages)
+	sess.SanitizeMessages()
+
+	// All messages should be preserved — the second result must not be stripped
 	assert.Equal(t, initialLen, len(sess.messages))
 }
 
@@ -1517,7 +1576,7 @@ func TestSession_AskWithStreaming_CancelDuringStreaming(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	llm := &mockLLMCancelDuringStream{cancel: cancel}
 
-	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(llm, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	_, err = sess.AskWithStreaming(ctx, "test", nil)
@@ -1554,7 +1613,7 @@ func TestSession_AskWithStreaming_AfterToolCall_NoMoreToolMessages(t *testing.T)
 	t.Parallel()
 
 	// This tests the path where tool calls are skipped due to nil/empty FunctionCall
-	sess, err := NewSession(&mockLLMSkippedToolCalls{}, &SessionConfig{}, nil, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMSkippedToolCalls{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	out, err := sess.AskWithStreaming(context.Background(), "test", nil)
@@ -1567,7 +1626,7 @@ func TestSession_ProcessToolCalls_MultipleToolsOneAborted(t *testing.T) {
 	t.Parallel()
 
 	tool := &mockTool{name: "test_tool", output: "result"}
-	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "")
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	// Create context that we'll cancel
@@ -1599,7 +1658,7 @@ func TestSession_GetContextInfo_Anthropic(t *testing.T) {
 		},
 	}
 
-	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "You are a helpful assistant")
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "You are a helpful assistant", "")
 	require.NoError(t, err)
 
 	info := sess.GetContextInfo()
@@ -1624,7 +1683,7 @@ func TestSession_GetContextInfo_OpenAI(t *testing.T) {
 		},
 	}
 
-	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "You are a helpful assistant")
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "You are a helpful assistant", "")
 	require.NoError(t, err)
 
 	info := sess.GetContextInfo()
@@ -1645,7 +1704,7 @@ func TestSession_GetContextInfo_WithContextFiles(t *testing.T) {
 		},
 	}
 
-	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "system prompt")
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "system prompt", "")
 	require.NoError(t, err)
 
 	infoBefore := sess.GetContextInfo()
@@ -1670,7 +1729,7 @@ func TestSession_GetContextInfo_UnknownModel(t *testing.T) {
 		},
 	}
 
-	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "system")
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, nil, nil, func(any) {}, "system", "")
 	require.NoError(t, err)
 
 	info := sess.GetContextInfo()

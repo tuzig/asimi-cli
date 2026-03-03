@@ -53,12 +53,6 @@ type Prompt struct {
 	ContextFiles map[string]string // Files loaded via @ references
 }
 
-// TabbedMsg wraps a message with its target tab ID for stream routing
-type TabbedMsg struct {
-	TabID string
-	Msg   any
-}
-
 // Task carries work from Chancellor to a Minister
 type Task struct {
 	Ctx        context.Context    // Per-task cancellation (e.g. CTRL-C)
@@ -189,7 +183,7 @@ type ZhengmingAnsweredMsg struct {
 }
 
 // StreamDoneMsg signals that streaming has completed
-type StreamDoneMsg struct{}
+type StreamDoneMsg struct{ TabID string }
 
 // MinisterBase provides shared functionality for all ministers.
 // Ministers embed this struct to gain database access and session creation capabilities.
@@ -256,25 +250,26 @@ func (m *MinisterBase) Scratchpad() string {
 // CreateSessionOpts holds optional parameters for CreateSession.
 type CreateSessionOpts struct {
 	EdictID    string
+	TabID      string
 	Scratchpad string // Pre-formatted markdown context from ritual
 }
 
 // CreateSession creates a session for a minister with composed system prompt.
 // The system prompt is built from the shared template with the minister's role injected.
 // edictID is optional — when provided, it's included in the scratchpad context.
-func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, edictID ...string) (*Session, error) {
+func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, tabID string, edictID ...string) (*Session, error) {
 	eid := ""
 	if len(edictID) > 0 {
 		eid = edictID[0]
 	}
 	systemPrompt := buildSystemPrompt(minister, config, eid)
-	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt)
+	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, tabID)
 }
 
 // CreateSessionWithOpts creates a session with extended options including given context.
 func CreateSessionWithOpts(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
 	systemPrompt := buildSystemPrompt(minister, config, opts.EdictID, opts.Scratchpad)
-	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt)
+	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, opts.TabID)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template

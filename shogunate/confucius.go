@@ -118,37 +118,27 @@ func (c *Confucius) Run(ctx context.Context) {
 
 func (c *Confucius) processPrompt(ctx context.Context, prompt *Prompt) {
 	if c.model == nil {
-		if c.notify != nil {
-			c.notify(StreamErrorMsg{Err: fmt.Errorf("LLM not configured")})
-		}
+		c.notify(StreamErrorMsg{TabID: "confucius", Err: fmt.Errorf("LLM not configured")})
 		return
 	}
 
 	if c.session == nil {
 		var err error
-		c.session, err = CreateSession(c, c.model, c.config, c.notify, prompt.EdictID)
+		c.session, err = CreateSession(c, c.model, c.config, c.notify, "confucius", prompt.EdictID)
 		if err != nil {
-			if c.notify != nil {
-				c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})
-			}
+			c.notify(StreamErrorMsg{TabID: "confucius", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
 	}
 
-	if c.notify != nil {
-		c.notify(StreamStartMsg{EdictID: "confucius"})
-	}
+	c.notify(StreamStartMsg{TabID: "confucius", EdictID: "confucius"})
 
 	_, err := c.session.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
 	if err != nil && ctx.Err() == nil {
-		if c.notify != nil {
-			c.notify(StreamErrorMsg{Err: err})
-		}
+		c.notify(StreamErrorMsg{TabID: "confucius", Err: err})
 		return
 	}
-	if c.notify != nil {
-		c.notify(StreamDoneMsg{})
-	}
+	c.notify(StreamDoneMsg{TabID: "confucius"})
 }
 
 func (c *Confucius) processTask(ctx context.Context, task *Task) {

@@ -93,6 +93,19 @@ func (tm *TabManager) StreamingChatByTab(tabID string) *ChatComponent {
 	return tm.StreamingChat()
 }
 
+// ChatByTab returns the ChatComponent for the tab matching target.
+// Falls back to active tab if no match.
+func (tm *TabManager) ChatByTab(tabID string) *ChatComponent {
+	if tabID != "" {
+		for i := range tm.tabs {
+			if tm.tabs[i].Target == tabID {
+				return tm.tabs[i].Content.Chat
+			}
+		}
+	}
+	return tm.tabs[tm.activeTab].Content.Chat
+}
+
 // Ruling returns the Ruling tab's ChatComponent (always index 0)
 func (tm *TabManager) Ruling() *ChatComponent {
 	return tm.tabs[0].Content.Chat

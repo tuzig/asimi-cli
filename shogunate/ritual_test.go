@@ -612,7 +612,7 @@ func TestRitualStreamMessages(t *testing.T) {
 	)
 
 	for _, msg := range messages {
-		stepMsg, ok := unwrapRitualStepMsg(msg)
+		stepMsg, ok := msg.(RitualStepMsg)
 		if !ok {
 			continue
 		}
@@ -682,7 +682,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := unwrapRitualStepMsg(msg); ok {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -737,7 +737,7 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := unwrapRitualStepMsg(msg); ok {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -1377,7 +1377,7 @@ func TestBackgroundGiven(t *testing.T) {
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
-		if stepMsg, ok := unwrapRitualStepMsg(msg); ok {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
 			messages = append(messages, stepMsg)
 		}
 	}
@@ -1424,19 +1424,6 @@ func TestBackgroundGiven(t *testing.T) {
 	if cmdDone != 1 {
 		t.Errorf("expected 1 cmd_done message for background, got %d", cmdDone)
 	}
-}
-
-// unwrapRitualStepMsg extracts a RitualStepMsg from either a bare message or a TabbedMsg wrapper.
-func unwrapRitualStepMsg(msg any) (RitualStepMsg, bool) {
-	if stepMsg, ok := msg.(RitualStepMsg); ok {
-		return stepMsg, true
-	}
-	if tabbed, ok := msg.(TabbedMsg); ok {
-		if stepMsg, ok := tabbed.Msg.(RitualStepMsg); ok {
-			return stepMsg, true
-		}
-	}
-	return RitualStepMsg{}, false
 }
 
 // ritualTestMinister is a Minister that auto-completes tasks with a configured result.

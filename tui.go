@@ -59,7 +59,6 @@ type TUIModel struct {
 
 	// Shogunate integration
 	currentEdictID string // Tracks current edict for multi-turn conversations
-	currentTabID   string // TabID from last TabbedMsg for stream routing
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -220,11 +219,6 @@ func (m *TUIModel) initHistory() {
 	}
 }
 
-// streamingChat returns the ChatComponent that should receive stream data
-func (m *TUIModel) streamingChat() *ChatComponent {
-	return m.tabs.StreamingChatByTab(m.currentTabID)
-}
-
 // getCurrentSession returns the current shogunate session, or nil if not available
 func (m *TUIModel) getCurrentSession() *shogunate.Session {
 	if m.shogunate != nil && m.currentEdictID != "" {
@@ -332,11 +326,6 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.commandLine.Update()
 
 	switch msg := msg.(type) {
-	case shogunate.TabbedMsg:
-		// Unwrap tab-tagged message and re-dispatch with routing context
-		m.currentTabID = msg.TabID
-		return m.Update(msg.Msg.(tea.Msg))
-
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 
@@ -1530,7 +1519,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case responseMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.Content().Chat
 		chat.AddToRawHistory("AI_RESPONSE", string(msg))
 		m.stopStreaming()
 		// Use AddAIChunk for non-streaming AI responses
@@ -1539,62 +1528,55 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repoInfo.RefreshDiff()
 
 	case runners.ToolCallScheduledMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
 		chat.HandleToolCallScheduled(msg)
 
 	case runners.ToolCallExecutingMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
 		chat.HandleToolCallExecuting(msg)
 
 	case runners.ToolCallSuccessMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
 		chat.HandleToolCallSuccess(msg)
 		m.repoInfo.RefreshDiff()
 
 	case runners.ToolCallErrorMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
 		chat.HandleToolCallError(msg)
 
 	case runners.ToolCallAbortedMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("TOOL_ABORTED", fmt.Sprintf("%s\nInput: %s\nReason: sandbox restarted", msg.Call.Tool.Name(), msg.Call.Input))
 		chat.HandleToolCallAborted(msg)
 
 	case errMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.Content().Chat
 		chat.AddToRawHistory("ERROR", fmt.Sprintf("%v", msg.err))
 		chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 
 	case shogunate.StreamStartMsg:
 		// Streaming has started — capture edict ID for multi-turn
-		if m.currentTabID != "" {
-			m.tabs.SetStreamingTabByTab(m.currentTabID)
-		} else {
-			m.tabs.SetStreamingTab()
-		}
+		m.tabs.SetStreamingTabByTab(msg.TabID)
 		if msg.EdictID != "" {
 			m.currentEdictID = msg.EdictID
 			m.tabs.SetActiveEdictID(msg.EdictID)
 		}
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("STREAM_START", "AI streaming response started")
 		slog.Debug("streamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
 		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
 
 	case shogunate.StreamCompleteMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(chat.Messages))
-		if m.currentTabID != "" {
-			m.tabs.ClearStreamingByTab(m.currentTabID)
-		} else {
-			m.stopStreaming()
-		}
+		m.tabs.ClearStreamingByTab(msg.TabID)
+		m.stopWaitingForResponse()
 
 		// Finalize the last AI message with success/failure prefix
 		isFailure := chat.FinalizeLastAIMessage()
@@ -1617,7 +1599,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shogunate.StreamInterruptedMsg:
 		// Streaming was interrupted by user
-		m.streamingChat().AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
+		m.tabs.ChatByTab(msg.TabID).AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
 		m.stopStreaming()
 		m.streamCompleteCallback = nil // Clear callback on interrupt
@@ -1625,7 +1607,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shogunate.StreamErrorMsg:
 		fullError := fmt.Sprintf("Model Error: %v", msg.Err)
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.Err))
 		slog.Error("shogunate.StreamErrorMsg", "error", msg.Err)
 		// Add full error message to chat for visibility
@@ -1648,7 +1630,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		*/
 	case shogunate.StreamMaxTokensReachedMsg:
 		// Max tokens reached, mark session as inactive and show warning
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.Content))
 		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.Content))
 		chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
@@ -1658,8 +1640,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Shogunate streaming message handlers
 	case shogunate.StreamChunkMsg:
-		// Handle text chunks from Shogunate — route to streaming tab
-		chat := m.streamingChat()
+		// Handle text chunks from Shogunate — route to correct tab
+		chat := m.tabs.ChatByTab(msg.TabID)
 		m.status.AddStreamChars(len(msg.Text))
 		chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
 		if m.streamingActive {
@@ -1674,15 +1656,15 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shogunate.StreamReasoningChunkMsg:
-		// Handle thinking/reasoning chunks from Shogunate — route to streaming tab
-		chat := m.streamingChat()
+		// Handle thinking/reasoning chunks from Shogunate — route to correct tab
+		chat := m.tabs.ChatByTab(msg.TabID)
 		m.status.AddStreamChars(len(msg.Text))
 		chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
 		chat.AddThinkingChunk(msg.Text)
 		return m, nil
 
 	case shogunate.MinisterInvokingMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("MINISTER_INVOKING",
 			fmt.Sprintf("Minister %s invoked for edict %s", msg.MinisterID, msg.EdictID))
 		chat.Indent++
@@ -1694,7 +1676,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shogunate.MinisterCompletedMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		if msg.Error != nil {
 			chat.AddToRawHistory("MINISTER_FAILED",
 				fmt.Sprintf("Minister %s failed: %v", msg.MinisterID, msg.Error))
@@ -1710,7 +1692,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shogunate.RitualStepMsg:
-		chat := m.tabs.Ruling()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("RITUAL_STEP",
 			fmt.Sprintf("Ritual %s step %s [%d/%d] %s",
 				msg.RitualName, msg.StepName, msg.StepIndex+1, msg.TotalSteps, msg.Status))
@@ -1744,13 +1726,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shogunate.StreamDoneMsg:
-		// TODO: old handling, descided what to do with the message
-		// chat := m.streamingChat()
-		// chat.Indent = 0
 		return m, nil
 
 	case shogunate.EventsDrainedMsg:
-		chat := m.streamingChat()
+		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddMessage(fmt.Sprintf("%sRecovered %d event(s) from previous session:", systemPrefix, len(msg.Events)))
 		for _, ev := range msg.Events {
 			detail := fmt.Sprintf("%s  %s", systemPrefix, ev.EventType)
@@ -2600,7 +2579,10 @@ func (m TUIModel) View() string {
 
 	// Update prompt dimensions based on content before rendering
 	// This ensures the prompt grows to 10 lines when multiline (#31)
+	// SetWidth ensures the active tab's prompt matches the terminal width
+	// (prompts are per-tab, but only the active one is sized on WindowSizeMsg)
 	m.prompt().SetScreenHeight(m.height)
+	m.prompt().SetWidth(m.width - 2)
 	promptHeight := m.prompt().CalculateDesiredHeight()
 	m.prompt().SetHeight(promptHeight)
 

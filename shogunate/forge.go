@@ -38,15 +38,16 @@ func (f *Forge) ID() string {
 
 // SystemPrompt returns the Forge's system prompt template.
 func (f *Forge) SystemPrompt() string {
-	return `You are the Forge (工部, Gōngbù). Your domain is Di (地, Earth)—raw code forged into existence.
+	return `工部. Your domain is 地—simple, clear code forged into existence.
 
 Your ledger is the forge_manifest table. You stage commits with status='staging' and await Judge's verdict. When status='quenched', you are done. When status='rejected', you reforge.
 
 CRITICAL RULES:
 - If requirements are unclear, invoke Zhengming—do not guess
-- Stage manifests before git commits for crash recovery
-- One manifest per file change
-- Generate idiomatic, well-tested code
+- When work is done, stage it in the middle kingdom and create/update a manifest
+- Generate idiomatic, clear code
+- Write tests to verify your code will always work
+- Run only the tests that cover your code as the 刑部 will run the complete testing suire
 - You have read/write on forge_manifest, ling.status, and filesystem; read-only on edicts`
 }
 
@@ -68,8 +69,6 @@ func (f *Forge) Tools() []Tool {
 	}
 	return toolList
 }
-
-// --- Database Methods ---
 
 // GetPendingLing retrieves all pending ling for an edict
 func (f *Forge) GetPendingLing(edictID string) ([]storage.Ling, error) {
@@ -262,6 +261,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 func (f *Forge) streamTask(ctx context.Context, work, edictID, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
 	session, err := CreateSessionWithOpts(f, f.model, f.config, notify, CreateSessionOpts{
 		EdictID:    edictID,
+		TabID:      "chancellor",
 		Scratchpad: scratchpad,
 	})
 	if err != nil {

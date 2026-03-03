@@ -218,7 +218,7 @@ func (c *Censor) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, er
 	}
 
 	// Create a session for the review
-	session, err := CreateSession(c, c.model, c.config, c.notify)
+	session, err := CreateSession(c, c.model, c.config, c.notify, "chancellor")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create censor session: %w", err)
 	}

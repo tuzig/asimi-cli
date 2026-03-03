@@ -87,6 +87,7 @@ type DrainedEvent struct {
 
 // EventsDrainedMsg notifies the TUI that crash-recovery drained events from the DB.
 type EventsDrainedMsg struct {
+	TabID  string
 	Events []DrainedEvent
 }
 

@@ -95,6 +95,7 @@ type InvokeMinisterTool struct {
 
 // MinisterInvokingMsg notifies the user that a minister is being invoked
 type MinisterInvokingMsg struct {
+	TabID      string
 	MinisterID string
 	EdictID    string
 	Task       string
@@ -102,6 +103,7 @@ type MinisterInvokingMsg struct {
 
 // MinisterCompletedMsg notifies the user that a minister completed its task
 type MinisterCompletedMsg struct {
+	TabID      string
 	MinisterID string
 	EdictID    string
 	Output     string
@@ -148,6 +150,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	// Notify: invoking
 	if t.chancellor.notify != nil {
 		t.chancellor.notify(MinisterInvokingMsg{
+			TabID:      "chancellor",
 			MinisterID: params.MinisterID,
 			EdictID:    params.EdictID,
 			Task:       params.Work,
@@ -160,6 +163,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		err := fmt.Errorf("minister not found: %s", params.MinisterID)
 		if t.chancellor.notify != nil {
 			t.chancellor.notify(MinisterCompletedMsg{
+				TabID:      "chancellor",
 				MinisterID: params.MinisterID,
 				EdictID:    params.EdictID,
 				Error:      err,
@@ -198,6 +202,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		err := fmt.Errorf("minister %s timeout after %v", params.MinisterID, timeout)
 		if t.chancellor.notify != nil {
 			t.chancellor.notify(MinisterCompletedMsg{
+				TabID:      "chancellor",
 				MinisterID: params.MinisterID,
 				EdictID:    params.EdictID,
 				Error:      err,
@@ -212,6 +217,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		// Notify: failed
 		if t.chancellor.notify != nil {
 			t.chancellor.notify(MinisterCompletedMsg{
+				TabID:      "chancellor",
 				MinisterID: params.MinisterID,
 				EdictID:    params.EdictID,
 				Error:      result.Err,
@@ -227,6 +233,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	// Notify: completed
 	if t.chancellor.notify != nil {
 		t.chancellor.notify(MinisterCompletedMsg{
+			TabID:      "chancellor",
 			MinisterID: params.MinisterID,
 			EdictID:    params.EdictID,
 			Output:     params.Work,
@@ -339,6 +346,29 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	// Check edict status - don't start rituals on sealed/cancelled edicts
+	/*
+		if t.chancellor.db != nil {
+			var edict storage.Edict
+			if err := t.chancellor.db.Where("edict_id = ?", params.EdictID).First(&edict).Error; err == nil {
+				if edict.Status == storage.EdictSealed || edict.Status == storage.EdictCancelled {
+					result := map[string]any{
+						"status":      "rejected",
+						"ritual_name": params.RitualName,
+						"edict_id":    params.EdictID,
+						"reason":      fmt.Sprintf("edict is already %s", edict.Status),
+					}
+					resultJSON, _ := json.Marshal(result)
+					logger.Warn("ritual rejected: edict already terminal",
+						"edict_id", params.EdictID,
+						"edict_status", edict.Status,
+						"ritual", params.RitualName)
+					return string(resultJSON), nil
+				}
+			}
+		}
+	*/
 
 	// Block until ritual completes (or fails/cancels)
 	exec, err := t.chancellor.RunRitual(ctx, params.RitualName, params.EdictID, params.Inputs)
@@ -704,7 +734,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 		// TODO: Need to report the new edictID to the TUI
 		edict, err := CreateEdict(c.db, edictID, prompt.Message)
 		if err != nil {
-			c.notify(StreamErrorMsg{Err: fmt.Errorf("create edict: %w", err)})
+			c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("create edict: %w", err)})
 			return
 		}
 		edictID = edict.EdictID
@@ -716,7 +746,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 	}
 
 	// Notify TUI of edict ID before streaming begins
-	c.notify(StreamStartMsg{EdictID: edictID})
+	c.notify(StreamStartMsg{TabID: "chancellor", EdictID: edictID})
 
 	// Call LLM with streaming
 	c.brewWithStreaming(ctx, edictID, prompt.Message, prompt.ContextFiles)
@@ -726,7 +756,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string) {
 	// Check if LLM is configured before proceeding
 	if c.model == nil {
-		c.notify(StreamErrorMsg{Err: fmt.Errorf("LLM not configured - please wait for model to connect")})
+		c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("LLM not configured - please wait for model to connect")})
 		return
 	}
 
@@ -734,9 +764,9 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 	sess, exists := c.edictSessions[edictID]
 	if !exists {
 		var err error
-		sess, err = CreateSession(c, c.model, c.config, c.notify, edictID)
+		sess, err = CreateSession(c, c.model, c.config, c.notify, "chancellor", edictID)
 		if err != nil {
-			c.notify(StreamErrorMsg{Err: fmt.Errorf("failed to create session: %w", err)})
+			c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
 		c.edictSessions[edictID] = sess
@@ -750,10 +780,10 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 	// Use AskWithStreaming for tool execution and streaming
 	_, err := sess.AskWithStreaming(ctx, prompt, contextFiles)
 	if err != nil && ctx.Err() == nil {
-		c.notify(StreamErrorMsg{Err: err})
+		c.notify(StreamErrorMsg{TabID: "chancellor", Err: err})
 		return
 	}
-	c.notify(StreamDoneMsg{})
+	c.notify(StreamDoneMsg{TabID: "chancellor"})
 }
 
 // processTask handles a task from the ritual runner or other ministers.
@@ -800,14 +830,11 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 // Returns the session for potential reuse in multi-turn conversations.
 func (c *Chancellor) streamTask(ctx context.Context, work, edictID,
 	scratchpad string) (*Session, string, error) {
-	notify := c.notify
-	if notify == nil {
-		notify = func(any) {} // no-op when notify not yet wired
-	}
-	notify(StreamStartMsg{EdictID: edictID})
+	c.notify(StreamStartMsg{TabID: "chancellor", EdictID: edictID})
 
-	session, err := CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
+	session, err := CreateSessionWithOpts(c, c.model, c.config, c.notify, CreateSessionOpts{
 		EdictID:    edictID,
+		TabID:      "chancellor",
 		Scratchpad: scratchpad,
 	})
 	if err != nil {
@@ -816,11 +843,11 @@ func (c *Chancellor) streamTask(ctx context.Context, work, edictID,
 
 	_, err = session.AskWithStreaming(ctx, work, nil)
 	if err != nil {
-		notify(StreamDoneMsg{})
+		c.notify(StreamDoneMsg{TabID: "chancellor"})
 		return session, "", err
 	}
 
-	notify(StreamDoneMsg{})
+	c.notify(StreamDoneMsg{TabID: "chancellor"})
 	c.logger.Info("chancellor task completed", "edict_id", edictID)
 	return session, "", nil
 }

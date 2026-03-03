@@ -24,30 +24,42 @@ import (
 
 // StreamChunkMsg contains a streaming text chunk from the LLM
 type StreamChunkMsg struct {
-	Text string
+	TabID string
+	Text  string
 }
 
 // StreamReasoningChunkMsg contains a reasoning/thinking chunk from the LLM
 type StreamReasoningChunkMsg struct {
-	Text string
+	TabID string
+	Text  string
 }
 
 // StreamStartMsg signals that streaming has begun
 type StreamStartMsg struct {
+	TabID   string
 	EdictID string
 }
 
 // StreamCompleteMsg signals that streaming has completed successfully
-type StreamCompleteMsg struct{}
+type StreamCompleteMsg struct{ TabID string }
 
 // StreamInterruptedMsg signals that streaming was interrupted
-type StreamInterruptedMsg struct{ PartialContent string }
+type StreamInterruptedMsg struct {
+	TabID          string
+	PartialContent string
+}
 
 // StreamErrorMsg signals an error during streaming
-type StreamErrorMsg struct{ Err error }
+type StreamErrorMsg struct {
+	TabID string
+	Err   error
+}
 
 // StreamMaxTokensReachedMsg signals that the response was truncated due to token limit
-type StreamMaxTokensReachedMsg struct{ Content string }
+type StreamMaxTokensReachedMsg struct {
+	TabID   string
+	Content string
+}
 
 // SessionConfig holds configuration for minister sessions
 type SessionConfig struct {
@@ -72,6 +84,7 @@ type Session struct {
 	messages     []llms.MessageContent
 	notify       internal.NotifyFunc
 	systemPrompt string
+	tabID        string
 
 	// Tool execution
 	toolCatalog map[string]Tool
@@ -112,6 +125,7 @@ func NewSession(
 	scheduler *runners.CoreToolScheduler,
 	notify internal.NotifyFunc,
 	systemPrompt string,
+	tabID string,
 ) (*Session, error) {
 	now := time.Now()
 	workingDir, _ := os.Getwd()
@@ -126,6 +140,7 @@ func NewSession(
 		messages:     []llms.MessageContent{},
 		notify:       notify,
 		systemPrompt: systemPrompt,
+		tabID:        tabID,
 		toolCatalog:  make(map[string]Tool),
 		ContextFiles: make(map[string]string),
 		filesRead:    make(map[string]bool),
@@ -160,9 +175,10 @@ func NewSession(
 	// Use provided scheduler or create a new one
 	if scheduler != nil {
 		session.scheduler = scheduler
-		session.scheduler.SetNotify(notify)
+		session.scheduler.SetNotify(notify, tabID)
 	} else {
 		session.scheduler = runners.NewCoreToolScheduler(notify)
+		session.scheduler.SetNotify(notify, tabID)
 	}
 
 	// Initialize token counts
@@ -190,7 +206,7 @@ func (s *Session) SetMessages(msgs []llms.MessageContent) {
 func (s *Session) SetNotify(notify internal.NotifyFunc) {
 	s.notify = notify
 	if s.scheduler != nil {
-		s.scheduler.SetNotify(notify)
+		s.scheduler.SetNotify(notify, s.tabID)
 	}
 }
 
@@ -1079,7 +1095,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		case <-ctx.Done():
 			accumulatedText := s.getStreamBuffer()
 			if s.notify != nil {
-				s.notify(StreamInterruptedMsg{PartialContent: accumulatedText})
+				s.notify(StreamInterruptedMsg{TabID: s.tabID, PartialContent: accumulatedText})
 			}
 			return accumulatedText, ctx.Err()
 		default:
@@ -1096,7 +1112,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			chunkStr := string(chunk)
 			s.accumulatedContent.WriteString(chunkStr)
 			if s.notify != nil {
-				s.notify(StreamChunkMsg{Text: chunkStr})
+				s.notify(StreamChunkMsg{TabID: s.tabID, Text: chunkStr})
 			}
 			return nil
 		}
@@ -1110,7 +1126,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			}
 
 			if len(reasoningChunk) > 0 && s.notify != nil {
-				s.notify(StreamReasoningChunkMsg{Text: string(reasoningChunk)})
+				s.notify(StreamReasoningChunkMsg{TabID: s.tabID, Text: string(reasoningChunk)})
 			}
 			return nil
 		}
@@ -1120,12 +1136,12 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			if ctx.Err() != nil {
 				accumulatedText := s.getStreamBuffer()
 				if s.notify != nil {
-					s.notify(StreamInterruptedMsg{PartialContent: accumulatedText})
+					s.notify(StreamInterruptedMsg{TabID: s.tabID, PartialContent: accumulatedText})
 				}
 				return accumulatedText, ctx.Err()
 			}
 			if s.notify != nil {
-				s.notify(StreamErrorMsg{Err: err})
+				s.notify(StreamErrorMsg{TabID: s.tabID, Err: err})
 			}
 			return "", err
 		}
@@ -1135,7 +1151,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		// Check if response was truncated
 		if choice.StopReason == "max_tokens" {
 			if s.notify != nil {
-				s.notify(StreamMaxTokensReachedMsg{Content: responseContent})
+				s.notify(StreamMaxTokensReachedMsg{TabID: s.tabID, Content: responseContent})
 			}
 			s.appendMessage(choice)
 			return responseContent + "\n\n[Response truncated due to length limit]", nil
@@ -1146,7 +1162,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			err := fmt.Errorf("LLM generation failed: stop_reason=%s", choice.StopReason)
 			slog.Warn("LLM returned error stop reason", "stop_reason", choice.StopReason)
 			if s.notify != nil {
-				s.notify(StreamErrorMsg{Err: err})
+				s.notify(StreamErrorMsg{TabID: s.tabID, Err: err})
 			}
 			return "", err
 		}
@@ -1169,7 +1185,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 
 		if shouldReturn {
 			if s.notify != nil {
-				s.notify(StreamCompleteMsg{})
+				s.notify(StreamCompleteMsg{TabID: s.tabID})
 			}
 			return finalText, nil
 		}
@@ -1182,7 +1198,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 	}
 
 	if s.notify != nil {
-		s.notify(StreamCompleteMsg{})
+		s.notify(StreamCompleteMsg{TabID: s.tabID})
 	}
 
 	return finalText, nil

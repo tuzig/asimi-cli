@@ -23,6 +23,7 @@ import (
 
 // RitualStepMsg notifies the UI of ritual step progress
 type RitualStepMsg struct {
+	TabID       string
 	RitualName  string
 	ExecutionID string
 	EdictID     string
@@ -520,15 +521,6 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		}
 	}
 
-	// Wrap notify to route all ritual output to the Ruling tab
-	var tabbedNotify internal.NotifyFunc
-	if notify != nil {
-		rawNotify := notify
-		tabbedNotify = func(msg any) {
-			rawNotify(TabbedMsg{TabID: "chancellor", Msg: msg})
-		}
-	}
-
 	// Create execution record
 	exec := &RitualExecution{
 		ID:          GenerateID("ritual", ritualName, edictID, time.Now().String()),
@@ -538,7 +530,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		State:       RitualStatePending,
 		Data:        storage.JSON{"inputs": inputs},
 		def:         def,
-		notify:      tabbedNotify,
+		notify:      notify,
 	}
 
 	// Initialize step states
@@ -574,6 +566,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 
 	if exec.notify != nil {
 		exec.notify(RitualStepMsg{
+			TabID:       "chancellor",
 			RitualName:  exec.RitualName,
 			ExecutionID: exec.ID,
 			EdictID:     exec.EdictID,
@@ -614,6 +607,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		}
 		if exec.notify != nil {
 			exec.notify(RitualStepMsg{
+				TabID:       "chancellor",
 				RitualName:  exec.RitualName,
 				ExecutionID: exec.ID,
 				EdictID:     exec.EdictID,
@@ -630,6 +624,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		}
 		if exec.notify != nil {
 			exec.notify(RitualStepMsg{
+				TabID:       "chancellor",
 				RitualName:  exec.RitualName,
 				ExecutionID: exec.ID,
 				EdictID:     exec.EdictID,
@@ -667,6 +662,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			// Notify: step failed
 			if exec.notify != nil {
 				exec.notify(RitualStepMsg{
+					TabID:       "chancellor",
 					RitualName:  exec.RitualName,
 					ExecutionID: exec.ID,
 					EdictID:     exec.EdictID,
@@ -705,6 +701,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		// Notify: step completed
 		if exec.notify != nil {
 			exec.notify(RitualStepMsg{
+				TabID:       "chancellor",
 				RitualName:  exec.RitualName,
 				ExecutionID: exec.ID,
 				EdictID:     exec.EdictID,
@@ -749,6 +746,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	// Notify: ritual completed
 	if exec.notify != nil {
 		exec.notify(RitualStepMsg{
+			TabID:       "chancellor",
 			RitualName:  exec.RitualName,
 			ExecutionID: exec.ID,
 			EdictID:     exec.EdictID,
@@ -803,6 +801,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	// Notify: step started
 	if exec.notify != nil {
 		exec.notify(RitualStepMsg{
+			TabID:       "chancellor",
 			RitualName:  exec.RitualName,
 			ExecutionID: exec.ID,
 			EdictID:     exec.EdictID,
@@ -873,6 +872,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		}
 		if exec.notify != nil {
 			exec.notify(RitualStepMsg{
+				TabID:       "chancellor",
 				RitualName:  exec.RitualName,
 				ExecutionID: exec.ID,
 				EdictID:     exec.EdictID,
@@ -886,6 +886,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		}
 		if exec.notify != nil {
 			exec.notify(RitualStepMsg{
+				TabID:       "chancellor",
 				RitualName:  exec.RitualName,
 				ExecutionID: exec.ID,
 				EdictID:     exec.EdictID,
@@ -1357,6 +1358,7 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 			// Notify: retrying
 			if exec.notify != nil {
 				exec.notify(RitualStepMsg{
+					TabID:       "chancellor",
 					RitualName:  exec.RitualName,
 					ExecutionID: exec.ID,
 					EdictID:     exec.EdictID,

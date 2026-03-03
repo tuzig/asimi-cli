@@ -118,14 +118,15 @@
     - the earth status
     - the court status
   steps:
-    - name: survey
+    - name: current-n-next
       minister: chancellor
       on_failure: retry
       act: |
         The Shogunate is starting up.
         Start by reporting the current 三界 status.
+        List changes to the borderland and the middle kingdom.
         List any active edicts, rituals and manifests.
-        Raise a zhengming when done, porosing to the ruler some paths forward
+        Call the request_zhengming tool when done, proposing to the ruler some paths forward
 
 - name: review
   description: |
