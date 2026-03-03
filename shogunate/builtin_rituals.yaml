@@ -126,7 +126,7 @@
         Start by reporting the current 三界 status.
         List changes to the borderland and the middle kingdom.
         List any active edicts, rituals and manifests.
-        Call the request_zhengming tool when done, proposing to the ruler some paths forward
+        End your task by calling the request_zhengming, proposing to the ruler some paths forward
 
 - name: review
   description: |
