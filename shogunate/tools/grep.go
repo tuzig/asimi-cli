@@ -14,8 +14,9 @@ import (
 
 // GrepInput is the input for the GrepTool
 type GrepInput struct {
-	Pattern string `json:"pattern"`
-	Path    string `json:"path,omitempty"`
+	Pattern       string `json:"pattern"`
+	Path          string `json:"path,omitempty"`
+	IncludeHidden bool   `json:"includeHidden,omitempty"`
 }
 
 // GrepTool searches for patterns in files
@@ -57,16 +58,22 @@ func (t GrepTool) Call(ctx context.Context, input string) (string, error) {
 		if err != nil {
 			return nil // Skip files we can't access
 		}
+		name := info.Name()
+		isHidden := name != "." && strings.HasPrefix(name, ".")
+
 		if info.IsDir() {
-			// Skip hidden directories and common non-code directories
-			name := info.Name()
-			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
+			if isHidden && !params.IncludeHidden {
+				return filepath.SkipDir
+			}
+			if name == "node_modules" || name == "vendor" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		// Skip binary and hidden files
-		if strings.HasPrefix(info.Name(), ".") || info.Size() > 1<<20 { // Skip files > 1MB
+		if isHidden && !params.IncludeHidden {
+			return nil
+		}
+		if info.Size() > 1<<20 { // Skip files > 1MB
 			return nil
 		}
 
@@ -113,6 +120,10 @@ func (t GrepTool) ParameterSchema() map[string]any {
 			"path": map[string]any{
 				"type":        "string",
 				"description": "File or directory to search in (defaults to '.')",
+			},
+			"includeHidden": map[string]any{
+				"type":        "boolean",
+				"description": "Include hidden files and directories in search (similar to ripgrep's --hidden flag)",
 			},
 		},
 		"required": []string{"pattern"},
