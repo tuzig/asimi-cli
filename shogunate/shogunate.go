@@ -110,6 +110,9 @@ type Shogunate struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	streamingCtx    context.Context
+	streamingCancel context.CancelFunc
 }
 
 // NewShogunate creates a new Shogunate coordinator.
@@ -184,6 +187,7 @@ func (s *Shogunate) Start(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	s.ctx, s.cancel = context.WithCancel(ctx)
+	s.streamingCtx, s.streamingCancel = context.WithCancel(s.ctx)
 
 	// Load rituals from .agents/rituals/
 	if err := s.loadRituals(); err != nil {
@@ -461,19 +465,29 @@ func (s *Shogunate) DispatchEvent(event Event) {
 			edictID := event.EdictID
 			inputs := map[string]string{"edict_id": edictID}
 			go func(r *RitualDef) {
-				exec, err := s.ritualRunner.Start(s.ctx, r.Name, edictID, inputs, s.notify)
+				exec, err := s.ritualRunner.Start(s.streamingCtx, r.Name, edictID, inputs, s.notify)
 				if err != nil {
 					s.logger.Warn("failed to start event-triggered ritual",
 						"ritual", r.Name, "event", event.Type, "error", err)
 					return
 				}
-				if err := s.ritualRunner.Run(s.ctx, exec); err != nil {
+				if err := s.ritualRunner.Run(s.streamingCtx, exec); err != nil {
 					s.logger.Warn("event-triggered ritual failed",
 						"ritual", r.Name, "error", err)
 				}
 			}(ritual)
 		}
 	}
+}
+
+// Interrupt cancels the streaming context, stopping event-triggered rituals,
+// then creates a fresh streaming context for subsequent work.
+func (s *Shogunate) Interrupt() {
+	if s == nil || s.streamingCancel == nil {
+		return
+	}
+	s.streamingCancel()
+	s.streamingCtx, s.streamingCancel = context.WithCancel(s.ctx)
 }
 
 // SubmitPrompt routes a prompt to the specified minister by ID.

@@ -673,6 +673,13 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 					Message:     err.Error(),
 				})
 			}
+			// Context cancelled (user interrupt) — abort without cascading events
+			if ctx.Err() != nil {
+				exec.State = RitualStateAborted
+				r.saveExecution(exec)
+				return err
+			}
+
 			// Emit step_failed Tian event
 			r.emitEvent(exec.EdictID, "step_failed", storage.JSON{
 				"ritual":       exec.RitualName,
@@ -1345,6 +1352,11 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 	action := OnFailureAction(step.resolveOnFailure(exec.def))
 	if action == "" {
 		action = OnFailureAbort
+	}
+
+	// Don't retry if context was cancelled (e.g. user pressed CTRL-C)
+	if ctx.Err() != nil {
+		return false
 	}
 
 	switch action {

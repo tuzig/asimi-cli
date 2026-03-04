@@ -2882,6 +2882,9 @@ func (m *TUIModel) stopStreaming() {
 	m.streamingCancel = nil
 	m.tabs.ClearStreaming()
 	m.stopWaitingForResponse()
+	if m.shogunate != nil {
+		m.shogunate.Interrupt()
+	}
 }
 
 // handleAnsweringComplete resolves the zhengming waiter and updates the DB.
