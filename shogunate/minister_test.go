@@ -182,10 +182,11 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, _ := forge.StageManifest("test/repo#4", "", "test.go", "TestFunc", "hash1")
-	forge.ActivateManifest(manifestID, "commit123")
+	manifestID, err := forge.StageManifest("test/repo#4", "", "test.go", "TestFunc", "hash1")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, manifestID)
 
-	// Create judge (no CI runner - will auto-pass)
+	// Create judge (no CI runner - will auto-pass, picks up "forged" manifests)
 	judge := NewJudge(base, nil)
 
 	// Execute judgment (internal method)
@@ -215,8 +216,9 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, _ := forge.StageManifest("test/repo#5", "", "review.go", "ReviewFunc", "hash2")
-	forge.ActivateManifest(manifestID, "commit456")
+	manifestID, err := forge.StageManifest("test/repo#5", "", "review.go", "ReviewFunc", "hash2")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, manifestID)
 
 	judge := NewJudge(base, nil)
 	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
@@ -252,8 +254,12 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, _ := forge.StageManifest("test/repo#6", "", "prod.go", "ProdFunc", "hash3")
-	forge.ActivateManifest(manifestID, "prodcommit789")
+	manifestID, err := forge.StageManifest("test/repo#6", "", "prod.go", "ProdFunc", "hash3")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, manifestID)
+	// Set commit_hash directly for marshal incident lookup
+	db.Model(&storage.ForgeManifest{}).Where("edict_id = ?", "test/repo#6").
+		Update("commit_hash", "prodcommit789")
 
 	// Create marshal
 	marshal := NewMarshal(base, nil)
@@ -586,9 +592,8 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error when context is cancelled during wait")
 	}
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Expected context.Canceled, got: %v", err)
-	}
+	
+	assert.Equal(t, err.Error, "context canceled")
 }
 
 // TestInvokeMinisterTool_Notifications verifies MinisterInvokingMsg and MinisterCompletedMsg are sent

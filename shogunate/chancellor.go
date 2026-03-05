@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -217,16 +216,11 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	if result.Err != nil {
 		// Notify: failed
 		if t.chancellor.notify != nil {
-			// Replace "context canceled" error with "aborted by user"
-			errMsg := result.Err
-			if errors.Is(result.Err, context.Canceled) {
-				errMsg = fmt.Errorf("aborted by user")
-			}
 			t.chancellor.notify(MinisterCompletedMsg{
 				TabID:      "chancellor",
 				MinisterID: params.MinisterID,
 				EdictID:    params.EdictID,
-				Error:      errMsg,
+				Error:      result.Err,
 			})
 		}
 		logger.Error("task returned error",

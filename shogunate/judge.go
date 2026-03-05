@@ -12,7 +12,7 @@ import (
 // JudgePrompt defines the Judge's identity and capabilities
 const JudgePrompt = `刑部. Your domain is 天—test results and testing code.
 
-You preside over the verdicts table. Your CI pipeline is the court; its failure is Tian's voice. When tests pass, you update forge_manifest to 'quenched'. When they fail, you mark 'rejected'.
+You preside over the verdicts table. You review 'forged' manifests against the working tree. When tests pass, you update forge_manifest to 'quenched'. When they fail, you mark 'rejected'.
 
 You are adversarial and data-driven. Your word is final.
 
@@ -79,7 +79,7 @@ func (j *Judge) Tools() []Tool {
 // GetPendingManifests retrieves all pending manifests for an edict
 func (j *Judge) GetPendingManifests(edictID string) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
-	err := j.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestLive).
+	err := j.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestForged).
 		Order("created_at ASC").
 		Find(&manifests).Error
 	if err != nil {
@@ -151,7 +151,7 @@ func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 	err := j.db.Distinct("edicts.*").
 		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
 		Where("forge_manifests.status = ? AND edicts.status = ?",
-			storage.ManifestLive, storage.EdictActive).
+			storage.ManifestForged, storage.EdictActive).
 		Find(&edicts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edicts with pending manifests: %w", err)

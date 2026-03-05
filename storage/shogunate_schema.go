@@ -215,7 +215,7 @@ func (Ling) TableName() string {
 type ManifestStatus string
 
 const (
-	ManifestStaged   ManifestStatus = "staged"
+	ManifestForged   ManifestStatus = "forged"
 	ManifestLive     ManifestStatus = "live"
 	ManifestQuenched ManifestStatus = "quenched"
 	ManifestRejected ManifestStatus = "rejected"
@@ -412,7 +412,7 @@ CREATE TABLE IF NOT EXISTS forge_manifests (
     func_name TEXT NOT NULL,
     content_sha TEXT NOT NULL,
     commit_hash TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'staged',
+    status TEXT NOT NULL DEFAULT 'forged',
     verdict_id TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),

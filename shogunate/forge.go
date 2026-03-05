@@ -40,15 +40,15 @@ func (f *Forge) ID() string {
 func (f *Forge) SystemPrompt() string {
 	return `工部. Your domain is 地—simple, clear code forged into existence.
 
-Your ledger is the forge_manifest table. You stage commits with status='staging' and await Judge's verdict. When status='quenched', you are done. When status='rejected', you reforge.
+Your ledger is the forge_manifest table. You create manifests with status='forged' and leave them for the Judge to review. You do NOT commit code—commits happen after Judge and Censor approve. When status='rejected', you reforge.
 
 CRITICAL RULES:
 - If requirements are unclear, invoke Zhengming—do not guess
-- When work is done, stage it in the middle kingdom and create/update a manifest
+- When work is done, create a manifest to record the change (status will be 'forged')
 - Generate idiomatic, clear code
 - Write tests to verify your code will always work
-- Run only the tests that cover your code as the 刑部 will run the complete testing suire
-- You have read/write on forge_manifest, ling.status, and filesystem; read-only on edicts`
+- Run only the tests that cover your code as the 刑部 will run the complete testing suite
+- Do NOT commit to git - other members of the shogunate need to approve your work`
 }
 
 // Tools returns the Forge's LLM tools for interactive sessions.
@@ -56,8 +56,6 @@ func (f *Forge) Tools() []Tool {
 	toolList := []Tool{
 		// Specialized Forge tools for manifest tracking
 		&CreateManifestTool{forge: f},
-		&UpdateManifestTool{forge: f},
-		&CommitManifestTool{forge: f},
 	}
 	// Add file-based tools
 	for _, t := range tools.GetFileTools() {
@@ -107,7 +105,7 @@ func (f *Forge) StageManifest(edictID, lingID, filePath, funcName, contentSHA st
 		FilePath:   filePath,
 		FuncName:   funcName,
 		ContentSHA: contentSHA,
-		Status:     storage.ManifestStaged,
+		Status:     storage.ManifestForged,
 	}
 
 	if err := f.db.Create(&manifest).Error; err != nil {
@@ -116,32 +114,15 @@ func (f *Forge) StageManifest(edictID, lingID, filePath, funcName, contentSHA st
 	return manifestID, nil
 }
 
-// ActivateManifest transitions a staged manifest to live after git commit
-func (f *Forge) ActivateManifest(manifestID, commitHash string) error {
-	result := f.db.Model(&storage.ForgeManifest{}).
-		Where("manifest_id = ? AND status = ?", manifestID, storage.ManifestStaged).
-		Updates(map[string]interface{}{
-			"commit_hash": commitHash,
-			"status":      storage.ManifestLive,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("failed to activate manifest: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("staged manifest not found: %s", manifestID)
-	}
-	return nil
-}
-
-// DeleteStagedManifest removes a staged manifest (git commit failed)
-func (f *Forge) DeleteStagedManifest(manifestID string) error {
-	result := f.db.Where("manifest_id = ? AND status = ?", manifestID, storage.ManifestStaged).
+// DeleteForgedManifest removes a forged manifest
+func (f *Forge) DeleteForgedManifest(manifestID string) error {
+	result := f.db.Where("manifest_id = ? AND status = ?", manifestID, storage.ManifestForged).
 		Delete(&storage.ForgeManifest{})
 	if result.Error != nil {
-		return fmt.Errorf("failed to delete staged manifest: %w", result.Error)
+		return fmt.Errorf("failed to delete forged manifest: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("staged manifest not found: %s", manifestID)
+		return fmt.Errorf("forged manifest not found: %s", manifestID)
 	}
 	return nil
 }
@@ -333,105 +314,3 @@ func (t *CreateManifestTool) Format(input, result string, err error) string {
 	return fmt.Sprintf("Create Manifest: %s\n", result)
 }
 
-// UpdateManifestTool updates a manifest's status
-type UpdateManifestTool struct {
-	forge *Forge
-}
-
-func (t *UpdateManifestTool) Name() string { return "update_manifest" }
-
-func (t *UpdateManifestTool) Description() string {
-	return "Updates a manifest's status. Valid statuses: staged, live, quenched, rejected. Input: JSON with 'manifest_id' and 'status'."
-}
-
-func (t *UpdateManifestTool) Call(ctx context.Context, input string) (string, error) {
-	var params struct {
-		ManifestID string `json:"manifest_id"`
-		Status     string `json:"status"`
-	}
-	if err := json.Unmarshal([]byte(input), &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
-	}
-	if params.ManifestID == "" || params.Status == "" {
-		return "", fmt.Errorf("manifest_id and status are required")
-	}
-
-	// For now, just update status (simplified - real impl would validate transitions)
-	result := t.forge.db.Model(&storage.ForgeManifest{}).
-		Where("manifest_id = ?", params.ManifestID).
-		Update("status", params.Status)
-	if result.Error != nil {
-		return "", fmt.Errorf("failed to update manifest: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return "", fmt.Errorf("manifest not found: %s", params.ManifestID)
-	}
-
-	return fmt.Sprintf("Updated manifest %s status to %s", params.ManifestID, params.Status), nil
-}
-
-func (t *UpdateManifestTool) ParameterSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"manifest_id": map[string]any{"type": "string", "description": "The manifest ID to update"},
-			"status":      map[string]any{"type": "string", "description": "New status: staged, live, quenched, rejected"},
-		},
-		"required": []string{"manifest_id", "status"},
-	}
-}
-
-func (t *UpdateManifestTool) Format(input, result string, err error) string {
-	if err != nil {
-		return fmt.Sprintf("Update Manifest: Error: %v\n", err)
-	}
-	return fmt.Sprintf("Update Manifest: %s\n", result)
-}
-
-// CommitManifestTool marks a manifest as committed with a git SHA
-type CommitManifestTool struct {
-	forge *Forge
-}
-
-func (t *CommitManifestTool) Name() string { return "commit_manifest" }
-
-func (t *CommitManifestTool) Description() string {
-	return "Marks a manifest as committed with the git commit SHA. Input: JSON with 'manifest_id' and 'commit_sha'."
-}
-
-func (t *CommitManifestTool) Call(ctx context.Context, input string) (string, error) {
-	var params struct {
-		ManifestID string `json:"manifest_id"`
-		CommitSHA  string `json:"commit_sha"`
-	}
-	if err := json.Unmarshal([]byte(input), &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
-	}
-	if params.ManifestID == "" || params.CommitSHA == "" {
-		return "", fmt.Errorf("manifest_id and commit_sha are required")
-	}
-
-	if err := t.forge.ActivateManifest(params.ManifestID, params.CommitSHA); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("Committed manifest %s with SHA %s", params.ManifestID, params.CommitSHA), nil
-}
-
-func (t *CommitManifestTool) ParameterSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"manifest_id": map[string]any{"type": "string", "description": "The manifest ID to commit"},
-			"commit_sha":  map[string]any{"type": "string", "description": "The git commit SHA"},
-		},
-		"required": []string{"manifest_id", "commit_sha"},
-	}
-}
-
-func (t *CommitManifestTool) Format(input, result string, err error) string {
-	if err != nil {
-		return fmt.Sprintf("Commit Manifest: Error: %v\n", err)
-	}
-	return fmt.Sprintf("Commit Manifest: %s\n", result)
-}
