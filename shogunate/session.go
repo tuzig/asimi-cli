@@ -851,9 +851,8 @@ func (s *Session) checkToolCallLoop(name, argsJSON string) bool {
 
 // --- Message Sanitization ---
 
-// SanitizeMessages removes any trailing tool responses that don't have
-// corresponding AI messages with tool calls. It does NOT remove AI messages
-// with tool calls, as those may have pending tool executions (e.g., slow rituals).
+// SanitizeMessages removes trailing assistant messages with unmatched tool calls
+// and trailing tool responses without matching AI messages.
 func (s *Session) SanitizeMessages() {
 	if s.config != nil && s.config.DisableContextSanitization {
 		return
@@ -867,8 +866,22 @@ func (s *Session) SanitizeMessages() {
 		lastIdx := len(s.messages) - 1
 		lastMsg := s.messages[lastIdx]
 
-		// Only remove tool responses that don't have matching AI messages
-		// Do NOT remove AI messages with tool calls - they may have pending executions
+		if lastMsg.Role == llms.ChatMessageTypeAI {
+			hasToolCalls := false
+			for _, part := range lastMsg.Parts {
+				if _, ok := part.(llms.ToolCall); ok {
+					hasToolCalls = true
+					break
+				}
+			}
+
+			if hasToolCalls {
+				slog.Debug("removing unmatched tool call from context")
+				s.messages = s.messages[:lastIdx]
+				continue
+			}
+		}
+
 		if lastMsg.Role == llms.ChatMessageTypeTool {
 			if lastIdx == 0 {
 				slog.Debug("removing tool result without prior messages")
@@ -1167,6 +1180,13 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 
 		if strings.TrimSpace(responseContent) != "" {
 			finalText = responseContent
+		}
+
+		// Ensure tool call IDs before appending to message history
+		for i := range choice.ToolCalls {
+			if choice.ToolCalls[i].FunctionCall != nil && choice.ToolCalls[i].FunctionCall.Name != "" {
+				ensureToolCallID(&choice.ToolCalls[i], i)
+			}
 		}
 		s.appendMessage(choice)
 

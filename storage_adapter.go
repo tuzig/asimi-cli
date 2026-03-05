@@ -261,9 +261,6 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 		return fmt.Errorf("cannot save nil session")
 	}
 
-	// Remove unmatched tool calls before saving
-	session.SanitizeMessages()
-
 	// Don't save empty sessions (only system messages)
 	messages := session.GetMessages()
 	hasUserContent := false

@@ -279,7 +279,7 @@ func TestSession_AskWithStreaming_WithContextFiles(t *testing.T) {
 	}
 }
 
-func TestSession_SanitizeMessages_KeepsAIMessagesWithToolCalls(t *testing.T) {
+func TestSession_SanitizeMessages_RemovesUnmatchedToolCalls(t *testing.T) {
 	t.Parallel()
 
 	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
@@ -291,8 +291,7 @@ func TestSession_SanitizeMessages_KeepsAIMessagesWithToolCalls(t *testing.T) {
 		Parts: []llms.ContentPart{llms.TextContent{Text: "Hello"}},
 	})
 
-	// Add an AI message with tool call (no corresponding tool response yet)
-	// This simulates a pending tool call (e.g., slow-running ritual)
+	// Add an AI message with tool call (no corresponding tool response)
 	sess.messages = append(sess.messages, llms.MessageContent{
 		Role: llms.ChatMessageTypeAI,
 		Parts: []llms.ContentPart{
@@ -300,7 +299,7 @@ func TestSession_SanitizeMessages_KeepsAIMessagesWithToolCalls(t *testing.T) {
 				ID:   "tc1",
 				Type: "function",
 				FunctionCall: &llms.FunctionCall{
-					Name:      "some_slow_tool",
+					Name:      "some_tool",
 					Arguments: "{}",
 				},
 			},
@@ -310,8 +309,8 @@ func TestSession_SanitizeMessages_KeepsAIMessagesWithToolCalls(t *testing.T) {
 	initialLen := len(sess.messages)
 	sess.SanitizeMessages()
 
-	// Should NOT remove the AI message with tool call - it may have pending execution
-	assert.Equal(t, initialLen, len(sess.messages), "AI messages with tool calls should be kept for pending tool executions")
+	// Should have removed the trailing AI message with unmatched tool call
+	assert.Less(t, len(sess.messages), initialLen)
 }
 
 func TestSession_SanitizeMessages_RemovesOrphanToolResponses(t *testing.T) {
@@ -422,6 +421,86 @@ func TestSession_SanitizeMessages_DisabledByConfig(t *testing.T) {
 
 	// Should NOT remove messages when sanitization is disabled
 	assert.Equal(t, initialLen, len(sess.messages))
+}
+
+func TestSession_EnsureToolCallIDsBeforeAppend(t *testing.T) {
+	t.Parallel()
+
+	// Simulate a provider returning empty tool call IDs
+	mock := &mockLLM{
+		toolCalls: []llms.ToolCall{
+			{
+				ID:   "", // empty ID, simulating provider bug
+				Type: "function",
+				FunctionCall: &llms.FunctionCall{
+					Name:      "read_file",
+					Arguments: `{"path":"test.txt"}`,
+				},
+			},
+		},
+	}
+
+	echoTool := &mockTool{name: "read_file", output: "file contents"}
+	scheduler := runners.NewCoreToolScheduler(func(any) {})
+	sess, err := NewSession(mock, &SessionConfig{LLM: internalconfig.LLMConfig{MaxTurns: 2}}, nil, scheduler, func(any) {}, "system", "test")
+	require.NoError(t, err)
+
+	sess.toolCatalog["read_file"] = echoTool
+	sess.toolDefs = []llms.Tool{{
+		Type: "function",
+		Function: &llms.FunctionDefinition{
+			Name:        "read_file",
+			Description: "Read a file",
+			Parameters:  map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}},
+		},
+	}}
+
+	// After the first call (tool call), mock returns plain text to end the loop
+	mock.toolCalls = []llms.ToolCall{
+		{
+			ID:   "",
+			Type: "function",
+			FunctionCall: &llms.FunctionCall{
+				Name:      "read_file",
+				Arguments: `{"path":"test.txt"}`,
+			},
+		},
+	}
+
+	// Run AskWithStreaming — it will call generateLLMResponse which calls appendMessage
+	// The fix ensures ensureToolCallID is called BEFORE appendMessage
+	_, _ = sess.AskWithStreaming(context.Background(), "read test.txt", nil)
+
+	// Find the AI message with tool calls and verify IDs are non-empty
+	for _, msg := range sess.messages {
+		if msg.Role != llms.ChatMessageTypeAI {
+			continue
+		}
+		for _, part := range msg.Parts {
+			if tc, ok := part.(llms.ToolCall); ok {
+				assert.NotEmpty(t, tc.ID, "AI message tool call ID should not be empty after ensureToolCallID")
+				assert.Contains(t, tc.ID, "synthetic_", "Empty provider IDs should get synthetic IDs")
+			}
+		}
+	}
+
+	// Verify tool response IDs match AI message tool call IDs
+	aiToolCallIDs := map[string]bool{}
+	toolResponseIDs := map[string]bool{}
+	for _, msg := range sess.messages {
+		for _, part := range msg.Parts {
+			if tc, ok := part.(llms.ToolCall); ok {
+				aiToolCallIDs[tc.ID] = true
+			}
+			if resp, ok := part.(llms.ToolCallResponse); ok {
+				toolResponseIDs[resp.ToolCallID] = true
+			}
+		}
+	}
+
+	for id := range toolResponseIDs {
+		assert.True(t, aiToolCallIDs[id], "Tool response ID %q should match an AI message tool call ID", id)
+	}
 }
 
 func TestSession_CheckToolCallLoop(t *testing.T) {
