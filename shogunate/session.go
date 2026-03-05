@@ -809,6 +809,7 @@ func (s *Session) appendMessage(choice *llms.ContentChoice) {
 			Type:         toolCall.Type,
 			FunctionCall: toolCall.FunctionCall,
 		})
+		slog.Debug("appending AI message with tool call", "tool", toolCall.FunctionCall.Name, "tool_call_id", toolCall.ID)
 	}
 
 	if len(parts) > 0 {
@@ -850,8 +851,9 @@ func (s *Session) checkToolCallLoop(name, argsJSON string) bool {
 
 // --- Message Sanitization ---
 
-// SanitizeMessages removes any trailing assistant messages with tool calls
-// that don't have corresponding tool responses.
+// SanitizeMessages removes any trailing tool responses that don't have
+// corresponding AI messages with tool calls. It does NOT remove AI messages
+// with tool calls, as those may have pending tool executions (e.g., slow rituals).
 func (s *Session) SanitizeMessages() {
 	if s.config != nil && s.config.DisableContextSanitization {
 		return
@@ -865,22 +867,8 @@ func (s *Session) SanitizeMessages() {
 		lastIdx := len(s.messages) - 1
 		lastMsg := s.messages[lastIdx]
 
-		if lastMsg.Role == llms.ChatMessageTypeAI {
-			hasToolCalls := false
-			for _, part := range lastMsg.Parts {
-				if _, ok := part.(llms.ToolCall); ok {
-					hasToolCalls = true
-					break
-				}
-			}
-
-			if hasToolCalls {
-				slog.Debug("removing unmatched tool call from context")
-				s.messages = s.messages[:lastIdx]
-				continue
-			}
-		}
-
+		// Only remove tool responses that don't have matching AI messages
+		// Do NOT remove AI messages with tool calls - they may have pending executions
 		if lastMsg.Role == llms.ChatMessageTypeTool {
 			if lastIdx == 0 {
 				slog.Debug("removing tool result without prior messages")
@@ -912,11 +900,19 @@ func (s *Session) SanitizeMessages() {
 				}
 			}
 
+			slog.Debug("SanitizeMessages checking tool response", "ai_msg_tool_call_ids", toolCallIDs)
+
 			valid := len(toolCallIDs) > 0
 			for _, part := range lastMsg.Parts {
 				if resp, ok := part.(llms.ToolCallResponse); ok {
+					slog.Debug("checking tool response ID", "response_tool_call_id", resp.ToolCallID, "response_name", resp.Name)
 					if _, exists := toolCallIDs[resp.ToolCallID]; !exists || resp.ToolCallID == "" {
 						valid = false
+						if resp.ToolCallID == "" {
+							slog.Debug("tool result invalid: empty ToolCallID", "name", resp.Name)
+						} else {
+							slog.Debug("tool result invalid: ID not found in AI message", "response_id", resp.ToolCallID, "ai_msg_ids", toolCallIDs)
+						}
 						break
 					}
 				}
@@ -946,6 +942,7 @@ func ensureToolCallID(tc *llms.ToolCall, index int) string {
 	toolCallIDCounter++
 	syntheticID := fmt.Sprintf("synthetic_%d_%d", time.Now().UnixNano(), toolCallIDCounter)
 	tc.ID = syntheticID
+	slog.Debug("generated synthetic tool call ID", "tool", tc.FunctionCall.Name, "synthetic_id", syntheticID)
 	slog.Warn("provider returned empty tool_call_id, using synthetic ID",
 		"index", index,
 		"tool", tc.FunctionCall.Name,
@@ -1068,6 +1065,7 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCal
 
 		response := s.executeToolCall(ctx, tool, *tc, argsJSON)
 		slog.Debug("Called a tool", "tool", name, "args", argsJSON)
+		slog.Debug("creating tool response message", "tool_call_id", response.ToolCallID, "tool_name", response.Name)
 		toolMessages = append(toolMessages, llms.MessageContent{
 			Role:  llms.ChatMessageTypeTool,
 			Parts: []llms.ContentPart{response},

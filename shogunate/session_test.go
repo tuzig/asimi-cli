@@ -279,7 +279,7 @@ func TestSession_AskWithStreaming_WithContextFiles(t *testing.T) {
 	}
 }
 
-func TestSession_SanitizeMessages_RemovesUnmatchedToolCalls(t *testing.T) {
+func TestSession_SanitizeMessages_KeepsAIMessagesWithToolCalls(t *testing.T) {
 	t.Parallel()
 
 	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
@@ -291,7 +291,8 @@ func TestSession_SanitizeMessages_RemovesUnmatchedToolCalls(t *testing.T) {
 		Parts: []llms.ContentPart{llms.TextContent{Text: "Hello"}},
 	})
 
-	// Add an AI message with tool call (no corresponding tool response)
+	// Add an AI message with tool call (no corresponding tool response yet)
+	// This simulates a pending tool call (e.g., slow-running ritual)
 	sess.messages = append(sess.messages, llms.MessageContent{
 		Role: llms.ChatMessageTypeAI,
 		Parts: []llms.ContentPart{
@@ -299,7 +300,7 @@ func TestSession_SanitizeMessages_RemovesUnmatchedToolCalls(t *testing.T) {
 				ID:   "tc1",
 				Type: "function",
 				FunctionCall: &llms.FunctionCall{
-					Name:      "some_tool",
+					Name:      "some_slow_tool",
 					Arguments: "{}",
 				},
 			},
@@ -309,8 +310,39 @@ func TestSession_SanitizeMessages_RemovesUnmatchedToolCalls(t *testing.T) {
 	initialLen := len(sess.messages)
 	sess.SanitizeMessages()
 
-	// Should have removed the trailing AI message with unmatched tool call
-	assert.Less(t, len(sess.messages), initialLen)
+	// Should NOT remove the AI message with tool call - it may have pending execution
+	assert.Equal(t, initialLen, len(sess.messages), "AI messages with tool calls should be kept for pending tool executions")
+}
+
+func TestSession_SanitizeMessages_RemovesOrphanToolResponses(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	// Add a user message
+	sess.messages = append(sess.messages, llms.MessageContent{
+		Role:  llms.ChatMessageTypeHuman,
+		Parts: []llms.ContentPart{llms.TextContent{Text: "Hello"}},
+	})
+
+	// Add an orphan tool response (no matching AI message)
+	sess.messages = append(sess.messages, llms.MessageContent{
+		Role: llms.ChatMessageTypeTool,
+		Parts: []llms.ContentPart{
+			llms.ToolCallResponse{
+				ToolCallID: "orphan_tc",
+				Name:       "some_tool",
+				Content:    "orphan result",
+			},
+		},
+	})
+
+	initialLen := len(sess.messages)
+	sess.SanitizeMessages()
+
+	// Should have removed the orphan tool response
+	assert.Less(t, len(sess.messages), initialLen, "Orphan tool responses should be removed")
 }
 
 func TestSession_SanitizeMessages_KeepsMatchedToolCalls(t *testing.T) {

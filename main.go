@@ -1,3 +1,4 @@
+// Asimi - AI coding agent governed by a 幕府 of six ministers and a sage
 package main
 
 import (
