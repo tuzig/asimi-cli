@@ -19,7 +19,7 @@ run:
 
 # Run all tests (skips git-altering tests locally)
 test:
-    go test -timeout 1m -v ./...
+    go test -timeout 1m ./...
 
 # Run all tests including git-altering tests (CI mode)
 test-ci:

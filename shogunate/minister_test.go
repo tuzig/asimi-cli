@@ -593,7 +593,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 		t.Fatal("Expected error when context is cancelled during wait")
 	}
 	
-	assert.Equal(t, err.Error, "context canceled")
+	assert.Equal(t, err.Error(), "context canceled")
 }
 
 // TestInvokeMinisterTool_Notifications verifies MinisterInvokingMsg and MinisterCompletedMsg are sent
