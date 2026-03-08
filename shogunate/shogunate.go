@@ -289,14 +289,6 @@ func CreateEdict(db *gorm.DB, edictID, intent string) (*storage.Edict, error) {
 
 // PublishEvent persists an event to the DB and sends it to the event channel.
 func (s *Shogunate) PublishEvent(edictID, eventType string, payload storage.JSON) string {
-	if edictID == "" {
-		edictID = generateEdictID()
-		edict, err := CreateEdict(s.db, edictID, fmt.Sprintf("Created by %s event", eventType))
-		if err != nil {
-			s.logger.Error("failed to create edict for event", "edict_id", edictID, "error", err)
-		}
-		edictID = edict.EdictID
-	}
 	if s.db != nil {
 		dbEvent := storage.TianEvent{
 			EdictID:   edictID,

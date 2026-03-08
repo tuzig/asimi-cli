@@ -2922,7 +2922,7 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 }
 
 func (m *TUIModel) raiseShogunateEvent(event string, params storage.JSON) {
-	m.currentEdictID = m.shogunate.PublishEvent(m.currentEdictID, event, params)
+	m.shogunate.PublishEvent(m.currentEdictID, event, params)
 }
 
 // jsonEscape escapes a string for use in JSON

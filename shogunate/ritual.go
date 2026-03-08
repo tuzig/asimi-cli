@@ -1103,6 +1103,9 @@ func (r *RitualRunner) getEdictDetails(ctx context.Context, edictID string) (*st
 func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {
 	switch fn {
 	case "get_edict":
+		if exec.EdictID == "" {
+			return map[string]string{"status": "no edict (system event)"}, nil
+		}
 		return r.arrangeGetEdict(exec.EdictID)
 	case "get_court_status":
 		return r.arrangeGetCourtStatus(exec.EdictID)
@@ -1249,6 +1252,10 @@ func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) 
 
 // runBuiltinThen runs a builtin then function (extensible via step registry)
 func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution, fn string) error {
+	if exec.EdictID == "" {
+		r.logger.Debug("skipping edict operation for system ritual", "fn", fn)
+		return nil
+	}
 	switch fn {
 	case "seal_edict":
 		return r.db.Model(&storage.Edict{}).
