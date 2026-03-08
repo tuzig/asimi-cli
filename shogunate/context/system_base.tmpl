@@ -13,3 +13,9 @@ In this 三界 you are knwon {{ .MinisterID}} and you play the role of {{ .Role 
 {{ .Scratchpad }}
 --- End of scratchpad ---
 {{- end }}
+
+{{- if .EnvBlock }}
+--- Environment ---
+{{ .EnvBlock }}
+--- End of Environment ---
+{{- end }}

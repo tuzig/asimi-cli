@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -91,6 +93,8 @@ type Minister interface {
 	SubmitPrompt(p *Prompt)
 	// Run starts the minister's processing loop (blocks until context cancelled)
 	Run(ctx context.Context)
+	// RepoInfo returns the repository information
+	RepoInfo() repo.RepoInfo
 }
 
 // --- External Dependencies ---
@@ -247,6 +251,11 @@ func (m *MinisterBase) Scratchpad() string {
 	return ""
 }
 
+// RepoInfo returns the repository information
+func (m *MinisterBase) RepoInfo() repo.RepoInfo {
+	return m.repoInfo
+}
+
 // CreateSessionOpts holds optional parameters for CreateSession.
 type CreateSessionOpts struct {
 	EdictID    string
@@ -290,6 +299,9 @@ func buildSystemPrompt(minister Minister, config *SessionConfig, edictID string,
 		scratchpad += "\n\n" + args[0]
 	}
 
+	// Get repo info and build environment block
+	envBlock := sessBuildEnvBlock(minister.RepoInfo())
+
 	var buf bytes.Buffer
 	ministerTmpl.Execute(&buf, map[string]string{
 		"Realm":          realm,
@@ -298,6 +310,7 @@ func buildSystemPrompt(minister Minister, config *SessionConfig, edictID string,
 		"Scratchpad":     scratchpad,
 		"ProjectContext": readProjectContext(agentsFile),
 		"AgentsFile":     agentsFile,
+		"EnvBlock":       envBlock,
 	})
 	return buf.String()
 }
@@ -580,4 +593,31 @@ func (m *MinisterBase) GetEdict(edictID string) (*storage.Edict, error) {
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
 	return &edict, nil
+}
+// sessBuildEnvBlock constructs a markdown summary of the OS, shell, and key paths.
+func sessBuildEnvBlock(repoInfo repo.RepoInfo) string {
+	var env strings.Builder
+
+	env.WriteString(fmt.Sprintf("- **OS:** %s\n", runtime.GOOS))
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		env.WriteString(fmt.Sprintf("- **Working copy path:** %s\n", cwd))
+	}
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "bash"
+	}
+	env.WriteString(fmt.Sprintf("- **Shell:** %s\n", shell))
+
+	if repoInfo.Branch != "" {
+		env.WriteString(fmt.Sprintf("- **Branch:** %s\n", repoInfo.Branch))
+	}
+
+	if repoInfo.IsWorktree && repoInfo.Branch != "dev" {
+		env.WriteString(
+			`\n\n**IMPORTANT:** Working on worktree so commits will be quashed.
+Feel free to commit whenever you can summarize the changes in a meaningful commit message.`)
+	}
+
+	return env.String()
 }
