@@ -1142,8 +1142,13 @@ func (r *RitualRunner) arrangeGetCourtStatus(edictID string) (interface{}, error
 	result := make([]map[string]interface{}, len(edicts))
 	for i, e := range edicts {
 		result[i] = map[string]interface{}{
-			"edict_id": e.EdictID,
-			"status":   string(e.Status),
+			"edict_id":   e.EdictID,
+			"session_id": e.SessionID,
+			"issue_ref":  e.IssueRef,
+			"intent":     e.Intent,
+			"status":     string(e.Status),
+			"created_at": e.CreatedAt,
+			"updated_at": e.UpdatedAt,
 		}
 	}
 	return result, nil
@@ -1158,8 +1163,16 @@ func (r *RitualRunner) arrangeGetManifests(edictID string) (interface{}, error) 
 	for i, m := range manifests {
 		result[i] = map[string]interface{}{
 			"manifest_id": m.ManifestID,
+			"edict_id":    m.EdictID,
+			"ling_id":     m.LingID,
 			"file_path":   m.FilePath,
+			"func_name":   m.FuncName,
+			"content_sha": m.ContentSHA,
+			"commit_hash": m.CommitHash,
 			"status":      string(m.Status),
+			"verdict_id":  m.VerdictID,
+			"created_at":  m.CreatedAt,
+			"updated_at":  m.UpdatedAt,
 		}
 	}
 	return result, nil

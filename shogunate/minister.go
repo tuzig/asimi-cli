@@ -594,6 +594,7 @@ func (m *MinisterBase) GetEdict(edictID string) (*storage.Edict, error) {
 	}
 	return &edict, nil
 }
+
 // sessBuildEnvBlock constructs a markdown summary of the OS, shell, and key paths.
 func sessBuildEnvBlock(repoInfo repo.RepoInfo) string {
 	var env strings.Builder
