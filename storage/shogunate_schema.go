@@ -332,6 +332,11 @@ func (RitualGuardCheckpoint) TableName() string {
 
 // ShogunateSchema is the SQL DDL for creating Shogunate tables
 const ShogunateSchema = `
+-- DESIGN NOTE: Foreign key constraints removed intentionally.
+-- Oracle: Application layer enforces referential integrity.
+-- Benefit: Orphaned records preserved as historical data.
+-- Trade-off: Manual cleanup required when deleting parent records.
+
 -- Edicts table (high-level tasks/issues)
 CREATE TABLE IF NOT EXISTS edicts (
     edict_id TEXT PRIMARY KEY,
@@ -359,7 +364,6 @@ CREATE TABLE IF NOT EXISTS zhengming_requests (
     answered_at INTEGER,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    FOREIGN KEY (edict_id) REFERENCES edicts(edict_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_zhengming_edict ON zhengming_requests(edict_id);
@@ -372,7 +376,6 @@ CREATE TABLE IF NOT EXISTS tian_events (
     event_type TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    FOREIGN KEY (edict_id) REFERENCES edicts(edict_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_tian_events_edict ON tian_events(edict_id);
@@ -398,7 +401,6 @@ CREATE TABLE IF NOT EXISTS lings (
     status TEXT NOT NULL DEFAULT 'pending',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    FOREIGN KEY (edict_id) REFERENCES edicts(edict_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_lings_edict ON lings(edict_id);
@@ -416,7 +418,6 @@ CREATE TABLE IF NOT EXISTS forge_manifests (
     verdict_id TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    FOREIGN KEY (edict_id) REFERENCES edicts(edict_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_manifests_edict ON forge_manifests(edict_id);
@@ -430,7 +431,6 @@ CREATE TABLE IF NOT EXISTS judge_verdicts (
     outcome TEXT NOT NULL,
     evidence TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    FOREIGN KEY (manifest_id) REFERENCES forge_manifests(manifest_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_judge_verdicts_manifest ON judge_verdicts(manifest_id);
@@ -443,7 +443,6 @@ CREATE TABLE IF NOT EXISTS censor_precedents (
     ruling TEXT NOT NULL,
     justification TEXT NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    FOREIGN KEY (manifest_id) REFERENCES forge_manifests(manifest_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_censor_precedents_manifest ON censor_precedents(manifest_id);
@@ -470,7 +469,6 @@ CREATE TABLE IF NOT EXISTS ruler_councils (
     approved_by TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    FOREIGN KEY (edict_id) REFERENCES edicts(edict_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ruler_councils_edict ON ruler_councils(edict_id);
@@ -492,7 +490,6 @@ CREATE TABLE IF NOT EXISTS ritual_executions (
     data TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    FOREIGN KEY (edict_id) REFERENCES edicts(edict_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ritual_executions_edict ON ritual_executions(edict_id);
@@ -507,7 +504,6 @@ CREATE TABLE IF NOT EXISTS ritual_step_states (
     status TEXT NOT NULL DEFAULT 'pending',
     retry_count INTEGER NOT NULL DEFAULT 0,
     message TEXT NOT NULL DEFAULT '',
-    FOREIGN KEY (execution_id) REFERENCES ritual_executions(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ritual_step_states_execution ON ritual_step_states(execution_id);
