@@ -148,7 +148,7 @@
     - name: censor
       minister: censor
       act: |
-        Review the code changes for quality and standards compliance.
+        Review the given changes for quality and standards compliance.
         Check for style violations, security concerns, and architectural issues.
       depends_on: [judge]
 
