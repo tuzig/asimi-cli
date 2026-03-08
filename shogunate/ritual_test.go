@@ -1549,8 +1549,9 @@ func TestInvokeRitualTool_Blocking(t *testing.T) {
 	ritualRunner := NewRitualRunner(registry, shogunate, db, nil, nil)
 	shogunate.ritualRunner = ritualRunner
 
+	base := &MinisterBase{logger: slog.Default()}
 	chanc := &Chancellor{
-		MinisterBase: MinisterBase{logger: slog.Default()},
+		MinisterBase: base,
 		shogunate:    shogunate,
 	}
 
@@ -1607,8 +1608,9 @@ func TestInvokeRitualTool_BlockingFailure(t *testing.T) {
 	ritualRunner := NewRitualRunner(registry, shogunate, db, nil, nil)
 	shogunate.ritualRunner = ritualRunner
 
+	base := &MinisterBase{logger: slog.Default()}
 	chanc := &Chancellor{
-		MinisterBase: MinisterBase{logger: slog.Default()},
+		MinisterBase: base,
 		shogunate:    shogunate,
 	}
 

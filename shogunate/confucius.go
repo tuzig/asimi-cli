@@ -35,14 +35,14 @@ CRITICAL RULES:
 
 // Confucius provides read-only codebase exploration and suggests edicts via zhengming
 type Confucius struct {
-	MinisterBase
+	*MinisterBase
 	shogunate *Shogunate
 	tasks     chan *Task
 	session   *Session
 }
 
 // NewConfucius creates a new Confucius minister
-func NewConfucius(base MinisterBase) *Confucius {
+func NewConfucius(base *MinisterBase) *Confucius {
 	base.ministerID = "confucius"
 	return &Confucius{
 		MinisterBase: base,

@@ -25,13 +25,13 @@ CRITICAL RULES:
 
 // Judge evaluates code through CI and renders verdicts
 type Judge struct {
-	MinisterBase // embedded base for database access and session creation
+	*MinisterBase // embedded base for database access and session creation
 	ci           CIRunner
 	tasks        chan *Task
 }
 
 // NewJudge creates a new Judge minister
-func NewJudge(base MinisterBase, ci CIRunner) *Judge {
+func NewJudge(base *MinisterBase, ci CIRunner) *Judge {
 	base.ministerID = "judge"
 	return &Judge{
 		MinisterBase: base,

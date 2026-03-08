@@ -2327,8 +2327,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Container launch notification
 		m.commandLine.AddToast(msg.Message, "info", 3*time.Second)
 		// Update shell runner info in status bar
-		// TODO set the container ID
-		m.status.ContainerID = m.status.ContainerID
+		m.status.ContainerID = msg.ContainerID
 		return m, nil
 
 	case shellCommandResultMsg:

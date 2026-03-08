@@ -24,7 +24,7 @@ CRITICAL RULES:
 
 // RitualGuard processes events and invokes ministers
 type RitualGuard struct {
-	MinisterBase // embedded base for database access and session creation
+	*MinisterBase // embedded base for database access and session creation
 	chancellor   *Chancellor
 	shogunate    *Shogunate
 	maxRetries   int
@@ -33,7 +33,7 @@ type RitualGuard struct {
 }
 
 // NewRitualGuard creates a new Ritual Guard
-func NewRitualGuard(base MinisterBase, chancellor *Chancellor, shogunate *Shogunate) *RitualGuard {
+func NewRitualGuard(base *MinisterBase, chancellor *Chancellor, shogunate *Shogunate) *RitualGuard {
 	base.ministerID = "ritual_guard"
 	return &RitualGuard{
 		MinisterBase: base,

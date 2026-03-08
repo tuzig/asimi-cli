@@ -13,12 +13,12 @@ import (
 // Forge receives Tasks from the Chancellor via the tasks channel.
 // When an LLM is configured, it creates sessions to process tasks through tool execution.
 type Forge struct {
-	MinisterBase // embedded base for database access and session creation
+	*MinisterBase // embedded base for database access and session creation
 	tasks        chan *Task
 }
 
 // NewForge creates a new Forge that processes tasks via the Task pattern.
-func NewForge(base MinisterBase) *Forge {
+func NewForge(base *MinisterBase) *Forge {
 	base.ministerID = "forge"
 	return &Forge{
 		MinisterBase: base,

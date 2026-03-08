@@ -133,7 +133,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ritualRunner = NewRitualRunner(s.ritualRegistry, s, db, runner, s.logger)
 
 	// Create all ministers — each needs its own base (channels/maps are reference types)
-	newBase := func() MinisterBase {
+	newBase := func() *MinisterBase {
 		base := NewMinisterBase(db, runner, logger)
 		base.publish = s.PublishEvent
 		return base

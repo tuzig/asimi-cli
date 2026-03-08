@@ -205,11 +205,11 @@ type MinisterBase struct {
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
-func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger) MinisterBase {
+func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger) *MinisterBase {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return MinisterBase{
+	return &MinisterBase{
 		db:               db,
 		runner:           runner,
 		logger:           logger,

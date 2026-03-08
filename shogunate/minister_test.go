@@ -791,7 +791,7 @@ func (f *fakeMinisterWithScratchpad) Scratchpad() string { return f.scratchpad }
 
 // fakeMinister is a minimal Minister implementation for testing
 type fakeMinister struct {
-	MinisterBase
+	*MinisterBase
 	id    string
 	tasks chan *Task
 }

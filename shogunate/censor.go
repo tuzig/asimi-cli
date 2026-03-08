@@ -28,13 +28,13 @@ type Finding struct {
 
 // Censor enforces code ethics and maintains precedent law
 type Censor struct {
-	MinisterBase // embedded base for database access and session creation
+	*MinisterBase // embedded base for database access and session creation
 	linter       Linter
 	tasks        chan *Task
 }
 
 // NewCensor creates a new Censor minister
-func NewCensor(base MinisterBase, linter Linter) *Censor {
+func NewCensor(base *MinisterBase, linter Linter) *Censor {
 	base.ministerID = "censor"
 	return &Censor{
 		MinisterBase: base,

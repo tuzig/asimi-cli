@@ -20,7 +20,7 @@ var role string
 
 // Chancellor harmonizes all ministers and manages edict lifecycle
 type Chancellor struct {
-	MinisterBase // embedded base provides db, llm, config, repoInfo, logger
+	*MinisterBase // embedded base provides db, llm, config, repoInfo, logger
 	shogunate    *Shogunate
 	taskChan     chan *Task
 
@@ -29,7 +29,7 @@ type Chancellor struct {
 }
 
 // NewChancellor creates a new Chancellor minister
-func NewChancellor(base MinisterBase) *Chancellor {
+func NewChancellor(base *MinisterBase) *Chancellor {
 	base.ministerID = "chancellor"
 	return &Chancellor{
 		MinisterBase:  base,

@@ -39,13 +39,13 @@ CRITICAL RULES:
 
 // Marshal monitors production and handles incidents
 type Marshal struct {
-	MinisterBase // embedded base for database access and session creation
+	*MinisterBase // embedded base for database access and session creation
 	rca          RCAAnalyzer
 	tasks        chan *Task
 }
 
 // NewMarshal creates a new Marshal minister
-func NewMarshal(base MinisterBase, rca RCAAnalyzer) *Marshal {
+func NewMarshal(base *MinisterBase, rca RCAAnalyzer) *Marshal {
 	base.ministerID = "marshal"
 	return &Marshal{
 		MinisterBase: base,
