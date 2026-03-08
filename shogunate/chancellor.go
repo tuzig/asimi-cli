@@ -313,10 +313,8 @@ func (t InvokeRitualTool) Name() string {
 }
 
 func (t InvokeRitualTool) Description() string {
-	return `Execute a YAML-defined ritual workflow for an edict. Blocks until the ritual completes or fails.
-Rituals are predefined workflows that orchestrate ministers through a series of steps.
-Use list_rituals to see available rituals, or specify a ritual name directly.
-Common rituals: implement, fix, refactor, review.`
+	return `Execute a YAML-defined ritual workflow for an existing edict. Blocks until the ritual completes or fails.
+Rituals are predefined workflows that orchestrate ministers and commands through a series of steps.`
 }
 
 func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error) {
