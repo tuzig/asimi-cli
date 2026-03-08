@@ -35,9 +35,9 @@ func (t RequestZhengmingTool) Description() string {
 
 func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID   string              `json:"edict_id"`
+		EdictID   string                      `json:"edict_id"`
 		Questions []storage.ZhengmingQuestion `json:"questions"`
-		Priority  string              `json:"priority"`
+		Priority  string                      `json:"priority"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -150,4 +150,3 @@ func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 		"required": []string{"edict_id", "questions"},
 	}
 }
-

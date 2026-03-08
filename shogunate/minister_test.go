@@ -592,7 +592,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error when context is cancelled during wait")
 	}
-	
+
 	assert.Equal(t, err.Error(), "context canceled")
 }
 

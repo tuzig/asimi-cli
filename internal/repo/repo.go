@@ -188,6 +188,7 @@ func (r *RepoInfo) BranchSlugOrDefault() string {
 
 	return slug
 }
+
 // SanitizeSegment normalizes a string for use as a URL/storage segment.
 func SanitizeSegment(value string) string {
 	value = strings.ToLower(value)
@@ -421,6 +422,7 @@ func summarizeStatus(status gogit.Status) string {
 	}
 	return result
 }
+
 // GitRemoteOriginURL returns the remote origin URL for the given working directory.
 func GitRemoteOriginURL(workingDir string) (string, error) {
 	cmd := exec.Command("git", "-C", workingDir, "config", "--get", "remote.origin.url")

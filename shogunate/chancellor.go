@@ -21,8 +21,8 @@ var role string
 // Chancellor harmonizes all ministers and manages edict lifecycle
 type Chancellor struct {
 	*MinisterBase // embedded base provides db, llm, config, repoInfo, logger
-	shogunate    *Shogunate
-	taskChan     chan *Task
+	shogunate     *Shogunate
+	taskChan      chan *Task
 
 	// Run() loop fields
 	edictSessions map[string]*Session // Per-edict sessions (edictID -> session)

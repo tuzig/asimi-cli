@@ -381,7 +381,6 @@ func (s *WorkflowStore) UpdateWorkflowData(workflowID string, data map[string]st
 	return nil
 }
 
-
 // IncrementStepRetryCount increments the retry count for a step
 func (s *WorkflowStore) IncrementStepRetryCount(workflowID string, stepIndex int) error {
 	_, err := s.db.conn.Exec(`

@@ -55,7 +55,7 @@ func newTestShogunate(t *testing.T, db *gorm.DB) *Shogunate {
 	s := &Shogunate{
 		db:            db,
 		logger:        slog.Default(),
-		ministers:      make(map[string]Minister),
+		ministers:     make(map[string]Minister),
 		eventRegistry: NewEventRegistry(),
 		eventCh:       make(chan Event, 256),
 	}
@@ -150,7 +150,7 @@ func TestBackpressure(t *testing.T) {
 	s := &Shogunate{
 		db:            db,
 		logger:        slog.Default(),
-		ministers:      make(map[string]Minister),
+		ministers:     make(map[string]Minister),
 		eventRegistry: NewEventRegistry(),
 		eventCh:       make(chan Event, 2),
 	}

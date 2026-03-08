@@ -29,7 +29,7 @@ CRITICAL RULES:
 // Strategist decomposes edicts into executable ling (令, task orders)
 type Strategist struct {
 	*MinisterBase // embedded base for database access and session creation
-	tasks        chan *Task
+	tasks         chan *Task
 }
 
 // NewStrategist creates a new Strategist minister

@@ -40,8 +40,8 @@ CRITICAL RULES:
 // Marshal monitors production and handles incidents
 type Marshal struct {
 	*MinisterBase // embedded base for database access and session creation
-	rca          RCAAnalyzer
-	tasks        chan *Task
+	rca           RCAAnalyzer
+	tasks         chan *Task
 }
 
 // NewMarshal creates a new Marshal minister

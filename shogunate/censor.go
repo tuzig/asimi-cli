@@ -29,8 +29,8 @@ type Finding struct {
 // Censor enforces code ethics and maintains precedent law
 type Censor struct {
 	*MinisterBase // embedded base for database access and session creation
-	linter       Linter
-	tasks        chan *Task
+	linter        Linter
+	tasks         chan *Task
 }
 
 // NewCensor creates a new Censor minister

@@ -17,7 +17,7 @@
         - If there are no changes, Welcome the ruler
  
 - name: swift-strike
-  description: "The Swift Strike - A tight loop of creation and validation for small changes"
+  description: A tight loop for enacting small changes in 地
   triggers:
     - manual: true
   inputs:
@@ -34,14 +34,15 @@
         Implement the changes for edict {{ .edict_id }}.
         Focus on minimal, targeted changes to fulfill the intent.
       on_failure: retry
-
     - name: judge
       minister: judge
       given:
         - the manifests
+        - !just test
       act: |
-        Run tests and validate the changes for edict {{ .edict_id }}.
         If tests fail, provide clear feedback for the Forge.
+        if they pass ensure the changes in the manifest are covered by tests
+        that ensure the change will ALWAYS work
       then:
         - "!just test"
       depends_on: [forge]
@@ -51,7 +52,7 @@
     - the edict is sealed
 
 - name: grand-campaign
-  description: "The Grand Campaign (L) - Architecture-first with strict gatekeeping"
+  description: "A large 地change - architecture-first with strict gatekeeping"
   triggers:
     - manual: true
   inputs:

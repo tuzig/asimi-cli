@@ -25,11 +25,11 @@ CRITICAL RULES:
 // RitualGuard processes events and invokes ministers
 type RitualGuard struct {
 	*MinisterBase // embedded base for database access and session creation
-	chancellor   *Chancellor
-	shogunate    *Shogunate
-	maxRetries   int
-	batchSize    int
-	flatlineAge  time.Duration
+	chancellor    *Chancellor
+	shogunate     *Shogunate
+	maxRetries    int
+	batchSize     int
+	flatlineAge   time.Duration
 }
 
 // NewRitualGuard creates a new Ritual Guard

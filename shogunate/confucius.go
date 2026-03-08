@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -145,10 +146,36 @@ func (c *Confucius) processPrompt(ctx context.Context, prompt *Prompt) {
 func (c *Confucius) processTask(ctx context.Context, task *Task) {
 	c.logger.Info("confucius processing task", "edict_id", task.EdictID, "work", task.Work)
 
+	// Use task-level notify override for routing (e.g., ritual → Ruling tab)
+	notify := c.notify
+	if task.Notify != nil {
+		notify = task.Notify
+	}
+
+	var output string
+	var taskErr error
+	var session *Session
+
+	if c.model != nil {
+		if task.Session != nil {
+			// Multi-turn: continue existing session
+			session = task.Session
+			session.SetNotify(notify)
+			_, taskErr = session.AskWithStreaming(ctx, task.Work, nil)
+		} else {
+			// First invocation: create new session
+			session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify)
+		}
+	} else {
+		output = "confucius task acknowledged (no LLM configured)"
+	}
+
 	result := Result{
 		MinisterID: c.ID(),
 		Sealed:     true,
-		Output:     "Confucius has reviewed the matter.",
+		Output:     output,
+		Session:    session,
+		Err:        taskErr,
 	}
 
 	select {
@@ -156,6 +183,27 @@ func (c *Confucius) processTask(ctx context.Context, task *Task) {
 	default:
 		c.logger.Warn("done channel full", "edict_id", task.EdictID)
 	}
+}
+
+// streamTask creates a session and streams the task through the LLM.
+// Returns the session for potential reuse in multi-turn conversations.
+func (c *Confucius) streamTask(ctx context.Context, work, edictID, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
+	session, err := CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
+		EdictID:    edictID,
+		TabID:      "chancellor",
+		Scratchpad: scratchpad,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create confucius session: %w", err)
+	}
+
+	_, err = session.AskWithStreaming(ctx, work, nil)
+	if err != nil {
+		return session, "", err
+	}
+
+	c.logger.Info("confucius task completed")
+	return session, "", nil
 }
 
 // --- Confucius-specific tools ---

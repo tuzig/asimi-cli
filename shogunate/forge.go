@@ -14,7 +14,7 @@ import (
 // When an LLM is configured, it creates sessions to process tasks through tool execution.
 type Forge struct {
 	*MinisterBase // embedded base for database access and session creation
-	tasks        chan *Task
+	tasks         chan *Task
 }
 
 // NewForge creates a new Forge that processes tasks via the Task pattern.
@@ -313,4 +313,3 @@ func (t *CreateManifestTool) Format(input, result string, err error) string {
 	}
 	return fmt.Sprintf("Create Manifest: %s\n", result)
 }
-

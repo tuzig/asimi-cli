@@ -473,9 +473,9 @@ type RitualExecution struct {
 	UpdatedAt   time.Time    `gorm:"column:updated_at;autoUpdateTime"`
 
 	// Runtime (not persisted)
-	def         *RitualDef
-	stepStates  []RitualStepState
-	notify internal.NotifyFunc
+	def        *RitualDef
+	stepStates []RitualStepState
+	notify     internal.NotifyFunc
 }
 
 // TableName returns the table name for RitualExecution

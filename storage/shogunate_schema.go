@@ -136,17 +136,17 @@ const (
 
 // Zhengming represents a clarification request from a minister
 type Zhengming struct {
-	RequestID  string              `gorm:"primaryKey;column:request_id"`
-	EdictID    string              `gorm:"column:edict_id;index"`
-	MinisterID string              `gorm:"column:minister_id"`
-	Questions  ZhengmingQuestions  `gorm:"column:question;type:text"`
-	Answer     string              `gorm:"column:answer"`
-	Priority   ZhengmingPriority   `gorm:"column:priority"`
-	Status     ZhengmingStatus     `gorm:"column:status"`
-	TimeoutAt  time.Time           `gorm:"column:timeout_at"`
-	AnsweredAt *time.Time          `gorm:"column:answered_at"`
-	CreatedAt  time.Time           `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt  time.Time           `gorm:"column:updated_at;autoUpdateTime"`
+	RequestID  string             `gorm:"primaryKey;column:request_id"`
+	EdictID    string             `gorm:"column:edict_id;index"`
+	MinisterID string             `gorm:"column:minister_id"`
+	Questions  ZhengmingQuestions `gorm:"column:question;type:text"`
+	Answer     string             `gorm:"column:answer"`
+	Priority   ZhengmingPriority  `gorm:"column:priority"`
+	Status     ZhengmingStatus    `gorm:"column:status"`
+	TimeoutAt  time.Time          `gorm:"column:timeout_at"`
+	AnsweredAt *time.Time         `gorm:"column:answered_at"`
+	CreatedAt  time.Time          `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt  time.Time          `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName returns the table name for Zhengming

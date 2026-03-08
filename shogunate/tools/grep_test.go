@@ -26,7 +26,7 @@ func TestGrepToolWithDotPath(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	tool := GrepTool{}
-	
+
 	// Test 1: Search with path="." should work now (bug fix)
 	result, err := tool.Call(context.Background(), `{"pattern": "hello", "path": "."}`)
 	if err != nil {

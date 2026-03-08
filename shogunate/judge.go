@@ -26,8 +26,8 @@ CRITICAL RULES:
 // Judge evaluates code through CI and renders verdicts
 type Judge struct {
 	*MinisterBase // embedded base for database access and session creation
-	ci           CIRunner
-	tasks        chan *Task
+	ci            CIRunner
+	tasks         chan *Task
 }
 
 // NewJudge creates a new Judge minister
