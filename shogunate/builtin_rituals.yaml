@@ -38,13 +38,11 @@
       minister: judge
       given:
         - the manifests
-        - !just test
+        - '!just test'
       act: |
         If tests fail, provide clear feedback for the Forge.
         if they pass ensure the changes in the manifest are covered by tests
         that ensure the change will ALWAYS work
-      then:
-        - "!just test"
       depends_on: [forge]
       on_failure: goto
       on_failure_target: forge
