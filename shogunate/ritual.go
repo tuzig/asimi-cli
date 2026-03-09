@@ -150,6 +150,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the edict is sealed", "seal_edict", "sealed"},
 		{"the edict is blocked", "block_edict", "blocked"},
 		{"the edict is unblocked", "unblock_edict", "unblocked"},
+		{"the ruler approves", "request_zhengming", "approved"},
 	}
 	for _, b := range builtins {
 		_ = r.Register(b.pattern, b.handlerKey, b.outputKey) // builtin patterns are known-good
@@ -1282,6 +1283,45 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 		return r.db.Model(&storage.Edict{}).
 			Where("edict_id = ? AND status = ?", exec.EdictID, storage.EdictBlocked).
 			Update("status", storage.EdictActive).Error
+	case "request_zhengming":
+		step := exec.def.Steps[exec.CurrentStep]
+		minister := r.shogunate.GetMinister(step.Minister)
+		if minister == nil {
+			return fmt.Errorf("minister not found: %s", step.Minister)
+		}
+		type zhengmingGate interface {
+			RequestZhengming(string, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+			WaitForAnswer(context.Context, string) (string, error)
+		}
+		gate, ok := minister.(zhengmingGate)
+		if !ok {
+			return fmt.Errorf("minister %s does not support zhengming", step.Minister)
+		}
+		questions := storage.ZhengmingQuestions{{
+			Text:    fmt.Sprintf("The %s has completed work on edict %s. Do you approve?", step.Minister, exec.EdictID),
+			Options: []string{"Approve and proceed", "Let me clarify", "Reject"},
+		}}
+		requestID, err := gate.RequestZhengming(exec.EdictID, questions, storage.PriorityUrgent)
+		if err != nil {
+			return fmt.Errorf("failed to request zhengming: %w", err)
+		}
+		if exec.notify != nil {
+			exec.notify(ZhengmingPendingMsg{
+				RequestID:  requestID,
+				EdictID:    exec.EdictID,
+				MinisterID: step.Minister,
+				Questions:  questions,
+				Priority:   storage.PriorityUrgent,
+			})
+		}
+		answer, err := gate.WaitForAnswer(ctx, requestID)
+		if err != nil {
+			return err
+		}
+		if answer == "Reject" {
+			return fmt.Errorf("ruler rejected the plan")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown then function: %s", fn)
 	}
