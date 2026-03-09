@@ -812,7 +812,7 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 
 	registry := NewRitualRegistry()
 	registry.Register(&RitualDef{Name: "swift-strike", Description: "The Swift Strike (S)"})
-	registry.Register(&RitualDef{Name: "grand-campaign", Description: "The Grand Campaign (L)"})
+	registry.Register(&RitualDef{Name: "castle-siege", Description: "The Castle Siege (L)"})
 
 	shogunate := &Shogunate{
 		db:             db,
@@ -829,10 +829,10 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	if !strings.Contains(prompt, "The Swift Strike (S)") {
 		t.Errorf("Expected ritual description in system prompt, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "grand-campaign") {
-		t.Errorf("Expected ritual name 'grand-campaign' in system prompt, got:\n%s", prompt)
+	if !strings.Contains(prompt, "castle-siege") {
+		t.Errorf("Expected ritual name 'castle-siege' in system prompt, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "The Grand Campaign (L)") {
+	if !strings.Contains(prompt, "The Castle Siege (L)") {
 		t.Errorf("Expected ritual description in system prompt, got:\n%s", prompt)
 	}
 }

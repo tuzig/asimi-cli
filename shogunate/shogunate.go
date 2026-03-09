@@ -367,7 +367,7 @@ func (s *Shogunate) ministerIDs() []string {
 
 // loadRituals loads embedded rituals and project rituals from .agents/rituals/
 func (s *Shogunate) loadRituals() error {
-	// Load embedded rituals first (swift-strike, grand-campaign)
+	// Load embedded rituals first
 	embedded, err := LoadEmbeddedRituals()
 	if err != nil {
 		return fmt.Errorf("failed to load embedded rituals: %w", err)

@@ -479,20 +479,20 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 				t.Error("swift-strike forge step: expected act field")
 			}
 
-		case "grand-campaign":
+		case "castle-siege":
 			foundGrand = true
 			if len(r.Steps) != 4 {
-				t.Errorf("grand-campaign: expected 4 steps, got %d", len(r.Steps))
+				t.Errorf("castle-siege: expected 4 steps, got %d", len(r.Steps))
 			}
 			expectedMinisters := []string{"strategist", "forge", "judge", "censor"}
 			for i, expected := range expectedMinisters {
 				if r.Steps[i].Minister != expected {
-					t.Errorf("grand-campaign: step %d expected minister %q, got %q", i, expected, r.Steps[i].Minister)
+					t.Errorf("castle-siege: step %d expected minister %q, got %q", i, expected, r.Steps[i].Minister)
 				}
 			}
 			// Verify ritual-level defaults
 			if r.MaxRetries != 3 {
-				t.Errorf("grand-campaign: expected max_retries 3, got %d", r.MaxRetries)
+				t.Errorf("castle-siege: expected max_retries 3, got %d", r.MaxRetries)
 			}
 
 		case "review":
@@ -531,7 +531,7 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 		t.Error("swift-strike ritual not found")
 	}
 	if !foundGrand {
-		t.Error("grand-campaign ritual not found")
+		t.Error("castle-siege ritual not found")
 	}
 	if !foundReview {
 		t.Error("review ritual not found")

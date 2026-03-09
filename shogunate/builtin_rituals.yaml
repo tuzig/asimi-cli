@@ -49,8 +49,8 @@
   then:
     - the edict is sealed
 
-- name: grand-campaign
-  description: "A large 地change - architecture-first with strict gatekeeping"
+- name: castle-siege
+  description: "A medium complexity 地 change with planning"
   triggers:
     - manual: true
   inputs:

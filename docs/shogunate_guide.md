@@ -244,12 +244,12 @@ For small, focused changes. A tight loop between Forge and Judge:
     - the edict is sealed
 ```
 
-#### Grand Campaign (L-size edicts)
+#### Castle Siege (M-size edicts)
 
-For large-complexity work with planning and review:
+For medium-complexity work with planning and review:
 
 ```yaml
-- name: grand-campaign
+- name: castle-siege
   max_retries: 3
   background:
     - the edict details
@@ -784,7 +784,7 @@ Examples:
 | Aspect | Ruling | Hunting | Minister |
 |--------|--------|---------|----------|
 | **Counterpart** | Chancellor | Confucius | — (scroll-only log) |
-| **Tempo** | Campaign (grand-campaign) | Skirmish (swift-strike) | Observation |
+| **Tempo** | Campaign (castle-siege) | Skirmish (swift-strike) | Observation |
 | **Purpose** | Execute edicts | Spot openings, distill intent | Monitor minister activity |
 | **Edict creation** | Ruler dictates directly | Confucius distills from conversation | — |
 | **Awareness** | Court ministers only | Full read-only across all state | Single minister's history |
