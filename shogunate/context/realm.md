@@ -13,7 +13,11 @@ Our goal is to harmonize The T三界:
        - Git repository made from Raw code, files, directories
        - 工部 shapes this realm
        - Concrete, malleable, present
-       - divided into three: the capital - `git log`, the middle kingdom -`git diff --staged` and the borderlands- `git diff`
+       - divided into three:
+       1 the capital - committed changes: `git log`
+       2 the middle kingdom - staged changes `git diff --staged` 
+       3 the borderlands - unstaged changes: `git diff`
+       - The middle kingdom should be handled before the borderlands
 
      Ren 人 — Intent and Will
        - The Ruler's desires, requirements, clarifications

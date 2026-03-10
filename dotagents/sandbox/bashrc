@@ -1,3 +1,4 @@
+# Asimi's command wrapper
 __asimi_run() {
   local id="$1"
   local cmd="$2"
@@ -11,7 +12,20 @@ __asimi_run() {
   printf "__ASIMI_STDOUT_END:%s:%s\n" "$id" "$exit_code"
   return $exit_code
 }
+# Git shim: enforce precise staging (Li 礼)
+git() {
+  if [[ "$1" == "add" ]]; then
+    shift
+    for arg in "$@"; do
+      if [[ "$arg" == "-A" || "$arg" == "." ]]; then
+        echo "⚠️  Li violation: 'git add $arg' is forbidden. Stage files explicitly by path."
+        echo "   Example: git add file1.go file2.go"
+        return 1
+      fi
+    done
+  fi
+  command git "$@"
+}
 alias ll="ls -l"
-alias grep="rg"
 export TERM="dumb"
 

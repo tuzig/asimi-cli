@@ -1041,19 +1041,25 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 }
 
 // workPromptTmpl is the template for building dynamic work messages.
-// It includes previous step results and given context before the task.
+// Task comes first so the model reads the instruction before the data.
 var workPromptTmpl = template.Must(template.New("work").Parse(
-	`{{ if .step_results }}# Previous Step Results
-{{ range $name, $result := .step_results }}
-## {{ $name }}
-{{ $result }}
-{{ end }}{{ end }}{{ if .given_context }}# Given Context
-{{ range $key, $val := .given_context }}
-## {{ $key }}
-{{ $val }}
-{{ end }}{{ end }}# Task
+	`# Task
 {{ .Act }}
-`))
+{{ if or .step_results .given_context }}
+---
+# Reference Data
+The following information has already been gathered for you. Use it directly — do NOT call tools to re-fetch this data.
+{{ if .step_results }}
+## Previous Step Results
+{{ range $name, $result := .step_results }}
+### {{ $name }}
+{{ $result }}
+{{ end }}{{ end }}{{ if .given_context }}
+## Given Context
+{{ range $key, $val := .given_context }}
+### {{ $key }}
+{{ $val }}
+{{ end }}{{ end }}{{ end }}`))
 
 // buildWorkPrompt builds the dynamic work message from step results, given context, and the act.
 // This is rebuilt on every invocation so goto re-invocations get fresh context.

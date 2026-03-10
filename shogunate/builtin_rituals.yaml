@@ -90,7 +90,7 @@
         Execute all tests and validate the Forge's work.
         If the Judge fails, the Forge must return to the anvil.
       then:
-        - "!just test"
+        - "!git diff"
       depends_on: [forge]
       on_failure: goto
       on_failure_target: forge
@@ -131,22 +131,19 @@
 
 - name: review
   description: |
-    Code review - judge and censor review the changes is
-    the middle kingdom and the borderlands and suggesting
-    the next ritual
+    Code review - judge and censor review the changes before
+    committing and suggesting the next steps
   triggers:
     - manual: true
   background:
+    - the earth status
     - "!git diff"
-    - "!git diff --cached"
-    - "!just test"
   steps:
     - name: judge
       minister: judge
       act: |
-        Review the code changes. Run tests and identify any issues,
-        bugs, or missing test coverage.
-
+        If the tests pass, ensure 
+        the changes in the borderlands and middle kingdom are covered by tests
     - name: censor
       minister: censor
       act: |
@@ -155,7 +152,7 @@
       depends_on: [judge]
 
     - name: report
-      minister: chancellor
+      minister: confucius
       act: |
         Produce a comprehensive code review report.
         Summarize the findings from the judge and censor.

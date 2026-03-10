@@ -108,7 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/afittestide/asimi-cli/main/scripts/
 vim CHANGELOG.md                           # Polish changelog
 sed -i 's/version = .*/version = "0.2.1"/' main.go  # Update version
 vim README.md                              # Update roadmap
-git add -A && git commit -m "chore: releasing 0.2.1"
+git add CHANGELOG.md main.go README.md && git commit -m "chore: releasing 0.2.1"
 git tag -a v0.2.1 -m "Release 0.2.1"
 git push origin main --tags
 ```
