@@ -1290,10 +1290,11 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 			Where("edict_id = ? AND status = ?", exec.EdictID, storage.EdictBlocked).
 			Update("status", storage.EdictActive).Error
 	case "request_zhengming":
-		step := exec.def.Steps[exec.CurrentStep]
-		minister := r.shogunate.GetMinister(step.Minister)
+		// Use the chancellor for zhengming requests, as it's the minister that interacts with the ruler
+		// and has a corresponding tab for displaying zhengming questions
+		minister := r.shogunate.GetMinister("chancellor")
 		if minister == nil {
-			return fmt.Errorf("minister not found: %s", step.Minister)
+			return fmt.Errorf("minister not found: chancellor")
 		}
 		type zhengmingGate interface {
 			RequestZhengming(string, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
@@ -1301,10 +1302,15 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 		}
 		gate, ok := minister.(zhengmingGate)
 		if !ok {
-			return fmt.Errorf("minister %s does not support zhengming", step.Minister)
+			return fmt.Errorf("minister chancellor does not support zhengming")
+		}
+		// Get the step that just completed to include in the question
+		stepName := ""
+		if exec.CurrentStep >= 0 && exec.CurrentStep < len(exec.def.Steps) {
+			stepName = exec.def.Steps[exec.CurrentStep].Name
 		}
 		questions := storage.ZhengmingQuestions{{
-			Text:    fmt.Sprintf("The %s has completed work on edict %s. Do you approve?", step.Minister, exec.EdictID),
+			Text:    fmt.Sprintf("The %s has completed work on edict %s. Do you approve?", stepName, exec.EdictID),
 			Options: []string{"Approve and proceed", "Let me clarify", "Reject"},
 		}}
 		requestID, err := gate.RequestZhengming(exec.EdictID, questions, storage.PriorityUrgent)
@@ -1315,7 +1321,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 			exec.notify(ZhengmingPendingMsg{
 				RequestID:  requestID,
 				EdictID:    exec.EdictID,
-				MinisterID: step.Minister,
+				MinisterID: "chancellor",
 				Questions:  questions,
 				Priority:   storage.PriorityUrgent,
 			})
