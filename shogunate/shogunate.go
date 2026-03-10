@@ -143,6 +143,31 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	chancellor.SetShogunate(s)
 	s.ministers[chancellor.ID()] = chancellor
 
+	// Subscribe Chancellor to events
+	s.eventRegistry.Subscribe(EventEdictCreated, func(e Event) {
+		select {
+		case chancellor.eventChan <- e:
+		default:
+			s.logger.Warn("chancellor event channel full", "event", e.Type)
+		}
+	})
+
+	s.eventRegistry.Subscribe(EventRitualCompleted, func(e Event) {
+		select {
+		case chancellor.eventChan <- e:
+		default:
+			s.logger.Warn("chancellor event channel full", "event", e.Type)
+		}
+	})
+
+	s.eventRegistry.Subscribe(EventRitualFailed, func(e Event) {
+		select {
+		case chancellor.eventChan <- e:
+		default:
+			s.logger.Warn("chancellor event channel full", "event", e.Type)
+		}
+	})
+
 	// Wire up the ritual guard
 	s.ritualGuard = NewRitualGuard(newBase(), chancellor, s)
 

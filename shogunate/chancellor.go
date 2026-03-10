@@ -23,6 +23,7 @@ type Chancellor struct {
 	*MinisterBase // embedded base provides db, llm, config, repoInfo, logger
 	shogunate     *Shogunate
 	taskChan      chan *Task
+	eventChan     chan Event
 
 	// Run() loop fields
 	edictSessions map[string]*Session // Per-edict sessions (edictID -> session)
@@ -34,6 +35,7 @@ func NewChancellor(base *MinisterBase) *Chancellor {
 	return &Chancellor{
 		MinisterBase:  base,
 		taskChan:      make(chan *Task, 10),
+		eventChan:     make(chan Event, 256),
 		edictSessions: make(map[string]*Session),
 	}
 }
@@ -531,9 +533,9 @@ func (c *Chancellor) getDBPath() string {
 	return file
 }
 
-// Run listens for prompts from the Ruler and tasks from ministers
+// Run listens for prompts from the Ruler, tasks from ministers, and events from the Shogunate
 func (c *Chancellor) Run(ctx context.Context) {
-	c.logger.Info("chancellor started, awaiting prompts")
+	c.logger.Info("chancellor started, awaiting prompts and events")
 	for {
 		select {
 		case <-ctx.Done():
@@ -556,6 +558,8 @@ func (c *Chancellor) Run(ctx context.Context) {
 			}
 			c.processTask(merged, task)
 			mergedCancel()
+		case event := <-c.eventChan:
+			c.processEvent(ctx, event)
 		}
 	}
 }
@@ -799,6 +803,77 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 			c.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
 		}
 	}
+}
+
+// processEvent handles events from the Shogunate event system
+func (c *Chancellor) processEvent(ctx context.Context, event Event) {
+	c.logger.Debug("chancellor processing event", "type", event.Type, "edict_id", event.EdictID)
+
+	switch event.Type {
+	case EventEdictCreated:
+		c.handleEdictCreated(ctx, event.EdictID)
+	case EventRitualCompleted:
+		c.handleRitualCompleted(ctx, event.EdictID, event.Payload)
+	case EventRitualFailed:
+		c.handleRitualFailed(ctx, event.EdictID, event.Payload)
+	default:
+		c.logger.Debug("ignoring unknown event type", "type", event.Type)
+	}
+}
+
+// handleEdictCreated processes a new edict event by determining and enacting the appropriate ritual
+func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
+	c.logger.Info("handling edict created", "edict_id", edictID)
+
+	// Read the edict to determine the appropriate ritual
+	edict, err := c.GetEdict(edictID)
+	if err != nil {
+		c.logger.Error("failed to get edict", "edict_id", edictID, "error", err)
+		return
+	}
+
+	// For now, use swift-strike as the default ritual
+	// TODO: Implement edict sizing logic to choose appropriate ritual
+	ritualName := "swift-strike"
+
+	c.logger.Info("enacting ritual for edict", "edict_id", edictID, "ritual", ritualName, "intent", edict.Intent)
+
+	// Enact the ritual
+	inputs := map[string]string{"edict_id": edictID}
+	exec, err := c.shogunate.ritualRunner.Start(ctx, ritualName, edictID, inputs, c.notify)
+	if err != nil {
+		c.logger.Error("failed to start ritual", "ritual", ritualName, "edict_id", edictID, "error", err)
+		return
+	}
+
+	// Run the ritual asynchronously
+	go func() {
+		if err := c.shogunate.ritualRunner.Run(ctx, exec); err != nil {
+			c.logger.Error("ritual failed", "ritual", ritualName, "edict_id", edictID, "error", err)
+		}
+	}()
+}
+
+// handleRitualCompleted processes a completed ritual event
+func (c *Chancellor) handleRitualCompleted(ctx context.Context, edictID string, payload map[string]interface{}) {
+	c.logger.Info("handling ritual completed", "edict_id", edictID, "payload", payload)
+
+	// Synthesize results and potentially seal the edict
+	// The ritual itself should have already committed changes and created manifests
+	// Here we can perform any final synthesis or notification
+
+	// Check if edict should be sealed (all work complete)
+	// For now, this is a placeholder - actual logic depends on edict state
+	c.logger.Debug("ritual completed - edict may need synthesis", "edict_id", edictID)
+}
+
+// handleRitualFailed processes a failed ritual event
+func (c *Chancellor) handleRitualFailed(ctx context.Context, edictID string, payload map[string]interface{}) {
+	c.logger.Error("handling ritual failed", "edict_id", edictID, "payload", payload)
+
+	// Analyze failure and potentially request zhengming or retry
+	// For now, this is a placeholder - actual logic depends on failure type
+	c.logger.Debug("ritual failed - may need zhengming or retry", "edict_id", edictID)
 }
 
 // streamTask creates a session and streams the task through the LLM.
