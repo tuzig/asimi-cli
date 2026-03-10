@@ -345,29 +345,6 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		logger = slog.Default()
 	}
 
-	// Check edict status - don't start rituals on sealed/cancelled edicts
-	/*
-		if t.chancellor.db != nil {
-			var edict storage.Edict
-			if err := t.chancellor.db.Where("edict_id = ?", params.EdictID).First(&edict).Error; err == nil {
-				if edict.Status == storage.EdictSealed || edict.Status == storage.EdictCancelled {
-					result := map[string]any{
-						"status":      "rejected",
-						"ritual_name": params.RitualName,
-						"edict_id":    params.EdictID,
-						"reason":      fmt.Sprintf("edict is already %s", edict.Status),
-					}
-					resultJSON, _ := json.Marshal(result)
-					logger.Warn("ritual rejected: edict already terminal",
-						"edict_id", params.EdictID,
-						"edict_status", edict.Status,
-						"ritual", params.RitualName)
-					return string(resultJSON), nil
-				}
-			}
-		}
-	*/
-
 	// Block until ritual completes (or fails/cancels)
 	exec, err := t.chancellor.RunRitual(ctx, params.RitualName, params.EdictID, params.Inputs)
 	if err != nil {
