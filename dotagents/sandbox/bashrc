@@ -12,24 +12,30 @@ __asimi_run() {
   printf "__ASIMI_STDOUT_END:%s:%s\n" "$id" "$exit_code"
   return $exit_code
 }
-# Git shim: enforce precise staging (Li 礼)
+# Git shim: enforce Li (礼) - proper conduct for git operations
 git() {
-  if [[ "$1" == "add" ]]; then
-    shift
-    for arg in "$@"; do
-      if [[ "$arg" == "-A" || "$arg" == "." ]]; then
-        echo "⚠️  Li violation: 'git add $arg' is forbidden. Stage files explicitly by path."
-        echo "   Example: git add file1.go file2.go"
-        return 1
-      fi
-    done
-  fi
-  for arg in "$@"; do
-    if [[ "$arg" == "--hard" || "$arg" == "-f" || "$arg" == "--force" || "$arg" == "-D" || "$arg" == "--no-verify" || "$arg" == "--overwrite-ignore" ]]; then
-      echo "⚠️  Li violation: 'git $*' is forbidden. Destructive/bypass flags (--hard, -f, --force, -D, --no-verify, --overwrite-ignore) are not allowed. Ask the ruler to run them for you"
+  # Block forbidden flags on all subcommands
+  for arg in "${@:2}"; do
+    if [[ "$arg" == "--hard" || "$arg" == "--force" || "$arg" == "--force-with-lease" || "$arg" == "-D" || "$arg" == "--no-verify" || "$arg" == "--overwrite-ignore" ]]; then
+      echo "⚠️  Li violation: 'git $*' uses a forbidden flag. Ask the ruler to run it for you."
       return 1
     fi
   done
+  # Subcommand-specific rules
+  case "$1" in
+    add)
+      for arg in "${@:2}"; do
+        if [[ "$arg" == "-A" || "$arg" == "--all" || "$arg" == "." ]]; then
+          echo "⚠️  Li violation: 'git add $arg' is forbidden. Stage files explicitly by path."
+          return 1
+        fi
+      done
+      ;;
+    clean)
+      echo "⚠️  Li violation: 'git clean' is forbidden. Ask the ruler to run it for you."
+      return 1
+      ;;
+  esac
   command git "$@"
 }
 alias ll="ls -l"
