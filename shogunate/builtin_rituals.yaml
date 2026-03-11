@@ -116,19 +116,24 @@
   max_retries: 2
   triggers:
     - event: shogunate_started
-  background:
-    - the earth status
-    - the court status
   steps:
-    - name: current-n-next
+    - name: earth-status
       minister: chancellor
       on_failure: retry
+      given:
+        - the earth status
       act: |
-        The Shogunate is starting up.
-        Start by reporting the current 三界 status.
-        List changes to the middle kingdom and the borderlands.
+        Provide a succinct report on earth status.
+        List recent changes in the capital and 
+        changes to the middle kingdom and the borderlands.
+    - name: court-status
+      minister: chancellor
+      on_failure: retry
+      given:
+        - the court status
+      act: |
         Summarize active edicts, rituals and manifests.
-        End your task by calling the request_zhengming, proposing to the ruler some paths forward
+        End your task by calling the request_zhengming with a single question "best path forward?" and some options
 
 - name: review
   description: |
@@ -174,3 +179,51 @@
         A ritual has failed after exhausting all retries for edict {{ .edict_id }}.
         Analyze the failure and suggest next steps.
         Consider requesting zhengming if the path forward is unclear.
+
+- name: lint-fix
+  description: "Fix linter errors in parallel using fork/join"
+  triggers:
+    - manual: true
+  max_retries: 2
+  background:
+    - the earth status
+  steps:
+    - name: lint
+      minister: forge
+      act: |
+        Run the linter (just lint) and parse the output to extract a list of files with errors.
+        Return a JSON array of objects with format: [{"file": "path/to/file.go", "errors": ["error1", "error2"]}]
+      then:
+        - the edict is blocked
+
+    - name: fix-all-files
+      fork:
+        over: lint
+        batch_size: 5
+      work:
+        - name: fix-file
+          minister: forge
+          act: |
+            Fix all linter errors in file {{ .item.file }}.
+            The errors to fix are: {{ .item.errors }}.
+            Make minimal, targeted changes to resolve each error.
+        - name: verify-file
+          minister: judge
+          act: |
+            Run tests for file {{ .item.file }} to ensure the fixes don't break anything.
+            If tests fail, retry the fix.
+          on_failure: retry
+          on_failure_target: fix-file
+
+    - name: commit-all
+      minister: forge
+      given:
+        - the earth status
+      act: |
+        Stage all changes and commit them together using git magic to exclude this commit from blame.
+        Use: git add -A && git commit -m "Fix linter errors" --author="Asimi Linter <asimi@local>"
+        Or use git commit-tree for advanced blame exclusion.
+      depends_on: [fix-all-files]
+  then:
+    - the edict is unblocked
+    - the edict is sealed

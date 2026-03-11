@@ -85,7 +85,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	chancellor := NewChancellor(base)
 
 	// Create an edict (starts in brewing phase)
-	edict, err := CreateEdict(db, "test/repo#1", "Add a simple hello world function")
+	edict, err := CreateEdictForTest(db, "test/repo#1", "Add a simple hello world function")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
@@ -101,7 +101,7 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 
 	// Create edict
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdict(db, "test/repo#2", "Implement user authentication with login and logout")
+	edict, err := CreateEdictForTest(db, "test/repo#2", "Implement user authentication with login and logout")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
@@ -133,7 +133,7 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 
 	// Create edict with ambiguous intent
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdict(db, "test/repo#3", "Fix it")
+	edict, err := CreateEdictForTest(db, "test/repo#3", "Fix it")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
@@ -177,7 +177,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 
 	// Setup: create edict and manifest
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdict(db, "test/repo#4", "Test feature")
+	edict, err := CreateEdictForTest(db, "test/repo#4", "Test feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
@@ -211,7 +211,7 @@ func TestCensor_ReviewFlow(t *testing.T) {
 
 	// Setup: create quenched manifest
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdict(db, "test/repo#5", "Review feature")
+	edict, err := CreateEdictForTest(db, "test/repo#5", "Review feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
@@ -249,7 +249,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 
 	// Setup: create edict and manifest
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdict(db, "test/repo#6", "Production feature")
+	edict, err := CreateEdictForTest(db, "test/repo#6", "Production feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
@@ -287,7 +287,7 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
-	edict, err := CreateEdict(db, "test/repo#7", "Feature to cancel")
+	edict, err := CreateEdictForTest(db, "test/repo#7", "Feature to cancel")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 	err = chancellor.CancelEdictWithContext(ctx, "test/repo#7", "@user", "No longer needed")
@@ -358,7 +358,7 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// Create an edict for the test
 	edictID := "test-e2e-edict"
-	edict, err := CreateEdict(db, edictID, "E2E test edict")
+	edict, err := CreateEdictForTest(db, edictID, "E2E test edict")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 	// Start the Forge's Run loop in a goroutine

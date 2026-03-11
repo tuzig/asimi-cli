@@ -711,7 +711,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 	edictID := prompt.EdictID
 	if edictID == "" {
 		// TODO: Need to report the new edictID to the TUI
-		edict, err := CreateEdict(c.db, edictID, prompt.Message)
+		edict, err := c.shogunate.CreateEdict(edictID, prompt.Message)
 		if err != nil {
 			c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("create edict: %w", err)})
 			return

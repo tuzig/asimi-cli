@@ -275,7 +275,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 			return "", fmt.Errorf("waiting for answer: %w", err)
 		}
 		if answer == "Approve edict" {
-			edict, err := CreateEdict(t.confucius.db, "", params.Suggestion)
+			edict, err := t.confucius.shogunate.CreateEdict("", params.Suggestion)
 			if err != nil {
 				return "", fmt.Errorf("create edict from suggestion: %w", err)
 			}

@@ -296,8 +296,25 @@ func (s *Shogunate) Ministers() []Minister {
 	return active
 }
 
-// CreateEdict creates a new active edict record in the database.
-func CreateEdict(db *gorm.DB, edictID, intent string) (*storage.Edict, error) {
+// CreateEdict creates a new active edict record in the database and publishes EventEdictCreated.
+func (s *Shogunate) CreateEdict(edictID, intent string) (*storage.Edict, error) {
+	if edictID == "" {
+		edictID = generateEdictID()
+	}
+	edict := storage.Edict{
+		EdictID: edictID,
+		Intent:  intent,
+		Status:  storage.EdictActive,
+	}
+	if err := s.db.Create(&edict).Error; err != nil {
+		return nil, fmt.Errorf("failed to create edict: %w", err)
+	}
+	s.PublishEvent(edictID, string(EventEdictCreated), storage.JSON{"intent": intent})
+	return &edict, nil
+}
+
+// CreateEdictForTest creates an edict without publishing events (for unit tests).
+func CreateEdictForTest(db *gorm.DB, edictID, intent string) (*storage.Edict, error) {
 	if edictID == "" {
 		edictID = generateEdictID()
 	}

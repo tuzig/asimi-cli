@@ -440,12 +440,12 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 		t.Fatalf("LoadEmbeddedRituals() error = %v", err)
 	}
 
-	if len(rituals) != 6 {
+	if len(rituals) != 7 {
 		names := make([]string, len(rituals))
 		for i, r := range rituals {
 			names[i] = r.Name
 		}
-		t.Errorf("expected 6 embedded rituals, got %d: %v", len(rituals), names)
+		t.Errorf("expected 7 embedded rituals, got %d: %v", len(rituals), names)
 	}
 
 	// Check key rituals exist
@@ -1322,7 +1322,7 @@ func TestLoadBuiltinRituals(t *testing.T) {
 		t.Fatalf("LoadBuiltinRituals() error = %v", err)
 	}
 
-	if len(rituals) != 6 {
+	if len(rituals) != 7 {
 		names := make([]string, len(rituals))
 		for i, r := range rituals {
 			names[i] = r.Name
@@ -2019,5 +2019,39 @@ func TestExpandTemplate_GotoIncludesLaterSteps(t *testing.T) {
 	expected := "impl: impl output"
 	if result != expected {
 		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestLintFixRitual(t *testing.T) {
+	rituals, err := LoadEmbeddedRituals()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedRituals() error = %v", err)
+	}
+
+	var lintFix *RitualDef
+	for _, r := range rituals {
+		if r.Name == "lint-fix" {
+			lintFix = r
+			break
+		}
+	}
+
+	if lintFix == nil {
+		t.Fatal("lint-fix ritual not found")
+	}
+
+	if len(lintFix.Steps) != 3 {
+		t.Fatalf("lint-fix: expected 3 steps, got %d", len(lintFix.Steps))
+	}
+
+	forkStep := lintFix.Steps[1]
+	if forkStep.Fork == nil {
+		t.Fatal("lint-fix: expected fork step to have Fork defined")
+	}
+	if forkStep.Fork.Over != "lint" {
+		t.Fatalf("lint-fix: expected fork over 'lint', got %q", forkStep.Fork.Over)
+	}
+	if forkStep.Fork.BatchSize != 5 {
+		t.Fatalf("lint-fix: expected batch_size 5, got %d", forkStep.Fork.BatchSize)
 	}
 }
