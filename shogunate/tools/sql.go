@@ -27,10 +27,26 @@ func (t AsimiSQLTool) Name() string {
 }
 
 func (t AsimiSQLTool) Description() string {
-	return `Execute SQL against the Shogunate database. Use for edict status transitions:
+	return `Execute SQL against the Shogunate database. Use for edict status transitions and reviewing precedents:
+
+Edict Status Transitions:
 - UPDATE edicts SET status = 'sealed' WHERE edict_id = '...';
 - UPDATE edicts SET status = 'active' WHERE edict_id = '...';
-Statuses: active, blocked, sealed, cancelled`
+Statuses: active, blocked, sealed, cancelled
+
+Find Review Suggestions (Censor Precedents):
+- SELECT * FROM censor_precedents ORDER BY created_at DESC LIMIT 10;
+- SELECT principle, ruling, justification FROM censor_precedents WHERE ruling = 'rejected';
+
+Query Manifests and Verdicts:
+- SELECT * FROM forge_manifests WHERE status = 'forged' ORDER BY created_at DESC;
+- SELECT * FROM judge_verdicts WHERE outcome = 'failed';
+
+Statuses:
+- Edicts: active, blocked, sealed, cancelled
+- Manifests: forged, live, quenched, rejected
+- Verdicts: passed, failed
+- Precedents: approved, rejected`
 }
 
 func (t AsimiSQLTool) Call(ctx context.Context, input string) (string, error) {

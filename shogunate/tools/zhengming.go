@@ -122,9 +122,10 @@ func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 			},
 			"questions": map[string]any{
 				"type":        "array",
-				"description": "Array of questions to ask the user, each with 2-4 predefined answer options (recommended answer first)",
+				"description": "Array of questions with 2-4 answer options",
 				"items": map[string]any{
-					"type": "object",
+					"type":  "object",
+					"title": "Question",
 					"properties": map[string]any{
 						"text": map[string]any{
 							"type":        "string",
@@ -132,21 +133,23 @@ func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 						},
 						"options": map[string]any{
 							"type":        "array",
-							"description": "2-4 predefined answer options, recommended first",
+							"description": "2-4 answer options, recommended first",
 							"items":       map[string]any{"type": "string"},
 							"minItems":    2,
 							"maxItems":    4,
 						},
 					},
-					"required": []string{"text", "options"},
+					"required":             []string{"text", "options"},
+					"additionalProperties": false,
 				},
 			},
 			"priority": map[string]any{
 				"type":        "string",
 				"enum":        []string{"low", "normal", "urgent"},
-				"description": "Priority of the clarification request",
+				"description": "Priority level",
 			},
 		},
-		"required": []string{"edict_id", "questions"},
+		"required":             []string{"edict_id", "questions"},
+		"additionalProperties": false,
 	}
 }
