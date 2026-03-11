@@ -16,7 +16,6 @@ steps:
   - name: fix-all
     fork:
       over: work_units
-      mode: parallel
       batch_size: 5
     work:
       - name: fix
@@ -42,9 +41,6 @@ steps:
 	}
 	if forkStep.Fork.Over != "work_units" {
 		t.Errorf("expected fork over 'work_units', got %q", forkStep.Fork.Over)
-	}
-	if forkStep.Fork.Mode != "parallel" {
-		t.Errorf("expected fork mode 'parallel', got %q", forkStep.Fork.Mode)
 	}
 	if forkStep.Fork.BatchSize != 5 {
 		t.Errorf("expected batch_size 5, got %d", forkStep.Fork.BatchSize)
@@ -74,7 +70,7 @@ func TestValidateForkRitual(t *testing.T) {
 				Steps: []RitualStep{
 					{
 						Name:     "fork-step",
-						Fork:     &ForkDef{Over: "work_units", Mode: "parallel"},
+						Fork:     &ForkDef{Over: "work_units", BatchSize: 5},
 						Work:     []RitualStep{{Name: "work", Minister: "forge", Task: "do work"}},
 					},
 				},

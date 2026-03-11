@@ -29,7 +29,6 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 				Name: "process-all",
 				Fork: &ForkDef{
 					Over:      "work_units",
-					Mode:      "parallel",
 					BatchSize: 2,
 				},
 				Work: []RitualStep{
@@ -140,8 +139,8 @@ func TestExecuteForkStep_Sequential(t *testing.T) {
 			{
 				Name: "process-all",
 				Fork: &ForkDef{
-					Over: "items",
-					Mode: "sequential",
+					Over:      "items",
+					BatchSize: 1,
 				},
 				Work: []RitualStep{
 					{Name: "process", Minister: "forge", Act: "process {{ .item }}"},
@@ -231,9 +230,9 @@ func TestExecuteForkStep_WithLimit(t *testing.T) {
 			{
 				Name: "process-all",
 				Fork: &ForkDef{
-					Over:  "items",
-					Mode:  "sequential",
-					Limit: "2",
+					Over:      "items",
+					BatchSize: 1,
+					Limit:     "2",
 				},
 				Work: []RitualStep{
 					{Name: "process", Minister: "forge", Act: "process {{ .item }}"},
@@ -433,8 +432,8 @@ func TestExecuteForkItem(t *testing.T) {
 			{
 				Name: "process",
 				Fork: &ForkDef{
-					Over: "items",
-					Mode: "sequential",
+					Over:      "items",
+					BatchSize: 1,
 				},
 				Work: []RitualStep{
 					{Name: "step1", Minister: "forge", Act: "work on {{ .item }}"},
@@ -537,8 +536,8 @@ func TestExecuteForkStep_FailureHandling(t *testing.T) {
 			{
 				Name: "process-all",
 				Fork: &ForkDef{
-					Over: "items",
-					Mode: "sequential",
+					Over:      "items",
+					BatchSize: 1,
 				},
 				Work: []RitualStep{
 					{Name: "process", Minister: "forge", Act: "process {{ .item }}"},
@@ -639,8 +638,8 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 			{
 				Name: "process-all",
 				Fork: &ForkDef{
-					Over: "items",
-					Mode: "sequential",
+					Over:      "items",
+					BatchSize: 1,
 				},
 				Work: []RitualStep{
 					{Name: "process", Minister: "forge", Act: "process {{ .item }}"},
@@ -744,8 +743,8 @@ func TestExecuteForkStep_TemplateExpansion(t *testing.T) {
 			{
 				Name: "process-all",
 				Fork: &ForkDef{
-					Over: "files",
-					Mode: "sequential",
+					Over:      "files",
+					BatchSize: 1,
 				},
 				Work: []RitualStep{
 					{Name: "fix", Minister: "forge", Act: "Fix {{ .item }}"},
@@ -847,8 +846,8 @@ func TestExecuteForkStep_Cancelation(t *testing.T) {
 			{
 				Name: "process-all",
 				Fork: &ForkDef{
-					Over: "items",
-					Mode: "sequential",
+					Over:      "items",
+					BatchSize: 1,
 				},
 				Work: []RitualStep{
 					{Name: "process", Minister: "forge", Act: "process {{ .item }}"},

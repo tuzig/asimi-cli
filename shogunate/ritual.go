@@ -107,10 +107,9 @@ type RitualStep struct {
 
 // ForkDef defines fork/join parallel execution
 type ForkDef struct {
-	Over      string `yaml:"over"`      // Output key to iterate over
-	Mode      string `yaml:"mode"`      // "parallel" or "sequential"
-	BatchSize int    `yaml:"batch_size"` // Number of concurrent workers (parallel mode)
-	Limit     string `yaml:"limit"`     // Max items to process (0 = unlimited)
+	Over      string `yaml:"over"`       // Output key to iterate over
+	BatchSize int    `yaml:"batch_size"` // Number of concurrent workers: 0=default parallel, 1=sequential, >1=parallel
+	Limit     string `yaml:"limit"`      // Max items to process (0 = unlimited)
 }
 
 // StepDefKind distinguishes bash commands from builtin handlers
@@ -1009,17 +1008,14 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 	r.logger.Info("fork work units",
 		"total", len(workUnits),
 		"limit", limit,
-		"mode", step.Fork.Mode)
+		"batch_size", step.Fork.BatchSize)
 
-	// Determine execution mode
-	mode := "parallel"
-	if step.Fork.Mode != "" {
-		mode = r.expandTemplate(step.Fork.Mode, exec)
-	}
-
-	// Execute work units
+	// Determine execution mode based on BatchSize:
+	// BatchSize==0 → default parallel (5 workers)
+	// BatchSize==1 → sequential
+	// BatchSize>1 → parallel with specified batch size
 	var results []ForkResult
-	if mode == "sequential" {
+	if step.Fork.BatchSize == 1 {
 		results = r.executeForkSequential(ctx, exec, step, workUnits)
 	} else {
 		batchSize := step.Fork.BatchSize
