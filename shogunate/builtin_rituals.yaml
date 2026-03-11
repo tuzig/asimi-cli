@@ -100,8 +100,9 @@
       given:
         - the manifests
         - the verdicts
+        - The earth status
       act: |
-        Review the implemented code for edict {{ .edict_id }}.
+        Review the implemented code in this ritual.
         Verify it adheres to the Imperial Code (project standards).
         Veto if the code violates conventions or introduces risk.
       depends_on: [judge]
