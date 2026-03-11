@@ -3,10 +3,12 @@ package shogunate
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -99,6 +101,16 @@ type RitualStep struct {
 	Model           string            `yaml:"model,omitempty"`             // LLM model override for this step
 	Temperature     float64           `yaml:"temperature,omitempty"`       // LLM temperature override
 	Env             map[string]string `yaml:"env,omitempty"`               // Environment variables for this step
+	Fork            *ForkDef          `yaml:"fork,omitempty"`              // Fork/join parallel execution
+	Work            []RitualStep      `yaml:"work,omitempty"`              // Steps to execute for each fork item
+}
+
+// ForkDef defines fork/join parallel execution
+type ForkDef struct {
+	Over      string `yaml:"over"`      // Output key to iterate over
+	Mode      string `yaml:"mode"`      // "parallel" or "sequential"
+	BatchSize int    `yaml:"batch_size"` // Number of concurrent workers (parallel mode)
+	Limit     string `yaml:"limit"`     // Max items to process (0 = unlimited)
 }
 
 // StepDefKind distinguishes bash commands from builtin handlers
@@ -333,12 +345,35 @@ func ValidateRitual(def *RitualDef) error {
 			}
 		}
 
-		// Validate minister and act
-		if step.Minister == "" {
-			return fmt.Errorf("ritual %q: step %q requires minister", def.Name, step.Name)
-		}
-		if step.Act == "" && step.Task == "" {
-			return fmt.Errorf("ritual %q: step %q requires act or task", def.Name, step.Name)
+		// Validate fork steps vs regular steps
+		if step.Fork != nil {
+			// Fork step: requires work steps, no minister/act
+			if len(step.Work) == 0 {
+				return fmt.Errorf("ritual %q: fork step %q requires work steps", def.Name, step.Name)
+			}
+			if step.Fork.Over == "" {
+				return fmt.Errorf("ritual %q: fork step %q requires 'over' field", def.Name, step.Name)
+			}
+			// Validate work steps recursively
+			for i, workStep := range step.Work {
+				if workStep.Name == "" {
+					return fmt.Errorf("ritual %q: fork step %q work[%d] requires name", def.Name, step.Name, i)
+				}
+				if workStep.Minister == "" {
+					return fmt.Errorf("ritual %q: fork step %q work[%d] requires minister", def.Name, step.Name, i)
+				}
+				if workStep.Act == "" && workStep.Task == "" {
+					return fmt.Errorf("ritual %q: fork step %q work[%d] requires act or task", def.Name, step.Name, i)
+				}
+			}
+		} else {
+			// Regular step: requires minister and act
+			if step.Minister == "" {
+				return fmt.Errorf("ritual %q: step %q requires minister", def.Name, step.Name)
+			}
+			if step.Act == "" && step.Task == "" {
+				return fmt.Errorf("ritual %q: step %q requires act or task", def.Name, step.Name)
+			}
 		}
 	}
 
@@ -799,6 +834,11 @@ func (step *RitualStep) resolveMaxRetries(def *RitualDef) int {
 
 // executeStep runs a single ritual step using the Given → Act → Then model
 func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
+	// Check if this is a fork step
+	if step.Fork != nil {
+		return r.executeForkStep(ctx, exec, step)
+	}
+
 	r.saveExecution(exec)
 
 	r.logger.Debug("executing ritual step",
@@ -906,6 +946,294 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	}
 
 	return actResult, nil
+}
+
+// ForkResult holds the result of a single fork item execution
+type ForkResult struct {
+	Item   interface{}
+	Output string
+	Error  error
+}
+
+// executeForkStep executes a fork/join parallel step
+func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
+	r.saveExecution(exec)
+
+	r.logger.Info("executing fork step",
+		"ritual", exec.RitualName,
+		"step", step.Name,
+		"over", step.Fork.Over)
+
+	// Notify: fork started
+	if exec.notify != nil {
+		exec.notify(RitualStepMsg{
+			TabID:       "chancellor",
+			RitualName:  exec.RitualName,
+			ExecutionID: exec.ID,
+			EdictID:     exec.EdictID,
+			StepName:    step.Name,
+			StepIndex:   exec.CurrentStep,
+			TotalSteps:  len(exec.def.Steps),
+			Status:      "started",
+			Message:     fmt.Sprintf("fork over %s", step.Fork.Over),
+		})
+	}
+
+	// Emit step_started Tian event
+	r.emitEvent(exec.EdictID, "step_started", storage.JSON{
+		"ritual":       exec.RitualName,
+		"execution_id": exec.ID,
+		"step":         step.Name,
+		"step_index":   exec.CurrentStep,
+		"fork":         true,
+	})
+
+	// Get the work units to iterate over
+	workUnits, err := r.getForkWorkUnits(exec, step.Fork.Over)
+	if err != nil {
+		return "", fmt.Errorf("failed to get fork work units: %w", err)
+	}
+
+	// Apply limit if specified
+	limit := 0
+	if step.Fork.Limit != "" {
+		limitStr := r.expandTemplate(step.Fork.Limit, exec)
+		if limitStr != "" {
+			limit, _ = strconv.Atoi(limitStr)
+		}
+	}
+	if limit > 0 && len(workUnits) > limit {
+		workUnits = workUnits[:limit]
+	}
+
+	r.logger.Info("fork work units",
+		"total", len(workUnits),
+		"limit", limit,
+		"mode", step.Fork.Mode)
+
+	// Determine execution mode
+	mode := "parallel"
+	if step.Fork.Mode != "" {
+		mode = r.expandTemplate(step.Fork.Mode, exec)
+	}
+
+	// Execute work units
+	var results []ForkResult
+	if mode == "sequential" {
+		results = r.executeForkSequential(ctx, exec, step, workUnits)
+	} else {
+		batchSize := step.Fork.BatchSize
+		if batchSize == 0 {
+			batchSize = 5 // default batch size
+		}
+		results = r.executeForkParallel(ctx, exec, step, workUnits, batchSize)
+	}
+
+	// Store fork results in execution context
+	forkOut := []ForkResult{}
+	forkErr := []ForkResult{}
+	for _, res := range results {
+		if res.Error != nil {
+			forkErr = append(forkErr, res)
+		} else {
+			forkOut = append(forkOut, res)
+		}
+	}
+
+	if exec.Data == nil {
+		exec.Data = storage.JSON{}
+	}
+	exec.Data["fork"] = map[string]interface{}{
+		"out": forkOut,
+		"err": forkErr,
+	}
+
+	// Build summary result
+	summary := fmt.Sprintf("Fork completed: %d successful, %d failed", len(forkOut), len(forkErr))
+
+	// Notify: fork completed
+	if exec.notify != nil {
+		exec.notify(RitualStepMsg{
+			TabID:       "chancellor",
+			RitualName:  exec.RitualName,
+			ExecutionID: exec.ID,
+			EdictID:     exec.EdictID,
+			StepName:    step.Name,
+			StepIndex:   exec.CurrentStep,
+			TotalSteps:  len(exec.def.Steps),
+			Status:      "completed",
+			Message:     summary,
+		})
+	}
+
+	// Emit step_completed Tian event
+	r.emitEvent(exec.EdictID, "step_completed", storage.JSON{
+		"ritual":       exec.RitualName,
+		"execution_id": exec.ID,
+		"step":         step.Name,
+		"step_index":   exec.CurrentStep,
+		"fork":         true,
+		"success":      len(forkOut),
+		"failed":       len(forkErr),
+	})
+
+	return summary, nil
+}
+
+// getForkWorkUnits retrieves the work units from execution context
+func (r *RitualRunner) getForkWorkUnits(exec *RitualExecution, over string) ([]interface{}, error) {
+	// Look in given_context first
+	if exec.Data != nil {
+		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok {
+			if val, ok := given[over]; ok {
+				return r.toInterfaceSlice(val)
+			}
+		}
+		// Also check step_results
+		if stepResults, ok := exec.Data["step_results"].(map[string]interface{}); ok {
+			if val, ok := stepResults[over]; ok {
+				return r.toInterfaceSlice(val)
+			}
+		}
+	}
+	return nil, fmt.Errorf("work units key %q not found in context", over)
+}
+
+// toInterfaceSlice converts various slice types to []interface{}
+func (r *RitualRunner) toInterfaceSlice(val interface{}) ([]interface{}, error) {
+	switch v := val.(type) {
+	case []interface{}:
+		return v, nil
+	case []map[string]interface{}:
+		result := make([]interface{}, len(v))
+		for i, m := range v {
+			result[i] = m
+		}
+		return result, nil
+	default:
+		// Try to convert via JSON marshaling
+		data, err := json.Marshal(val)
+		if err != nil {
+			return nil, fmt.Errorf("cannot convert work units: %w", err)
+		}
+		var result []interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return nil, fmt.Errorf("cannot unmarshal work units: %w", err)
+		}
+		return result, nil
+	}
+}
+
+// executeForkSequential executes work units one at a time
+func (r *RitualRunner) executeForkSequential(ctx context.Context, exec *RitualExecution, step RitualStep, workUnits []interface{}) []ForkResult {
+	results := make([]ForkResult, 0, len(workUnits))
+	for i, item := range workUnits {
+		select {
+		case <-ctx.Done():
+			r.logger.Warn("fork cancelled", "completed", i, "total", len(workUnits))
+			return results
+		default:
+		}
+
+		r.logger.Debug("executing fork item", "index", i, "total", len(workUnits))
+		result := r.executeForkItem(ctx, exec, step, item)
+		results = append(results, result)
+	}
+	return results
+}
+
+// executeForkParallel executes work units in parallel with batching
+func (r *RitualRunner) executeForkParallel(ctx context.Context, exec *RitualExecution, step RitualStep, workUnits []interface{}, batchSize int) []ForkResult {
+	results := make([]ForkResult, 0, len(workUnits))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	sem := make(chan struct{}, batchSize)
+
+	for i, item := range workUnits {
+		select {
+		case <-ctx.Done():
+			r.logger.Warn("fork cancelled", "completed", len(results), "total", len(workUnits))
+			return results
+		default:
+		}
+
+		wg.Add(1)
+		sem <- struct{}{} // Acquire semaphore
+
+		go func(idx int, it interface{}) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release semaphore
+
+			r.logger.Debug("executing fork item", "index", idx, "total", len(workUnits))
+			result := r.executeForkItem(ctx, exec, step, it)
+
+			mu.Lock()
+			results = append(results, result)
+			mu.Unlock()
+		}(i, item)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// executeForkItem executes a single fork item
+func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecution, step RitualStep, item interface{}) ForkResult {
+	// Create a fork-specific execution context
+	forkExec := &RitualExecution{
+		ID:          exec.ID,
+		RitualName:  exec.RitualName,
+		EdictID:     exec.EdictID,
+		Data:        storage.JSON{},
+		def:         exec.def,
+		stepStates:  exec.stepStates,
+		notify:      exec.notify,
+	}
+
+	// Copy existing context
+	if exec.Data != nil {
+		forkExec.Data = storage.JSON{}
+		for k, v := range exec.Data {
+			forkExec.Data[k] = v
+		}
+	}
+
+	// Add .item to the context
+	if forkExec.Data == nil {
+		forkExec.Data = storage.JSON{}
+	}
+	forkExec.Data["item"] = item
+
+	result := ForkResult{Item: item}
+
+	// Execute each work step
+	for _, workStep := range step.Work {
+		// Create a temporary step state for this work item
+		workStepState := RitualStepState{
+			ExecutionID: exec.ID,
+			StepIndex:   exec.CurrentStep,
+			Name:        workStep.Name,
+		}
+
+		// Execute the work step
+		output, err := r.executeStep(ctx, forkExec, workStep)
+		workStepState.Message = output
+		workStepState.Output = output
+
+		if err != nil {
+			result.Error = err
+			result.Output = output
+			r.logger.Warn("fork item failed",
+				"item", item,
+				"step", workStep.Name,
+				"error", err)
+			break
+		}
+		result.Output = output
+	}
+
+	return result
 }
 
 // executeMinisterStep invokes a minister for a task
@@ -1573,6 +1901,15 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 	if exec.Data != nil {
 		if ar, ok := exec.Data["act_result"]; ok {
 			data["act_result"] = ar
+		}
+	}
+	// Merge fork context (.fork.out, .fork.err, .item)
+	if exec.Data != nil {
+		if fork, ok := exec.Data["fork"]; ok {
+			data["fork"] = fork
+		}
+		if item, ok := exec.Data["item"]; ok {
+			data["item"] = item
 		}
 	}
 	// Build step_results from completed steps

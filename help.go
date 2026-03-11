@@ -506,7 +506,7 @@ see what's currently in context:
 Asimi has built-in tools for file operations:
   - read_file      - Read file contents
   - write_file     - Write or update files
-  - list_files     - List directory contents
+  - glob           - Find files by pattern
 
 These tools are used automatically by the AI when needed.
 

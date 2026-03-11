@@ -67,11 +67,11 @@ Each minister is a specialized AI agent with a specific role:
 | Minister | Role | Core Tools | Specialized Tools |
 |----------|------|------------|-------------------|
 | **Chancellor** | Coordinates all ministers, manages edict lifecycle, interfaces with the Ruler | — | `create_edict`, `cancel_edict`, `request_zhengming`, `answer_zhengming`, `get_edict_status`, `list_edicts`, `list_rituals`, `enact_ritual`, `get_tian_events`, `asimisql` |
-| **Strategist** | Analyzes edicts, creates execution plans, decomposes work into Lings | `read_file`, `list_files`, `grep` | `create_ling`, `update_ling`, `list_lings` |
-| **Forge** | Implements code changes according to plans | `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, `run_shell_command` | `create_manifest`, `update_manifest`, `commit_manifest` |
-| **Judge** | Writes tests and validates changes through test coverage | `read_file`, `write_file`, `edit_file`, `list_files`, `run_shell_command` | `record_verdict` |
-| **Censor** | Reviews code for ethics, quality, and standards compliance | `read_file`, `list_files`, `grep` | `record_precedent` |
-| **Marshal** | Handles production incidents and performs root cause analysis | `read_file`, `list_files`, `grep`, `run_shell_command` | `create_incident`, `resolve_incident` |
+| **Strategist** | Analyzes edicts, creates execution plans, decomposes work into Lings | `read_file`, `glob`, `grep` | `create_ling`, `update_ling`, `list_lings` |
+| **Forge** | Implements code changes according to plans | `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell_command` | `create_manifest`, `update_manifest`, `commit_manifest` |
+| **Judge** | Writes tests and validates changes through test coverage | `read_file`, `write_file`, `edit_file`, `glob`, `run_shell_command` | `record_verdict` |
+| **Censor** | Reviews code for ethics, quality, and standards compliance | `read_file`, `glob`, `grep` | `record_precedent` |
+| **Marshal** | Handles production incidents and performs root cause analysis | `read_file`, `glob`, `grep`, `run_shell_command` | `create_incident`, `resolve_incident` |
 
 **Core Tools** are the basic file system and shell tools needed for each minister's work. **Specialized Tools** are unique to each minister's role in the Shogunate.
 

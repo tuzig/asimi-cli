@@ -86,7 +86,7 @@ func GetFileTools() []Tool {
 	return []Tool{
 		ReadFileTool{},
 		WriteFileTool{},
-		ListDirectoryTool{},
+		GlobTool{},
 		ReplaceTextTool{},
 		ReadManyFilesTool{},
 		GrepTool{},
@@ -96,7 +96,7 @@ func GetFileTools() []Tool {
 // GetROTools returns read-only tools for exploration and research.
 func GetROTools() []Tool {
 	return []Tool{
-		ListDirectoryTool{},
+		GlobTool{},
 		ReadFileTool{},
 		ReadManyFilesTool{},
 		GrepTool{},
@@ -109,7 +109,7 @@ func GetEditTools() []Tool {
 		ReadFileTool{},
 		WriteFileTool{},
 		ReplaceTextTool{},
-		ListDirectoryTool{},
+		GlobTool{},
 		ReadManyFilesTool{},
 		GrepTool{},
 	}
