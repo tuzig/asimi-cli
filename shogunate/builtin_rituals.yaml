@@ -118,22 +118,20 @@
     - event: shogunate_started
   steps:
     - name: earth-status
-      minister: chancellor
+      minister: confucius
       on_failure: retry
       given:
         - the earth status
-      act: |
-        Provide a succinct report on earth status.
-        List recent changes in the capital and 
-        changes to the middle kingdom and the borderlands.
-    - name: court-status
-      minister: chancellor
-      on_failure: retry
-      given:
         - the court status
       act: |
-        Summarize active edicts, rituals and manifests.
-        End your task by calling the request_zhengming with a single question "best path forward?" and some options
+        Given the information below, provide a succinct report on 三界.
+        follows you.
+        
+    - name: next-step
+      minister: chancellor
+      act: |
+        review the information gathered below and request zhengming with a single question: "best path forward?" 
+        help the ruler choose by formulating succinct options
 
 - name: review
   description: |
