@@ -1698,14 +1698,20 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.RitualName, msg.StepName, msg.StepIndex+1, msg.TotalSteps, msg.Status))
 		switch msg.Status {
 		case "started":
+			m := ""
 			if msg.StepName == "" {
-				chat.AddMessage(fmt.Sprintf("%sRitual %s started for edict %s",
-					ritualPrefix, msg.RitualName, msg.EdictID))
+				m = fmt.Sprintf("%sRitual %s started",
+					ritualPrefix, msg.RitualName)
+				if msg.EdictID != "" {
+					m = fmt.Sprintf("%s for edict %s",
+						m, msg.EdictID)
+				}
 				chat.Indent++
 			} else {
-				chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s",
-					ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+				m = fmt.Sprintf("%sStep %d/%d: %s",
+					ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName)
 			}
+			chat.AddMessage(m)
 		case "completed":
 			chat.AddMessage(fmt.Sprintf("%s%s Step %d/%d: %s done",
 				ritualPrefix, checkPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
