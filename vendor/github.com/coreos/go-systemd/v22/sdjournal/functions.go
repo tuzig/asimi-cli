@@ -16,10 +16,9 @@
 package sdjournal
 
 import (
+	"github.com/coreos/go-systemd/v22/internal/dlopen"
 	"sync"
 	"unsafe"
-
-	"github.com/coreos/go-systemd/v22/internal/dlopen"
 )
 
 var (

@@ -2,19 +2,20 @@
 //
 // For a full guide visit http://github.com/tcnksm/go-gitconfig
 //
-//	package main
+//  package main
 //
-//	import (
-//	  "github.com/tcnksm/go-gitconfig"
-//	  "fmt"
-//	)
+//  import (
+//    "github.com/tcnksm/go-gitconfig"
+//    "fmt"
+//  )
 //
-//	func main() {
-//	  user, err := gitconfig.Global("user.name")
-//	  if err == nil {
-//	    fmt.Println(user)
-//	  }
-//	}
+//  func main() {
+//    user, err := gitconfig.Global("user.name")
+//    if err == nil {
+//      fmt.Println(user)
+//    }
+//  }
+//
 package gitconfig
 
 import (
