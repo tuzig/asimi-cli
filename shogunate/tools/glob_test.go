@@ -1,0 +1,106 @@
+package tools
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestGlobTool(t *testing.T) {
+	// Save current directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Create a temporary directory structure for testing
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create test files
+	testFiles := []string{
+		"root.go",
+		filepath.Join("sub1", "file1.go"),
+		filepath.Join("sub1", "file2.go"),
+		filepath.Join("sub1", "nested", "deep.go"),
+		filepath.Join("sub2", "file3.go"),
+	}
+
+	for _, f := range testFiles {
+		dir := filepath.Dir(f)
+		if dir != "." {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(f, []byte("package test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("recursive pattern matches root and nested files", func(t *testing.T) {
+		tool := GlobTool{}
+		result, err := tool.Call(context.Background(), `{"pattern": "**/*.go"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should find all .go files including root.go
+		if result == "No matches found" {
+			t.Fatal("expected matches, got none")
+		}
+
+		// Check that root.go is included
+		if !containsLine(result, "root.go") {
+			t.Error("expected root.go to be included in results")
+		}
+
+		// Check that nested files are included
+		if !containsLine(result, filepath.Join("sub1", "file1.go")) {
+			t.Error("expected sub1/file1.go to be included")
+		}
+		if !containsLine(result, filepath.Join("sub1", "nested", "deep.go")) {
+			t.Error("expected sub1/nested/deep.go to be included")
+		}
+	})
+
+	t.Run("regular pattern works", func(t *testing.T) {
+		tool := GlobTool{}
+		result, err := tool.Call(context.Background(), `{"pattern": "*.go"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !containsLine(result, "root.go") {
+			t.Error("expected root.go to be included")
+		}
+	})
+}
+
+func containsLine(result, expected string) bool {
+	for _, line := range splitLines(result) {
+		if line == expected || filepath.Base(line) == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	for _, line := range []byte(s) {
+		if line == '\n' {
+			lines = append(lines, "")
+		} else {
+			if len(lines) == 0 {
+				lines = append(lines, "")
+			}
+			lines[len(lines)-1] += string(line)
+		}
+	}
+	return lines
+}

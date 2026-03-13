@@ -70,6 +70,7 @@ type Edict struct {
 	EdictID   string      `gorm:"primaryKey;column:edict_id"`
 	SessionID string      `gorm:"column:session_id;index"`
 	IssueRef  string      `gorm:"column:issue_ref"`
+	Summary   string      `gorm:"column:summary"`
 	Intent    string      `gorm:"column:intent"`
 	Status    EdictStatus `gorm:"column:status"`
 	CreatedAt time.Time   `gorm:"column:created_at;autoCreateTime"`
@@ -84,6 +85,7 @@ func (Edict) TableName() string {
 // ZhengmingQuestion represents a single question with predefined answer options
 type ZhengmingQuestion struct {
 	Text    string   `json:"text"`
+	Summary string   `json:"summary,omitempty"` // Short display text for the UI; Text is used if empty
 	Options []string `json:"options"`
 }
 
@@ -359,6 +361,7 @@ CREATE TABLE IF NOT EXISTS edicts (
     edict_id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL DEFAULT '',
     issue_ref TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
     intent TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),

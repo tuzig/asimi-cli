@@ -74,6 +74,7 @@ type AnsweringState struct {
 // AnsweringQuestion holds a single question with selectable options
 type AnsweringQuestion struct {
 	Text     string
+	Summary  string   // Short display text; Text is used if empty
 	Options  []string // 2-4 options from LLM; "Other..." appended automatically
 	Selected int      // cursor position (includes "Other..." entry)
 }
@@ -375,6 +376,7 @@ func (p *PromptComponent) HandleZhengmingPending(msg shogunate.ZhengmingPendingM
 	for i, q := range msg.Questions {
 		aq[i] = AnsweringQuestion{
 			Text:    q.Text,
+			Summary: q.Summary,
 			Options: q.Options,
 		}
 	}
@@ -729,8 +731,12 @@ func (p PromptComponent) viewAnswering() string {
 	// Title
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render(a.Title))
 	b.WriteByte('\n')
-	// Question text
-	b.WriteString(q.Text)
+	// Question text (prefer summary for compact display)
+	displayText := q.Text
+	if q.Summary != "" {
+		displayText = q.Summary
+	}
+	b.WriteString(displayText)
 	b.WriteByte('\n')
 
 	if a.Typing {

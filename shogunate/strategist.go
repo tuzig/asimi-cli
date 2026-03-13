@@ -174,7 +174,7 @@ func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) 
 	// For large plans (>500 chars), use approve_doc for external review
 	planContent := s.formatPlanForReview(lingList)
 	if len(planContent) > 500 {
-		approveTool := tools.ApproveDocTool{}
+		approveTool := tools.ApproveDocTool{Notify: s.notify}
 		approveInput := map[string]any{
 			"content":     planContent,
 			"description": "Review strategic plan before execution",

@@ -226,6 +226,7 @@ Returns immediately with status='suggested' - the edict will be created if appro
 func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		Suggestion string `json:"suggestion"`
+		Summary    string `json:"summary"`
 		Priority   string `json:"priority"`
 		Evidence   string `json:"evidence"`
 	}
@@ -249,7 +250,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 
 	// For large suggestions (>500 chars), use approve_doc for external review
 	if len(questionText) > 500 {
-		approveTool := tools.ApproveDocTool{}
+		approveTool := tools.ApproveDocTool{Notify: t.confucius.notify}
 		approveInput := map[string]any{
 			"content":     questionText,
 			"description": "Review edict suggestion before submission",
@@ -279,6 +280,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 
 	questions := storage.ZhengmingQuestions{{
 		Text:    questionText,
+		Summary: params.Summary,
 		Options: []string{"Approve edict", "Dismiss suggestion"},
 	}}
 
@@ -329,6 +331,10 @@ func (t *SuggestEdictTool) ParameterSchema() map[string]any {
 			"suggestion": map[string]any{
 				"type":        "string",
 				"description": "What edict should the Ruler consider? Be specific about the change.",
+			},
+			"summary": map[string]any{
+				"type":        "string",
+				"description": "A short one-line summary of the suggestion for display in the prompt UI.",
 			},
 			"priority": map[string]any{
 				"type":        "string",

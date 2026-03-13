@@ -159,12 +159,17 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 			if err := s.db.First(&req, "request_id = ?", e.Payload["request_id"]).Error; err == nil {
 				if len(req.Questions) > 0 {
 					suggestion := req.Questions[0].Text
+					summary := req.Questions[0].Summary
 					// Remove "Evidence:" part if present
 					if idx := strings.Index(suggestion, "\n\nEvidence:"); idx != -1 {
 						suggestion = suggestion[:idx]
 					}
-					if _, err := s.CreateEdict("", suggestion); err != nil {
+					edict, err := s.CreateEdict("", suggestion)
+					if err != nil {
 						s.logger.Warn("failed to create edict from zhengming approval", "error", err)
+					} else if summary != "" {
+						edict.Summary = summary
+						s.db.Save(edict)
 					}
 				}
 			}

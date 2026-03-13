@@ -14,6 +14,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -102,6 +103,12 @@ type shellCommandResultMsg struct {
 	output   string
 	exitCode string
 	err      error
+}
+
+// editorResultMsg is sent after tea.ExecProcess finishes running the editor.
+type editorResultMsg struct {
+	ResultChan chan error
+	Err        error
 }
 
 // NewTUIModel creates a new TUI model
@@ -1708,18 +1715,18 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				chat.Indent++
 			} else {
-				m = fmt.Sprintf("%sStep %d/%d: %s",
+				m = fmt.Sprintf("%s %d/%d: %s",
 					ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName)
 			}
 			chat.AddMessage(m)
 		case "completed":
-			chat.AddMessage(fmt.Sprintf("%s%s Step %d/%d: %s done",
+			chat.AddMessage(fmt.Sprintf("%s%s %d/%d: %s ",
 				ritualPrefix, checkPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
 		case "failed":
-			chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s failed: %s",
+			chat.AddMessage(fmt.Sprintf("%s %d/%d: %s failed: %s",
 				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName, msg.Message))
 		case "retrying":
-			chat.AddMessage(fmt.Sprintf("%sStep %d/%d: %s retrying",
+			chat.AddMessage(fmt.Sprintf("%s %d/%d: %s retrying",
 				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
 		case "cmd_running":
 			chat.AddMessage(fmt.Sprintf("%s Running: %s", cmdRunningPrefix, msg.Message))
@@ -1762,6 +1769,17 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnsweringCancelMsg:
 		m.prompt().ExitAnsweringMode()
+		return m, nil
+
+	case tools.EditorRequest:
+		// A tool wants to open $EDITOR — suspend the TUI via tea.ExecProcess
+		return m, tea.ExecProcess(msg.Cmd, func(err error) tea.Msg {
+			return editorResultMsg{ResultChan: msg.ResultChan, Err: err}
+		})
+
+	case editorResultMsg:
+		// Editor finished — unblock the waiting tool goroutine
+		msg.ResultChan <- msg.Err
 		return m, nil
 
 	case showHelpMsg:
