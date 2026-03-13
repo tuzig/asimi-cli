@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/afittestide/asimi/internal"
@@ -15,12 +16,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// ShogunateEvent represents an event type emitted by the Shogunate lifecycle.
-type ShogunateEvent string
-
 // Event is a dispatched event carrying type, edict, and payload.
 type Event struct {
-	Type    ShogunateEvent
+	Type    storage.ShogunateEvent
 	EdictID string
 	Payload map[string]interface{}
 }
@@ -31,18 +29,18 @@ type EventHandler func(event Event)
 // EventRegistry manages event subscriptions and dispatch.
 type EventRegistry struct {
 	mu          sync.RWMutex
-	subscribers map[ShogunateEvent][]EventHandler
+	subscribers map[storage.ShogunateEvent][]EventHandler
 }
 
 // NewEventRegistry creates a new event registry.
 func NewEventRegistry() *EventRegistry {
 	return &EventRegistry{
-		subscribers: make(map[ShogunateEvent][]EventHandler),
+		subscribers: make(map[storage.ShogunateEvent][]EventHandler),
 	}
 }
 
 // Subscribe registers a handler for an event type.
-func (r *EventRegistry) Subscribe(eventType ShogunateEvent, handler EventHandler) {
+func (r *EventRegistry) Subscribe(eventType storage.ShogunateEvent, handler EventHandler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.subscribers[eventType] = append(r.subscribers[eventType], handler)
@@ -59,28 +57,9 @@ func (r *EventRegistry) Dispatch(event Event) {
 	}
 }
 
-const (
-	EventEdictAssigned     ShogunateEvent = "edict_assigned"
-	EventEdictCreated      ShogunateEvent = "edict_created"
-	EventPhaseChanged      ShogunateEvent = "phase_changed"
-	EventForgeCommitted    ShogunateEvent = "forge_committed"
-	EventManifestCommitted ShogunateEvent = "manifest_committed"
-	EventManifestRejected  ShogunateEvent = "manifest_rejected"
-	EventRitualStarted     ShogunateEvent = "ritual_started"
-	EventRitualCompleted   ShogunateEvent = "ritual_completed"
-	EventRitualFailed      ShogunateEvent = "ritual_failed"
-	EventStepStarted       ShogunateEvent = "step_started"
-	EventStepCompleted     ShogunateEvent = "step_completed"
-	EventStepFailed        ShogunateEvent = "step_failed"
-	EventLingCreated       ShogunateEvent = "ling_created"
-	EventZhengmingNeeded   ShogunateEvent = "zhengming_needed"
-	EventZhengmingAnswered ShogunateEvent = "zhengming_answered"
-	EventEdictCancelled    ShogunateEvent = "edict_cancelled"
-)
-
 // DrainedEvent describes a single event recovered from the DB at startup.
 type DrainedEvent struct {
-	EventType string
+	EventType storage.ShogunateEvent
 	EdictID   string
 	Payload   map[string]interface{}
 }
@@ -144,7 +123,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ministers[chancellor.ID()] = chancellor
 
 	// Subscribe Chancellor to events
-	s.eventRegistry.Subscribe(EventEdictCreated, func(e Event) {
+	s.eventRegistry.Subscribe(storage.EventEdictCreated, func(e Event) {
 		select {
 		case chancellor.eventChan <- e:
 		default:
@@ -152,7 +131,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 	})
 
-	s.eventRegistry.Subscribe(EventRitualCompleted, func(e Event) {
+	s.eventRegistry.Subscribe(storage.EventRitualCompleted, func(e Event) {
 		select {
 		case chancellor.eventChan <- e:
 		default:
@@ -160,11 +139,42 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 	})
 
-	s.eventRegistry.Subscribe(EventRitualFailed, func(e Event) {
+	s.eventRegistry.Subscribe(storage.EventRitualFailed, func(e Event) {
 		select {
 		case chancellor.eventChan <- e:
 		default:
 			s.logger.Warn("chancellor event channel full", "event", e.Type)
+		}
+	})
+
+	// Handle zhengming_answered events for edict creation from suggestions
+	s.eventRegistry.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
+		answer, _ := e.Payload["answer"].(string)
+		edictID, _ := e.Payload["edict_id"].(string)
+		s.logger.Debug("zhengming_answered handler", "answer", answer, "edict_id", edictID, "payload", e.Payload)
+
+		if answer == "Approve edict" {
+			// Extract suggestion from the zhengming request
+			var req storage.Zhengming
+			if err := s.db.First(&req, "request_id = ?", e.Payload["request_id"]).Error; err == nil {
+				if len(req.Questions) > 0 {
+					suggestion := req.Questions[0].Text
+					// Remove "Evidence:" part if present
+					if idx := strings.Index(suggestion, "\n\nEvidence:"); idx != -1 {
+						suggestion = suggestion[:idx]
+					}
+					if _, err := s.CreateEdict("", suggestion); err != nil {
+						s.logger.Warn("failed to create edict from zhengming approval", "error", err)
+					}
+				}
+			}
+		} else if edictID == "" && answer != "" {
+			// System ritual (e.g., wakeup) — no edict, user chose a path forward
+			if edict, err := s.CreateEdict("", answer); err != nil {
+				s.logger.Warn("failed to create edict from zhengming answer", "error", err)
+			} else {
+				s.logger.Info("created edict from zhengming answer", "edict_id", edict.EdictID, "answer", answer)
+			}
 		}
 	})
 
@@ -296,7 +306,7 @@ func (s *Shogunate) Ministers() []Minister {
 	return active
 }
 
-// CreateEdict creates a new active edict record in the database and publishes EventEdictCreated.
+// CreateEdict creates a new active edict record in the database and publishes storage.EventEdictCreated.
 func (s *Shogunate) CreateEdict(edictID, intent string) (*storage.Edict, error) {
 	if edictID == "" {
 		edictID = generateEdictID()
@@ -309,7 +319,7 @@ func (s *Shogunate) CreateEdict(edictID, intent string) (*storage.Edict, error) 
 	if err := s.db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
 	}
-	s.PublishEvent(edictID, string(EventEdictCreated), storage.JSON{"intent": intent})
+	s.PublishEvent(edictID, storage.EventEdictCreated, storage.JSON{"intent": intent})
 	return &edict, nil
 }
 
@@ -330,7 +340,7 @@ func CreateEdictForTest(db *gorm.DB, edictID, intent string) (*storage.Edict, er
 }
 
 // PublishEvent persists an event to the DB and sends it to the event channel.
-func (s *Shogunate) PublishEvent(edictID, eventType string, payload storage.JSON) string {
+func (s *Shogunate) PublishEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string {
 	if s.db != nil {
 		dbEvent := storage.TianEvent{
 			EdictID:   edictID,
@@ -342,7 +352,7 @@ func (s *Shogunate) PublishEvent(edictID, eventType string, payload storage.JSON
 		}
 	}
 	select {
-	case s.eventCh <- Event{Type: ShogunateEvent(eventType), EdictID: edictID, Payload: map[string]interface{}(payload)}:
+	case s.eventCh <- Event{Type: eventType, EdictID: edictID, Payload: map[string]interface{}(payload)}:
 	default:
 		s.logger.Warn("event channel full, persisted to DB only", "type", eventType)
 	}
@@ -373,13 +383,14 @@ func (s *Shogunate) drainUnprocessedEvents() {
 
 	s.logger.Info("draining unprocessed events", "count", len(events), "from_id", lastEventID)
 	for _, event := range events {
+		t := event.EventType
 		s.DispatchEvent(Event{
-			Type:    ShogunateEvent(event.EventType),
+			Type:    t,
 			EdictID: event.EdictID,
 			Payload: map[string]interface{}(event.Payload),
 		})
 		s.drainedEvents = append(s.drainedEvents, DrainedEvent{
-			EventType: event.EventType,
+			EventType: t,
 			EdictID:   event.EdictID,
 			Payload:   map[string]interface{}(event.Payload),
 		})

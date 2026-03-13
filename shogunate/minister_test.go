@@ -143,26 +143,34 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 	// Capture notifications to get the requestID
 	var notifiedMsg ZhengmingPendingMsg
 	var notifyMu sync.Mutex
+	var answered sync.WaitGroup
+	answered.Add(1)
 	strategist.SetNotify(func(msg any) {
 		notifyMu.Lock()
 		defer notifyMu.Unlock()
 		if m, ok := msg.(ZhengmingPendingMsg); ok {
 			notifiedMsg = m
 			// Answer via the full DB path (HandleZhengmingResponse)
-			go strategist.HandleZhengmingResponse(ctx, m.RequestID, "Let me expand the requirements")
+			go func() {
+				defer answered.Done()
+				strategist.HandleZhengmingResponse(ctx, m.RequestID, "Let me expand the requirements")
+			}()
 		}
 	})
 
-	// Execute - should request zhengming and block until resolved
+	// Execute - should request zhengming and return immediately (not sealed)
 	sealed, err := strategist.execute(ctx, "test/repo#3")
 	require.NoError(t, err)
 	assert.False(t, sealed, "expected not sealed for ambiguous intent")
 
 	// Verify notification was sent with structured questions
 	notifyMu.Lock()
-	defer notifyMu.Unlock()
 	assert.NotEmpty(t, notifiedMsg.RequestID, "expected zhengming notification")
 	assert.NotEmpty(t, notifiedMsg.Questions, "expected structured questions")
+	notifyMu.Unlock()
+
+	// Wait for the answer to be processed
+	answered.Wait()
 
 	// Verify the DB was updated with answer and answered_at
 	var req storage.Zhengming
@@ -228,12 +236,15 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	censor := NewCensor(base, nil)
 
 	// Execute review (internal method)
-	sealed, err := censor.execute(ctx, "test/repo#5")
+	sealed, summary, err := censor.execute(ctx, "test/repo#5")
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
 	if !sealed {
 		t.Error("Expected sealed after review")
+	}
+	if summary == nil {
+		t.Error("Expected review summary")
 	}
 
 	// Check no rejections
@@ -865,41 +876,6 @@ func TestChancellor_GetDBPath_NilDB(t *testing.T) {
 	if gotPath != "" {
 		t.Errorf("getDBPath() with nil db = %q, want empty string", gotPath)
 	}
-}
-
-func TestZhengmingWaitForAnswer(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
-
-	// Resolve from another goroutine
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		ok := base.ResolveZhengmingWaiter("req-1", "Yes")
-		assert.True(t, ok, "ResolveZhengmingWaiter should return true")
-	}()
-
-	answer, err := base.WaitForAnswer(context.Background(), "req-1")
-	require.NoError(t, err)
-	assert.Equal(t, "Yes", answer)
-}
-
-func TestZhengmingWaitForAnswer_ContextCancelled(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		cancel()
-	}()
-
-	_, err := base.WaitForAnswer(ctx, "req-2")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled)
-
-	// Verify waiter was cleaned up
-	base.zhengmingMu.Lock()
-	_, exists := base.zhengmingWaiters["req-2"]
-	base.zhengmingMu.Unlock()
-	assert.False(t, exists, "waiter should be cleaned up after context cancellation")
 }
 
 func TestZhengmingMultipleQuestions(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1888,7 +1889,8 @@ func TestIsModelSelectable(t *testing.T) {
 // Used to simulate a long-running LLM response for CTRL-C testing.
 type slowStreamingLLM struct {
 	llms.Model
-	started chan struct{} // closed when streaming begins
+	started   chan struct{} // closed when streaming begins
+	startOnce sync.Once
 }
 
 func (m *slowStreamingLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
@@ -1897,8 +1899,8 @@ func (m *slowStreamingLLM) GenerateContent(ctx context.Context, messages []llms.
 		opt(callOpts)
 	}
 
-	// Signal that streaming has started
-	close(m.started)
+	// Signal that streaming has started (only on first call)
+	m.startOnce.Do(func() { close(m.started) })
 
 	// Stream an initial chunk so the TUI knows we're active
 	if callOpts.StreamingFunc != nil {

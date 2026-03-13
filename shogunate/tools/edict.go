@@ -15,7 +15,7 @@ import (
 type EdictManager interface {
 	GetEdict(edictID string) (*storage.Edict, error)
 	AppendToIntent(edictID, clarification string) error
-	EmitEvent(edictID, eventType string, payload storage.JSON) error
+	EmitEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) error
 }
 
 // UpdateEdictTool refines an existing edict's intent (Chancellor only).

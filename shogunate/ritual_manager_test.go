@@ -72,7 +72,7 @@ func TestChannelDelivery(t *testing.T) {
 	// Subscribe to the event
 	var received []Event
 	var mu sync.Mutex
-	s.eventRegistry.Subscribe(EventEdictCreated, func(e Event) {
+	s.eventRegistry.Subscribe(storage.EventEdictCreated, func(e Event) {
 		mu.Lock()
 		received = append(received, e)
 		mu.Unlock()
@@ -90,7 +90,7 @@ func TestChannelDelivery(t *testing.T) {
 	}()
 
 	// Publish an event
-	s.PublishEvent("edict-1", string(EventEdictCreated), storage.JSON{"foo": "bar"})
+	s.PublishEvent("edict-1", storage.EventEdictCreated, storage.JSON{"foo": "bar"})
 
 	// Wait briefly for the event to be dispatched
 	time.Sleep(50 * time.Millisecond)
@@ -102,8 +102,8 @@ func TestChannelDelivery(t *testing.T) {
 	if received[0].EdictID != "edict-1" {
 		t.Errorf("expected EdictID 'edict-1', got %q", received[0].EdictID)
 	}
-	if received[0].Type != EventEdictCreated {
-		t.Errorf("expected type %q, got %q", EventEdictCreated, received[0].Type)
+	if received[0].Type != storage.EventEdictCreated {
+		t.Errorf("expected type %q, got %q", storage.EventEdictCreated, received[0].Type)
 	}
 	mu.Unlock()
 

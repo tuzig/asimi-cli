@@ -22,7 +22,6 @@ type RequestZhengmingTool struct {
 	MinisterID string
 	Requester  ZhengmingRequester
 	Notify     ZhengmingNotifyFunc
-	Waiter     storage.ZhengmingWaiter
 }
 
 func (t RequestZhengmingTool) Name() string {
@@ -30,7 +29,7 @@ func (t RequestZhengmingTool) Name() string {
 }
 
 func (t RequestZhengmingTool) Description() string {
-	return "Request clarification from the user (Zhengming - 正名) when requirements are ambiguous. Use this when you need more information before proceeding with an edict. The tool blocks until the user responds."
+	return "Request clarification from the user (Zhengming - 正名) when requirements are ambiguous. Use this when you need more information before proceeding with an edict. The tool returns immediately with status='pending'."
 }
 
 func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, error) {
@@ -43,9 +42,6 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	if params.EdictID == "" {
-		return "", fmt.Errorf("edict_id is required")
-	}
 	if len(params.Questions) == 0 {
 		return "", fmt.Errorf("questions array is required and must not be empty")
 	}
@@ -73,15 +69,7 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 		t.Notify(requestID, params.EdictID, t.MinisterID, params.Questions, priority)
 	}
 
-	// Block until user answers
-	if t.Waiter != nil {
-		answer, err := t.Waiter.WaitForAnswer(ctx, requestID)
-		if err != nil {
-			return "", fmt.Errorf("waiting for answer: %w", err)
-		}
-		return fmt.Sprintf(`{"status":"answered","request_id":"%s","answer":%s}`, requestID, utils.MustJSON(answer)), nil
-	}
-
+	// Return immediately with pending status - no blocking
 	return fmt.Sprintf(`{"status":"pending","request_id":"%s"}`, requestID), nil
 }
 
@@ -149,7 +137,7 @@ func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 				"description": "Priority level",
 			},
 		},
-		"required":             []string{"edict_id", "questions"},
+		"required":             []string{"questions"},
 		"additionalProperties": false,
 	}
 }

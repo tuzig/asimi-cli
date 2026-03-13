@@ -2055,3 +2055,148 @@ func TestLintFixRitual(t *testing.T) {
 		t.Fatalf("lint-fix: expected batch_size 5, got %d", forkStep.Fork.BatchSize)
 	}
 }
+
+// TestRitualSessionIDTracking verifies that session_id is captured during ritual execution
+func TestRitualSessionIDTracking(t *testing.T) {
+	// Create in-memory database
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+
+	// Run migrations
+	if err := db.Exec(storage.Schema).Error; err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+	if err := db.Exec(storage.ShogunateSchema).Error; err != nil {
+		t.Fatalf("failed to create shogunate schema: %v", err)
+	}
+
+	// Create a test edict
+	edictID := "edict-test-session-tracking"
+	testEdict := storage.Edict{
+		EdictID:   edictID,
+		SessionID: "session-initial",
+		Intent:    "Test session tracking",
+		Status:    storage.EdictActive,
+	}
+	if err := db.Create(&testEdict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Verify ritual_executions table has session_id column
+	var execResult struct {
+		Cid        int    `gorm:"column:cid"`
+		Name       string `gorm:"column:name"`
+		Type       string `gorm:"column:type"`
+		NotNull    int    `gorm:"column:notnull"`
+		DefaultVal string `gorm:"column:dflt_value"`
+		Pk         int    `gorm:"column:pk"`
+	}
+
+	// Check ritual_executions.session_id exists
+	rows, err := db.Raw("PRAGMA table_info(ritual_executions)").Rows()
+	if err != nil {
+		t.Fatalf("failed to get ritual_executions columns: %v", err)
+	}
+	defer rows.Close()
+
+	foundSessionID := false
+	for rows.Next() {
+		if err := db.ScanRows(rows, &execResult); err != nil {
+			t.Fatalf("failed to scan row: %v", err)
+		}
+		if execResult.Name == "session_id" {
+			foundSessionID = true
+			break
+		}
+	}
+	if !foundSessionID {
+		t.Error("ritual_executions.session_id column not found")
+	}
+
+	// Check ritual_step_states.session_id exists
+	rows, err = db.Raw("PRAGMA table_info(ritual_step_states)").Rows()
+	if err != nil {
+		t.Fatalf("failed to get ritual_step_states columns: %v", err)
+	}
+	defer rows.Close()
+
+	foundSessionID = false
+	for rows.Next() {
+		if err := db.ScanRows(rows, &execResult); err != nil {
+			t.Fatalf("failed to scan row: %v", err)
+		}
+		if execResult.Name == "session_id" {
+			foundSessionID = true
+			break
+		}
+	}
+	if !foundSessionID {
+		t.Error("ritual_step_states.session_id column not found")
+	}
+
+	// Test inserting and querying session_id directly via SQL
+	execID := "ritual-exec-test-1"
+	sessionID := "session-from-minister"
+	
+	// Insert ritual execution with session_id
+	err = db.Exec(`
+		INSERT INTO ritual_executions (id, ritual_name, edict_id, session_id, current_step, state, data, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+	`, execID, "test-ritual", edictID, sessionID, 0, "running", "{}").Error
+	if err != nil {
+		t.Fatalf("failed to insert ritual execution: %v", err)
+	}
+
+	// Verify session_id was stored
+	var storedSessionID string
+	err = db.Raw("SELECT session_id FROM ritual_executions WHERE id = ?", execID).Scan(&storedSessionID).Error
+	if err != nil {
+		t.Fatalf("failed to retrieve session_id: %v", err)
+	}
+	if storedSessionID != sessionID {
+		t.Errorf("expected session_id '%s', got %q", sessionID, storedSessionID)
+	}
+
+	// Insert step state with session_id
+	stepSessionID := "session-step-1"
+	err = db.Exec(`
+		INSERT INTO ritual_step_states (execution_id, step_index, name, session_id, retry_count, message)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, execID, 0, "test-step", stepSessionID, 0, "Step completed").Error
+	if err != nil {
+		t.Fatalf("failed to insert step state: %v", err)
+	}
+
+	// Verify step state session_id was stored
+	var storedStepSessionID string
+	err = db.Raw("SELECT session_id FROM ritual_step_states WHERE execution_id = ? AND step_index = ?", execID, 0).Scan(&storedStepSessionID).Error
+	if err != nil {
+		t.Fatalf("failed to retrieve step session_id: %v", err)
+	}
+	if storedStepSessionID != stepSessionID {
+		t.Errorf("expected step session_id '%s', got %q", stepSessionID, storedStepSessionID)
+	}
+
+	// Test querying by session_id
+	var count int64
+	err = db.Raw("SELECT COUNT(*) FROM ritual_step_states WHERE session_id = ?", stepSessionID).Scan(&count).Error
+	if err != nil {
+		t.Fatalf("failed to query step states by session_id: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 step state for session_id, got %d", count)
+	}
+
+	// Test querying ritual executions by session_id
+	err = db.Raw("SELECT COUNT(*) FROM ritual_executions WHERE session_id = ?", sessionID).Scan(&count).Error
+	if err != nil {
+		t.Fatalf("failed to query executions by session_id: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 execution for session_id, got %d", count)
+	}
+}

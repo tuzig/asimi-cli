@@ -172,7 +172,7 @@ func runInteractiveMode() error {
 	}
 
 	// start the wakeup ceremony
-	tuiModel.raiseShogunateEvent("shogunate_started", storage.JSON{"trigger": "model_configured"})
+	tuiModel.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{"trigger": "model_configured"})
 	_, runErr := tuiProgram.Run()
 
 	if runErr != nil {

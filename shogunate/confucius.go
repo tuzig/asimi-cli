@@ -68,7 +68,7 @@ func (c *Confucius) Tools() []Tool {
 	toolList := []Tool{
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
-		&SuggestEdictTool{confucius: c, waiter: c},
+		&SuggestEdictTool{confucius: c},
 		&QueryCourtTool{db: c.db},
 	}
 	for _, t := range tools.GetROTools() {
@@ -211,7 +211,6 @@ func (c *Confucius) streamTask(ctx context.Context, work, edictID, scratchpad st
 // SuggestEdictTool suggests a new edict via zhengming (Confucius never creates edicts)
 type SuggestEdictTool struct {
 	confucius *Confucius
-	waiter    storage.ZhengmingWaiter
 }
 
 func (t *SuggestEdictTool) Name() string { return "suggest_edict" }
@@ -220,7 +219,8 @@ func (t *SuggestEdictTool) Description() string {
 	return `Suggest a new edict to the Ruler via Zhengming. Use this when you identify
 an improvement opportunity, naming inconsistency, or refactoring need.
 You cannot create edicts directly — only the Ruler can do that.
-This creates a Zhengming request that the Ruler can approve or dismiss.`
+This creates a Zhengming request that the Ruler can approve or dismiss.
+Returns immediately with status='suggested' - the edict will be created if approved via event.`
 }
 
 func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, error) {
@@ -246,6 +246,37 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 	if params.Evidence != "" {
 		questionText = fmt.Sprintf("%s\n\nEvidence: %s", params.Suggestion, params.Evidence)
 	}
+
+	// For large suggestions (>500 chars), use approve_doc for external review
+	if len(questionText) > 500 {
+		approveTool := tools.ApproveDocTool{}
+		approveInput := map[string]any{
+			"content":     questionText,
+			"description": "Review edict suggestion before submission",
+		}
+		approveInputJSON, _ := json.Marshal(approveInput)
+		approveResult, err := approveTool.Call(ctx, string(approveInputJSON))
+		if err != nil {
+			return "", fmt.Errorf("approve_doc failed: %w", err)
+		}
+
+		// Check if user approved or modified
+		var approveRes struct {
+			Status string `json:"status"`
+			Diff   string `json:"diff,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(approveResult), &approveRes); err != nil {
+			return "", fmt.Errorf("failed to parse approve_doc result: %w", err)
+		}
+
+		if approveRes.Status == "modified" {
+			// User modified the suggestion, use the modified version
+			// Extract the modified content from the diff (simplified: assume user edited the whole thing)
+			questionText = params.Suggestion + approveRes.Diff
+		}
+		// If approved, continue with original questionText
+	}
+
 	questions := storage.ZhengmingQuestions{{
 		Text:    questionText,
 		Options: []string{"Approve edict", "Dismiss suggestion"},
@@ -268,22 +299,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 		})
 	}
 
-	// Block until user answers
-	if t.waiter != nil {
-		answer, err := t.waiter.WaitForAnswer(ctx, requestID)
-		if err != nil {
-			return "", fmt.Errorf("waiting for answer: %w", err)
-		}
-		if answer == "Approve edict" {
-			edict, err := t.confucius.shogunate.CreateEdict("", params.Suggestion)
-			if err != nil {
-				return "", fmt.Errorf("create edict from suggestion: %w", err)
-			}
-			return fmt.Sprintf(`{"status":"approved","edict_id":"%s","request_id":"%s"}`, edict.EdictID, requestID), nil
-		}
-		return fmt.Sprintf(`{"status":"dismissed","request_id":"%s","answer":%s}`, requestID, utils.MustJSON(answer)), nil
-	}
-
+	// Return immediately - edict creation happens via event handler when user answers
 	return fmt.Sprintf(`{"status":"suggested","request_id":"%s"}`, requestID), nil
 }
 

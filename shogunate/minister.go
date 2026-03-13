@@ -41,7 +41,7 @@ type ZhengmingConn interface {
 
 // EventEmitter emits events to the Ritual Guard's ledger (behavioral interface)
 type EventEmitter interface {
-	EmitEvent(edictID, eventType string, payload storage.JSON) error
+	EmitEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) error
 }
 
 // === UNIFIED TYPES ===
@@ -201,9 +201,8 @@ type MinisterBase struct {
 	logger     *slog.Logger
 	notify     internal.NotifyFunc
 	prompts    chan *Prompt
-	publish    func(edictID, eventType string, payload storage.JSON) string // routes events through Shogunate when set
+	publish    func(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string // routes events through Shogunate when set
 
-	zhengmingWaiters  map[string]chan string
 	zhengmingMu       sync.Mutex
 	onZhengmingRaised func()
 }
@@ -214,11 +213,10 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger) *M
 		logger = slog.Default()
 	}
 	return &MinisterBase{
-		db:               db,
-		runner:           runner,
-		logger:           logger,
-		prompts:          make(chan *Prompt),
-		zhengmingWaiters: make(map[string]chan string),
+		db:      db,
+		runner:  runner,
+		logger:  logger,
+		prompts: make(chan *Prompt),
 	}
 }
 
@@ -386,45 +384,6 @@ func (m *MinisterBase) SetOnZhengmingRaised(cb func()) {
 	m.onZhengmingRaised = cb
 }
 
-// RegisterZhengmingWaiter creates a channel for the given request ID and returns it.
-func (m *MinisterBase) RegisterZhengmingWaiter(requestID string) <-chan string {
-	m.zhengmingMu.Lock()
-	defer m.zhengmingMu.Unlock()
-	if m.zhengmingWaiters == nil {
-		m.zhengmingWaiters = make(map[string]chan string)
-	}
-	ch := make(chan string, 1)
-	m.zhengmingWaiters[requestID] = ch
-	return ch
-}
-
-// ResolveZhengmingWaiter sends the answer to the waiting tool goroutine.
-func (m *MinisterBase) ResolveZhengmingWaiter(requestID, answer string) bool {
-	m.zhengmingMu.Lock()
-	defer m.zhengmingMu.Unlock()
-	ch, ok := m.zhengmingWaiters[requestID]
-	if !ok {
-		return false
-	}
-	ch <- answer
-	delete(m.zhengmingWaiters, requestID)
-	return true
-}
-
-// WaitForAnswer registers a waiter and blocks until the user answers or the context is cancelled.
-func (m *MinisterBase) WaitForAnswer(ctx context.Context, requestID string) (string, error) {
-	ch := m.RegisterZhengmingWaiter(requestID)
-	select {
-	case answer := <-ch:
-		return answer, nil
-	case <-ctx.Done():
-		m.zhengmingMu.Lock()
-		delete(m.zhengmingWaiters, requestID)
-		m.zhengmingMu.Unlock()
-		return "", ctx.Err()
-	}
-}
-
 // GenerateID creates a unique ID using SHA256.
 // Exported for use by session.go envelope pattern.
 func GenerateID(parts ...string) string {
@@ -481,6 +440,14 @@ func (m *MinisterBase) RequestZhengming(edictID string, questions storage.Zhengm
 			Update("status", storage.EdictBlocked)
 	}
 
+	// Emit zhengming_requested event
+	m.EmitEvent(edictID, "zhengming_requested", storage.JSON{
+		"request_id":  requestID,
+		"minister_id": m.ministerID,
+		"questions":   questions,
+		"priority":    string(priority),
+	})
+
 	return requestID, nil
 }
 
@@ -535,10 +502,6 @@ func (m *MinisterBase) AppendToIntent(edictID, clarification string) error {
 
 // HandleZhengmingResponse processes a clarification response
 func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
-	// Always resolve the waiter so blocking tools like suggest_edict unblock,
-	// even if DB operations below fail.
-	defer m.ResolveZhengmingWaiter(requestID, answer)
-
 	if err := m.AnswerZhengming(requestID, answer); err != nil {
 		return fmt.Errorf("answer zhengming: %w", err)
 	}
@@ -561,11 +524,18 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 		}
 	}
 
+	// Emit zhengming_answered event
+	m.EmitEvent(req.EdictID, "zhengming_answered", storage.JSON{
+		"request_id": requestID,
+		"answer":     answer,
+		"edict_id":   req.EdictID,
+	})
+
 	return nil
 }
 
 // EmitEvent records an event in the Tian ledger and delivers it via channel when available.
-func (m *MinisterBase) EmitEvent(edictID, eventType string, payload storage.JSON) error {
+func (m *MinisterBase) EmitEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) error {
 	if m.publish != nil {
 		_ = m.publish(edictID, eventType, payload)
 		return nil

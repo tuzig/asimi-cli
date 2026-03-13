@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
@@ -112,11 +111,6 @@ func (q *ZhengmingQuestions) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, q)
 }
 
-// ZhengmingWaiter blocks a tool goroutine until the user answers
-type ZhengmingWaiter interface {
-	WaitForAnswer(ctx context.Context, requestID string) (string, error)
-}
-
 // ZhengmingPriority represents the priority of a clarification request
 type ZhengmingPriority string
 
@@ -154,13 +148,36 @@ func (Zhengming) TableName() string {
 	return "zhengming_requests"
 }
 
+// ShogunateEvent represents an event type emitted by the Shogunate lifecycle.
+type ShogunateEvent string
+
+const (
+	EventShogunateStarted  ShogunateEvent = "shogunate_started"
+	EventEdictAssigned     ShogunateEvent = "edict_assigned"
+	EventEdictCreated      ShogunateEvent = "edict_created"
+	EventPhaseChanged      ShogunateEvent = "phase_changed"
+	EventForgeCommitted    ShogunateEvent = "forge_committed"
+	EventManifestCommitted ShogunateEvent = "manifest_committed"
+	EventManifestRejected  ShogunateEvent = "manifest_rejected"
+	EventRitualStarted     ShogunateEvent = "ritual_started"
+	EventRitualCompleted   ShogunateEvent = "ritual_completed"
+	EventRitualFailed      ShogunateEvent = "ritual_failed"
+	EventStepStarted       ShogunateEvent = "step_started"
+	EventStepCompleted     ShogunateEvent = "step_completed"
+	EventStepFailed        ShogunateEvent = "step_failed"
+	EventLingCreated       ShogunateEvent = "ling_created"
+	EventZhengmingNeeded   ShogunateEvent = "zhengming_needed"
+	EventZhengmingAnswered ShogunateEvent = "zhengming_answered"
+	EventEdictCancelled    ShogunateEvent = "edict_cancelled"
+)
+
 // TianEvent represents an event in the Tian ledger
 type TianEvent struct {
-	ID        uint      `gorm:"primaryKey;autoIncrement"`
-	EdictID   string    `gorm:"column:edict_id;index"`
-	EventType string    `gorm:"column:event_type"`
-	Payload   JSON      `gorm:"column:payload;type:json"`
-	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
+	ID        uint           `gorm:"primaryKey;autoIncrement"`
+	EdictID   string         `gorm:"column:edict_id;index"`
+	EventType ShogunateEvent `gorm:"column:event_type"`
+	Payload   JSON           `gorm:"column:payload;type:json"`
+	CreatedAt time.Time      `gorm:"column:created_at;autoCreateTime"`
 }
 
 // TableName returns the table name for TianEvent
@@ -170,14 +187,14 @@ func (TianEvent) TableName() string {
 
 // TianEventDLQ represents a dead-letter queue entry for failed event processing
 type TianEventDLQ struct {
-	ID           uint      `gorm:"primaryKey;autoIncrement"`
-	OriginalID   uint      `gorm:"column:original_id"`
-	EdictID      string    `gorm:"column:edict_id;index"`
-	EventType    string    `gorm:"column:event_type"`
-	Payload      JSON      `gorm:"column:payload;type:json"`
-	ErrorMessage string    `gorm:"column:error_message"`
-	RetryCount   int       `gorm:"column:retry_count"`
-	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime"`
+	ID           uint           `gorm:"primaryKey;autoIncrement"`
+	OriginalID   uint           `gorm:"column:original_id"`
+	EdictID      string         `gorm:"column:edict_id;index"`
+	EventType    ShogunateEvent `gorm:"column:event_type"`
+	Payload      JSON           `gorm:"column:payload;type:json"`
+	ErrorMessage string         `gorm:"column:error_message"`
+	RetryCount   int            `gorm:"column:retry_count"`
+	CreatedAt    time.Time      `gorm:"column:created_at;autoCreateTime"`
 }
 
 // TableName returns the table name for TianEventDLQ
@@ -363,7 +380,7 @@ CREATE TABLE IF NOT EXISTS zhengming_requests (
     timeout_at INTEGER NOT NULL,
     answered_at INTEGER,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_zhengming_edict ON zhengming_requests(edict_id);
@@ -375,7 +392,7 @@ CREATE TABLE IF NOT EXISTS tian_events (
     edict_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}',
-    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_tian_events_edict ON tian_events(edict_id);
@@ -400,7 +417,7 @@ CREATE TABLE IF NOT EXISTS lings (
     dependencies TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'pending',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_lings_edict ON lings(edict_id);
@@ -417,7 +434,7 @@ CREATE TABLE IF NOT EXISTS forge_manifests (
     status TEXT NOT NULL DEFAULT 'forged',
     verdict_id TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_manifests_edict ON forge_manifests(edict_id);
@@ -430,7 +447,7 @@ CREATE TABLE IF NOT EXISTS judge_verdicts (
     test_suite TEXT NOT NULL,
     outcome TEXT NOT NULL,
     evidence TEXT NOT NULL DEFAULT '{}',
-    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_judge_verdicts_manifest ON judge_verdicts(manifest_id);
@@ -442,7 +459,7 @@ CREATE TABLE IF NOT EXISTS censor_precedents (
     principle TEXT NOT NULL,
     ruling TEXT NOT NULL,
     justification TEXT NOT NULL,
-    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_censor_precedents_manifest ON censor_precedents(manifest_id);
@@ -468,7 +485,7 @@ CREATE TABLE IF NOT EXISTS ruler_councils (
     approved INTEGER NOT NULL DEFAULT 0,
     approved_by TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_ruler_councils_edict ON ruler_councils(edict_id);
@@ -485,15 +502,17 @@ CREATE TABLE IF NOT EXISTS ritual_executions (
     id TEXT PRIMARY KEY,
     ritual_name TEXT NOT NULL,
     edict_id TEXT NOT NULL,
+    session_id TEXT,
     current_step INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'pending',
     data TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_ritual_executions_edict ON ritual_executions(edict_id);
 CREATE INDEX IF NOT EXISTS idx_ritual_executions_state ON ritual_executions(state);
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_session ON ritual_executions(session_id);
 
 -- Ritual step states table (tracks step state within executions)
 CREATE TABLE IF NOT EXISTS ritual_step_states (
@@ -501,10 +520,12 @@ CREATE TABLE IF NOT EXISTS ritual_step_states (
     execution_id TEXT NOT NULL,
     step_index INTEGER NOT NULL,
     name TEXT NOT NULL,
+    session_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     retry_count INTEGER NOT NULL DEFAULT 0,
-    message TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_ritual_step_states_execution ON ritual_step_states(execution_id);
+CREATE INDEX IF NOT EXISTS idx_ritual_step_states_session ON ritual_step_states(session_id);
 `

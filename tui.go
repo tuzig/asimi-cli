@@ -2892,41 +2892,31 @@ func (m *TUIModel) stopStreaming() {
 	}
 }
 
-// handleAnsweringComplete resolves the zhengming waiter and updates the DB.
+// handleAnsweringComplete closes the zhengming waiter and updates the DB.
 // Runs in a goroutine from the Update loop.
 func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 	if m.shogunate == nil {
 		return
 	}
+	m.raiseShogunateEvent(storage.EventZhengmingAnswered, storage.JSON{})
 	// Join answers into a single string for the response
 	answer := strings.Join(msg.Answers, "; ")
 
-	// Handle DB updates and resolve waiters on all ministers
+	// Handle DB updates and emit zhengming_answered event
 	type zhengmingHandler interface {
 		HandleZhengmingResponse(ctx context.Context, requestID, answer string) error
 	}
-	dbUpdated := false
 	for _, minister := range m.shogunate.Ministers() {
 		if h, ok := minister.(zhengmingHandler); ok {
-			if !dbUpdated {
-				if err := h.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
-					slog.Error("failed to handle zhengming response", "error", err)
-				}
-				dbUpdated = true
-			} else {
-				// DB already updated, just resolve the waiter
-				type waiterResolver interface {
-					ResolveZhengmingWaiter(requestID, answer string) bool
-				}
-				if r, ok := minister.(waiterResolver); ok {
-					r.ResolveZhengmingWaiter(msg.RequestID, answer)
-				}
+			if err := h.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
+				slog.Error("failed to handle zhengming response", "error", err)
 			}
+			break // Only need to call once
 		}
 	}
 }
 
-func (m *TUIModel) raiseShogunateEvent(event string, params storage.JSON) {
+func (m *TUIModel) raiseShogunateEvent(event storage.ShogunateEvent, params storage.JSON) {
 	m.shogunate.PublishEvent(m.currentEdictID, event, params)
 }
 

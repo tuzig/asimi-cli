@@ -17,6 +17,15 @@ type ReviewResult struct {
 	Reasoning string    `json:"reasoning"`
 }
 
+// ReviewSummary holds the summary of a censor review for reporting
+type ReviewSummary struct {
+	Approved       bool      `json:"approved"`
+	ManifestsCount int       `json:"manifests_count"`
+	FindingsCount  int       `json:"findings_count"`
+	Findings       []Finding `json:"findings,omitempty"`
+	Reasoning      string    `json:"reasoning"`
+}
+
 // Finding represents a single issue found during review
 type Finding struct {
 	File      string `json:"file"`
@@ -370,47 +379,88 @@ func (c *Censor) parseReviewResponse(response string) *ReviewResult {
 // --- Execute Logic ---
 
 // execute runs the Censor's ethics review for an edict (internal method)
-func (c *Censor) execute(ctx context.Context, edictID string) (bool, error) {
+// Returns: sealed (phase complete), review summary, error
+func (c *Censor) execute(ctx context.Context, edictID string) (bool, *ReviewSummary, error) {
 	// Check if there are any rejections
 	noRejections, err := c.NoRejections(edictID)
 	if err != nil {
-		return false, fmt.Errorf("check rejections: %w", err)
+		return false, nil, fmt.Errorf("check rejections: %w", err)
 	}
 
 	// Get quenched manifests to review
 	manifests, err := c.GetQuenchedManifests(edictID)
 	if err != nil {
-		return false, fmt.Errorf("get quenched manifests: %w", err)
+		return false, nil, fmt.Errorf("get quenched manifests: %w", err)
 	}
 
 	if len(manifests) == 0 {
 		// No manifests to review, phase complete if no rejections
 		if noRejections {
 			c.logger.Info("censor review complete, no rejections", "edict_id", edictID)
-			return true, nil
+			return true, &ReviewSummary{
+				Approved:       true,
+				ManifestsCount: 0,
+				Reasoning:      "No manifests to review",
+			}, nil
 		}
 		c.logger.Info("censor review blocked by rejections", "edict_id", edictID)
-		return false, nil
+		return false, &ReviewSummary{
+			Approved:  false,
+			Reasoning: "Review blocked by previous rejections",
+		}, nil
 	}
+
+	// Collect all findings from manifest reviews
+	var allFindings []Finding
+	var reviewReasoning strings.Builder
+	reviewReasoning.WriteString(fmt.Sprintf("Reviewed %d manifest(s)\n\n", len(manifests)))
 
 	// Review each manifest
 	for _, manifest := range manifests {
-		if err := c.reviewManifest(ctx, &manifest); err != nil {
-			return false, fmt.Errorf("review manifest %s: %w", manifest.ManifestID, err)
+		findings, err := c.reviewManifest(ctx, &manifest)
+		if err != nil {
+			return false, nil, fmt.Errorf("review manifest %s: %w", manifest.ManifestID, err)
 		}
+		allFindings = append(allFindings, findings...)
 	}
 
 	// Check again for rejections
 	noRejections, err = c.NoRejections(edictID)
 	if err != nil {
-		return false, fmt.Errorf("check rejections after review: %w", err)
+		return false, nil, fmt.Errorf("check rejections after review: %w", err)
 	}
 
-	return noRejections, nil
+	// Build reasoning summary
+	if len(allFindings) == 0 {
+		reviewReasoning.WriteString("No issues found. All manifests approved.")
+	} else {
+		reviewReasoning.WriteString(fmt.Sprintf("Found %d issue(s):\n", len(allFindings)))
+		for i, f := range allFindings {
+			reviewReasoning.WriteString(fmt.Sprintf("%d. [%s] %s", i+1, f.Severity, f.Message))
+			if f.File != "" {
+				reviewReasoning.WriteString(fmt.Sprintf(" (%s", f.File))
+				if f.Line > 0 {
+					reviewReasoning.WriteString(fmt.Sprintf(":%d", f.Line))
+				}
+				reviewReasoning.WriteString(")")
+			}
+			reviewReasoning.WriteString("\n")
+		}
+	}
+
+	summary := &ReviewSummary{
+		Approved:       noRejections,
+		ManifestsCount: len(manifests),
+		FindingsCount:  len(allFindings),
+		Findings:       allFindings,
+		Reasoning:      reviewReasoning.String(),
+	}
+
+	return noRejections, summary, nil
 }
 
-// reviewManifest runs ethics checks on a single manifest
-func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeManifest) error {
+// reviewManifest runs ethics checks on a single manifest and returns any findings
+func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
 	// If we have a linter, use it for static analysis
 	if c.linter != nil {
 		return c.reviewManifestWithLinter(ctx, manifest)
@@ -429,20 +479,20 @@ func (c *Censor) reviewManifest(ctx context.Context, manifest *storage.ForgeMani
 		"No linter or LLM configured",
 	)
 	if err != nil {
-		return fmt.Errorf("log auto-approval precedent: %w", err)
+		return nil, fmt.Errorf("log auto-approval precedent: %w", err)
 	}
 	c.logger.Info("manifest auto-approved", "manifest_id", manifest.ManifestID)
-	return nil
+	return []Finding{}, nil
 }
 
 // reviewManifestWithLinter uses the linter interface for static analysis
-func (c *Censor) reviewManifestWithLinter(ctx context.Context, manifest *storage.ForgeManifest) error {
+func (c *Censor) reviewManifestWithLinter(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
 	violations, err := c.linter.Analyze(ctx, manifest.FilePath)
 	if err != nil {
-		return fmt.Errorf("linter analyze: %w", err)
+		return nil, fmt.Errorf("linter analyze: %w", err)
 	}
 
-	// Log each violation as a precedent
+	var findings []Finding
 	hasRejection := false
 	for _, v := range violations {
 		_, err := c.LogPrecedent(
@@ -452,18 +502,27 @@ func (c *Censor) reviewManifestWithLinter(ctx context.Context, manifest *storage
 			v.Justification,
 		)
 		if err != nil {
-			return fmt.Errorf("log precedent: %w", err)
+			return nil, fmt.Errorf("log precedent: %w", err)
 		}
 
+		severity := "warning"
 		if v.Ruling == storage.PrecedentRejected {
+			severity = "error"
 			hasRejection = true
 		}
+
+		findings = append(findings, Finding{
+			File:      manifest.FilePath,
+			Severity:  severity,
+			Message:   v.Justification,
+			Principle: v.Principle,
+		})
 	}
 
 	// Reject manifest if any violations were rejected
 	if hasRejection {
 		if err := c.RejectManifest(manifest.ManifestID); err != nil {
-			return fmt.Errorf("reject manifest: %w", err)
+			return nil, fmt.Errorf("reject manifest: %w", err)
 		}
 		c.logger.Info("manifest rejected by censor",
 			"manifest_id", manifest.ManifestID,
@@ -474,21 +533,21 @@ func (c *Censor) reviewManifestWithLinter(ctx context.Context, manifest *storage
 			"waivers", len(violations))
 	}
 
-	return nil
+	return findings, nil
 }
 
 // reviewManifestWithLLM uses the LLM for diff-based review
-func (c *Censor) reviewManifestWithLLM(ctx context.Context, manifest *storage.ForgeManifest) error {
+func (c *Censor) reviewManifestWithLLM(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
 	// Get the diff for this manifest
 	diff, err := c.getManifestDiff(manifest)
 	if err != nil {
-		return fmt.Errorf("get manifest diff: %w", err)
+		return nil, fmt.Errorf("get manifest diff: %w", err)
 	}
 
 	// Review the diff
 	result, err := c.ReviewDiff(ctx, diff)
 	if err != nil {
-		return fmt.Errorf("review diff: %w", err)
+		return nil, fmt.Errorf("review diff: %w", err)
 	}
 
 	// Record findings as precedents
@@ -515,7 +574,7 @@ func (c *Censor) reviewManifestWithLLM(ctx context.Context, manifest *storage.Fo
 	// Reject manifest if not approved
 	if !result.Approved {
 		if err := c.RejectManifest(manifest.ManifestID); err != nil {
-			return fmt.Errorf("reject manifest: %w", err)
+			return nil, fmt.Errorf("reject manifest: %w", err)
 		}
 		c.logger.Info("manifest rejected by censor",
 			"manifest_id", manifest.ManifestID,
@@ -526,7 +585,7 @@ func (c *Censor) reviewManifestWithLLM(ctx context.Context, manifest *storage.Fo
 			"findings", len(result.Findings))
 	}
 
-	return nil
+	return result.Findings, nil
 }
 
 // getManifestDiff retrieves the diff for a manifest
@@ -567,17 +626,51 @@ func (c *Censor) processTask(ctx context.Context, task *Task) {
 		"work", task.Work)
 
 	// Execute the review logic
-	sealed, err := c.execute(ctx, task.EdictID)
+	sealed, summary, err := c.execute(ctx, task.EdictID)
+
+	// Build output with review details
+	var output strings.Builder
+	if summary != nil {
+		if summary.Approved {
+			output.WriteString("APPROVED\n\n")
+		} else {
+			output.WriteString("REJECTED\n\n")
+		}
+
+		output.WriteString(fmt.Sprintf("Manifests reviewed: %d\n", summary.ManifestsCount))
+		output.WriteString(fmt.Sprintf("Issues found: %d\n\n", summary.FindingsCount))
+
+		if len(summary.Findings) > 0 {
+			output.WriteString("Findings:\n")
+			for i, f := range summary.Findings {
+				output.WriteString(fmt.Sprintf("%d. [%s] %s", i+1, f.Severity, f.Message))
+				if f.File != "" {
+					output.WriteString(fmt.Sprintf(" (%s", f.File))
+					if f.Line > 0 {
+						output.WriteString(fmt.Sprintf(":%d", f.Line))
+					}
+					output.WriteString(")")
+				}
+				if f.Principle != "" {
+					output.WriteString(fmt.Sprintf(" [%s]", f.Principle))
+				}
+				output.WriteString("\n")
+			}
+			output.WriteString("\n")
+		}
+
+		output.WriteString("Reasoning:\n")
+		output.WriteString(summary.Reasoning)
+	} else {
+		output.WriteString("review complete")
+	}
 
 	// Send result back to Chancellor
 	result := Result{
 		MinisterID: c.ID(),
 		Sealed:     sealed,
 		Err:        err,
-	}
-
-	if sealed {
-		result.Output = "review complete"
+		Output:     output.String(),
 	}
 
 	// Send result (non-blocking)

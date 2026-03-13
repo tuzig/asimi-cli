@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/afittestide/asimi/internal/utils"
@@ -36,7 +38,17 @@ func (t GlobTool) Call(ctx context.Context, input string) (string, error) {
 		params.Pattern = "*"
 	}
 
-	matches, err := filepathx.Glob(params.Pattern)
+	var matches []string
+	var err error
+
+	// Handle patterns starting with "**/"
+	if strings.HasPrefix(params.Pattern, "**/") {
+		subpattern := strings.TrimPrefix(params.Pattern, "**/")
+		matches, err = t.globRecursive(subpattern)
+	} else {
+		matches, err = filepathx.Glob(params.Pattern)
+	}
+
 	if err != nil {
 		return "", fmt.Errorf("invalid glob pattern: %w", err)
 	}
@@ -62,6 +74,45 @@ func (t GlobTool) Call(ctx context.Context, input string) (string, error) {
 		output += fmt.Sprintf("\n... (truncated at %d results)", maxResults)
 	}
 	return output, nil
+}
+
+// globRecursive handles patterns starting with "**/" by searching recursively from current directory
+func (t GlobTool) globRecursive(subpattern string) ([]string, error) {
+	var allMatches []string
+
+	// First, try to match the subpattern in the current directory
+	currentDirMatches, err := filepathx.Glob(subpattern)
+	if err == nil {
+		allMatches = append(allMatches, currentDirMatches...)
+	}
+
+	// Get all directories in the current working directory
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		return allMatches, nil // Return what we have so far
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dirName := entry.Name()
+
+		// Skip hidden directories
+		if strings.HasPrefix(dirName, ".") {
+			continue
+		}
+
+		// Build pattern for this directory: dirname/**/subpattern
+		pattern := filepath.Join(dirName, "**", subpattern)
+		matches, err := filepathx.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		allMatches = append(allMatches, matches...)
+	}
+
+	return allMatches, nil
 }
 
 func (t GlobTool) ParameterSchema() map[string]any {

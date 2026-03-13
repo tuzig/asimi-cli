@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -154,21 +155,9 @@ func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) 
 			})
 		}
 
-		// Block until user answers
-		answer, err := s.WaitForAnswer(ctx, requestID)
-		if err != nil {
-			return false, fmt.Errorf("waiting for answer: %w", err)
-		}
-
-		switch answer {
-		case "Cancel this edict":
-			return false, fmt.Errorf("edict cancelled by user")
-		case "Proceed with best guess":
-			// Fall through to decomposition
-		default:
-			// User will expand requirements; halt for now
-			return false, nil
-		}
+		// Return false to indicate we're waiting for clarification
+		// The ritual will pause and resume when zhengming_answered event is received
+		return false, nil
 	}
 
 	// Decompose into ling
@@ -180,6 +169,37 @@ func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) 
 	// Validate dependencies form a DAG
 	if err := s.validateDependencies(lingList); err != nil {
 		return false, fmt.Errorf("invalid dependencies: %w", err)
+	}
+
+	// For large plans (>500 chars), use approve_doc for external review
+	planContent := s.formatPlanForReview(lingList)
+	if len(planContent) > 500 {
+		approveTool := tools.ApproveDocTool{}
+		approveInput := map[string]any{
+			"content":     planContent,
+			"description": "Review strategic plan before execution",
+		}
+		approveInputJSON, _ := json.Marshal(approveInput)
+		approveResult, err := approveTool.Call(ctx, string(approveInputJSON))
+		if err != nil {
+			return false, fmt.Errorf("approve_doc failed: %w", err)
+		}
+
+		// Check if user approved or modified
+		var approveRes struct {
+			Status string `json:"status"`
+			Diff   string `json:"diff,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(approveResult), &approveRes); err != nil {
+			return false, fmt.Errorf("failed to parse approve_doc result: %w", err)
+		}
+
+		if approveRes.Status == "modified" {
+			// User modified the plan - for now, log the diff and continue
+			// In a more sophisticated implementation, we could re-parse the modified plan
+			s.logger.Info("plan modified by user", "edict_id", edictID, "diff", approveRes.Diff)
+		}
+		// If approved, continue with original plan
 	}
 
 	// Insert ling
@@ -197,6 +217,23 @@ func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) 
 func (s *Strategist) isAmbiguous(intent string) bool {
 	// Simple heuristic: very short intents are likely ambiguous
 	return len(intent) < 20
+}
+
+// formatPlanForReview formats a list of ling into a human-readable plan for review
+func (s *Strategist) formatPlanForReview(lingList []storage.Ling) string {
+	var sb strings.Builder
+	sb.WriteString("Strategic Plan\n")
+	sb.WriteString("==============\n\n")
+	
+	for i, ling := range lingList {
+		sb.WriteString(fmt.Sprintf("%d. %s", i+1, ling.Description))
+		if len(ling.Dependencies) > 0 {
+			sb.WriteString(fmt.Sprintf(" (depends on: %v)", ling.Dependencies))
+		}
+		sb.WriteString("\n")
+	}
+	
+	return sb.String()
 }
 
 // decompose breaks down an edict into executable ling

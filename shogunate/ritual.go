@@ -501,6 +501,7 @@ type RitualExecution struct {
 	ID          string       `gorm:"primaryKey;column:id"`
 	RitualName  string       `gorm:"column:ritual_name"`
 	EdictID     string       `gorm:"column:edict_id;index"`
+	SessionID   string       `gorm:"column:session_id"`
 	CurrentStep int          `gorm:"column:current_step"`
 	State       RitualState  `gorm:"column:state"`
 	Data        storage.JSON `gorm:"column:data;type:json"`
@@ -524,6 +525,7 @@ type RitualStepState struct {
 	ExecutionID string `gorm:"column:execution_id;index"`
 	StepIndex   int    `gorm:"column:step_index"`
 	Name        string `gorm:"column:name"`
+	SessionID   string `gorm:"column:session_id"`
 	RetryCount  int    `gorm:"column:retry_count"`
 	Message     string `gorm:"column:message"`
 
@@ -627,7 +629,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	r.saveExecution(exec)
 
 	// Emit ritual_started Tian event
-	r.emitEvent(exec.EdictID, "ritual_started", storage.JSON{
+	r.emitEvent(exec.EdictID, storage.EventRitualStarted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 	})
@@ -716,7 +718,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			}
 
 			// Emit step_failed Tian event
-			r.emitEvent(exec.EdictID, "step_failed", storage.JSON{
+			r.emitEvent(exec.EdictID, storage.EventStepFailed, storage.JSON{
 				"ritual":       exec.RitualName,
 				"execution_id": exec.ID,
 				"step":         step.Name,
@@ -729,7 +731,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 				exec.State = RitualStateFailed
 				r.saveExecution(exec)
 				// Emit ritual_failed Tian event
-				r.emitEvent(exec.EdictID, "ritual_failed", storage.JSON{
+				r.emitEvent(exec.EdictID, storage.EventRitualFailed, storage.JSON{
 					"ritual":       exec.RitualName,
 					"execution_id": exec.ID,
 					"step":         step.Name,
@@ -755,7 +757,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			})
 		}
 		// Emit step_completed Tian event
-		r.emitEvent(exec.EdictID, "step_completed", storage.JSON{
+		r.emitEvent(exec.EdictID, storage.EventStepCompleted, storage.JSON{
 			"ritual":       exec.RitualName,
 			"execution_id": exec.ID,
 			"step":         step.Name,
@@ -799,7 +801,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		})
 	}
 	// Emit ritual_completed Tian event
-	r.emitEvent(exec.EdictID, "ritual_completed", storage.JSON{
+	r.emitEvent(exec.EdictID, storage.EventRitualCompleted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 	})
@@ -859,7 +861,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		})
 	}
 	// Emit step_started Tian event
-	r.emitEvent(exec.EdictID, "step_started", storage.JSON{
+	r.emitEvent(exec.EdictID, storage.EventStepStarted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 		"step":         step.Name,
@@ -979,7 +981,7 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 	}
 
 	// Emit step_started Tian event
-	r.emitEvent(exec.EdictID, "step_started", storage.JSON{
+	r.emitEvent(exec.EdictID, storage.EventStepStarted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 		"step":         step.Name,
@@ -1063,7 +1065,7 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 	}
 
 	// Emit step_completed Tian event
-	r.emitEvent(exec.EdictID, "step_completed", storage.JSON{
+	r.emitEvent(exec.EdictID, storage.EventStepCompleted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 		"step":         step.Name,
@@ -1291,9 +1293,14 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	for {
 		select {
 		case result := <-doneChan:
-			// Store session for potential reuse
+			// Store session for potential reuse and capture session_id
 			if result.Session != nil {
 				exec.stepStates[stepIdx].Session = result.Session
+				exec.stepStates[stepIdx].SessionID = result.Session.ID
+				// Set ritual execution session_id if not already set (primary session)
+				if exec.SessionID == "" {
+					exec.SessionID = result.Session.ID
+				}
 			}
 			if result.Err != nil {
 				return result.Output, result.Err
@@ -1305,8 +1312,14 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 			r.logger.Debug("zhengming raised, pausing step timeout", "step", step.Name)
 			select {
 			case result := <-doneChan:
+				// Store session for potential reuse and capture session_id
 				if result.Session != nil {
 					exec.stepStates[stepIdx].Session = result.Session
+					exec.stepStates[stepIdx].SessionID = result.Session.ID
+					// Set ritual execution session_id if not already set (primary session)
+					if exec.SessionID == "" {
+						exec.SessionID = result.Session.ID
+					}
 				}
 				if result.Err != nil {
 					return result.Output, result.Err
@@ -1622,7 +1635,6 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 		}
 		type zhengmingGate interface {
 			RequestZhengming(string, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
-			WaitForAnswer(context.Context, string) (string, error)
 		}
 		gate, ok := minister.(zhengmingGate)
 		if !ok {
@@ -1650,13 +1662,12 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 				Priority:   storage.PriorityUrgent,
 			})
 		}
-		answer, err := gate.WaitForAnswer(ctx, requestID)
-		if err != nil {
-			return err
+		// Return without blocking - ritual will resume on zhengming_answered event
+		// Store request_id in execution data for event handler to check
+		if exec.Data == nil {
+			exec.Data = storage.JSON{}
 		}
-		if answer == "Reject" {
-			return fmt.Errorf("ruler rejected the plan")
-		}
+		exec.Data["pending_zhengming"] = requestID
 		return nil
 	default:
 		return fmt.Errorf("unknown then function: %s", fn)
@@ -1823,7 +1834,7 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 
 // emitEvent records a Tian event from the ritual runner.
 // Routes through Shogunate's PublishEvent for channel delivery when available.
-func (r *RitualRunner) emitEvent(edictID, eventType string, payload storage.JSON) {
+func (r *RitualRunner) emitEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) {
 	if r.shogunate != nil {
 		r.shogunate.PublishEvent(edictID, eventType, payload)
 		return

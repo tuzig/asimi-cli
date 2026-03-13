@@ -8,7 +8,7 @@ import (
 )
 
 // Schema version for migrations
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Type aliases - use types from internal/config as the single source of truth
 type (
@@ -204,13 +204,45 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
 
 CREATE INDEX IF NOT EXISTS idx_workflow_steps_workflow ON workflow_steps(workflow_id, step_index);
 
+-- Ritual executions table (added in schema version 3)
+CREATE TABLE IF NOT EXISTS ritual_executions (
+    id TEXT PRIMARY KEY,
+    ritual_name TEXT NOT NULL,
+    edict_id TEXT NOT NULL,
+    session_id TEXT,
+    current_step INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'pending',
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_edict ON ritual_executions(edict_id);
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_state ON ritual_executions(state);
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_session ON ritual_executions(session_id);
+
+-- Ritual step states table (added in schema version 3)
+CREATE TABLE IF NOT EXISTS ritual_step_states (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    session_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_ritual_step_states_execution ON ritual_step_states(execution_id);
+CREATE INDEX IF NOT EXISTS idx_ritual_step_states_session ON ritual_step_states(session_id);
+
 -- Schema version table
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at INTEGER NOT NULL
 );
 
-INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (2, unixepoch());
+INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (3, unixepoch());
 `
 
 // Migration1to2 contains the SQL to migrate from schema version 1 to 2
@@ -251,4 +283,21 @@ CREATE INDEX IF NOT EXISTS idx_workflow_steps_workflow ON workflow_steps(workflo
 
 -- Update schema version
 INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (2, unixepoch());
+`
+
+// Migration2to3 contains the SQL to migrate from schema version 2 to 3
+// Adds session_id tracking to ritual_executions and ritual_step_states
+const Migration2to3 = `
+-- Add session_id to ritual_executions
+ALTER TABLE ritual_executions ADD COLUMN session_id TEXT;
+
+-- Add session_id to ritual_step_states
+ALTER TABLE ritual_step_states ADD COLUMN session_id TEXT;
+
+-- Add indexes for efficient querying
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_session ON ritual_executions(session_id);
+CREATE INDEX IF NOT EXISTS idx_ritual_step_states_session ON ritual_step_states(session_id);
+
+-- Update schema version
+INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (3, unixepoch());
 `

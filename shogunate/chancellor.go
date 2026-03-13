@@ -458,7 +458,7 @@ func (c *Chancellor) Tools() []Tool {
 	toolList := []Tool{
 		tools.AsimiSQLTool{DBPath: c.getDBPath()},
 		tools.UpdateEdictTool{Manager: c},
-		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, Notify: zhengmingNotify, Waiter: c},
+		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, Notify: zhengmingNotify},
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
 		InvokeMinisterTool{chancellor: c},
@@ -810,48 +810,45 @@ func (c *Chancellor) processEvent(ctx context.Context, event Event) {
 	c.logger.Debug("chancellor processing event", "type", event.Type, "edict_id", event.EdictID)
 
 	switch event.Type {
-	case EventEdictCreated:
+	case storage.EventEdictCreated:
 		c.handleEdictCreated(ctx, event.EdictID)
-	case EventRitualCompleted:
+	case storage.EventRitualCompleted:
 		c.handleRitualCompleted(ctx, event.EdictID, event.Payload)
-	case EventRitualFailed:
+	case storage.EventRitualFailed:
 		c.handleRitualFailed(ctx, event.EdictID, event.Payload)
 	default:
 		c.logger.Debug("ignoring unknown event type", "type", event.Type)
 	}
 }
 
-// handleEdictCreated processes a new edict event by determining and enacting the appropriate ritual
+// handleEdictCreated sends the new edict to the chancellor LLM to choose and enact the appropriate ritual.
 func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
 	c.logger.Info("handling edict created", "edict_id", edictID)
 
-	// Read the edict to determine the appropriate ritual
+	if len(c.shogunate.ritualRegistry.List()) == 0 {
+		c.logger.Warn("no rituals available", "edict_id", edictID)
+		return
+	}
+
 	edict, err := c.GetEdict(edictID)
 	if err != nil {
 		c.logger.Error("failed to get edict", "edict_id", edictID, "error", err)
 		return
 	}
 
-	// For now, use swift-strike as the default ritual
-	// TODO: Implement edict sizing logic to choose appropriate ritual
-	ritualName := "swift-strike"
-
-	c.logger.Info("enacting ritual for edict", "edict_id", edictID, "ritual", ritualName, "intent", edict.Intent)
-
-	// Enact the ritual
-	inputs := map[string]string{"edict_id": edictID}
-	exec, err := c.shogunate.ritualRunner.Start(ctx, ritualName, edictID, inputs, c.notify)
-	if err != nil {
-		c.logger.Error("failed to start ritual", "ritual", ritualName, "edict_id", edictID, "error", err)
-		return
+	work := fmt.Sprintf("New edict %s: %s\n\nChoose the appropriate ritual and enact it.", edictID, edict.Intent)
+	task := &Task{
+		Ctx:     ctx,
+		EdictID: edictID,
+		Work:    work,
+		Done:    make(chan Result, 1),
 	}
 
-	// Run the ritual asynchronously
-	go func() {
-		if err := c.shogunate.ritualRunner.Run(ctx, exec); err != nil {
-			c.logger.Error("ritual failed", "ritual", ritualName, "edict_id", edictID, "error", err)
-		}
-	}()
+	select {
+	case c.taskChan <- task:
+	default:
+		c.logger.Warn("chancellor task channel full", "edict_id", edictID)
+	}
 }
 
 // handleRitualCompleted processes a completed ritual event

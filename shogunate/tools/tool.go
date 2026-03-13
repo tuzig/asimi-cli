@@ -112,5 +112,6 @@ func GetEditTools() []Tool {
 		GlobTool{},
 		ReadManyFilesTool{},
 		GrepTool{},
+		ApproveDocTool{},
 	}
 }
