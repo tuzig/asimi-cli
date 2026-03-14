@@ -2066,12 +2066,23 @@ func TestRitualSessionIDTracking(t *testing.T) {
 		t.Fatalf("failed to open database: %v", err)
 	}
 
-	// Run migrations
-	if err := db.Exec(storage.Schema).Error; err != nil {
-		t.Fatalf("failed to create schema: %v", err)
-	}
-	if err := db.Exec(storage.ShogunateSchema).Error; err != nil {
-		t.Fatalf("failed to create shogunate schema: %v", err)
+	// Run migrations via GORM AutoMigrate
+	if err := db.AutoMigrate(
+		&storage.Edict{},
+		&storage.Zhengming{},
+		&storage.TianEvent{},
+		&storage.TianEventDLQ{},
+		&storage.Ling{},
+		&storage.ForgeManifest{},
+		&storage.JudgeVerdict{},
+		&storage.CensorPrecedent{},
+		&storage.MarshalIncident{},
+		&storage.RulerCouncil{},
+		&storage.RitualGuardCheckpoint{},
+		&RitualExecution{},
+		&RitualStepState{},
+	); err != nil {
+		t.Fatalf("failed to auto-migrate schema: %v", err)
 	}
 
 	// Create a test edict
