@@ -1,13 +1,14 @@
 package shogunate
 
 import (
+	"sort"
 	"time"
 
 	"github.com/afittestide/asimi/storage"
 )
 
-// LiveRitual represents a currently running or pending ritual execution.
-type LiveRitual struct {
+// RitualEntry represents a ritual execution (active or historical) for dashboard display.
+type RitualEntry struct {
 	RitualName  string
 	EdictID     string
 	State       RitualState
@@ -27,45 +28,56 @@ type EventEntry struct {
 
 // Snapshot captures the current state of the shogunate for dashboard display.
 type Snapshot struct {
-	LiveRituals []LiveRitual
-	Events      []EventEntry
-	TakenAt     time.Time
+	Rituals []RitualEntry
+	Events  []EventEntry
+	TakenAt time.Time
 }
 
 // TakeSnapshot returns a point-in-time snapshot of live rituals and recent events.
 func (s *Shogunate) TakeSnapshot() Snapshot {
 	snap := Snapshot{TakenAt: time.Now()}
 
-	// Live rituals from the ritual runner
+	// Rituals from the ritual runner (all states)
 	if rr := s.GetRitualRunner(); rr != nil {
 		execs, err := rr.ListExecutions("")
 		if err == nil {
 			for _, ex := range execs {
+				age := time.Since(ex.CreatedAt)
 				if ex.State != RitualStatePending && ex.State != RitualStateRunning {
-					continue
+					// For completed rituals, age = duration from creation to last update
+					age = ex.UpdatedAt.Sub(ex.CreatedAt)
 				}
-				lr := LiveRitual{
+				entry := RitualEntry{
 					RitualName:  ex.RitualName,
 					EdictID:     ex.EdictID,
 					State:       ex.State,
 					CurrentStep: ex.CurrentStep,
-					Age:         time.Since(ex.CreatedAt),
+					Age:         age,
 				}
 				// Get step info from the ritual definition
 				if def := rr.registry.Get(ex.RitualName); def != nil {
-					lr.TotalSteps = len(def.Steps)
+					entry.TotalSteps = len(def.Steps)
 					if ex.CurrentStep >= 0 && ex.CurrentStep < len(def.Steps) {
-						lr.StepName = def.Steps[ex.CurrentStep].Minister
+						entry.StepName = def.Steps[ex.CurrentStep].Minister
 					}
 				}
 				// Try to get step name from step states in DB
 				var stepState RitualStepState
 				if err := s.db.Where("execution_id = ? AND step_index = ?", ex.ID, ex.CurrentStep).
 					First(&stepState).Error; err == nil && stepState.Name != "" {
-					lr.StepName = stepState.Name
+					entry.StepName = stepState.Name
 				}
-				snap.LiveRituals = append(snap.LiveRituals, lr)
+				snap.Rituals = append(snap.Rituals, entry)
 			}
+			// Sort: active rituals first, then by age descending (most recent first)
+			sort.Slice(snap.Rituals, func(i, j int) bool {
+				iActive := snap.Rituals[i].State == RitualStatePending || snap.Rituals[i].State == RitualStateRunning
+				jActive := snap.Rituals[j].State == RitualStatePending || snap.Rituals[j].State == RitualStateRunning
+				if iActive != jActive {
+					return iActive
+				}
+				return snap.Rituals[i].Age < snap.Rituals[j].Age
+			})
 		}
 	}
 

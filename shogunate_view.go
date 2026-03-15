@@ -25,29 +25,55 @@ func (m TUIModel) renderShogunateView(height int) string {
 	var b strings.Builder
 
 	// TODO: use globalTheme
+	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
+	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	failedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#CC4444"))
 	detailStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00CCCC"))
 
-	// Live rituals section
-	b.WriteString(sectionStyle.Render(fmt.Sprintf(" LIVE RITUALS (%d)", len(snap.LiveRituals))))
+	// Split available rows evenly: each section gets header + content rows
+	// 2 section headers + 1 blank separator = 3 fixed lines
+	halfHeight := (height - 3) / 2
+	if halfHeight < 2 {
+		halfHeight = 2
+	}
+
+	// Ritual log section
+	b.WriteString(sectionStyle.Render(" RITUAL LOG"))
 	b.WriteString("\n")
 
-	if len(snap.LiveRituals) == 0 {
-		b.WriteString(labelStyle.Render(" No running rituals"))
+	if len(snap.Rituals) == 0 {
+		b.WriteString(labelStyle.Render(" No rituals recorded"))
 		b.WriteString("\n")
 	} else {
 		// Column header
-		b.WriteString(labelStyle.Render(fmt.Sprintf(" %-16s %-12s %-18s %s", "RITUAL", "EDICT", "STEP", "AGE")))
+		b.WriteString(labelStyle.Render(fmt.Sprintf(" %-16s %-10s %-10s %-18s %s", "RITUAL", "EDICT", "STATE", "STEP", "AGE")))
 		b.WriteString("\n")
-		for _, lr := range snap.LiveRituals {
-			edictShort := lr.EdictID
-			if len(edictShort) > 10 {
-				edictShort = edictShort[:10]
+		ritualRows := halfHeight - 1 // subtract column header
+		shown := len(snap.Rituals)
+		if shown > ritualRows {
+			shown = ritualRows
+		}
+		for _, r := range snap.Rituals[:shown] {
+			edictShort := r.EdictID
+			if len(edictShort) > 8 {
+				edictShort = edictShort[:8]
 			}
-			stepInfo := fmt.Sprintf("%d/%d %s", lr.CurrentStep+1, lr.TotalSteps, lr.StepName)
-			b.WriteString(detailStyle.Render(fmt.Sprintf(" %-16s %-12s %-18s %s",
-				lr.RitualName, edictShort, stepInfo, formatAge(lr.Age))))
+			stepInfo := fmt.Sprintf("%d/%d %s", r.CurrentStep+1, r.TotalSteps, r.StepName)
+			line := fmt.Sprintf(" %-16s %-10s %-10s %-18s %s",
+				r.RitualName, edictShort, string(r.State), stepInfo, formatAge(r.Age))
+
+			var style lipgloss.Style
+			switch {
+			case r.State == "pending" || r.State == "running":
+				style = activeStyle
+			case r.State == "failed" || r.State == "aborted":
+				style = failedStyle
+			default:
+				style = completedStyle
+			}
+			b.WriteString(style.Render(line))
 			b.WriteString("\n")
 		}
 	}
@@ -62,15 +88,9 @@ func (m TUIModel) renderShogunateView(height int) string {
 		b.WriteString(labelStyle.Render(" No events recorded"))
 		b.WriteString("\n")
 	} else {
-		// Calculate how many events we can show
-		usedLines := strings.Count(b.String(), "\n") + 1
-		remaining := height - usedLines
-		if remaining < 1 {
-			remaining = 1
-		}
 		shown := len(snap.Events)
-		if shown > remaining {
-			shown = remaining
+		if shown > halfHeight {
+			shown = halfHeight
 		}
 		for _, ev := range snap.Events[:shown] {
 			edictShort := ev.EdictID
