@@ -8,9 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// shogunateTickMsg triggers periodic refresh of the shogunate dashboard.
-type shogunateTickMsg struct{}
-
 func (m TUIModel) renderShogunateView(height int) string {
 	if m.shogunate == nil {
 		empty := lipgloss.NewStyle().
@@ -27,27 +24,21 @@ func (m TUIModel) renderShogunateView(height int) string {
 
 	var b strings.Builder
 
-	// Header
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-	labelStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00CCCC"))
-
-	b.WriteString(headerStyle.Render(" SHOGUNATE"))
-	b.WriteString(dimStyle.Render(fmt.Sprintf("%*s", m.width-12, "refreshed: "+snap.TakenAt.Format("15:04:05"))))
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(strings.Repeat("─", m.width)))
-	b.WriteString("\n\n")
+	// TODO: use globalTheme
+	detailStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00CCCC"))
 
 	// Live rituals section
-	b.WriteString(labelStyle.Render(fmt.Sprintf(" LIVE RITUALS (%d)", len(snap.LiveRituals))))
+	b.WriteString(sectionStyle.Render(fmt.Sprintf(" LIVE RITUALS (%d)", len(snap.LiveRituals))))
 	b.WriteString("\n")
 
 	if len(snap.LiveRituals) == 0 {
-		b.WriteString(dimStyle.Render(" No running rituals"))
+		b.WriteString(labelStyle.Render(" No running rituals"))
 		b.WriteString("\n")
 	} else {
 		// Column header
-		b.WriteString(dimStyle.Render(fmt.Sprintf(" %-16s %-12s %-18s %s", "RITUAL", "EDICT", "STEP", "AGE")))
+		b.WriteString(labelStyle.Render(fmt.Sprintf(" %-16s %-12s %-18s %s", "RITUAL", "EDICT", "STEP", "AGE")))
 		b.WriteString("\n")
 		for _, lr := range snap.LiveRituals {
 			edictShort := lr.EdictID
@@ -55,8 +46,8 @@ func (m TUIModel) renderShogunateView(height int) string {
 				edictShort = edictShort[:10]
 			}
 			stepInfo := fmt.Sprintf("%d/%d %s", lr.CurrentStep+1, lr.TotalSteps, lr.StepName)
-			b.WriteString(fmt.Sprintf(" %-16s %-12s %-18s %s",
-				lr.RitualName, edictShort, stepInfo, formatAge(lr.Age)))
+			b.WriteString(detailStyle.Render(fmt.Sprintf(" %-16s %-12s %-18s %s",
+				lr.RitualName, edictShort, stepInfo, formatAge(lr.Age))))
 			b.WriteString("\n")
 		}
 	}
@@ -64,11 +55,11 @@ func (m TUIModel) renderShogunateView(height int) string {
 	b.WriteString("\n")
 
 	// Events section
-	b.WriteString(labelStyle.Render(" EVENTS (recent)"))
+	b.WriteString(sectionStyle.Render(" EVENTS (recent)"))
 	b.WriteString("\n")
 
 	if len(snap.Events) == 0 {
-		b.WriteString(dimStyle.Render(" No events recorded"))
+		b.WriteString(labelStyle.Render(" No events recorded"))
 		b.WriteString("\n")
 	} else {
 		// Calculate how many events we can show
@@ -90,8 +81,13 @@ func (m TUIModel) renderShogunateView(height int) string {
 			if detail == "" {
 				detail = "-"
 			}
-			b.WriteString(dimStyle.Render(fmt.Sprintf(" %s  %-18s %-16s %s",
-				ev.Time.Format("15:04:05"), ev.EventType, detail, edictShort)))
+			b.WriteString(fmt.Sprintf(" %s  ",
+				labelStyle.Render(ev.Time.Format("15:04:05"))))
+			b.WriteString(fmt.Sprintf("%-18s ",
+				detailStyle.Render(ev.EventType)))
+			b.WriteString(fmt.Sprintf("%-16s %s",
+				detailStyle.Render(detail),
+				labelStyle.Render(edictShort)))
 			b.WriteString("\n")
 		}
 	}

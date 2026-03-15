@@ -359,7 +359,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		}
 		if exec != nil {
 			result["execution_id"] = exec.ID
-			result["step_results"] = collectStepResults(exec)
+			result["output"] = getLastStepOutput(exec)
 		}
 		resultJSON, _ := json.Marshal(result)
 		logger.Error("ritual failed",
@@ -379,7 +379,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		"execution_id": exec.ID,
 		"ritual_name":  params.RitualName,
 		"edict_id":     params.EdictID,
-		"step_results": collectStepResults(exec),
+		"output":       getLastStepOutput(exec),
 	}
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil
@@ -477,22 +477,14 @@ func (c *Chancellor) Tools() []Tool {
 	return toolList
 }
 
-// collectStepResults extracts step output summaries from a RitualExecution for LLM tool responses.
-// Truncates long outputs to 2000 chars to avoid blowing up context.
-func collectStepResults(exec *RitualExecution) []map[string]any {
-	results := make([]map[string]any, 0, len(exec.stepStates))
-	for _, ss := range exec.stepStates {
-		msg := ss.Message
-		if len(msg) > 2000 {
-			msg = msg[:2000] + "...(truncated)"
+// getLastStepOutput returns the full output of the last step that produced a message.
+func getLastStepOutput(exec *RitualExecution) string {
+	for i := len(exec.stepStates) - 1; i >= 0; i-- {
+		if exec.stepStates[i].Message != "" {
+			return exec.stepStates[i].Message
 		}
-		results = append(results, map[string]any{
-			"step":    ss.Name,
-			"output":  msg,
-			"retries": ss.RetryCount,
-		})
 	}
-	return results
+	return ""
 }
 
 // --- Interface implementations for tools package ---

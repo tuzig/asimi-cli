@@ -279,9 +279,9 @@ func TestViNormalModeGtSwitchesTab(t *testing.T) {
 	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true
 
-	// App starts with 2 tabs (Ruling, Hunting), active tab 0
-	assert.Equal(t, 2, model.tabs.TabCount(), "Should start with 2 tabs")
-	assert.Equal(t, 0, model.tabs.activeTab, "Should start on first tab")
+	// App starts with 3 tabs (Shogunate, Ruling, Hunting), active tab 1 (Ruling)
+	assert.Equal(t, 3, model.tabs.TabCount(), "Should start with 3 tabs")
+	assert.Equal(t, 1, model.tabs.activeTab, "Should start on Ruling tab")
 
 	// Enter normal mode
 	model.prompt().EnterViNormalMode()
@@ -298,7 +298,7 @@ func TestViNormalModeGtSwitchesTab(t *testing.T) {
 	updatedModel, ok = newModel.(TUIModel)
 	require.True(t, ok)
 	assert.False(t, updatedModel.tabs.IsPendingG(), "PendingG should be cleared after gt")
-	assert.Equal(t, 1, updatedModel.tabs.activeTab, "Active tab should switch to 1 after gt")
+	assert.Equal(t, 2, updatedModel.tabs.activeTab, "Active tab should switch to 2 after gt")
 }
 
 func TestViNormalModeGTSwitchesPrevTab(t *testing.T) {
@@ -306,8 +306,8 @@ func TestViNormalModeGTSwitchesPrevTab(t *testing.T) {
 	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true
 
-	// Start on second tab
-	model.tabs.SwitchTo(1)
+	// Start on Ruling tab (index 1), switch to Hunting (index 2)
+	model.tabs.SwitchTo(2)
 	model.prompt().EnterViNormalMode()
 	model.Mode = "normal"
 
@@ -319,7 +319,7 @@ func TestViNormalModeGTSwitchesPrevTab(t *testing.T) {
 	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
 	updatedModel, ok = newModel.(TUIModel)
 	require.True(t, ok)
-	assert.Equal(t, 0, updatedModel.tabs.activeTab, "Active tab should switch to 0 after gT")
+	assert.Equal(t, 1, updatedModel.tabs.activeTab, "Active tab should switch to 1 after gT")
 }
 
 func TestScrollModeGtSwitchesTab(t *testing.T) {
@@ -328,8 +328,8 @@ func TestScrollModeGtSwitchesTab(t *testing.T) {
 	model.sessionActive = true
 	model.Mode = "scroll"
 
-	// App starts with 2 tabs, active tab 0
-	assert.Equal(t, 0, model.tabs.activeTab)
+	// App starts with 3 tabs, active tab 1 (Ruling)
+	assert.Equal(t, 1, model.tabs.activeTab)
 
 	// Press 'g' to set pending g-prefix in scroll mode
 	result, _, handled := model.handleScrollModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
@@ -343,5 +343,5 @@ func TestScrollModeGtSwitchesTab(t *testing.T) {
 	assert.True(t, handled)
 	updatedModel, ok = result.(TUIModel)
 	require.True(t, ok)
-	assert.Equal(t, 1, updatedModel.tabs.activeTab, "Active tab should switch to 1 after gt in scroll mode")
+	assert.Equal(t, 2, updatedModel.tabs.activeTab, "Active tab should switch to 2 after gt in scroll mode")
 }

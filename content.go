@@ -14,9 +14,9 @@ import (
 type TabType string
 
 const (
-	TabRuling  TabType = "ruling"  // Default tab for edict conversation
-	TabHunting TabType = "hunting" // Confucius codebase exploration
-	TabObserve TabType = "observe" // Minister observation
+	TabRuling    TabType = "ruling"    // Default tab for edict conversation
+	TabHunting   TabType = "hunting"   // Confucius codebase exploration
+	TabObserve   TabType = "observe"   // Minister observation
 	TabRitual    TabType = "ritual"    // Ritual monitoring
 	TabShogunate TabType = "shogunate" // Shogunate dashboard
 )
@@ -41,18 +41,22 @@ type TabManager struct {
 	getStatus       func() string
 }
 
-// NewTabManager creates a TabManager with a default Ruling tab
+// NewTabManager creates a TabManager with Shogunate, Ruling, and Hunting tabs.
+// Ruling is the active tab at start.
 func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager {
+	shogunateContent := NewContentComponent(w, h, mdEnabled)
+	shogunateContent.Chat.GetStatus = getStatus
 	ruling := NewContentComponent(w, h, mdEnabled)
 	ruling.Chat.GetStatus = getStatus
 	hunting := NewContentComponent(w, h, mdEnabled)
 	hunting.Chat.GetStatus = getStatus
 	return TabManager{
 		tabs: []Tab{
+			{Label: "Shogunate", Type: TabShogunate, Target: "shogunate", Content: shogunateContent},
 			{Label: "Ruling", Type: TabRuling, Target: "chancellor", Content: ruling},
 			{Label: "Hunting", Type: TabHunting, Target: "confucius", Content: hunting},
 		},
-		activeTab:       0,
+		activeTab:       1, // Ruling is the default
 		width:           w,
 		height:          h,
 		markdownEnabled: mdEnabled,

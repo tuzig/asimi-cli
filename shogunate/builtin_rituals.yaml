@@ -147,16 +147,12 @@
       act: |
         Review the manifests and the code changes below.
         Check for style violations, security concerns, and architectural issues.
-        Record your insights using record_precedent
-      depends_on: [judge]
-
-    - name: report
-      minister: confucius
-      act: |
-        Produce a comprehensive code review report.
-        Summarize the findings from the judge and confucius.
+        Record your insights using record_precedent.
+        Produce a comprehensive code review report summarizing findings from both judge and confucius.
         Highlight any blocking issues and suggest improvements.
-      depends_on: [confucius]
+      depends_on: [judge]
+  then:
+    - the edict is sealed
 
 - name: report_failure
   description: "Report ritual failure after retry exhaustion"

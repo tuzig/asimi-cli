@@ -1035,7 +1035,7 @@ func TestWaitingIndicator_StartStop(t *testing.T) {
 	cmd := model.startWaitingForResponse()
 	require.True(t, model.waitingForResponse)
 	require.False(t, model.waitingStart.IsZero())
-	require.NotNil(t, cmd, "Should return tick command")
+	require.Nil(t, cmd, "Tick moved to Init, startWaiting no longer returns a command")
 
 	// Verify status component was updated
 	require.True(t, model.status.waitingForResponse)
@@ -1051,8 +1051,7 @@ func TestWaitingIndicator_DoubleStart(t *testing.T) {
 	model := newTestModel(t)
 
 	// Start waiting
-	cmd1 := model.startWaitingForResponse()
-	require.NotNil(t, cmd1)
+	model.startWaitingForResponse()
 	startTime := model.waitingStart
 
 	// Try to start again
@@ -1078,7 +1077,7 @@ func TestWaitingTickMsg_WhileWaiting(t *testing.T) {
 	model.startWaitingForResponse()
 
 	// Handle tick message
-	newModel, cmd := model.handleCustomMessages(waitingTickMsg{})
+	newModel, cmd := model.handleCustomMessages(tickMsg{})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 	require.NotNil(t, cmd, "Should return next tick command")
@@ -1092,10 +1091,10 @@ func TestWaitingTickMsg_NotWaiting(t *testing.T) {
 	model := newTestModel(t)
 
 	// Handle tick message when not waiting
-	newModel, cmd := model.handleCustomMessages(waitingTickMsg{})
+	newModel, cmd := model.handleCustomMessages(tickMsg{})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
-	require.Nil(t, cmd, "Should not return tick command when not waiting")
+	require.NotNil(t, cmd, "Tick always re-chains")
 	require.False(t, updatedModel.waitingForResponse)
 }
 

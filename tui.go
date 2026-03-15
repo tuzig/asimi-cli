@@ -85,9 +85,19 @@ type TUIModel struct {
 	repoInfo            *repo.RepoInfo
 }
 
-// prompt returns the PromptComponent for the active tab
+// prompt returns the PromptComponent for the active tab, creating one if needed.
 func (m *TUIModel) prompt() *PromptComponent {
-	return m.prompts[m.tabs.ActiveTab().Label]
+	label := m.tabs.ActiveTab().Label
+	p, ok := m.prompts[label]
+	if !ok {
+		np := NewPromptComponent(m.width, 5)
+		if m.config != nil && m.config.UI.PromptExpandedHeight > 0 {
+			np.SetExpandedHeight(m.config.UI.PromptExpandedHeight)
+		}
+		p = &np
+		m.prompts[label] = p
+	}
+	return p
 }
 
 type promptHistoryEntry struct {
@@ -96,7 +106,7 @@ type promptHistoryEntry struct {
 	ChatSnapshot    int
 }
 
-type waitingTickMsg struct{}
+type tickMsg struct{}
 
 type shellCommandResultMsg struct {
 	command  string
@@ -118,17 +128,7 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 	registry := NewCommandRegistry()
 	theme := NewTheme()
 
-	newPrompt := func(w, h int) *PromptComponent {
-		p := NewPromptComponent(w, h)
-		if cfg != nil && cfg.UI.PromptExpandedHeight > 0 {
-			p.SetExpandedHeight(cfg.UI.PromptExpandedHeight)
-		}
-		return &p
-	}
-	prompts := map[string]*PromptComponent{
-		"Ruling":  newPrompt(80, 5),
-		"Hunting": newPrompt(80, 5),
-	}
+	prompts := map[string]*PromptComponent{}
 
 	// Create status component and set repo info
 	status := NewStatusComponent(80)
@@ -305,7 +305,8 @@ func (m *TUIModel) shutdown() {
 // Init implements bubbletea.Model
 func (m TUIModel) Init() tea.Cmd {
 	// Async LLM initialization - getModelClient handles credentials/keyring
-	return func() tea.Msg {
+	tick := tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
+	return tea.Batch(func() tea.Msg {
 		slog.Info("connecting to LLM", "provider", m.config.LLM.Provider)
 		model, err := getModelClient(m.config)
 		if err != nil {
@@ -313,7 +314,7 @@ func (m TUIModel) Init() tea.Cmd {
 		}
 		slog.Info("LLM client connected")
 		return llmInitSuccessMsg{model: model}
-	}
+	}, tick)
 }
 
 // Update implements bubbletea.Model
@@ -1050,7 +1051,7 @@ func (m *TUIModel) startWaitingForResponse() tea.Cmd {
 	m.waitingForResponse = true
 	m.waitingStart = now
 	m.status.StartWaiting()
-	return tea.Tick(time.Second, func(time.Time) tea.Msg { return waitingTickMsg{} })
+	return nil
 }
 
 func (m *TUIModel) stopWaitingForResponse() {
@@ -1867,17 +1868,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tabs.Content().Chat.AddMessage(successMsg.String())
 		return m, nil
 
-	case shogunateTickMsg:
-		if m.tabs.ActiveTab().Type == TabShogunate {
-			return m, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return shogunateTickMsg{} })
-		}
-		return m, nil
-
-	case waitingTickMsg:
-		if m.waitingForResponse {
-			return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return waitingTickMsg{} })
-		}
-		return m, nil
+	case tickMsg:
+		return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 
 	case providerSelectedMsg:
 		m.providerModal = nil
@@ -2606,19 +2598,27 @@ func (m TUIModel) View() string {
 		return "Initializing..."
 	}
 
+	// Shogunate tab is prompt-free — give all space to content
+	isShogunateTab := m.tabs.ActiveTab().Type == TabShogunate
+
 	// Update prompt dimensions based on content before rendering
 	// This ensures the prompt grows to 10 lines when multiline (#31)
 	// SetWidth ensures the active tab's prompt matches the terminal width
 	// (prompts are per-tab, but only the active one is sized on WindowSizeMsg)
-	m.prompt().SetScreenHeight(m.height)
-	m.prompt().SetWidth(m.width - 2)
-	promptHeight := m.prompt().CalculateDesiredHeight()
-	m.prompt().SetHeight(promptHeight)
+	promptHeight := 0
+	promptWithBorder := 0
+	// TODO: add a tab field `HasPrompt` and use it instead of isShogunateTab
+	if !isShogunateTab {
+		m.prompt().SetScreenHeight(m.height)
+		m.prompt().SetWidth(m.width - 2)
+		promptHeight = m.prompt().CalculateDesiredHeight()
+		m.prompt().SetHeight(promptHeight)
+		promptWithBorder = promptHeight + 2
+	}
 
 	// Recalculate content height based on new prompt height
 	commandLineHeight := 1
 	statusHeight := 1
-	promptWithBorder := promptHeight + 2
 	tabBarHeight := m.tabs.TabBarHeight()
 	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1
 	if contentHeight < 0 {
@@ -2631,7 +2631,10 @@ func (m TUIModel) View() string {
 		modalHeight = lipgloss.Height(m.modal.Render())
 	}
 	mainContent := m.renderMainContent(modalHeight)
-	promptView := m.prompt().View()
+	promptView := ""
+	if !isShogunateTab {
+		promptView = m.prompt().View()
+	}
 	commandLineView := m.commandLine.View()
 	view := m.composeBaseView(mainContent, promptView, commandLineView)
 	if m.showCompletionDialog {
@@ -2705,7 +2708,10 @@ func (m TUIModel) composeBaseView(mainContent, promptView, commandLineView strin
 		layoutParts = append(layoutParts, modalRender, "")
 	}
 
-	layoutParts = append(layoutParts, promptView, statusView, commandLineView)
+	if promptView != "" {
+		layoutParts = append(layoutParts, promptView)
+	}
+	layoutParts = append(layoutParts, statusView, commandLineView)
 
 	return lipgloss.JoinVertical(lipgloss.Left, layoutParts...)
 }

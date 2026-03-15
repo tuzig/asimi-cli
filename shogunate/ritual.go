@@ -679,15 +679,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 				Message:     raw,
 			})
 		}
-		if exec.Data == nil {
-			exec.Data = storage.JSON{}
-		}
-		given, _ := exec.Data["given_context"].(map[string]interface{})
-		if given == nil {
-			given = make(map[string]interface{})
-		}
-		given[entry.Key] = result
-		exec.Data["given_context"] = given
+		storeGivenResult(exec, entry.Key, result)
 	}
 
 	for exec.CurrentStep < len(exec.def.Steps) {
@@ -899,16 +891,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			if err != nil {
 				return "", fmt.Errorf("given %q failed: %w", raw, err)
 			}
-			// Store given result in execution data for template use
-			if exec.Data == nil {
-				exec.Data = storage.JSON{}
-			}
-			given, _ := exec.Data["given_context"].(map[string]interface{})
-			if given == nil {
-				given = make(map[string]interface{})
-			}
-			given[entry.Key] = result
-			exec.Data["given_context"] = given
+			storeGivenResult(exec, entry.Key, result)
 		}
 	}
 
@@ -1573,10 +1556,10 @@ func (r *RitualRunner) arrangeGetPrecedents(edictID string) (interface{}, error)
 // getEarthStatus captures the three parts of the Earth realm:
 // the capital (git log), the middle kingdom (git diff --staged), and the borderlands (git diff).
 func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) {
-	result := map[string]interface{}{
-		"capital":        "",
-		"middle_kingdom": "",
-		"borderlands":    "",
+	result := map[string]string{
+		"earth_status:capital":        "",
+		"earth_status:middle_kingdom": "",
+		"earth_status:borderlands":    "",
 	}
 
 	if r.runner == nil {
@@ -1586,21 +1569,21 @@ func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) 
 	// The capital: git log (recent commits)
 	capitalOutput, err := r.runner.Run(ctx, runners.Input{
 		Command:        "git log --oneline -20",
-		Description:    "get earth status: capital (git log)",
+		Description:    "get capital status (git log)",
 		BypassApproval: true,
 	})
 	if err == nil {
-		result["capital"] = capitalOutput.Output
+		result["earth_status:capital"] = capitalOutput.Output
 	}
 
 	// The middle kingdom: git diff --staged
 	middleKingdomOutput, err := r.runner.Run(ctx, runners.Input{
 		Command:        "git diff --staged",
-		Description:    "get earth status: middle kingdom (git diff --staged)",
+		Description:    "get middle kingdom (git diff --staged)",
 		BypassApproval: true,
 	})
 	if err == nil {
-		result["middle_kingdom"] = middleKingdomOutput.Output
+		result["earth_status:middle_kingdom"] = middleKingdomOutput.Output
 	}
 
 	// The borderlands: git diff
@@ -1610,7 +1593,7 @@ func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) 
 		BypassApproval: true,
 	})
 	if err == nil {
-		result["borderlands"] = borderlandsOutput.Output
+		result["earth_status:borderlands"] = borderlandsOutput.Output
 	}
 
 	return result, nil
@@ -1710,6 +1693,26 @@ func (r *RitualRunner) resolveStepDef(raw string) (StepDefEntry, error) {
 		Key:     def.OutputKey,
 		Command: def.HandlerKey,
 	}, nil
+}
+
+// storeGivenResult stores a given step result into exec.Data["given_context"].
+// map[string]string results are flattened into separate colon-delimited keys.
+func storeGivenResult(exec *RitualExecution, key string, result interface{}) {
+	if exec.Data == nil {
+		exec.Data = storage.JSON{}
+	}
+	given, _ := exec.Data["given_context"].(map[string]interface{})
+	if given == nil {
+		given = make(map[string]interface{})
+	}
+	if m, ok := result.(map[string]string); ok {
+		for k, v := range m {
+			given[k] = v
+		}
+	} else {
+		given[key] = result
+	}
+	exec.Data["given_context"] = given
 }
 
 // runGivenStep executes a single given step and returns its result
