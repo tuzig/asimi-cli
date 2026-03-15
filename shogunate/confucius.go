@@ -280,7 +280,13 @@ func (t *SuggestEdictTool) Description() string {
 an improvement opportunity, naming inconsistency, or refactoring need.
 You cannot create edicts directly — only the Ruler can do that.
 This creates a Zhengming request that the Ruler can approve or dismiss.
-Returns immediately with status='suggested' - the edict will be created if approved via event.`
+Returns immediately with status='suggested' - the edict will be created if approved via event.
+
+For large suggestions (>500 chars), the Ruler reviews the text in $EDITOR.
+If the tool returns status='ruler_modified', the Ruler has edited your suggestion.
+Review the original, modified content, and diff. Then either:
+- Call suggest_edict again with the modified content if you find it harmonized with your intent
+- Respond in conversation explaining your concerns and suggesting changes if not harmonized`
 }
 
 func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, error) {
@@ -323,17 +329,21 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 
 		// Check if user approved or modified
 		var approveRes struct {
-			Status string `json:"status"`
-			Diff   string `json:"diff,omitempty"`
+			Status  string `json:"status"`
+			Diff    string `json:"diff,omitempty"`
+			Content string `json:"content,omitempty"`
 		}
 		if err := json.Unmarshal([]byte(approveResult), &approveRes); err != nil {
 			return "", fmt.Errorf("failed to parse approve_doc result: %w", err)
 		}
 
 		if approveRes.Status == "modified" {
-			// User modified the suggestion, use the modified version
-			// Extract the modified content from the diff (simplified: assume user edited the whole thing)
-			questionText = params.Suggestion + approveRes.Diff
+			// Return to LLM for review — don't create zhengming yet
+			originalJSON, _ := json.Marshal(questionText)
+			modifiedJSON, _ := json.Marshal(approveRes.Content)
+			diffJSON, _ := json.Marshal(approveRes.Diff)
+			return fmt.Sprintf(`{"status":"ruler_modified","original":%s,"modified":%s,"diff":%s}`,
+				originalJSON, modifiedJSON, diffJSON), nil
 		}
 		// If approved, continue with original questionText
 	}

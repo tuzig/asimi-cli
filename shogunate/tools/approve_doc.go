@@ -114,8 +114,9 @@ func (t ApproveDocTool) Call(ctx context.Context, input string) (string, error) 
 	}
 
 	result := map[string]any{
-		"status": "modified",
-		"diff":   string(diffOutput),
+		"status":  "modified",
+		"diff":    string(diffOutput),
+		"content": string(modifiedContent),
 	}
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil
