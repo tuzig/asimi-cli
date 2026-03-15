@@ -130,7 +130,7 @@
         
 - name: review
   description: |
-    Code review - judge and censor review the changes before
+    Code review - judge and Confucius review the changes before
     committing and suggesting the next steps
   triggers:
     - manual: true
