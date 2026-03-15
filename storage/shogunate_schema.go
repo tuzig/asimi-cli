@@ -82,6 +82,23 @@ func (Edict) TableName() string {
 	return "edicts"
 }
 
+// Seal represents a minister's seal on an edict
+type Seal struct {
+	SealID     string    `gorm:"primaryKey;column:seal_id"`
+	EdictID    string    `gorm:"column:edict_id;index"`
+	MinisterID string    `gorm:"column:minister_id"` // "judge", "confucius", "ruler"
+	SealedAt   time.Time `gorm:"column:sealed_at;autoCreateTime"`
+	Metadata   JSON      `gorm:"column:metadata;type:json"` // Optional: verdict_id, precedent_id, etc.
+}
+
+// TableName returns the table name for Seal
+func (Seal) TableName() string {
+	return "seals"
+}
+
+// DeprecationNote: Edict.Status is a denormalized cache.
+// The seal chain in the seals table is the source of truth for an edict's state.
+
 // ZhengmingQuestion represents a single question with predefined answer options
 type ZhengmingQuestion struct {
 	Text    string   `json:"text"`

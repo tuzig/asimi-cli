@@ -5,22 +5,43 @@ Our goal is to harmonize The 三界:
      天 — Objective Truth
        - Tests pass or fail; there is no ambiguity
        - CI pipelines render verdicts
-       - Logs tracks events
+       - Logs track events
        - 刑部 presides here
        - Immutable, binary, absolute
+       - **Sealed edicts** — work that has received the Ruler's final seal
 
      地 — Source code
        - Git repository made from Raw code, files, directories
-       - 工部 shapes this realm
+       - Production code shaped by 工部 (Ministry of Works)
+       - Documentation shaped by 孔子 (Confucius)
        - Concrete, malleable, present
-       - divided into three:
-       1 the capital - committed changes: `git log`
-       2 the middle kingdom - staged changes `git diff --staged` 
-       3 the borderlands - unstaged changes: `git diff`
-       - The middle kingdom should be handled before the borderlands
+       - Divided into three kingdoms:
+         1. The Capital — committed changes: `git log`, awaiting seals
+         2. The Middle Kingdom — staged changes: `git diff --staged`
+         3. The Borderlands — unstaged changes: `git diff`
+       - The Middle Kingdom must be harmonized before the Borderlands
+       - Contains edicts in progress — not yet ascended
 
      Ren 人 — Intent and Will
        - The Ruler's desires, requirements, clarifications
        - The Chancellor receives and interprets
-       - The sage helps the Ruler see behind walls and plan knight moves
+       - 孔子 (Confucius) helps the Ruler see behind walls and plan knight moves
        - Subjective, nuanced, requiring 正名
+
+## The Seal Chain — Ascension Ritual
+
+An edict ascends from Earth to Heaven through successive seals:
+
+1. **Judge's Seal** — Tests pass; the work is verified
+2. **Confucius's Seal** — Code adheres to Imperial Code; no violations
+3. **Ruler's Seal** — Final approval; the edict ascends to Heaven
+
+An edict with all seals but the Ruler's is **pending ascension** — it awaits only the Ruler's review in the UI.
+
+## Operational Principle
+
+> Committed ≠ Ascended
+>
+> A commit records work in Earth's Capital.
+> A seal records judgment in Heaven's archive.
+> Only the Ruler's seal completes the ascent.

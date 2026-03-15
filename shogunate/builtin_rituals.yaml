@@ -47,7 +47,9 @@
       on_failure: goto
       on_failure_target: forge
   then:
-    - the edict is sealed
+    - record the judge's seal
+    - record the confucius's seal
+    - the edict awaits the ruler's seal
 
 - name: castle-siege
   description: "A medium complexity 地 change with planning"
@@ -109,7 +111,9 @@
       on_failure: goto
       on_failure_target: strategist
   then:
-    - the edict is sealed
+    - record the judge's seal
+    - record the confucius's seal
+    - the edict awaits the ruler's seal
 
 - name: wakeup
   description: "Startup ritual - report court status on Shogunate boot"
@@ -152,7 +156,9 @@
         Highlight any blocking issues and suggest improvements.
       depends_on: [judge]
   then:
-    - the edict is sealed
+    - record the judge's seal
+    - record the confucius's seal
+    - the edict awaits the ruler's seal
 
 - name: report_failure
   description: "Report ritual failure after retry exhaustion"
@@ -215,4 +221,5 @@
       depends_on: [fix-all-files]
   then:
     - the edict is unblocked
-    - the edict is sealed
+    - record the judge's seal
+    - the edict awaits the ruler's seal
