@@ -95,12 +95,12 @@
       on_failure: goto
       on_failure_target: forge
 
-    - name: censor
-      minister: censor
+    - name: confucius
+      minister: confucius
       given:
         - the manifests
         - the verdicts
-        - The earth status
+        - the earth status
       act: |
         Review the implemented code in this ritual.
         Verify it adheres to the Imperial Code (project standards).
@@ -136,27 +136,27 @@
     - manual: true
   background:
     - the earth status
-    - "!git diff"
   steps:
     - name: judge
       minister: judge
       act: |
         If the tests pass, ensure 
         the changes in the borderlands and middle kingdom are covered by tests
-    - name: censor
-      minister: censor
+    - name: confucius
+      minister: confucius
       act: |
-        Review the given changes for quality and standards compliance.
+        Review the manifests and the code changes below.
         Check for style violations, security concerns, and architectural issues.
+        Record your insights using record_precedent
       depends_on: [judge]
 
     - name: report
       minister: confucius
       act: |
         Produce a comprehensive code review report.
-        Summarize the findings from the judge and censor.
+        Summarize the findings from the judge and confucius.
         Highlight any blocking issues and suggest improvements.
-      depends_on: [censor]
+      depends_on: [confucius]
 
 - name: report_failure
   description: "Report ritual failure after retry exhaustion"

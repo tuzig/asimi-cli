@@ -15,7 +15,7 @@ import (
 
 // ConfuciusRole defines Confucius's identity and capabilities
 const ConfuciusRole = `孔子,the Sage.
-Your domain is clarity, nomenclature, and semantic precision.
+Your domain is clarity, nomenclature, semantic precision, AND code review with precedent tracking.
 
 You have full read-only access to the codebase, edicts, and all court records.
 When the conversation leads to a well defined edict, use the suggest_edict
@@ -27,12 +27,65 @@ The ruler converse with you in the Hunting tab where you will:
 - Suggest new edicts when you spot opportunities for improvement
 - Answer questions about code architecture and conventions
 
+CODE REVIEW RESPONSIBILITIES:
+You also preside over the censor_precedents table. You review code changes with thoroughness and rigor. Every ruling becomes precedent—case law that future reviewers will consult. Because your decisions shape institutional memory, you must explain your reasoning clearly.
+
+REVIEW PROCESS:
+1. Examine the code changes carefully—read the full diff, not just summaries
+2. Identify potential issues: bugs, name that can be improved, inconsistencies, style violations, security concerns, logical errors
+3. For each issue, determine: Is this a violation requiring precedent, or a waiver with justification?
+4. Explain YOUR reasoning in detail. "Looks fine" is not a ruling. State WHAT you checked and WHY it passes.
+
+REVIEW CHECKLIST:
+- Are variable names consistent with the codebase conventions?
+- Is error handling present and appropriate?
+- Do changes maintain backward compatibility where expected?
+- Are there potential bugs or edge cases not handled?
+- Is the code idiomatic for the language (Go)?
+- Do changes align with the project's architecture?
+- Are there security implications (input validation, secrets, etc.)?
+
+YOUR RULINGS:
+- APPROVE: The changes pass all ethical and quality checks. Explain why.
+- REJECT: The changes have issues that must be fixed. Cite specific problems.
+- WAIVE: The changes have issues but are acceptable. Explain the trade-offs.
+
 CRITICAL RULES:
 - You are READ-ONLY: never modify code
 - When you identify work that should be done, suggest it via suggest_edict
 - When you identify more than one path forward converse with the ruler to choose the best path
 - Always ground suggestions in specific code references
-- Speak with scholarly precision; cite file:line when referencing code`
+- Speak with scholarly precision; cite file:line when referencing code
+- NO GUESSING: If style rules are ambiguous or requirements are unclear, invoke Zhengming immediately
+- Every ruling requires written justification—this becomes permanent precedent
+- Waivers are not approvals—they acknowledge issues with documented rationale
+- Precedents are searchable case law; write them as if explaining to a junior developer
+- When in doubt, request clarification rather than guess`
+
+// ReviewResult represents the outcome of a diff review
+type ReviewResult struct {
+	Approved  bool      `json:"approved"`
+	Findings  []Finding `json:"findings"`
+	Reasoning string    `json:"reasoning"`
+}
+
+// ReviewSummary holds the summary of a censor review for reporting
+type ReviewSummary struct {
+	Approved       bool      `json:"approved"`
+	ManifestsCount int       `json:"manifests_count"`
+	FindingsCount  int       `json:"findings_count"`
+	Findings       []Finding `json:"findings,omitempty"`
+	Reasoning      string    `json:"reasoning"`
+}
+
+// Finding represents a single issue found during review
+type Finding struct {
+	File      string `json:"file"`
+	Line      int    `json:"line"`
+	Severity  string `json:"severity"` // "error", "warning", "info"
+	Message   string `json:"message"`
+	Principle string `json:"principle"` // The principle violated (if any)
+}
 
 // Confucius provides read-only codebase exploration and suggests edicts via zhengming
 type Confucius struct {
@@ -40,14 +93,16 @@ type Confucius struct {
 	shogunate *Shogunate
 	tasks     chan *Task
 	session   *Session
+	linter    Linter
 }
 
 // NewConfucius creates a new Confucius minister
-func NewConfucius(base *MinisterBase) *Confucius {
+func NewConfucius(base *MinisterBase, linter Linter) *Confucius {
 	base.ministerID = "confucius"
 	return &Confucius{
 		MinisterBase: base,
 		tasks:        make(chan *Task, 10),
+		linter:       linter,
 	}
 }
 
@@ -63,13 +118,18 @@ func (c *Confucius) SystemPrompt() string { return ConfuciusRole }
 // Tasks returns the channel for task submission
 func (c *Confucius) Tasks() chan<- *Task { return c.tasks }
 
-// Tools returns Confucius's LLM tools — read-only access plus zhengming
+// Tools returns Confucius's LLM tools — read-only access plus zhengming and review tools
 func (c *Confucius) Tools() []Tool {
 	toolList := []Tool{
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
 		&SuggestEdictTool{confucius: c},
 		&QueryCourtTool{db: c.db},
+		// Review and precedent tools
+		&RecordPrecedentTool{confucius: c},
+		&ListQuenchedManifestsTool{confucius: c},
+		&QueryPrecedentsTool{confucius: c},
+		&ReviewDiffTool{confucius: c},
 	}
 	for _, t := range tools.GetROTools() {
 		toolList = append(toolList, t)
@@ -453,4 +513,538 @@ func truncateForCourt(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// --- Database Methods (migrated from Censor) ---
+
+// GetQuenchedManifests retrieves all quenched manifests ready for ethics review
+func (c *Confucius) GetQuenchedManifests(edictID string) ([]storage.ForgeManifest, error) {
+	var manifests []storage.ForgeManifest
+	err := c.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestQuenched).
+		Order("created_at ASC").
+		Find(&manifests).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get quenched manifests: %w", err)
+	}
+	return manifests, nil
+}
+
+// NoRejections checks if there are any rejected manifests for an edict
+func (c *Confucius) NoRejections(edictID string) (bool, error) {
+	var count int64
+	err := c.db.Model(&storage.ForgeManifest{}).
+		Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to check rejections: %w", err)
+	}
+	return count == 0, nil
+}
+
+// LogPrecedent records an ethics decision for a manifest
+func (c *Confucius) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
+	precedentID := GenerateID("precedent", manifestID, principle)
+
+	precedent := storage.CensorPrecedent{
+		PrecedentID:   precedentID,
+		ManifestID:    manifestID,
+		Principle:     principle,
+		Ruling:        ruling,
+		Justification: justification,
+	}
+
+	if err := c.db.Create(&precedent).Error; err != nil {
+		return "", fmt.Errorf("failed to log precedent: %w", err)
+	}
+	return precedentID, nil
+}
+
+// RejectManifest marks a manifest as rejected by the Censor
+func (c *Confucius) RejectManifest(manifestID string) error {
+	result := c.db.Model(&storage.ForgeManifest{}).
+		Where("manifest_id = ?", manifestID).
+		Update("status", storage.ManifestRejected)
+	if result.Error != nil {
+		return fmt.Errorf("failed to reject manifest: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("manifest not found: %s", manifestID)
+	}
+	return nil
+}
+
+// GetPrecedentsForManifest retrieves all precedents for a specific manifest
+func (c *Confucius) GetPrecedentsForManifest(manifestID string) ([]storage.CensorPrecedent, error) {
+	var precedents []storage.CensorPrecedent
+	err := c.db.Where("manifest_id = ?", manifestID).
+		Order("created_at ASC").
+		Find(&precedents).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get precedents: %w", err)
+	}
+	return precedents, nil
+}
+
+// QueryPrecedentsByPrinciple searches precedents by principle (for case law lookup)
+func (c *Confucius) QueryPrecedentsByPrinciple(principle string, limit int) ([]storage.CensorPrecedent, error) {
+	var precedents []storage.CensorPrecedent
+	query := c.db.Where("principle LIKE ?", "%"+principle+"%").
+		Order("created_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&precedents).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query precedents: %w", err)
+	}
+	return precedents, nil
+}
+
+// GetEdictsWithQuenchedManifests returns edicts with quenched manifests needing review
+func (c *Confucius) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
+	var edicts []storage.Edict
+	err := c.db.Distinct("edicts.*").
+		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
+		Where("forge_manifests.status = ? AND edicts.status = ?",
+			storage.ManifestQuenched, storage.EdictActive).
+		Find(&edicts).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get edicts with quenched manifests: %w", err)
+	}
+	return edicts, nil
+}
+
+// --- Diff Review Methods (migrated from Censor) ---
+
+// ReviewDiff reviews a diff string and returns structured findings.
+// This method can be used for ad-hoc reviews without requiring manifests or database writes.
+// The Confucius's Role() prompt guides the review process.
+func (c *Confucius) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, error) {
+	// If no LLM is configured, return a basic result
+	if c.model == nil {
+		return &ReviewResult{
+			Approved:  true,
+			Findings:  []Finding{},
+			Reasoning: "No LLM configured for diff review - auto-approved",
+		}, nil
+	}
+
+	// Create a session for the review
+	session, err := CreateSession(c, c.model, c.config, c.notify, "chancellor")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create confucius session: %w", err)
+	}
+
+	// Build the review prompt
+	reviewPrompt := c.buildReviewPrompt(diff)
+
+	// Get the review from the LLM
+	response, err := session.AskWithStreaming(ctx, reviewPrompt, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get LLM review: %w", err)
+	}
+
+	// Parse the response into a structured result
+	result := c.parseReviewResponse(response)
+	return result, nil
+}
+
+// ReviewDiffWithManifests reviews a diff in the context of manifests and records precedents.
+// This is used during ritual workflows where the review outcome should be persisted.
+func (c *Confucius) ReviewDiffWithManifests(ctx context.Context, diff string, manifests []storage.ForgeManifest) (*ReviewResult, error) {
+	// First, perform the diff review
+	result, err := c.ReviewDiff(ctx, diff)
+	if err != nil {
+		return nil, err
+	}
+
+	// Record precedents for each manifest based on findings
+	for _, manifest := range manifests {
+		for _, finding := range result.Findings {
+			ruling := storage.PrecedentApproved
+			if finding.Severity == "error" {
+				ruling = storage.PrecedentRejected
+			}
+
+			_, err := c.LogPrecedent(
+				manifest.ManifestID,
+				finding.Principle,
+				ruling,
+				finding.Message,
+			)
+			if err != nil {
+				c.logger.Warn("failed to log precedent",
+					"manifest_id", manifest.ManifestID,
+					"principle", finding.Principle,
+					"error", err)
+			}
+		}
+
+		// If any error-level findings, reject the manifest
+		hasErrors := false
+		for _, f := range result.Findings {
+			if f.Severity == "error" {
+				hasErrors = true
+				break
+			}
+		}
+
+		if hasErrors {
+			if err := c.RejectManifest(manifest.ManifestID); err != nil {
+				c.logger.Warn("failed to reject manifest",
+					"manifest_id", manifest.ManifestID,
+					"error", err)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// buildReviewPrompt constructs the prompt for diff review
+func (c *Confucius) buildReviewPrompt(diff string) string {
+	return fmt.Sprintf(`Review the following code diff and provide your assessment.
+
+DIFF:
+%s
+
+INSTRUCTIONS:
+1. Analyze the diff for potential issues
+2. For each issue found, provide: file, line (if determinable), severity (error/warning/info), message, and principle violated
+3. Provide your overall reasoning and ruling (APPROVE/REJECT/WAIVE)
+
+Respond in JSON format:
+{
+  "approved": true/false,
+  "findings": [
+    {
+      "file": "path/to/file.go",
+      "line": 42,
+      "severity": "error|warning|info",
+      "message": "Description of the issue",
+      "principle": "The principle or standard violated"
+    }
+  ],
+  "reasoning": "Your detailed reasoning for the overall ruling"
+}
+
+If the diff is clean with no issues, return approved=true with empty findings and explain your reasoning.`, diff)
+}
+
+// parseReviewResponse parses the LLM response into a ReviewResult
+func (c *Confucius) parseReviewResponse(response string) *ReviewResult {
+	result := &ReviewResult{
+		Approved:  true,
+		Findings:  []Finding{},
+		Reasoning: response, // Default to full response if parsing fails
+	}
+
+	// Try to extract JSON from the response
+	jsonStart := strings.Index(response, "{")
+	jsonEnd := strings.LastIndex(response, "}")
+	if jsonStart == -1 || jsonEnd == -1 || jsonEnd <= jsonStart {
+		// No valid JSON found, use the response as reasoning
+		result.Reasoning = response
+		// Check for approval keywords in the response
+		lowerResponse := strings.ToLower(response)
+		if strings.Contains(lowerResponse, "reject") || strings.Contains(lowerResponse, "error") {
+			result.Approved = false
+		}
+		return result
+	}
+
+	jsonStr := response[jsonStart : jsonEnd+1]
+
+	var parsed struct {
+		Approved  bool      `json:"approved"`
+		Findings  []Finding `json:"findings"`
+		Reasoning string    `json:"reasoning"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		c.logger.Warn("failed to parse review response as JSON", "error", err)
+		result.Reasoning = response
+		return result
+	}
+
+	result.Approved = parsed.Approved
+	result.Findings = parsed.Findings
+	result.Reasoning = parsed.Reasoning
+
+	// If reasoning is empty, use the full response
+	if result.Reasoning == "" {
+		result.Reasoning = response
+	}
+
+	return result
+}
+
+// --- Review Tools (migrated from Censor) ---
+
+// RecordPrecedentTool records an ethics review outcome
+type RecordPrecedentTool struct {
+	confucius *Confucius
+}
+
+func (t *RecordPrecedentTool) Name() string { return "record_precedent" }
+
+func (t *RecordPrecedentTool) Description() string {
+	return "Records an ethics review outcome with reasoning. Input: JSON with 'edict_id', 'approved' (boolean), and 'reasoning'."
+}
+
+func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		EdictID   string `json:"edict_id"`
+		Approved  bool   `json:"approved"`
+		Reasoning string `json:"reasoning"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.EdictID == "" || params.Reasoning == "" {
+		return "", fmt.Errorf("edict_id and reasoning are required")
+	}
+
+	// Get quenched manifests to review
+	manifests, err := t.confucius.GetQuenchedManifests(params.EdictID)
+	if err != nil {
+		return "", err
+	}
+
+	ruling := storage.PrecedentApproved
+	if !params.Approved {
+		ruling = storage.PrecedentRejected
+	}
+
+	// Log precedent for each manifest
+	for _, m := range manifests {
+		_, err := t.confucius.LogPrecedent(m.ManifestID, "ethics_review", ruling, params.Reasoning)
+		if err != nil {
+			return "", fmt.Errorf("failed to log precedent: %w", err)
+		}
+
+		// Reject manifest if not approved
+		if !params.Approved {
+			if err := t.confucius.RejectManifest(m.ManifestID); err != nil {
+				return "", fmt.Errorf("failed to reject manifest: %w", err)
+			}
+		}
+	}
+
+	status := "approved"
+	if !params.Approved {
+		status = "rejected"
+	}
+	return fmt.Sprintf("Recorded precedent (%s) for edict %s: %s", status, params.EdictID, params.Reasoning), nil
+}
+
+func (t *RecordPrecedentTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"edict_id":  map[string]any{"type": "string", "description": "The edict ID"},
+			"approved":  map[string]any{"type": "boolean", "description": "Whether the code is approved"},
+			"reasoning": map[string]any{"type": "string", "description": "The reasoning for the decision"},
+		},
+		"required": []string{"edict_id", "approved", "reasoning"},
+	}
+}
+
+func (t *RecordPrecedentTool) Format(input, result string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("Record Precedent: Error: %v\n", err)
+	}
+	return fmt.Sprintf("Record Precedent: %s\n", result)
+}
+
+// ListQuenchedManifestsTool lists manifests ready for ethics review
+type ListQuenchedManifestsTool struct {
+	confucius *Confucius
+}
+
+func (t *ListQuenchedManifestsTool) Name() string { return "list_quenched_manifests" }
+
+func (t *ListQuenchedManifestsTool) Description() string {
+	return "Lists manifests that passed testing and are ready for ethics review. Input: JSON with 'edict_id'."
+}
+
+func (t *ListQuenchedManifestsTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		EdictID string `json:"edict_id"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.EdictID == "" {
+		return "", fmt.Errorf("edict_id is required")
+	}
+
+	manifests, err := t.confucius.GetQuenchedManifests(params.EdictID)
+	if err != nil {
+		return "", err
+	}
+
+	if len(manifests) == 0 {
+		return "No quenched manifests found", nil
+	}
+
+	result, err := json.MarshalIndent(manifests, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to format manifests: %w", err)
+	}
+	return string(result), nil
+}
+
+func (t *ListQuenchedManifestsTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"edict_id": map[string]any{"type": "string", "description": "The edict ID to list manifests for"},
+		},
+		"required": []string{"edict_id"},
+	}
+}
+
+func (t *ListQuenchedManifestsTool) Format(input, result string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("List Quenched Manifests: Error: %v\n", err)
+	}
+	return fmt.Sprintf("List Quenched Manifests: %s\n", result)
+}
+
+// QueryPrecedentsTool searches precedents by principle
+type QueryPrecedentsTool struct {
+	confucius *Confucius
+}
+
+func (t *QueryPrecedentsTool) Name() string { return "query_precedents" }
+
+func (t *QueryPrecedentsTool) Description() string {
+	return "Searches precedents by principle for case law lookup. Input: JSON with 'principle' and optional 'limit'."
+}
+
+func (t *QueryPrecedentsTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		Principle string `json:"principle"`
+		Limit     int    `json:"limit"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.Principle == "" {
+		return "", fmt.Errorf("principle is required")
+	}
+	if params.Limit == 0 {
+		params.Limit = 10
+	}
+
+	precedents, err := t.confucius.QueryPrecedentsByPrinciple(params.Principle, params.Limit)
+	if err != nil {
+		return "", err
+	}
+
+	if len(precedents) == 0 {
+		return "No precedents found for this principle", nil
+	}
+
+	result, err := json.MarshalIndent(precedents, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to format precedents: %w", err)
+	}
+	return string(result), nil
+}
+
+func (t *QueryPrecedentsTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"principle": map[string]any{"type": "string", "description": "The principle to search for"},
+			"limit":     map[string]any{"type": "integer", "description": "Maximum number of results (default 10)"},
+		},
+		"required": []string{"principle"},
+	}
+}
+
+func (t *QueryPrecedentsTool) Format(input, result string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("Query Precedents: Error: %v\n", err)
+	}
+	return fmt.Sprintf("Query Precedents: %s\n", result)
+}
+
+// ReviewDiffTool provides ad-hoc diff review capability for use in conversations
+type ReviewDiffTool struct {
+	confucius *Confucius
+}
+
+func (t *ReviewDiffTool) Name() string { return "review_diff" }
+
+func (t *ReviewDiffTool) Description() string {
+	return "Reviews a code diff for ethics and quality issues. Returns structured findings without recording precedents. Input: JSON with 'diff' (the diff string to review)."
+}
+
+func (t *ReviewDiffTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		Diff string `json:"diff"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if params.Diff == "" {
+		return "", fmt.Errorf("diff is required")
+	}
+
+	result, err := t.confucius.ReviewDiff(ctx, params.Diff)
+	if err != nil {
+		return "", fmt.Errorf("review failed: %w", err)
+	}
+
+	// Format the result as a readable string
+	var output strings.Builder
+	if result.Approved {
+		output.WriteString("APPROVED\n\n")
+	} else {
+		output.WriteString("REJECTED\n\n")
+	}
+
+	if len(result.Findings) > 0 {
+		output.WriteString("Findings:\n")
+		for i, f := range result.Findings {
+			output.WriteString(fmt.Sprintf("%d. [%s] %s", i+1, f.Severity, f.Message))
+			if f.File != "" {
+				output.WriteString(fmt.Sprintf(" (%s", f.File))
+				if f.Line > 0 {
+					output.WriteString(fmt.Sprintf(":%d", f.Line))
+				}
+				output.WriteString(")")
+			}
+			if f.Principle != "" {
+				output.WriteString(fmt.Sprintf(" [%s]", f.Principle))
+			}
+			output.WriteString("\n")
+		}
+		output.WriteString("\n")
+	}
+
+	output.WriteString("Reasoning:\n")
+	output.WriteString(result.Reasoning)
+
+	return output.String(), nil
+}
+
+func (t *ReviewDiffTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"diff": map[string]any{"type": "string", "description": "The diff string to review"},
+		},
+		"required": []string{"diff"},
+	}
+}
+
+func (t *ReviewDiffTool) Format(input, result string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("Review Diff: Error: %v\n", err)
+	}
+	return fmt.Sprintf("Review Diff:\n%s\n", result)
 }

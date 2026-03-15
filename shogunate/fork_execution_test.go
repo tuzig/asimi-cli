@@ -91,13 +91,11 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 	}
 
 	shog := &Shogunate{
-		ministers:     map[string]Minister{"strategist": strategistM, "forge": forgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		ministers: map[string]Minister{"strategist": strategistM, "forge": forgeM},
+		logger:   slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "fork-parallel-test", "edict-fork-1", nil, nil)
 	if err != nil {
@@ -181,13 +179,11 @@ func TestExecuteForkStep_Sequential(t *testing.T) {
 	}
 
 	shog := &Shogunate{
-		ministers:     map[string]Minister{"forge": forgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		ministers: map[string]Minister{"forge": forgeM},
+		logger:   slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "fork-sequential-test", "edict-fork-2", nil, nil)
 	if err != nil {
@@ -273,13 +269,11 @@ func TestExecuteForkStep_WithLimit(t *testing.T) {
 	}
 
 	shog := &Shogunate{
-		ministers:     map[string]Minister{"forge": forgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		ministers: map[string]Minister{"forge": forgeM},
+		logger:   slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "fork-limit-test", "edict-fork-3", nil, nil)
 	if err != nil {
@@ -310,7 +304,7 @@ func TestExecuteForkStep_WithLimit(t *testing.T) {
 func TestGetForkWorkUnits(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, db, nil, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
 
 	tests := []struct {
 		name      string
@@ -374,7 +368,7 @@ func TestGetForkWorkUnits(t *testing.T) {
 func TestToInterfaceSlice(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, db, nil, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
 
 	tests := []struct {
 		name    string
@@ -486,13 +480,11 @@ func TestExecuteForkItem(t *testing.T) {
 	}
 
 	shog := &Shogunate{
-		ministers:     map[string]Minister{"forge": forgeM, "judge": judgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
+		logger:   slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "fork-item-test", "edict-fork-4", nil, nil)
 	if err != nil {
@@ -579,13 +571,11 @@ func TestExecuteForkStep_FailureHandling(t *testing.T) {
 	}
 
 	shog := &Shogunate{
-		ministers:     map[string]Minister{"forge": forgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		ministers: map[string]Minister{"forge": forgeM},
+		logger:   slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "fork-failure-test", "edict-fork-5", nil, nil)
 	if err != nil {
@@ -674,13 +664,11 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 	}
 
 	shog := &Shogunate{
-		ministers:     map[string]Minister{"forge": forgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		ministers: map[string]Minister{"forge": forgeM},
+		logger:   slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -785,13 +773,11 @@ func TestExecuteForkStep_TemplateExpansion(t *testing.T) {
 	}
 
 	shog := &Shogunate{
-		ministers:     map[string]Minister{"forge": forgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		ministers: map[string]Minister{"forge": forgeM},
+		logger:   slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "fork-template-test", "edict-fork-7", nil, nil)
 	if err != nil {
@@ -889,13 +875,11 @@ func TestExecuteForkStep_Cancelation(t *testing.T) {
 	}
 
 	shog := &Shogunate{
-		ministers:     map[string]Minister{"forge": forgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		ministers: map[string]Minister{"forge": forgeM},
+		logger:   slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "fork-cancel-test", "edict-fork-8", nil, nil)
 	if err != nil {

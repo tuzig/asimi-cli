@@ -17,7 +17,8 @@ const (
 	TabRuling  TabType = "ruling"  // Default tab for edict conversation
 	TabHunting TabType = "hunting" // Confucius codebase exploration
 	TabObserve TabType = "observe" // Minister observation
-	TabRitual  TabType = "ritual"  // Ritual monitoring
+	TabRitual    TabType = "ritual"    // Ritual monitoring
+	TabShogunate TabType = "shogunate" // Shogunate dashboard
 )
 
 // Tab represents a TUI tab with its own content buffer and stream target

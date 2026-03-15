@@ -77,12 +77,8 @@ type Shogunate struct {
 	config *config.ShogunateConfig
 	runner runners.Runner
 
-	ministers      map[string]Minister
-	ritualGuard    *RitualGuard
-	ritualRegistry *RitualRegistry
-	ritualRunner   *RitualRunner
-	eventRegistry  *EventRegistry
-	eventCh        chan Event
+	ministers    map[string]Minister
+	ritualGuard *RitualGuard
 
 	notify        internal.NotifyFunc
 	drainedEvents []DrainedEvent // events recovered from DB at startup
@@ -97,24 +93,21 @@ type Shogunate struct {
 // NewShogunate creates a new Shogunate coordinator.
 func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runner, logger *slog.Logger) *Shogunate {
 	s := &Shogunate{
-		db:             db,
-		logger:         logger,
-		config:         cfg,
-		runner:         runner,
-		ministers:      make(map[string]Minister),
-		ritualRegistry: NewRitualRegistry(),
-		eventRegistry:  NewEventRegistry(),
-		eventCh:        make(chan Event, 256),
+		db:        db,
+		logger:    logger,
+		config:    cfg,
+		runner:    runner,
+		ministers: make(map[string]Minister),
 	}
 	s.ensureDefaults()
 
-	// Create ritual runner with shell runner for cmd steps
-	s.ritualRunner = NewRitualRunner(s.ritualRegistry, s, db, runner, s.logger)
-
-	// Create all ministers — each needs its own base (channels/maps are reference types)
+	// Create all ministers — each needs its own base (channels/maps are reference types).
+	// publish uses a closure so it works even before ritualGuard is assigned.
 	newBase := func() *MinisterBase {
 		base := NewMinisterBase(db, runner, logger)
-		base.publish = s.PublishEvent
+		base.publish = func(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string {
+			return s.PublishEvent(edictID, eventType, payload)
+		}
 		return base
 	}
 
@@ -122,8 +115,19 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	chancellor.SetShogunate(s)
 	s.ministers[chancellor.ID()] = chancellor
 
-	// Subscribe Chancellor to events
-	s.eventRegistry.Subscribe(storage.EventEdictCreated, func(e Event) {
+	// Wire up the ritual guard — it owns all ritual/event infrastructure
+	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
+		Base:       newBase(),
+		Chancellor: chancellor,
+		Runner:     runner,
+		GetMinister: s.GetMinister,
+		StreamingCtx: func() context.Context {
+			return s.streamingCtx
+		},
+	})
+
+	// Subscribe Chancellor to events via RitualGuard
+	s.ritualGuard.Subscribe(storage.EventEdictCreated, func(e Event) {
 		select {
 		case chancellor.eventChan <- e:
 		default:
@@ -131,7 +135,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 	})
 
-	s.eventRegistry.Subscribe(storage.EventRitualCompleted, func(e Event) {
+	s.ritualGuard.Subscribe(storage.EventRitualCompleted, func(e Event) {
 		select {
 		case chancellor.eventChan <- e:
 		default:
@@ -139,7 +143,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 	})
 
-	s.eventRegistry.Subscribe(storage.EventRitualFailed, func(e Event) {
+	s.ritualGuard.Subscribe(storage.EventRitualFailed, func(e Event) {
 		select {
 		case chancellor.eventChan <- e:
 		default:
@@ -148,7 +152,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	})
 
 	// Handle zhengming_answered events for edict creation from suggestions
-	s.eventRegistry.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
+	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
 		answer, _ := e.Payload["answer"].(string)
 		edictID, _ := e.Payload["edict_id"].(string)
 		s.logger.Debug("zhengming_answered handler", "answer", answer, "edict_id", edictID, "payload", e.Payload)
@@ -183,15 +187,11 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 	})
 
-	// Wire up the ritual guard
-	s.ritualGuard = NewRitualGuard(newBase(), chancellor, s)
-
 	s.ministers["strategist"] = NewStrategist(newBase())
 	s.ministers["forge"] = NewForge(newBase())
 	s.ministers["judge"] = NewJudge(newBase(), nil)
-	s.ministers["censor"] = NewCensor(newBase(), nil)
 	s.ministers["marshal"] = NewMarshal(newBase(), nil)
-	confucius := NewConfucius(newBase())
+	confucius := NewConfucius(newBase(), nil)
 	confucius.shogunate = s
 	s.ministers["confucius"] = confucius
 
@@ -204,6 +204,7 @@ func (s *Shogunate) SetNotify(notify internal.NotifyFunc) {
 		return
 	}
 	s.notify = notify
+	s.ritualGuard.SetNotify(notify)
 	for _, minister := range s.Ministers() {
 		if base, ok := minister.(interface{ SetNotify(internal.NotifyFunc) }); ok {
 			base.SetNotify(notify)
@@ -229,19 +230,14 @@ func (s *Shogunate) Start(ctx context.Context) error {
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	s.streamingCtx, s.streamingCancel = context.WithCancel(s.ctx)
 
-	// Load rituals from .agents/rituals/
-	if err := s.loadRituals(); err != nil {
+	// Load rituals
+	if err := s.ritualGuard.LoadRituals(); err != nil {
 		s.logger.Warn("failed to load rituals", "error", err)
 	}
 
 	for _, minister := range s.Ministers() {
 		go minister.Run(s.ctx)
 	}
-
-	// Drain unprocessed DB events synchronously before starting the channel consumer.
-	// Running on the main goroutine avoids opening a second SQLite connection
-	// for in-memory databases where each connection is a separate database.
-	// s.drainUnprocessedEvents()
 
 	if s.ritualGuard != nil {
 		go s.ritualGuard.Run(s.ctx)
@@ -250,7 +246,7 @@ func (s *Shogunate) Start(ctx context.Context) error {
 	s.logger.Info("shogunate started",
 		"poll_interval", s.config.PollInterval,
 		"ministers", s.ministerIDs(),
-		"rituals", s.ritualRegistry.List())
+		"rituals", s.ritualGuard.RitualRegistry().List())
 
 	return nil
 }
@@ -344,65 +340,20 @@ func CreateEdictForTest(db *gorm.DB, edictID, intent string) (*storage.Edict, er
 	return &edict, nil
 }
 
-// PublishEvent persists an event to the DB and sends it to the event channel.
+// PublishEvent delegates to RitualGuard.
 func (s *Shogunate) PublishEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string {
-	if s.db != nil {
-		dbEvent := storage.TianEvent{
-			EdictID:   edictID,
-			EventType: eventType,
-			Payload:   payload,
-		}
-		if err := s.db.Create(&dbEvent).Error; err != nil {
-			s.logger.Error("failed to persist event", "type", eventType, "error", err)
-		}
+	if s == nil || s.ritualGuard == nil {
+		return edictID
 	}
-	select {
-	case s.eventCh <- Event{Type: eventType, EdictID: edictID, Payload: map[string]interface{}(payload)}:
-	default:
-		s.logger.Warn("event channel full, persisted to DB only", "type", eventType)
-	}
-	return edictID
+	return s.ritualGuard.PublishEvent(edictID, eventType, payload)
 }
 
-// drainUnprocessedEvents replays events persisted to DB but never dispatched (crash recovery).
-func (s *Shogunate) drainUnprocessedEvents() {
-	if s.ritualGuard == nil {
+// DispatchEvent delegates to RitualGuard.
+func (s *Shogunate) DispatchEvent(event Event) {
+	if s == nil || s.ritualGuard == nil {
 		return
 	}
-
-	lastEventID, err := s.ritualGuard.GetLastAcknowledgedEvent()
-	if err != nil {
-		s.logger.Warn("drain: failed to get last checkpoint", "error", err)
-		return
-	}
-
-	events, err := s.ritualGuard.GetEventsFrom(lastEventID, 0)
-	if err != nil {
-		s.logger.Warn("drain: failed to get unprocessed events", "error", err)
-		return
-	}
-
-	if len(events) == 0 {
-		return
-	}
-
-	s.logger.Info("draining unprocessed events", "count", len(events), "from_id", lastEventID)
-	for _, event := range events {
-		t := event.EventType
-		s.DispatchEvent(Event{
-			Type:    t,
-			EdictID: event.EdictID,
-			Payload: map[string]interface{}(event.Payload),
-		})
-		s.drainedEvents = append(s.drainedEvents, DrainedEvent{
-			EventType: t,
-			EdictID:   event.EdictID,
-			Payload:   map[string]interface{}(event.Payload),
-		})
-		if err := s.ritualGuard.SaveCheckpoint(event.ID); err != nil {
-			s.logger.Warn("drain: failed to save checkpoint", "error", err)
-		}
-	}
+	s.ritualGuard.DispatchEvent(event)
 }
 
 func (s *Shogunate) ensureDefaults() {
@@ -423,44 +374,6 @@ func (s *Shogunate) ministerIDs() []string {
 	return ids
 }
 
-// loadRituals loads embedded rituals and project rituals from .agents/rituals/
-func (s *Shogunate) loadRituals() error {
-	// Load embedded rituals first
-	embedded, err := LoadEmbeddedRituals()
-	if err != nil {
-		return fmt.Errorf("failed to load embedded rituals: %w", err)
-	}
-
-	for _, ritual := range embedded {
-		if err := s.ritualRegistry.Register(ritual); err != nil {
-			s.logger.Warn("failed to register embedded ritual",
-				"ritual", ritual.Name,
-				"error", err)
-			continue
-		}
-		s.logger.Debug("loaded embedded ritual", "name", ritual.Name)
-	}
-
-	// Load project-specific rituals (can override embedded)
-	projectRituals, err := LoadRitualsFromDir(".agents/rituals")
-	if err != nil {
-		s.logger.Warn("failed to load project rituals", "error", err)
-		return nil // Don't fail - embedded rituals are still available
-	}
-
-	for _, ritual := range projectRituals {
-		if err := s.ritualRegistry.Register(ritual); err != nil {
-			s.logger.Warn("failed to register project ritual",
-				"ritual", ritual.Name,
-				"error", err)
-			continue
-		}
-		s.logger.Debug("loaded project ritual", "name", ritual.Name)
-	}
-
-	return nil
-}
-
 // GetRunner returns the shell runner
 func (s *Shogunate) GetRunner() runners.Runner {
 	if s == nil {
@@ -471,63 +384,26 @@ func (s *Shogunate) GetRunner() runners.Runner {
 
 // GetRitualRegistry returns the ritual registry
 func (s *Shogunate) GetRitualRegistry() *RitualRegistry {
-	if s == nil {
+	if s == nil || s.ritualGuard == nil {
 		return nil
 	}
-	return s.ritualRegistry
+	return s.ritualGuard.RitualRegistry()
 }
 
 // GetRitualRunner returns the ritual runner
 func (s *Shogunate) GetRitualRunner() *RitualRunner {
-	if s == nil {
+	if s == nil || s.ritualGuard == nil {
 		return nil
 	}
-	return s.ritualRunner
+	return s.ritualGuard.RitualRunner()
 }
 
 // GetEventRegistry returns the event registry
 func (s *Shogunate) GetEventRegistry() *EventRegistry {
-	if s == nil {
+	if s == nil || s.ritualGuard == nil {
 		return nil
 	}
-	return s.eventRegistry
-}
-
-// DispatchEvent dispatches an event to all subscribers and triggers event-driven rituals.
-func (s *Shogunate) DispatchEvent(event Event) {
-	if s == nil || s.eventRegistry == nil {
-		return
-	}
-	s.eventRegistry.Dispatch(event)
-
-	// Trigger event-driven rituals
-	if s.ritualRegistry != nil && s.ritualRunner != nil {
-		rituals := s.ritualRegistry.GetByEvent(string(event.Type))
-		// Extract source ritual name from payload to prevent cascading loops
-		// (e.g. report_failure failing should not trigger report_failure again)
-		sourceRitual, _ := event.Payload["ritual"].(string)
-		for _, ritual := range rituals {
-			if ritual.Name == sourceRitual {
-				s.logger.Debug("skipping self-triggered ritual",
-					"ritual", ritual.Name, "event", event.Type)
-				continue
-			}
-			edictID := event.EdictID
-			inputs := map[string]string{"edict_id": edictID}
-			go func(r *RitualDef) {
-				exec, err := s.ritualRunner.Start(s.streamingCtx, r.Name, edictID, inputs, s.notify)
-				if err != nil {
-					s.logger.Warn("failed to start event-triggered ritual",
-						"ritual", r.Name, "event", event.Type, "error", err)
-					return
-				}
-				if err := s.ritualRunner.Run(s.streamingCtx, exec); err != nil {
-					s.logger.Warn("event-triggered ritual failed",
-						"ritual", r.Name, "error", err)
-				}
-			}(ritual)
-		}
-	}
+	return s.ritualGuard.EventRegistry()
 }
 
 // Interrupt cancels the streaming context, stopping event-triggered rituals,

@@ -484,7 +484,7 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 			if len(r.Steps) != 4 {
 				t.Errorf("castle-siege: expected 4 steps, got %d", len(r.Steps))
 			}
-			expectedMinisters := []string{"strategist", "forge", "judge", "censor"}
+			expectedMinisters := []string{"strategist", "forge", "judge", "confucius"}
 			for i, expected := range expectedMinisters {
 				if r.Steps[i].Minister != expected {
 					t.Errorf("castle-siege: step %d expected minister %q, got %q", i, expected, r.Steps[i].Minister)
@@ -504,16 +504,16 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 			if len(r.Background) < 1 {
 				t.Errorf("review: expected at least 1 background entry, got %d", len(r.Background))
 			}
-			// Censor depends on judge
+			// Confucius depends on judge
 			if len(r.Steps[1].DependsOn) != 1 || r.Steps[1].DependsOn[0] != "judge" {
-				t.Errorf("review censor: expected depends_on [judge], got %v", r.Steps[1].DependsOn)
+				t.Errorf("review confucius: expected depends_on [judge], got %v", r.Steps[1].DependsOn)
 			}
 			// Report step should have a valid minister assigned
 			if r.Steps[2].Minister == "" {
 				t.Errorf("review report: expected minister to be assigned, got empty string")
 			}
 			// Verify all step ministers are valid
-			validMinisters := map[string]bool{"chancellor": true, "strategist": true, "forge": true, "judge": true, "censor": true, "marshal": true, "confucius": true}
+			validMinisters := map[string]bool{"chancellor": true, "strategist": true, "forge": true, "judge": true, "marshal": true, "confucius": true}
 			for j, step := range r.Steps {
 				if !validMinisters[step.Minister] {
 					t.Errorf("review step %d: invalid minister %q", j, step.Minister)
@@ -582,7 +582,7 @@ func TestRitualStreamMessages(t *testing.T) {
 	shogunate := newRitualTestShogunate(t, "hello\n", nil)
 
 	// Create ritual runner
-	runner := NewRitualRunner(registry, shogunate, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
 
 	// Collect messages from the stream
 	var messages []any
@@ -670,7 +670,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 		Steps: []RitualStep{
 			{Name: "step1", Minister: "forge", Task: "do one"},
 			{Name: "step2", Minister: "judge", Task: "do two", DependsOn: []string{"step1"}},
-			{Name: "step3", Minister: "censor", Task: "do three", DependsOn: []string{"step2"}},
+			{Name: "step3", Minister: "confucius", Task: "do three", DependsOn: []string{"step2"}},
 		},
 	}
 
@@ -678,7 +678,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 	registry.Register(ritual)
 
 	shogunate := newRitualTestShogunate(t, "ok\n", nil)
-	runner := NewRitualRunner(registry, shogunate, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -733,7 +733,7 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 
 	// Mock shogunate where ministers return errors
 	shogunate := newRitualTestShogunate(t, "", fmt.Errorf("minister failed"))
-	runner := NewRitualRunner(registry, shogunate, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -841,12 +841,10 @@ func TestRitualGotoPassesErrorMessage(t *testing.T) {
 	}
 	shog := &Shogunate{
 		ministers:     map[string]Minister{"forge": forgeM, "judge": judgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "goto-error-test", "edict-goto", nil, nil)
 	if err != nil {
@@ -942,12 +940,10 @@ func TestRitualGotoPassesOutputAndError(t *testing.T) {
 	}
 	shog := &Shogunate{
 		ministers:     map[string]Minister{"forge": forgeM, "judge": judgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "goto-output-error-test", "edict-goto-out", nil, nil)
 	if err != nil {
@@ -1044,12 +1040,10 @@ func TestRitualGotoSessionReuse(t *testing.T) {
 	}
 	shog := &Shogunate{
 		ministers:     map[string]Minister{"forge": forgeM, "judge": judgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "goto-session-test", "edict-session", nil, nil)
 	if err != nil {
@@ -1109,12 +1103,10 @@ func TestRitualGotoPreservesOutputOnFailure(t *testing.T) {
 	}
 	shog := &Shogunate{
 		ministers:     map[string]Minister{"forge": forgeM},
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	exec, err := runner.Start(ctx, "preserve-output-test", "edict-preserve", nil, nil)
 	if err != nil {
@@ -1172,7 +1164,7 @@ func TestStepDefRegistry(t *testing.T) {
 func TestResolveStepDef(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, db, nil, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
 
 	// Test bash command resolution
 	entry, err := runner.resolveStepDef("!just test")
@@ -1212,7 +1204,7 @@ func TestRunGivenStep_Bash(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
 	mockRunner := &mockCmdRunner{output: "diff output\n", exitCode: "0"}
-	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil)
 
 	exec := &RitualExecution{
 		ID:         "test-exec",
@@ -1241,7 +1233,7 @@ func TestRunThenStep_Bash(t *testing.T) {
 
 	// Success case
 	mockRunner := &mockCmdRunner{output: "ok\n", exitCode: "0"}
-	runner := NewRitualRunner(registry, nil, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil)
 
 	exec := &RitualExecution{
 		ID:         "test-exec",
@@ -1262,7 +1254,7 @@ func TestRunThenStep_Bash(t *testing.T) {
 
 	// Failure case
 	failRunner := &mockCmdRunner{output: "FAIL\n", exitCode: "1"}
-	runner = NewRitualRunner(registry, nil, db, failRunner, nil)
+	runner = NewRitualRunner(registry, nil, nil, db, failRunner, nil)
 
 	err = runner.runThenStep(context.Background(), exec, entry)
 	if err == nil {
@@ -1299,7 +1291,7 @@ func TestRunThenStep_Multiple(t *testing.T) {
 			{Output: "FAIL\n", ExitCode: "1"}, // second then
 		},
 	}
-	runner := NewRitualRunner(registry, shogunate, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil)
 
 	ctx := context.Background()
 	exec, err := runner.Start(ctx, "multi-then", "edict-test", nil, nil)
@@ -1373,7 +1365,7 @@ func TestBackgroundGiven(t *testing.T) {
 			{Output: "background-data\n", ExitCode: "0"}, // background given
 		},
 	}
-	runner := NewRitualRunner(registry, shogunate, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil)
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -1456,7 +1448,7 @@ func (m *ritualTestMinister) Run(ctx context.Context) {
 func newRitualTestShogunate(t *testing.T, output string, err error) *Shogunate {
 	t.Helper()
 	ministers := map[string]Minister{}
-	for _, id := range []string{"forge", "judge", "censor", "strategist", "chancellor", "marshal"} {
+	for _, id := range []string{"forge", "judge", "confucius", "strategist", "chancellor", "marshal"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,
@@ -1469,12 +1461,46 @@ func newRitualTestShogunate(t *testing.T, output string, err error) *Shogunate {
 		t.Cleanup(cancel)
 		go m.Run(ctx)
 	}
-	return &Shogunate{
-		ministers:     ministers,
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+	s := &Shogunate{
+		ministers: ministers,
+		logger:   slog.Default(),
 	}
+	// Set up a minimal ritualGuard so PublishEvent and GetRitualRunner work
+	base := &MinisterBase{logger: slog.Default()}
+	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
+		Base:        base,
+		GetMinister: s.GetMinister,
+	})
+	return s
+}
+
+// newRitualTestShogunateWithDB is like newRitualTestShogunate but with a db for the ritualGuard.
+func newRitualTestShogunateWithDB(t *testing.T, db *gorm.DB, output string, err error) *Shogunate {
+	t.Helper()
+	ministers := map[string]Minister{}
+	for _, id := range []string{"forge", "judge", "confucius", "strategist", "chancellor", "marshal"} {
+		m := &ritualTestMinister{
+			MinisterBase: MinisterBase{logger: slog.Default()},
+			id:           id,
+			tasksCh:      make(chan *Task, 1),
+			result:       output,
+			err:          err,
+		}
+		ministers[id] = m
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		go m.Run(ctx)
+	}
+	s := &Shogunate{
+		ministers: ministers,
+		logger:   slog.Default(),
+	}
+	base := NewMinisterBase(db, nil, slog.Default())
+	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
+		Base:        base,
+		GetMinister: s.GetMinister,
+	})
+	return s
 }
 
 // mockCallCountRunner returns sequential results for successive calls
@@ -1542,12 +1568,8 @@ func TestInvokeRitualTool_Blocking(t *testing.T) {
 		},
 	}
 
-	registry := NewRitualRegistry()
-	registry.Register(ritual)
-
-	shogunate := newRitualTestShogunate(t, "hello\n", nil)
-	ritualRunner := NewRitualRunner(registry, shogunate, db, nil, nil)
-	shogunate.ritualRunner = ritualRunner
+	shogunate := newRitualTestShogunateWithDB(t, db, "hello\n", nil)
+	shogunate.GetRitualRegistry().Register(ritual)
 
 	base := &MinisterBase{logger: slog.Default()}
 	chanc := &Chancellor{
@@ -1601,12 +1623,8 @@ func TestInvokeRitualTool_BlockingFailure(t *testing.T) {
 		},
 	}
 
-	registry := NewRitualRegistry()
-	registry.Register(ritual)
-
-	shogunate := newRitualTestShogunate(t, "", fmt.Errorf("minister failed"))
-	ritualRunner := NewRitualRunner(registry, shogunate, db, nil, nil)
-	shogunate.ritualRunner = ritualRunner
+	shogunate := newRitualTestShogunateWithDB(t, db, "", fmt.Errorf("minister failed"))
+	shogunate.GetRitualRegistry().Register(ritual)
 
 	base := &MinisterBase{logger: slog.Default()}
 	chanc := &Chancellor{
@@ -1737,12 +1755,10 @@ func TestRitualZhengmingPausesTimeout(t *testing.T) {
 
 	shogunate := &Shogunate{
 		ministers:     ministers,
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shogunate, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -1815,13 +1831,11 @@ func TestRitualTimeoutWithoutZhengming(t *testing.T) {
 
 	shogunate := &Shogunate{
 		ministers:     ministers,
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
-		logger:        slog.Default(),
+		logger: slog.Default(),
 	}
 
 	// Use a patched runner that verifies the timeout fires
-	runner := NewRitualRunner(registry, shogunate, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
 
 	notify := func(msg any) {}
 

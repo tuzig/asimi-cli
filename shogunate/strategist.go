@@ -12,8 +12,8 @@ import (
 )
 
 // StrategistRole defines the Strategist's identity and capabilities
-const StrategistRole = `You are the Strategist (兵部, Bīngbù) and the planner of the shogunate.
-Your domain is strategy and sequence.
+const StrategistRole = `兵部, and the planner of the shogunate.
+Your domain is strategy and sequence and.
 
 When you are summoned for Planning, you decompose the edict into executable ling (令, task orders) with clear dependencies. You enforce temporal order: no forging until planning is complete.
 

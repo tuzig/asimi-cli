@@ -1867,6 +1867,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tabs.Content().Chat.AddMessage(successMsg.String())
 		return m, nil
 
+	case shogunateTickMsg:
+		if m.tabs.ActiveTab().Type == TabShogunate {
+			return m, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return shogunateTickMsg{} })
+		}
+		return m, nil
+
 	case waitingTickMsg:
 		if m.waitingForResponse {
 			return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return waitingTickMsg{} })
@@ -2662,6 +2668,11 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	// First check if we're viewing help/models/resume - these take precedence
 	if m.tabs.Content().GetActiveView() != ViewChat {
 		return m.tabs.Content().View()
+	}
+
+	// Shogunate dashboard has its own renderer
+	if m.tabs.ActiveTab().Type == TabShogunate {
+		return m.renderShogunateView(contentHeight)
 	}
 
 	// Then check for special modes

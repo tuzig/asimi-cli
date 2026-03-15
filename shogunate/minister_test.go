@@ -213,7 +213,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	}
 }
 
-func TestCensor_ReviewFlow(t *testing.T) {
+func TestConfucius_ReviewFlow(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -232,11 +232,11 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
 	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID)
 
-	// Create censor (no linter - will auto-approve)
-	censor := NewCensor(base, nil)
+	// Create confucius (no linter - will auto-approve)
+	confucius := NewConfucius(base, nil)
 
 	// Execute review (internal method)
-	sealed, summary, err := censor.execute(ctx, "test/repo#5")
+	sealed, summary, err := confucius.execute(ctx, "test/repo#5")
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestCensor_ReviewFlow(t *testing.T) {
 	}
 
 	// Check no rejections
-	noReject, _ := censor.NoRejections("test/repo#5")
+	noReject, _ := confucius.NoRejections("test/repo#5")
 	if !noReject {
 		t.Error("Expected no rejections")
 	}
@@ -821,15 +821,14 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
-	registry := NewRitualRegistry()
-	registry.Register(&RitualDef{Name: "swift-strike", Description: "The Swift Strike (S)"})
-	registry.Register(&RitualDef{Name: "castle-siege", Description: "The Castle Siege (L)"})
-
 	shogunate := &Shogunate{
-		db:             db,
-		ministers:      map[string]Minister{chancellor.ID(): chancellor},
-		ritualRegistry: registry,
+		db:        db,
+		ministers: map[string]Minister{chancellor.ID(): chancellor},
 	}
+	rgBase := NewMinisterBase(db, nil, nil)
+	shogunate.ritualGuard = NewRitualGuard(RitualGuardOpts{Base: rgBase})
+	shogunate.GetRitualRegistry().Register(&RitualDef{Name: "swift-strike", Description: "The Swift Strike (S)"})
+	shogunate.GetRitualRegistry().Register(&RitualDef{Name: "castle-siege", Description: "The Castle Siege (L)"})
 	chancellor.SetShogunate(shogunate)
 
 	prompt := buildSystemPrompt(chancellor, nil, "")

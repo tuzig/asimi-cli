@@ -53,14 +53,12 @@ func setupEventTestDB(t *testing.T) *gorm.DB {
 func newTestShogunate(t *testing.T, db *gorm.DB) *Shogunate {
 	t.Helper()
 	s := &Shogunate{
-		db:            db,
-		logger:        slog.Default(),
-		ministers:     make(map[string]Minister),
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 256),
+		db:        db,
+		logger:    slog.Default(),
+		ministers: make(map[string]Minister),
 	}
 	base := NewMinisterBase(db, nil, slog.Default())
-	rg := NewRitualGuard(base, nil, s)
+	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 	s.ritualGuard = rg
 	return s
 }
@@ -72,7 +70,7 @@ func TestChannelDelivery(t *testing.T) {
 	// Subscribe to the event
 	var received []Event
 	var mu sync.Mutex
-	s.eventRegistry.Subscribe(storage.EventEdictCreated, func(e Event) {
+	s.ritualGuard.Subscribe(storage.EventEdictCreated, func(e Event) {
 		mu.Lock()
 		received = append(received, e)
 		mu.Unlock()
@@ -135,7 +133,7 @@ func TestDBPersistence(t *testing.T) {
 
 	// Also verify it arrived on the channel
 	select {
-	case ev := <-s.eventCh:
+	case ev := <-s.ritualGuard.eventCh:
 		if ev.EdictID != "edict-2" {
 			t.Errorf("channel event EdictID: expected 'edict-2', got %q", ev.EdictID)
 		}
@@ -147,13 +145,16 @@ func TestDBPersistence(t *testing.T) {
 func TestBackpressure(t *testing.T) {
 	db := setupEventTestDB(t)
 	// Use a tiny channel to force backpressure
+	base := NewMinisterBase(db, nil, slog.Default())
+	rg := NewRitualGuard(RitualGuardOpts{Base: base})
+	// Replace the default channel with a tiny one
+	rg.eventCh = make(chan Event, 2)
 	s := &Shogunate{
-		db:            db,
-		logger:        slog.Default(),
-		ministers:     make(map[string]Minister),
-		eventRegistry: NewEventRegistry(),
-		eventCh:       make(chan Event, 2),
+		db:        db,
+		logger:    slog.Default(),
+		ministers: make(map[string]Minister),
 	}
+	s.ritualGuard = rg
 
 	// Fill the channel
 	s.PublishEvent("e1", "edict_created", storage.JSON{})
@@ -170,8 +171,8 @@ func TestBackpressure(t *testing.T) {
 	}
 
 	// Verify channel has exactly 2 (capacity)
-	if len(s.eventCh) != 2 {
-		t.Errorf("expected 2 events in channel, got %d", len(s.eventCh))
+	if len(s.ritualGuard.eventCh) != 2 {
+		t.Errorf("expected 2 events in channel, got %d", len(s.ritualGuard.eventCh))
 	}
 }
 
@@ -179,10 +180,7 @@ func TestDrainUnprocessedEvents(t *testing.T) {
 	db := setupEventTestDB(t)
 	s := newTestShogunate(t, db)
 
-	// Create a ritual guard for checkpoint methods
-	base := NewMinisterBase(db, nil, slog.Default())
-	rg := NewRitualGuard(base, nil, s)
-	s.ritualGuard = rg
+	rg := s.ritualGuard
 
 	// Insert 5 events directly into DB (simulating crash scenario)
 	for i := 0; i < 5; i++ {
@@ -199,14 +197,14 @@ func TestDrainUnprocessedEvents(t *testing.T) {
 	// Track dispatched events
 	var dispatched []Event
 	var mu sync.Mutex
-	s.eventRegistry.Subscribe("step_completed", func(e Event) {
+	s.ritualGuard.Subscribe("step_completed", func(e Event) {
 		mu.Lock()
 		dispatched = append(dispatched, e)
 		mu.Unlock()
 	})
 
 	// Drain should replay events 3, 4, 5
-	s.drainUnprocessedEvents()
+	s.ritualGuard.DrainUnprocessedEvents()
 
 	mu.Lock()
 	if len(dispatched) != 3 {
@@ -266,7 +264,7 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 
 	// Verify channel
 	select {
-	case ev := <-s.eventCh:
+	case ev := <-s.ritualGuard.eventCh:
 		if ev.EdictID != "edict-pub" {
 			t.Errorf("expected EdictID 'edict-pub', got %q", ev.EdictID)
 		}

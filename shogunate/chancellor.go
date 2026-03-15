@@ -58,15 +58,15 @@ func (c *Chancellor) Scratchpad() string {
 	var b strings.Builder
 
 	b.WriteString("# Available Rituals\n")
-	if c.shogunate == nil || c.shogunate.ritualRegistry == nil {
+	if c.shogunate == nil || c.shogunate.GetRitualRegistry() == nil {
 		b.WriteString("None loaded\n")
 	} else {
-		names := c.shogunate.ritualRegistry.List()
+		names := c.shogunate.GetRitualRegistry().List()
 		if len(names) == 0 {
 			b.WriteString("None loaded\n")
 		} else {
 			for _, name := range names {
-				ritual := c.shogunate.ritualRegistry.Get(name)
+				ritual := c.shogunate.GetRitualRegistry().Get(name)
 				if ritual != nil {
 					b.WriteString(fmt.Sprintf("- %s: %s\n", name, ritual.Description))
 				}
@@ -468,7 +468,7 @@ func (c *Chancellor) Tools() []Tool {
 		toolList = append(toolList, t)
 	}
 	// Add InvokeRitualTool if ritual runner is available
-	if c.shogunate != nil && c.shogunate.ritualRunner != nil {
+	if c.shogunate != nil && c.shogunate.GetRitualRunner() != nil {
 		toolList = append(toolList, InvokeRitualTool{chancellor: c})
 	}
 	if c.runner != nil {
@@ -500,17 +500,17 @@ func collectStepResults(exec *RitualExecution) []map[string]any {
 // RunRitual runs a ritual synchronously, blocking until completion or failure.
 // Uses the caller's ctx so CTRL-C propagates properly.
 func (c *Chancellor) RunRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (*RitualExecution, error) {
-	if c.shogunate == nil || c.shogunate.ritualRunner == nil {
+	if c.shogunate == nil || c.shogunate.GetRitualRunner() == nil {
 		return nil, fmt.Errorf("ritual runner not available")
 	}
 
-	exec, err := c.shogunate.ritualRunner.Start(ctx, ritualName, edictID, inputs, c.notify)
+	exec, err := c.shogunate.GetRitualRunner().Start(ctx, ritualName, edictID, inputs, c.notify)
 	if err != nil {
 		return nil, err
 	}
 
 	// Run synchronously — blocks until completion/failure/cancellation
-	if err := c.shogunate.ritualRunner.Run(ctx, exec); err != nil {
+	if err := c.shogunate.GetRitualRunner().Run(ctx, exec); err != nil {
 		return exec, fmt.Errorf("ritual %s failed: %w", ritualName, err)
 	}
 	return exec, nil
@@ -825,7 +825,7 @@ func (c *Chancellor) processEvent(ctx context.Context, event Event) {
 func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
 	c.logger.Info("handling edict created", "edict_id", edictID)
 
-	if len(c.shogunate.ritualRegistry.List()) == 0 {
+	if len(c.shogunate.GetRitualRegistry().List()) == 0 {
 		c.logger.Warn("no rituals available", "edict_id", edictID)
 		return
 	}

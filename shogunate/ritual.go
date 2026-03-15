@@ -471,28 +471,37 @@ func LoadRitualsFromDir(dir string) ([]*RitualDef, error) {
 
 // RitualRunner executes rituals
 type RitualRunner struct {
-	registry   *RitualRegistry
-	stepDefs   *StepDefRegistry
-	shogunate  *Shogunate
-	db         *gorm.DB
-	runner     runners.Runner
-	logger     *slog.Logger
-	maxRetries int
+	registry     *RitualRegistry
+	stepDefs     *StepDefRegistry
+	getMinister  func(id string) Minister
+	publishEvent func(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string
+	db           *gorm.DB
+	runner       runners.Runner
+	logger       *slog.Logger
+	maxRetries   int
 }
 
 // NewRitualRunner creates a new ritual runner
-func NewRitualRunner(registry *RitualRegistry, shogunate *Shogunate, db *gorm.DB, runner runners.Runner, logger *slog.Logger) *RitualRunner {
+func NewRitualRunner(
+	registry *RitualRegistry,
+	getMinister func(id string) Minister,
+	publishEvent func(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string,
+	db *gorm.DB,
+	runner runners.Runner,
+	logger *slog.Logger,
+) *RitualRunner {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &RitualRunner{
-		registry:   registry,
-		stepDefs:   NewStepDefRegistry(),
-		shogunate:  shogunate,
-		db:         db,
-		runner:     runner,
-		logger:     logger,
-		maxRetries: 3,
+		registry:     registry,
+		stepDefs:     NewStepDefRegistry(),
+		getMinister:  getMinister,
+		publishEvent: publishEvent,
+		db:           db,
+		runner:       runner,
+		logger:       logger,
+		maxRetries:   3,
 	}
 }
 
@@ -1236,7 +1245,7 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 
 // executeMinisterStep invokes a minister for a task
 func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
-	minister := r.shogunate.GetMinister(step.Minister)
+	minister := r.getMinister(step.Minister)
 	if minister == nil {
 		return "", fmt.Errorf("minister not found: %s", step.Minister)
 	}
@@ -1629,7 +1638,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 	case "request_zhengming":
 		// Use the chancellor for zhengming requests, as it's the minister that interacts with the ruler
 		// and has a corresponding tab for displaying zhengming questions
-		minister := r.shogunate.GetMinister("chancellor")
+		minister := r.getMinister("chancellor")
 		if minister == nil {
 			return fmt.Errorf("minister not found: chancellor")
 		}
@@ -1833,10 +1842,10 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 }
 
 // emitEvent records a Tian event from the ritual runner.
-// Routes through Shogunate's PublishEvent for channel delivery when available.
+// Routes through publishEvent for channel delivery when available.
 func (r *RitualRunner) emitEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) {
-	if r.shogunate != nil {
-		r.shogunate.PublishEvent(edictID, eventType, payload)
+	if r.publishEvent != nil {
+		r.publishEvent(edictID, eventType, payload)
 		return
 	}
 	// Fallback: DB-only (for tests without shogunate)
