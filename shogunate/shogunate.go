@@ -151,8 +151,24 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 	})
 
-	// Forward zhengming_answered events to chancellor for ritual resumption
+	// Forward zhengming_answered events: first try ritual runner, then fall through to chancellor
 	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
+		requestID, _ := e.Payload["request_id"].(string)
+		answer, _ := e.Payload["answer"].(string)
+		edictID := e.EdictID
+
+		// Try to deliver to a waiting ritual first
+		if requestID != "" && s.ritualGuard.DeliverZhengmingAnswer(ZhengmingAnswer{
+			RequestID: requestID,
+			Answer:    answer,
+			EdictID:   edictID,
+		}) {
+			s.logger.Info("zhengming answer delivered to ritual runner",
+				"request_id", requestID, "edict_id", edictID)
+			return
+		}
+
+		// No ritual waiting — forward to chancellor for the legacy "Resume edict" path
 		select {
 		case chancellor.eventChan <- e:
 		default:

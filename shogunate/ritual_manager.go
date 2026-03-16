@@ -225,6 +225,23 @@ func (rg *RitualGuard) SetNotify(notify internal.NotifyFunc) {
 	rg.notify = notify
 }
 
+// DeliverZhengmingAnswer delivers a zhengming answer to a waiting ritual.
+// Returns true if a ritual was waiting for this answer.
+func (rg *RitualGuard) DeliverZhengmingAnswer(answer ZhengmingAnswer) bool {
+	if rg.ritualRunner == nil {
+		return false
+	}
+	return rg.ritualRunner.DeliverZhengmingAnswer(answer)
+}
+
+// HasPendingZhengming returns true if a ritual is waiting for the given zhengming request.
+func (rg *RitualGuard) HasPendingZhengming(requestID string) bool {
+	if rg.ritualRunner == nil {
+		return false
+	}
+	return rg.ritualRunner.HasPendingZhengming(requestID)
+}
+
 // DrainUnprocessedEvents replays events persisted to DB but never dispatched (crash recovery).
 func (rg *RitualGuard) DrainUnprocessedEvents() []DrainedEvent {
 	lastEventID, err := rg.GetLastAcknowledgedEvent()

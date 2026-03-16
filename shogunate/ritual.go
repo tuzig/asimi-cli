@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -57,6 +58,17 @@ const (
 	OnFailureGoto      OnFailureAction = "goto"
 	OnFailureAbort     OnFailureAction = "abort"
 )
+
+// ErrZhengmingPending is returned by runBuiltinThen when a zhengming request
+// has been created and the ritual must block until the ruler answers.
+var ErrZhengmingPending = errors.New("zhengming pending")
+
+// ZhengmingAnswer carries the ruler's response to a pending zhengming request.
+type ZhengmingAnswer struct {
+	RequestID string
+	Answer    string
+	EdictID   string
+}
 
 // RitualDef represents a YAML-defined ritual
 type RitualDef struct {
@@ -479,6 +491,9 @@ type RitualRunner struct {
 	runner       runners.Runner
 	logger       *slog.Logger
 	maxRetries   int
+
+	pendingZhengming   map[string]chan ZhengmingAnswer
+	pendingZhengmingMu sync.Mutex
 }
 
 // NewRitualRunner creates a new ritual runner
@@ -494,14 +509,87 @@ func NewRitualRunner(
 		logger = slog.Default()
 	}
 	return &RitualRunner{
-		registry:     registry,
-		stepDefs:     NewStepDefRegistry(),
-		getMinister:  getMinister,
-		publishEvent: publishEvent,
-		db:           db,
-		runner:       runner,
-		logger:       logger,
-		maxRetries:   3,
+		registry:         registry,
+		stepDefs:         NewStepDefRegistry(),
+		getMinister:      getMinister,
+		publishEvent:     publishEvent,
+		db:               db,
+		runner:           runner,
+		logger:           logger,
+		maxRetries:       3,
+		pendingZhengming: make(map[string]chan ZhengmingAnswer),
+	}
+}
+
+// registerPendingZhengming creates a channel for a zhengming request and returns it.
+func (r *RitualRunner) registerPendingZhengming(requestID string) chan ZhengmingAnswer {
+	r.pendingZhengmingMu.Lock()
+	defer r.pendingZhengmingMu.Unlock()
+	ch := make(chan ZhengmingAnswer, 1)
+	r.pendingZhengming[requestID] = ch
+	return ch
+}
+
+// removePendingZhengming removes a pending zhengming channel.
+func (r *RitualRunner) removePendingZhengming(requestID string) {
+	r.pendingZhengmingMu.Lock()
+	defer r.pendingZhengmingMu.Unlock()
+	delete(r.pendingZhengming, requestID)
+}
+
+// DeliverZhengmingAnswer delivers a zhengming answer to a waiting ritual.
+// Returns true if the answer was delivered to a pending ritual request.
+func (r *RitualRunner) DeliverZhengmingAnswer(answer ZhengmingAnswer) bool {
+	r.pendingZhengmingMu.Lock()
+	ch, ok := r.pendingZhengming[answer.RequestID]
+	r.pendingZhengmingMu.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- answer:
+		return true
+	default:
+		return false
+	}
+}
+
+// HasPendingZhengming returns true if the given request ID has a pending ritual zhengming.
+func (r *RitualRunner) HasPendingZhengming(requestID string) bool {
+	r.pendingZhengmingMu.Lock()
+	defer r.pendingZhengmingMu.Unlock()
+	_, ok := r.pendingZhengming[requestID]
+	return ok
+}
+
+// waitForZhengming registers a channel, sets ritual state to stopped,
+// blocks until the answer arrives or ctx is cancelled, then restores state.
+func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecution, requestID string) (ZhengmingAnswer, error) {
+	ch := r.registerPendingZhengming(requestID)
+	defer r.removePendingZhengming(requestID)
+
+	exec.State = RitualStateStopped
+	r.saveExecution(exec)
+	r.logger.Info("ritual paused waiting for zhengming",
+		"ritual", exec.RitualName,
+		"step", exec.CurrentStep, 
+		"execution_id", exec.ID,
+		"request_id", requestID)
+
+	select {
+	case answer := <-ch:
+		exec.State = RitualStateRunning
+		r.saveExecution(exec)
+		r.logger.Info("ritual resumed after zhengming",
+			"ritual", exec.RitualName,
+			"execution_id", exec.ID,
+			"request_id", requestID,
+			"answer", answer.Answer)
+		return answer, nil
+	case <-ctx.Done():
+		exec.State = RitualStateRunning
+		r.saveExecution(exec)
+		return ZhengmingAnswer{}, ctx.Err()
 	}
 }
 
@@ -773,9 +861,6 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		r.saveExecution(exec)
 	}
 
-	exec.State = RitualStateCompleted
-	r.saveExecution(exec)
-
 	// === RITUAL-LEVEL THEN ===
 	for _, raw := range exec.def.Then {
 		entry, err := r.resolveStepDef(raw)
@@ -783,10 +868,27 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			r.logger.Warn("ritual-level then failed to resolve", "raw", raw, "error", err)
 			continue
 		}
-		if err := r.runThenStep(ctx, exec, entry); err != nil {
+		if err := r.runThenStep(ctx, exec, entry); errors.Is(err, ErrZhengmingPending) {
+			requestID, ok := exec.Data["pending_zhengming"].(string)
+			if !ok || requestID == "" {
+				r.logger.Error("zhengming pending but no request_id in execution data")
+				continue
+			}
+			answer, waitErr := r.waitForZhengming(ctx, exec, requestID)
+			if waitErr != nil {
+				r.logger.Warn("ritual-level then zhengming wait failed", "raw", raw, "error", waitErr)
+				continue
+			}
+			if answer.Answer == "Reject" {
+				r.logger.Warn("ritual-level then zhengming rejected", "raw", raw)
+			}
+		} else if err != nil {
 			r.logger.Warn("ritual-level then step failed", "raw", raw, "error", err)
 		}
 	}
+
+	exec.State = RitualStateCompleted
+	r.saveExecution(exec)
 
 	// Notify: ritual completed
 	if exec.notify != nil {
@@ -937,7 +1039,21 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 				Message:     raw,
 			})
 		}
-		if err := r.runThenStep(ctx, exec, entry); err != nil {
+		if err := r.runThenStep(ctx, exec, entry); errors.Is(err, ErrZhengmingPending) {
+			// Block until the ruler answers the zhengming
+			requestID, ok := exec.Data["pending_zhengming"].(string)
+			if !ok || requestID == "" {
+				r.logger.Error("zhengming pending but no request_id in execution data")
+				continue
+			}
+			answer, waitErr := r.waitForZhengming(ctx, exec, requestID)
+			if waitErr != nil {
+				return "", fmt.Errorf("then %q zhengming wait failed: %w", raw, waitErr)
+			}
+			if answer.Answer == "Reject" {
+				return "", fmt.Errorf("then %q zhengming rejected by ruler", raw)
+			}
+		} else if err != nil {
 			return "", fmt.Errorf("then %q failed: %w", raw, err)
 		}
 		if exec.notify != nil {
@@ -1675,13 +1791,13 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 				Priority:   storage.PriorityUrgent,
 			})
 		}
-		// Return without blocking - ritual will resume on zhengming_answered event
-		// Store request_id in execution data for event handler to check
+		// Store request_id in execution data
 		if exec.Data == nil {
 			exec.Data = storage.JSON{}
 		}
 		exec.Data["pending_zhengming"] = requestID
-		return nil
+		// Return sentinel so the caller can block until the ruler answers
+		return ErrZhengmingPending
 	default:
 		return fmt.Errorf("unknown then function: %s", fn)
 	}
