@@ -331,9 +331,106 @@ func (rg *RitualGuard) MoveToDLQ(event storage.TianEvent, errMsg string, retryCo
 	return nil
 }
 
+// scanForStaleRituals finds running rituals on sealed/cancelled edicts and aborts them
+func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
+	if rg.db == nil || rg.ritualRunner == nil {
+		return
+	}
+
+	// Find all running rituals
+	var runningRituals []RitualExecution
+	if err := rg.db.Where("state = ?", RitualStateRunning).Find(&runningRituals).Error; err != nil {
+		rg.logger.Warn("failed to query running rituals", "error", err)
+		return
+	}
+
+	if len(runningRituals) == 0 {
+		return
+	}
+
+	// Collect edict IDs to check
+	edictIDs := make([]string, 0, len(runningRituals))
+	for _, ritual := range runningRituals {
+		if ritual.EdictID != "" {
+			edictIDs = append(edictIDs, ritual.EdictID)
+		}
+	}
+
+	if len(edictIDs) == 0 {
+		return
+	}
+
+	// Find edicts that are sealed or cancelled
+	var staleEdicts []storage.Edict
+	if err := rg.db.Where("edict_id IN ? AND status IN ?", edictIDs, []storage.EdictStatus{storage.EdictSealed, storage.EdictCancelled}).Find(&staleEdicts).Error; err != nil {
+		rg.logger.Warn("failed to query stale edicts", "error", err)
+		return
+	}
+
+	if len(staleEdicts) == 0 {
+		return
+	}
+
+	// Build set of stale edict IDs
+	staleEdictSet := make(map[string]bool)
+	for _, edict := range staleEdicts {
+		staleEdictSet[edict.EdictID] = true
+		rg.logger.Info("detected stale ritual on edict state change",
+			"edict_id", edict.EdictID,
+			"edict_status", edict.Status)
+	}
+
+	// Abort rituals on stale edicts
+	for _, ritual := range runningRituals {
+		if staleEdictSet[ritual.EdictID] {
+			if err := rg.abortRitual(ctx, &ritual, fmt.Sprintf("edict %s is %s", ritual.EdictID, staleEdicts[0].Status)); err != nil {
+				rg.logger.Warn("failed to abort stale ritual",
+					"execution_id", ritual.ID,
+					"edict_id", ritual.EdictID,
+					"error", err)
+			}
+		}
+	}
+}
+
+// abortRitual marks a ritual as aborted and emits an event
+func (rg *RitualGuard) abortRitual(ctx context.Context, exec *RitualExecution, reason string) error {
+	// Update ritual state to aborted
+	if err := rg.db.Model(&RitualExecution{}).
+		Where("id = ?", exec.ID).
+		Updates(map[string]interface{}{
+			"state":      RitualStateAborted,
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+		return fmt.Errorf("failed to update ritual state: %w", err)
+	}
+
+	// Emit ritual_aborted event
+	if rg.ritualRunner != nil {
+		rg.ritualRunner.emitEvent(exec.EdictID, storage.EventRitualAborted, storage.JSON{
+			"ritual":       exec.RitualName,
+			"execution_id": exec.ID,
+			"reason":       reason,
+		})
+	}
+
+	rg.logger.Info("ritual aborted due to edict state change",
+		"ritual", exec.RitualName,
+		"execution_id", exec.ID,
+		"edict_id", exec.EdictID,
+		"reason", reason)
+
+	return nil
+}
+
 // Run consumes events from the event channel and dispatches them.
 func (rg *RitualGuard) Run(ctx context.Context) {
 	rg.logger.Info("ritual guard started (channel mode)")
+
+	// Create ticker for stale ritual scan every 2 minutes
+	staleScanTicker := time.NewTicker(2 * time.Minute)
+	defer staleScanTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -341,6 +438,8 @@ func (rg *RitualGuard) Run(ctx context.Context) {
 			return
 		case event := <-rg.eventCh:
 			rg.DispatchEvent(event)
+		case <-staleScanTicker.C:
+			rg.scanForStaleRituals(ctx)
 		}
 	}
 }

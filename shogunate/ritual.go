@@ -841,6 +841,21 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		return r.executeForkStep(ctx, exec, step)
 	}
 
+	// Check edict status before executing step - abort if sealed or cancelled
+	if exec.EdictID != "" {
+		var edict storage.Edict
+		if err := r.db.First(&edict, "edict_id = ?", exec.EdictID).Error; err == nil {
+			if edict.Status == storage.EdictSealed || edict.Status == storage.EdictCancelled {
+				r.logger.Info("aborting ritual step due to edict state change",
+					"ritual", exec.RitualName,
+					"step", step.Name,
+					"edict_id", exec.EdictID,
+					"edict_status", edict.Status)
+				return "", fmt.Errorf("ritual aborted: edict %s is %s", exec.EdictID, edict.Status)
+			}
+		}
+	}
+
 	r.saveExecution(exec)
 
 	r.logger.Debug("executing ritual step",

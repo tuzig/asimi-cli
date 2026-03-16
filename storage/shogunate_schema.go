@@ -181,6 +181,7 @@ const (
 	EventRitualStarted     ShogunateEvent = "ritual_started"
 	EventRitualCompleted   ShogunateEvent = "ritual_completed"
 	EventRitualFailed      ShogunateEvent = "ritual_failed"
+	EventRitualAborted     ShogunateEvent = "ritual_aborted"
 	EventStepStarted       ShogunateEvent = "step_started"
 	EventStepCompleted     ShogunateEvent = "step_completed"
 	EventStepFailed        ShogunateEvent = "step_failed"

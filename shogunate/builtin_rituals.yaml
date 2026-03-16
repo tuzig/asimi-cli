@@ -160,21 +160,6 @@
     - record the confucius's seal
     - the edict awaits the ruler's seal
 
-- name: report_failure
-  description: "Report ritual failure after retry exhaustion"
-  triggers:
-    - event: ritual_failed
-  background:
-    - the edict details
-    - the court status
-  steps:
-    - name: report
-      minister: chancellor
-      act: |
-        A ritual has failed after exhausting all retries for edict {{ .edict_id }}.
-        Analyze the failure and suggest next steps.
-        Consider requesting zhengming if the path forward is unclear.
-
 - name: lint-fix
   description: "Fix linter errors in parallel using fork/join"
   triggers:
