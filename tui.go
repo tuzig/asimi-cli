@@ -1770,6 +1770,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnsweringCancelMsg:
 		m.prompt().ExitAnsweringMode()
+		go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: []string{"[chat]"}})
 		return m, nil
 
 	case tools.EditorRequest:
@@ -2663,7 +2664,7 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	statusHeight := 1
 	promptWithBorder := m.prompt().Height + 2
 	tabBarHeight := m.tabs.TabBarHeight()
-	justContentHeight := m.height - commandLineHeight - statusHeight - tabBarHeight + 1 
+	justContentHeight := m.height - commandLineHeight - statusHeight - tabBarHeight
 	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1 - modalHeight
 	if contentHeight < 0 {
 		contentHeight = 0
@@ -2934,10 +2935,11 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 	if m.shogunate == nil {
 		return
 	}
-	m.raiseShogunateEvent(storage.EventZhengmingAnswered, storage.JSON{})
 	// Join answers into a single string for the response
 	answer := strings.Join(msg.Answers, "; ")
-
+	if answer == "[chat]" {
+		return
+	}
 	// Handle DB updates and emit zhengming_answered event
 	type zhengmingHandler interface {
 		HandleZhengmingResponse(ctx context.Context, requestID, answer string) error

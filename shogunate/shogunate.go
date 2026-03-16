@@ -151,6 +151,15 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 	})
 
+	// Forward zhengming_answered events to chancellor for ritual resumption
+	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
+		select {
+		case chancellor.eventChan <- e:
+		default:
+			s.logger.Warn("chancellor event channel full", "event", e.Type)
+		}
+	})
+
 	// Handle zhengming_answered events for edict creation from suggestions
 	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
 		answer, _ := e.Payload["answer"].(string)

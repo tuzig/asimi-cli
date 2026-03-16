@@ -194,7 +194,11 @@ func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) 
 			return false, fmt.Errorf("failed to parse approve_doc result: %w", err)
 		}
 
-		if approveRes.Status == "modified" {
+		switch approveRes.Status {
+		case "rejected":
+			s.logger.Info("plan rejected by user", "edict_id", edictID)
+			return false, nil
+		case "modified":
 			// User modified the plan - for now, log the diff and continue
 			// In a more sophisticated implementation, we could re-parse the modified plan
 			s.logger.Info("plan modified by user", "edict_id", edictID, "diff", approveRes.Diff)

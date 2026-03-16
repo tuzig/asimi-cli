@@ -13,6 +13,26 @@ import (
 	"gorm.io/gorm"
 )
 
+type ctxKey int
+
+const failureKey ctxKey = iota
+
+// CtxWithFailure adds a failure accumulator to the context.
+func CtxWithFailure(ctx context.Context) (context.Context, *strings.Builder) {
+	buf := &strings.Builder{}
+	return context.WithValue(ctx, failureKey, buf), buf
+}
+
+// AddFailure appends a failure reason to the context's accumulator.
+func AddFailure(ctx context.Context, reason string) {
+	if buf, ok := ctx.Value(failureKey).(*strings.Builder); ok {
+		if buf.Len() > 0 {
+			buf.WriteString("; ")
+		}
+		buf.WriteString(reason)
+	}
+}
+
 // ConfuciusRole defines Confucius's identity and capabilities
 const ConfuciusRole = `孔子,the Sage.
 Your domain is clarity, nomenclature, semantic precision, AND code review with precedent tracking.
@@ -206,6 +226,9 @@ func (c *Confucius) processPrompt(ctx context.Context, prompt *Prompt) {
 func (c *Confucius) processTask(ctx context.Context, task *Task) {
 	c.logger.Info("confucius processing task", "edict_id", task.EdictID, "work", task.Work)
 
+	// Inject failure accumulator into context so tools can flag soft failures
+	ctx, failureBuf := CtxWithFailure(ctx)
+
 	// Use task-level notify override for routing (e.g., ritual → Ruling tab)
 	notify := c.notify
 	if task.Notify != nil {
@@ -234,6 +257,7 @@ func (c *Confucius) processTask(ctx context.Context, task *Task) {
 		MinisterID: c.ID(),
 		Sealed:     true,
 		Output:     output,
+		Failure:    failureBuf.String(),
 		Session:    session,
 		Err:        taskErr,
 	}
@@ -337,7 +361,10 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 			return "", fmt.Errorf("failed to parse approve_doc result: %w", err)
 		}
 
-		if approveRes.Status == "modified" {
+		switch approveRes.Status {
+		case "rejected":
+			return `{"status":"rejected","reason":"Ruler dismissed the suggestion (quit without saving)"}`, nil
+		case "modified":
 			// Return to LLM for review — don't create zhengming yet
 			originalJSON, _ := json.Marshal(questionText)
 			modifiedJSON, _ := json.Marshal(approveRes.Content)
@@ -844,6 +871,7 @@ func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, e
 	status := "approved"
 	if !params.Approved {
 		status = "rejected"
+		AddFailure(ctx, fmt.Sprintf("rejected edict %s: %s", params.EdictID, params.Reasoning))
 	}
 	return fmt.Sprintf("Recorded precedent (%s) for edict %s: %s", status, params.EdictID, params.Reasoning), nil
 }

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -29,9 +30,36 @@ func TestApproveDocTool(t *testing.T) {
 		}
 	})
 
-	t.Run("approves unchanged content", func(t *testing.T) {
-		// Use "true" as editor so the file is left unchanged (non-interactive)
+	t.Run("rejects when quit without saving", func(t *testing.T) {
+		// Use "true" as editor so the file is left unchanged (simulates :q!)
 		t.Setenv("EDITOR", "true")
+
+		content := "This is test content that will not be modified"
+		input := map[string]any{
+			"content":     content,
+			"description": "Test review",
+		}
+		inputJSON, _ := json.Marshal(input)
+
+		result, err := tool.Call(context.Background(), string(inputJSON))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var res struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(result), &res); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
+		}
+		if res.Status != "rejected" {
+			t.Fatalf("expected status 'rejected', got: %s", res.Status)
+		}
+	})
+
+	t.Run("approves when saved without changes", func(t *testing.T) {
+		// Use "touch" as editor — updates mtime without changing content (simulates :wq)
+		t.Setenv("EDITOR", "touch")
 
 		content := "This is test content that will not be modified"
 		input := map[string]any{
@@ -105,6 +133,19 @@ func TestApproveDocToolFormat(t *testing.T) {
 		output := tool.Format(input, result, nil)
 		if output == "" {
 			t.Fatal("expected non-empty output")
+		}
+	})
+
+	t.Run("formats rejected result", func(t *testing.T) {
+		input := `{"content": "test", "description": "Test review"}`
+		result := `{"status": "rejected"}`
+
+		output := tool.Format(input, result, nil)
+		if output == "" {
+			t.Fatal("expected non-empty output")
+		}
+		if !strings.Contains(output, "Rejected") {
+			t.Fatalf("expected 'Rejected' in output, got: %s", output)
 		}
 	})
 

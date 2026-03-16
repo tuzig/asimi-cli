@@ -1297,6 +1297,9 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 			if result.Err != nil {
 				return result.Output, result.Err
 			}
+			if result.Failure != "" {
+				return result.Output, fmt.Errorf("%s", result.Failure)
+			}
 			return result.Output, nil
 		case <-zhengmingSig:
 			// Zhengming raised — pause timeout, wait only for completion or cancellation
@@ -1315,6 +1318,9 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 				}
 				if result.Err != nil {
 					return result.Output, result.Err
+				}
+				if result.Failure != "" {
+					return result.Output, fmt.Errorf("%s", result.Failure)
 				}
 				return result.Output, nil
 			case <-ctx.Done():

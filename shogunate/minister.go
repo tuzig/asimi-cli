@@ -71,6 +71,7 @@ type Result struct {
 	MinisterID string
 	Sealed     bool // phase complete
 	Output     string
+	Failure    string   // soft failure reason (tool completed but found problems)
 	Session    *Session // Return session for reuse by ritual runner
 	Err        error
 }

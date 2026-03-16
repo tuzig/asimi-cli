@@ -808,6 +808,8 @@ func (c *Chancellor) processEvent(ctx context.Context, event Event) {
 		c.handleRitualCompleted(ctx, event.EdictID, event.Payload)
 	case storage.EventRitualFailed:
 		c.handleRitualFailed(ctx, event.EdictID, event.Payload)
+	case storage.EventZhengmingAnswered:
+		c.handleZhengmingAnswered(ctx, event.EdictID, event.Payload)
 	default:
 		c.logger.Debug("ignoring unknown event type", "type", event.Type)
 	}
@@ -854,6 +856,35 @@ func (c *Chancellor) handleRitualCompleted(ctx context.Context, edictID string, 
 	// Check if edict should be sealed (all work complete)
 	// For now, this is a placeholder - actual logic depends on edict state
 	c.logger.Debug("ritual completed - edict may need synthesis", "edict_id", edictID)
+}
+
+// handleZhengmingAnswered resumes the chancellor's work on an edict after clarification
+func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, edictID string, payload map[string]interface{}) {
+	answer, _ := payload["answer"].(string)
+	if edictID == "" || answer == "" {
+		return
+	}
+	c.logger.Info("handling zhengming answered", "edict_id", edictID, "answer", answer)
+
+	edict, err := c.GetEdict(edictID)
+	if err != nil {
+		c.logger.Error("failed to get edict for zhengming resumption", "edict_id", edictID, "error", err)
+		return
+	}
+
+	work := fmt.Sprintf("Resume edict %s: %s\n\nThe clarification has been answered. Continue from where you left off.", edictID, edict.Intent)
+	task := &Task{
+		Ctx:     ctx,
+		EdictID: edictID,
+		Work:    work,
+		Done:    make(chan Result, 1),
+	}
+
+	select {
+	case c.taskChan <- task:
+	default:
+		c.logger.Warn("chancellor task channel full", "edict_id", edictID)
+	}
 }
 
 // handleRitualFailed processes a failed ritual event

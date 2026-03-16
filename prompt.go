@@ -68,7 +68,6 @@ type AnsweringState struct {
 	Questions []AnsweringQuestion
 	Answers   []string // collected answers
 	Current   int      // index of current question being answered
-	Typing    bool     // true when user picked "Other..." and is typing
 }
 
 // AnsweringQuestion holds a single question with selectable options
@@ -739,22 +738,16 @@ func (p PromptComponent) viewAnswering() string {
 	b.WriteString(displayText)
 	b.WriteByte('\n')
 
-	if a.Typing {
-		// Show textarea for free-text input
-		b.WriteByte('\n')
-		b.WriteString(p.TextArea.View())
-	} else {
-		// Render options + "Other..."
-		allOptions := append(q.Options, "Other...")
-		for i, opt := range allOptions {
-			if i == q.Selected {
-				b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptOnBorder).Render(fmt.Sprintf("  ▶ %s", opt)))
-			} else {
-				b.WriteString(fmt.Sprintf("    %s", opt))
-			}
-			if i < len(allOptions)-1 {
-				b.WriteByte('\n')
-			}
+	// Render options + "Chat"
+	allOptions := append(q.Options, "Chat")
+	for i, opt := range allOptions {
+		if i == q.Selected {
+			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptOnBorder).Render(fmt.Sprintf("  ▶ %s", opt)))
+		} else {
+			b.WriteString(fmt.Sprintf("    %s", opt))
+		}
+		if i < len(allOptions)-1 {
+			b.WriteByte('\n')
 		}
 	}
 
@@ -769,34 +762,8 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 	}
 	q := &a.Questions[a.Current]
 
-	// When typing free-text ("Other..." selected)
-	if a.Typing {
-		switch keyMsg.Type {
-		case tea.KeyEscape:
-			// Go back to option selection
-			a.Typing = false
-			p.TextArea.SetValue("")
-			p.TextArea.Blur()
-			return p, nil
-		case tea.KeyEnter:
-			if !keyMsg.Alt {
-				text := strings.TrimSpace(p.TextArea.Value())
-				if text == "" {
-					return p, nil
-				}
-				p.TextArea.SetValue("")
-				p.TextArea.Blur()
-				a.Typing = false
-				return p.advanceAnswer(text)
-			}
-		}
-		// Delegate to textarea for typing
-		p.TextArea, _ = p.TextArea.Update(keyMsg)
-		return p, nil
-	}
-
 	// Option selection mode
-	totalOptions := len(q.Options) + 1 // +1 for "Other..."
+	totalOptions := len(q.Options) + 1 // +1 for "Chat"
 	switch keyMsg.String() {
 	case "j", "down":
 		q.Selected = (q.Selected + 1) % totalOptions
@@ -804,14 +771,13 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 		q.Selected = (q.Selected - 1 + totalOptions) % totalOptions
 	case "enter":
 		if q.Selected == len(q.Options) {
-			// "Other..." selected — switch to typing mode
-			a.Typing = true
-			p.TextArea.SetValue("")
-			p.TextArea.Placeholder = "Type your answer..."
-			p.TextArea.Focus()
-		} else {
-			return p.advanceAnswer(q.Options[q.Selected])
+			// "Chat" selected — reject zhengming and return to chat
+			requestID := a.RequestID
+			return p, func() tea.Msg {
+				return AnsweredMsg{RequestID: requestID, Answers: []string{"[chat]"}}
+			}
 		}
+		return p.advanceAnswer(q.Options[q.Selected])
 	case "esc":
 		return p, func() tea.Msg { return AnsweringCancelMsg{RequestID: a.RequestID} }
 	}

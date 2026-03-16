@@ -58,8 +58,16 @@ func (t ApproveDocTool) Call(ctx context.Context, input string) (string, error) 
 		editor = "vi"
 	}
 
+	// Derive extension from filename param, default to .md for editor syntax highlighting
+	ext := ".md"
+	if params.Filename != "" {
+		if i := strings.LastIndex(params.Filename, "."); i >= 0 {
+			ext = params.Filename[i:]
+		}
+	}
+
 	// Create temp file with original content
-	tmpFile, err := os.CreateTemp("", "approve_doc_*.txt")
+	tmpFile, err := os.CreateTemp("", "approve_doc_*"+ext)
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -70,6 +78,14 @@ func (t ApproveDocTool) Call(ctx context.Context, input string) (string, error) 
 		os.Remove(tmpPath)
 		return "", fmt.Errorf("failed to write temp file: %w", err)
 	}
+
+	// Capture mtime before editor to detect :q! (quit without saving)
+	statBefore, err := os.Stat(tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("failed to stat temp file: %w", err)
+	}
+	mtimeBefore := statBefore.ModTime()
 
 	// Ask the TUI to run the editor via tea.ExecProcess and block until done
 	cmd := exec.Command(editor, tmpPath)
@@ -88,6 +104,19 @@ func (t ApproveDocTool) Call(ctx context.Context, input string) (string, error) 
 		}
 	}
 
+	// Check mtime to detect :q! (quit without saving)
+	statAfter, err := os.Stat(tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("failed to stat temp file after edit: %w", err)
+	}
+
+	if statAfter.ModTime().Equal(mtimeBefore) {
+		// mtime unchanged → user quit without saving (:q!)
+		os.Remove(tmpPath)
+		return `{"status":"rejected"}`, nil
+	}
+
 	// Read modified content
 	modifiedContent, err := os.ReadFile(tmpPath)
 	if err != nil {
@@ -95,13 +124,14 @@ func (t ApproveDocTool) Call(ctx context.Context, input string) (string, error) 
 		return "", fmt.Errorf("failed to read modified file: %w", err)
 	}
 
-	// Compare with original
+	// mtime changed but content same → user saved without edits (:wq)
 	if string(modifiedContent) == params.Content {
 		os.Remove(tmpPath)
 		return `{"status":"approved"}`, nil
 	}
 
 	// Compute diff (must happen before removing tmpPath)
+	// TODO: use a go library for this
 	diffCmd := exec.Command("diff", "-u", "-", tmpPath)
 	diffCmd.Stdin = strings.NewReader(params.Content)
 	diffOutput, err := diffCmd.Output()
@@ -128,7 +158,7 @@ func (t ApproveDocTool) ParameterSchema() map[string]any {
 		"properties": map[string]any{
 			"content": map[string]any{
 				"type":        "string",
-				"description": "Document content to review",
+				"description": "Document content to review, formatted as markdown",
 			},
 			"filename": map[string]any{
 				"type":        "string",
@@ -161,9 +191,12 @@ func (t ApproveDocTool) Format(input, result string, err error) string {
 			Status string `json:"status"`
 		}
 		json.Unmarshal([]byte(result), &res)
-		if res.Status == "approved" {
+		switch res.Status {
+		case "approved":
 			msg.WriteString("Approved (no changes)")
-		} else {
+		case "rejected":
+			msg.WriteString("Rejected (quit without saving)")
+		default:
 			msg.WriteString("Modified (diff returned)")
 		}
 	}
