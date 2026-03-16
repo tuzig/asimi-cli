@@ -26,9 +26,9 @@ func (m TUIModel) renderShogunateView(height int) string {
 
 	// TODO: use globalTheme
 	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
-	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#222222"))
 	failedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#CC4444"))
-	detailStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
+	detailStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00CCCC"))
 

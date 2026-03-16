@@ -8,7 +8,6 @@ Our goal is to harmonize The 三界:
        - Logs track events
        - 刑部 presides here
        - Immutable, binary, absolute
-       - **Sealed edicts** — work that has received the Ruler's final seal
 
      地 — Source code
        - Git repository made from Raw code, files, directories
@@ -27,6 +26,7 @@ Our goal is to harmonize The 三界:
        - The Chancellor receives and interprets
        - 孔子 (Confucius) helps the Ruler see behind walls and plan knight moves
        - Subjective, nuanced, requiring 正名
+       - Also, TODO comments
 
 ## The Seal Chain — Ascension Ritual
 
