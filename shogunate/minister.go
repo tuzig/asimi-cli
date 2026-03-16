@@ -554,6 +554,54 @@ func (m *MinisterBase) EmitEvent(edictID string, eventType storage.ShogunateEven
 	return nil
 }
 
+// grantSeal records the minister's seal on an edict
+func (m *MinisterBase) grantSeal(edictID string, metadata storage.JSON) error {
+	// Check if minister already sealed this edict
+	hasSeal, err := m.hasSeal(edictID)
+	if err != nil {
+		return fmt.Errorf("check existing seal: %w", err)
+	}
+	if hasSeal {
+		m.logger.Debug("seal already granted", "edict_id", edictID, "minister_id", m.ministerID)
+		return nil
+	}
+
+	// Create seal with metadata
+	sealID := GenerateID("seal", edictID, m.ministerID)
+	seal := storage.Seal{
+		SealID:     sealID,
+		EdictID:    edictID,
+		MinisterID: m.ministerID,
+		SealedAt:   time.Now(),
+		Metadata:   metadata,
+	}
+
+	if err := m.db.Create(&seal).Error; err != nil {
+		return fmt.Errorf("failed to grant seal: %w", err)
+	}
+
+	// Emit event
+	m.EmitEvent(edictID, storage.EventSealGranted, storage.JSON{
+		"minister_id": m.ministerID,
+		"seal_id":     sealID,
+	})
+
+	m.logger.Info("seal granted", "edict_id", edictID, "seal_id", sealID)
+	return nil
+}
+
+// hasSeal checks if the minister has already sealed this edict
+func (m *MinisterBase) hasSeal(edictID string) (bool, error) {
+	var count int64
+	err := m.db.Model(&storage.Seal{}).
+		Where("edict_id = ? AND minister_id = ?", edictID, m.ministerID).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to check seal: %w", err)
+	}
+	return count > 0, nil
+}
+
 // GetEdict retrieves an edict by ID
 func (m *MinisterBase) GetEdict(edictID string) (*storage.Edict, error) {
 	var edict storage.Edict

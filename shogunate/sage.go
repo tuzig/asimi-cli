@@ -872,6 +872,11 @@ func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, e
 	if !params.Approved {
 		status = "rejected"
 		AddFailure(ctx, fmt.Sprintf("rejected edict %s: %s", params.EdictID, params.Reasoning))
+	} else {
+		// Grant Sage's seal when approved
+		if err := t.sage.grantSeal(params.EdictID, storage.JSON{"reason": params.Reasoning}); err != nil {
+			t.sage.logger.Warn("failed to grant sage seal", "edict_id", params.EdictID, "error", err)
+		}
 	}
 	return fmt.Sprintf("Recorded precedent (%s) for edict %s: %s", status, params.EdictID, params.Reasoning), nil
 }

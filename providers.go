@@ -330,6 +330,7 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 	// Auto-migrate Shogunate tables
 	if err := db.AutoMigrate(
 		&storage.Edict{},
+		&storage.Seal{},
 		&storage.Zhengming{},
 		&storage.TianEvent{},
 		&storage.TianEventDLQ{},

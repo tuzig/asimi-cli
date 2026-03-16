@@ -38,11 +38,12 @@
       minister: judge
       given:
         - the manifests
-        - '!just test'
+        - "!just test"
       act: |
-        If tests fail, provide clear feedback for the Forge.
-        if they pass ensure the changes in the manifest are covered by tests
-        that ensure the change will ALWAYS work
+        If any tests were changed, you need to verify that were not weakened
+        and that non trivial changes are justified by the edict.
+        If tests fail, provide clear feedback for the Forge on what needs to be fixed.
+        If changes are not covered by test, add the missing tests and write them so they ensure the changed code will always work.
       depends_on: [forge]
       on_failure: goto
       on_failure_target: forge

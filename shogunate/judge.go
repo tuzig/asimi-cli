@@ -197,6 +197,13 @@ func (j *Judge) execute(ctx context.Context, edictID string) (bool, error) {
 		return false, fmt.Errorf("check quenched after judging: %w", err)
 	}
 
+	// If all manifests passed, grant the Judge's seal
+	if allQuenched {
+		if err := j.grantSeal(edictID, storage.JSON{"type": "judgment_complete"}); err != nil {
+			j.logger.Warn("failed to grant judge seal", "edict_id", edictID, "error", err)
+		}
+	}
+
 	return allQuenched, nil
 }
 
