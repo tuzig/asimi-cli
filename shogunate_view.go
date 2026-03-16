@@ -26,7 +26,7 @@ func (m TUIModel) renderShogunateView(height int) string {
 
 	// TODO: use globalTheme
 	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
-	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#222222"))
+	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 	failedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#CC4444"))
 	detailStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
@@ -47,22 +47,16 @@ func (m TUIModel) renderShogunateView(height int) string {
 		b.WriteString(labelStyle.Render(" No rituals recorded"))
 		b.WriteString("\n")
 	} else {
-		// Column header
-		b.WriteString(labelStyle.Render(fmt.Sprintf(" %-16s %-10s %-10s %-18s %s", "RITUAL", "EDICT", "STATE", "STEP", "AGE")))
-		b.WriteString("\n")
-		ritualRows := halfHeight - 1 // subtract column header
 		shown := len(snap.Rituals)
-		if shown > ritualRows {
-			shown = ritualRows
+		if shown > halfHeight {
+			shown = halfHeight
 		}
 		for _, r := range snap.Rituals[:shown] {
 			edictShort := r.EdictID
-			if len(edictShort) > 8 {
-				edictShort = edictShort[:8]
+			if len(edictShort) > 10 {
+				edictShort = edictShort[:10]
 			}
 			stepInfo := fmt.Sprintf("%d/%d %s", r.CurrentStep+1, r.TotalSteps, r.StepName)
-			line := fmt.Sprintf(" %-16s %-10s %-10s %-18s %s",
-				r.RitualName, edictShort, string(r.State), stepInfo, formatAge(r.Age))
 
 			var style lipgloss.Style
 			switch {
@@ -73,7 +67,14 @@ func (m TUIModel) renderShogunateView(height int) string {
 			default:
 				style = completedStyle
 			}
-			b.WriteString(style.Render(line))
+
+			b.WriteString(fmt.Sprintf(" %s  ",
+				labelStyle.Render(r.StartedAt.Format("15:04:05"))))
+			b.WriteString(fmt.Sprintf("%-16s ",
+				style.Render(r.RitualName)))
+			b.WriteString(fmt.Sprintf("%-10s %-18s %s",
+				style.Render(string(r.State)), style.Render(stepInfo),
+				labelStyle.Render(edictShort)))
 			b.WriteString("\n")
 		}
 	}

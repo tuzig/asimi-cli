@@ -16,6 +16,7 @@ type RitualEntry struct {
 	TotalSteps  int
 	StepName    string
 	Age         time.Duration
+	StartedAt   time.Time
 }
 
 // EventEntry represents a single event from the tian_events ledger.
@@ -53,6 +54,7 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 					State:       ex.State,
 					CurrentStep: ex.CurrentStep,
 					Age:         age,
+					StartedAt:   ex.CreatedAt,
 				}
 				// Get step info from the ritual definition
 				if def := rr.registry.Get(ex.RitualName); def != nil {
