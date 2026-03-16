@@ -33,8 +33,8 @@ func AddFailure(ctx context.Context, reason string) {
 	}
 }
 
-// ConfuciusRole defines Confucius's identity and capabilities
-const ConfuciusRole = `孔子,the Sage.
+// SageRole defines the Sage's identity and capabilities
+const SageRole = `孔子 聖人, the Sage.
 Your domain is clarity, nomenclature, semantic precision, AND code review with precedent tracking.
 
 You have full read-only access to the codebase, edicts, and all court records.
@@ -107,8 +107,8 @@ type Finding struct {
 	Principle string `json:"principle"` // The principle violated (if any)
 }
 
-// Confucius provides read-only codebase exploration and suggests edicts via zhengming
-type Confucius struct {
+// Sage provides read-only codebase exploration and suggests edicts via zhengming
+type Sage struct {
 	*MinisterBase
 	shogunate *Shogunate
 	tasks     chan *Task
@@ -116,10 +116,10 @@ type Confucius struct {
 	linter    Linter
 }
 
-// NewConfucius creates a new Confucius minister
-func NewConfucius(base *MinisterBase, linter Linter) *Confucius {
-	base.ministerID = "confucius"
-	return &Confucius{
+// NewSage creates a new Sage minister
+func NewSage(base *MinisterBase, linter Linter) *Sage {
+	base.ministerID = "sage"
+	return &Sage{
 		MinisterBase: base,
 		tasks:        make(chan *Task, 10),
 		linter:       linter,
@@ -127,29 +127,29 @@ func NewConfucius(base *MinisterBase, linter Linter) *Confucius {
 }
 
 // ID returns the minister identifier
-func (c *Confucius) ID() string { return "confucius" }
+func (c *Sage) ID() string { return "sage" }
 
 // Title returns the minister's honorific title
-func (c *Confucius) Title() string { return "Confucius" }
+func (c *Sage) Title() string { return "Sage" }
 
-// SystemPrompt returns Confucius's system prompt template.
-func (c *Confucius) SystemPrompt() string { return ConfuciusRole }
+// SystemPrompt returns the Sage's system prompt template.
+func (c *Sage) SystemPrompt() string { return SageRole }
 
 // Tasks returns the channel for task submission
-func (c *Confucius) Tasks() chan<- *Task { return c.tasks }
+func (c *Sage) Tasks() chan<- *Task { return c.tasks }
 
-// Tools returns Confucius's LLM tools — read-only access plus zhengming and review tools
-func (c *Confucius) Tools() []Tool {
+// Tools returns the Sage's LLM tools — read-only access plus zhengming and review tools
+func (c *Sage) Tools() []Tool {
 	toolList := []Tool{
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
-		&SuggestEdictTool{confucius: c},
+		&SuggestEdictTool{sage: c},
 		&QueryCourtTool{db: c.db},
 		// Review and precedent tools
-		&RecordPrecedentTool{confucius: c},
-		&ListQuenchedManifestsTool{confucius: c},
-		&QueryPrecedentsTool{confucius: c},
-		&ReviewDiffTool{confucius: c},
+		&RecordPrecedentTool{sage: c},
+		&ListQuenchedManifestsTool{sage: c},
+		&QueryPrecedentsTool{sage: c},
+		&ReviewDiffTool{sage: c},
 	}
 	for _, t := range tools.GetROTools() {
 		toolList = append(toolList, t)
@@ -158,7 +158,7 @@ func (c *Confucius) Tools() []Tool {
 }
 
 // GetEdict retrieves an edict (satisfies EdictManager for GetEdictStatusTool)
-func (c *Confucius) GetEdict(edictID string) (*storage.Edict, error) {
+func (c *Sage) GetEdict(edictID string) (*storage.Edict, error) {
 	var edict storage.Edict
 	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -169,14 +169,14 @@ func (c *Confucius) GetEdict(edictID string) (*storage.Edict, error) {
 	return &edict, nil
 }
 
-// AppendToIntent is a no-op stub — Confucius never modifies edicts (satisfies EdictManager interface)
-// Run starts Confucius's processing loop
-func (c *Confucius) Run(ctx context.Context) {
-	c.logger.Info("confucius started, awaiting prompts")
+// AppendToIntent is a no-op stub — Sage never modifies edicts (satisfies EdictManager interface)
+// Run starts the Sage's processing loop
+func (c *Sage) Run(ctx context.Context) {
+	c.logger.Info("sage started, awaiting prompts")
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("confucius stopped")
+			c.logger.Info("sage stopped")
 			return
 		case prompt := <-c.PromptsChan():
 			// Merge lifecycle ctx (shutdown) with per-prompt ctx (CTRL-C):
@@ -198,33 +198,33 @@ func (c *Confucius) Run(ctx context.Context) {
 	}
 }
 
-func (c *Confucius) processPrompt(ctx context.Context, prompt *Prompt) {
+func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 	if c.model == nil {
-		c.notify(StreamErrorMsg{TabID: "confucius", Err: fmt.Errorf("LLM not configured")})
+		c.notify(StreamErrorMsg{TabID: "sage", Err: fmt.Errorf("LLM not configured")})
 		return
 	}
 
 	if c.session == nil {
 		var err error
-		c.session, err = CreateSession(c, c.model, c.config, c.notify, "confucius", prompt.EdictID)
+		c.session, err = CreateSession(c, c.model, c.config, c.notify, "sage", prompt.EdictID)
 		if err != nil {
-			c.notify(StreamErrorMsg{TabID: "confucius", Err: fmt.Errorf("failed to create session: %w", err)})
+			c.notify(StreamErrorMsg{TabID: "sage", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
 	}
 
-	c.notify(StreamStartMsg{TabID: "confucius", EdictID: "confucius"})
+	c.notify(StreamStartMsg{TabID: "sage", EdictID: "sage"})
 
 	_, err := c.session.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
 	if err != nil && ctx.Err() == nil {
-		c.notify(StreamErrorMsg{TabID: "confucius", Err: err})
+		c.notify(StreamErrorMsg{TabID: "sage", Err: err})
 		return
 	}
-	c.notify(StreamDoneMsg{TabID: "confucius"})
+	c.notify(StreamDoneMsg{TabID: "sage"})
 }
 
-func (c *Confucius) processTask(ctx context.Context, task *Task) {
-	c.logger.Info("confucius processing task", "edict_id", task.EdictID, "work", task.Work)
+func (c *Sage) processTask(ctx context.Context, task *Task) {
+	c.logger.Info("sage processing task", "edict_id", task.EdictID, "work", task.Work)
 
 	// Inject failure accumulator into context so tools can flag soft failures
 	ctx, failureBuf := CtxWithFailure(ctx)
@@ -250,7 +250,7 @@ func (c *Confucius) processTask(ctx context.Context, task *Task) {
 			session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify)
 		}
 	} else {
-		output = "confucius task acknowledged (no LLM configured)"
+		output = "sage task acknowledged (no LLM configured)"
 	}
 
 	result := Result{
@@ -271,14 +271,14 @@ func (c *Confucius) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (c *Confucius) streamTask(ctx context.Context, work, edictID, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
+func (c *Sage) streamTask(ctx context.Context, work, edictID, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
 	session, err := CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
 		EdictID:    edictID,
 		TabID:      "chancellor",
 		Scratchpad: scratchpad,
 	})
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create confucius session: %w", err)
+		return nil, "", fmt.Errorf("failed to create sage session: %w", err)
 	}
 
 	_, err = session.AskWithStreaming(ctx, work, nil)
@@ -286,15 +286,15 @@ func (c *Confucius) streamTask(ctx context.Context, work, edictID, scratchpad st
 		return session, "", err
 	}
 
-	c.logger.Info("confucius task completed")
+	c.logger.Info("sage task completed")
 	return session, "", nil
 }
 
-// --- Confucius-specific tools ---
+// --- Sage-specific tools ---
 
-// SuggestEdictTool suggests a new edict via zhengming (Confucius never creates edicts)
+// SuggestEdictTool suggests a new edict via zhengming (Sage never creates edicts)
 type SuggestEdictTool struct {
-	confucius *Confucius
+	sage *Sage
 }
 
 func (t *SuggestEdictTool) Name() string { return "suggest_edict" }
@@ -340,7 +340,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 
 	// For large suggestions (>500 chars), use approve_doc for external review
 	if len(questionText) > 500 {
-		approveTool := tools.ApproveDocTool{Notify: t.confucius.notify}
+		approveTool := tools.ApproveDocTool{Notify: t.sage.notify}
 		approveInput := map[string]any{
 			"content":     questionText,
 			"description": "Review edict suggestion before submission",
@@ -382,17 +382,17 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 	}}
 
 	edictID := ""
-	requestID, err := t.confucius.RequestZhengming(edictID, questions, priority)
+	requestID, err := t.sage.RequestZhengming(edictID, questions, priority)
 	if err != nil {
 		return "", fmt.Errorf("failed to suggest edict: %w", err)
 	}
 
 	// Notify TUI
-	if t.confucius.notify != nil {
-		t.confucius.notify(ZhengmingPendingMsg{
+	if t.sage.notify != nil {
+		t.sage.notify(ZhengmingPendingMsg{
 			RequestID:  requestID,
 			EdictID:    edictID,
-			MinisterID: t.confucius.ministerID,
+			MinisterID: t.sage.ministerID,
 			Questions:  questions,
 			Priority:   priority,
 		})
@@ -555,7 +555,7 @@ func truncateForCourt(s string, maxLen int) string {
 // --- Database Methods (migrated from Censor) ---
 
 // GetQuenchedManifests retrieves all quenched manifests ready for ethics review
-func (c *Confucius) GetQuenchedManifests(edictID string) ([]storage.ForgeManifest, error) {
+func (c *Sage) GetQuenchedManifests(edictID string) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
 	err := c.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestQuenched).
 		Order("created_at ASC").
@@ -567,7 +567,7 @@ func (c *Confucius) GetQuenchedManifests(edictID string) ([]storage.ForgeManifes
 }
 
 // NoRejections checks if there are any rejected manifests for an edict
-func (c *Confucius) NoRejections(edictID string) (bool, error) {
+func (c *Sage) NoRejections(edictID string) (bool, error) {
 	var count int64
 	err := c.db.Model(&storage.ForgeManifest{}).
 		Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
@@ -579,7 +579,7 @@ func (c *Confucius) NoRejections(edictID string) (bool, error) {
 }
 
 // LogPrecedent records an ethics decision for a manifest
-func (c *Confucius) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
+func (c *Sage) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
 	precedentID := GenerateID("precedent", manifestID, principle)
 
 	precedent := storage.CensorPrecedent{
@@ -597,7 +597,7 @@ func (c *Confucius) LogPrecedent(manifestID, principle string, ruling storage.Pr
 }
 
 // RejectManifest marks a manifest as rejected by the Censor
-func (c *Confucius) RejectManifest(manifestID string) error {
+func (c *Sage) RejectManifest(manifestID string) error {
 	result := c.db.Model(&storage.ForgeManifest{}).
 		Where("manifest_id = ?", manifestID).
 		Update("status", storage.ManifestRejected)
@@ -611,7 +611,7 @@ func (c *Confucius) RejectManifest(manifestID string) error {
 }
 
 // GetPrecedentsForManifest retrieves all precedents for a specific manifest
-func (c *Confucius) GetPrecedentsForManifest(manifestID string) ([]storage.CensorPrecedent, error) {
+func (c *Sage) GetPrecedentsForManifest(manifestID string) ([]storage.CensorPrecedent, error) {
 	var precedents []storage.CensorPrecedent
 	err := c.db.Where("manifest_id = ?", manifestID).
 		Order("created_at ASC").
@@ -623,7 +623,7 @@ func (c *Confucius) GetPrecedentsForManifest(manifestID string) ([]storage.Censo
 }
 
 // QueryPrecedentsByPrinciple searches precedents by principle (for case law lookup)
-func (c *Confucius) QueryPrecedentsByPrinciple(principle string, limit int) ([]storage.CensorPrecedent, error) {
+func (c *Sage) QueryPrecedentsByPrinciple(principle string, limit int) ([]storage.CensorPrecedent, error) {
 	var precedents []storage.CensorPrecedent
 	query := c.db.Where("principle LIKE ?", "%"+principle+"%").
 		Order("created_at DESC")
@@ -638,7 +638,7 @@ func (c *Confucius) QueryPrecedentsByPrinciple(principle string, limit int) ([]s
 }
 
 // GetEdictsWithQuenchedManifests returns edicts with quenched manifests needing review
-func (c *Confucius) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
+func (c *Sage) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := c.db.Distinct("edicts.*").
 		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
@@ -655,8 +655,8 @@ func (c *Confucius) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 
 // ReviewDiff reviews a diff string and returns structured findings.
 // This method can be used for ad-hoc reviews without requiring manifests or database writes.
-// The Confucius's Role() prompt guides the review process.
-func (c *Confucius) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, error) {
+// The Sage's Role() prompt guides the review process.
+func (c *Sage) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, error) {
 	// If no LLM is configured, return a basic result
 	if c.model == nil {
 		return &ReviewResult{
@@ -669,7 +669,7 @@ func (c *Confucius) ReviewDiff(ctx context.Context, diff string) (*ReviewResult,
 	// Create a session for the review
 	session, err := CreateSession(c, c.model, c.config, c.notify, "chancellor")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create confucius session: %w", err)
+		return nil, fmt.Errorf("failed to create sage session: %w", err)
 	}
 
 	// Build the review prompt
@@ -688,7 +688,7 @@ func (c *Confucius) ReviewDiff(ctx context.Context, diff string) (*ReviewResult,
 
 // ReviewDiffWithManifests reviews a diff in the context of manifests and records precedents.
 // This is used during ritual workflows where the review outcome should be persisted.
-func (c *Confucius) ReviewDiffWithManifests(ctx context.Context, diff string, manifests []storage.ForgeManifest) (*ReviewResult, error) {
+func (c *Sage) ReviewDiffWithManifests(ctx context.Context, diff string, manifests []storage.ForgeManifest) (*ReviewResult, error) {
 	// First, perform the diff review
 	result, err := c.ReviewDiff(ctx, diff)
 	if err != nil {
@@ -739,7 +739,7 @@ func (c *Confucius) ReviewDiffWithManifests(ctx context.Context, diff string, ma
 }
 
 // buildReviewPrompt constructs the prompt for diff review
-func (c *Confucius) buildReviewPrompt(diff string) string {
+func (c *Sage) buildReviewPrompt(diff string) string {
 	return fmt.Sprintf(`Review the following code diff and provide your assessment.
 
 DIFF:
@@ -769,7 +769,7 @@ If the diff is clean with no issues, return approved=true with empty findings an
 }
 
 // parseReviewResponse parses the LLM response into a ReviewResult
-func (c *Confucius) parseReviewResponse(response string) *ReviewResult {
+func (c *Sage) parseReviewResponse(response string) *ReviewResult {
 	result := &ReviewResult{
 		Approved:  true,
 		Findings:  []Finding{},
@@ -820,7 +820,7 @@ func (c *Confucius) parseReviewResponse(response string) *ReviewResult {
 
 // RecordPrecedentTool records an ethics review outcome
 type RecordPrecedentTool struct {
-	confucius *Confucius
+	sage *Sage
 }
 
 func (t *RecordPrecedentTool) Name() string { return "record_precedent" }
@@ -843,7 +843,7 @@ func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, e
 	}
 
 	// Get quenched manifests to review
-	manifests, err := t.confucius.GetQuenchedManifests(params.EdictID)
+	manifests, err := t.sage.GetQuenchedManifests(params.EdictID)
 	if err != nil {
 		return "", err
 	}
@@ -855,14 +855,14 @@ func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, e
 
 	// Log precedent for each manifest
 	for _, m := range manifests {
-		_, err := t.confucius.LogPrecedent(m.ManifestID, "ethics_review", ruling, params.Reasoning)
+		_, err := t.sage.LogPrecedent(m.ManifestID, "ethics_review", ruling, params.Reasoning)
 		if err != nil {
 			return "", fmt.Errorf("failed to log precedent: %w", err)
 		}
 
 		// Reject manifest if not approved
 		if !params.Approved {
-			if err := t.confucius.RejectManifest(m.ManifestID); err != nil {
+			if err := t.sage.RejectManifest(m.ManifestID); err != nil {
 				return "", fmt.Errorf("failed to reject manifest: %w", err)
 			}
 		}
@@ -897,7 +897,7 @@ func (t *RecordPrecedentTool) Format(input, result string, err error) string {
 
 // ListQuenchedManifestsTool lists manifests ready for ethics review
 type ListQuenchedManifestsTool struct {
-	confucius *Confucius
+	sage *Sage
 }
 
 func (t *ListQuenchedManifestsTool) Name() string { return "list_quenched_manifests" }
@@ -917,7 +917,7 @@ func (t *ListQuenchedManifestsTool) Call(ctx context.Context, input string) (str
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	manifests, err := t.confucius.GetQuenchedManifests(params.EdictID)
+	manifests, err := t.sage.GetQuenchedManifests(params.EdictID)
 	if err != nil {
 		return "", err
 	}
@@ -952,7 +952,7 @@ func (t *ListQuenchedManifestsTool) Format(input, result string, err error) stri
 
 // QueryPrecedentsTool searches precedents by principle
 type QueryPrecedentsTool struct {
-	confucius *Confucius
+	sage *Sage
 }
 
 func (t *QueryPrecedentsTool) Name() string { return "query_precedents" }
@@ -976,7 +976,7 @@ func (t *QueryPrecedentsTool) Call(ctx context.Context, input string) (string, e
 		params.Limit = 10
 	}
 
-	precedents, err := t.confucius.QueryPrecedentsByPrinciple(params.Principle, params.Limit)
+	precedents, err := t.sage.QueryPrecedentsByPrinciple(params.Principle, params.Limit)
 	if err != nil {
 		return "", err
 	}
@@ -1012,7 +1012,7 @@ func (t *QueryPrecedentsTool) Format(input, result string, err error) string {
 
 // ReviewDiffTool provides ad-hoc diff review capability for use in conversations
 type ReviewDiffTool struct {
-	confucius *Confucius
+	sage *Sage
 }
 
 func (t *ReviewDiffTool) Name() string { return "review_diff" }
@@ -1032,7 +1032,7 @@ func (t *ReviewDiffTool) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("diff is required")
 	}
 
-	result, err := t.confucius.ReviewDiff(ctx, params.Diff)
+	result, err := t.sage.ReviewDiff(ctx, params.Diff)
 	if err != nil {
 		return "", fmt.Errorf("review failed: %w", err)
 	}

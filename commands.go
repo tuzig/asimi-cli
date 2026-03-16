@@ -767,7 +767,7 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 	if len(args) == 0 {
 		// Default: open a Hunting tab
-		model.tabs.Add("Hunting", TabHunting, "confucius")
+		model.tabs.Add("Hunting", TabHunting, "sage")
 		model.commandLine.AddToast("Opened Hunting tab", "success", time.Second*2)
 		return nil
 	}
@@ -775,7 +775,7 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 	target := args[0]
 	switch target {
 	case "hunting":
-		model.tabs.Add("Hunting", TabHunting, "confucius")
+		model.tabs.Add("Hunting", TabHunting, "sage")
 		model.commandLine.AddToast("Opened Hunting tab", "success", time.Second*2)
 	case "shogunate":
 		model.tabs.Add("Shogunate", TabShogunate, "shogunate")

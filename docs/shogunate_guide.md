@@ -27,7 +27,7 @@ This is the essence of Zhengming (正名).
 ### Main Function
 
 The Shogunate's purpose is to free the Ruler to hunt.
-The Ruler together with Confucius the sage will hunt for new rituals,
+The Ruler together with the Sage will hunt for new rituals,
 improvments and look behind corners to come up with knight moves.
 The court handles the bureaucracy so the Ruler
 can stay in skirmish tempo, spotting openings and shaping direction.
@@ -83,7 +83,7 @@ to handle complex software engineering tasks from inception to deployment.
                         └─────┬───────────────┬───────┘
                               │ Prompt        │ Prompt
                         ┌─────▼─────┐   ┌────▼──────┐
-                        │Chancellor │   │ Confucius │
+                        │Chancellor │   │   Sage    │
                         │  (宰相)    │   │  (孔子)    │
                         └─────┬─────┘   └───────────┘
                               │              sees all (read-only)
@@ -144,7 +144,7 @@ Each minister is a specialized AI agent with a specific role:
 | **Judge** | Writes tests and validates changes through test coverage | `read_file`, `write_file`, `edit_file`, `glob`, `run_shell_command` | `record_verdict`, `reject_manifest`, `request_zhengming` |
 | **Censor** | Reviews code for ethics, quality, and standards compliance | `read_file`, `glob`, `grep` | `record_precedent`, `reject_manifest`, `request_zhengming` |
 | **Marshal** | Handles production incidents and performs root cause analysis | `read_file`, `glob`, `grep`, `run_shell_command` | `create_incident`, `resolve_incident`, `request_zhengming` |
-| **Confucius** | Sees all state read-only, helps distill intent into edicts | `read_file`, `glob`, `grep` (all tables) | `create_edict`, `request_zhengming` |
+| **Sage** | Sees all state read-only, helps distill intent into edicts | `read_file`, `glob`, `grep` (all tables) | `create_edict`, `request_zhengming` |
 
 **Core Tools** are the basic file system and shell tools needed for each minister's work. **Specialized Tools** are unique to each minister's role in the Shogunate.
 
@@ -750,17 +750,17 @@ The Ruling tab is the court. You talk to the **Chancellor**, edicts flow through
 
 #### Hunting Tab — Skirmish Tempo
 
-The Hunting tab is where agility lives — knight moves, L-shaped lateral thinking. You talk to **Confucius** (孔子), who sits outside the court hierarchy.
+The Hunting tab is where agility lives — knight moves, L-shaped lateral thinking. You talk to **Sage** (孔子), who sits outside the court hierarchy.
 
-**Confucius** sees everything: edicts, ling, manifests, precedents, code — full read-only access across the entire system. His job is to distill the Ruler's *ren* (仁) — to help fuzzy intent crystallize into sharp edicts.
+**Sage** sees everything: edicts, ling, manifests, precedents, code — full read-only access across the entire system. His job is to distill the Ruler's *ren* (仁) — to help fuzzy intent crystallize into sharp edicts.
 
 ```
 Hunting tab                          Ruling tab
 ───────────                          ──────────
-You + Confucius                      Chancellor + Court
+You + Sage                      Chancellor + Court
     │                                     │
     ├─ "this auth is brittle"             │
-    ├─ Confucius probes, questions        │
+    ├─ Sage probes, questions        │
     ├─ intent crystallizes                │
     ├─ creates edict ────────────────────►│
     │   [edict-a3f8b2c1](ruling://...)    ├─ Chancellor classifies
@@ -768,7 +768,7 @@ You + Confucius                      Chancellor + Court
     │                                     ▼
 ```
 
-When Confucius creates an edict, the Hunting tab shows a clickable link. Clicking it switches to the Ruling tab, scrolled to where that edict's conversation begins.
+When Sage creates an edict, the Hunting tab shows a clickable link. Clicking it switches to the Ruling tab, scrolled to where that edict's conversation begins.
 
 #### Minister Tabs — Observation
 
@@ -783,10 +783,10 @@ Examples:
 
 | Aspect | Ruling | Hunting | Minister |
 |--------|--------|---------|----------|
-| **Counterpart** | Chancellor | Confucius | — (scroll-only log) |
+| **Counterpart** | Chancellor | Sage | — (scroll-only log) |
 | **Tempo** | Campaign (castle-siege) | Skirmish (swift-strike) | Observation |
 | **Purpose** | Execute edicts | Spot openings, distill intent | Monitor minister activity |
-| **Edict creation** | Ruler dictates directly | Confucius distills from conversation | — |
+| **Edict creation** | Ruler dictates directly | Sage distills from conversation | — |
 | **Awareness** | Court ministers only | Full read-only across all state | Single minister's history |
 
 ---
@@ -913,14 +913,14 @@ Ministers are isolated by **tool catalogs** — each minister receives a differe
 | **Judge** | edit (read, write, replace, list, read_many, grep) | yes | verdicts, forge_manifests | record_verdict, reject_manifest, request_zhengming |
 | **Censor** | read-only | no | censor_precedents | record_precedent, reject_manifest, request_zhengming |
 | **Marshal** | read-only | yes | incidents | create_incident, resolve_incident, request_zhengming |
-| **Confucius** | read-only (all tables) | no | edicts, ling, forge_manifests, verdicts, censor_precedents | create_edict, request_zhengming |
+| **Sage** | read-only (all tables) | no | edicts, ling, forge_manifests, verdicts, censor_precedents | create_edict, request_zhengming |
 
 Key constraints:
 - **Strategist cannot write code** — it only plans (ling) and reads.
 - **Censor cannot modify files** — it reviews and records precedents.
 - **Chancellor cannot write files** — it orchestrates, never implements.
 - **Only Forge and Judge have shell access** alongside the Marshal (for incident investigation).
-- **Confucius sees all but changes nothing** — full read-only across every table; can only create edicts.
+- **Sage sees all but changes nothing** — full read-only across every table; can only create edicts.
 
 The `Session` also enforces **write protection** — a file must be read via `read_file` before it can be written via `write_file`. This is tracked per-session in `filesRead`.
 

@@ -10,7 +10,7 @@ name: fork-ritual
 description: A ritual with fork/join
 steps:
   - name: plan
-    minister: confucius
+    minister: sage
     task: Plan the work
     output_key: work_units
   - name: fix-all

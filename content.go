@@ -15,7 +15,7 @@ type TabType string
 
 const (
 	TabRuling    TabType = "ruling"    // Default tab for edict conversation
-	TabHunting   TabType = "hunting"   // Confucius codebase exploration
+	TabHunting   TabType = "hunting"   // Sage codebase exploration
 	TabObserve   TabType = "observe"   // Minister observation
 	TabRitual    TabType = "ritual"    // Ritual monitoring
 	TabShogunate TabType = "shogunate" // Shogunate dashboard
@@ -54,7 +54,7 @@ func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager
 		tabs: []Tab{
 			{Label: "Shogunate", Type: TabShogunate, Target: "shogunate", Content: shogunateContent},
 			{Label: "Ruling", Type: TabRuling, Target: "chancellor", Content: ruling},
-			{Label: "Hunting", Type: TabHunting, Target: "confucius", Content: hunting},
+			{Label: "Hunting", Type: TabHunting, Target: "sage", Content: hunting},
 		},
 		activeTab:       1, // Ruling is the default
 		width:           w,

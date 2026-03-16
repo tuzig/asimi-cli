@@ -819,6 +819,14 @@ func (c *Chancellor) processEvent(ctx context.Context, event Event) {
 func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
 	c.logger.Info("handling edict created", "edict_id", edictID)
 
+	// Skip if processPrompt already created a session for this edict —
+	// the edict_created event is a side effect of CreateEdict, and
+	// processPrompt already handles it via brewWithStreaming.
+	if c.edictSessions[edictID] != nil {
+		c.logger.Debug("skipping handleEdictCreated: session already exists", "edict_id", edictID)
+		return
+	}
+
 	if len(c.shogunate.GetRitualRegistry().List()) == 0 {
 		c.logger.Warn("no rituals available", "edict_id", edictID)
 		return

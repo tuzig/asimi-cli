@@ -589,7 +589,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 		Steps: []RitualStep{
 			{Name: "step1", Minister: "forge", Task: "do one"},
 			{Name: "step2", Minister: "judge", Task: "do two", DependsOn: []string{"step1"}},
-			{Name: "step3", Minister: "confucius", Task: "do three", DependsOn: []string{"step2"}},
+			{Name: "step3", Minister: "sage", Task: "do three", DependsOn: []string{"step2"}},
 		},
 	}
 
@@ -1367,7 +1367,7 @@ func (m *ritualTestMinister) Run(ctx context.Context) {
 func newRitualTestShogunate(t *testing.T, output string, err error) *Shogunate {
 	t.Helper()
 	ministers := map[string]Minister{}
-	for _, id := range []string{"forge", "judge", "confucius", "strategist", "chancellor", "marshal"} {
+	for _, id := range []string{"forge", "judge", "sage", "strategist", "chancellor", "marshal"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,
@@ -1397,7 +1397,7 @@ func newRitualTestShogunate(t *testing.T, output string, err error) *Shogunate {
 func newRitualTestShogunateWithDB(t *testing.T, db *gorm.DB, output string, err error) *Shogunate {
 	t.Helper()
 	ministers := map[string]Minister{}
-	for _, id := range []string{"forge", "judge", "confucius", "strategist", "chancellor", "marshal"} {
+	for _, id := range []string{"forge", "judge", "sage", "strategist", "chancellor", "marshal"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,

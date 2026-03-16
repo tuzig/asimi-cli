@@ -48,7 +48,7 @@
       on_failure_target: forge
   then:
     - record the judge's seal
-    - record the confucius's seal
+    - record the sage's seal
     - the edict awaits the ruler's seal
 
 - name: castle-siege
@@ -97,8 +97,8 @@
       on_failure: goto
       on_failure_target: forge
 
-    - name: confucius
-      minister: confucius
+    - name: sage
+      minister: sage
       given:
         - the manifests
         - the verdicts
@@ -112,7 +112,7 @@
       on_failure_target: strategist
   then:
     - record the judge's seal
-    - record the confucius's seal
+    - record the sage's seal
     - the edict awaits the ruler's seal
 
 - name: wakeup
@@ -134,7 +134,7 @@
         
 - name: review
   description: |
-    Code review - judge and Confucius review the changes before
+    Code review - judge and sage review the changes before
     committing and suggesting the next steps
   triggers:
     - manual: true
@@ -146,18 +146,18 @@
       act: |
         If the tests pass, ensure 
         the changes in the borderlands and middle kingdom are covered by tests
-    - name: confucius
-      minister: confucius
+    - name: sage
+      minister: sage
       act: |
         Review the manifests and the code changes below.
         Check for style violations, security concerns, and architectural issues.
         Record your insights using record_precedent.
-        Produce a comprehensive code review report summarizing findings from both judge and confucius.
+        Produce a comprehensive code review report summarizing findings from both judge and sage.
         Highlight any blocking issues and suggest improvements.
       depends_on: [judge]
   then:
     - record the judge's seal
-    - record the confucius's seal
+    - record the sage's seal
     - the edict awaits the ruler's seal
 
 - name: lint-fix

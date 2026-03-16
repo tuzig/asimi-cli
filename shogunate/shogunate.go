@@ -151,13 +151,13 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 	})
 
-	// Forward zhengming_answered events: first try ritual runner, then fall through to chancellor
+	// Handle zhengming_answered events: merged handler for ritual delivery, edict creation, and legacy path
 	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
 		requestID, _ := e.Payload["request_id"].(string)
 		answer, _ := e.Payload["answer"].(string)
 		edictID := e.EdictID
 
-		// Try to deliver to a waiting ritual first
+		// 1. Try to deliver to a waiting ritual first
 		if requestID != "" && s.ritualGuard.DeliverZhengmingAnswer(ZhengmingAnswer{
 			RequestID: requestID,
 			Answer:    answer,
@@ -168,24 +168,10 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 			return
 		}
 
-		// No ritual waiting — forward to chancellor for the legacy "Resume edict" path
-		select {
-		case chancellor.eventChan <- e:
-		default:
-			s.logger.Warn("chancellor event channel full", "event", e.Type)
-		}
-	})
-
-	// Handle zhengming_answered events for edict creation from suggestions
-	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
-		answer, _ := e.Payload["answer"].(string)
-		edictID, _ := e.Payload["edict_id"].(string)
-		s.logger.Debug("zhengming_answered handler", "answer", answer, "edict_id", edictID, "payload", e.Payload)
-
+		// 2. Handle "Approve edict" for suggestion-based edict creation
 		if answer == "Approve edict" {
-			// Extract suggestion from the zhengming request
 			var req storage.Zhengming
-			if err := s.db.First(&req, "request_id = ?", e.Payload["request_id"]).Error; err == nil {
+			if err := s.db.First(&req, "request_id = ?", requestID).Error; err == nil {
 				if len(req.Questions) > 0 {
 					suggestion := req.Questions[0].Text
 					summary := req.Questions[0].Summary
@@ -202,13 +188,24 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 					}
 				}
 			}
-		} else if edictID == "" && answer != "" {
-			// System ritual (e.g., wakeup) — no edict, user chose a path forward
+			return
+		}
+
+		// 3. Handle system ritual path (e.g., wakeup) — no edict, user chose a path forward
+		if edictID == "" && answer != "" {
 			if edict, err := s.CreateEdict("", answer); err != nil {
 				s.logger.Warn("failed to create edict from zhengming answer", "error", err)
 			} else {
 				s.logger.Info("created edict from zhengming answer", "edict_id", edict.EdictID, "answer", answer)
 			}
+			return
+		}
+
+		// 4. Forward to chancellor event channel as fallback for legacy path
+		select {
+		case chancellor.eventChan <- e:
+		default:
+			s.logger.Warn("chancellor event channel full", "event", e.Type)
 		}
 	})
 
@@ -216,9 +213,9 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ministers["forge"] = NewForge(newBase())
 	s.ministers["judge"] = NewJudge(newBase(), nil)
 	s.ministers["marshal"] = NewMarshal(newBase(), nil)
-	confucius := NewConfucius(newBase(), nil)
-	confucius.shogunate = s
-	s.ministers["confucius"] = confucius
+	sage := NewSage(newBase(), nil)
+	sage.shogunate = s
+	s.ministers["sage"] = sage
 
 	return s
 }

@@ -86,7 +86,7 @@ func (Edict) TableName() string {
 type Seal struct {
 	SealID     string    `gorm:"primaryKey;column:seal_id"`
 	EdictID    string    `gorm:"column:edict_id;index"`
-	MinisterID string    `gorm:"column:minister_id"` // "judge", "confucius", "ruler"
+	MinisterID string    `gorm:"column:minister_id"` // "judge", "sage", "ruler"
 	SealedAt   time.Time `gorm:"column:sealed_at;autoCreateTime"`
 	Metadata   JSON      `gorm:"column:metadata;type:json"` // Optional: verdict_id, precedent_id, etc.
 }

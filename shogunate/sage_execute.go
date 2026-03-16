@@ -10,9 +10,9 @@ import (
 
 // --- Execute Logic (migrated from Censor) ---
 
-// execute runs the Confucius's ethics review for an edict (internal method)
+// execute runs the Sage's ethics review for an edict (internal method)
 // Returns: sealed (phase complete), review summary, error
-func (c *Confucius) execute(ctx context.Context, edictID string) (bool, *ReviewSummary, error) {
+func (c *Sage) execute(ctx context.Context, edictID string) (bool, *ReviewSummary, error) {
 	// Check if there are any rejections
 	noRejections, err := c.NoRejections(edictID)
 	if err != nil {
@@ -28,14 +28,14 @@ func (c *Confucius) execute(ctx context.Context, edictID string) (bool, *ReviewS
 	if len(manifests) == 0 {
 		// No manifests to review, phase complete if no rejections
 		if noRejections {
-			c.logger.Info("confucius review complete, no rejections", "edict_id", edictID)
+			c.logger.Info("sage review complete, no rejections", "edict_id", edictID)
 			return true, &ReviewSummary{
 				Approved:       true,
 				ManifestsCount: 0,
 				Reasoning:      "No manifests to review",
 			}, nil
 		}
-		c.logger.Info("confucius review blocked by rejections", "edict_id", edictID)
+		c.logger.Info("sage review blocked by rejections", "edict_id", edictID)
 		return false, &ReviewSummary{
 			Approved:  false,
 			Reasoning: "Review blocked by previous rejections",
@@ -92,7 +92,7 @@ func (c *Confucius) execute(ctx context.Context, edictID string) (bool, *ReviewS
 }
 
 // reviewManifest runs ethics checks on a single manifest and returns any findings
-func (c *Confucius) reviewManifest(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
+func (c *Sage) reviewManifest(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
 	// If we have a linter, use it for static analysis
 	if c.linter != nil {
 		return c.reviewManifestWithLinter(ctx, manifest)
@@ -118,7 +118,7 @@ func (c *Confucius) reviewManifest(ctx context.Context, manifest *storage.ForgeM
 }
 
 // reviewManifestWithLinter uses the linter interface for static analysis
-func (c *Confucius) reviewManifestWithLinter(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
+func (c *Sage) reviewManifestWithLinter(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
 	violations, err := c.linter.Analyze(ctx, manifest.FilePath)
 	if err != nil {
 		return nil, fmt.Errorf("linter analyze: %w", err)
@@ -156,11 +156,11 @@ func (c *Confucius) reviewManifestWithLinter(ctx context.Context, manifest *stor
 		if err := c.RejectManifest(manifest.ManifestID); err != nil {
 			return nil, fmt.Errorf("reject manifest: %w", err)
 		}
-		c.logger.Info("manifest rejected by confucius",
+		c.logger.Info("manifest rejected by sage",
 			"manifest_id", manifest.ManifestID,
 			"violations", len(violations))
 	} else {
-		c.logger.Info("manifest approved by confucius",
+		c.logger.Info("manifest approved by sage",
 			"manifest_id", manifest.ManifestID,
 			"waivers", len(violations))
 	}
@@ -169,7 +169,7 @@ func (c *Confucius) reviewManifestWithLinter(ctx context.Context, manifest *stor
 }
 
 // reviewManifestWithLLM uses the LLM for diff-based review
-func (c *Confucius) reviewManifestWithLLM(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
+func (c *Sage) reviewManifestWithLLM(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
 	// Get the diff for this manifest
 	diff, err := c.getManifestDiff(manifest)
 	if err != nil {
@@ -208,11 +208,11 @@ func (c *Confucius) reviewManifestWithLLM(ctx context.Context, manifest *storage
 		if err := c.RejectManifest(manifest.ManifestID); err != nil {
 			return nil, fmt.Errorf("reject manifest: %w", err)
 		}
-		c.logger.Info("manifest rejected by confucius",
+		c.logger.Info("manifest rejected by sage",
 			"manifest_id", manifest.ManifestID,
 			"findings", len(result.Findings))
 	} else {
-		c.logger.Info("manifest approved by confucius",
+		c.logger.Info("manifest approved by sage",
 			"manifest_id", manifest.ManifestID,
 			"findings", len(result.Findings))
 	}
@@ -222,7 +222,7 @@ func (c *Confucius) reviewManifestWithLLM(ctx context.Context, manifest *storage
 
 // getManifestDiff retrieves the diff for a manifest
 // This is a placeholder - in a real implementation, this would use git to get the actual diff
-func (c *Confucius) getManifestDiff(manifest *storage.ForgeManifest) (string, error) {
+func (c *Sage) getManifestDiff(manifest *storage.ForgeManifest) (string, error) {
 	// If we have a commit hash, we could use git diff
 	// For now, return a placeholder that indicates the file was changed
 	if manifest.CommitHash != "" {

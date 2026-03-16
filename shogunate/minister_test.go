@@ -213,7 +213,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	}
 }
 
-func TestConfucius_ReviewFlow(t *testing.T) {
+func TestSage_ReviewFlow(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -232,11 +232,11 @@ func TestConfucius_ReviewFlow(t *testing.T) {
 	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
 	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID)
 
-	// Create confucius (no linter - will auto-approve)
-	confucius := NewConfucius(base, nil)
+	// Create sage (no linter - will auto-approve)
+	sage := NewSage(base, nil)
 
 	// Execute review (internal method)
-	sealed, summary, err := confucius.execute(ctx, "test/repo#5")
+	sealed, summary, err := sage.execute(ctx, "test/repo#5")
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestConfucius_ReviewFlow(t *testing.T) {
 	}
 
 	// Check no rejections
-	noReject, _ := confucius.NoRejections("test/repo#5")
+	noReject, _ := sage.NoRejections("test/repo#5")
 	if !noReject {
 		t.Error("Expected no rejections")
 	}
