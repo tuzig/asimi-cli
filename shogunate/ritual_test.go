@@ -1466,7 +1466,7 @@ func setupRitualTestDB(t *testing.T) *gorm.DB {
 	}
 
 	// Migrate ritual tables
-	err = db.AutoMigrate(&RitualExecution{}, &RitualStepState{})
+	err = db.AutoMigrate(&RitualExecution{}, &RitualStepState{}, &storage.TianEvent{})
 	if err != nil {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
@@ -1474,14 +1474,14 @@ func setupRitualTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// TestInvokeRitualTool_Blocking verifies that enact_ritual blocks until the ritual completes
-// and returns full results with step_results.
-func TestInvokeRitualTool_Blocking(t *testing.T) {
+// TestInvokeRitualTool_Enacted verifies that enact_ritual returns immediately with "enacted" status
+// and publishes an EventRitualEnacted event for the RitualGuard to pick up.
+func TestInvokeRitualTool_Enacted(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	ritual := &RitualDef{
-		Name:        "test-blocking",
-		Description: "A test ritual for blocking behavior",
+		Name:        "test-enacted",
+		Description: "A test ritual for async enactment",
 		Steps: []RitualStep{
 			{Name: "echo", Minister: "forge", Task: "echo hello"},
 		},
@@ -1490,14 +1490,14 @@ func TestInvokeRitualTool_Blocking(t *testing.T) {
 	shogunate := newRitualTestShogunateWithDB(t, db, "hello\n", nil)
 	shogunate.GetRitualRegistry().Register(ritual)
 
-	base := &MinisterBase{logger: slog.Default()}
+	base := &MinisterBase{logger: slog.Default(), db: db}
 	chanc := &Chancellor{
 		MinisterBase: base,
 		shogunate:    shogunate,
 	}
 
 	tool := InvokeRitualTool{chancellor: chanc}
-	input := `{"ritual_name":"test-blocking","edict_id":"edict-block-1"}`
+	input := `{"ritual_name":"test-enacted","edict_id":"edict-block-1"}`
 
 	result, err := tool.Call(context.Background(), input)
 	if err != nil {
@@ -1510,33 +1510,24 @@ func TestInvokeRitualTool_Blocking(t *testing.T) {
 		t.Fatalf("Failed to parse result JSON: %v", err)
 	}
 
-	if res["status"] != "completed" {
-		t.Errorf("expected status 'completed', got %q", res["status"])
+	if res["status"] != "enacted" {
+		t.Errorf("expected status 'enacted', got %q", res["status"])
 	}
-	if res["ritual_name"] != "test-blocking" {
-		t.Errorf("expected ritual_name 'test-blocking', got %q", res["ritual_name"])
+	if res["ritual_name"] != "test-enacted" {
+		t.Errorf("expected ritual_name 'test-enacted', got %q", res["ritual_name"])
 	}
-	if res["execution_id"] == nil || res["execution_id"] == "" {
-		t.Error("expected non-empty execution_id")
-	}
-
-	// Verify output from last step is present
-	output, ok := res["output"].(string)
-	if !ok {
-		t.Fatalf("expected output string, got %T", res["output"])
-	}
-	if output == "" {
-		t.Error("expected non-empty output")
+	if res["edict_id"] != "edict-block-1" {
+		t.Errorf("expected edict_id 'edict-block-1', got %q", res["edict_id"])
 	}
 }
 
-// TestInvokeRitualTool_BlockingFailure verifies that a failed ritual returns failure details
-// as tool output (not a Go error) so the LLM can reason about it.
-func TestInvokeRitualTool_BlockingFailure(t *testing.T) {
+// TestInvokeRitualTool_EnactedEvenForBadRitual verifies that enact_ritual returns "enacted"
+// even for rituals that would fail — failure is reported asynchronously via events.
+func TestInvokeRitualTool_EnactedEvenForBadRitual(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	ritual := &RitualDef{
-		Name: "test-fail-blocking",
+		Name: "test-fail-enacted",
 		Steps: []RitualStep{
 			{Name: "fail", Minister: "forge", Task: "do something", OnFailure: "abort"},
 		},
@@ -1545,19 +1536,18 @@ func TestInvokeRitualTool_BlockingFailure(t *testing.T) {
 	shogunate := newRitualTestShogunateWithDB(t, db, "", fmt.Errorf("minister failed"))
 	shogunate.GetRitualRegistry().Register(ritual)
 
-	base := &MinisterBase{logger: slog.Default()}
+	base := &MinisterBase{logger: slog.Default(), db: db}
 	chanc := &Chancellor{
 		MinisterBase: base,
 		shogunate:    shogunate,
 	}
 
 	tool := InvokeRitualTool{chancellor: chanc}
-	input := `{"ritual_name":"test-fail-blocking","edict_id":"edict-fail-1"}`
+	input := `{"ritual_name":"test-fail-enacted","edict_id":"edict-fail-1"}`
 
 	result, err := tool.Call(context.Background(), input)
-	// Should NOT return a Go error — failure is returned as tool output
 	if err != nil {
-		t.Fatalf("Call() returned Go error (should return failure as tool output): %v", err)
+		t.Fatalf("Call() returned error: %v", err)
 	}
 
 	var res map[string]any
@@ -1565,20 +1555,12 @@ func TestInvokeRitualTool_BlockingFailure(t *testing.T) {
 		t.Fatalf("Failed to parse result JSON: %v", err)
 	}
 
-	if res["status"] != "failed" {
-		t.Errorf("expected status 'failed', got %q", res["status"])
+	// Should still return "enacted" — failure happens async
+	if res["status"] != "enacted" {
+		t.Errorf("expected status 'enacted', got %q", res["status"])
 	}
-	if res["error"] == nil || res["error"] == "" {
-		t.Error("expected non-empty error field")
-	}
-
-	// Verify output from last step is present even on failure
-	output, ok := res["output"].(string)
-	if !ok {
-		t.Fatalf("expected output string, got %T", res["output"])
-	}
-	if output == "" {
-		t.Error("expected non-empty output")
+	if res["ritual_name"] != "test-fail-enacted" {
+		t.Errorf("expected ritual_name 'test-fail-enacted', got %q", res["ritual_name"])
 	}
 }
 

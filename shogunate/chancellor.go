@@ -26,7 +26,8 @@ type Chancellor struct {
 	eventChan     chan Event
 
 	// Run() loop fields
-	edictSessions map[string]*Session // Per-edict sessions (edictID -> session)
+	edictSessions  map[string]*Session // Per-edict sessions (edictID -> session)
+	rulingSession  *Session            // Persistent edict-free session for direct chat
 }
 
 // NewChancellor creates a new Chancellor minister
@@ -347,39 +348,23 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		logger = slog.Default()
 	}
 
-	// Block until ritual completes (or fails/cancels)
-	exec, err := t.chancellor.RunRitual(ctx, params.RitualName, params.EdictID, params.Inputs)
-	if err != nil {
-		// Return failure details as tool output so the LLM can reason about it
-		result := map[string]any{
-			"status":      "failed",
-			"ritual_name": params.RitualName,
-			"edict_id":    params.EdictID,
-			"error":       err.Error(),
-		}
-		if exec != nil {
-			result["execution_id"] = exec.ID
-			result["output"] = getLastStepOutput(exec)
-		}
-		resultJSON, _ := json.Marshal(result)
-		logger.Error("ritual failed",
-			"ritual", params.RitualName,
-			"edict_id", params.EdictID,
-			"error", err)
-		return string(resultJSON), nil
+	// Publish EventRitualEnacted for RitualGuard to handle asynchronously
+	payload := storage.JSON{
+		"ritual_name": params.RitualName,
+		"inputs":      params.Inputs,
+	}
+	if err := t.chancellor.EmitEvent(params.EdictID, storage.EventRitualEnacted, payload); err != nil {
+		logger.Warn("failed to emit ritual_enacted event", "error", err)
 	}
 
-	logger.Info("ritual completed",
+	logger.Info("ritual enacted",
 		"ritual", params.RitualName,
-		"execution_id", exec.ID,
 		"edict_id", params.EdictID)
 
 	result := map[string]any{
-		"status":       "completed",
-		"execution_id": exec.ID,
-		"ritual_name":  params.RitualName,
-		"edict_id":     params.EdictID,
-		"output":       getLastStepOutput(exec),
+		"status":      "enacted",
+		"ritual_name": params.RitualName,
+		"edict_id":    params.EdictID,
 	}
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil
@@ -564,9 +549,19 @@ func (c *Chancellor) SetShogunate(s *Shogunate) {
 // GetSession returns the session for the specified edict ID
 func (c *Chancellor) GetSession(edictID string) *Session {
 	if edictID == "" {
-		return nil
+		return c.rulingSession
 	}
 	return c.edictSessions[edictID]
+}
+
+// GetRulingSession returns the Chancellor's edict-free ruling session
+func (c *Chancellor) GetRulingSession() *Session {
+	return c.rulingSession
+}
+
+// ResetRulingSession nils out the ruling session so the next prompt creates a fresh one
+func (c *Chancellor) ResetRulingSession() {
+	c.rulingSession = nil
 }
 
 // --- Edict Management ---
@@ -699,22 +694,15 @@ func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID, cancel
 
 // processPrompt handles a single prompt from the Ruler
 func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
-	// Determine: new edict or continue existing?
 	edictID := prompt.EdictID
-	if edictID == "" {
-		// TODO: Need to report the new edictID to the TUI
-		edict, err := c.shogunate.CreateEdict(edictID, prompt.Message)
-		if err != nil {
-			c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("create edict: %w", err)})
-			return
-		}
-		edictID = edict.EdictID
-		c.logger.Info("new edict created", "edict_id", edict.EdictID)
-	} else {
+	if edictID != "" {
+		// Edict-bound prompt — append to intent
 		if err := c.AppendToIntent(edictID, prompt.Message); err != nil {
 			c.logger.Warn("failed to append to intent", "edict_id", edictID, "error", err)
 		}
 	}
+	// When edictID == "", this is a ruling session (edict-free chat).
+	// No edict is created — the Chancellor can create one on-demand via tools.
 
 	// Notify TUI of edict ID before streaming begins
 	c.notify(StreamStartMsg{TabID: "chancellor", EdictID: edictID})
@@ -731,17 +719,33 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 		return
 	}
 
-	// Get or create session for this edict
-	sess, exists := c.edictSessions[edictID]
-	if !exists {
-		var err error
-		sess, err = CreateSession(c, c.model, c.config, c.notify, "chancellor", edictID)
-		if err != nil {
-			c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
-			return
+	var sess *Session
+	if edictID == "" {
+		// Ruling session — edict-free chat
+		if c.rulingSession == nil {
+			var err error
+			c.rulingSession, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
+			if err != nil {
+				c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
+				return
+			}
+			c.logger.Info("chancellor created ruling session")
 		}
-		c.edictSessions[edictID] = sess
-		c.logger.Info("chancellor created session for edict", "edict_id", edictID)
+		sess = c.rulingSession
+	} else {
+		// Edict-bound session
+		var exists bool
+		sess, exists = c.edictSessions[edictID]
+		if !exists {
+			var err error
+			sess, err = CreateSession(c, c.model, c.config, c.notify, "chancellor", edictID)
+			if err != nil {
+				c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
+				return
+			}
+			c.edictSessions[edictID] = sess
+			c.logger.Info("chancellor created session for edict", "edict_id", edictID)
+		}
 	}
 
 	c.logger.Debug("context files received from TUI", "count", len(contextFiles))

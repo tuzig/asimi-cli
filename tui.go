@@ -228,8 +228,19 @@ func (m *TUIModel) initHistory() {
 
 // getCurrentSession returns the current shogunate session, or nil if not available
 func (m *TUIModel) getCurrentSession() *shogunate.Session {
-	if m.shogunate != nil && m.currentEdictID != "" {
+	if m.shogunate == nil {
+		return nil
+	}
+	if m.currentEdictID != "" {
 		return m.shogunate.GetCurrentSession(m.currentEdictID)
+	}
+	// No edict — return the session for the active tab
+	tab := m.tabs.ActiveTab()
+	switch tab.Type {
+	case TabRuling:
+		return m.shogunate.GetRulingSession()
+	case TabHunting:
+		return m.shogunate.GetHuntingSession()
 	}
 	return nil
 }
@@ -2270,14 +2281,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle conversation compaction
 		slog.Debug("got compactConversationMsg")
 
-		// Try Shogunate session first, then fall back to main session
 		var compactFunc func(ctx context.Context, prompt string) (string, error)
 
-		if m.shogunate != nil && m.currentEdictID != "" {
-			if shogunateSession := m.shogunate.GetCurrentSession(m.currentEdictID); shogunateSession != nil {
-				compactFunc = shogunateSession.CompactHistory
-				slog.Debug("using Shogunate session for compaction", "edict_id", m.currentEdictID)
-			}
+		if session := m.getCurrentSession(); session != nil {
+			compactFunc = session.CompactHistory
+			slog.Debug("using session for compaction")
 		}
 
 		if compactFunc == nil {
@@ -2309,28 +2317,22 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Compaction completed successfully
 		slog.Debug("compaction completed")
 
-		// Get context info from the appropriate session
 		var info ContextInfo
 
-		if m.shogunate != nil && m.currentEdictID != "" {
-			if shogunateSession := m.shogunate.GetCurrentSession(m.currentEdictID); shogunateSession != nil {
-				shogunateInfo := shogunateSession.GetContextInfo()
-				info = ContextInfo{
-					Model:              shogunateInfo.Model,
-					TotalTokens:        shogunateInfo.TotalTokens,
-					UsedTokens:         shogunateInfo.UsedTokens,
-					SystemPromptTokens: shogunateInfo.SystemPromptTokens,
-					SystemToolsTokens:  shogunateInfo.SystemToolsTokens,
-					MemoryFilesTokens:  shogunateInfo.MemoryFilesTokens,
-					MessagesTokens:     shogunateInfo.MessagesTokens,
-					FreeTokens:         shogunateInfo.FreeTokens,
-					AutocompactBuffer:  shogunateInfo.AutocompactBuffer,
-				}
+		if session := m.getCurrentSession(); session != nil {
+			si := session.GetContextInfo()
+			info = ContextInfo{
+				Model:              si.Model,
+				TotalTokens:        si.TotalTokens,
+				UsedTokens:         si.UsedTokens,
+				SystemPromptTokens: si.SystemPromptTokens,
+				SystemToolsTokens:  si.SystemToolsTokens,
+				MemoryFilesTokens:  si.MemoryFilesTokens,
+				MessagesTokens:     si.MessagesTokens,
+				FreeTokens:         si.FreeTokens,
+				AutocompactBuffer:  si.AutocompactBuffer,
 			}
 		}
-
-		// Info was obtained from shogunate session above; if TotalTokens is 0, we have no valid session
-		// (the shogunate session check is already done above)
 
 		// Add success message
 		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted successfully!\n\nContext usage: %s/%s tokens (%.1f%%)",

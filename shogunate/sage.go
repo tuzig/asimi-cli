@@ -157,6 +157,16 @@ func (c *Sage) Tools() []Tool {
 	return toolList
 }
 
+// ResetSession nils out the hunting session so the next prompt creates a fresh one
+func (c *Sage) ResetSession() {
+	c.session = nil
+}
+
+// GetSession returns the Sage's hunting session
+func (c *Sage) GetSession() *Session {
+	return c.session
+}
+
 // GetEdict retrieves an edict (satisfies EdictManager for GetEdictStatusTool)
 func (c *Sage) GetEdict(edictID string) (*storage.Edict, error) {
 	var edict storage.Edict
@@ -206,7 +216,7 @@ func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 
 	if c.session == nil {
 		var err error
-		c.session, err = CreateSession(c, c.model, c.config, c.notify, "sage", prompt.EdictID)
+		c.session, err = CreateSession(c, c.model, c.config, c.notify, "sage")
 		if err != nil {
 			c.notify(StreamErrorMsg{TabID: "sage", Err: fmt.Errorf("failed to create session: %w", err)})
 			return

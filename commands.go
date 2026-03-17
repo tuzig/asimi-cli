@@ -192,6 +192,18 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	// Clear the chat instead of creating a new component to avoid re-initializing the markdown renderer
 	model.tabs.Content().Chat.Clear()
 
+	// Reset the appropriate minister session based on active tab
+	if model.shogunate != nil {
+		tab := model.tabs.ActiveTab()
+		switch tab.Type {
+		case TabRuling:
+			model.currentEdictID = ""
+			model.shogunate.ResetMinisterSession("chancellor")
+		case TabHunting:
+			model.shogunate.ResetMinisterSession("sage")
+		}
+	}
+
 	// Use the generic startConversationMsg to reset the session
 	// The tryUpgradeToSandbox flag tells the handler to attempt upgrading
 	// from host to sandbox runner asynchronously
@@ -212,29 +224,23 @@ func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
-		// Try Shogunate session first, then fall back to main session
-		var info ContextInfo
-
-		if model.shogunate != nil && model.currentEdictID != "" {
-			if shogunateSession := model.shogunate.GetCurrentSession(model.currentEdictID); shogunateSession != nil {
-				shogunateInfo := shogunateSession.GetContextInfo()
-				// Convert shogunate.ContextInfo to main.ContextInfo
-				info = ContextInfo{
-					Model:              shogunateInfo.Model,
-					TotalTokens:        shogunateInfo.TotalTokens,
-					UsedTokens:         shogunateInfo.UsedTokens,
-					SystemPromptTokens: shogunateInfo.SystemPromptTokens,
-					SystemToolsTokens:  shogunateInfo.SystemToolsTokens,
-					MemoryFilesTokens:  shogunateInfo.MemoryFilesTokens,
-					MessagesTokens:     shogunateInfo.MessagesTokens,
-					FreeTokens:         shogunateInfo.FreeTokens,
-					AutocompactBuffer:  shogunateInfo.AutocompactBuffer,
-				}
-				return showContextMsg{content: renderContextInfo(info)}
+		if session := model.getCurrentSession(); session != nil {
+			shogunateInfo := session.GetContextInfo()
+			info := ContextInfo{
+				Model:              shogunateInfo.Model,
+				TotalTokens:        shogunateInfo.TotalTokens,
+				UsedTokens:         shogunateInfo.UsedTokens,
+				SystemPromptTokens: shogunateInfo.SystemPromptTokens,
+				SystemToolsTokens:  shogunateInfo.SystemToolsTokens,
+				MemoryFilesTokens:  shogunateInfo.MemoryFilesTokens,
+				MessagesTokens:     shogunateInfo.MessagesTokens,
+				FreeTokens:         shogunateInfo.FreeTokens,
+				AutocompactBuffer:  shogunateInfo.AutocompactBuffer,
 			}
+			return showContextMsg{content: renderContextInfo(info)}
 		}
 
-		// No shogunate session available
+		// No session available
 		return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
 	}
 }
@@ -303,14 +309,11 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
-	// Get the Shogunate session for the current edict
 	var session ExportableSession
 
-	if model.shogunate != nil && model.currentEdictID != "" {
-		if shogunateSession := model.shogunate.GetCurrentSession(model.currentEdictID); shogunateSession != nil {
-			session = shogunateSession
-			slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictID)
-		}
+	if s := model.getCurrentSession(); s != nil {
+		session = s
+		slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictID)
 	}
 
 	if session == nil {
@@ -677,13 +680,10 @@ func checkMissingInfraFiles(agentsFile string) []string {
 }
 
 func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
-	// Try Shogunate session first, then fall back to main session
 	var messageCount int
 
-	if model.shogunate != nil && model.currentEdictID != "" {
-		if shogunateSession := model.shogunate.GetCurrentSession(model.currentEdictID); shogunateSession != nil {
-			messageCount = len(shogunateSession.GetMessages())
-		}
+	if session := model.getCurrentSession(); session != nil {
+		messageCount = len(session.GetMessages())
 	}
 
 	if messageCount == 0 {

@@ -452,9 +452,9 @@ func (s *Shogunate) SubmitPrompt(targetID string, p *Prompt) error {
 }
 
 // GetCurrentSession returns the session for the specified edict ID.
-// If edictID is empty, returns nil.
+// When edictID is empty, returns the Chancellor's ruling session.
 func (s *Shogunate) GetCurrentSession(edictID string) *Session {
-	if s == nil || edictID == "" {
+	if s == nil {
 		return nil
 	}
 	chancellor := s.GetMinister("chancellor")
@@ -467,4 +467,46 @@ func (s *Shogunate) GetCurrentSession(edictID string) *Session {
 		return nil
 	}
 	return ch.GetSession(edictID)
+}
+
+// GetRulingSession returns the Chancellor's edict-free ruling session
+func (s *Shogunate) GetRulingSession() *Session {
+	if s == nil {
+		return nil
+	}
+	ch, ok := s.GetMinister("chancellor").(*Chancellor)
+	if !ok {
+		return nil
+	}
+	return ch.GetRulingSession()
+}
+
+// GetHuntingSession returns the Sage's hunting session
+func (s *Shogunate) GetHuntingSession() *Session {
+	if s == nil {
+		return nil
+	}
+	sage, ok := s.GetMinister("sage").(*Sage)
+	if !ok {
+		return nil
+	}
+	return sage.GetSession()
+}
+
+// ResetMinisterSession resets the persistent session for the specified target.
+// "chancellor" resets the ruling session, "sage" resets the hunting session.
+func (s *Shogunate) ResetMinisterSession(target string) {
+	if s == nil {
+		return
+	}
+	switch target {
+	case "chancellor":
+		if ch, ok := s.GetMinister("chancellor").(*Chancellor); ok {
+			ch.ResetRulingSession()
+		}
+	case "sage":
+		if sage, ok := s.GetMinister("sage").(*Sage); ok {
+			sage.ResetSession()
+		}
+	}
 }

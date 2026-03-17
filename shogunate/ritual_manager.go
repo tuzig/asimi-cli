@@ -133,6 +133,29 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 	}
 	rg.eventRegistry.Dispatch(event)
 
+	// Handle ritual enactment (from chancellor's enact_ritual tool)
+	if event.Type == storage.EventRitualEnacted {
+		ritualName, _ := event.Payload["ritual_name"].(string)
+		inputs := make(map[string]string)
+		if rawInputs, ok := event.Payload["inputs"].(map[string]interface{}); ok {
+			for k, v := range rawInputs {
+				inputs[k] = fmt.Sprintf("%v", v)
+			}
+		}
+		go func() {
+			ctx := rg.streamingCtx()
+			exec, err := rg.ritualRunner.Start(ctx, ritualName, event.EdictID, inputs, rg.notify)
+			if err != nil {
+				rg.logger.Warn("failed to start enacted ritual", "ritual", ritualName, "error", err)
+				return
+			}
+			if err := rg.ritualRunner.Run(ctx, exec); err != nil {
+				rg.logger.Warn("enacted ritual failed", "ritual", ritualName, "error", err)
+			}
+		}()
+		return
+	}
+
 	// Trigger event-driven rituals
 	if rg.ritualRegistry != nil && rg.ritualRunner != nil && rg.streamingCtx != nil {
 		rituals := rg.ritualRegistry.GetByEvent(string(event.Type))

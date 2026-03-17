@@ -640,23 +640,41 @@ The Censor records **Precedents** from ethics reviews:
 
 ### Tian Events
 
-The **Tian** (天, Heaven) ledger records all events in the edict lifecycle for auditing and debugging. **All events are logged to the session logs** for complete traceability:
+The **Tian** (天, Heaven) ledger records all events in the edict lifecycle for auditing and debugging. **All events are logged to the session logs** for complete traceability.
 
-- `edict_created`
-- `edict_assigned`
-- `phase_changed`
-- `forge_committed`
-- `manifest_committed`
-- `manifest_rejected`
-- `ritual_started`
-- `ritual_completed`
-- `ritual_failed`
-- `ritual_step_started`
-- `ritual_step_completed`
-- `ritual_step_failed`
-- `zhengming_needed`
-- `zhengming_answered`
-- `edict_cancelled`
+Events are classified into two categories:
+
+#### Domain Events (Trigger Actions)
+
+These events trigger minister actions via subscriptions. Ministers subscribe to specific event types and receive them as tasks:
+
+| Event | Emitted by | Subscribers | Action Triggered |
+|-------|-----------|-------------|------------------|
+| `edict_created` | Chancellor | Strategist | Begin planning |
+| `manifest_committed` | Forge | Judge | Run tests |
+| `manifest_rejected` | Judge, Censor | Forge | Reforge changes |
+| `zhengming_answered` | Chancellor | originating minister | Resume halted work |
+| `shogunate_started` | Shogunate | — | Triggers `wakeup` ritual |
+
+#### Audit Events (Ledger Only)
+
+These events are recorded for traceability and debugging but do not trigger subscriptions:
+
+| Event | Purpose |
+|-------|---------|
+| `edict_assigned` | Records which minister received an edict |
+| `phase_changed` | Tracks edict phase transitions |
+| `forge_committed` | Records Forge commit actions |
+| `ritual_started` | Marks ritual invocation |
+| `ritual_completed` | Marks successful ritual completion |
+| `ritual_failed` | Marks ritual failure after retries |
+| `ritual_step_started` | Tracks step execution start |
+| `ritual_step_completed` | Tracks step execution success |
+| `ritual_step_failed` | Tracks step execution failure |
+| `zhengming_needed` | Records clarification request |
+| `edict_cancelled` | Records edict cancellation |
+
+> **Note:** The Event Registry (see [Architecture](#architecture)) routes Domain Events to subscribed ministers. Audit Events flow through the registry but have no subscribers — they exist solely for the Tian ledger's immutable record.
 
 ---
 

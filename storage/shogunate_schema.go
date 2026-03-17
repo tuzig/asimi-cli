@@ -178,6 +178,7 @@ const (
 	EventForgeCommitted    ShogunateEvent = "forge_committed"
 	EventManifestCommitted ShogunateEvent = "manifest_committed"
 	EventManifestRejected  ShogunateEvent = "manifest_rejected"
+	EventRitualEnacted     ShogunateEvent = "ritual_enacted"
 	EventRitualStarted     ShogunateEvent = "ritual_started"
 	EventRitualCompleted   ShogunateEvent = "ritual_completed"
 	EventRitualFailed      ShogunateEvent = "ritual_failed"
