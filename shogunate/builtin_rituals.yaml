@@ -31,7 +31,7 @@
     - name: forge
       minister: forge
       act: |
-        Implement the changes for edict {{ .edict_id }}.
+        Implement the changes for the edict below.
         Focus on minimal, targeted changes to fulfill the intent.
       on_failure: retry
     - name: judge

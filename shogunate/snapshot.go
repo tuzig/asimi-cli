@@ -78,7 +78,7 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 				if iActive != jActive {
 					return iActive
 				}
-				return snap.Rituals[i].Age < snap.Rituals[j].Age
+				return snap.Rituals[i].StartedAt.After(snap.Rituals[j].StartedAt)
 			})
 		}
 	}
