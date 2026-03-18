@@ -60,15 +60,17 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 				if def := rr.registry.Get(ex.RitualName); def != nil {
 					entry.TotalSteps = len(def.Steps)
 					if ex.CurrentStep >= 0 && ex.CurrentStep < len(def.Steps) {
-						entry.StepName = def.Steps[ex.CurrentStep].Minister
+						entry.StepName = def.Steps[ex.CurrentStep].Name
 					}
 				}
 				// Try to get step name from step states in DB
+				/* TODO: why do we need this?
 				var stepState RitualStepState
 				if err := s.db.Where("execution_id = ? AND step_index = ?", ex.ID, ex.CurrentStep).
 					First(&stepState).Error; err == nil && stepState.Name != "" {
 					entry.StepName = stepState.Name
 				}
+				*/
 				snap.Rituals = append(snap.Rituals, entry)
 			}
 			// Sort: active rituals first, then by age descending (most recent first)

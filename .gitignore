@@ -1,7 +1,8 @@
 # Binary
 asimi
 .gocache/
-# Test coverage
+# Test output
+test.out
 coverage.txt
 coverage.out
 coverage.html

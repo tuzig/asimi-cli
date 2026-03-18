@@ -56,7 +56,7 @@ func (m TUIModel) renderShogunateView(height int) string {
 			if len(edictShort) > 10 {
 				edictShort = edictShort[:10]
 			}
-			stepInfo := fmt.Sprintf("%d/%d %s", r.CurrentStep+1, r.TotalSteps, r.StepName)
+			stepInfo := fmt.Sprintf("%d/%d %s", r.CurrentStep+1, r.TotalSteps+1, r.StepName)
 
 			var style lipgloss.Style
 			switch {

@@ -231,10 +231,6 @@ func (m *TUIModel) getCurrentSession() *shogunate.Session {
 	if m.shogunate == nil {
 		return nil
 	}
-	if m.currentEdictID != "" {
-		return m.shogunate.GetCurrentSession(m.currentEdictID)
-	}
-	// No edict — return the session for the active tab
 	tab := m.tabs.ActiveTab()
 	switch tab.Type {
 	case TabRuling:
@@ -293,13 +289,15 @@ func (m *TUIModel) saveSession() {
 		return
 	}
 
-	// Get the current shogunate session
-	session := m.getCurrentSession()
-	if session == nil {
-		return
+	// Save both ruling and hunting sessions if they exist
+	if m.shogunate != nil {
+		if ruling := m.shogunate.GetRulingSession(); ruling != nil {
+			m.sessionStore.SaveSession(ruling)
+		}
+		if hunting := m.shogunate.GetHuntingSession(); hunting != nil {
+			m.sessionStore.SaveSession(hunting)
+		}
 	}
-
-	m.sessionStore.SaveSession(session)
 	slog.Debug("session auto-save queued")
 }
 
@@ -2578,6 +2576,7 @@ func (m *TUIModel) updateComponentDimensions() {
 	m.prompt().SetHeight(promptHeight)
 
 	// Update status info
+	// TODO: move this to a proper place and drop the currentEdictID
 	if m.shogunate != nil && m.currentEdictID != "" {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {

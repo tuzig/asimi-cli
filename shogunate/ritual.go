@@ -170,6 +170,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the verdicts", "get_verdicts", "verdicts"},
 		{"the precedents", "get_precedents", "precedents"},
 		{"the earth status", "get_earth_status", "earth_status"},
+		{"the borderlands", "get_borderlands", "borderlands"},
 		{"the edict is sealed", "seal_edict", "sealed"},
 		{"the edict is blocked", "block_edict", "blocked"},
 		{"the edict is unblocked", "unblock_edict", "unblocked"},
@@ -1590,6 +1591,8 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 		return r.arrangeGetPrecedents(exec.EdictID)
 	case "get_earth_status":
 		return r.getEarthStatus(ctx)
+	case "get_borderlands":
+		return r.getBorderlands(ctx)
 	default:
 		return nil, fmt.Errorf("unknown given function: %s", fn)
 	}
@@ -1733,6 +1736,36 @@ func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) 
 		result["earth_status:borderlands"] = borderlandsOutput.Output
 	}
 
+	return result, nil
+}
+
+// getBorderlands captures unstaged changes and untracked files.
+func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) {
+	if r.runner == nil {
+		return "", nil
+	}
+	result := map[string]string{
+		"borderlands:changes":   "",
+		"borderlands:untracked": "",
+	}
+	// Unstaged changes
+	diff, err := r.runner.Run(ctx, runners.Input{
+		Command:        "git diff",
+		Description:    "get borderlands (git diff)",
+		BypassApproval: true,
+	})
+	if err == nil {
+		result["borderlands:changes"] = diff.Output
+	}
+	// Untracked files
+	untracked, err := r.runner.Run(ctx, runners.Input{
+		Command:        "git ls-files --others --exclude-standard",
+		Description:    "get borderlands (untracked files)",
+		BypassApproval: true,
+	})
+	if err == nil {
+		result["borderlands:untracked"] = untracked.Output
+	}
 	return result, nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
+	"github.com/tmc/langchaingo/llms"
 	"gorm.io/gorm"
 )
 
@@ -23,21 +24,17 @@ type Chancellor struct {
 	*MinisterBase // embedded base provides db, llm, config, repoInfo, logger
 	shogunate     *Shogunate
 	taskChan      chan *Task
-	eventChan     chan Event
 
 	// Run() loop fields
-	edictSessions  map[string]*Session // Per-edict sessions (edictID -> session)
-	rulingSession  *Session            // Persistent edict-free session for direct chat
+	RulingSession  *Session            // Persistent edict-free session for direct chat
 }
 
 // NewChancellor creates a new Chancellor minister
 func NewChancellor(base *MinisterBase) *Chancellor {
 	base.ministerID = "chancellor"
 	return &Chancellor{
-		MinisterBase:  base,
-		taskChan:      make(chan *Task, 10),
-		eventChan:     make(chan Event, 256),
-		edictSessions: make(map[string]*Session),
+		MinisterBase: base,
+		taskChan:     make(chan *Task, 10),
 	}
 }
 
@@ -349,9 +346,15 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	}
 
 	// Publish EventRitualEnacted for RitualGuard to handle asynchronously
+	// Convert inputs to map[string]interface{} so the type is consistent
+	// whether the event travels via in-memory channel or DB round-trip.
+	inputsPayload := make(map[string]interface{}, len(params.Inputs))
+	for k, v := range params.Inputs {
+		inputsPayload[k] = v
+	}
 	payload := storage.JSON{
 		"ritual_name": params.RitualName,
-		"inputs":      params.Inputs,
+		"inputs":      inputsPayload,
 	}
 	if err := t.chancellor.EmitEvent(params.EdictID, storage.EventRitualEnacted, payload); err != nil {
 		logger.Warn("failed to emit ritual_enacted event", "error", err)
@@ -535,8 +538,6 @@ func (c *Chancellor) Run(ctx context.Context) {
 			}
 			c.processTask(merged, task)
 			mergedCancel()
-		case event := <-c.eventChan:
-			c.processEvent(ctx, event)
 		}
 	}
 }
@@ -546,22 +547,34 @@ func (c *Chancellor) SetShogunate(s *Shogunate) {
 	c.shogunate = s
 }
 
-// GetSession returns the session for the specified edict ID
-func (c *Chancellor) GetSession(edictID string) *Session {
-	if edictID == "" {
-		return c.rulingSession
+// SubscribeToEvents registers the Chancellor's event handlers directly with the RitualGuard.
+func (c *Chancellor) SubscribeToEvents(rg *RitualGuard) {
+	rg.Subscribe(storage.EventEdictCreated, func(e Event) {
+		c.handleEdictCreated(c.shogunate.ctx, e.EdictID)
+	})
+	rg.Subscribe(storage.EventRitualCompleted, func(e Event) {
+		c.handleRitualCompleted(c.shogunate.ctx, e.EdictID, e.Payload)
+	})
+	rg.Subscribe(storage.EventRitualFailed, func(e Event) {
+		c.handleRitualFailed(c.shogunate.ctx, e.EdictID, e.Payload)
+	})
+}
+
+// ResetSession nils out the interactive session
+func (c *Chancellor) ResetSession() {
+	c.RulingSession = nil
+}
+
+// RestoreSession creates a fully-wired interactive session and injects loaded history
+func (c *Chancellor) RestoreSession(msgs []llms.MessageContent) error {
+	sess, err := CreateSession(c, c.model, c.config, c.notify, "chancellor")
+	if err != nil {
+		return err
 	}
-	return c.edictSessions[edictID]
-}
-
-// GetRulingSession returns the Chancellor's edict-free ruling session
-func (c *Chancellor) GetRulingSession() *Session {
-	return c.rulingSession
-}
-
-// ResetRulingSession nils out the ruling session so the next prompt creates a fresh one
-func (c *Chancellor) ResetRulingSession() {
-	c.rulingSession = nil
+	sess.SetMessages(msgs)
+	sess.TabType = "interactive"
+	c.RulingSession = sess
+	return nil
 }
 
 // --- Edict Management ---
@@ -713,47 +726,32 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 
 // brewWithStreaming delegates to Session for LLM interaction
 func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string) {
-	// Check if LLM is configured before proceeding
 	if c.model == nil {
-		c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("LLM not configured - please wait for model to connect")})
+		c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("LLM not configured")})
 		return
 	}
 
-	var sess *Session
-	if edictID == "" {
-		// Ruling session — edict-free chat
-		if c.rulingSession == nil {
-			var err error
-			c.rulingSession, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
-			if err != nil {
-				c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
-				return
-			}
-			c.logger.Info("chancellor created ruling session")
+	// Always use RulingSession — no per-edict sessions
+	if c.RulingSession == nil {
+		var err error
+		c.RulingSession, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
+		if err != nil {
+			c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
+			return
 		}
-		sess = c.rulingSession
-	} else {
-		// Edict-bound session
-		var exists bool
-		sess, exists = c.edictSessions[edictID]
-		if !exists {
-			var err error
-			sess, err = CreateSession(c, c.model, c.config, c.notify, "chancellor", edictID)
-			if err != nil {
-				c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
-				return
-			}
-			c.edictSessions[edictID] = sess
-			c.logger.Info("chancellor created session for edict", "edict_id", edictID)
-		}
+		c.RulingSession.TabType = "interactive"
+		c.logger.Info("chancellor created interactive session")
 	}
 
 	c.logger.Debug("context files received from TUI", "count", len(contextFiles))
 
-	c.logger.Debug("stored stream channel for streaming", "edict_id", edictID)
+	// Pass edictID in prompt context, not session
+	fullPrompt := prompt
+	if edictID != "" {
+		fullPrompt = fmt.Sprintf("[Context: edict %s]\n\n%s", edictID, prompt)
+	}
 
-	// Use AskWithStreaming for tool execution and streaming
-	_, err := sess.AskWithStreaming(ctx, prompt, contextFiles)
+	_, err := c.RulingSession.AskWithStreaming(ctx, fullPrompt, contextFiles)
 	if err != nil && ctx.Err() == nil {
 		c.notify(StreamErrorMsg{TabID: "chancellor", Err: err})
 		return
@@ -769,16 +767,21 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 
 	var output string
 	var taskErr error
-	var session *Session
 
 	if c.model != nil {
-		if task.Session != nil {
-			// Multi-turn: continue existing session
-			session = task.Session
-			_, taskErr = session.AskWithStreaming(ctx, task.Work, nil)
-		} else {
-			// First invocation: create new session
-			session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad)
+		// Always use RulingSession for task conversation
+		if c.RulingSession == nil {
+			var err error
+			c.RulingSession, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
+			if err != nil {
+				taskErr = fmt.Errorf("failed to create session: %w", err)
+			} else {
+				c.RulingSession.TabType = "interactive"
+			}
+		}
+
+		if taskErr == nil {
+			_, taskErr = c.RulingSession.AskWithStreaming(ctx, task.Work, nil)
 		}
 	} else {
 		output = "chancellor task acknowledged (no LLM configured)"
@@ -788,7 +791,6 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 		MinisterID: c.ID(),
 		Sealed:     true,
 		Output:     output,
-		Session:    session,
 		Err:        taskErr,
 	}
 
@@ -801,40 +803,9 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 	}
 }
 
-// processEvent handles events from the Shogunate event system
-func (c *Chancellor) processEvent(ctx context.Context, event Event) {
-	c.logger.Debug("chancellor processing event", "type", event.Type, "edict_id", event.EdictID)
-
-	switch event.Type {
-	case storage.EventEdictCreated:
-		c.handleEdictCreated(ctx, event.EdictID)
-	case storage.EventRitualCompleted:
-		c.handleRitualCompleted(ctx, event.EdictID, event.Payload)
-	case storage.EventRitualFailed:
-		c.handleRitualFailed(ctx, event.EdictID, event.Payload)
-	case storage.EventZhengmingAnswered:
-		c.handleZhengmingAnswered(ctx, event.EdictID, event.Payload)
-	default:
-		c.logger.Debug("ignoring unknown event type", "type", event.Type)
-	}
-}
-
 // handleEdictCreated sends the new edict to the chancellor LLM to choose and enact the appropriate ritual.
 func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
 	c.logger.Info("handling edict created", "edict_id", edictID)
-
-	// Skip if processPrompt already created a session for this edict —
-	// the edict_created event is a side effect of CreateEdict, and
-	// processPrompt already handles it via brewWithStreaming.
-	if c.edictSessions[edictID] != nil {
-		c.logger.Debug("skipping handleEdictCreated: session already exists", "edict_id", edictID)
-		return
-	}
-
-	if len(c.shogunate.GetRitualRegistry().List()) == 0 {
-		c.logger.Warn("no rituals available", "edict_id", edictID)
-		return
-	}
 
 	edict, err := c.GetEdict(edictID)
 	if err != nil {
@@ -906,32 +877,6 @@ func (c *Chancellor) handleRitualFailed(ctx context.Context, edictID string, pay
 	// Analyze failure and potentially request zhengming or retry
 	// For now, this is a placeholder - actual logic depends on failure type
 	c.logger.Debug("ritual failed - may need zhengming or retry", "edict_id", edictID)
-}
-
-// streamTask creates a session and streams the task through the LLM.
-// Returns the session for potential reuse in multi-turn conversations.
-func (c *Chancellor) streamTask(ctx context.Context, work, edictID,
-	scratchpad string) (*Session, string, error) {
-	c.notify(StreamStartMsg{TabID: "chancellor", EdictID: edictID})
-
-	session, err := CreateSessionWithOpts(c, c.model, c.config, c.notify, CreateSessionOpts{
-		EdictID:    edictID,
-		TabID:      "chancellor",
-		Scratchpad: scratchpad,
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create chancellor task session: %w", err)
-	}
-
-	_, err = session.AskWithStreaming(ctx, work, nil)
-	if err != nil {
-		c.notify(StreamDoneMsg{TabID: "chancellor"})
-		return session, "", err
-	}
-
-	c.notify(StreamDoneMsg{TabID: "chancellor"})
-	c.logger.Info("chancellor task completed", "edict_id", edictID)
-	return session, "", nil
 }
 
 // generateEdictID creates a unique edict ID

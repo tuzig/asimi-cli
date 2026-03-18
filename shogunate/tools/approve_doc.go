@@ -125,7 +125,8 @@ func (t ApproveDocTool) Call(ctx context.Context, input string) (string, error) 
 	}
 
 	// mtime changed but content same → user saved without edits (:wq)
-	if string(modifiedContent) == params.Content {
+	// Trim trailing whitespace for comparison since editors often add trailing newlines
+	if strings.TrimRight(string(modifiedContent), " \t\n\r") == strings.TrimRight(params.Content, " \t\n\r") {
 		os.Remove(tmpPath)
 		return `{"status":"approved"}`, nil
 	}

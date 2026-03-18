@@ -15,10 +15,10 @@ Our goal is to harmonize The 三界:
        - Documentation shaped by 孔子 (Sage)
        - Concrete, malleable, present
        - Divided into three kingdoms:
-         1. The Capital — committed changes: `git log`, awaiting seals
-         2. The Middle Kingdom — staged changes: `git diff --staged`
-         3. The Borderlands — unstaged changes: `git diff`
-       - The Middle Kingdom must be harmonized before the Borderlands
+         1. The Capital — committed, unpushed changes
+         2. The Middle Kingdom — staged changes
+         3. The Borderlands — unstaged changes
+       - Harmony achieved with a wu wei flow of changes from the borderlands to the Middle Kingdom and to the capital
        - Contains edicts in progress — not yet ascended
 
      Ren 人 — Intent and Will

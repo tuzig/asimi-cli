@@ -10,6 +10,7 @@ import (
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
+	"github.com/tmc/langchaingo/llms"
 	"gorm.io/gorm"
 )
 
@@ -162,6 +163,18 @@ func (c *Sage) ResetSession() {
 	c.session = nil
 }
 
+// RestoreSession creates a fully-wired hunting session and injects loaded history
+func (c *Sage) RestoreSession(msgs []llms.MessageContent) error {
+	sess, err := CreateSession(c, c.model, c.config, c.notify, "sage")
+	if err != nil {
+		return err
+	}
+	sess.SetMessages(msgs)
+	sess.TabType = "hunting"
+	c.session = sess
+	return nil
+}
+
 // GetSession returns the Sage's hunting session
 func (c *Sage) GetSession() *Session {
 	return c.session
@@ -221,6 +234,7 @@ func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 			c.notify(StreamErrorMsg{TabID: "sage", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
+		c.session.TabType = "hunting"
 	}
 
 	c.notify(StreamStartMsg{TabID: "sage", EdictID: "sage"})

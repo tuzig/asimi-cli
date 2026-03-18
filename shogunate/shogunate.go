@@ -46,14 +46,14 @@ func (r *EventRegistry) Subscribe(eventType storage.ShogunateEvent, handler Even
 	r.subscribers[eventType] = append(r.subscribers[eventType], handler)
 }
 
-// Dispatch sends an event to all registered handlers.
+// Dispatch sends an event to all registered handlers asynchronously.
 func (r *EventRegistry) Dispatch(event Event) {
 	r.mu.RLock()
 	handlers := r.subscribers[event.Type]
 	r.mu.RUnlock()
 
 	for _, handler := range handlers {
-		handler(event)
+		go handler(event)
 	}
 }
 
@@ -127,29 +127,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	})
 
 	// Subscribe Chancellor to events via RitualGuard
-	s.ritualGuard.Subscribe(storage.EventEdictCreated, func(e Event) {
-		select {
-		case chancellor.eventChan <- e:
-		default:
-			s.logger.Warn("chancellor event channel full", "event", e.Type)
-		}
-	})
-
-	s.ritualGuard.Subscribe(storage.EventRitualCompleted, func(e Event) {
-		select {
-		case chancellor.eventChan <- e:
-		default:
-			s.logger.Warn("chancellor event channel full", "event", e.Type)
-		}
-	})
-
-	s.ritualGuard.Subscribe(storage.EventRitualFailed, func(e Event) {
-		select {
-		case chancellor.eventChan <- e:
-		default:
-			s.logger.Warn("chancellor event channel full", "event", e.Type)
-		}
-	})
+	chancellor.SubscribeToEvents(s.ritualGuard)
 
 	// Handle zhengming_answered events: merged handler for ritual delivery, edict creation, and legacy path
 	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
@@ -201,12 +179,9 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 			return
 		}
 
-		// 4. Forward to chancellor event channel as fallback for legacy path
-		select {
-		case chancellor.eventChan <- e:
-		default:
-			s.logger.Warn("chancellor event channel full", "event", e.Type)
-		}
+		// 4. Forward to chancellor as fallback for legacy path
+		s.logger.Info("Default forwarding zhengming answer to chancellot")
+		go chancellor.handleZhengmingAnswered(s.ctx, e.EdictID, e.Payload)
 	})
 
 	s.ministers["strategist"] = NewStrategist(newBase())
@@ -453,7 +428,7 @@ func (s *Shogunate) SubmitPrompt(targetID string, p *Prompt) error {
 
 // GetCurrentSession returns the session for the specified edict ID.
 // When edictID is empty, returns the Chancellor's ruling session.
-func (s *Shogunate) GetCurrentSession(edictID string) *Session {
+func (s *Shogunate) GetRulingSession() *Session {
 	if s == nil {
 		return nil
 	}
@@ -466,19 +441,7 @@ func (s *Shogunate) GetCurrentSession(edictID string) *Session {
 		s.logger.Warn("Failed to get the chancellor in Shogunate.GetCurrentSession")
 		return nil
 	}
-	return ch.GetSession(edictID)
-}
-
-// GetRulingSession returns the Chancellor's edict-free ruling session
-func (s *Shogunate) GetRulingSession() *Session {
-	if s == nil {
-		return nil
-	}
-	ch, ok := s.GetMinister("chancellor").(*Chancellor)
-	if !ok {
-		return nil
-	}
-	return ch.GetRulingSession()
+	return ch.RulingSession
 }
 
 // GetHuntingSession returns the Sage's hunting session
@@ -493,20 +456,43 @@ func (s *Shogunate) GetHuntingSession() *Session {
 	return sage.GetSession()
 }
 
-// ResetMinisterSession resets the persistent session for the specified target.
-// "chancellor" resets the ruling session, "sage" resets the hunting session.
-func (s *Shogunate) ResetMinisterSession(target string) {
+// RestoreMinisterSession creates a fully-wired session and injects loaded history.
+// Routes to chancellor or sage based on tabType.
+func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []llms.MessageContent) error {
+	if s == nil {
+		return fmt.Errorf("shogunate not initialized")
+	}
+	switch tabType {
+	case "ruling":
+		if ch, ok := s.GetMinister("chancellor").(*Chancellor); ok {
+			return ch.RestoreSession(msgs)
+		}
+		return fmt.Errorf("chancellor not found")
+	case "hunting":
+		if sage, ok := s.GetMinister("sage").(*Sage); ok {
+			return sage.RestoreSession(msgs)
+		}
+		return fmt.Errorf("sage not found")
+	default:
+		return fmt.Errorf("unknown tab type: %s", tabType)
+	}
+}
+
+// ResetRulling resets the rulling session
+func (s *Shogunate) ResetRuling() {
 	if s == nil {
 		return
 	}
-	switch target {
-	case "chancellor":
-		if ch, ok := s.GetMinister("chancellor").(*Chancellor); ok {
-			ch.ResetRulingSession()
-		}
-	case "sage":
-		if sage, ok := s.GetMinister("sage").(*Sage); ok {
-			sage.ResetSession()
-		}
+	if ch, ok := s.GetMinister("chancellor").(*Chancellor); ok {
+		ch.ResetSession()
+	}
+}
+// ResetHunting resets the hunting session
+func (s *Shogunate) ResetHunting() {
+	if s == nil {
+		return
+	}
+	if sage, ok := s.GetMinister("sage").(*Sage); ok {
+		sage.ResetSession()
 	}
 }

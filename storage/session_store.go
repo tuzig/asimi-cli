@@ -53,8 +53,8 @@ func (s *SessionStore) SaveSession(session *SessionData, host, org, project, bra
 	// Insert or replace session metadata
 	_, err = tx.Exec(`
 		INSERT OR REPLACE INTO sessions
-		(id, branch_id, created_at, last_updated, first_prompt, provider, model, working_dir)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, branch_id, created_at, last_updated, first_prompt, provider, model, working_dir, tab_type)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID,
 		branchID,
 		session.CreatedAt.Unix(),
@@ -63,6 +63,7 @@ func (s *SessionStore) SaveSession(session *SessionData, host, org, project, bra
 		session.Provider,
 		session.Model,
 		session.WorkingDir,
+		session.TabType,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to save session: %w", err)
@@ -115,7 +116,7 @@ func (s *SessionStore) LoadSession(sessionID string) (*SessionData, string, stri
 
 	err := s.db.conn.QueryRow(`
 		SELECT s.id, s.created_at, s.last_updated, s.first_prompt,
-		       s.provider, s.model, s.working_dir,
+		       s.provider, s.model, s.working_dir, s.tab_type,
 		       r.host, r.org, r.project, b.name
 		FROM sessions s
 		JOIN branches b ON s.branch_id = b.id
@@ -130,6 +131,7 @@ func (s *SessionStore) LoadSession(sessionID string) (*SessionData, string, stri
 		&session.Provider,
 		&session.Model,
 		&session.WorkingDir,
+		&session.TabType,
 		&host,
 		&org,
 		&project,
@@ -192,7 +194,7 @@ func (s *SessionStore) LoadSession(sessionID string) (*SessionData, string, stri
 func (s *SessionStore) ListSessions(host, org, project, branch string, limit int) ([]SessionData, error) {
 	query := `
 		SELECT s.id, s.created_at, s.last_updated, s.first_prompt,
-		       s.provider, s.model, s.working_dir,
+		       s.provider, s.model, s.working_dir, s.tab_type,
 		       COUNT(m.id) as message_count
 		FROM sessions s
 		JOIN branches b ON s.branch_id = b.id
@@ -200,7 +202,7 @@ func (s *SessionStore) ListSessions(host, org, project, branch string, limit int
 		LEFT JOIN messages m ON s.id = m.session_id
 		WHERE r.host = ? AND r.org = ? AND r.project = ? AND b.name = ?
 		GROUP BY s.id, s.created_at, s.last_updated, s.first_prompt,
-		         s.provider, s.model, s.working_dir
+		         s.provider, s.model, s.working_dir, s.tab_type
 		ORDER BY s.last_updated DESC`
 
 	if limit > 0 {
@@ -227,6 +229,7 @@ func (s *SessionStore) ListSessions(host, org, project, branch string, limit int
 			&session.Provider,
 			&session.Model,
 			&session.WorkingDir,
+			&session.TabType,
 			&messageCount,
 		)
 		if err != nil {
@@ -254,14 +257,14 @@ func (s *SessionStore) ListSessions(host, org, project, branch string, limit int
 func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 	query := `
 		SELECT s.id, s.created_at, s.last_updated, s.first_prompt,
-		       s.provider, s.model, s.working_dir, r.host, r.org, r.project,
+		       s.provider, s.model, s.working_dir, s.tab_type, r.host, r.org, r.project,
 		       COUNT(m.id) as message_count
 		FROM sessions s
 		JOIN branches b ON s.branch_id = b.id
 		JOIN repositories r ON b.repository_id = r.id
 		LEFT JOIN messages m ON s.id = m.session_id
 		GROUP BY s.id, s.created_at, s.last_updated, s.first_prompt,
-		         s.provider, s.model, s.working_dir, r.host, r.org, r.project
+		         s.provider, s.model, s.working_dir, s.tab_type, r.host, r.org, r.project
 		ORDER BY s.last_updated DESC`
 
 	if limit > 0 {
@@ -289,6 +292,7 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 			&session.Provider,
 			&session.Model,
 			&session.WorkingDir,
+			&session.TabType,
 			&host,
 			&org,
 			&project,

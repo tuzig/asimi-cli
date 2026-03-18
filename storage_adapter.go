@@ -314,6 +314,7 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 		Model:        session.Model,
 		WorkingDir:   session.WorkingDir,
 		ProjectSlug:  session.ProjectSlug,
+		TabType:      session.TabType,
 		Messages:     messages,
 		ContextFiles: session.ContextFiles,
 	}
@@ -344,6 +345,7 @@ func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 		Model:        storageSession.Model,
 		WorkingDir:   storageSession.WorkingDir,
 		ProjectSlug:  storageSession.ProjectSlug,
+		TabType:      storageSession.TabType,
 		ContextFiles: storageSession.ContextFiles,
 	}
 	session.SetMessages(storageSession.Messages)
@@ -369,6 +371,7 @@ func (s *SessionStore) ListSessions(limit int) ([]shogunate.Session, error) {
 			Model:        ss.Model,
 			WorkingDir:   ss.WorkingDir,
 			ProjectSlug:  ss.ProjectSlug,
+			TabType:      ss.TabType,
 			ContextFiles: ss.ContextFiles,
 			MessageCount: ss.MessageCount,
 		}

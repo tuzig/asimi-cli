@@ -270,6 +270,16 @@ func (tm *TabManager) TabByTarget(target string) *Tab {
 	return nil
 }
 
+// SwitchToTabType switches to the first tab matching the given type
+func (tm *TabManager) SwitchToTabType(tabType TabType) {
+	for i := range tm.tabs {
+		if tm.tabs[i].Type == tabType {
+			tm.SwitchTo(i)
+			return
+		}
+	}
+}
+
 // TabCount returns the number of tabs
 func (tm *TabManager) TabCount() int {
 	return len(tm.tabs)

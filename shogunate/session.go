@@ -77,6 +77,7 @@ type Session struct {
 	Model       string    `json:"model"`
 	WorkingDir  string    `json:"working_dir"`
 	ProjectSlug string    `json:"project_slug,omitempty"`
+	TabType     string    `json:"tab_type,omitempty"`
 
 	model        llms.Model
 	config       *internalconfig.LLMConfig

@@ -1,21 +1,3 @@
-- name: new
-  description: "Session startup - review current state and await commands"
-  triggers:
-    - manual: true
-  background:
-    - "!echo '**The Borderlands**'"
-    - "!git diff"
-    - "!echo '**The middle kingdom**'"
-    - "!git diff --cached"
-  steps:
-    - name: review
-      minister: chancellor
-      act: |
-        Review the diff in the scratchpad:
-        - If there are changes in progress, help the user resolve them
-        (rename the current edict to: "committing ..." and invoke the fitting ritual).
-        - If there are no changes, Welcome the ruler
- 
 - name: swift-strike
   description: A tight loop for enacting small changes in 地
   triggers:
@@ -130,17 +112,17 @@
         - the court status
       act: |
         Given the information below, provide a succinct report on 三界.
-        follows you.
-        finish by calling request_zhengming with a single question: "best path forward?".
+        finish by calling request_zhengming with a single question: "best path forward?" with
+        a few options for a clear next step. e.g, "commit middle kingdom", "review borderlands".
         
-- name: review
+- name: borderland-review
   description: |
-    Code review - judge and sage review the changes before
-    committing and suggesting the next steps
+    Code review - judge and sage review the borderlands before
+    staging
   triggers:
     - manual: true
   background:
-    - the earth status
+    - the borderlands
   steps:
     - name: judge
       minister: judge
@@ -157,9 +139,8 @@
         Highlight any blocking issues and suggest improvements.
       depends_on: [judge]
   then:
-    - record the judge's seal
     - record the sage's seal
-    - the edict awaits the ruler's seal
+    - the edict is sealed
 
 - name: lint-fix
   description: "Fix linter errors in parallel using fork/join"

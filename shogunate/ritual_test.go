@@ -1233,12 +1233,12 @@ func TestLoadBuiltinRituals(t *testing.T) {
 		t.Fatalf("LoadBuiltinRituals() error = %v", err)
 	}
 
-	if len(rituals) != 6 {
+	if len(rituals) != 5 {
 		names := make([]string, len(rituals))
 		for i, r := range rituals {
 			names[i] = r.Name
 		}
-		t.Errorf("expected 6 builtin rituals, got %d: %v", len(rituals), names)
+		t.Errorf("expected 5 builtin rituals, got %d: %v", len(rituals), names)
 	}
 
 	// Verify swift-strike uses ritual-level background given

@@ -206,6 +206,9 @@ func TestDrainUnprocessedEvents(t *testing.T) {
 	// Drain should replay events 3, 4, 5
 	s.ritualGuard.DrainUnprocessedEvents()
 
+	// Wait for async dispatch handlers to complete
+	time.Sleep(50 * time.Millisecond)
+
 	mu.Lock()
 	if len(dispatched) != 3 {
 		t.Fatalf("expected 3 drained events, got %d", len(dispatched))

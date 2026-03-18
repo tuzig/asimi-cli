@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -191,9 +192,14 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 			timeStr := formatRelativeTime(session.LastUpdated)
 			sessionTitle := sessionTitlePreview(session)
 
+			tabLabel := "Ruling"
+			if session.TabType == "hunting" {
+				tabLabel = "Hunting"
+			}
+
 			var line strings.Builder
 			line.WriteString(prefix)
-			line.WriteString(fmt.Sprintf("[%s] %4d %s", timeStr, session.MessageCount, sessionTitle))
+			line.WriteString(fmt.Sprintf("[%s] [%s] %4d %s", timeStr, tabLabel, session.MessageCount, sessionTitle))
 
 			lineStyle := lipgloss.NewStyle()
 			if isSelected {
@@ -283,14 +289,24 @@ func formatRelativeTime(t time.Time) string {
 }
 
 // handleSessionSelected processes a resumed session and updates the TUI model.
-// It rebuilds the chat UI from messages and resets prompt history state.
-// Note: With the shogunate architecture, resuming only displays the conversation
-// history in the UI - the shogunate will start a fresh session on next prompt.
-// TODO: Implement full session restoration in shogunate.
+// It rebuilds the chat UI from messages, switches to the correct tab, and
+// re-hydrates the minister session for full conversation continuity.
 func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	if session == nil {
 		return
 	}
+
+	// Determine target tab from session's TabType (default to ruling)
+	targetTabType := TabRuling
+	if session.TabType == "hunting" {
+		targetTabType = TabHunting
+	}
+
+	// Switch to the correct tab
+	m.tabs.SwitchToTabType(targetTabType)
+
+	// Clear current edict ID (resumed sessions are edict-free)
+	m.currentEdictID = ""
 
 	// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
 	m.tabs.Content().Chat.Clear()
@@ -376,6 +392,17 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 		}
 	}
 	m.sessionActive = true
+
+	// Re-hydrate the minister session so follow-up prompts continue the conversation
+	if m.shogunate != nil {
+		tabType := session.TabType
+		if tabType == "" {
+			tabType = "ruling"
+		}
+		if err := m.shogunate.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
+			slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
+		}
+	}
 
 	// Reset in-session prompt history state to prevent rollback issues
 	// when the user enters a new prompt after resuming.

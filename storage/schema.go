@@ -8,7 +8,7 @@ import (
 )
 
 // Schema version for migrations
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Type aliases - use types from internal/config as the single source of truth
 type (
@@ -27,6 +27,7 @@ type DBSession struct {
 	Provider    string    `db:"provider"`
 	Model       string    `db:"model"`
 	WorkingDir  string    `db:"working_dir"`
+	TabType     string    `db:"tab_type"`
 }
 
 // SessionData contains the persistable session fields
@@ -41,6 +42,7 @@ type SessionData struct {
 	Model        string
 	WorkingDir   string
 	ProjectSlug  string
+	TabType      string
 	Messages     []llms.MessageContent
 	ContextFiles map[string]string
 	MessageCount int // Number of messages (for list views, avoids loading full messages)
@@ -127,6 +129,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
     working_dir TEXT NOT NULL,
+    tab_type TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
 );
 
@@ -242,7 +245,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at INTEGER NOT NULL
 );
 
-INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (3, unixepoch());
+INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (4, unixepoch());
 `
 
 // Migration1to2 contains the SQL to migrate from schema version 1 to 2
@@ -300,5 +303,14 @@ CREATE INDEX IF NOT EXISTS idx_ritual_step_states_session ON ritual_step_states(
 
 -- Update schema version
 INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (3, unixepoch());
+`
+
+// Migration3to4 contains the SQL to migrate from schema version 3 to 4
+// Adds tab_type column to sessions table
+const Migration3to4 = `
+ALTER TABLE sessions ADD COLUMN tab_type TEXT NOT NULL DEFAULT '';
+
+-- Update schema version
+INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, unixepoch());
 `
 

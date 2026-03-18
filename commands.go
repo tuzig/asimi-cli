@@ -198,9 +198,9 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 		switch tab.Type {
 		case TabRuling:
 			model.currentEdictID = ""
-			model.shogunate.ResetMinisterSession("chancellor")
+			model.shogunate.ResetRuling()
 		case TabHunting:
-			model.shogunate.ResetMinisterSession("sage")
+			model.shogunate.ResetHunting()
 		}
 	}
 
