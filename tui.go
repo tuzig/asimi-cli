@@ -1308,6 +1308,9 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 				tab.Cancel()
 			}
 			tab.Cancel = cancel
+			if tab.Target == "chancellor" && m.shogunate != nil {
+				m.shogunate.SetStreamingCtx(ctx)
+			}
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
@@ -1514,6 +1517,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				tab.Cancel()
 			}
 			tab.Cancel = cancel
+			if tab.Target == "chancellor" && m.shogunate != nil {
+				m.shogunate.SetStreamingCtx(ctx)
+			}
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
@@ -2251,6 +2257,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				tab.Cancel()
 			}
 			tab.Cancel = cancel
+			if tab.Target == "chancellor" && m.shogunate != nil {
+				m.shogunate.SetStreamingCtx(ctx)
+			}
 			m.sessionActive = true
 
 			var streamCmd tea.Cmd
@@ -2939,12 +2948,10 @@ func (m *TUIModel) stopStreamingTab(tabTarget string) {
 }
 
 // stopStreaming cancels all streaming globally (used for shutdown).
+// CancelAllTabs cancels the ruling tab's context, which propagates to rituals via SetStreamingCtx.
 func (m *TUIModel) stopStreaming() {
 	m.tabs.CancelAllTabs()
 	m.stopWaitingForResponse()
-	if m.shogunate != nil {
-		m.shogunate.Interrupt()
-	}
 }
 
 // handleAnsweringComplete closes the zhengming waiter and updates the DB.

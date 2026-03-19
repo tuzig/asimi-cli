@@ -171,41 +171,6 @@ func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) 
 		return false, fmt.Errorf("invalid dependencies: %w", err)
 	}
 
-	// For large plans (>500 chars), use approve_doc for external review
-	planContent := s.formatPlanForReview(lingList)
-	if len(planContent) > 500 {
-		approveTool := tools.ApproveDocTool{Notify: s.notify}
-		approveInput := map[string]any{
-			"content":     planContent,
-			"description": "Review strategic plan before execution",
-		}
-		approveInputJSON, _ := json.Marshal(approveInput)
-		approveResult, err := approveTool.Call(ctx, string(approveInputJSON))
-		if err != nil {
-			return false, fmt.Errorf("approve_doc failed: %w", err)
-		}
-
-		// Check if user approved or modified
-		var approveRes struct {
-			Status string `json:"status"`
-			Diff   string `json:"diff,omitempty"`
-		}
-		if err := json.Unmarshal([]byte(approveResult), &approveRes); err != nil {
-			return false, fmt.Errorf("failed to parse approve_doc result: %w", err)
-		}
-
-		switch approveRes.Status {
-		case "rejected":
-			s.logger.Info("plan rejected by user", "edict_id", edictID)
-			return false, nil
-		case "modified":
-			// User modified the plan - for now, log the diff and continue
-			// In a more sophisticated implementation, we could re-parse the modified plan
-			s.logger.Info("plan modified by user", "edict_id", edictID, "diff", approveRes.Diff)
-		}
-		// If approved, continue with original plan
-	}
-
 	// Insert ling
 	for _, ling := range lingList {
 		if err := s.InsertLing(&ling); err != nil {
