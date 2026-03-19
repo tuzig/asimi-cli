@@ -449,6 +449,7 @@ func (c *Chancellor) Tools() []Tool {
 		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, Notify: zhengmingNotify},
 		tools.GetEdictStatusTool{Manager: c},
 		tools.ListEdictsTool{DB: c.db},
+		tools.TransitionEdictTool{DB: c.db},
 		InvokeMinisterTool{chancellor: c},
 	}
 	// Add read-only file tools

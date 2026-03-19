@@ -98,8 +98,8 @@
     - record the sage's seal
     - the edict awaits the ruler's seal
 
-- name: wakeup
-  description: "Startup ritual - report court status on Shogunate boot"
+- name: dawn-audience
+  description: "Startup ritual - Chancellor reports court status on Shogunate boot, then requests zhengming"
   max_retries: 2
   triggers:
     - event: shogunate_started

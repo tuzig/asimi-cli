@@ -1218,10 +1218,11 @@ func TestHistoryNavigation_WithArrowKeys(t *testing.T) {
 func TestCancelActiveStreaming(t *testing.T) {
 	model := newTestModel(t)
 
-	// Set up active streaming
-	model.streamingActive = true
+	// Set up active streaming on the active tab
+	tab := model.tabs.ActiveTab()
+	tab.Streaming = true
 	cancelCalled := false
-	model.streamingCancel = func() {
+	tab.Cancel = func() {
 		cancelCalled = true
 	}
 
@@ -1229,8 +1230,8 @@ func TestCancelActiveStreaming(t *testing.T) {
 	model.stopStreaming()
 
 	require.True(t, cancelCalled, "Cancel function should be called")
-	require.False(t, model.streamingActive)
-	require.Nil(t, model.streamingCancel)
+	require.False(t, model.tabs.AnyStreaming())
+	require.Nil(t, model.tabs.ActiveTab().Cancel)
 }
 
 // TestCancelActiveStreaming_NotActive tests cancellation when not streaming
@@ -1238,14 +1239,15 @@ func TestCancelActiveStreaming_NotActive(t *testing.T) {
 	model := newTestModel(t)
 
 	// Not streaming
-	model.streamingActive = false
-	model.streamingCancel = nil
+	tab := model.tabs.ActiveTab()
+	tab.Streaming = false
+	tab.Cancel = nil
 
 	// Should not panic
 	model.stopStreaming()
 
-	require.False(t, model.streamingActive)
-	require.Nil(t, model.streamingCancel)
+	require.False(t, model.tabs.AnyStreaming())
+	require.Nil(t, model.tabs.ActiveTab().Cancel)
 }
 
 // TestSaveHistoryPresentState tests saving the present state
@@ -1351,10 +1353,11 @@ func TestStatusComponent_WaitingIndicatorView(t *testing.T) {
 func TestEscapeDuringStreaming_StopsWaiting(t *testing.T) {
 	model := newTestModel(t)
 
-	// Set up streaming
-	model.streamingActive = true
+	// Set up streaming on the active tab
+	tab := model.tabs.ActiveTab()
+	tab.Streaming = true
 	cancelCalled := false
-	model.streamingCancel = func() {
+	tab.Cancel = func() {
 		cancelCalled = true
 	}
 
@@ -1377,7 +1380,7 @@ func TestStreamChunkMsg_StopsWaiting(t *testing.T) {
 
 	// Start waiting and mark as streaming
 	model.startWaitingForResponse()
-	model.streamingActive = true
+	model.tabs.ActiveTab().Streaming = true
 	require.True(t, model.waitingForResponse)
 
 	// Record the initial wait start time
@@ -2011,6 +2014,6 @@ func TestCtrlCStopsStreamingE2E(t *testing.T) {
 	tuiModel, ok := finalModel.(TUIModel)
 	require.True(t, ok)
 
-	assert.False(t, tuiModel.streamingActive, "streaming should be stopped after CTRL-C")
+	assert.False(t, tuiModel.tabs.AnyStreaming(), "streaming should be stopped after CTRL-C")
 	assert.False(t, tuiModel.waitingForResponse, "should not be waiting for response after CTRL-C")
 }

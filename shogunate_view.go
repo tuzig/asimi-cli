@@ -5,7 +5,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/lipgloss"
+)
+
+// Styles shared across panes
+var (
+	activeStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
+	completedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	failedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#CC4444"))
+	urgentStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6633"))
+	labelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	sectionStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00CCCC"))
 )
 
 func (m TUIModel) renderShogunateView(height int) string {
@@ -22,41 +33,135 @@ func (m TUIModel) renderShogunateView(height int) string {
 
 	snap := m.shogunate.TakeSnapshot()
 
+	// Height allocation: zhengming gets min 2 lines, +1 per entry, capped at height/3
+	zhengH := 2 + len(snap.Zhengming)
+	maxZheng := height / 3
+	if maxZheng < 2 {
+		maxZheng = 2
+	}
+	if zhengH > maxZheng {
+		zhengH = maxZheng
+	}
+	bottomH := height - zhengH
+	if bottomH < 2 {
+		bottomH = 2
+	}
+	halfW := m.width / 2
+
+	zhengPane := renderZhengmingPane(snap, m.width, zhengH)
+	eventsPane := renderEventsPane(snap, halfW, bottomH)
+	ritualsPane := renderRitualsPane(snap, m.width-halfW, bottomH)
+
+	bottom := lipgloss.JoinHorizontal(lipgloss.Top, eventsPane, ritualsPane)
+	return lipgloss.JoinVertical(lipgloss.Left, zhengPane, bottom)
+}
+
+func renderZhengmingPane(snap shogunate.Snapshot, w, h int) string {
 	var b strings.Builder
+	b.WriteString(sectionStyle.Render(" ZHENGMING"))
+	b.WriteString("\n")
 
-	// TODO: use globalTheme
-	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
-	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-	failedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#CC4444"))
-	detailStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00CCCC"))
-
-	// Split available rows evenly: each section gets header + content rows
-	// 2 section headers + 1 blank separator = 3 fixed lines
-	halfHeight := (height - 3) / 2
-	if halfHeight < 2 {
-		halfHeight = 2
+	if len(snap.Zhengming) == 0 {
+		b.WriteString(labelStyle.Render(" No pending requests"))
+		b.WriteString("\n")
+	} else {
+		maxRows := h - 1 // header takes 1 line
+		shown := len(snap.Zhengming)
+		if shown > maxRows {
+			shown = maxRows
+		}
+		for _, z := range snap.Zhengming[:shown] {
+			style := labelStyle
+			priorityMark := " "
+			if z.Priority == "urgent" {
+				style = urgentStyle
+				priorityMark = "!"
+			}
+			question := "-"
+			if len(z.Questions) > 0 {
+				question = z.Questions[0]
+			}
+			maxQ := w - 32 // space for time + minister + priority
+			if maxQ < 10 {
+				maxQ = 10
+			}
+			if len(question) > maxQ {
+				question = question[:maxQ-3] + "..."
+			}
+			minister := z.MinisterID
+			if len(minister) > 10 {
+				minister = minister[:10]
+			}
+			b.WriteString(fmt.Sprintf(" %s %s %-10s %s",
+				labelStyle.Render(z.CreatedAt.Format("15:04:05")),
+				style.Render(priorityMark),
+				style.Render(minister),
+				style.Render(question)))
+			b.WriteString("\n")
+		}
 	}
 
-	// Ritual log section
-	b.WriteString(sectionStyle.Render(" RITUAL LOG"))
+	return lipgloss.NewStyle().Width(w).Height(h).Render(b.String())
+}
+
+func renderEventsPane(snap shogunate.Snapshot, w, h int) string {
+	detailStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
+	var b strings.Builder
+	b.WriteString(sectionStyle.Render(" EVENTS"))
+	b.WriteString("\n")
+
+	if len(snap.Events) == 0 {
+		b.WriteString(labelStyle.Render(" No events recorded"))
+		b.WriteString("\n")
+	} else {
+		maxRows := h - 1
+		shown := len(snap.Events)
+		if shown > maxRows {
+			shown = maxRows
+		}
+		for _, ev := range snap.Events[:shown] {
+			detail := ev.Detail
+			if detail == "" {
+				detail = "-"
+			}
+			maxDetail := w - 30
+			if maxDetail < 5 {
+				maxDetail = 5
+			}
+			if len(detail) > maxDetail {
+				detail = detail[:maxDetail-3] + "..."
+			}
+			evType := ev.EventType
+			if len(evType) > 16 {
+				evType = evType[:16]
+			}
+			b.WriteString(fmt.Sprintf(" %s %-16s %s",
+				labelStyle.Render(ev.Time.Format("15:04:05")),
+				detailStyle.Render(evType),
+				detailStyle.Render(detail)))
+			b.WriteString("\n")
+		}
+	}
+
+	return lipgloss.NewStyle().Width(w).Height(h).Render(b.String())
+}
+
+func renderRitualsPane(snap shogunate.Snapshot, w, h int) string {
+	var b strings.Builder
+	b.WriteString(sectionStyle.Render(" RITUALS"))
 	b.WriteString("\n")
 
 	if len(snap.Rituals) == 0 {
 		b.WriteString(labelStyle.Render(" No rituals recorded"))
 		b.WriteString("\n")
 	} else {
+		maxRows := h - 1
 		shown := len(snap.Rituals)
-		if shown > halfHeight {
-			shown = halfHeight
+		if shown > maxRows {
+			shown = maxRows
 		}
 		for _, r := range snap.Rituals[:shown] {
-			edictShort := r.EdictID
-			if len(edictShort) > 10 {
-				edictShort = edictShort[:10]
-			}
-			stepInfo := fmt.Sprintf("%d/%d %s", r.CurrentStep+1, r.TotalSteps+1, r.StepName)
+			stepInfo := fmt.Sprintf("%d/%d", r.CurrentStep+1, r.TotalSteps+1)
 
 			var style lipgloss.Style
 			switch {
@@ -68,55 +173,25 @@ func (m TUIModel) renderShogunateView(height int) string {
 				style = completedStyle
 			}
 
-			b.WriteString(fmt.Sprintf(" %s  ",
-				labelStyle.Render(r.StartedAt.Format("15:04:05"))))
-			b.WriteString(fmt.Sprintf("%-16s ",
-				style.Render(r.RitualName)))
-			b.WriteString(fmt.Sprintf("%-10s %-18s %s",
-				style.Render(string(r.State)), style.Render(stepInfo),
-				labelStyle.Render(edictShort)))
+			name := r.RitualName
+			maxName := w - 26
+			if maxName < 8 {
+				maxName = 8
+			}
+			if len(name) > maxName {
+				name = name[:maxName-3] + "..."
+			}
+
+			b.WriteString(fmt.Sprintf(" %s %-8s %s %s",
+				labelStyle.Render(r.StartedAt.Format("15:04")),
+				style.Render(name),
+				style.Render(fmt.Sprintf("%-8s", string(r.State))),
+				labelStyle.Render(stepInfo)))
 			b.WriteString("\n")
 		}
 	}
 
-	b.WriteString("\n")
-
-	// Events section
-	b.WriteString(sectionStyle.Render(" EVENTS (recent)"))
-	b.WriteString("\n")
-
-	if len(snap.Events) == 0 {
-		b.WriteString(labelStyle.Render(" No events recorded"))
-		b.WriteString("\n")
-	} else {
-		shown := len(snap.Events)
-		if shown > halfHeight {
-			shown = halfHeight
-		}
-		for _, ev := range snap.Events[:shown] {
-			edictShort := ev.EdictID
-			if len(edictShort) > 10 {
-				edictShort = edictShort[:10]
-			}
-			detail := ev.Detail
-			if detail == "" {
-				detail = "-"
-			}
-			b.WriteString(fmt.Sprintf(" %s  ",
-				labelStyle.Render(ev.Time.Format("15:04:05"))))
-			b.WriteString(fmt.Sprintf("%-18s ",
-				detailStyle.Render(ev.EventType)))
-			b.WriteString(fmt.Sprintf("%-16s %s",
-				detailStyle.Render(detail),
-				labelStyle.Render(edictShort)))
-			b.WriteString("\n")
-		}
-	}
-
-	return lipgloss.NewStyle().
-		Width(m.width).
-		Height(height).
-		Render(b.String())
+	return lipgloss.NewStyle().Width(w).Height(h).Render(b.String())
 }
 
 func formatAge(d time.Duration) string {

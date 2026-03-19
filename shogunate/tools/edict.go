@@ -259,3 +259,123 @@ func truncateString(s string, maxLen int) string {
 	}
 	return s[:maxLen-3] + "..."
 }
+
+// TransitionEdictTool transitions an edict to a new status (e.g., unblock or reject).
+type TransitionEdictTool struct {
+	DB *gorm.DB
+}
+
+func (t TransitionEdictTool) Name() string {
+	return "transition_edict"
+}
+
+func (t TransitionEdictTool) Description() string {
+	return "Transitions an edict to a new status. Use this to unblock (active) or reject (cancelled) blocked edicts after review."
+}
+
+func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, error) {
+	var params struct {
+		EdictID string `json:"edict_id"`
+		Status  string `json:"status"`
+		Reason  string `json:"reason,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+
+	if params.EdictID == "" {
+		return "", fmt.Errorf("edict_id is required")
+	}
+	if params.Status == "" {
+		return "", fmt.Errorf("status is required")
+	}
+
+	// Validate status transition
+	var targetStatus storage.EdictStatus
+	switch params.Status {
+	case "active":
+		targetStatus = storage.EdictActive
+	case "cancelled":
+		targetStatus = storage.EdictCancelled
+	case "blocked":
+		targetStatus = storage.EdictBlocked
+	case "sealed":
+		targetStatus = storage.EdictSealed
+	default:
+		return "", fmt.Errorf("invalid status: %s (valid: active, cancelled, blocked, sealed)", params.Status)
+	}
+
+	// Verify edict exists and get current status
+	var edict storage.Edict
+	if err := t.DB.First(&edict, "edict_id = ?", params.EdictID).Error; err != nil {
+		return "", fmt.Errorf("get edict: %w", err)
+	}
+
+	// Validate transition from blocked
+	if edict.Status == storage.EdictBlocked {
+		if targetStatus != storage.EdictActive && targetStatus != storage.EdictCancelled {
+			return "", fmt.Errorf("blocked edicts can only be transitioned to active (unblock) or cancelled (reject)")
+		}
+	}
+
+	// Perform transition
+	if err := t.DB.Model(&storage.Edict{}).
+		Where("edict_id = ? AND status = ?", params.EdictID, edict.Status).
+		Update("status", targetStatus).Error; err != nil {
+		return "", fmt.Errorf("transition edict: %w", err)
+	}
+
+	result := map[string]any{
+		"edict_id":      params.EdictID,
+		"previous_status": string(edict.Status),
+		"new_status":    string(targetStatus),
+	}
+	if params.Reason != "" {
+		result["reason"] = params.Reason
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	return string(resultJSON), nil
+}
+
+func (t TransitionEdictTool) Format(input, result string, err error) string {
+	var params struct {
+		EdictID string `json:"edict_id"`
+		Status  string `json:"status"`
+	}
+	json.Unmarshal([]byte(input), &params)
+
+	msg := utils.NewMsgBlockBuilder("TransitionEdict")
+	msg.Writef(" %s", params.EdictID)
+	msg.WriteLn()
+
+	if err != nil {
+		msg.Writef("Error: %v", err)
+	} else {
+		msg.Writef("Transitioned to [%s]", params.Status)
+	}
+
+	return msg.String() + "\n"
+}
+
+func (t TransitionEdictTool) ParameterSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"edict_id": map[string]any{
+				"type":        "string",
+				"description": "The edict ID to transition",
+			},
+			"status": map[string]any{
+				"type":        "string",
+				"enum":        []string{"active", "cancelled", "blocked", "sealed"},
+				"description": "New status: active (unblock), cancelled (reject), blocked, or sealed",
+			},
+			"reason": map[string]any{
+				"type":        "string",
+				"description": "Optional reason for the transition",
+			},
+		},
+		"required": []string{"edict_id", "status"},
+	}
+}

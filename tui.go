@@ -45,8 +45,6 @@ type TUIModel struct {
 	updateAvailable      bool // True when a newer version is available
 	configCreated        bool // True when config file was created on first run
 
-	streamingActive        bool
-	streamingCancel        context.CancelFunc
 	streamCompleteCallback func(*TUIModel) tea.Cmd // Optional callback to run after stream completes
 
 	// Command registry
@@ -935,12 +933,13 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Single press — cancel streaming / escape
+	// Single press — cancel streaming on active tab only
 	m.ctrlCLastPress = now
 	m.tabs.Content().Chat.AddUserMessage("CTRL-C")
-	if m.streamingActive {
-		slog.Info("ctrl_c_during_streaming", "cancelling_context", true)
-		m.stopStreaming()
+	activeTab := m.tabs.ActiveTab()
+	if activeTab.Streaming {
+		slog.Info("ctrl_c_during_streaming", "cancelling_active_tab", activeTab.Target)
+		m.stopStreamingTab(activeTab.Target)
 	}
 
 	m.commandLine.AddToast(
@@ -953,9 +952,10 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 
 // handleEscape handles the escape key and the first ctrl-c
 func (m TUIModel) handleEscape() (tea.Model, tea.Cmd) {
-	if m.streamingActive {
-		slog.Info("escape_during_streaming", "cancelling_context", true)
-		m.stopStreaming()
+	activeTab := m.tabs.ActiveTab()
+	if activeTab.Streaming {
+		slog.Info("escape_during_streaming", "cancelling_active_tab", activeTab.Target)
+		m.stopStreamingTab(activeTab.Target)
 		return m, nil
 	}
 
@@ -1098,7 +1098,6 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		}
 	}
 
-	m.streamingActive = true
 	return nil
 }
 
@@ -1304,7 +1303,11 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 				cmds = append(cmds, waitCmd)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
-			m.streamingCancel = cancel
+			tab := m.tabs.ActiveTab()
+			if tab.Cancel != nil {
+				tab.Cancel()
+			}
+			tab.Cancel = cancel
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
@@ -1506,7 +1509,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, waitCmd)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
-			m.streamingCancel = cancel
+			tab := m.tabs.ActiveTab()
+			if tab.Cancel != nil {
+				tab.Cancel()
+			}
+			tab.Cancel = cancel
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
@@ -1585,15 +1592,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("STREAM_START", "AI streaming response started")
 		slog.Debug("streamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
-		m.streamingActive = true
 		m.status.ClearError() // Clear any previous error state
 
 	case shogunate.StreamCompleteMsg:
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(chat.Messages))
-		m.tabs.ClearStreamingByTab(msg.TabID)
-		m.stopWaitingForResponse()
+		m.tabs.CancelTabByID(msg.TabID)
+		if !m.tabs.AnyStreaming() {
+			m.stopWaitingForResponse()
+		}
 
 		// Finalize the last AI message with success/failure prefix
 		isFailure := chat.FinalizeLastAIMessage()
@@ -1618,7 +1626,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Streaming was interrupted by user
 		m.tabs.ChatByTab(msg.TabID).AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
-		m.stopStreaming()
+		m.stopStreamingTab(msg.TabID)
 		m.streamCompleteCallback = nil // Clear callback on interrupt
 		m.repoInfo.RefreshDiff()
 
@@ -1632,7 +1640,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Toast will be automatically truncated by commandline component if needed
 		m.commandLine.AddToast(fullError, "error", time.Second*5)
 		m.status.SetError() // Update status icon to show error
-		m.stopStreaming()
+		m.stopStreamingTab(msg.TabID)
 		m.repoInfo.RefreshDiff()
 
 		/* TODO: Add the message bellow
@@ -1651,7 +1659,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.Content))
 		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.Content))
 		chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
-		m.stopStreaming()
+		m.stopStreamingTab(msg.TabID)
 		m.streamCompleteCallback = nil // Clear callback on max tokens
 		m.repoInfo.RefreshDiff()
 
@@ -1661,7 +1669,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat := m.tabs.ChatByTab(msg.TabID)
 		m.status.AddStreamChars(len(msg.Text))
 		chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
-		if m.streamingActive {
+		if m.tabs.AnyStreaming() {
 			m.waitingStart = time.Now()
 			if !m.waitingForResponse {
 				waitCmd := m.startWaitingForResponse()
@@ -2238,7 +2246,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If there's a prompt, send it to the AI
 		if msg.prompt != "" {
 			ctx, cancel := context.WithCancel(context.Background())
-			m.streamingCancel = cancel
+			tab := m.tabs.ActiveTab()
+			if tab.Cancel != nil {
+				tab.Cancel()
+			}
+			tab.Cancel = cancel
 			m.sessionActive = true
 
 			var streamCmd tea.Cmd
@@ -2917,13 +2929,18 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 
 	return container
 }
-func (m *TUIModel) stopStreaming() {
-	if m.streamingActive && m.streamingCancel != nil {
-		m.streamingCancel()
+
+// stopStreamingTab cancels streaming on a single tab by target ID.
+func (m *TUIModel) stopStreamingTab(tabTarget string) {
+	m.tabs.CancelTabByID(tabTarget)
+	if !m.tabs.AnyStreaming() {
+		m.stopWaitingForResponse()
 	}
-	m.streamingActive = false
-	m.streamingCancel = nil
-	m.tabs.ClearStreaming()
+}
+
+// stopStreaming cancels all streaming globally (used for shutdown).
+func (m *TUIModel) stopStreaming() {
+	m.tabs.CancelAllTabs()
 	m.stopWaitingForResponse()
 	if m.shogunate != nil {
 		m.shogunate.Interrupt()

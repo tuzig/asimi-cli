@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -25,10 +26,11 @@ const (
 type Tab struct {
 	Label     string
 	Type      TabType
-	Target    string           // minister ID, edict ID, or ritual run ID
-	Content   ContentComponent // Own content buffer per tab
-	EdictID   string           // Current edict ID for this tab
-	Streaming bool             // True when this tab is actively receiving stream data
+	Target    string             // minister ID, edict ID, or ritual run ID
+	Content   ContentComponent   // Own content buffer per tab
+	EdictID   string             // Current edict ID for this tab
+	Streaming bool               // True when this tab is actively receiving stream data
+	Cancel    context.CancelFunc // per-tab streaming cancellation
 }
 
 // TabManager manages multiple tabs, each wrapping a ContentComponent
@@ -134,6 +136,41 @@ func (tm *TabManager) ClearStreamingByTab(tabID string) {
 			tm.tabs[i].Streaming = false
 			return
 		}
+	}
+}
+
+// CancelActiveTab cancels streaming on the active tab only
+func (tm *TabManager) CancelActiveTab() {
+	tab := &tm.tabs[tm.activeTab]
+	if tab.Streaming && tab.Cancel != nil {
+		tab.Cancel()
+		tab.Cancel = nil
+	}
+	tab.Streaming = false
+}
+
+// CancelTabByID cancels streaming on the tab matching the given target
+func (tm *TabManager) CancelTabByID(tabID string) {
+	for i := range tm.tabs {
+		if tm.tabs[i].Target == tabID {
+			if tm.tabs[i].Cancel != nil {
+				tm.tabs[i].Cancel()
+				tm.tabs[i].Cancel = nil
+			}
+			tm.tabs[i].Streaming = false
+			return
+		}
+	}
+}
+
+// CancelAllTabs cancels streaming on all tabs
+func (tm *TabManager) CancelAllTabs() {
+	for i := range tm.tabs {
+		if tm.tabs[i].Cancel != nil {
+			tm.tabs[i].Cancel()
+			tm.tabs[i].Cancel = nil
+		}
+		tm.tabs[i].Streaming = false
 	}
 }
 

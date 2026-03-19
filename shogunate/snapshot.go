@@ -27,11 +27,24 @@ type EventEntry struct {
 	EdictID   string
 }
 
+// ZhengmingEntry represents a pending clarification request for dashboard display.
+type ZhengmingEntry struct {
+	RequestID  string
+	EdictID    string
+	MinisterID string
+	Questions  []string // Summary or truncated Text for each question
+	Priority   string
+	Status     string
+	CreatedAt  time.Time
+	TimeoutAt  time.Time
+}
+
 // Snapshot captures the current state of the shogunate for dashboard display.
 type Snapshot struct {
-	Rituals []RitualEntry
-	Events  []EventEntry
-	TakenAt time.Time
+	Rituals   []RitualEntry
+	Events    []EventEntry
+	Zhengming []ZhengmingEntry
+	TakenAt   time.Time
 }
 
 // TakeSnapshot returns a point-in-time snapshot of live rituals and recent events.
@@ -94,6 +107,35 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 				EventType: string(ev.EventType),
 				Detail:    extractDetail(ev),
 				EdictID:   ev.EdictID,
+			})
+		}
+	}
+
+	// Pending zhengming (clarification requests)
+	var pending []storage.Zhengming
+	if err := s.db.Where("status = ?", storage.ZhengmingPending).
+		Order("priority DESC, created_at ASC").Limit(20).Find(&pending).Error; err == nil {
+		for _, z := range pending {
+			var questions []string
+			for _, q := range z.Questions {
+				text := q.Summary
+				if text == "" {
+					text = q.Text
+					if len(text) > 60 {
+						text = text[:57] + "..."
+					}
+				}
+				questions = append(questions, text)
+			}
+			snap.Zhengming = append(snap.Zhengming, ZhengmingEntry{
+				RequestID:  z.RequestID,
+				EdictID:    z.EdictID,
+				MinisterID: z.MinisterID,
+				Questions:  questions,
+				Priority:   string(z.Priority),
+				Status:     string(z.Status),
+				CreatedAt:  z.CreatedAt,
+				TimeoutAt:  z.TimeoutAt,
 			})
 		}
 	}
