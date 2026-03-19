@@ -677,13 +677,25 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		// Load step states to determine which steps completed
 		var stepStates []RitualStepState
 		if err := r.db.Where("execution_id = ?", previousExec.ID).Order("step_index").Find(&stepStates).Error; err == nil {
-			// Find first incomplete step (message is empty or step was not reached)
+			// Find first incomplete step (message is empty, has error, or step was not reached)
 			firstIncompleteStep := len(def.Steps) // Default to end if all complete
 			for i := range def.Steps {
 				if i < len(stepStates) {
 					ss := stepStates[i]
-					// Step is incomplete if it has no message (never executed) or has error message
-					if ss.Message == "" || ss.RetryCount > 0 {
+					// Step is incomplete if:
+					// - No message (never executed)
+					// - Has retries (failed and retried)
+					// - Message indicates error/cancellation (context canceled, timeout, etc.)
+					isIncomplete := ss.Message == "" || ss.RetryCount > 0
+					if !isIncomplete && ss.Message != "" {
+						// Check for error patterns that indicate incomplete execution
+						if strings.Contains(ss.Message, "context canceled") ||
+							strings.Contains(ss.Message, "timeout") ||
+							strings.Contains(ss.Message, "aborted") {
+							isIncomplete = true
+						}
+					}
+					if isIncomplete {
 						firstIncompleteStep = i
 						break
 					}
@@ -694,7 +706,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 			}
 
 			// Only recover if there are incomplete steps
-			if firstIncompleteStep < len(def.Steps) {
+			if firstIncompleteStep > 0 && firstIncompleteStep < len(def.Steps) {
 				r.logger.Info("resuming ritual from incomplete step",
 					"ritual", ritualName,
 					"from_step", firstIncompleteStep,
@@ -756,6 +768,12 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 							r.logger.Info("user declined recovery, starting fresh",
 								"ritual", ritualName,
 								"previous_execution_id", previousExec.ID)
+							// Mark the zhengming-saved execution as completed (cleanup)
+							exec.State = RitualStateCompleted
+							r.saveExecution(exec)
+							// Generate a fresh execution ID and reset state
+							exec.ID = GenerateID("ritual", ritualName, edictID, time.Now().String())
+							exec.State = RitualStatePending
 							// Clear recovery data to start fresh
 							previousExec = nil
 							recoveryData = nil
@@ -798,12 +816,12 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 	}
 
 	// Save to database
-	if err := r.db.Create(exec).Error; err != nil {
+	if err := r.db.Save(exec).Error; err != nil {
 		return nil, fmt.Errorf("failed to create ritual execution: %w", err)
 	}
 
-	for _, state := range exec.stepStates {
-		if err := r.db.Create(&state).Error; err != nil {
+	for i := range exec.stepStates {
+		if err := r.db.Save(&exec.stepStates[i]).Error; err != nil {
 			return nil, fmt.Errorf("failed to create step state: %w", err)
 		}
 	}

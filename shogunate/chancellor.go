@@ -365,7 +365,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		"edict_id", params.EdictID)
 
 	result := map[string]any{
-		"status":      "enacted. the ritual guard will wake you up when finished.",
+		"status":      "enacted and reported. the ritual guard will wake you when finished.",
 		"ritual_name": params.RitualName,
 		"edict_id":    params.EdictID,
 	}
