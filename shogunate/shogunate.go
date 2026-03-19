@@ -169,6 +169,12 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 			return
 		}
 
+		// 2b. Handle rejection — user dismissed the suggestion
+		if answer == "Reject" || answer == "Dismiss suggestion" {
+			s.logger.Info("zhengming suggestion rejected", "request_id", requestID)
+			return
+		}
+
 		// 3. Handle system ritual path (e.g., wakeup) — no edict, user chose a path forward
 		if edictID == "" && answer != "" {
 			if edict, err := s.CreateEdict("", answer); err != nil {

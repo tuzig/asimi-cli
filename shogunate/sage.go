@@ -385,10 +385,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 			return "", fmt.Errorf("failed to parse approve_doc result: %w", err)
 		}
 
-		switch approveRes.Status {
-		case "rejected":
-			return `{"status":"rejected","reason":"Ruler dismissed the suggestion (quit without saving)"}`, nil
-		case "modified":
+		if approveRes.Status == "modified" {
 			// Return to LLM for review — don't create zhengming yet
 			originalJSON, _ := json.Marshal(questionText)
 			modifiedJSON, _ := json.Marshal(approveRes.Content)
@@ -396,13 +393,13 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 			return fmt.Sprintf(`{"status":"ruler_modified","original":%s,"modified":%s,"diff":%s}`,
 				originalJSON, modifiedJSON, diffJSON), nil
 		}
-		// If approved, continue with original questionText
+		// If approved or rejected (no content change), fall through to zhengming
 	}
 
 	questions := storage.ZhengmingQuestions{{
 		Text:    questionText,
 		Summary: params.Summary,
-		Options: []string{"Approve edict", "Dismiss suggestion"},
+		Options: []string{"Approve edict", "Reject"},
 	}}
 
 	edictID := ""
