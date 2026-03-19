@@ -610,6 +610,10 @@ type RitualExecution struct {
 	def        *RitualDef
 	stepStates []RitualStepState
 	notify     internal.NotifyFunc
+
+	// Recovery tracking (not persisted)
+	PreviousExecutionID string `gorm:"-"` // ID of the aborted execution being recovered
+	RecoveryMode        bool   `gorm:"-"` // True if this execution is a recovery
 }
 
 // TableName returns the table name for RitualExecution
@@ -656,6 +660,51 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		}
 	}
 
+	// Check for existing aborted/paused ritual execution to recover from
+	var previousExec *RitualExecution
+	var recoveryData storage.JSON
+	var recoveryFirstIncompleteStep int = -1
+	if err := r.db.Where("edict_id = ? AND ritual_name = ? AND state IN (?, ?)", edictID, ritualName, RitualStateAborted, RitualStateStopped).
+		Order("updated_at DESC").
+		First(&previousExec).Error; err == nil {
+		// Found aborted execution - attempt recovery
+		r.logger.Info("found aborted ritual execution for recovery",
+			"ritual", ritualName,
+			"edict_id", edictID,
+			"previous_execution_id", previousExec.ID,
+			"state", previousExec.State)
+
+		// Load step states to determine which steps completed
+		var stepStates []RitualStepState
+		if err := r.db.Where("execution_id = ?", previousExec.ID).Order("step_index").Find(&stepStates).Error; err == nil {
+			// Find first incomplete step (message is empty or step was not reached)
+			firstIncompleteStep := len(def.Steps) // Default to end if all complete
+			for i := range def.Steps {
+				if i < len(stepStates) {
+					ss := stepStates[i]
+					// Step is incomplete if it has no message (never executed) or has error message
+					if ss.Message == "" || ss.RetryCount > 0 {
+						firstIncompleteStep = i
+						break
+					}
+				} else {
+					firstIncompleteStep = i
+					break
+				}
+			}
+
+			// Only recover if there are incomplete steps
+			if firstIncompleteStep < len(def.Steps) {
+				r.logger.Info("resuming ritual from incomplete step",
+					"ritual", ritualName,
+					"from_step", firstIncompleteStep,
+					"previous_execution_id", previousExec.ID)
+				recoveryData = previousExec.Data
+				recoveryFirstIncompleteStep = firstIncompleteStep
+			}
+		}
+	}
+
 	// Create execution record
 	exec := &RitualExecution{
 		ID:          GenerateID("ritual", ritualName, edictID, time.Now().String()),
@@ -666,6 +715,76 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		Data:        storage.JSON{"inputs": inputs},
 		def:         def,
 		notify:      notify,
+	}
+
+	// If recovering from aborted execution, request zhengming confirmation (if getMinister is available)
+	if previousExec != nil && recoveryData != nil && recoveryFirstIncompleteStep >= 0 {
+		if r.getMinister != nil {
+			// Request zhengming for recovery confirmation
+			minister := r.getMinister("chancellor")
+			if minister != nil {
+				type zhengmingGate interface {
+					RequestZhengming(string, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+				}
+				gate, ok := minister.(zhengmingGate)
+				if ok {
+					questions := storage.ZhengmingQuestions{{
+						Text:    fmt.Sprintf("Ritual '%s' was previously aborted at step %d/%d. Recover from step %d (preserving %d completed steps)?", ritualName, recoveryFirstIncompleteStep, len(def.Steps), recoveryFirstIncompleteStep, recoveryFirstIncompleteStep),
+						Options: []string{"Recover from step " + strconv.Itoa(recoveryFirstIncompleteStep), "Start fresh from step 0"},
+					}}
+					requestID, err := gate.RequestZhengming(edictID, questions, storage.PriorityUrgent)
+					if err == nil {
+						// Notify UI of zhengming request
+						if exec.notify != nil {
+							exec.notify(ZhengmingPendingMsg{
+								RequestID:  requestID,
+								EdictID:    edictID,
+								MinisterID: "chancellor",
+								Questions:  questions,
+								Priority:   storage.PriorityUrgent,
+							})
+						}
+						// Wait for zhengming answer
+						answer, waitErr := r.waitForZhengming(ctx, exec, requestID)
+						if waitErr != nil {
+							r.logger.Warn("recovery zhengming wait failed, starting fresh", "error", waitErr)
+							// Clear recovery data on wait failure
+							previousExec = nil
+							recoveryData = nil
+							recoveryFirstIncompleteStep = -1
+						} else if answer.Answer == "Start fresh from step 0" {
+							r.logger.Info("user declined recovery, starting fresh",
+								"ritual", ritualName,
+								"previous_execution_id", previousExec.ID)
+							// Clear recovery data to start fresh
+							previousExec = nil
+							recoveryData = nil
+							recoveryFirstIncompleteStep = -1
+						} else {
+							r.logger.Info("user approved recovery",
+								"ritual", ritualName,
+								"from_step", recoveryFirstIncompleteStep,
+								"previous_execution_id", previousExec.ID)
+						}
+					} else {
+						r.logger.Warn("recovery zhengming request failed, proceeding with recovery", "error", err)
+					}
+				}
+			}
+		}
+		// If getMinister is nil or zhengming was not requested/answered with "Start fresh",
+		// proceed with recovery initialization
+		if previousExec != nil && recoveryData != nil && recoveryFirstIncompleteStep >= 0 {
+			exec.CurrentStep = recoveryFirstIncompleteStep
+			exec.Data = recoveryData
+			exec.PreviousExecutionID = previousExec.ID
+			exec.RecoveryMode = true
+			r.logger.Info("ritual recovery initialized",
+				"ritual", ritualName,
+				"execution_id", exec.ID,
+				"resuming_from_step", exec.CurrentStep,
+				"previous_execution_id", previousExec.ID)
+		}
 	}
 
 	// Initialize step states
@@ -689,10 +808,18 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 		}
 	}
 
-	r.logger.Info("ritual started",
-		"ritual", ritualName,
-		"execution_id", exec.ID,
-		"edict_id", edictID)
+	if exec.RecoveryMode {
+		r.logger.Info("ritual started (recovery mode)",
+			"ritual", ritualName,
+			"execution_id", exec.ID,
+			"edict_id", edictID,
+			"from_step", exec.CurrentStep)
+	} else {
+		r.logger.Info("ritual started",
+			"ritual", ritualName,
+			"execution_id", exec.ID,
+			"edict_id", edictID)
+	}
 
 	steps := 0
 	if exec.def != nil {

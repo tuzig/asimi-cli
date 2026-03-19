@@ -54,13 +54,15 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 	if l.logLevel <= gormlogger.Silent {
 		return
 	}
-	elapsed := time.Since(begin)
-	sql, rows := fc()
-	if err != nil {
-		l.logger.Debug("gorm trace", "source", "gorm", "sql", sql, "rows", rows, "elapsed", elapsed, "error", err)
-	} else {
-		l.logger.Debug("gorm trace", "source", "gorm", "sql", sql, "rows", rows, "elapsed", elapsed)
-	}
+	/*
+		elapsed := time.Since(begin)
+		sql, rows := fc()
+		if err != nil {
+			l.logger.Debug("gorm trace", "source", "gorm", "sql", sql, "rows", rows, "elapsed", elapsed, "error", err)
+		} else {
+			l.logger.Debug("gorm trace", "source", "gorm", "sql", sql, "rows", rows, "elapsed", elapsed)
+		}
+	*/
 }
 
 // LoggerResult holds the configured logger

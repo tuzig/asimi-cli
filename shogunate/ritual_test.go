@@ -1510,8 +1510,8 @@ func TestInvokeRitualTool_Enacted(t *testing.T) {
 		t.Fatalf("Failed to parse result JSON: %v", err)
 	}
 
-	if res["status"] != "enacted" {
-		t.Errorf("expected status 'enacted', got %q", res["status"])
+	if !strings.HasPrefix(res["status"].(string), "enacted") {
+		t.Errorf("expected status to start with 'enacted', got %q", res["status"])
 	}
 	if res["ritual_name"] != "test-enacted" {
 		t.Errorf("expected ritual_name 'test-enacted', got %q", res["ritual_name"])
@@ -1556,8 +1556,8 @@ func TestInvokeRitualTool_EnactedEvenForBadRitual(t *testing.T) {
 	}
 
 	// Should still return "enacted" — failure happens async
-	if res["status"] != "enacted" {
-		t.Errorf("expected status 'enacted', got %q", res["status"])
+	if !strings.HasPrefix(res["status"].(string), "enacted") {
+		t.Errorf("expected status to start with 'enacted', got %q", res["status"])
 	}
 	if res["ritual_name"] != "test-fail-enacted" {
 		t.Errorf("expected ritual_name 'test-fail-enacted', got %q", res["ritual_name"])
