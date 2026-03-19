@@ -29,7 +29,9 @@ func (t RequestZhengmingTool) Name() string {
 }
 
 func (t RequestZhengmingTool) Description() string {
-	return "Request clarification from the user (Zhengming - 正名) when requirements are ambiguous. Use this when you need more information before proceeding with an edict. The tool returns immediately with status='pending'."
+	return `Request clarification from the user (Zhengming - 正名).
+	Example input: 
+	{"questions":[{"text":"Which approach?","options":["Option A","Option B"]}]}`
 }
 
 func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, error) {
@@ -102,26 +104,30 @@ func (t RequestZhengmingTool) Format(input, result string, err error) string {
 
 func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":        "object",
+		"description": "Clarification request containing one or more questions",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
 				"type":        "string",
-				"description": "The edict ID this question relates to",
+				"description": "The ID of the edict being worked on",
 			},
 			"questions": map[string]any{
 				"type":        "array",
 				"description": "Array of questions with 2-4 answer options",
 				"items": map[string]any{
-					"type":  "object",
-					"title": "Question",
+					"type": "object",
 					"properties": map[string]any{
 						"text": map[string]any{
 							"type":        "string",
 							"description": "The question text",
 						},
+						"summary": map[string]any{
+							"type":        "string",
+							"description": "Optional short display text for the UI; text is used if empty",
+						},
 						"options": map[string]any{
 							"type":        "array",
-							"description": "2-4 answer options, recommended first",
+							"description": "2-4 predefined answer choices. Put the recommended choice first.",
 							"items":       map[string]any{"type": "string"},
 							"minItems":    2,
 							"maxItems":    4,
@@ -133,7 +139,7 @@ func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 			},
 			"priority": map[string]any{
 				"type":        "string",
-				"enum":        []string{"low", "normal", "urgent"},
+				"enum":        []string{"normal", "urgent"},
 				"description": "Priority level",
 			},
 		},
