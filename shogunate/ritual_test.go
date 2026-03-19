@@ -444,22 +444,22 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 		t.Fatal("expected at least 1 embedded ritual")
 	}
 
-	// Only verify wakeup — other rituals change frequently
-	var wakeup *RitualDef
+	// Only verify dawn-audience — other rituals change frequently
+	var dawnAudience *RitualDef
 	for _, r := range rituals {
-		if r.Name == "wakeup" {
-			wakeup = r
+		if r.Name == "dawn-audience" {
+			dawnAudience = r
 			break
 		}
 	}
-	if wakeup == nil {
-		t.Fatal("wakeup ritual not found")
+	if dawnAudience == nil {
+		t.Fatal("dawn-audience ritual not found")
 	}
-	if len(wakeup.Steps) != 1 {
-		t.Errorf("wakeup: expected 1 step, got %d", len(wakeup.Steps))
+	if len(dawnAudience.Steps) != 1 {
+		t.Errorf("dawn-audience: expected 1 step, got %d", len(dawnAudience.Steps))
 	}
-	if wakeup.Steps[0].Minister != "chancellor" {
-		t.Errorf("wakeup: expected minister 'chancellor', got %q", wakeup.Steps[0].Minister)
+	if dawnAudience.Steps[0].Minister != "chancellor" {
+		t.Errorf("dawn-audience: expected minister 'chancellor', got %q", dawnAudience.Steps[0].Minister)
 	}
 }
 
