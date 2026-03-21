@@ -1083,7 +1083,6 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 	}
 
 	tab := m.tabs.ActiveTab()
-	m.tabs.SetStreamingTab()
 
 	p := &shogunate.Prompt{
 		Ctx:          ctx,
@@ -1098,6 +1097,9 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 			return shogunate.StreamErrorMsg{Err: err}
 		}
 	}
+
+	// Mark the target tab as streaming after successful submission
+	m.tabs.SetStreamingTabByTab(tab.Target)
 
 	return nil
 }

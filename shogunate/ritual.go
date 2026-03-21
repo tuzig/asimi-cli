@@ -1004,11 +1004,13 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 					})
 				}
 				// Emit ritual_failed Tian event
+				lastStepOutput := getLastStepOutput(exec)
 				r.emitEvent(exec.EdictID, storage.EventRitualFailed, storage.JSON{
-					"ritual":       exec.RitualName,
-					"execution_id": exec.ID,
-					"step":         step.Name,
-					"error":        err.Error(),
+					"ritual":           exec.RitualName,
+					"execution_id":     exec.ID,
+					"step":             step.Name,
+					"error":            err.Error(),
+					"last_step_output": lastStepOutput,
 				})
 				return err
 			}
@@ -1088,9 +1090,11 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		})
 	}
 	// Emit ritual_completed Tian event
+	lastStepOutput := getLastStepOutput(exec)
 	r.emitEvent(exec.EdictID, storage.EventRitualCompleted, storage.JSON{
-		"ritual":       exec.RitualName,
-		"execution_id": exec.ID,
+		"ritual":           exec.RitualName,
+		"execution_id":     exec.ID,
+		"last_step_output": lastStepOutput,
 	})
 
 	r.logger.Info("ritual completed",

@@ -483,7 +483,7 @@ type QueryCourtTool struct {
 func (t *QueryCourtTool) Name() string { return "query_court" }
 
 func (t *QueryCourtTool) Description() string {
-	return `Query the current state of the court. Returns active edicts, their phases,
+	return `Query the current state of the court. Returns active edicts, their seal status,
 recent manifests, verdicts, and precedents. Use this for a broad overview
 of what's happening in the Shogunate.`
 }
@@ -516,6 +516,25 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 		}
 	}
 	result["edicts"] = edictSummaries
+
+	// Get seals for each edict
+	sealSummaries := make([]map[string]interface{}, len(edicts))
+	for i, e := range edicts {
+		var seals []storage.Seal
+		t.db.Where("edict_id = ?", e.EdictID).Order("sealed_at ASC").Find(&seals)
+		sealList := make([]map[string]interface{}, len(seals))
+		for j, seal := range seals {
+			sealList[j] = map[string]interface{}{
+				"minister_id": seal.MinisterID,
+				"sealed_at":   seal.SealedAt,
+			}
+		}
+		sealSummaries[i] = map[string]interface{}{
+			"edict_id": e.EdictID,
+			"seals":    sealList,
+		}
+	}
+	result["seals"] = sealSummaries
 
 	// Get recent zhengming
 	var zhengming []storage.Zhengming

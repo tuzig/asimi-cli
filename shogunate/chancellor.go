@@ -833,12 +833,14 @@ func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
 func (c *Chancellor) handleRitualCompleted(ctx context.Context, edictID string, payload map[string]interface{}) {
 	c.logger.Info("handling ritual completed", "edict_id", edictID, "payload", payload)
 
-	// Synthesize results and potentially seal the edict
-	// The ritual itself should have already committed changes and created manifests
-	// Here we can perform any final synthesis or notification
+	// Extract last_step_output from payload and append to RulingSession
+	if lastStepOutput, ok := payload["last_step_output"].(string); ok && lastStepOutput != "" {
+		if c.RulingSession != nil {
+			c.RulingSession.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual completed. Last step output:\n%s", lastStepOutput))
+			c.logger.Debug("appended ritual completion to RulingSession", "edict_id", edictID)
+		}
+	}
 
-	// Check if edict should be sealed (all work complete)
-	// For now, this is a placeholder - actual logic depends on edict state
 	c.logger.Debug("ritual completed - edict may need synthesis", "edict_id", edictID)
 }
 
@@ -875,8 +877,15 @@ func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, edictID string
 func (c *Chancellor) handleRitualFailed(ctx context.Context, edictID string, payload map[string]interface{}) {
 	c.logger.Error("handling ritual failed", "edict_id", edictID, "payload", payload)
 
-	// Analyze failure and potentially request zhengming or retry
-	// For now, this is a placeholder - actual logic depends on failure type
+	// Extract last_step_output and error from payload and append to RulingSession
+	if lastStepOutput, ok := payload["last_step_output"].(string); ok && lastStepOutput != "" {
+		if c.RulingSession != nil {
+			errMsg, _ := payload["error"].(string)
+			c.RulingSession.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual failed. Error: %s\nLast step output:\n%s", errMsg, lastStepOutput))
+			c.logger.Debug("appended ritual failure to RulingSession", "edict_id", edictID)
+		}
+	}
+
 	c.logger.Debug("ritual failed - may need zhengming or retry", "edict_id", edictID)
 }
 
