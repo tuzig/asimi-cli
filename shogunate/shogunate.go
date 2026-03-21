@@ -86,8 +86,7 @@ type Shogunate struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	streamingCtx context.Context
-	streamingMu  sync.Mutex
+	rulingCtx func() context.Context
 }
 
 // NewShogunate creates a new Shogunate coordinator.
@@ -122,10 +121,8 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		Runner:     runner,
 		GetMinister: s.GetMinister,
 		StreamingCtx: func() context.Context {
-			s.streamingMu.Lock()
-			defer s.streamingMu.Unlock()
-			if s.streamingCtx != nil {
-				return s.streamingCtx
+			if s.rulingCtx != nil {
+				return s.rulingCtx()
 			}
 			return s.ctx
 		},
@@ -236,7 +233,6 @@ func (s *Shogunate) Start(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	s.ctx, s.cancel = context.WithCancel(ctx)
-	s.streamingCtx = s.ctx
 
 	// Load rituals
 	if err := s.ritualGuard.LoadRituals(); err != nil {
@@ -414,12 +410,13 @@ func (s *Shogunate) GetEventRegistry() *EventRegistry {
 	return s.ritualGuard.EventRegistry()
 }
 
-// SetStreamingCtx sets the streaming context used by rituals.
-// Call this with the ruling tab's context so CTRL-C cancels both prompt and rituals.
-func (s *Shogunate) SetStreamingCtx(ctx context.Context) {
-	s.streamingMu.Lock()
-	defer s.streamingMu.Unlock()
-	s.streamingCtx = ctx
+// SetRulingCtx sets the function that returns the ruling tab's context.
+// Rituals use this context, so cancelling the ruling tab cancels rituals.
+func (s *Shogunate) SetRulingCtx(fn func() context.Context) {
+	if s == nil {
+		return
+	}
+	s.rulingCtx = fn
 }
 
 // SubmitPrompt routes a prompt to the specified minister by ID.

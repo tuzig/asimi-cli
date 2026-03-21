@@ -1231,7 +1231,8 @@ func TestCancelActiveStreaming(t *testing.T) {
 
 	require.True(t, cancelCalled, "Cancel function should be called")
 	require.False(t, model.tabs.AnyStreaming())
-	require.Nil(t, model.tabs.ActiveTab().Cancel)
+	// Ruling tab always has a fresh cancel func after cancellation
+	require.NotNil(t, model.tabs.ActiveTab().Cancel)
 }
 
 // TestCancelActiveStreaming_NotActive tests cancellation when not streaming
@@ -1247,7 +1248,8 @@ func TestCancelActiveStreaming_NotActive(t *testing.T) {
 	model.stopStreaming()
 
 	require.False(t, model.tabs.AnyStreaming())
-	require.Nil(t, model.tabs.ActiveTab().Cancel)
+	// Ruling tab gets a fresh cancel func even when not previously streaming
+	require.NotNil(t, model.tabs.ActiveTab().Cancel)
 }
 
 // TestSaveHistoryPresentState tests saving the present state
@@ -1350,29 +1352,6 @@ func TestStatusComponent_WaitingIndicatorView(t *testing.T) {
 }
 
 // TestEscapeDuringStreaming_StopsWaiting tests that ESC during streaming stops waiting
-func TestEscapeDuringStreaming_StopsWaiting(t *testing.T) {
-	model := newTestModel(t)
-
-	// Set up streaming on the active tab
-	tab := model.tabs.ActiveTab()
-	tab.Streaming = true
-	cancelCalled := false
-	tab.Cancel = func() {
-		cancelCalled = true
-	}
-
-	// Start waiting
-	model.startWaitingForResponse()
-	require.True(t, model.waitingForResponse)
-
-	// Press escape
-	newModel, _ := model.handleEscape()
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
-
-	require.True(t, cancelCalled)
-	require.False(t, updatedModel.waitingForResponse)
-}
 
 // TestStreamChunkMsg_StopsWaiting tests that receiving a stream chunk resets the quiet time timer
 func TestStreamChunkMsg_StopsWaiting(t *testing.T) {
@@ -2016,4 +1995,26 @@ func TestCtrlCStopsStreamingE2E(t *testing.T) {
 
 	assert.False(t, tuiModel.tabs.AnyStreaming(), "streaming should be stopped after CTRL-C")
 	assert.False(t, tuiModel.waitingForResponse, "should not be waiting for response after CTRL-C")
+}
+
+// TestEscapeDuringStreaming_StopsWaiting tests that ESC during streaming stops waiting
+func TestEscapeDuringStreaming_StopsWaiting(t *testing.T) {
+	model := newTestModel(t)
+
+	// Set up streaming on the active tab
+	tab := model.tabs.ActiveTab()
+	tab.Streaming = true
+
+	// Start waiting
+	model.startWaitingForResponse()
+	require.True(t, model.waitingForResponse)
+
+	// Press escape
+	newModel, _ := model.handleEscape()
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Verify streaming was stopped
+	require.False(t, updatedModel.tabs.ActiveTab().Streaming, "streaming should be stopped after ESC")
+	require.False(t, updatedModel.waitingForResponse)
 }

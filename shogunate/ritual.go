@@ -921,6 +921,16 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		case <-ctx.Done():
 			exec.State = RitualStateAborted
 			r.saveExecution(exec)
+			if exec.notify != nil {
+				exec.notify(RitualStepMsg{
+					TabID:       "chancellor",
+					RitualName:  exec.RitualName,
+					ExecutionID: exec.ID,
+					EdictID:     exec.EdictID,
+					Status:      "ritual_failed",
+					Message:     "aborted by user",
+				})
+			}
 			return ctx.Err()
 		default:
 		}
@@ -930,6 +940,26 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		if err != nil {
 			exec.stepStates[exec.CurrentStep].Message = err.Error()
 			exec.stepStates[exec.CurrentStep].Output = result
+
+			// Context cancelled (user interrupt) — abort without cascading events
+			if ctx.Err() != nil {
+				if exec.notify != nil {
+					exec.notify(RitualStepMsg{
+						TabID:       "chancellor",
+						RitualName:  exec.RitualName,
+						ExecutionID: exec.ID,
+						EdictID:     exec.EdictID,
+						StepName:    step.Name,
+						StepIndex:   exec.CurrentStep,
+						TotalSteps:  len(exec.def.Steps),
+						Status:      "aborted",
+						Message:     "aborted by user",
+					})
+				}
+				exec.State = RitualStateAborted
+				r.saveExecution(exec)
+				return err
+			}
 
 			// Notify: step failed
 			if exec.notify != nil {
@@ -945,12 +975,6 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 					Message:     err.Error(),
 				})
 			}
-			// Context cancelled (user interrupt) — abort without cascading events
-			if ctx.Err() != nil {
-				exec.State = RitualStateAborted
-				r.saveExecution(exec)
-				return err
-			}
 
 			// Emit step_failed Tian event
 			r.emitEvent(exec.EdictID, storage.EventStepFailed, storage.JSON{
@@ -965,6 +989,20 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			if !r.handleFailure(ctx, exec, step, err) {
 				exec.State = RitualStateFailed
 				r.saveExecution(exec)
+				// Notify UI so Indent is decremented
+				if exec.notify != nil {
+					exec.notify(RitualStepMsg{
+						TabID:       "chancellor",
+						RitualName:  exec.RitualName,
+						ExecutionID: exec.ID,
+						EdictID:     exec.EdictID,
+						StepName:    step.Name,
+						StepIndex:   exec.CurrentStep,
+						TotalSteps:  len(exec.def.Steps),
+						Status:      "ritual_failed",
+						Message:     err.Error(),
+					})
+				}
 				// Emit ritual_failed Tian event
 				r.emitEvent(exec.EdictID, storage.EventRitualFailed, storage.JSON{
 					"ritual":       exec.RitualName,

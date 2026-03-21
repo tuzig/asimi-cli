@@ -137,6 +137,7 @@ func runInteractiveMode() error {
 	tuiProgram := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	// TODO: simplify by refactoring internal.NotifyFunc to func(msg tea.Msg)
 	tuiModel.shogunate.SetNotify(func(msg any) { tuiProgram.Send(msg) })
+	tuiModel.shogunate.SetRulingCtx(tuiModel.tabs.RulingCtx)
 
 	// Connect the shell runner's message channel to the TUI for approval requests
 	// TODO: refactor the request approval to zhengming

@@ -929,6 +929,7 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 	// Double press within window — quit
 	if !m.ctrlCLastPress.IsZero() && now.Sub(m.ctrlCLastPress) <= windowTime {
 		slog.Info("CTRL-C: double press, quitting")
+		m.stopStreaming()
 		m.shutdown()
 		return m, tea.Quit
 	}
@@ -1302,15 +1303,13 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
 				cmds = append(cmds, waitCmd)
 			}
-			ctx, cancel := context.WithCancel(context.Background())
 			tab := m.tabs.ActiveTab()
 			if tab.Cancel != nil {
 				tab.Cancel()
 			}
+			ctx, cancel := context.WithCancel(context.Background())
+			tab.Ctx = ctx
 			tab.Cancel = cancel
-			if tab.Target == "chancellor" && m.shogunate != nil {
-				m.shogunate.SetStreamingCtx(ctx)
-			}
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
@@ -1511,15 +1510,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
 				cmds = append(cmds, waitCmd)
 			}
-			ctx, cancel := context.WithCancel(context.Background())
 			tab := m.tabs.ActiveTab()
 			if tab.Cancel != nil {
 				tab.Cancel()
 			}
+			ctx, cancel := context.WithCancel(context.Background())
+			tab.Ctx = ctx
 			tab.Cancel = cancel
-			if tab.Target == "chancellor" && m.shogunate != nil {
-				m.shogunate.SetStreamingCtx(ctx)
-			}
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
@@ -1604,7 +1601,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(chat.Messages))
-		m.tabs.CancelTabByID(msg.TabID)
+		m.tabs.ClearStreamingByTab(msg.TabID)
 		if !m.tabs.AnyStreaming() {
 			m.stopWaitingForResponse()
 		}
@@ -1749,6 +1746,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "failed":
 			chat.AddMessage(fmt.Sprintf("%s %d/%d: %s failed: %s",
 				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName, msg.Message))
+		case "aborted":
+			chat.AddMessage(fmt.Sprintf("%s %d/%d: %s ABORT",
+				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
 		case "retrying":
 			chat.AddMessage(fmt.Sprintf("%s %d/%d: %s retrying",
 				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
@@ -1759,6 +1759,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ritual_completed":
 			chat.AddMessage(fmt.Sprintf("%sRitual %s completed", ritualPrefix, msg.RitualName))
 			chat.Indent--
+		case "ritual_failed":
+			chat.AddMessage(fmt.Sprintf("%sRitual %s failed: %s", ritualPrefix, msg.RitualName, msg.Message))
+			if chat.Indent > 0 {
+				chat.Indent--
+			}
 		}
 		return m, nil
 
@@ -2251,15 +2256,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Add initialization message if this is an init command (has a prompt and callback)
 		// If there's a prompt, send it to the AI
 		if msg.prompt != "" {
-			ctx, cancel := context.WithCancel(context.Background())
 			tab := m.tabs.ActiveTab()
 			if tab.Cancel != nil {
 				tab.Cancel()
 			}
+			ctx, cancel := context.WithCancel(context.Background())
+			tab.Ctx = ctx
 			tab.Cancel = cancel
-			if tab.Target == "chancellor" && m.shogunate != nil {
-				m.shogunate.SetStreamingCtx(ctx)
-			}
 			m.sessionActive = true
 
 			var streamCmd tea.Cmd
@@ -2948,7 +2951,6 @@ func (m *TUIModel) stopStreamingTab(tabTarget string) {
 }
 
 // stopStreaming cancels all streaming globally (used for shutdown).
-// CancelAllTabs cancels the ruling tab's context, which propagates to rituals via SetStreamingCtx.
 func (m *TUIModel) stopStreaming() {
 	m.tabs.CancelAllTabs()
 	m.stopWaitingForResponse()

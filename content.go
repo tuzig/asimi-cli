@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -30,6 +31,7 @@ type Tab struct {
 	Content   ContentComponent   // Own content buffer per tab
 	EdictID   string             // Current edict ID for this tab
 	Streaming bool               // True when this tab is actively receiving stream data
+	Ctx       context.Context    // per-tab context, flows to rituals for ruling tab
 	Cancel    context.CancelFunc // per-tab streaming cancellation
 }
 
@@ -52,11 +54,15 @@ func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager
 	ruling.Chat.GetStatus = getStatus
 	hunting := NewContentComponent(w, h, mdEnabled)
 	hunting.Chat.GetStatus = getStatus
+	rulingCtx, rulingCancel := context.WithCancel(context.Background())
+	huntingCtx, huntingCancel := context.WithCancel(context.Background())
 	return TabManager{
 		tabs: []Tab{
-			{Label: "Shogunate", Type: TabShogunate, Target: "shogunate", Content: shogunateContent},
-			{Label: "Ruling", Type: TabRuling, Target: "chancellor", Content: ruling},
-			{Label: "Hunting", Type: TabHunting, Target: "sage", Content: hunting},
+			{Label: "Monitoring", Type: TabShogunate, Target: "shogunate", Content: shogunateContent},
+			{Label: "Ruling", Type: TabRuling, Target: "chancellor", Content: ruling,
+				Ctx: rulingCtx, Cancel: rulingCancel},
+			{Label: "Hunting", Type: TabHunting, Target: "sage", Content: hunting,
+				Ctx: huntingCtx, Cancel: huntingCancel},
 		},
 		activeTab:       1, // Ruling is the default
 		width:           w,
@@ -139,39 +145,46 @@ func (tm *TabManager) ClearStreamingByTab(tabID string) {
 	}
 }
 
-// CancelActiveTab cancels streaming on the active tab only
-func (tm *TabManager) CancelActiveTab() {
-	tab := &tm.tabs[tm.activeTab]
-	if tab.Streaming && tab.Cancel != nil {
-		tab.Cancel()
-		tab.Cancel = nil
-	}
-	tab.Streaming = false
-}
-
-// CancelTabByID cancels streaming on the tab matching the given target
+// CancelTabByID cancels streaming on the tab matching the given target.
 func (tm *TabManager) CancelTabByID(tabID string) {
 	for i := range tm.tabs {
-		if tm.tabs[i].Target == tabID {
-			if tm.tabs[i].Cancel != nil {
-				tm.tabs[i].Cancel()
-				tm.tabs[i].Cancel = nil
+		tab := &tm.tabs[i]
+		if tab.Target == tabID {
+			if tab.Cancel != nil {
+				tab.Cancel()
 			}
-			tm.tabs[i].Streaming = false
+			tab.Ctx, tab.Cancel = context.WithCancel(context.Background())
+			tab.Streaming = false
 			return
 		}
 	}
+	slog.Error("Failed to cancel tab streaming, tabID not found", "tabID", tabID)
 }
 
-// CancelAllTabs cancels streaming on all tabs
+// CancelAllTabs cancels streaming on all tabs.
+// The ruling tab gets a fresh context for future rituals.
 func (tm *TabManager) CancelAllTabs() {
 	for i := range tm.tabs {
 		if tm.tabs[i].Cancel != nil {
 			tm.tabs[i].Cancel()
+		}
+		if tm.tabs[i].Type == TabRuling {
+			tm.tabs[i].Ctx, tm.tabs[i].Cancel = context.WithCancel(context.Background())
+		} else {
 			tm.tabs[i].Cancel = nil
 		}
 		tm.tabs[i].Streaming = false
 	}
+}
+
+// RulingCtx returns the ruling tab's current context.
+func (tm *TabManager) RulingCtx() context.Context {
+	for i := range tm.tabs {
+		if tm.tabs[i].Type == TabRuling {
+			return tm.tabs[i].Ctx
+		}
+	}
+	return context.Background()
 }
 
 // SwitchTo saves current tab state and switches to the target index
