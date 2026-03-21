@@ -89,6 +89,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("logout", "Logout from current provider and clear credentials", handleLogoutCommand)
 	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [hunting|<minister>|ritual <run_id>])", handleTabNewCommand)
 	registry.RegisterCommand("tabclose", "Close the current tab", handleTabCloseCommand)
+	registry.RegisterCommand("seal", "Grant Ruler's seal to an edict (usage: :seal [edict_id] [notes])", handleSealCommand)
 
 	return registry
 }
@@ -810,4 +811,11 @@ func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
 	}
 	model.commandLine.AddToast("Tab closed", "success", time.Second*2)
 	return nil
+}
+
+// handleSealCommand grants the Ruler's seal to an edict
+func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
+	return func() tea.Msg {
+		return showSystemMsg("WIP")
+	}
 }

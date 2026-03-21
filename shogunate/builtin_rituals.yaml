@@ -52,8 +52,6 @@
         Analyze edict {{ .edict_id }} and produce a technical Battle Plan.
         Break down the work into clear phases with dependencies.
         Identify risks and architectural decisions.
-      then:
-        - the ruler approves
       on_failure: zhengming
 
     - name: forge
