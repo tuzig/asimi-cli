@@ -515,3 +515,11 @@ func (s *Shogunate) ResetHunting() {
 		sage.ResetSession()
 	}
 }
+
+// GetSealService returns the seal service
+func (s *Shogunate) GetSealService() *SealService {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return NewSealService(s.db)
+}

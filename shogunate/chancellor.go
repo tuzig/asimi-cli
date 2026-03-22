@@ -704,6 +704,57 @@ func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID, cancel
 	return nil
 }
 
+// SealEdict grants the Ruler's seal to an edict
+func (c *Chancellor) SealEdict(edictID, notes string) error {
+	if c.shogunate == nil {
+		return fmt.Errorf("shogunate not available")
+	}
+
+	sealService := c.shogunate.GetSealService()
+	if sealService == nil {
+		return fmt.Errorf("seal service not available")
+	}
+
+	// Check prerequisites
+	missing, err := sealService.GetMissingSeals(edictID)
+	if err != nil {
+		return fmt.Errorf("failed to check seal status: %w", err)
+	}
+
+	// Filter out ruler from missing (we're about to grant it)
+	var prereqMissing []string
+	for _, m := range missing {
+		if m != "ruler" {
+			prereqMissing = append(prereqMissing, m)
+		}
+	}
+
+	if len(prereqMissing) > 0 {
+		return fmt.Errorf("cannot grant Ruler seal - missing %s seal(s)", strings.Join(prereqMissing, ", "))
+	}
+
+	// Grant the seal
+	metadata := storage.JSON{
+		"notes":     notes,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	if err := sealService.GrantSeal(edictID, "ruler", metadata); err != nil {
+		return fmt.Errorf("failed to grant Ruler seal: %w", err)
+	}
+
+	// Emit event
+	payload := storage.JSON{
+		"minister_id": "ruler",
+		"notes":       notes,
+		"timestamp":   metadata["timestamp"],
+	}
+	c.EmitEvent(edictID, storage.EventSealGranted, payload)
+
+	c.logger.Info("Ruler's seal granted", "edict_id", edictID, "notes", notes)
+	return nil
+}
+
 // --- Prompt Processing ---
 
 // processPrompt handles a single prompt from the Ruler

@@ -191,6 +191,7 @@ const (
 	EventZhengmingAnswered ShogunateEvent = "zhengming_answered"
 	EventEdictCancelled    ShogunateEvent = "edict_cancelled"
 	EventSealGranted       ShogunateEvent = "seal_granted"
+	EventEdictSealed       ShogunateEvent = "edict_sealed"
 )
 
 // TianEvent represents an event in the Tian ledger

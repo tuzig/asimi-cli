@@ -12,6 +12,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -816,6 +817,95 @@ func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
 // handleSealCommand grants the Ruler's seal to an edict
 func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
-		return showSystemMsg("WIP")
+		// Parse arguments: :seal [edict_id] [notes]
+		var edictID string
+		var notes string
+
+		if len(args) > 0 {
+			edictID = args[0]
+			if len(args) > 1 {
+				notes = strings.Join(args[1:], " ")
+			}
+		} else {
+			// Default to current edict if in Ruling tab
+			if model.currentEdictID != "" {
+				edictID = model.currentEdictID
+			} else {
+				return showSystemMsg("Usage: :seal [edict_id] [notes] - provide edict_id or be in an active edict session")
+			}
+		}
+
+		// Get seal service from shogunate
+		if model.shogunate == nil {
+			return showSystemMsg("Shogunate not active - cannot grant seal")
+		}
+
+		sealService := model.shogunate.GetSealService()
+		if sealService == nil {
+			return showSystemMsg("Seal service not available")
+		}
+
+		// Get current seals for the edict
+		seals, err := sealService.GetSeals(edictID)
+		if err != nil {
+			return showSystemMsg(fmt.Sprintf("Failed to get seals for %s: %v", edictID, err))
+		}
+
+		// Display seal chain status
+		sealChainMsg := renderSealChain(seals, 60)
+
+		// Check if Judge and Sage seals exist
+		hasJudge := false
+		hasSage := false
+		hasRuler := false
+
+		for _, seal := range seals {
+			switch seal.MinisterID {
+			case "judge":
+				hasJudge = true
+			case "sage":
+				hasSage = true
+			case "ruler":
+				hasRuler = true
+			}
+		}
+
+		// If Ruler seal already exists, inform user
+		if hasRuler {
+			return showSystemMsg(fmt.Sprintf("Ruler's seal already granted to %s\n%s", edictID, sealChainMsg))
+		}
+
+		// Check prerequisites
+		var missingSeals []string
+		if !hasJudge {
+			missingSeals = append(missingSeals, "Judge")
+		}
+		if !hasSage {
+			missingSeals = append(missingSeals, "Sage")
+		}
+
+		if len(missingSeals) > 0 {
+			return showSystemMsg(fmt.Sprintf("Cannot grant Ruler seal - missing %s seal(s)\n%s", strings.Join(missingSeals, ", "), sealChainMsg))
+		}
+
+		// All prerequisites met - grant Ruler's seal
+		metadata := storage.JSON{
+			"notes":     notes,
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+
+		if err := sealService.GrantSeal(edictID, "ruler", metadata); err != nil {
+			return showSystemMsg(fmt.Sprintf("Failed to grant Ruler's seal: %v", err))
+		}
+
+		// Emit event
+		payload := storage.JSON{
+			"minister_id": "ruler",
+			"notes":       notes,
+			"timestamp":   metadata["timestamp"],
+		}
+		model.shogunate.PublishEvent(edictID, storage.EventSealGranted, payload)
+
+		return showSystemMsg(fmt.Sprintf("Ruler's seal granted to %s\n%s", edictID, sealChainMsg))
 	}
 }
