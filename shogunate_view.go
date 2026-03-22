@@ -204,7 +204,7 @@ func formatAge(d time.Duration) string {
 // renderSealChain displays the seal chain status for an edict
 func renderSealChain(seals []storage.Seal, w int) string {
 	var b strings.Builder
-	
+
 	// Define required seals in order
 	requiredMinisters := []string{"judge", "sage", "ruler"}
 	ministerTitles := map[string]string{
@@ -212,19 +212,19 @@ func renderSealChain(seals []storage.Seal, w int) string {
 		"sage":  "Sage",
 		"ruler": "Ruler",
 	}
-	
+
 	// Build set of granted seals
 	granted := make(map[string]bool)
 	for _, seal := range seals {
 		granted[seal.MinisterID] = true
 	}
-	
+
 	// Render each seal
 	for i, ministerID := range requiredMinisters {
 		if i > 0 {
 			b.WriteString(" ")
 		}
-		
+
 		title := ministerTitles[ministerID]
 		if granted[ministerID] {
 			b.WriteString(activeStyle.Render(fmt.Sprintf("[✓ %s]", title)))
@@ -232,6 +232,6 @@ func renderSealChain(seals []storage.Seal, w int) string {
 			b.WriteString(labelStyle.Render(fmt.Sprintf("[○ %s]", title)))
 		}
 	}
-	
+
 	return lipgloss.NewStyle().Width(w).Render(b.String())
 }

@@ -596,15 +596,16 @@ func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecuti
 
 // RitualExecution tracks a running ritual instance
 type RitualExecution struct {
-	ID          string       `gorm:"primaryKey;column:id"`
-	RitualName  string       `gorm:"column:ritual_name"`
-	EdictID     string       `gorm:"column:edict_id;index"`
-	SessionID   string       `gorm:"column:session_id"`
-	CurrentStep int          `gorm:"column:current_step"`
-	State       RitualState  `gorm:"column:state"`
-	Data        storage.JSON `gorm:"column:data;type:json"`
-	CreatedAt   time.Time    `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt   time.Time    `gorm:"column:updated_at;autoUpdateTime"`
+	ID          string          `gorm:"primaryKey;column:id"`
+	RitualName  string          `gorm:"column:ritual_name"`
+	EdictID     string          `gorm:"column:edict_id;index"`
+	SessionID   string          `gorm:"column:session_id"`
+	CurrentStep int             `gorm:"column:current_step"`
+	State       RitualState     `gorm:"column:state"`
+	Data        storage.JSON    `gorm:"column:data;type:json"`
+	ContextType RitualContextType `gorm:"column:context_type"`
+	CreatedAt   time.Time       `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt   time.Time       `gorm:"column:updated_at;autoUpdateTime"`
 
 	// Runtime (not persisted)
 	def        *RitualDef
