@@ -329,6 +329,11 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to open GORM database: %w", err)
 	}
 
+	// Migrate edict_id columns from TEXT to INTEGER (uint) before AutoMigrate
+	if err := storage.MigrateEdictIDToUint(db, params.Logger); err != nil {
+		return nil, fmt.Errorf("failed to migrate edict_id to uint: %w", err)
+	}
+
 	// Auto-migrate Shogunate tables
 	if err := db.AutoMigrate(
 		&storage.Edict{},

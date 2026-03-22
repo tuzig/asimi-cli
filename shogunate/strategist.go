@@ -78,7 +78,7 @@ func (s *Strategist) Tools() []Tool {
 func (s *Strategist) InsertLing(ling *storage.Ling) error {
 	// Generate ling ID if not set
 	if ling.LingID == "" {
-		ling.LingID = GenerateID("ling", ling.EdictID, ling.Description)
+		ling.LingID = GenerateID("ling", fmt.Sprintf("%d", ling.EdictID), ling.Description)
 	}
 
 	if err := s.db.Create(ling).Error; err != nil {
@@ -88,7 +88,7 @@ func (s *Strategist) InsertLing(ling *storage.Ling) error {
 }
 
 // GetLingForEdict retrieves all ling for an edict
-func (s *Strategist) GetLingForEdict(edictID string) ([]storage.Ling, error) {
+func (s *Strategist) GetLingForEdict(edictID uint) ([]storage.Ling, error) {
 	var ling []storage.Ling
 	err := s.db.Where("edict_id = ?", edictID).
 		Order("created_at ASC").
@@ -100,7 +100,7 @@ func (s *Strategist) GetLingForEdict(edictID string) ([]storage.Ling, error) {
 }
 
 // LingExistsForEdict checks if any ling exists for an edict
-func (s *Strategist) LingExistsForEdict(edictID string) (bool, error) {
+func (s *Strategist) LingExistsForEdict(edictID uint) (bool, error) {
 	var count int64
 	err := s.db.Model(&storage.Ling{}).
 		Where("edict_id = ?", edictID).
@@ -114,7 +114,7 @@ func (s *Strategist) LingExistsForEdict(edictID string) (bool, error) {
 // --- Execute Logic ---
 
 // execute runs the Strategist's planning logic for an edict (internal method)
-func (s *Strategist) execute(ctx context.Context, edictID string) (bool, error) {
+func (s *Strategist) execute(ctx context.Context, edictID uint) (bool, error) {
 	// Check if ling already exist (idempotency)
 	exists, err := s.LingExistsForEdict(edictID)
 	if err != nil {
@@ -347,14 +347,14 @@ func (t *InsertLingTool) Description() string {
 
 func (t *InsertLingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID      string   `json:"edict_id"`
+		EdictID      uint     `json:"edict_id"`
 		Description  string   `json:"description"`
 		Dependencies []string `json:"dependencies,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 	if params.Description == "" {
@@ -372,7 +372,7 @@ func (t *InsertLingTool) Call(ctx context.Context, input string) (string, error)
 		return "", err
 	}
 
-	return fmt.Sprintf("Created ling %s for edict %s", ling.LingID, params.EdictID), nil
+	return fmt.Sprintf("Created ling %s for edict %d", ling.LingID, params.EdictID), nil
 }
 
 func (t *InsertLingTool) ParameterSchema() map[string]any {
@@ -380,7 +380,7 @@ func (t *InsertLingTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "The edict ID this ling belongs to",
 			},
 			"description": map[string]any{
@@ -417,12 +417,12 @@ func (t *ListLingTool) Description() string {
 
 func (t *ListLingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
@@ -447,7 +447,7 @@ func (t *ListLingTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "The edict ID to list ling for",
 			},
 		},

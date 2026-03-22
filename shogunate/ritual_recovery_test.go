@@ -19,15 +19,14 @@ func TestRitualRecoveryDetection(t *testing.T) {
 	}
 	
 	// Create test edict
-	edictID := "edict-recovery-test"
-	err := db.Create(&storage.Edict{
-		EdictID: edictID,
-		Intent:  "Test recovery",
-		Status:  storage.EdictActive,
-	}).Error
-	if err != nil {
+	edict := storage.Edict{
+		Intent: "Test recovery",
+		Status: storage.EdictActive,
+	}
+	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
+	edictID := edict.EdictID
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -42,7 +41,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 
 	// Create aborted execution with one completed step
 	abortedExecID := "ritual-aborted-123"
-	err = db.Create(&RitualExecution{
+	err := db.Create(&RitualExecution{
 		ID:          abortedExecID,
 		RitualName:  "test-recovery",
 		EdictID:     edictID,
@@ -137,15 +136,14 @@ func TestRitualRecoveryNoAbortedExecution(t *testing.T) {
 	}
 	
 	// Create test edict
-	edictID := "edict-fresh-start-test"
-	err := db.Create(&storage.Edict{
-		EdictID: edictID,
-		Intent:  "Test fresh start",
-		Status:  storage.EdictActive,
-	}).Error
-	if err != nil {
+	edict := storage.Edict{
+		Intent: "Test fresh start",
+		Status: storage.EdictActive,
+	}
+	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
+	edictID := edict.EdictID
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -205,15 +203,14 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 	}
 	
 	// Create test edict
-	edictID := "edict-all-complete-test"
-	err := db.Create(&storage.Edict{
-		EdictID: edictID,
-		Intent:  "Test all complete",
-		Status:  storage.EdictActive,
-	}).Error
-	if err != nil {
+	edict := storage.Edict{
+		Intent: "Test all complete",
+		Status: storage.EdictActive,
+	}
+	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
+	edictID := edict.EdictID
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -227,7 +224,7 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 
 	// Create aborted execution with ALL steps completed
 	abortedExecID := "ritual-aborted-complete-123"
-	err = db.Create(&RitualExecution{
+	err := db.Create(&RitualExecution{
 		ID:          abortedExecID,
 		RitualName:  "test-all-complete",
 		EdictID:     edictID,
@@ -305,15 +302,14 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 	}
 	
 	// Create test edict
-	edictID := "edict-retry-test"
-	err := db.Create(&storage.Edict{
-		EdictID: edictID,
-		Intent:  "Test retry",
-		Status:  storage.EdictActive,
-	}).Error
-	if err != nil {
+	edict := storage.Edict{
+		Intent: "Test retry",
+		Status: storage.EdictActive,
+	}
+	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
+	edictID := edict.EdictID
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -328,7 +324,7 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 
 	// Create aborted execution
 	abortedExecID := "ritual-aborted-retry-123"
-	err = db.Create(&RitualExecution{
+	err := db.Create(&RitualExecution{
 		ID:          abortedExecID,
 		RitualName:  "test-retry",
 		EdictID:     edictID,
@@ -406,15 +402,14 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 	}
 	
 	// Create test edict
-	edictID := "edict-log-test"
-	err := db.Create(&storage.Edict{
-		EdictID: edictID,
-		Intent:  "Test log",
-		Status:  storage.EdictActive,
-	}).Error
-	if err != nil {
+	edict := storage.Edict{
+		Intent: "Test log",
+		Status: storage.EdictActive,
+	}
+	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
+	edictID := edict.EdictID
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -428,7 +423,7 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 
 	// Create aborted execution
 	abortedExecID := "ritual-aborted-log-123"
-	err = db.Create(&RitualExecution{
+	err := db.Create(&RitualExecution{
 		ID:          abortedExecID,
 		RitualName:  "test-log",
 		EdictID:     edictID,

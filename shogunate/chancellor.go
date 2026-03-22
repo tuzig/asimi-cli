@@ -97,7 +97,7 @@ type InvokeMinisterTool struct {
 type MinisterInvokingMsg struct {
 	TabID      string
 	MinisterID string
-	EdictID    string
+	EdictID    uint
 	Task       string
 }
 
@@ -105,7 +105,7 @@ type MinisterInvokingMsg struct {
 type MinisterCompletedMsg struct {
 	TabID      string
 	MinisterID string
-	EdictID    string
+	EdictID    uint
 	Output     string
 	Sealed     bool
 	Error      error
@@ -125,7 +125,7 @@ func (t InvokeMinisterTool) Description() string {
 func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		MinisterID string `json:"minister_id"`
-		EdictID    string `json:"edict_id"`
+		EdictID    uint   `json:"edict_id"`
 		Work       string `json:"task"` // JSON field is "task" for backwards compatibility
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
@@ -135,7 +135,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	if params.MinisterID == "" {
 		return "", fmt.Errorf("minister_id is required")
 	}
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 	if params.Work == "" {
@@ -291,7 +291,7 @@ func (t InvokeMinisterTool) ParameterSchema() map[string]any {
 				"description": "The minister to invoke (strategist, forge, judge, censor or marshal)",
 			},
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "The edict ID to process",
 			},
 			"task": map[string]any{
@@ -320,7 +320,7 @@ Rituals are predefined workflows that orchestrate ministers and commands through
 func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		RitualName string            `json:"ritual_name"`
-		EdictID    string            `json:"edict_id"`
+		EdictID    uint              `json:"edict_id"`
 		Inputs     map[string]string `json:"inputs"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
@@ -330,7 +330,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	if params.RitualName == "" {
 		return "", fmt.Errorf("ritual_name is required")
 	}
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
@@ -338,7 +338,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		params.Inputs = make(map[string]string)
 	}
 	// Add edict_id to inputs for template expansion
-	params.Inputs["edict_id"] = params.EdictID
+	params.Inputs["edict_id"] = fmt.Sprintf("%d", params.EdictID)
 
 	logger := t.chancellor.logger
 	if logger == nil {
@@ -417,7 +417,7 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 				"description": "Name of the ritual to invoke (e.g., 'implement', 'fix', 'refactor')",
 			},
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "The edict ID this ritual is processing",
 			},
 			"inputs": map[string]any{
@@ -433,7 +433,7 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 func (c *Chancellor) Tools() []Tool {
 	// Create zhengming notify wrapper
 	var zhengmingNotify tools.ZhengmingNotifyFunc
-	zhengmingNotify = func(requestID, edictID, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
+	zhengmingNotify = func(requestID string, edictID uint, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
 		c.notify(ZhengmingPendingMsg{
 			RequestID:  requestID,
 			EdictID:    edictID,
@@ -480,7 +480,7 @@ func getLastStepOutput(exec *RitualExecution) string {
 
 // RunRitual runs a ritual synchronously, blocking until completion or failure.
 // Uses the caller's ctx so CTRL-C propagates properly.
-func (c *Chancellor) RunRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string) (*RitualExecution, error) {
+func (c *Chancellor) RunRitual(ctx context.Context, ritualName string, edictID uint, inputs map[string]string) (*RitualExecution, error) {
 	if c.shogunate == nil || c.shogunate.GetRitualRunner() == nil {
 		return nil, fmt.Errorf("ritual runner not available")
 	}
@@ -581,11 +581,11 @@ func (c *Chancellor) RestoreSession(msgs []llms.MessageContent) error {
 // --- Edict Management ---
 
 // GetEdict retrieves an edict by ID
-func (c *Chancellor) GetEdict(edictID string) (*storage.Edict, error) {
+func (c *Chancellor) GetEdict(edictID uint) (*storage.Edict, error) {
 	var edict storage.Edict
 	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("edict not found: %s", edictID)
+			return nil, fmt.Errorf("edict not found: %d", edictID)
 		}
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
@@ -593,7 +593,7 @@ func (c *Chancellor) GetEdict(edictID string) (*storage.Edict, error) {
 }
 
 // SetChancellorSeal sets or clears the Chancellor's seal on an edict
-func (c *Chancellor) SetChancellorSeal(edictID string, sealed bool) error {
+func (c *Chancellor) SetChancellorSeal(edictID uint, sealed bool) error {
 	result := c.db.Model(&storage.Edict{}).
 		Where("edict_id = ?", edictID).
 		Update("chancellor_seal", sealed)
@@ -601,13 +601,13 @@ func (c *Chancellor) SetChancellorSeal(edictID string, sealed bool) error {
 		return fmt.Errorf("failed to set chancellor seal: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %s", edictID)
+		return fmt.Errorf("edict not found: %d", edictID)
 	}
 	return nil
 }
 
 // SetCensorSeal sets or clears the Censor's seal on an edict
-func (c *Chancellor) SetCensorSeal(edictID string, sealed bool) error {
+func (c *Chancellor) SetCensorSeal(edictID uint, sealed bool) error {
 	result := c.db.Model(&storage.Edict{}).
 		Where("edict_id = ?", edictID).
 		Update("censor_seal", sealed)
@@ -615,13 +615,13 @@ func (c *Chancellor) SetCensorSeal(edictID string, sealed bool) error {
 		return fmt.Errorf("failed to set censor seal: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %s", edictID)
+		return fmt.Errorf("edict not found: %d", edictID)
 	}
 	return nil
 }
 
 // CancelEdict marks an edict as cancelled
-func (c *Chancellor) CancelEdict(edictID, cancelledBy, reason string) error {
+func (c *Chancellor) CancelEdict(edictID uint, cancelledBy, reason string) error {
 	result := c.db.Model(&storage.Edict{}).
 		Where("edict_id = ?", edictID).
 		Update("status", storage.EdictCancelled)
@@ -629,7 +629,7 @@ func (c *Chancellor) CancelEdict(edictID, cancelledBy, reason string) error {
 		return fmt.Errorf("failed to cancel edict: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %s", edictID)
+		return fmt.Errorf("edict not found: %d", edictID)
 	}
 	return nil
 }
@@ -637,10 +637,10 @@ func (c *Chancellor) CancelEdict(edictID, cancelledBy, reason string) error {
 // --- Zhengming (Clarification) Management ---
 
 // GetPendingZhengming retrieves all pending clarification requests for an edict
-func (c *Chancellor) GetPendingZhengming(edictID string) ([]storage.Zhengming, error) {
+func (c *Chancellor) GetPendingZhengming(edictID uint) ([]storage.Zhengming, error) {
 	var requests []storage.Zhengming
 	query := c.db.Where("status = ?", storage.ZhengmingPending).Order("created_at ASC")
-	if edictID != "" {
+	if edictID != 0 {
 		query = query.Where("edict_id = ?", edictID)
 	}
 	if err := query.Find(&requests).Error; err != nil {
@@ -652,7 +652,7 @@ func (c *Chancellor) GetPendingZhengming(edictID string) ([]storage.Zhengming, e
 // --- Manifest and Ling Management ---
 
 // GetAllManifestsForEdict retrieves all manifests for an edict (Chancellor privilege)
-func (c *Chancellor) GetAllManifestsForEdict(edictID string) ([]storage.ForgeManifest, error) {
+func (c *Chancellor) GetAllManifestsForEdict(edictID uint) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
 	err := c.db.Where("edict_id = ?", edictID).
 		Order("created_at ASC").
@@ -664,7 +664,7 @@ func (c *Chancellor) GetAllManifestsForEdict(edictID string) ([]storage.ForgeMan
 }
 
 // GetAllLingForEdict retrieves all ling for an edict (Chancellor privilege)
-func (c *Chancellor) GetAllLingForEdict(edictID string) ([]storage.Ling, error) {
+func (c *Chancellor) GetAllLingForEdict(edictID uint) ([]storage.Ling, error) {
 	var ling []storage.Ling
 	err := c.db.Where("edict_id = ?", edictID).
 		Order("created_at ASC").
@@ -690,7 +690,7 @@ func (c *Chancellor) ResetLingStatus(lingID string, status storage.LingStatus) e
 }
 
 // CancelEdictWithContext cancels an edict (context-aware variant)
-func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID, cancelledBy, reason string) error {
+func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID uint, cancelledBy, reason string) error {
 	if err := c.CancelEdict(edictID, cancelledBy, reason); err != nil {
 		return err
 	}
@@ -705,7 +705,7 @@ func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID, cancel
 }
 
 // SealEdict grants the Ruler's seal to an edict
-func (c *Chancellor) SealEdict(edictID, notes string) error {
+func (c *Chancellor) SealEdict(edictID uint, notes string) error {
 	if c.shogunate == nil {
 		return fmt.Errorf("shogunate not available")
 	}
@@ -760,13 +760,13 @@ func (c *Chancellor) SealEdict(edictID, notes string) error {
 // processPrompt handles a single prompt from the Ruler
 func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 	edictID := prompt.EdictID
-	if edictID != "" {
+	if edictID != 0 {
 		// Edict-bound prompt — append to intent
 		if err := c.AppendToIntent(edictID, prompt.Message); err != nil {
 			c.logger.Warn("failed to append to intent", "edict_id", edictID, "error", err)
 		}
 	}
-	// When edictID == "", this is a ruling session (edict-free chat).
+	// When edictID == 0, this is a ruling session (edict-free chat).
 	// No edict is created — the Chancellor can create one on-demand via tools.
 
 	// Notify TUI of edict ID before streaming begins
@@ -777,7 +777,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 }
 
 // brewWithStreaming delegates to Session for LLM interaction
-func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt string, contextFiles map[string]string) {
+func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID uint, prompt string, contextFiles map[string]string) {
 	if c.model == nil {
 		c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("LLM not configured")})
 		return
@@ -799,8 +799,8 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID, prompt stri
 
 	// Pass edictID in prompt context, not session
 	fullPrompt := prompt
-	if edictID != "" {
-		fullPrompt = fmt.Sprintf("[Context: edict %s]\n\n%s", edictID, prompt)
+	if edictID != 0 {
+		fullPrompt = fmt.Sprintf("[Context: edict %d]\n\n%s", edictID, prompt)
 	}
 
 	_, err := c.RulingSession.AskWithStreaming(ctx, fullPrompt, contextFiles)
@@ -856,7 +856,7 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 }
 
 // handleEdictCreated sends the new edict to the chancellor LLM to choose and enact the appropriate ritual.
-func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
+func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID uint) {
 	c.logger.Info("handling edict created", "edict_id", edictID)
 
 	edict, err := c.GetEdict(edictID)
@@ -865,7 +865,7 @@ func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
 		return
 	}
 
-	work := fmt.Sprintf("New edict %s: %s\n\nChoose the appropriate ritual and enact it.", edictID, edict.Intent)
+	work := fmt.Sprintf("New edict %d: %s\n\nChoose the appropriate ritual and enact it.", edictID, edict.Intent)
 	task := &Task{
 		Ctx:     ctx,
 		EdictID: edictID,
@@ -881,7 +881,7 @@ func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID string) {
 }
 
 // handleRitualCompleted processes a completed ritual event
-func (c *Chancellor) handleRitualCompleted(ctx context.Context, edictID string, payload map[string]interface{}) {
+func (c *Chancellor) handleRitualCompleted(ctx context.Context, edictID uint, payload map[string]interface{}) {
 	c.logger.Info("handling ritual completed", "edict_id", edictID, "payload", payload)
 
 	// Extract last_step_output from payload and append to RulingSession
@@ -896,9 +896,9 @@ func (c *Chancellor) handleRitualCompleted(ctx context.Context, edictID string, 
 }
 
 // handleZhengmingAnswered resumes the chancellor's work on an edict after clarification
-func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, edictID string, payload map[string]interface{}) {
+func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, edictID uint, payload map[string]interface{}) {
 	answer, _ := payload["answer"].(string)
-	if edictID == "" || answer == "" {
+	if edictID == 0 || answer == "" {
 		return
 	}
 	c.logger.Info("handling zhengming answered", "edict_id", edictID, "answer", answer)
@@ -909,7 +909,7 @@ func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, edictID string
 		return
 	}
 
-	work := fmt.Sprintf("Resume edict %s: %s\n\nThe clarification has been answered. Continue from where you left off.", edictID, edict.Intent)
+	work := fmt.Sprintf("Resume edict %d: %s\n\nThe clarification has been answered. Continue from where you left off.", edictID, edict.Intent)
 	task := &Task{
 		Ctx:     ctx,
 		EdictID: edictID,
@@ -925,7 +925,7 @@ func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, edictID string
 }
 
 // handleRitualFailed processes a failed ritual event
-func (c *Chancellor) handleRitualFailed(ctx context.Context, edictID string, payload map[string]interface{}) {
+func (c *Chancellor) handleRitualFailed(ctx context.Context, edictID uint, payload map[string]interface{}) {
 	c.logger.Error("handling ritual failed", "edict_id", edictID, "payload", payload)
 
 	// Extract last_step_output and error from payload and append to RulingSession
@@ -938,11 +938,6 @@ func (c *Chancellor) handleRitualFailed(ctx context.Context, edictID string, pay
 	}
 
 	c.logger.Debug("ritual failed - may need zhengming or retry", "edict_id", edictID)
-}
-
-// generateEdictID creates a unique edict ID
-func generateEdictID() string {
-	return fmt.Sprintf("edict-%d", time.Now().UnixNano())
 }
 
 // truncateString truncates a string to maxLen characters

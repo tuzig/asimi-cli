@@ -77,7 +77,7 @@ func (j *Judge) Tools() []Tool {
 // --- Database Methods ---
 
 // GetPendingManifests retrieves all pending manifests for an edict
-func (j *Judge) GetPendingManifests(edictID string) ([]storage.ForgeManifest, error) {
+func (j *Judge) GetPendingManifests(edictID uint) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
 	err := j.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestForged).
 		Order("created_at ASC").
@@ -89,7 +89,7 @@ func (j *Judge) GetPendingManifests(edictID string) ([]storage.ForgeManifest, er
 }
 
 // AllManifestsQuenched checks if all manifests for an edict are quenched
-func (j *Judge) AllManifestsQuenched(edictID string) (bool, error) {
+func (j *Judge) AllManifestsQuenched(edictID uint) (bool, error) {
 	var pendingCount int64
 	err := j.db.Model(&storage.ForgeManifest{}).
 		Where("edict_id = ? AND status != ?", edictID, storage.ManifestQuenched).
@@ -162,7 +162,7 @@ func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 // --- Execute Logic ---
 
 // execute runs the Judge's CI evaluation for an edict (internal method)
-func (j *Judge) execute(ctx context.Context, edictID string) (bool, error) {
+func (j *Judge) execute(ctx context.Context, edictID uint) (bool, error) {
 	// Check if all manifests are already quenched
 	allQuenched, err := j.AllManifestsQuenched(edictID)
 	if err != nil {
@@ -208,7 +208,7 @@ func (j *Judge) execute(ctx context.Context, edictID string) (bool, error) {
 }
 
 // judgeManifest runs CI for a single manifest
-func (j *Judge) judgeManifest(ctx context.Context, edictID string, manifest *storage.ForgeManifest) error {
+func (j *Judge) judgeManifest(ctx context.Context, edictID uint, manifest *storage.ForgeManifest) error {
 	if j.ci == nil {
 		// No CI runner - auto-pass
 		verdictID, err := j.InsertVerdict(
@@ -323,7 +323,7 @@ func (t *RecordVerdictTool) Description() string {
 
 func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint   `json:"edict_id"`
 		LingID  string `json:"ling_id"`
 		Passed  bool   `json:"passed"`
 		Details string `json:"details"`
@@ -331,7 +331,7 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
@@ -368,14 +368,14 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 		}
 	}
 
-	return fmt.Sprintf("Recorded verdict (passed=%v) for edict %s", params.Passed, params.EdictID), nil
+	return fmt.Sprintf("Recorded verdict (passed=%v) for edict %d", params.Passed, params.EdictID), nil
 }
 
 func (t *RecordVerdictTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"edict_id": map[string]any{"type": "string", "description": "The edict ID"},
+			"edict_id": map[string]any{"type": "integer", "description": "The edict ID"},
 			"ling_id":  map[string]any{"type": "string", "description": "Optional Ling ID to record verdict for"},
 			"passed":   map[string]any{"type": "boolean", "description": "Whether the tests passed"},
 			"details":  map[string]any{"type": "string", "description": "Additional details about the verdict"},
@@ -404,12 +404,12 @@ func (t *ListPendingManifestsTool) Description() string {
 
 func (t *ListPendingManifestsTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
@@ -433,7 +433,7 @@ func (t *ListPendingManifestsTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"edict_id": map[string]any{"type": "string", "description": "The edict ID to list manifests for"},
+			"edict_id": map[string]any{"type": "integer", "description": "The edict ID to list manifests for"},
 		},
 		"required": []string{"edict_id"},
 	}

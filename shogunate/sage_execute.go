@@ -12,7 +12,7 @@ import (
 
 // execute runs the Sage's ethics review for an edict (internal method)
 // Returns: sealed (phase complete), review summary, error
-func (c *Sage) execute(ctx context.Context, edictID string) (bool, *ReviewSummary, error) {
+func (c *Sage) execute(ctx context.Context, edictID uint) (bool, *ReviewSummary, error) {
 	// Check if there are any rejections
 	noRejections, err := c.NoRejections(edictID)
 	if err != nil {

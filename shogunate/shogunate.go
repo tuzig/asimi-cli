@@ -19,7 +19,7 @@ import (
 // Event is a dispatched event carrying type, edict, and payload.
 type Event struct {
 	Type    storage.ShogunateEvent
-	EdictID string
+	EdictID uint
 	Payload map[string]interface{}
 }
 
@@ -60,7 +60,7 @@ func (r *EventRegistry) Dispatch(event Event) {
 // DrainedEvent describes a single event recovered from the DB at startup.
 type DrainedEvent struct {
 	EventType storage.ShogunateEvent
-	EdictID   string
+	EdictID   uint
 	Payload   map[string]interface{}
 }
 
@@ -105,7 +105,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	// publish uses a closure so it works even before ritualGuard is assigned.
 	newBase := func() *MinisterBase {
 		base := NewMinisterBase(db, runner, logger)
-		base.publish = func(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string {
+		base.publish = func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 			return s.PublishEvent(edictID, eventType, payload)
 		}
 		return base
@@ -182,7 +182,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 
 		// 3. Handle system ritual path (e.g., wakeup) — no edict, user chose a path forward
-		if edictID == "" && answer != "" {
+		if edictID == 0 && answer != "" {
 			if edict, err := s.CreateEdict("", answer); err != nil {
 				s.logger.Warn("failed to create edict from zhengming answer", "error", err)
 			} else {
@@ -317,31 +317,24 @@ func (s *Shogunate) Ministers() []Minister {
 }
 
 // CreateEdict creates a new active edict record in the database and publishes storage.EventEdictCreated.
-func (s *Shogunate) CreateEdict(edictID, intent string) (*storage.Edict, error) {
-	if edictID == "" {
-		edictID = generateEdictID()
-	}
+func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
 	edict := storage.Edict{
-		EdictID: edictID,
-		Intent:  intent,
-		Status:  storage.EdictActive,
+		IssueRef: issueRef,
+		Intent:   intent,
+		Status:   storage.EdictActive,
 	}
 	if err := s.db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
 	}
-	s.PublishEvent(edictID, storage.EventEdictCreated, storage.JSON{"intent": intent})
+	s.PublishEvent(edict.EdictID, storage.EventEdictCreated, storage.JSON{"intent": intent})
 	return &edict, nil
 }
 
 // CreateEdictForTest creates an edict without publishing events (for unit tests).
-func CreateEdictForTest(db *gorm.DB, edictID, intent string) (*storage.Edict, error) {
-	if edictID == "" {
-		edictID = generateEdictID()
-	}
+func CreateEdictForTest(db *gorm.DB, intent string) (*storage.Edict, error) {
 	edict := storage.Edict{
-		EdictID: edictID,
-		Intent:  intent,
-		Status:  storage.EdictActive,
+		Intent: intent,
+		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
@@ -350,7 +343,7 @@ func CreateEdictForTest(db *gorm.DB, edictID, intent string) (*storage.Edict, er
 }
 
 // PublishEvent delegates to RitualGuard.
-func (s *Shogunate) PublishEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string {
+func (s *Shogunate) PublishEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 	if s == nil || s.ritualGuard == nil {
 		return edictID
 	}

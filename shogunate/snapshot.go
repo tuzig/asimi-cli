@@ -10,7 +10,7 @@ import (
 // RitualEntry represents a ritual execution (active or historical) for dashboard display.
 type RitualEntry struct {
 	RitualName  string
-	EdictID     string
+	EdictID     uint
 	State       RitualState
 	CurrentStep int
 	TotalSteps  int
@@ -24,13 +24,13 @@ type EventEntry struct {
 	Time      time.Time
 	EventType string
 	Detail    string
-	EdictID   string
+	EdictID   uint
 }
 
 // ZhengmingEntry represents a pending clarification request for dashboard display.
 type ZhengmingEntry struct {
 	RequestID  string
-	EdictID    string
+	EdictID    uint
 	MinisterID string
 	Questions  []string // Summary or truncated Text for each question
 	Priority   string
@@ -53,7 +53,7 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 
 	// Rituals from the ritual runner (all states)
 	if rr := s.GetRitualRunner(); rr != nil {
-		execs, err := rr.ListExecutions("")
+		execs, err := rr.ListExecutions(0)
 		if err == nil {
 			for _, ex := range execs {
 				age := time.Since(ex.CreatedAt)

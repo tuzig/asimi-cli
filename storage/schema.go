@@ -8,7 +8,7 @@ import (
 )
 
 // Schema version for migrations
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // Type aliases - use types from internal/config as the single source of truth
 type (
@@ -211,7 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_workflow_steps_workflow ON workflow_steps(workflo
 CREATE TABLE IF NOT EXISTS ritual_executions (
     id TEXT PRIMARY KEY,
     ritual_name TEXT NOT NULL,
-    edict_id TEXT NOT NULL,
+    edict_id INTEGER NOT NULL,
     session_id TEXT,
     current_step INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'pending',
@@ -245,7 +245,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at INTEGER NOT NULL
 );
 
-INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (4, unixepoch());
+INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (5, unixepoch());
 `
 
 // Migration1to2 contains the SQL to migrate from schema version 1 to 2
@@ -312,5 +312,34 @@ ALTER TABLE sessions ADD COLUMN tab_type TEXT NOT NULL DEFAULT '';
 
 -- Update schema version
 INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, unixepoch());
+`
+
+// Migration4to5 converts ritual_executions.edict_id from TEXT to INTEGER
+const Migration4to5 = `
+-- Rebuild ritual_executions with INTEGER edict_id
+CREATE TABLE IF NOT EXISTS ritual_executions_new (
+    id TEXT PRIMARY KEY,
+    ritual_name TEXT NOT NULL,
+    edict_id INTEGER NOT NULL,
+    session_id TEXT,
+    current_step INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'pending',
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+INSERT OR IGNORE INTO ritual_executions_new (id, ritual_name, edict_id, session_id, current_step, state, data, created_at, updated_at)
+    SELECT id, ritual_name, 0, session_id, current_step, state, data, created_at, updated_at FROM ritual_executions;
+
+DROP TABLE IF EXISTS ritual_executions;
+ALTER TABLE ritual_executions_new RENAME TO ritual_executions;
+
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_edict ON ritual_executions(edict_id);
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_state ON ritual_executions(state);
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_session ON ritual_executions(session_id);
+
+-- Update schema version
+INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (5, unixepoch());
 `
 

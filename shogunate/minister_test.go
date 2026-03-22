@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -85,12 +86,12 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	chancellor := NewChancellor(base)
 
 	// Create an edict (starts in brewing phase)
-	edict, err := CreateEdictForTest(db, "test/repo#1", "Add a simple hello world function")
+	edict, err := CreateEdictForTest(db, "Add a simple hello world function")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
 	// Verify edict was created with active status
-	edict2, err := chancellor.GetEdict("test/repo#1")
+	edict2, err := chancellor.GetEdict(edict.EdictID)
 	assert.NoError(t, err)
 	assert.Equal(t, edict2.Status, storage.EdictActive)
 }
@@ -101,7 +102,7 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 
 	// Create edict
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdictForTest(db, "test/repo#2", "Implement user authentication with login and logout")
+	edict, err := CreateEdictForTest(db, "Implement user authentication with login and logout")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
@@ -109,7 +110,7 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 	strategist := NewStrategist(base)
 
 	// Execute planning (internal method)
-	sealed, err := strategist.execute(ctx, "test/repo#2")
+	sealed, err := strategist.execute(ctx, edict.EdictID)
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -118,7 +119,7 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 	}
 
 	// Check ling was created
-	ling, err := strategist.GetLingForEdict("test/repo#2")
+	ling, err := strategist.GetLingForEdict(edict.EdictID)
 	if err != nil {
 		t.Fatalf("Failed to get ling: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 
 	// Create edict with ambiguous intent
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdictForTest(db, "test/repo#3", "Fix it")
+	edict, err := CreateEdictForTest(db, "Fix it")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
@@ -159,7 +160,7 @@ func TestStrategist_AmbiguousIntent(t *testing.T) {
 	})
 
 	// Execute - should request zhengming and return immediately (not sealed)
-	sealed, err := strategist.execute(ctx, "test/repo#3")
+	sealed, err := strategist.execute(ctx, edict.EdictID)
 	require.NoError(t, err)
 	assert.False(t, sealed, "expected not sealed for ambiguous intent")
 
@@ -185,12 +186,12 @@ func TestJudge_VerdictFlow(t *testing.T) {
 
 	// Setup: create edict and manifest
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdictForTest(db, "test/repo#4", "Test feature")
+	edict, err := CreateEdictForTest(db, "Test feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, err := forge.StageManifest("test/repo#4", "", "test.go", "TestFunc", "hash1")
+	manifestID, err := forge.StageManifest(edict.EdictID, "", "test.go", "TestFunc", "hash1")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, manifestID)
 
@@ -198,7 +199,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	judge := NewJudge(base, nil)
 
 	// Execute judgment (internal method)
-	sealed, err := judge.execute(ctx, "test/repo#4")
+	sealed, err := judge.execute(ctx, edict.EdictID)
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -207,7 +208,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	}
 
 	// Check manifest is quenched
-	allQuenched, _ := judge.AllManifestsQuenched("test/repo#4")
+	allQuenched, _ := judge.AllManifestsQuenched(edict.EdictID)
 	if !allQuenched {
 		t.Error("Expected all manifests quenched")
 	}
@@ -219,12 +220,12 @@ func TestSage_ReviewFlow(t *testing.T) {
 
 	// Setup: create quenched manifest
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdictForTest(db, "test/repo#5", "Review feature")
+	edict, err := CreateEdictForTest(db, "Review feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, err := forge.StageManifest("test/repo#5", "", "review.go", "ReviewFunc", "hash2")
+	manifestID, err := forge.StageManifest(edict.EdictID, "", "review.go", "ReviewFunc", "hash2")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, manifestID)
 
@@ -236,7 +237,7 @@ func TestSage_ReviewFlow(t *testing.T) {
 	sage := NewSage(base, nil)
 
 	// Execute review (internal method)
-	sealed, summary, err := sage.execute(ctx, "test/repo#5")
+	sealed, summary, err := sage.execute(ctx, edict.EdictID)
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestSage_ReviewFlow(t *testing.T) {
 	}
 
 	// Check no rejections
-	noReject, _ := sage.NoRejections("test/repo#5")
+	noReject, _ := sage.NoRejections(edict.EdictID)
 	if !noReject {
 		t.Error("Expected no rejections")
 	}
@@ -260,16 +261,16 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 
 	// Setup: create edict and manifest
 	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdictForTest(db, "test/repo#6", "Production feature")
+	edict, err := CreateEdictForTest(db, "Production feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, err := forge.StageManifest("test/repo#6", "", "prod.go", "ProdFunc", "hash3")
+	manifestID, err := forge.StageManifest(edict.EdictID, "", "prod.go", "ProdFunc", "hash3")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, manifestID)
 	// Set commit_hash directly for marshal incident lookup
-	db.Model(&storage.ForgeManifest{}).Where("edict_id = ?", "test/repo#6").
+	db.Model(&storage.ForgeManifest{}).Where("edict_id = ?", edict.EdictID).
 		Update("commit_hash", "prodcommit789")
 
 	// Create marshal
@@ -298,16 +299,16 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil)
 	chancellor := NewChancellor(base)
 
-	edict, err := CreateEdictForTest(db, "test/repo#7", "Feature to cancel")
+	edict, err := CreateEdictForTest(db, "Feature to cancel")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
-	err = chancellor.CancelEdictWithContext(ctx, "test/repo#7", "@user", "No longer needed")
+	err = chancellor.CancelEdictWithContext(ctx, edict.EdictID, "@user", "No longer needed")
 	if err != nil {
 		t.Fatalf("Failed to cancel: %v", err)
 	}
 
 	// Check cancelled
-	edict, _ = chancellor.GetEdict("test/repo#7")
+	edict, _ = chancellor.GetEdict(edict.EdictID)
 	if edict.Status != storage.EdictCancelled {
 		t.Errorf("Expected status cancelled, got %s", edict.Status)
 	}
@@ -368,8 +369,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	chancellor.SetShogunate(shogunate)
 
 	// Create an edict for the test
-	edictID := "test-e2e-edict"
-	edict, err := CreateEdictForTest(db, edictID, "E2E test edict")
+	edict, err := CreateEdictForTest(db, "E2E test edict")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 	// Start the Forge's Run loop in a goroutine
@@ -380,7 +380,7 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// Invoke the Forge minister with a trivial task
 	// With synchronous blocking, this call blocks until minister replies
-	taskInput := `{"minister_id": "forge", "edict_id": "test-e2e-edict", "task": "please reply with 'hello world'"}`
+	taskInput := fmt.Sprintf(`{"minister_id": "forge", "edict_id": %d, "task": "please reply with 'hello world'"}`, edict.EdictID)
 	result, err := tool.Call(ctx, taskInput)
 	if err != nil {
 		t.Fatalf("Failed to invoke minister: %v", err)
@@ -395,7 +395,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	// Parse the result to verify it contains completion info
 	var response struct {
 		MinisterID string `json:"minister_id"`
-		EdictID    string `json:"edict_id"`
+		EdictID    uint   `json:"edict_id"`
 		Status     string `json:"status"`
 		Sealed     bool   `json:"sealed"`
 		Output     string `json:"output"`
@@ -410,13 +410,13 @@ func TestHappyFlowE2E(t *testing.T) {
 	if response.MinisterID != "forge" {
 		t.Errorf("Expected MinisterID 'forge', got %s", response.MinisterID)
 	}
-	if response.EdictID != edictID {
-		t.Errorf("Expected EdictID %s, got %s", edictID, response.EdictID)
+	if response.EdictID != edict.EdictID {
+		t.Errorf("Expected EdictID %d, got %d", edict.EdictID, response.EdictID)
 	}
 	if !response.Sealed {
 		t.Error("Expected Sealed=true from Forge")
 	}
-	t.Logf("Received response: minister=%s, edict=%s, sealed=%v, output=%s",
+	t.Logf("Received response: minister=%s, edict=%d, sealed=%v, output=%s",
 		response.MinisterID, response.EdictID, response.Sealed, response.Output)
 }
 
@@ -438,7 +438,7 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
 	// Try to invoke a non-existent minister
-	taskInput := `{"minister_id": "unknown", "edict_id": "test", "task": "hello"}`
+	taskInput := `{"minister_id": "unknown", "edict_id": 1, "task": "hello"}`
 	_, err := tool.Call(ctx, taskInput)
 	if err == nil {
 		t.Error("Expected error for unknown minister")
@@ -456,7 +456,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
 	// Missing task parameter
-	taskInput := `{"minister_id": "forge", "edict_id": "test"}`
+	taskInput := `{"minister_id": "forge", "edict_id": 1}`
 	_, err := tool.Call(ctx, taskInput)
 	if err == nil {
 		t.Error("Expected error for missing task parameter")
@@ -484,7 +484,7 @@ func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
 	chancellor := NewChancellor(base)
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
-	_, err := tool.Call(context.Background(), `{"edict_id": "e1", "task": "do something"}`)
+	_, err := tool.Call(context.Background(), `{"edict_id": 1, "task": "do something"}`)
 	if err == nil {
 		t.Fatal("Expected error for missing minister_id")
 	}
@@ -535,7 +535,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 	}()
 
 	tool := InvokeMinisterTool{chancellor: chancellor}
-	_, err := tool.Call(ctx, `{"minister_id": "failing", "edict_id": "e1", "task": "break"}`)
+	_, err := tool.Call(ctx, `{"minister_id": "failing", "edict_id": 1, "task": "break"}`)
 	if err == nil {
 		t.Fatal("Expected error when minister returns Result.Err")
 	}
@@ -564,7 +564,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 	cancel()
 
 	tool := InvokeMinisterTool{chancellor: chancellor}
-	_, err := tool.Call(ctx, `{"minister_id": "blocked", "edict_id": "e1", "task": "go"}`)
+	_, err := tool.Call(ctx, `{"minister_id": "blocked", "edict_id": 1, "task": "go"}`)
 	if err == nil {
 		t.Fatal("Expected error when context is cancelled during send")
 	}
@@ -599,7 +599,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	}()
 
 	tool := InvokeMinisterTool{chancellor: chancellor}
-	_, err := tool.Call(ctx, `{"minister_id": "slow", "edict_id": "e1", "task": "wait"}`)
+	_, err := tool.Call(ctx, `{"minister_id": "slow", "edict_id": 1, "task": "wait"}`)
 	if err == nil {
 		t.Fatal("Expected error when context is cancelled during wait")
 	}
@@ -639,7 +639,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	}()
 
 	tool := InvokeMinisterTool{chancellor: chancellor}
-	_, err := tool.Call(ctx, `{"minister_id": "notifier", "edict_id": "e1", "task": "notify me"}`)
+	_, err := tool.Call(ctx, `{"minister_id": "notifier", "edict_id": 1, "task": "notify me"}`)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -656,7 +656,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected MinisterInvokingMsg, got %T", notifications[0])
 	}
-	if invoking.MinisterID != "notifier" || invoking.EdictID != "e1" || invoking.Task != "notify me" {
+	if invoking.MinisterID != "notifier" || invoking.EdictID != 1 || invoking.Task != "notify me" {
 		t.Errorf("Unexpected invoking msg: %+v", invoking)
 	}
 
@@ -665,7 +665,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected MinisterCompletedMsg, got %T", notifications[1])
 	}
-	if completed.MinisterID != "notifier" || completed.EdictID != "e1" || completed.Error != nil {
+	if completed.MinisterID != "notifier" || completed.EdictID != 1 || completed.Error != nil {
 		t.Errorf("Unexpected completed msg: %+v", completed)
 	}
 	if !completed.Sealed {
@@ -697,7 +697,7 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 	chancellor.SetShogunate(shogunate)
 
 	tool := InvokeMinisterTool{chancellor: chancellor}
-	_, _ = tool.Call(ctx, `{"minister_id": "ghost", "edict_id": "e1", "task": "haunt"}`)
+	_, _ = tool.Call(ctx, `{"minister_id": "ghost", "edict_id": 1, "task": "haunt"}`)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -753,8 +753,8 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
 	// With edict ID — should appear in system prompt alongside Realm and role text
-	prompt := buildSystemPrompt(fake, nil, "edict-123456")
-	if !strings.Contains(prompt, "Current Edict: edict-123456") {
+	prompt := buildSystemPrompt(fake, nil, 123456)
+	if !strings.Contains(prompt, "Current Edict: 123456") {
 		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "You are a test minister.") {
@@ -765,7 +765,7 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	}
 
 	// Without edict ID — should not contain "Current Edict"
-	prompt = buildSystemPrompt(fake, nil, "")
+	prompt = buildSystemPrompt(fake, nil, 0)
 	if strings.Contains(prompt, "Current Edict") {
 		t.Errorf("Expected no edict ID in system prompt, got:\n%s", prompt)
 	}
@@ -780,7 +780,7 @@ func TestBuildSystemPrompt_Scratchpad(t *testing.T) {
 		scratchpad:   "# Available Rituals\n- implement: Run implementation",
 	}
 
-	prompt := buildSystemPrompt(fake, nil, "")
+	prompt := buildSystemPrompt(fake, nil, 0)
 	if !regexp.MustCompile(`--- .* Scratchpad ---`).MatchString(prompt) {
 		t.Errorf("Expected scratchpad heading matching '--- .* Scratchpad ---', got:\n%s", prompt)
 	}
@@ -831,7 +831,7 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	shogunate.GetRitualRegistry().Register(&RitualDef{Name: "castle-siege", Description: "The Castle Siege (L)"})
 	chancellor.SetShogunate(shogunate)
 
-	prompt := buildSystemPrompt(chancellor, nil, "")
+	prompt := buildSystemPrompt(chancellor, nil, 0)
 
 	if !strings.Contains(prompt, "swift-strike") {
 		t.Errorf("Expected ritual name 'swift-strike' in system prompt, got:\n%s", prompt)
@@ -965,19 +965,19 @@ func TestBuildSystemPrompt_GivenContext(t *testing.T) {
 	})
 
 	// With scratchpad — edict intent should appear in system prompt
-	prompt := buildSystemPrompt(fake, nil, "edict-xyz", scratchpad)
+	prompt := buildSystemPrompt(fake, nil, 42, scratchpad)
 	if !strings.Contains(prompt, "Implement dark mode for the dashboard") {
 		t.Errorf("Expected edict intent in system prompt, got:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "# Given Context") {
 		t.Errorf("Expected '# Given Context' heading, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "Current Edict: edict-xyz") {
+	if !strings.Contains(prompt, "Current Edict: 42") {
 		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
 	}
 
 	// Without given context — should not contain "Given Context"
-	prompt = buildSystemPrompt(fake, nil, "edict-xyz")
+	prompt = buildSystemPrompt(fake, nil, 42)
 	if strings.Contains(prompt, "# Given Context") {
 		t.Errorf("Expected no scratchpad without scratchpad param, got:\n%s", prompt)
 	}

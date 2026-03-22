@@ -88,7 +88,7 @@ func TestChannelDelivery(t *testing.T) {
 	}()
 
 	// Publish an event
-	s.PublishEvent("edict-1", storage.EventEdictCreated, storage.JSON{"foo": "bar"})
+	s.PublishEvent(1, storage.EventEdictCreated, storage.JSON{"foo": "bar"})
 
 	// Wait briefly for the event to be dispatched
 	time.Sleep(50 * time.Millisecond)
@@ -97,7 +97,7 @@ func TestChannelDelivery(t *testing.T) {
 	if len(received) != 1 {
 		t.Fatalf("expected 1 dispatched event, got %d", len(received))
 	}
-	if received[0].EdictID != "edict-1" {
+	if received[0].EdictID != 1 {
 		t.Errorf("expected EdictID 'edict-1', got %q", received[0].EdictID)
 	}
 	if received[0].Type != storage.EventEdictCreated {
@@ -114,7 +114,7 @@ func TestDBPersistence(t *testing.T) {
 	s := newTestShogunate(t, db)
 
 	// Publish an event (just DB + channel, no consumer needed)
-	s.PublishEvent("edict-2", "edict_created", storage.JSON{"key": "val"})
+	s.PublishEvent(2, "edict_created", storage.JSON{"key": "val"})
 
 	// Verify it's in the database
 	var events []storage.TianEvent
@@ -124,8 +124,8 @@ func TestDBPersistence(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected 1 DB event, got %d", len(events))
 	}
-	if events[0].EdictID != "edict-2" {
-		t.Errorf("expected EdictID 'edict-2', got %q", events[0].EdictID)
+	if events[0].EdictID != 2 {
+		t.Errorf("expected EdictID 2, got %d", events[0].EdictID)
 	}
 	if events[0].EventType != "edict_created" {
 		t.Errorf("expected EventType 'edict_created', got %q", events[0].EventType)
@@ -134,8 +134,8 @@ func TestDBPersistence(t *testing.T) {
 	// Also verify it arrived on the channel
 	select {
 	case ev := <-s.ritualGuard.eventCh:
-		if ev.EdictID != "edict-2" {
-			t.Errorf("channel event EdictID: expected 'edict-2', got %q", ev.EdictID)
+		if ev.EdictID != 2 {
+			t.Errorf("channel event EdictID: expected 2, got %d", ev.EdictID)
 		}
 	default:
 		t.Error("expected event on channel")
@@ -157,11 +157,11 @@ func TestBackpressure(t *testing.T) {
 	s.ritualGuard = rg
 
 	// Fill the channel
-	s.PublishEvent("e1", "edict_created", storage.JSON{})
-	s.PublishEvent("e2", "edict_created", storage.JSON{})
+	s.PublishEvent(1, "edict_created", storage.JSON{})
+	s.PublishEvent(2, "edict_created", storage.JSON{})
 
 	// This one should overflow — persists to DB but doesn't block
-	s.PublishEvent("e3", "edict_created", storage.JSON{})
+	s.PublishEvent(3, "edict_created", storage.JSON{})
 
 	// Verify all 3 persisted to DB
 	var count int64
@@ -185,7 +185,7 @@ func TestDrainUnprocessedEvents(t *testing.T) {
 	// Insert 5 events directly into DB (simulating crash scenario)
 	for i := 0; i < 5; i++ {
 		db.Create(&storage.TianEvent{
-			EdictID:   "drain-edict",
+			EdictID:   99,
 			EventType: "step_completed",
 			Payload:   storage.JSON{"i": i},
 		})
@@ -253,14 +253,14 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 	base := NewMinisterBase(db, nil, slog.Default())
 	base.publish = s.PublishEvent
 
-	err := base.EmitEvent("edict-pub", "edict_assigned", storage.JSON{"from": "minister"})
+	err := base.EmitEvent(10, "edict_assigned", storage.JSON{"from": "minister"})
 	if err != nil {
 		t.Fatalf("EmitEvent error: %v", err)
 	}
 
 	// Verify DB
 	var count int64
-	db.Model(&storage.TianEvent{}).Where("edict_id = ?", "edict-pub").Count(&count)
+	db.Model(&storage.TianEvent{}).Where("edict_id = ?", 10).Count(&count)
 	if count != 1 {
 		t.Errorf("expected 1 DB event, got %d", count)
 	}
@@ -268,8 +268,8 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 	// Verify channel
 	select {
 	case ev := <-s.ritualGuard.eventCh:
-		if ev.EdictID != "edict-pub" {
-			t.Errorf("expected EdictID 'edict-pub', got %q", ev.EdictID)
+		if ev.EdictID != 10 {
+			t.Errorf("expected EdictID 10, got %d", ev.EdictID)
 		}
 	default:
 		t.Error("expected event on channel")
@@ -282,13 +282,13 @@ func TestMinisterBaseEmitEvent_Fallback(t *testing.T) {
 	base := NewMinisterBase(db, nil, slog.Default())
 	// No publish set — should fall back to DB-only
 
-	err := base.EmitEvent("edict-fb", "edict_created", storage.JSON{"from": "fallback"})
+	err := base.EmitEvent(20, "edict_created", storage.JSON{"from": "fallback"})
 	if err != nil {
 		t.Fatalf("EmitEvent error: %v", err)
 	}
 
 	var count int64
-	db.Model(&storage.TianEvent{}).Where("edict_id = ?", "edict-fb").Count(&count)
+	db.Model(&storage.TianEvent{}).Where("edict_id = ?", 20).Count(&count)
 	if count != 1 {
 		t.Errorf("expected 1 DB event, got %d", count)
 	}

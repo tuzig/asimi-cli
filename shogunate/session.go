@@ -37,7 +37,7 @@ type StreamReasoningChunkMsg struct {
 // StreamStartMsg signals that streaming has begun
 type StreamStartMsg struct {
 	TabID   string
-	EdictID string
+	EdictID uint
 }
 
 // StreamCompleteMsg signals that streaming has completed successfully

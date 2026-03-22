@@ -67,7 +67,7 @@ const (
 
 // Edict represents a high-level task/issue being processed by the Shogunate
 type Edict struct {
-	EdictID   string      `gorm:"primaryKey;column:edict_id"`
+	EdictID   uint        `gorm:"primaryKey;autoIncrement;column:edict_id"`
 	SessionID string      `gorm:"column:session_id;index"`
 	IssueRef  string      `gorm:"column:issue_ref"`
 	Summary   string      `gorm:"column:summary"`
@@ -85,7 +85,7 @@ func (Edict) TableName() string {
 // Seal represents a minister's seal on an edict
 type Seal struct {
 	SealID     string    `gorm:"primaryKey;column:seal_id"`
-	EdictID    string    `gorm:"column:edict_id;index"`
+	EdictID    uint      `gorm:"column:edict_id;index"`
 	MinisterID string    `gorm:"column:minister_id"` // "judge", "sage", "ruler"
 	SealedAt   time.Time `gorm:"column:sealed_at;autoCreateTime"`
 	Metadata   JSON      `gorm:"column:metadata;type:json"` // Optional: verdict_id, precedent_id, etc.
@@ -150,7 +150,7 @@ const (
 // Zhengming represents a clarification request from a minister
 type Zhengming struct {
 	RequestID  string             `gorm:"primaryKey;column:request_id"`
-	EdictID    string             `gorm:"column:edict_id;index"`
+	EdictID    uint               `gorm:"column:edict_id;index"`
 	MinisterID string             `gorm:"column:minister_id"`
 	Questions  ZhengmingQuestions `gorm:"column:question;type:text"`
 	Answer     string             `gorm:"column:answer"`
@@ -197,7 +197,7 @@ const (
 // TianEvent represents an event in the Tian ledger
 type TianEvent struct {
 	ID        uint           `gorm:"primaryKey;autoIncrement"`
-	EdictID   string         `gorm:"column:edict_id;index"`
+	EdictID   uint           `gorm:"column:edict_id;index"`
 	EventType ShogunateEvent `gorm:"column:event_type"`
 	Payload   JSON           `gorm:"column:payload;type:json"`
 	CreatedAt time.Time      `gorm:"column:created_at;autoCreateTime"`
@@ -212,7 +212,7 @@ func (TianEvent) TableName() string {
 type TianEventDLQ struct {
 	ID           uint           `gorm:"primaryKey;autoIncrement"`
 	OriginalID   uint           `gorm:"column:original_id"`
-	EdictID      string         `gorm:"column:edict_id;index"`
+	EdictID      uint           `gorm:"column:edict_id;index"`
 	EventType    ShogunateEvent `gorm:"column:event_type"`
 	Payload      JSON           `gorm:"column:payload;type:json"`
 	ErrorMessage string         `gorm:"column:error_message"`
@@ -238,7 +238,7 @@ const (
 // Ling represents a sub-task or step in an edict's execution plan
 type Ling struct {
 	LingID       string      `gorm:"primaryKey;column:ling_id"`
-	EdictID      string      `gorm:"column:edict_id;index"`
+	EdictID      uint        `gorm:"column:edict_id;index"`
 	Description  string      `gorm:"column:description"`
 	Dependencies StringArray `gorm:"column:dependencies;type:json"`
 	Status       LingStatus  `gorm:"column:status"`
@@ -264,7 +264,7 @@ const (
 // ForgeManifest represents a code change manifest from the Forge
 type ForgeManifest struct {
 	ManifestID string         `gorm:"primaryKey;column:manifest_id"`
-	EdictID    string         `gorm:"column:edict_id;index"`
+	EdictID    uint           `gorm:"column:edict_id;index"`
 	LingID     string         `gorm:"column:ling_id"`
 	FilePath   string         `gorm:"column:file_path"`
 	FuncName   string         `gorm:"column:func_name"`
@@ -331,7 +331,7 @@ func (CensorPrecedent) TableName() string {
 type MarshalIncident struct {
 	IncidentID string    `gorm:"primaryKey;column:incident_id"`
 	CommitHash string    `gorm:"column:commit_hash;index"`
-	EdictID    string    `gorm:"column:edict_id;index"`
+	EdictID    uint      `gorm:"column:edict_id;index"`
 	RCASummary string    `gorm:"column:rca_summary"`
 	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt  time.Time `gorm:"column:updated_at;autoUpdateTime"`
@@ -345,7 +345,7 @@ func (MarshalIncident) TableName() string {
 // RulerCouncil represents a high-stakes decision requiring human approval
 type RulerCouncil struct {
 	CouncilID  string    `gorm:"primaryKey;column:council_id"`
-	EdictID    string    `gorm:"column:edict_id;index"`
+	EdictID    uint      `gorm:"column:edict_id;index"`
 	Decision   string    `gorm:"column:decision"`
 	Approved   bool      `gorm:"column:approved"`
 	ApprovedBy string    `gorm:"column:approved_by"`
@@ -369,4 +369,3 @@ type RitualGuardCheckpoint struct {
 func (RitualGuardCheckpoint) TableName() string {
 	return "ritual_guard_checkpoint"
 }
-

@@ -57,7 +57,7 @@ type TUIModel struct {
 	shogunate    *shogunate.Shogunate
 
 	// Shogunate integration
-	currentEdictID string // Tracks current edict for multi-turn conversations
+	currentEdictID uint // Tracks current edict for multi-turn conversations
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -1590,7 +1590,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shogunate.StreamStartMsg:
 		// Streaming has started — capture edict ID for multi-turn
 		m.tabs.SetStreamingTabByTab(msg.TabID)
-		if msg.EdictID != "" {
+		if msg.EdictID != 0 {
 			m.currentEdictID = msg.EdictID
 			m.tabs.SetActiveEdictID(msg.EdictID)
 		}
@@ -1696,7 +1696,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shogunate.MinisterInvokingMsg:
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("MINISTER_INVOKING",
-			fmt.Sprintf("Minister %s invoked for edict %s", msg.MinisterID, msg.EdictID))
+			fmt.Sprintf("Minister %s invoked for edict %d", msg.MinisterID, msg.EdictID))
 		chat.Indent++
 		taskPreview := msg.Task
 		if len(taskPreview) > 60 {
@@ -1732,8 +1732,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.StepName == "" {
 				m = fmt.Sprintf("%sRitual %s started",
 					ritualPrefix, msg.RitualName)
-				if msg.EdictID != "" {
-					m = fmt.Sprintf("%s for edict %s",
+				if msg.EdictID != 0 {
+					m = fmt.Sprintf("%s for edict %d",
 						m, msg.EdictID)
 				}
 				chat.Indent++
@@ -1777,8 +1777,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.AddMessage(fmt.Sprintf("%sRecovered %d event(s) from previous session:", systemPrefix, len(msg.Events)))
 		for _, ev := range msg.Events {
 			detail := fmt.Sprintf("%s  %s", systemPrefix, ev.EventType)
-			if ev.EdictID != "" {
-				detail += fmt.Sprintf(" [edict:%s]", ev.EdictID)
+			if ev.EdictID != 0 {
+				detail += fmt.Sprintf(" [edict:%d]", ev.EdictID)
 			}
 			chat.AddMessage(detail)
 		}
@@ -2603,7 +2603,7 @@ func (m *TUIModel) updateComponentDimensions() {
 
 	// Update status info
 	// TODO: move this to a proper place and drop the currentEdictID
-	if m.shogunate != nil && m.currentEdictID != "" {
+	if m.shogunate != nil && m.currentEdictID != 0 {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)

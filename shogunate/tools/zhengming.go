@@ -11,11 +11,11 @@ import (
 
 // ZhengmingRequester provides clarification request capabilities
 type ZhengmingRequester interface {
-	RequestZhengming(edictID string, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
+	RequestZhengming(edictID uint, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
 }
 
 // ZhengmingNotifyFunc is a callback for notifying about zhengming requests
-type ZhengmingNotifyFunc func(requestID, edictID, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority)
+type ZhengmingNotifyFunc func(requestID string, edictID uint, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority)
 
 // RequestZhengmingTool requests clarification from the user.
 type RequestZhengmingTool struct {
@@ -36,7 +36,7 @@ func (t RequestZhengmingTool) Description() string {
 
 func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID   string                      `json:"edict_id"`
+		EdictID   uint                      `json:"edict_id"`
 		Questions []storage.ZhengmingQuestion `json:"questions"`
 		Priority  string                      `json:"priority"`
 	}
@@ -108,7 +108,7 @@ func (t RequestZhengmingTool) ParameterSchema() map[string]any {
 		"description": "Clarification request containing one or more questions",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "The ID of the edict being worked on",
 			},
 			"questions": map[string]any{

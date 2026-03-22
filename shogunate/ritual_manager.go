@@ -120,7 +120,7 @@ func (rg *RitualGuard) Tasks() chan<- *Task {
 // --- Event lifecycle ---
 
 // PublishEvent persists an event to the DB and sends it to the event channel.
-func (rg *RitualGuard) PublishEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string {
+func (rg *RitualGuard) PublishEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 	if rg.db != nil {
 		dbEvent := storage.TianEvent{
 			EdictID:   edictID,
@@ -140,7 +140,7 @@ func (rg *RitualGuard) PublishEvent(edictID string, eventType storage.ShogunateE
 }
 
 // startRitual starts and runs a ritual with the given context type.
-func (rg *RitualGuard) startRitual(ctx context.Context, ritualName, edictID string, inputs map[string]string, contextType RitualContextType) {
+func (rg *RitualGuard) startRitual(ctx context.Context, ritualName string, edictID uint, inputs map[string]string, contextType RitualContextType) {
 	exec, err := rg.ritualRunner.Start(ctx, ritualName, edictID, inputs, rg.notify)
 	if err != nil {
 		rg.logger.Warn("failed to start ritual", "ritual", ritualName, "error", err)
@@ -188,7 +188,7 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 				continue
 			}
 			edictID := event.EdictID
-			inputs := map[string]string{"edict_id": edictID}
+			inputs := map[string]string{"edict_id": fmt.Sprint(edictID)}
 			go func(r *RitualDef) {
 				// Event-driven rituals use background context (independent from Ruling tab)
 				ctx := rg.backgroundCtx()
@@ -402,9 +402,9 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 	}
 
 	// Collect edict IDs to check
-	edictIDs := make([]string, 0, len(runningRituals))
+	edictIDs := make([]uint, 0, len(runningRituals))
 	for _, ritual := range runningRituals {
-		if ritual.EdictID != "" {
+		if ritual.EdictID != 0 {
 			edictIDs = append(edictIDs, ritual.EdictID)
 		}
 	}
@@ -425,7 +425,7 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 	}
 
 	// Build set of stale edict IDs
-	staleEdictSet := make(map[string]bool)
+	staleEdictSet := make(map[uint]bool)
 	for _, edict := range staleEdicts {
 		staleEdictSet[edict.EdictID] = true
 		rg.logger.Info("detected stale ritual on edict state change",
@@ -436,7 +436,7 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 	// Abort rituals on stale edicts
 	for _, ritual := range runningRituals {
 		if staleEdictSet[ritual.EdictID] {
-			if err := rg.abortRitual(ctx, &ritual, fmt.Sprintf("edict %s is %s", ritual.EdictID, staleEdicts[0].Status)); err != nil {
+			if err := rg.abortRitual(ctx, &ritual, fmt.Sprintf("edict %d is %s", ritual.EdictID, staleEdicts[0].Status)); err != nil {
 				rg.logger.Warn("failed to abort stale ritual",
 					"execution_id", ritual.ID,
 					"edict_id", ritual.EdictID,

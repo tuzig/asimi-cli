@@ -29,7 +29,7 @@ type Tab struct {
 	Type      TabType
 	Target    string             // minister ID, edict ID, or ritual run ID
 	Content   ContentComponent   // Own content buffer per tab
-	EdictID   string             // Current edict ID for this tab
+	EdictID   uint               // Current edict ID for this tab
 	Streaming bool               // True when this tab is actively receiving stream data
 	Ctx       context.Context    // per-tab context, flows to rituals for ruling tab
 	Cancel    context.CancelFunc // per-tab streaming cancellation
@@ -336,12 +336,12 @@ func (tm *TabManager) TabCount() int {
 }
 
 // ActiveEdictID returns the active tab's edict ID
-func (tm *TabManager) ActiveEdictID() string {
+func (tm *TabManager) ActiveEdictID() uint {
 	return tm.tabs[tm.activeTab].EdictID
 }
 
 // SetActiveEdictID sets the edict ID on the active tab
-func (tm *TabManager) SetActiveEdictID(id string) {
+func (tm *TabManager) SetActiveEdictID(id uint) {
 	tm.tabs[tm.activeTab].EdictID = id
 }
 

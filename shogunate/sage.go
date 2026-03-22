@@ -188,11 +188,11 @@ func (c *Sage) GetSession() *Session {
 }
 
 // GetEdict retrieves an edict (satisfies EdictManager for GetEdictStatusTool)
-func (c *Sage) GetEdict(edictID string) (*storage.Edict, error) {
+func (c *Sage) GetEdict(edictID uint) (*storage.Edict, error) {
 	var edict storage.Edict
 	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("edict not found: %s", edictID)
+			return nil, fmt.Errorf("edict not found: %d", edictID)
 		}
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
@@ -244,7 +244,7 @@ func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 		c.session.TabType = "hunting"
 	}
 
-	c.notify(StreamStartMsg{TabID: "sage", EdictID: "sage"})
+	c.notify(StreamStartMsg{TabID: "sage", EdictID: 0})
 
 	_, err := c.session.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
 	if err != nil && ctx.Err() == nil {
@@ -302,7 +302,7 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (c *Sage) streamTask(ctx context.Context, work, edictID, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
+func (c *Sage) streamTask(ctx context.Context, work string, edictID uint, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
 	session, err := CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
 		EdictID:    edictID,
 		TabID:      "chancellor",
@@ -409,7 +409,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 		Options: []string{"Approve edict", "Reject"},
 	}}
 
-	edictID := ""
+	var edictID uint
 	requestID, err := t.sage.RequestZhengming(edictID, questions, priority)
 	if err != nil {
 		return "", fmt.Errorf("failed to suggest edict: %w", err)
@@ -490,7 +490,7 @@ of what's happening in the Shogunate.`
 
 func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint   `json:"edict_id"`
 		Scope   string `json:"scope"` // "active", "all", or specific edict_id
 	}
 	json.Unmarshal([]byte(input), &params)
@@ -500,7 +500,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 	// Get edicts
 	var edicts []storage.Edict
 	query := t.db.Order("created_at DESC").Limit(20)
-	if params.EdictID != "" {
+	if params.EdictID != 0 {
 		query = query.Where("edict_id = ?", params.EdictID)
 	} else if params.Scope != "all" {
 		query = query.Where("status NOT IN ?", []string{"sealed", "cancelled"})
@@ -579,7 +579,7 @@ func (t *QueryCourtTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "Optional: focus on a specific edict",
 			},
 			"scope": map[string]any{
@@ -602,7 +602,7 @@ func truncateForCourt(s string, maxLen int) string {
 // --- Database Methods (migrated from Censor) ---
 
 // GetQuenchedManifests retrieves all quenched manifests ready for ethics review
-func (c *Sage) GetQuenchedManifests(edictID string) ([]storage.ForgeManifest, error) {
+func (c *Sage) GetQuenchedManifests(edictID uint) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
 	err := c.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestQuenched).
 		Order("created_at ASC").
@@ -614,7 +614,7 @@ func (c *Sage) GetQuenchedManifests(edictID string) ([]storage.ForgeManifest, er
 }
 
 // NoRejections checks if there are any rejected manifests for an edict
-func (c *Sage) NoRejections(edictID string) (bool, error) {
+func (c *Sage) NoRejections(edictID uint) (bool, error) {
 	var count int64
 	err := c.db.Model(&storage.ForgeManifest{}).
 		Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
@@ -878,14 +878,14 @@ func (t *RecordPrecedentTool) Description() string {
 
 func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID   string `json:"edict_id"`
+		EdictID   uint   `json:"edict_id"`
 		Approved  bool   `json:"approved"`
 		Reasoning string `json:"reasoning"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
-	if params.EdictID == "" || params.Reasoning == "" {
+	if params.EdictID == 0 || params.Reasoning == "" {
 		return "", fmt.Errorf("edict_id and reasoning are required")
 	}
 
@@ -918,21 +918,21 @@ func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, e
 	status := "approved"
 	if !params.Approved {
 		status = "rejected"
-		AddFailure(ctx, fmt.Sprintf("rejected edict %s: %s", params.EdictID, params.Reasoning))
+		AddFailure(ctx, fmt.Sprintf("rejected edict %d: %s", params.EdictID, params.Reasoning))
 	} else {
 		// Grant Sage's seal when approved
 		if err := t.sage.grantSeal(params.EdictID, storage.JSON{"reason": params.Reasoning}); err != nil {
 			t.sage.logger.Warn("failed to grant sage seal", "edict_id", params.EdictID, "error", err)
 		}
 	}
-	return fmt.Sprintf("Recorded precedent (%s) for edict %s: %s", status, params.EdictID, params.Reasoning), nil
+	return fmt.Sprintf("Recorded precedent (%s) for edict %d: %s", status, params.EdictID, params.Reasoning), nil
 }
 
 func (t *RecordPrecedentTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"edict_id":  map[string]any{"type": "string", "description": "The edict ID"},
+			"edict_id":  map[string]any{"type": "integer", "description": "The edict ID"},
 			"approved":  map[string]any{"type": "boolean", "description": "Whether the code is approved"},
 			"reasoning": map[string]any{"type": "string", "description": "The reasoning for the decision"},
 		},
@@ -960,12 +960,12 @@ func (t *ListQuenchedManifestsTool) Description() string {
 
 func (t *ListQuenchedManifestsTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
@@ -989,7 +989,7 @@ func (t *ListQuenchedManifestsTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"edict_id": map[string]any{"type": "string", "description": "The edict ID to list manifests for"},
+			"edict_id": map[string]any{"type": "integer", "description": "The edict ID to list manifests for"},
 		},
 		"required": []string{"edict_id"},
 	}

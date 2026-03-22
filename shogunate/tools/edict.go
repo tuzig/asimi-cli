@@ -13,9 +13,9 @@ import (
 
 // EdictManager provides edict management capabilities
 type EdictManager interface {
-	GetEdict(edictID string) (*storage.Edict, error)
-	AppendToIntent(edictID, clarification string) error
-	EmitEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) error
+	GetEdict(edictID uint) (*storage.Edict, error)
+	AppendToIntent(edictID uint, clarification string) error
+	EmitEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) error
 }
 
 // UpdateEdictTool refines an existing edict's intent (Chancellor only).
@@ -34,14 +34,14 @@ func (t UpdateEdictTool) Description() string {
 
 func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID       string `json:"edict_id"`
+		EdictID       uint   `json:"edict_id"`
 		Clarification string `json:"clarification"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 	if params.Clarification == "" {
@@ -57,17 +57,17 @@ func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("update edict: %w", err)
 	}
 
-	return fmt.Sprintf(`{"status":"updated","edict_id":"%s"}`, params.EdictID), nil
+	return fmt.Sprintf(`{"status":"updated","edict_id":%d}`, params.EdictID), nil
 }
 
 func (t UpdateEdictTool) Format(input, result string, err error) string {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint `json:"edict_id"`
 	}
 	json.Unmarshal([]byte(input), &params)
 
 	msg := utils.NewMsgBlockBuilder("UpdateEdict")
-	msg.Writef(" %s", params.EdictID)
+	msg.Writef(" %d", params.EdictID)
 	msg.WriteLn()
 
 	if err != nil {
@@ -84,7 +84,7 @@ func (t UpdateEdictTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "The edict ID to refine",
 			},
 			"clarification": map[string]any{
@@ -111,13 +111,13 @@ func (t GetEdictStatusTool) Description() string {
 
 func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
@@ -138,12 +138,12 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 
 func (t GetEdictStatusTool) Format(input, result string, err error) string {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint `json:"edict_id"`
 	}
 	json.Unmarshal([]byte(input), &params)
 
 	msg := utils.NewMsgBlockBuilder("EdictStatus")
-	msg.Writef(" %s", params.EdictID)
+	msg.Writef(" %d", params.EdictID)
 	msg.WriteLn()
 
 	if err != nil {
@@ -164,7 +164,7 @@ func (t GetEdictStatusTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "The edict ID to check status for",
 			},
 		},
@@ -275,7 +275,7 @@ func (t TransitionEdictTool) Description() string {
 
 func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint   `json:"edict_id"`
 		Status  string `json:"status"`
 		Reason  string `json:"reason,omitempty"`
 	}
@@ -283,7 +283,7 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	if params.EdictID == "" {
+	if params.EdictID == 0 {
 		return "", fmt.Errorf("edict_id is required")
 	}
 	if params.Status == "" {
@@ -326,9 +326,9 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 	}
 
 	result := map[string]any{
-		"edict_id":      params.EdictID,
+		"edict_id":        params.EdictID,
 		"previous_status": string(edict.Status),
-		"new_status":    string(targetStatus),
+		"new_status":      string(targetStatus),
 	}
 	if params.Reason != "" {
 		result["reason"] = params.Reason
@@ -340,13 +340,13 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 
 func (t TransitionEdictTool) Format(input, result string, err error) string {
 	var params struct {
-		EdictID string `json:"edict_id"`
+		EdictID uint   `json:"edict_id"`
 		Status  string `json:"status"`
 	}
 	json.Unmarshal([]byte(input), &params)
 
 	msg := utils.NewMsgBlockBuilder("TransitionEdict")
-	msg.Writef(" %s", params.EdictID)
+	msg.Writef(" %d", params.EdictID)
 	msg.WriteLn()
 
 	if err != nil {
@@ -363,7 +363,7 @@ func (t TransitionEdictTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{
-				"type":        "string",
+				"type":        "integer",
 				"description": "The edict ID to transition",
 			},
 			"status": map[string]any{

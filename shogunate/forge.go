@@ -69,7 +69,7 @@ func (f *Forge) Tools() []Tool {
 }
 
 // GetPendingLing retrieves all pending ling for an edict
-func (f *Forge) GetPendingLing(edictID string) ([]storage.Ling, error) {
+func (f *Forge) GetPendingLing(edictID uint) ([]storage.Ling, error) {
 	var ling []storage.Ling
 	err := f.db.Where("edict_id = ? AND status = ?", edictID, storage.LingPending).
 		Order("created_at ASC").
@@ -95,8 +95,8 @@ func (f *Forge) MarkLingCompleted(lingID string) error {
 }
 
 // StageManifest creates a staged manifest (not yet committed to git)
-func (f *Forge) StageManifest(edictID, lingID, filePath, funcName, contentSHA string) (string, error) {
-	manifestID := GenerateID("manifest", edictID, lingID, filePath)
+func (f *Forge) StageManifest(edictID uint, lingID, filePath, funcName, contentSHA string) (string, error) {
+	manifestID := GenerateID("manifest", fmt.Sprintf("%d", edictID), lingID, filePath)
 
 	manifest := storage.ForgeManifest{
 		ManifestID: manifestID,
@@ -128,7 +128,7 @@ func (f *Forge) DeleteForgedManifest(manifestID string) error {
 }
 
 // GetRejectedManifests retrieves all rejected manifests for an edict
-func (f *Forge) GetRejectedManifests(edictID string) ([]storage.ForgeManifest, error) {
+func (f *Forge) GetRejectedManifests(edictID uint) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
 	err := f.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
 		Order("created_at DESC").
@@ -239,7 +239,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (f *Forge) streamTask(ctx context.Context, work, edictID, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
+func (f *Forge) streamTask(ctx context.Context, work string, edictID uint, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
 	session, err := CreateSessionWithOpts(f, f.model, f.config, notify, CreateSessionOpts{
 		EdictID:    edictID,
 		TabID:      "chancellor",
@@ -273,7 +273,7 @@ func (t *CreateManifestTool) Description() string {
 
 func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID    string `json:"edict_id"`
+		EdictID    uint   `json:"edict_id"`
 		LingID     string `json:"ling_id"`
 		FilePath   string `json:"file_path"`
 		FuncName   string `json:"func_name"`
@@ -282,7 +282,7 @@ func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, er
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
-	if params.EdictID == "" || params.FilePath == "" {
+	if params.EdictID == 0 || params.FilePath == "" {
 		return "", fmt.Errorf("edict_id and file_path are required")
 	}
 
@@ -297,7 +297,7 @@ func (t *CreateManifestTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"edict_id":    map[string]any{"type": "string", "description": "The edict ID this manifest belongs to"},
+			"edict_id":    map[string]any{"type": "integer", "description": "The edict ID this manifest belongs to"},
 			"ling_id":     map[string]any{"type": "string", "description": "The ling ID this manifest implements"},
 			"file_path":   map[string]any{"type": "string", "description": "Path to the modified file"},
 			"func_name":   map[string]any{"type": "string", "description": "Name of the function being modified (optional)"},

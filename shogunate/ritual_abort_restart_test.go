@@ -31,8 +31,9 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 	}
 	db.AutoMigrate(&RitualExecution{}, &RitualStepState{}, &storage.Edict{}, &storage.TianEvent{})
 
-	edictID := "edict-test"
-	db.Create(&storage.Edict{EdictID: edictID, Intent: "Test", Status: storage.EdictActive})
+	edictVar := storage.Edict{Intent: "Test", Status: storage.EdictActive}
+	db.Create(&edictVar)
+	edictID := edictVar.EdictID
 
 	ritual := &RitualDef{
 		Name: "test",
@@ -241,8 +242,9 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 	}
 	db.AutoMigrate(&RitualExecution{}, &RitualStepState{}, &storage.Edict{}, &storage.TianEvent{})
 
-	edictID := "edict-midstep-test"
-	db.Create(&storage.Edict{EdictID: edictID, Intent: "Test mid-step abort", Status: storage.EdictActive})
+	edictVar := storage.Edict{Intent: "Test mid-step abort", Status: storage.EdictActive}
+	db.Create(&edictVar)
+	edictID := edictVar.EdictID
 
 	ritual := &RitualDef{
 		Name: "test-midstep",

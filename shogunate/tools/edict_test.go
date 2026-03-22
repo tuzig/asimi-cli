@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/afittestide/asimi/storage"
@@ -29,9 +30,8 @@ func TestTransitionEdictTool_Unblock(t *testing.T) {
 
 	// Create a blocked edict
 	edict := storage.Edict{
-		EdictID: "edict-test-1",
-		Intent:  "Test edict",
-		Status:  storage.EdictBlocked,
+		Intent: "Test edict",
+		Status: storage.EdictBlocked,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -40,7 +40,7 @@ func TestTransitionEdictTool_Unblock(t *testing.T) {
 	tool := TransitionEdictTool{DB: db}
 
 	// Test unblocking
-	result, err := tool.Call(context.Background(), `{"edict_id": "edict-test-1", "status": "active", "reason": "reviewed and approved"}`)
+	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "active", "reason": "reviewed and approved"}`, edict.EdictID))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestTransitionEdictTool_Unblock(t *testing.T) {
 
 	// Verify edict status was updated
 	var updated storage.Edict
-	if err := db.First(&updated, "edict_id = ?", "edict-test-1").Error; err != nil {
+	if err := db.First(&updated, "edict_id = ?", edict.EdictID).Error; err != nil {
 		t.Fatalf("failed to get updated edict: %v", err)
 	}
 	if updated.Status != storage.EdictActive {
@@ -65,9 +65,8 @@ func TestTransitionEdictTool_Reject(t *testing.T) {
 
 	// Create a blocked edict
 	edict := storage.Edict{
-		EdictID: "edict-test-2",
-		Intent:  "Test edict to reject",
-		Status:  storage.EdictBlocked,
+		Intent: "Test edict to reject",
+		Status: storage.EdictBlocked,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -76,7 +75,7 @@ func TestTransitionEdictTool_Reject(t *testing.T) {
 	tool := TransitionEdictTool{DB: db}
 
 	// Test rejecting (cancelling)
-	result, err := tool.Call(context.Background(), `{"edict_id": "edict-test-2", "status": "cancelled", "reason": "no longer needed"}`)
+	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "cancelled", "reason": "no longer needed"}`, edict.EdictID))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -88,7 +87,7 @@ func TestTransitionEdictTool_Reject(t *testing.T) {
 
 	// Verify edict status was updated
 	var updated storage.Edict
-	if err := db.First(&updated, "edict_id = ?", "edict-test-2").Error; err != nil {
+	if err := db.First(&updated, "edict_id = ?", edict.EdictID).Error; err != nil {
 		t.Fatalf("failed to get updated edict: %v", err)
 	}
 	if updated.Status != storage.EdictCancelled {
@@ -101,9 +100,8 @@ func TestTransitionEdictTool_InvalidStatus(t *testing.T) {
 
 	// Create an edict
 	edict := storage.Edict{
-		EdictID: "edict-test-3",
-		Intent:  "Test edict",
-		Status:  storage.EdictActive,
+		Intent: "Test edict",
+		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -112,7 +110,7 @@ func TestTransitionEdictTool_InvalidStatus(t *testing.T) {
 	tool := TransitionEdictTool{DB: db}
 
 	// Test invalid status
-	_, err := tool.Call(context.Background(), `{"edict_id": "edict-test-3", "status": "invalid_status"}`)
+	_, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "invalid_status"}`, edict.EdictID))
 	if err == nil {
 		t.Fatal("Expected error for invalid status")
 	}
@@ -123,9 +121,8 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 
 	// Create a blocked edict
 	edict := storage.Edict{
-		EdictID: "edict-test-4",
-		Intent:  "Test edict",
-		Status:  storage.EdictBlocked,
+		Intent: "Test edict",
+		Status: storage.EdictBlocked,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -134,7 +131,7 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 	tool := TransitionEdictTool{DB: db}
 
 	// Test that blocked edicts can only go to active or cancelled
-	_, err := tool.Call(context.Background(), `{"edict_id": "edict-test-4", "status": "sealed"}`)
+	_, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "sealed"}`, edict.EdictID))
 	if err == nil {
 		t.Fatal("Expected error when transitioning blocked edict to sealed")
 	}
@@ -146,7 +143,7 @@ func TestTransitionEdictTool_NonExistent(t *testing.T) {
 	tool := TransitionEdictTool{DB: db}
 
 	// Test non-existent edict
-	_, err := tool.Call(context.Background(), `{"edict_id": "edict-nonexistent", "status": "active"}`)
+	_, err := tool.Call(context.Background(), `{"edict_id": 999, "status": "active"}`)
 	if err == nil {
 		t.Fatal("Expected error for non-existent edict")
 	}
@@ -164,7 +161,7 @@ func TestTransitionEdictTool_MissingFields(t *testing.T) {
 	}
 
 	// Test missing status
-	_, err = tool.Call(context.Background(), `{"edict_id": "edict-test"}`)
+	_, err = tool.Call(context.Background(), `{"edict_id": 1}`)
 	if err == nil {
 		t.Fatal("Expected error for missing status")
 	}
@@ -175,13 +172,13 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 
 	// Create edicts with different statuses
 	edicts := []storage.Edict{
-		{EdictID: "edict-1", Intent: "Active edict", Status: storage.EdictActive},
-		{EdictID: "edict-2", Intent: "Blocked edict", Status: storage.EdictBlocked},
-		{EdictID: "edict-3", Intent: "Another blocked", Status: storage.EdictBlocked},
-		{EdictID: "edict-4", Intent: "Sealed edict", Status: storage.EdictSealed},
+		{Intent: "Active edict", Status: storage.EdictActive},
+		{Intent: "Blocked edict", Status: storage.EdictBlocked},
+		{Intent: "Another blocked", Status: storage.EdictBlocked},
+		{Intent: "Sealed edict", Status: storage.EdictSealed},
 	}
-	for _, e := range edicts {
-		if err := db.Create(&e).Error; err != nil {
+	for i := range edicts {
+		if err := db.Create(&edicts[i]).Error; err != nil {
 			t.Fatalf("failed to create edict: %v", err)
 		}
 	}
@@ -198,12 +195,12 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 	if result == "" {
 		t.Fatal("Expected non-empty result")
 	}
-	// Should contain 2 blocked edicts
-	if !containsSubstring(result, "edict-2") || !containsSubstring(result, "edict-3") {
+	// Should contain 2 blocked edicts (by intent)
+	if !containsSubstring(result, "Blocked edict") || !containsSubstring(result, "Another blocked") {
 		t.Errorf("Expected result to contain blocked edicts, got: %s", result)
 	}
 	// Should not contain active or sealed edicts
-	if containsSubstring(result, "edict-1") || containsSubstring(result, "edict-4") {
+	if containsSubstring(result, "Active edict") || containsSubstring(result, "Sealed edict") {
 		t.Errorf("Result should not contain non-blocked edicts, got: %s", result)
 	}
 }

@@ -104,7 +104,7 @@ func (m *Marshal) GetManifestByCommit(commitHash string) (*storage.ForgeManifest
 }
 
 // LogIncident records a production crash incident
-func (m *Marshal) LogIncident(incidentID, edictID, commitHash, rcaSummary string) error {
+func (m *Marshal) LogIncident(incidentID string, edictID uint, commitHash, rcaSummary string) error {
 	incident := storage.MarshalIncident{
 		IncidentID: incidentID,
 		EdictID:    edictID,
@@ -160,7 +160,7 @@ func (m *Marshal) GetPendingIncidents() ([]storage.MarshalIncident, error) {
 
 // execute runs the Marshal's production monitoring (internal method)
 // Note: Marshal doesn't participate in normal edict flow, but handles incidents
-func (m *Marshal) execute(ctx context.Context, edictID string) (bool, error) {
+func (m *Marshal) execute(ctx context.Context, edictID uint) (bool, error) {
 	// Marshal's Execute is called for 'assassination' type edicts (hotfixes)
 	edict, err := m.GetEdict(edictID)
 	if err != nil {
@@ -181,7 +181,7 @@ func (m *Marshal) execute(ctx context.Context, edictID string) (bool, error) {
 func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string) error {
 	// Perform RCA if analyzer available
 	var rcaSummary string
-	var edictID string
+	var edictID uint
 
 	if m.rca != nil {
 		report, err := m.rca.Analyze(ctx, incidentID)
@@ -197,7 +197,7 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 	}
 
 	// Try to find the manifest by commit
-	if edictID == "" {
+	if edictID == 0 {
 		manifest, err := m.GetManifestByCommit(commitHash)
 		if err == nil && manifest != nil {
 			edictID = manifest.EdictID
@@ -210,7 +210,7 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 	}
 
 	// Request Zhengming for hotfix approval
-	if edictID != "" {
+	if edictID != 0 {
 		_, err := m.RequestZhengming(edictID,
 			storage.ZhengmingQuestions{{
 				Text:    fmt.Sprintf("Production incident %s requires hotfix approval.\n\nRCA: %s", incidentID, rcaSummary),
@@ -295,7 +295,7 @@ func (t *CreateIncidentTool) Call(ctx context.Context, input string) (string, er
 	var params struct {
 		Description string `json:"description"`
 		Severity    string `json:"severity"`
-		EdictID     string `json:"edict_id"`
+		EdictID     uint   `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -319,7 +319,7 @@ func (t *CreateIncidentTool) ParameterSchema() map[string]any {
 		"properties": map[string]any{
 			"description": map[string]any{"type": "string", "description": "Description of the incident"},
 			"severity":    map[string]any{"type": "string", "description": "Severity level (critical, high, medium, low)"},
-			"edict_id":    map[string]any{"type": "string", "description": "Optional edict ID linked to this incident"},
+			"edict_id":    map[string]any{"type": "integer", "description": "Optional edict ID linked to this incident"},
 		},
 		"required": []string{"description", "severity"},
 	}

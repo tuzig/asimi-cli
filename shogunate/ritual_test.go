@@ -480,7 +480,7 @@ func TestRitualStreamMessages(t *testing.T) {
 		Description: "A test ritual for streaming messages",
 		Triggers:    []RitualTrigger{{Manual: true}},
 		Inputs: map[string]InputDef{
-			"edict_id": {Type: "string", Required: true},
+			"edict_id": {Type: "integer", Required: true},
 		},
 		Steps: []RitualStep{
 			{
@@ -511,7 +511,7 @@ func TestRitualStreamMessages(t *testing.T) {
 
 	// Start the ritual
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "test-stream", "test-edict-1", map[string]string{"edict_id": "test-edict-1"}, notify)
+	exec, err := runner.Start(ctx, "test-stream", 1, map[string]string{"edict_id": "1"}, notify)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "multi-step", "edict-multi", nil, notify)
+	exec, err := runner.Start(ctx, "multi-step", 2, nil, notify)
 	if err != nil {
 		t.Fatalf("Failed to start: %v", err)
 	}
@@ -662,7 +662,7 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	exec, _ := runner.Start(ctx, "fail-ritual", "edict-fail", nil, notify)
+	exec, _ := runner.Start(ctx, "fail-ritual", 3, nil, notify)
 	err := runner.Run(ctx, exec)
 
 	// Should fail
@@ -765,7 +765,7 @@ func TestRitualGotoPassesErrorMessage(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "goto-error-test", "edict-goto", nil, nil)
+	exec, err := runner.Start(ctx, "goto-error-test", 4, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -864,7 +864,7 @@ func TestRitualGotoPassesOutputAndError(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "goto-output-error-test", "edict-goto-out", nil, nil)
+	exec, err := runner.Start(ctx, "goto-output-error-test", 5, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -964,7 +964,7 @@ func TestRitualGotoSessionReuse(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "goto-session-test", "edict-session", nil, nil)
+	exec, err := runner.Start(ctx, "goto-session-test", 6, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -1027,7 +1027,7 @@ func TestRitualGotoPreservesOutputOnFailure(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "preserve-output-test", "edict-preserve", nil, nil)
+	exec, err := runner.Start(ctx, "preserve-output-test", 7, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -1128,7 +1128,7 @@ func TestRunGivenStep_Bash(t *testing.T) {
 	exec := &RitualExecution{
 		ID:         "test-exec",
 		RitualName: "test",
-		EdictID:    "test-edict",
+		EdictID:    100,
 	}
 
 	entry := StepDefEntry{
@@ -1157,7 +1157,7 @@ func TestRunThenStep_Bash(t *testing.T) {
 	exec := &RitualExecution{
 		ID:         "test-exec",
 		RitualName: "test",
-		EdictID:    "test-edict",
+		EdictID:    100,
 	}
 
 	entry := StepDefEntry{
@@ -1213,7 +1213,7 @@ func TestRunThenStep_Multiple(t *testing.T) {
 	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil)
 
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "multi-then", "edict-test", nil, nil)
+	exec, err := runner.Start(ctx, "multi-then", 8, nil, nil)
 	if err != nil {
 		t.Fatalf("Start error: %v", err)
 	}
@@ -1294,7 +1294,7 @@ func TestBackgroundGiven(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "bg-test", "edict-bg", nil, notify)
+	exec, err := runner.Start(ctx, "bg-test", 9, nil, notify)
 	if err != nil {
 		t.Fatalf("Start error: %v", err)
 	}
@@ -1497,7 +1497,7 @@ func TestInvokeRitualTool_Enacted(t *testing.T) {
 	}
 
 	tool := InvokeRitualTool{chancellor: chanc}
-	input := `{"ritual_name":"test-enacted","edict_id":"edict-block-1"}`
+	input := `{"ritual_name":"test-enacted","edict_id":1}`
 
 	result, err := tool.Call(context.Background(), input)
 	if err != nil {
@@ -1516,8 +1516,9 @@ func TestInvokeRitualTool_Enacted(t *testing.T) {
 	if res["ritual_name"] != "test-enacted" {
 		t.Errorf("expected ritual_name 'test-enacted', got %q", res["ritual_name"])
 	}
-	if res["edict_id"] != "edict-block-1" {
-		t.Errorf("expected edict_id 'edict-block-1', got %q", res["edict_id"])
+	// edict_id comes back as float64 from JSON unmarshaling
+	if res["edict_id"] != float64(1) {
+		t.Errorf("expected edict_id 1, got %v", res["edict_id"])
 	}
 }
 
@@ -1543,7 +1544,7 @@ func TestInvokeRitualTool_EnactedEvenForBadRitual(t *testing.T) {
 	}
 
 	tool := InvokeRitualTool{chancellor: chanc}
-	input := `{"ritual_name":"test-fail-enacted","edict_id":"edict-fail-1"}`
+	input := `{"ritual_name":"test-fail-enacted","edict_id":2}`
 
 	result, err := tool.Call(context.Background(), input)
 	if err != nil {
@@ -1668,7 +1669,7 @@ func TestRitualZhengmingPausesTimeout(t *testing.T) {
 		}
 	}
 
-	exec, err := runner.Start(ctx, "zhengming-pause", "edict-zm-1", nil, notify)
+	exec, err := runner.Start(ctx, "zhengming-pause", 10, nil, notify)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -1740,7 +1741,7 @@ func TestRitualTimeoutWithoutZhengming(t *testing.T) {
 
 	notify := func(msg any) {}
 
-	exec, err := runner.Start(ctx, "timeout-test", "edict-to-1", nil, notify)
+	exec, err := runner.Start(ctx, "timeout-test", 11, nil, notify)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -1759,7 +1760,7 @@ func TestRitualTimeoutWithoutZhengming(t *testing.T) {
 func TestExpandTemplate_ActResult(t *testing.T) {
 	runner := &RitualRunner{logger: slog.Default()}
 	exec := &RitualExecution{
-		EdictID:     "edict-1",
+		EdictID:     1,
 		CurrentStep: 1,
 		Data: storage.JSON{
 			"act_result": "step0 produced this output",
@@ -1779,7 +1780,7 @@ func TestExpandTemplate_ActResult(t *testing.T) {
 func TestExpandTemplate_StepResults(t *testing.T) {
 	runner := &RitualRunner{logger: slog.Default()}
 	exec := &RitualExecution{
-		EdictID:     "edict-1",
+		EdictID:     1,
 		CurrentStep: 2,
 		stepStates: []RitualStepState{
 			{Name: "plan", Message: "the plan output"},
@@ -1921,7 +1922,7 @@ func TestExpandTemplate_GotoIncludesLaterSteps(t *testing.T) {
 
 	// Simulate: steps 0→1→2 ran, step 2 failed and goto back to step 0
 	exec := &RitualExecution{
-		EdictID:     "edict-1",
+		EdictID:     1,
 		CurrentStep: 0,
 		stepStates: []RitualStepState{
 			{Name: "plan", Message: ""},                 // current step
@@ -2001,9 +2002,7 @@ func TestRitualSessionIDTracking(t *testing.T) {
 	}
 
 	// Create a test edict
-	edictID := "edict-test-session-tracking"
 	testEdict := storage.Edict{
-		EdictID:   edictID,
 		SessionID: "session-initial",
 		Intent:    "Test session tracking",
 		Status:    storage.EdictActive,
@@ -2011,6 +2010,7 @@ func TestRitualSessionIDTracking(t *testing.T) {
 	if err := db.Create(&testEdict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
+	edictID := testEdict.EdictID
 
 	// Verify ritual_executions table has session_id column
 	var execResult struct {

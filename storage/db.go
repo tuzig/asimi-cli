@@ -104,6 +104,8 @@ func (db *DB) runMigrations(currentVersion int) error {
 			migrationSQL = Migration2to3
 		case 4:
 			migrationSQL = Migration3to4
+		case 5:
+			migrationSQL = Migration4to5
 		default:
 			return fmt.Errorf("unknown migration version: %d", v)
 		}

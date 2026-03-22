@@ -29,7 +29,7 @@ type RitualStepMsg struct {
 	TabID       string
 	RitualName  string
 	ExecutionID string
-	EdictID     string
+	EdictID     uint
 	StepName    string
 	StepIndex   int
 	TotalSteps  int
@@ -67,7 +67,7 @@ var ErrZhengmingPending = errors.New("zhengming pending")
 type ZhengmingAnswer struct {
 	RequestID string
 	Answer    string
-	EdictID   string
+	EdictID   uint
 }
 
 // RitualDef represents a YAML-defined ritual
@@ -487,7 +487,7 @@ type RitualRunner struct {
 	registry     *RitualRegistry
 	stepDefs     *StepDefRegistry
 	getMinister  func(id string) Minister
-	publishEvent func(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string
+	publishEvent func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint
 	db           *gorm.DB
 	runner       runners.Runner
 	logger       *slog.Logger
@@ -501,7 +501,7 @@ type RitualRunner struct {
 func NewRitualRunner(
 	registry *RitualRegistry,
 	getMinister func(id string) Minister,
-	publishEvent func(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) string,
+	publishEvent func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint,
 	db *gorm.DB,
 	runner runners.Runner,
 	logger *slog.Logger,
@@ -598,7 +598,7 @@ func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecuti
 type RitualExecution struct {
 	ID          string          `gorm:"primaryKey;column:id"`
 	RitualName  string          `gorm:"column:ritual_name"`
-	EdictID     string          `gorm:"column:edict_id;index"`
+	EdictID     uint            `gorm:"column:edict_id;index"`
 	SessionID   string          `gorm:"column:session_id"`
 	CurrentStep int             `gorm:"column:current_step"`
 	State       RitualState     `gorm:"column:state"`
@@ -643,7 +643,7 @@ func (RitualStepState) TableName() string {
 }
 
 // Start begins execution of a ritual
-func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, inputs map[string]string, notify internal.NotifyFunc) (*RitualExecution, error) {
+func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uint, inputs map[string]string, notify internal.NotifyFunc) (*RitualExecution, error) {
 	def := r.registry.Get(ritualName)
 	if def == nil {
 		return nil, fmt.Errorf("ritual not found: %s", ritualName)
@@ -720,7 +720,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 
 	// Create execution record
 	exec := &RitualExecution{
-		ID:          GenerateID("ritual", ritualName, edictID, time.Now().String()),
+		ID:          GenerateID("ritual", ritualName, fmt.Sprint(edictID), time.Now().String()),
 		RitualName:  ritualName,
 		EdictID:     edictID,
 		CurrentStep: 0,
@@ -737,7 +737,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 			minister := r.getMinister("chancellor")
 			if minister != nil {
 				type zhengmingGate interface {
-					RequestZhengming(string, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+					RequestZhengming(uint, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
 				}
 				gate, ok := minister.(zhengmingGate)
 				if ok {
@@ -773,7 +773,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName, edictID string, in
 							exec.State = RitualStateCompleted
 							r.saveExecution(exec)
 							// Generate a fresh execution ID and reset state
-							exec.ID = GenerateID("ritual", ritualName, edictID, time.Now().String())
+							exec.ID = GenerateID("ritual", ritualName, fmt.Sprint(edictID), time.Now().String())
 							exec.State = RitualStatePending
 							// Clear recovery data to start fresh
 							previousExec = nil
@@ -1133,7 +1133,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	}
 
 	// Check edict status before executing step - abort if sealed or cancelled
-	if exec.EdictID != "" {
+	if exec.EdictID != 0 {
 		var edict storage.Edict
 		if err := r.db.First(&edict, "edict_id = ?", exec.EdictID).Error; err == nil {
 			if edict.Status == storage.EdictSealed || edict.Status == storage.EdictCancelled {
@@ -1142,7 +1142,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 					"step", step.Name,
 					"edict_id", exec.EdictID,
 					"edict_status", edict.Status)
-				return "", fmt.Errorf("ritual aborted: edict %s is %s", exec.EdictID, edict.Status)
+				return "", fmt.Errorf("ritual aborted: edict %d is %s", exec.EdictID, edict.Status)
 			}
 		}
 	}
@@ -1746,7 +1746,7 @@ func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string
 }
 
 // getEdictDetails retrieves full edict information including clarification history
-func (r *RitualRunner) getEdictDetails(ctx context.Context, edictID string) (*storage.Edict, []storage.Zhengming, error) {
+func (r *RitualRunner) getEdictDetails(ctx context.Context, edictID uint) (*storage.Edict, []storage.Zhengming, error) {
 	var edict storage.Edict
 	if err := r.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
 		return nil, nil, err
@@ -1765,7 +1765,7 @@ func (r *RitualRunner) getEdictDetails(ctx context.Context, edictID string) (*st
 func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {
 	switch fn {
 	case "get_edict":
-		if exec.EdictID == "" {
+		if exec.EdictID == 0 {
 			return map[string]string{"status": "no edict (system event)"}, nil
 		}
 		return r.arrangeGetEdict(exec.EdictID)
@@ -1786,7 +1786,7 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 	}
 }
 
-func (r *RitualRunner) arrangeGetEdict(edictID string) (interface{}, error) {
+func (r *RitualRunner) arrangeGetEdict(edictID uint) (interface{}, error) {
 	var edict storage.Edict
 	if err := r.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
 		return nil, err
@@ -1798,7 +1798,7 @@ func (r *RitualRunner) arrangeGetEdict(edictID string) (interface{}, error) {
 	}, nil
 }
 
-func (r *RitualRunner) arrangeGetCourtStatus(edictID string) (interface{}, error) {
+func (r *RitualRunner) arrangeGetCourtStatus(edictID uint) (interface{}, error) {
 	var edicts []storage.Edict
 	if err := r.db.Where("status NOT IN ?", []string{"sealed", "cancelled"}).Find(&edicts).Error; err != nil {
 		return nil, err
@@ -1818,7 +1818,7 @@ func (r *RitualRunner) arrangeGetCourtStatus(edictID string) (interface{}, error
 	return result, nil
 }
 
-func (r *RitualRunner) arrangeGetManifests(edictID string) (interface{}, error) {
+func (r *RitualRunner) arrangeGetManifests(edictID uint) (interface{}, error) {
 	var manifests []storage.ForgeManifest
 	if err := r.db.Where("edict_id = ?", edictID).Find(&manifests).Error; err != nil {
 		return nil, err
@@ -1842,7 +1842,7 @@ func (r *RitualRunner) arrangeGetManifests(edictID string) (interface{}, error) 
 	return result, nil
 }
 
-func (r *RitualRunner) arrangeGetVerdicts(edictID string) (interface{}, error) {
+func (r *RitualRunner) arrangeGetVerdicts(edictID uint) (interface{}, error) {
 	var verdicts []storage.JudgeVerdict
 	err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = judge_verdicts.manifest_id").
 		Where("forge_manifests.edict_id = ?", edictID).
@@ -1861,7 +1861,7 @@ func (r *RitualRunner) arrangeGetVerdicts(edictID string) (interface{}, error) {
 	return result, nil
 }
 
-func (r *RitualRunner) arrangeGetPrecedents(edictID string) (interface{}, error) {
+func (r *RitualRunner) arrangeGetPrecedents(edictID uint) (interface{}, error) {
 	var precedents []storage.CensorPrecedent
 	err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
 		Where("forge_manifests.edict_id = ?", edictID).
@@ -1959,7 +1959,7 @@ func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) 
 
 // runBuiltinThen runs a builtin then function (extensible via step registry)
 func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution, fn string) error {
-	if exec.EdictID == "" {
+	if exec.EdictID == 0 {
 		r.logger.Debug("skipping edict operation for system ritual", "fn", fn)
 		return nil
 	}
@@ -1984,7 +1984,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 			return fmt.Errorf("minister not found: chancellor")
 		}
 		type zhengmingGate interface {
-			RequestZhengming(string, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+			RequestZhengming(uint, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
 		}
 		gate, ok := minister.(zhengmingGate)
 		if !ok {
@@ -1996,7 +1996,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 			stepName = exec.def.Steps[exec.CurrentStep].Name
 		}
 		questions := storage.ZhengmingQuestions{{
-			Text:    fmt.Sprintf("The %s has completed work on edict %s. Do you approve?", stepName, exec.EdictID),
+			Text:    fmt.Sprintf("The %s has completed work on edict %d. Do you approve?", stepName, exec.EdictID),
 			Options: []string{"Approve and proceed", "Let me clarify", "Reject"},
 		}}
 		requestID, err := gate.RequestZhengming(exec.EdictID, questions, storage.PriorityUrgent)
@@ -2204,7 +2204,7 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 
 // emitEvent records a Tian event from the ritual runner.
 // Routes through publishEvent for channel delivery when available.
-func (r *RitualRunner) emitEvent(edictID string, eventType storage.ShogunateEvent, payload storage.JSON) {
+func (r *RitualRunner) emitEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) {
 	if r.publishEvent != nil {
 		r.publishEvent(edictID, eventType, payload)
 		return
@@ -2226,7 +2226,7 @@ func (r *RitualRunner) invokeReportFailure(ctx context.Context, exec *RitualExec
 		return
 	}
 	inputs := map[string]string{
-		"edict_id":    exec.EdictID,
+		"edict_id":    fmt.Sprint(exec.EdictID),
 		"ritual_name": exec.RitualName,
 		"step_name":   step.Name,
 		"error":       err.Error(),
@@ -2349,10 +2349,10 @@ func (r *RitualRunner) GetExecution(executionID string) (*RitualExecution, error
 }
 
 // ListExecutions lists executions for an edict
-func (r *RitualRunner) ListExecutions(edictID string) ([]RitualExecution, error) {
+func (r *RitualRunner) ListExecutions(edictID uint) ([]RitualExecution, error) {
 	var executions []RitualExecution
 	query := r.db.Order("created_at DESC")
-	if edictID != "" {
+	if edictID != 0 {
 		query = query.Where("edict_id = ?", edictID)
 	}
 	if err := query.Find(&executions).Error; err != nil {

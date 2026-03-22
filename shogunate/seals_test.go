@@ -26,7 +26,7 @@ func TestSealService_GrantSeal(t *testing.T) {
 	db := setupTestDB(t)
 	service := NewSealService(db)
 
-	edictID := "edict-test-1"
+	var edictID uint = 1
 	ministerID := "judge"
 	metadata := storage.JSON{"test": "data"}
 
@@ -49,7 +49,7 @@ func TestSealService_GetSeals(t *testing.T) {
 	db := setupTestDB(t)
 	service := NewSealService(db)
 
-	edictID := "edict-test-2"
+	var edictID uint = 2
 
 	// Grant multiple seals
 	service.GrantSeal(edictID, "judge", storage.JSON{"verdict": "passed"})
@@ -69,7 +69,7 @@ func TestSealService_GetMissingSeals(t *testing.T) {
 	db := setupTestDB(t)
 	service := NewSealService(db)
 
-	edictID := "edict-test-3"
+	var edictID uint = 3
 
 	// Grant only judge seal
 	service.GrantSeal(edictID, "judge", storage.JSON{})
@@ -96,7 +96,7 @@ func TestSealService_IsPendingAscension(t *testing.T) {
 	db := setupTestDB(t)
 	service := NewSealService(db)
 
-	edictID := "edict-test-4"
+	var edictID uint = 4
 
 	// Initially not pending
 	pending, err := service.IsPendingAscension(edictID)
@@ -137,7 +137,7 @@ func TestSealService_GetSealStatus(t *testing.T) {
 	db := setupTestDB(t)
 	service := NewSealService(db)
 
-	edictID := "edict-test-5"
+	var edictID uint = 5
 
 	// Grant judge seal only
 	service.GrantSeal(edictID, "judge", storage.JSON{})
