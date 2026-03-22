@@ -831,7 +831,7 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 			if model.currentEdictID != "" {
 				edictID = model.currentEdictID
 			} else {
-				return showSystemMsg("Usage: :seal [edict_id] [notes] - provide edict_id or be in an active edict session")
+				return showSystemMsg("Usage: :seal [edict_id] [notes] - provide edict_id")
 			}
 		}
 
@@ -843,6 +843,15 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 		sealService := model.shogunate.GetSealService()
 		if sealService == nil {
 			return showSystemMsg("Seal service not available")
+		}
+
+		// Validate edict exists BEFORE seal lookup
+		if chancellorMinister := model.shogunate.GetMinister("chancellor"); chancellorMinister != nil {
+			if chancellor, ok := chancellorMinister.(*shogunate.Chancellor); ok {
+				if _, err := chancellor.GetEdict(edictID); err != nil {
+					return showSystemMsg(fmt.Sprintf("Edict '%s' not found", edictID))
+				}
+			}
 		}
 
 		// Get current seals for the edict
@@ -906,6 +915,13 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 		model.shogunate.PublishEvent(edictID, storage.EventSealGranted, payload)
 
-		return showSystemMsg(fmt.Sprintf("Ruler's seal granted to %s\n%s", edictID, sealChainMsg))
+		// Re-query seals to show fresh seal chain with Ruler's seal
+		updatedSeals, err := sealService.GetSeals(edictID)
+		if err != nil {
+			return showSystemMsg(fmt.Sprintf("Ruler's seal granted to %s (failed to refresh seal chain: %v)", edictID, err))
+		}
+
+		updatedSealChainMsg := renderSealChain(updatedSeals, 60)
+		return showSystemMsg(fmt.Sprintf("Ruler's seal granted to %s\n%s", edictID, updatedSealChainMsg))
 	}
 }

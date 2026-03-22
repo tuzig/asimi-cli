@@ -2691,7 +2691,7 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	statusHeight := 1
 	promptWithBorder := m.prompt().Height + 2
 	tabBarHeight := m.tabs.TabBarHeight()
-	justContentHeight := m.height - commandLineHeight - statusHeight - tabBarHeight - 1
+	justContentHeight := m.height - commandLineHeight - statusHeight - tabBarHeight - 2
 	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1 - modalHeight
 	if contentHeight < 0 {
 		contentHeight = 0
