@@ -1,6 +1,6 @@
 # The Ruler's Guide — Quick Start for Unix Veterans
 
-> For Shmir, who taught me vi in 1989.
+🎂 Happy 50th birthday to `vi`, the tool that will live forever 🎂
 
 ## You Are the Ruler
 
@@ -36,7 +36,8 @@ Earth (地) — Code
 
 ### Contributor Installation
 
-Shmir (or any new contributor) needs to install podman and:
+Asimi uses a podman based sandbox so you'll need to install it.
+Once you have podman:
 
 1. **Fork the repo:**
    ```bash
