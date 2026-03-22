@@ -834,9 +834,9 @@ type Prompt struct {
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
-    EdictID string
-    Work    string
-    Done    chan<- Result
+    EdictID     uint
+    Work        string
+    Done        chan<- Result
 }
 
 // Result signals a Minister has completed a Task

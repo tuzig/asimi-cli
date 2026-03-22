@@ -80,6 +80,8 @@ type TUIModel struct {
 
 	// Host command approval state
 	pendingHostApproval *runners.ApprovalRequestMsg
+	// Seal override confirmation state
+	pendingSealOverride *pendingSealOverride
 	repoInfo            *repo.RepoInfo
 }
 
@@ -117,6 +119,12 @@ type shellCommandResultMsg struct {
 type editorResultMsg struct {
 	ResultChan chan error
 	Err        error
+}
+
+// pendingSealOverride tracks state when waiting for Ruler confirmation to seal without prerequisites
+type pendingSealOverride struct {
+	edictID uint
+	notes   string
 }
 
 // NewTUIModel creates a new TUI model
@@ -1845,6 +1853,21 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case yesNoResponseMsg:
+		// Check if this is a response to a seal override request
+		if m.pendingSealOverride != nil {
+			if msg.answer {
+				// User confirmed - proceed with sealing
+				return m, grantRulerSealCmd(&m, m.pendingSealOverride.edictID, m.pendingSealOverride.notes)
+			} else {
+				// User declined
+				cancelMsg := NewChatMsgBuilder(systemPrefix)
+				cancelMsg.WriteLn("Seal cancelled.")
+				m.tabs.Content().Chat.AddMessage(cancelMsg.String())
+			}
+			m.pendingSealOverride = nil
+			return m, nil
+		}
+
 		// Check if this is a response to a host command approval request
 		if m.pendingHostApproval != nil {
 			// Send the response back to the waiting goroutine
