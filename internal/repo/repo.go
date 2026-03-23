@@ -129,6 +129,9 @@ func (r *RepoInfo) GetStatus() string {
 // IsClean returns true if the working tree has no changes
 func (r *RepoInfo) IsClean() bool {
 	r.RefreshDiff()
+	if r.repo != nil {
+		r.status = readShortStatus(r.repo)
+	}
 	return r.status == "" && r.LinesAdded == 0 && r.LinesDeleted == 0
 }
 
