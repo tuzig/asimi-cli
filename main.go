@@ -172,8 +172,15 @@ func runInteractiveMode() error {
 		}()
 	}
 
-	// start the wakeup ceremony
-	tuiModel.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{"trigger": "model_configured"})
+	// fire an event to get the shogunate going
+	latest, hasUpdate, err := CheckForUpdates(version)
+	if err != nil {
+		slog.Warn("Failed to check for Asimi updates", "err", err)
+	}
+	tuiModel.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{"trigger": "startup",
+		"our_version":    version,
+		"latest_version": latest,
+		"has_update":     hasUpdate})
 	_, runErr := tuiProgram.Run()
 
 	if runErr != nil {

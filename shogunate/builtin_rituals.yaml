@@ -100,7 +100,7 @@
   description: "Startup ritual - Chancellor reports court status on Shogunate boot, then requests zhengming"
   max_retries: 2
   triggers:
-    - event: shogunate_started
+    - event: shogunate_ready
   steps:
     - name: summarize-and-next
       minister: chancellor

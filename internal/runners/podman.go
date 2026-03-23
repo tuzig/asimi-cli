@@ -556,6 +556,13 @@ func (r *PodmanRunner) ContainerID() string {
 	return ""
 }
 
+// GetImageName returns the sandbox image name
+func (r *PodmanRunner) GetImageName() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.imageName
+}
+
 // AllowFallback enables or disables fallback to host runner
 func (r *PodmanRunner) AllowFallback(allow bool) {
 	r.allowFallback = allow

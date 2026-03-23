@@ -3,12 +3,23 @@ package shogunate
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
+	"github.com/rhysd/go-github-selfupdate/selfupdate"
 )
+
+// HealthCheckResult represents the result of a startup health check
+type HealthCheckResult struct {
+	VersionOK   bool            `json:"version_ok"`
+	ModelOK     bool            `json:"model_ok"`
+	SandboxOK   bool            `json:"sandbox_ok"`
+	Failures    []string        `json:"failures,omitempty"`
+	Remediation map[string]string `json:"remediation,omitempty"`
+}
 
 // RitualGuardPrompt defines the Ritual Guard's identity
 const RitualGuardPrompt = `禁军，Jìnjūn. You are commanding ritual execution and event handling
@@ -49,6 +60,7 @@ type RitualGuard struct {
 	getMinister   func(id string) Minister
 	streamingCtx  func() context.Context
 	backgroundCtx func() context.Context
+	version       string // Application version for health checks
 }
 
 // RitualGuardOpts configures a new RitualGuard.
@@ -60,6 +72,7 @@ type RitualGuardOpts struct {
 	GetMinister  func(id string) Minister
 	StreamingCtx func() context.Context
 	BackgroundCtx func() context.Context
+	Version      string // Application version for health checks
 }
 
 // NewRitualGuard creates a new Ritual Guard that owns all ritual/event infrastructure.
@@ -81,6 +94,7 @@ func NewRitualGuard(opts RitualGuardOpts) *RitualGuard {
 		getMinister:    opts.GetMinister,
 		streamingCtx:   opts.StreamingCtx,
 		backgroundCtx:  opts.BackgroundCtx,
+		version:        opts.Version,
 	}
 
 	// Create ritual runner with injected functions
@@ -170,11 +184,15 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 			}
 		}
 		go func() {
-			// Manual ritual invokes use foreground context (streamingCtx)
-			ctx := rg.streamingCtx()
+			// Rituals use background context so they survive new user messages on the Ruling tab.
+			// TODO: if this was enacted by the rulingSession, make it a foreground context
+			ctx := rg.backgroundCtx()
 			rg.startRitual(ctx, ritualName, event.EdictID, inputs, RitualContextForeground)
 		}()
 		return
+	}
+	if event.Type == storage.EventShogunateStarted {
+		rg.handleStartup(event)
 	}
 
 	// Trigger event-driven rituals
@@ -201,6 +219,120 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 // Subscribe registers a handler for an event type.
 func (rg *RitualGuard) Subscribe(eventType storage.ShogunateEvent, handler EventHandler) {
 	rg.eventRegistry.Subscribe(eventType, handler)
+}
+
+// RunHealthCheck performs startup health checks and returns the result
+func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
+	result := &HealthCheckResult{
+		VersionOK:   true,
+		ModelOK:     true,
+		SandboxOK:   true,
+		Failures:    []string{},
+		Remediation: map[string]string{},
+	}
+
+	latest := event.Payload["latest_version"].(*selfupdate.Release)
+	hasUpdate := event.Payload["has_update"].(bool)
+
+	// Check 1: Version - Verify we can check for updates
+	// For dev versions, skip the check but still provide remediation info
+	if hasUpdate {
+		result.Failures = append(result.Failures, fmt.Sprintf("Version %s available", latest.Version))
+	}
+	// Always provide version remediation message
+	result.Remediation["version"] = "Run `:update` to check for updates"
+
+	// Check 2: Model - Verify LLM connectivity with actual ping
+	if rg.chancellor != nil {
+		base := rg.chancellor.MinisterBase
+		if base == nil || base.model == nil {
+			result.ModelOK = false
+			result.Failures = append(result.Failures, "LLM model not configured")
+			result.Remediation["model"] = "Configure your LLM provider in ~/.config/asimi/config.yaml or run :config"
+		} else {
+			// Create a session and send a ping to verify connectivity
+			if !rg.pingLLM(base) {
+				result.ModelOK = false
+				result.Failures = append(result.Failures, "LLM model not responsive")
+				result.Remediation["model"] = "Check your LLM API key and network connectivity, or run :config"
+			}
+		}
+	}
+
+	// Check 3: Sandbox - Verify sandbox image exists using actual runner image name
+	imageName := rg.getSandboxImageName()
+	if !runners.IsPodmanAvailable(imageName) {
+		result.SandboxOK = false
+		result.Failures = append(result.Failures, "Sandbox image not found: "+imageName)
+		result.Remediation["sandbox"] = "Run `:init` to build the sandbox image"
+	}
+
+	return result
+}
+
+// pingLLM creates a session and sends a ping to verify LLM connectivity
+func (rg *RitualGuard) pingLLM(base *MinisterBase) bool {
+	if base == nil || base.model == nil {
+		return false
+	}
+
+	// Create a minimal session for ping test
+	config := &SessionConfig{
+		LLM: base.config.LLM,
+	}
+	
+	sess, err := CreateSession(rg, base.model, config, nil, "health_check")
+	if err != nil {
+		rg.logger.Debug("health check: failed to create session for ping", "error", err)
+		return false
+	}
+
+	// Send a simple ping prompt with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Use a simple ping message
+	_, err = sess.AskWithStreaming(ctx, "Respond with just the word: PONG", nil)
+	if err != nil {
+		rg.logger.Debug("health check: LLM ping failed", "error", err)
+		return false
+	}
+
+	rg.logger.Debug("health check: LLM ping successful")
+	return true
+}
+
+// getSandboxImageName returns the sandbox image name from the runner
+func (rg *RitualGuard) getSandboxImageName() string {
+	if rg.chancellor != nil && rg.chancellor.Runner() != nil {
+		// Try to get image name from PodmanRunner if available
+		if podmanRunner, ok := rg.chancellor.Runner().(*runners.PodmanRunner); ok {
+			return podmanRunner.GetImageName()
+		}
+	}
+	// Fallback to default image name
+	return "localhost/asimi-sandbox:latest"
+}
+
+// handleStartup handles the shogunate_started event by running health checks
+func (rg *RitualGuard) handleStartup(event Event) {
+	result := rg.RunHealthCheck(event)
+	if result.ModelOK && result.SandboxOK {
+		// All checks passed - publish shogunate_ready event and notify via MinisterCompletedMsg
+		rg.notify(MinisterCompletedMsg{
+			MinisterID: "ritual_guard",
+			Output:     "Health checks passed: model and sandbox",
+		})
+	} else {
+		// Health check failed - notify via MinisterCompletedMsg with error details
+		rg.notify(MinisterCompletedMsg{
+			MinisterID: "ritual_guard",
+			Output:     "Health checks failed",
+			Error:      fmt.Errorf("%s", strings.Join(result.Failures, ", ")),
+		})
+	}
+	// TODO: fix model health check and move this into the if above
+	rg.PublishEvent(0, storage.EventShogunateReady, storage.JSON{"checks": result})
 }
 
 // --- Ritual management ---

@@ -171,6 +171,7 @@ type ShogunateEvent string
 
 const (
 	EventShogunateStarted  ShogunateEvent = "shogunate_started"
+	EventShogunateReady    ShogunateEvent = "shogunate_ready"
 	EventEdictAssigned     ShogunateEvent = "edict_assigned"
 	EventEdictCreated      ShogunateEvent = "edict_created"
 	EventPhaseChanged      ShogunateEvent = "phase_changed"
