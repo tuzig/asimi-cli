@@ -99,8 +99,8 @@
 - name: dawn-audience
   description: "Startup ritual - Chancellor reports court status on Shogunate boot, then requests zhengming"
   max_retries: 2
-  triggers:
-    - event: shogunate_ready
+  # triggers:
+  #  - event: shogunate_ready
   steps:
     - name: summarize-and-next
       minister: chancellor
@@ -192,3 +192,87 @@
     - the edict is unblocked
     - record the judge's seal
     - the edict awaits the ruler's seal
+
+- name: project-init
+  description: "Initialize a project for Asimi - establishes infrastructure and validates through the seal chain"
+  triggers:
+    - manual: true
+  inputs:
+    clearMode:
+      type: boolean
+      required: false
+      default: false
+    agentsFile:
+      type: string
+      required: false
+      default: "AGENTS.md"
+  max_retries: 2
+  background:
+    - a clear working directory
+  
+  steps:
+    - name: establish-infrastructure
+      minister: forge
+      given:
+        - the project metadata
+        - the infrastructure templates
+      act: |
+        Establish Asimi project infrastructure.
+        
+        If clearMode is true, first remove existing infrastructure files.
+        
+        Use the templates above as a foundation, then customize for this project:
+        - Justfile starting with: PROJECT_NAME := "{{.project_slug}}"
+        - .agents/asimi.conf with: image_name = "localhost/asimi-sandbox-{{.project_slug}}:latest"
+        - {{.agentsFile}} with language and build conventions
+        - .agents/sandbox/Dockerfile with development environment
+        - .agents/sandbox/bashrc with shell configuration
+        
+        Analyze the codebase to customize templates for:
+        - Primary language: {{.project_name}}
+        - Branch: {{.branch}}
+        
+        Report what files were created or updated.
+      on_failure: retry
+
+    - name: judge-verifies
+      minister: judge
+      given:
+        - the earth status
+        - a built sandbox
+      act: |
+        Verify the project infrastructure is sound.
+        
+        If tests or lint fail, the infrastructure is broken.
+        Provide clear feedback on what must be fixed.
+        
+        If verification passes, record the Judge's Seal.
+      depends_on: [establish-infrastructure]
+      then:
+        - "!just test"
+      on_failure: goto
+      on_failure_target: establish-infrastructure
+
+    - name: sage-reviews
+      minister: sage
+      given:
+        - the earth status
+        - the verdicts
+      act: |
+        Review the infrastructure files for quality and convention adherence.
+        
+        Verify:
+        - {{.agentsFile}} follows project conventions
+        - Justfile commands are idiomatic
+        - Dockerfile is secure and minimal
+        - No hardcoded paths or secrets
+        
+        Record precedents for any new conventions established.
+        
+        If review passes, record the Sage's Seal.
+      depends_on: [judge-verifies]
+      on_failure: goto
+      on_failure_target: establish-infrastructure
+      then:
+        - record the sage's seal
+        - "!git add {{.agentsFile}} Justfile .agents/"

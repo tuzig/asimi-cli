@@ -14,10 +14,10 @@ import (
 
 // HealthCheckResult represents the result of a startup health check
 type HealthCheckResult struct {
-	VersionOK   bool            `json:"version_ok"`
-	ModelOK     bool            `json:"model_ok"`
-	SandboxOK   bool            `json:"sandbox_ok"`
-	Failures    []string        `json:"failures,omitempty"`
+	VersionOK   bool              `json:"version_ok"`
+	ModelOK     bool              `json:"model_ok"`
+	SandboxOK   bool              `json:"sandbox_ok"`
+	Failures    []string          `json:"failures,omitempty"`
 	Remediation map[string]string `json:"remediation,omitempty"`
 }
 
@@ -47,8 +47,8 @@ const (
 
 // RitualGuard processes events and owns ritual/event infrastructure
 type RitualGuard struct {
-	*MinisterBase // embedded base for database access and session creation
-	chancellor    *Chancellor
+	*MinisterBase  // embedded base for database access and session creation
+	chancellor     *Chancellor
 	ritualRegistry *RitualRegistry
 	ritualRunner   *RitualRunner
 	eventRegistry  *EventRegistry
@@ -65,14 +65,14 @@ type RitualGuard struct {
 
 // RitualGuardOpts configures a new RitualGuard.
 type RitualGuardOpts struct {
-	Base         *MinisterBase
+	Base *MinisterBase
 	// TODO: remove chancellor as we have GetMinister("chancellor")
-	Chancellor   *Chancellor
-	Runner       runners.Runner
-	GetMinister  func(id string) Minister
-	StreamingCtx func() context.Context
+	Chancellor    *Chancellor
+	Runner        runners.Runner
+	GetMinister   func(id string) Minister
+	StreamingCtx  func() context.Context
 	BackgroundCtx func() context.Context
-	Version      string // Application version for health checks
+	Version       string // Application version for health checks
 }
 
 // NewRitualGuard creates a new Ritual Guard that owns all ritual/event infrastructure.
@@ -163,6 +163,17 @@ func (rg *RitualGuard) startRitual(ctx context.Context, ritualName string, edict
 	exec.ContextType = contextType
 	if err := rg.ritualRunner.Run(ctx, exec); err != nil {
 		rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
+		// TODO: notification should be pushed down to Ritual
+		if rg.notify != nil {
+			rg.notify(RitualStepMsg{
+				TabID:       "chancellor",
+				RitualName:  ritualName,
+				ExecutionID: exec.ID,
+				EdictID:     edictID,
+				Status:      "ritual_failed",
+				Message:     err.Error(),
+			})
+		}
 	}
 }
 
@@ -280,7 +291,7 @@ func (rg *RitualGuard) pingLLM(base *MinisterBase) bool {
 	config := &SessionConfig{
 		LLM: base.config.LLM,
 	}
-	
+
 	sess, err := CreateSession(rg, base.model, config, nil, "health_check")
 	if err != nil {
 		rg.logger.Debug("health check: failed to create session for ping", "error", err)
@@ -560,7 +571,7 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 	sealService := storage.NewSealService(rg.db)
 	staleEdictSet := make(map[uint]bool)
 	staleStatuses := make(map[uint]storage.EdictStatus)
-	
+
 	for _, edict := range edicts {
 		status, err := sealService.GetEdictStatus(edict.EdictID)
 		if err != nil {

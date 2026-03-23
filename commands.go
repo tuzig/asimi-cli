@@ -360,7 +360,11 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 	// Use the new workflow-based implementation
-	return handleInitCommandWithWorkflow(model, args)
+	payload := storage.JSON{
+		"ritual_name": "project-init",
+	}
+	model.raiseShogunateEvent(storage.EventRitualEnacted, payload)
+	return nil
 }
 
 // startConversationMsg is sent to start a new conversation with optional guardrails

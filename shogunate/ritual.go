@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	cucumberexpressions "github.com/cucumber/cucumber-expressions/go/v19"
 
 	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"gopkg.in/yaml.v3"
@@ -175,6 +177,10 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the edict is blocked", "block_edict", "blocked"},
 		{"the edict is unblocked", "unblock_edict", "unblocked"},
 		{"the ruler approves", "request_zhengming", "approved"},
+		{"a clear working directory", "check_clean_working_directory", "working_directory_clean"},
+		{"the infrastructure templates", "get_infrastructure_templates", "infrastructure_templates"},
+		{"a built sandbox", "check_built_sandbox", "sandbox_built"},
+		{"the project metadata", "get_project_metadata", "project_metadata"},
 	}
 	for _, b := range builtins {
 		_ = r.Register(b.pattern, b.handlerKey, b.outputKey) // builtin patterns are known-good
@@ -573,7 +579,7 @@ func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecuti
 	r.saveExecution(exec)
 	r.logger.Info("ritual paused waiting for zhengming",
 		"ritual", exec.RitualName,
-		"step", exec.CurrentStep, 
+		"step", exec.CurrentStep,
 		"execution_id", exec.ID,
 		"request_id", requestID)
 
@@ -596,16 +602,16 @@ func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecuti
 
 // RitualExecution tracks a running ritual instance
 type RitualExecution struct {
-	ID          string          `gorm:"primaryKey;column:id"`
-	RitualName  string          `gorm:"column:ritual_name"`
-	EdictID     uint            `gorm:"column:edict_id;index"`
-	SessionID   string          `gorm:"column:session_id"`
-	CurrentStep int             `gorm:"column:current_step"`
-	State       RitualState     `gorm:"column:state"`
-	Data        storage.JSON    `gorm:"column:data;type:json"`
+	ID          string            `gorm:"primaryKey;column:id"`
+	RitualName  string            `gorm:"column:ritual_name"`
+	EdictID     uint              `gorm:"column:edict_id;index"`
+	SessionID   string            `gorm:"column:session_id"`
+	CurrentStep int               `gorm:"column:current_step"`
+	State       RitualState       `gorm:"column:state"`
+	Data        storage.JSON      `gorm:"column:data;type:json"`
 	ContextType RitualContextType `gorm:"column:context_type"`
-	CreatedAt   time.Time       `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt   time.Time       `gorm:"column:updated_at;autoUpdateTime"`
+	CreatedAt   time.Time         `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt   time.Time         `gorm:"column:updated_at;autoUpdateTime"`
 
 	// Runtime (not persisted)
 	def        *RitualDef
@@ -1493,13 +1499,13 @@ func (r *RitualRunner) executeForkParallel(ctx context.Context, exec *RitualExec
 func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecution, step RitualStep, item interface{}) ForkResult {
 	// Create a fork-specific execution context
 	forkExec := &RitualExecution{
-		ID:          exec.ID,
-		RitualName:  exec.RitualName,
-		EdictID:     exec.EdictID,
-		Data:        storage.JSON{},
-		def:         exec.def,
-		stepStates:  exec.stepStates,
-		notify:      exec.notify,
+		ID:         exec.ID,
+		RitualName: exec.RitualName,
+		EdictID:    exec.EdictID,
+		Data:       storage.JSON{},
+		def:        exec.def,
+		stepStates: exec.stepStates,
+		notify:     exec.notify,
 	}
 
 	// Copy existing context
@@ -1784,6 +1790,14 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 		return r.getEarthStatus(ctx)
 	case "get_borderlands":
 		return r.getBorderlands(ctx)
+	case "check_clean_working_directory":
+		return r.checkCleanWorkingDirectory(ctx)
+	case "get_infrastructure_templates":
+		return r.getInfrastructureTemplates(ctx)
+	case "check_built_sandbox":
+		return r.checkBuiltSandbox(ctx)
+	case "get_project_metadata":
+		return r.getProjectMetadata(ctx)
 	default:
 		return nil, fmt.Errorf("unknown given function: %s", fn)
 	}
@@ -1812,10 +1826,10 @@ func (r *RitualRunner) arrangeGetCourtStatus(edictID uint) (interface{}, error) 
 	if err := r.db.Find(&edicts).Error; err != nil {
 		return nil, err
 	}
-	
+
 	sealService := storage.NewSealService(r.db)
 	var result []map[string]interface{}
-	
+
 	for _, e := range edicts {
 		status, err := sealService.GetEdictStatus(e.EdictID)
 		if err != nil {
@@ -1975,6 +1989,149 @@ func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) 
 		result["borderlands:untracked"] = untracked.Output
 	}
 	return result, nil
+}
+
+// checkCleanWorkingDirectory verifies the working directory is clean (no unstaged changes)
+func (r *RitualRunner) checkCleanWorkingDirectory(ctx context.Context) (interface{}, error) {
+	output, err := runners.HostRun(ctx, runners.Input{
+		Command:        "git status --porcelain",
+		Description:    "check working directory is clean",
+		BypassApproval: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to check git status: %w", err)
+	}
+	if output.Output != "" {
+		return nil, fmt.Errorf("working directory is not clean:\n%s", output.Output)
+	}
+	return map[string]string{"status": "clean"}, nil
+}
+
+// getInfrastructureTemplates returns embedded template content for infrastructure files
+func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interface{}, error) {
+	templates := map[string]string{
+		"asimi.conf": `[project]
+name = "{{.ProjectName}}"
+language = "go"
+
+[session]
+agents_file = "AGENTS.md"
+`,
+		"bashrc": `# Asimi sandbox shell configuration
+export PATH="$HOME/go/bin:$PATH"
+export GOPATH="$HOME/go"
+`,
+		"Justfile": `# Asimi project Justfile
+
+run:
+    @echo "Running project..."
+    go run ./...
+
+build:
+    @echo "Building project..."
+    go build -o bin/asimi ./...
+
+test:
+    @echo "Running tests..."
+    go test -v ./...
+
+lint:
+    @echo "Running linter..."
+    golangci-lint run
+
+fmt:
+    @echo "Formatting code..."
+    gofmt -w -s .
+`,
+		"Dockerfile": `FROM golang:1.21-alpine
+
+RUN apk add --no-cache git curl just
+
+WORKDIR /workspace
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+CMD ["/bin/sh"]
+`,
+	}
+	return templates, nil
+}
+
+// checkBuiltSandbox verifies the sandbox container image exists
+func (r *RitualRunner) checkBuiltSandbox(ctx context.Context) (interface{}, error) {
+	if r.runner == nil {
+		return nil, fmt.Errorf("no runner configured")
+	}
+	output, err := runners.HostRun(ctx, runners.Input{
+		Command:        "podman images --format '{{.Repository}}:{{.Tag}}' | grep asimi-sandbox",
+		Description:    "check if sandbox image exists",
+		BypassApproval: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to check docker images: %w", err)
+	}
+	if output.Output == "" {
+		return nil, fmt.Errorf("sandbox container image not found - run 'just build-sandbox' first")
+	}
+	return map[string]string{"status": "built", "image": output.Output}, nil
+}
+
+// getProjectMetadata captures repository information for use in ritual templates
+func (r *RitualRunner) getProjectMetadata(ctx context.Context) (interface{}, error) {
+	repoInfo := repo.GetRepoInfo()
+
+	// Parse host, org, project from remote URL
+	host, org, project := "local", "local", "unknown"
+	if remote, err := repo.GitRemoteOriginURL(repoInfo.ProjectRoot); err == nil && remote != "" {
+		host, org, project = parseHostOrgProject(remote)
+	}
+
+	// Extract project name from slug
+	projectName := repoInfo.Slug
+	if idx := strings.LastIndex(repoInfo.Slug, "/"); idx >= 0 {
+		projectName = repoInfo.Slug[idx+1:]
+	}
+	if projectName == "" {
+		projectName = "unknown"
+	}
+
+	return map[string]string{
+		"project_slug":   repoInfo.Slug,
+		"project_name":   projectName,
+		"branch":         repoInfo.Branch,
+		"host":           host,
+		"org":            org,
+		"project":        project,
+	}, nil
+}
+
+// parseHostOrgProject extracts host, organization, and project from a git remote URL
+func parseHostOrgProject(remote string) (host, org, project string) {
+	host = "github.com" // default
+	if strings.Contains(remote, "://") {
+		if u, err := url.Parse(remote); err == nil {
+			host = u.Host
+		}
+	} else if strings.Contains(remote, "@") {
+		// SSH format: git@github.com:owner/repo.git
+		parts := strings.SplitN(remote, "@", 2)
+		if len(parts) == 2 {
+			hostPart := strings.SplitN(parts[1], ":", 2)
+			if len(hostPart) >= 1 {
+				host = hostPart[0]
+			}
+		}
+	}
+
+	owner, repoName := repo.ParseGitRemote(remote)
+	if owner == "" || repoName == "" {
+		return host, "unknown", "unknown"
+	}
+
+	return host, repo.SanitizeSegment(owner), repo.SanitizeSegment(repoName)
 }
 
 // runBuiltinThen runs a builtin then function (extensible via step registry)

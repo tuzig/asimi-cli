@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/storage"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 	isatty "github.com/mattn/go-isatty"
@@ -173,14 +172,8 @@ func runInteractiveMode() error {
 	}
 
 	// fire an event to get the shogunate going
-	latest, hasUpdate, err := CheckForUpdates(version)
-	if err != nil {
-		slog.Warn("Failed to check for Asimi updates", "err", err)
-	}
-	tuiModel.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{"trigger": "startup",
-		"our_version":    version,
-		"latest_version": latest,
-		"has_update":     hasUpdate})
+	// NOTE: EventShogunateStarted is now fired in tui.go after LLM model initialization completes
+	// to avoid race condition where health check runs before model is ready
 	_, runErr := tuiProgram.Run()
 
 	if runErr != nil {
