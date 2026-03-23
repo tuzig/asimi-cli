@@ -330,9 +330,6 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	if params.RitualName == "" {
 		return "", fmt.Errorf("ritual_name is required")
 	}
-	if params.EdictID == 0 {
-		return "", fmt.Errorf("edict_id is required")
-	}
 
 	if params.Inputs == nil {
 		params.Inputs = make(map[string]string)
@@ -418,14 +415,14 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 			},
 			"edict_id": map[string]any{
 				"type":        "integer",
-				"description": "The edict ID this ritual is processing",
+				"description": "The edict ID this ritual is processing (optional for unbound rituals, like reviews)",
 			},
 			"inputs": map[string]any{
 				"type":        "object",
 				"description": "Optional inputs for the ritual (key-value pairs)",
 			},
 		},
-		"required": []string{"ritual_name", "edict_id"},
+		"required": []string{"ritual_name"},
 	}
 }
 

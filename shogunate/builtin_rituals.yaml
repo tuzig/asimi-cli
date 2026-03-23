@@ -119,6 +119,10 @@
     staging
   triggers:
     - manual: true
+  inputs:
+    edict_id:
+      type: string
+      required: false
   background:
     - the borderlands
   steps:
