@@ -29,10 +29,10 @@ func (t AsimiSQLTool) Name() string {
 func (t AsimiSQLTool) Description() string {
 	return `Execute SQL against the Shogunate database. Use for edict status transitions and reviewing precedents:
 
-Edict Status Transitions:
-- UPDATE edicts SET status = 'sealed' WHERE edict_id = '...';
-- UPDATE edicts SET status = 'active' WHERE edict_id = '...';
-Statuses: active, blocked, sealed, cancelled
+Edict Status Transitions (via transition_edict tool, not direct SQL):
+- Status is derived from seals and zhengming tables
+- Use transition_edict tool to cancel edicts or grant ruler seal
+- Statuses: active (default), blocked (pending zhengming), sealed (ruler seal), cancelled (cancelled_at set)
 
 Find Review Suggestions (Censor Precedents):
 - SELECT * FROM censor_precedents ORDER BY created_at DESC LIMIT 10;
@@ -43,7 +43,7 @@ Query Manifests and Verdicts:
 - SELECT * FROM judge_verdicts WHERE outcome = 'failed';
 
 Statuses:
-- Edicts: active, blocked, sealed, cancelled
+- Edicts: active, blocked, sealed, cancelled (derived from seals/zhengming)
 - Manifests: forged, live, quenched, rejected
 - Verdicts: passed, failed
 - Precedents: approved, rejected`

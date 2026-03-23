@@ -150,13 +150,25 @@ func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := j.db.Distinct("edicts.*").
 		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
-		Where("forge_manifests.status = ? AND edicts.status = ?",
-			storage.ManifestForged, storage.EdictActive).
+		Where("forge_manifests.status = ?", storage.ManifestForged).
 		Find(&edicts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edicts with pending manifests: %w", err)
 	}
-	return edicts, nil
+	
+	// Filter out sealed/cancelled edicts using derived status
+	sealService := storage.NewSealService(j.db)
+	var activeEdicts []storage.Edict
+	for _, e := range edicts {
+		status, err := sealService.GetEdictStatus(e.EdictID)
+		if err != nil {
+			continue
+		}
+		if status == storage.EdictActive || status == storage.EdictBlocked {
+			activeEdicts = append(activeEdicts, e)
+		}
+	}
+	return activeEdicts, nil
 }
 
 // --- Execute Logic ---

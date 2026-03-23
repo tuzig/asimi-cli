@@ -11,9 +11,9 @@ import (
 )
 
 // RitualGuardPrompt defines the Ritual Guard's identity
-const RitualGuardPrompt = `禁军，Jìnjūn. You are commanding ritual execution and event hadling
+const RitualGuardPrompt = `禁军，Jìnjūn. You are commanding ritual execution and event handling
 
-You subscribe to events and invoke the Chancellor's ceremonies. You own no business logic.
+You subscribe to events and trigger subscribers: rituals and ministers.
 
 If you fail, the court enters flatline—detectable by overdue rituals. Your authority is time; your weapon is punctuality.
 
@@ -414,29 +414,44 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 	}
 
 	// Find edicts that are sealed or cancelled
-	var staleEdicts []storage.Edict
-	if err := rg.db.Where("edict_id IN ? AND status IN ?", edictIDs, []storage.EdictStatus{storage.EdictSealed, storage.EdictCancelled}).Find(&staleEdicts).Error; err != nil {
-		rg.logger.Warn("failed to query stale edicts", "error", err)
+	var edicts []storage.Edict
+	if err := rg.db.Where("edict_id IN ?", edictIDs).Find(&edicts).Error; err != nil {
+		rg.logger.Warn("failed to query edicts", "error", err)
 		return
 	}
 
-	if len(staleEdicts) == 0 {
+	if len(edicts) == 0 {
 		return
 	}
 
-	// Build set of stale edict IDs
+	// Build set of stale edict IDs (sealed or cancelled)
+	sealService := storage.NewSealService(rg.db)
 	staleEdictSet := make(map[uint]bool)
-	for _, edict := range staleEdicts {
-		staleEdictSet[edict.EdictID] = true
-		rg.logger.Info("detected stale ritual on edict state change",
-			"edict_id", edict.EdictID,
-			"edict_status", edict.Status)
+	staleStatuses := make(map[uint]storage.EdictStatus)
+	
+	for _, edict := range edicts {
+		status, err := sealService.GetEdictStatus(edict.EdictID)
+		if err != nil {
+			continue
+		}
+		if status == storage.EdictSealed || status == storage.EdictCancelled {
+			staleEdictSet[edict.EdictID] = true
+			staleStatuses[edict.EdictID] = status
+			rg.logger.Info("detected stale ritual on edict state change",
+				"edict_id", edict.EdictID,
+				"edict_status", status)
+		}
+	}
+
+	if len(staleEdictSet) == 0 {
+		return
 	}
 
 	// Abort rituals on stale edicts
 	for _, ritual := range runningRituals {
 		if staleEdictSet[ritual.EdictID] {
-			if err := rg.abortRitual(ctx, &ritual, fmt.Sprintf("edict %d is %s", ritual.EdictID, staleEdicts[0].Status)); err != nil {
+			status := staleStatuses[ritual.EdictID]
+			if err := rg.abortRitual(ctx, &ritual, fmt.Sprintf("edict %d is %s", ritual.EdictID, status)); err != nil {
 				rg.logger.Warn("failed to abort stale ritual",
 					"execution_id", ritual.ID,
 					"edict_id", ritual.EdictID,

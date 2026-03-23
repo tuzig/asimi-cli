@@ -36,12 +36,12 @@ func MigrateEdictIDToUint(db *gorm.DB, logger *slog.Logger) error {
 				issue_ref TEXT,
 				summary TEXT,
 				intent TEXT,
-				status TEXT,
+				cancelled_at INTEGER,
 				created_at DATETIME,
 				updated_at DATETIME
 			)`,
-			`INSERT INTO edicts_new (edict_id, session_id, issue_ref, summary, intent, status, created_at, updated_at)
-				SELECT ROWID, session_id, '', summary, intent, status, created_at, updated_at FROM edicts ORDER BY created_at`,
+			`INSERT INTO edicts_new (edict_id, session_id, issue_ref, summary, intent, cancelled_at, created_at, updated_at)
+				SELECT ROWID, session_id, '', summary, intent, cancelled_at, created_at, updated_at FROM edicts ORDER BY created_at`,
 
 			// 2. Build a mapping table from old TEXT id to new INTEGER id
 			`CREATE TEMP TABLE edict_id_map AS

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
@@ -17,21 +18,20 @@ func setupEdictTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open test db: %v", err)
 	}
 
-	// Migrate the Edict table
-	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
+	// Migrate all required tables
+	if err := db.AutoMigrate(&storage.Edict{}, &storage.Seal{}, &storage.Zhengming{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
 
 	return db
 }
 
-func TestTransitionEdictTool_Unblock(t *testing.T) {
+func TestTransitionEdictTool_Cancel(t *testing.T) {
 	db := setupEdictTestDB(t)
 
-	// Create a blocked edict
+	// Create an edict
 	edict := storage.Edict{
 		Intent: "Test edict",
-		Status: storage.EdictBlocked,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -39,42 +39,7 @@ func TestTransitionEdictTool_Unblock(t *testing.T) {
 
 	tool := TransitionEdictTool{DB: db}
 
-	// Test unblocking
-	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "active", "reason": "reviewed and approved"}`, edict.EdictID))
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	// Verify result
-	if result == "" {
-		t.Fatal("Expected non-empty result")
-	}
-
-	// Verify edict status was updated
-	var updated storage.Edict
-	if err := db.First(&updated, "edict_id = ?", edict.EdictID).Error; err != nil {
-		t.Fatalf("failed to get updated edict: %v", err)
-	}
-	if updated.Status != storage.EdictActive {
-		t.Errorf("Expected status to be active, got: %s", updated.Status)
-	}
-}
-
-func TestTransitionEdictTool_Reject(t *testing.T) {
-	db := setupEdictTestDB(t)
-
-	// Create a blocked edict
-	edict := storage.Edict{
-		Intent: "Test edict to reject",
-		Status: storage.EdictBlocked,
-	}
-	if err := db.Create(&edict).Error; err != nil {
-		t.Fatalf("failed to create edict: %v", err)
-	}
-
-	tool := TransitionEdictTool{DB: db}
-
-	// Test rejecting (cancelling)
+	// Test cancelling
 	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "cancelled", "reason": "no longer needed"}`, edict.EdictID))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -85,13 +50,23 @@ func TestTransitionEdictTool_Reject(t *testing.T) {
 		t.Fatal("Expected non-empty result")
 	}
 
-	// Verify edict status was updated
+	// Verify edict was cancelled
 	var updated storage.Edict
 	if err := db.First(&updated, "edict_id = ?", edict.EdictID).Error; err != nil {
 		t.Fatalf("failed to get updated edict: %v", err)
 	}
-	if updated.Status != storage.EdictCancelled {
-		t.Errorf("Expected status to be cancelled, got: %s", updated.Status)
+	if updated.CancelledAt == nil {
+		t.Errorf("Expected cancelled_at to be set")
+	}
+	
+	// Verify derived status is cancelled
+	sealService := storage.NewSealService(db)
+	status, err := sealService.GetEdictStatus(edict.EdictID)
+	if err != nil {
+		t.Fatalf("Failed to get edict status: %v", err)
+	}
+	if status != storage.EdictCancelled {
+		t.Errorf("Expected status to be cancelled, got: %s", status)
 	}
 }
 
@@ -101,7 +76,6 @@ func TestTransitionEdictTool_InvalidStatus(t *testing.T) {
 	// Create an edict
 	edict := storage.Edict{
 		Intent: "Test edict",
-		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -119,10 +93,9 @@ func TestTransitionEdictTool_InvalidStatus(t *testing.T) {
 func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 	db := setupEdictTestDB(t)
 
-	// Create a blocked edict
+	// Create an edict (not blocked)
 	edict := storage.Edict{
 		Intent: "Test edict",
-		Status: storage.EdictBlocked,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -130,10 +103,23 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 
 	tool := TransitionEdictTool{DB: db}
 
-	// Test that blocked edicts can only go to active or cancelled
-	_, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "sealed"}`, edict.EdictID))
-	if err == nil {
-		t.Fatal("Expected error when transitioning blocked edict to sealed")
+	// Test that we can seal a non-blocked edict
+	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "sealed"}`, edict.EdictID))
+	if err != nil {
+		t.Fatalf("Expected no error when sealing edict, got: %v", err)
+	}
+	if result == "" {
+		t.Fatal("Expected non-empty result")
+	}
+	
+	// Verify edict is now sealed
+	sealService := storage.NewSealService(db)
+	status, err := sealService.GetEdictStatus(edict.EdictID)
+	if err != nil {
+		t.Fatalf("Failed to get edict status: %v", err)
+	}
+	if status != storage.EdictSealed {
+		t.Errorf("Expected status to be sealed, got: %s", status)
 	}
 }
 
@@ -170,17 +156,41 @@ func TestTransitionEdictTool_MissingFields(t *testing.T) {
 func TestListEdictsTool_FilterByStatus(t *testing.T) {
 	db := setupEdictTestDB(t)
 
-	// Create edicts with different statuses
+	// Create edicts
 	edicts := []storage.Edict{
-		{Intent: "Active edict", Status: storage.EdictActive},
-		{Intent: "Blocked edict", Status: storage.EdictBlocked},
-		{Intent: "Another blocked", Status: storage.EdictBlocked},
-		{Intent: "Sealed edict", Status: storage.EdictSealed},
+		{Intent: "Active edict"},
+		{Intent: "Blocked edict"},
+		{Intent: "Another blocked"},
+		{Intent: "Sealed edict"},
 	}
 	for i := range edicts {
 		if err := db.Create(&edicts[i]).Error; err != nil {
 			t.Fatalf("failed to create edict: %v", err)
 		}
+	}
+	
+	// Create a pending zhengming for the second edict to make it blocked
+	zhengming := storage.Zhengming{
+		RequestID:  "test-blocked",
+		EdictID:    edicts[1].EdictID,
+		MinisterID: "forge",
+		Status:     storage.ZhengmingPending,
+		TimeoutAt:  time.Now().Add(time.Hour),
+	}
+	if err := db.Create(&zhengming).Error; err != nil {
+		t.Fatalf("failed to create zhengming: %v", err)
+	}
+	
+	// Seal the fourth edict
+	sealService := storage.NewSealService(db)
+	if err := sealService.GrantSeal(edicts[3].EdictID, "judge", storage.JSON{}); err != nil {
+		t.Fatalf("failed to grant judge seal: %v", err)
+	}
+	if err := sealService.GrantSeal(edicts[3].EdictID, "sage", storage.JSON{}); err != nil {
+		t.Fatalf("failed to grant sage seal: %v", err)
+	}
+	if err := sealService.GrantSeal(edicts[3].EdictID, "ruler", storage.JSON{}); err != nil {
+		t.Fatalf("failed to grant ruler seal: %v", err)
 	}
 
 	tool := ListEdictsTool{DB: db}
@@ -195,9 +205,9 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 	if result == "" {
 		t.Fatal("Expected non-empty result")
 	}
-	// Should contain 2 blocked edicts (by intent)
-	if !containsSubstring(result, "Blocked edict") || !containsSubstring(result, "Another blocked") {
-		t.Errorf("Expected result to contain blocked edicts, got: %s", result)
+	// Should contain the blocked edict
+	if !containsSubstring(result, "Blocked edict") {
+		t.Errorf("Expected result to contain blocked edict, got: %s", result)
 	}
 	// Should not contain active or sealed edicts
 	if containsSubstring(result, "Active edict") || containsSubstring(result, "Sealed edict") {

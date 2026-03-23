@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/storage"
@@ -99,6 +100,7 @@ func (t UpdateEdictTool) ParameterSchema() map[string]any {
 // GetEdictStatusTool retrieves the status of an edict.
 type GetEdictStatusTool struct {
 	Manager EdictManager
+	DB      *gorm.DB
 }
 
 func (t GetEdictStatusTool) Name() string {
@@ -126,9 +128,16 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 
+	// Derive status from seals and zhengming tables
+	sealService := storage.NewSealService(t.DB)
+	status, err := sealService.GetEdictStatus(params.EdictID)
+	if err != nil {
+		status = storage.EdictActive // default if error
+	}
+
 	result := map[string]any{
 		"edict_id": edict.EdictID,
-		"status":   string(edict.Status),
+		"status":   string(status),
 		"intent":   edict.Intent,
 	}
 
@@ -198,19 +207,27 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 
 	var edicts []storage.Edict
 	query := t.DB.Order("created_at DESC").Limit(params.Limit)
-	if params.Status != "" {
-		query = query.Where("status = ?", params.Status)
-	}
-
 	if err := query.Find(&edicts).Error; err != nil {
 		return "", fmt.Errorf("list edicts: %w", err)
 	}
 
+	// Filter by status if specified (using derived status)
+	sealService := storage.NewSealService(t.DB)
 	var results []map[string]any
 	for _, e := range edicts {
+		status, err := sealService.GetEdictStatus(e.EdictID)
+		if err != nil {
+			status = storage.EdictActive
+		}
+		
+		// Apply status filter
+		if params.Status != "" && string(status) != params.Status {
+			continue
+		}
+		
 		results = append(results, map[string]any{
 			"edict_id": e.EdictID,
-			"status":   string(e.Status),
+			"status":   string(status),
 			"intent":   truncateString(e.Intent, 100),
 		})
 	}
@@ -290,45 +307,60 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("status is required")
 	}
 
-	// Validate status transition
-	var targetStatus storage.EdictStatus
+	// Validate status
 	switch params.Status {
-	case "active":
-		targetStatus = storage.EdictActive
-	case "cancelled":
-		targetStatus = storage.EdictCancelled
-	case "blocked":
-		targetStatus = storage.EdictBlocked
-	case "sealed":
-		targetStatus = storage.EdictSealed
+	case "active", "cancelled", "blocked", "sealed":
+		// valid
 	default:
 		return "", fmt.Errorf("invalid status: %s (valid: active, cancelled, blocked, sealed)", params.Status)
 	}
 
-	// Verify edict exists and get current status
+	// Verify edict exists
 	var edict storage.Edict
 	if err := t.DB.First(&edict, "edict_id = ?", params.EdictID).Error; err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 
+	// Get current derived status
+	sealService := storage.NewSealService(t.DB)
+	currentStatus, err := sealService.GetEdictStatus(params.EdictID)
+	if err != nil {
+		return "", fmt.Errorf("get edict status: %w", err)
+	}
+
 	// Validate transition from blocked
-	if edict.Status == storage.EdictBlocked {
-		if targetStatus != storage.EdictActive && targetStatus != storage.EdictCancelled {
+	if currentStatus == storage.EdictBlocked {
+		if params.Status != "active" && params.Status != "cancelled" {
 			return "", fmt.Errorf("blocked edicts can only be transitioned to active (unblock) or cancelled (reject)")
 		}
 	}
 
-	// Perform transition
-	if err := t.DB.Model(&storage.Edict{}).
-		Where("edict_id = ? AND status = ?", params.EdictID, edict.Status).
-		Update("status", targetStatus).Error; err != nil {
-		return "", fmt.Errorf("transition edict: %w", err)
+	// Perform transition based on target status
+	switch params.Status {
+	case "cancelled":
+		// Set cancelled_at timestamp
+		now := time.Now()
+		if err := t.DB.Model(&storage.Edict{}).
+			Where("edict_id = ?", params.EdictID).
+			Update("cancelled_at", now).Error; err != nil {
+			return "", fmt.Errorf("cancel edict: %w", err)
+		}
+	case "sealed":
+		// Grant ruler seal (completes the seal chain)
+		if err := sealService.GrantSeal(params.EdictID, "ruler", storage.JSON{"transitioned_by": "transition_edict"}); err != nil {
+			return "", fmt.Errorf("seal edict: %w", err)
+		}
+	case "active", "blocked":
+		// These are derived states - cannot be directly set
+		// "active" is the default when no ruler seal and no pending zhengming
+		// "blocked" requires a pending zhengming request
+		return "", fmt.Errorf("cannot directly set status to %s - this is a derived state", params.Status)
 	}
 
 	result := map[string]any{
 		"edict_id":        params.EdictID,
-		"previous_status": string(edict.Status),
-		"new_status":      string(targetStatus),
+		"previous_status": string(currentStatus),
+		"new_status":      params.Status,
 	}
 	if params.Reason != "" {
 		result["reason"] = params.Reason

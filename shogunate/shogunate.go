@@ -321,7 +321,6 @@ func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error)
 	edict := storage.Edict{
 		IssueRef: issueRef,
 		Intent:   intent,
-		Status:   storage.EdictActive,
 	}
 	if err := s.db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
@@ -334,7 +333,6 @@ func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error)
 func CreateEdictForTest(db *gorm.DB, intent string) (*storage.Edict, error) {
 	edict := storage.Edict{
 		Intent: intent,
-		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
@@ -510,9 +508,9 @@ func (s *Shogunate) ResetHunting() {
 }
 
 // GetSealService returns the seal service
-func (s *Shogunate) GetSealService() *SealService {
+func (s *Shogunate) GetSealService() *storage.SealService {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return NewSealService(s.db)
+	return storage.NewSealService(s.db)
 }

@@ -2,6 +2,8 @@
 
 🎂 Happy 50th birthday to `vi`, the tool that will live forever 🎂
 
+**Note:** This guide is for **users** who have installed Asimi via brew, one-liner installer, or binary. For contributing to Asimi itself, see README.md → Development.
+
 ## You Are the Ruler
 
 In Asimi's Shogunate, **you** are the Ruler (君主). The AI ministers work for you. You speak intent; they execute. This guide gets you productive in 10 minutes.
@@ -34,39 +36,7 @@ Earth (地) — Code
 
 ## Quick Start
 
-### Contributor Installation
-
-Asimi uses a podman based sandbox so you'll need to install it.
-Once you have podman:
-
-1. **Fork the repo:**
-   ```bash
-   gh repo fork afittestide/asimi-cli --clone
-   cd asimi-cli
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   just bootstrap    # Installs golangci-lint, goimports
-   just install      # Installs asimi binary
-   ```
-
-3. **Run Asimi:**
-   ```bash
-   just run          # Starts Asimi with debug logging to ./asimi.log
-   ```
-
-4. **Initialize the project (first run only):**
-   ```
-   :init             # Creates AGENTS.md, Justfile if missing
-   ```
-
-5. **Verify it works:**
-   ```
-   :!just test       # Run tests in the sandbox
-   ```
-
-Now you're ready to issue edicts.
+**Note:** This guide is for **users** who have installed Asimi via brew, one-liner installer, or binary download. For contributing to Asimi itself, see README.md → Development.
 
 ### Your First Edict
 

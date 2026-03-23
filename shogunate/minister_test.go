@@ -90,10 +90,11 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
-	// Verify edict was created with active status
+	// Verify edict was created
 	edict2, err := chancellor.GetEdict(edict.EdictID)
 	assert.NoError(t, err)
-	assert.Equal(t, edict2.Status, storage.EdictActive)
+	assert.NotNil(t, edict2)
+	// Status is now derived - new edicts are active by default (no seals, no zhengming, not cancelled)
 }
 
 func TestStrategist_DecomposeEdict(t *testing.T) {
@@ -309,8 +310,13 @@ func TestChancellor_CancelEdict(t *testing.T) {
 
 	// Check cancelled
 	edict, _ = chancellor.GetEdict(edict.EdictID)
-	if edict.Status != storage.EdictCancelled {
-		t.Errorf("Expected status cancelled, got %s", edict.Status)
+	sealService := storage.NewSealService(db)
+	status, err := sealService.GetEdictStatus(edict.EdictID)
+	if err != nil {
+		t.Fatalf("Failed to get edict status: %v", err)
+	}
+	if status != storage.EdictCancelled {
+		t.Errorf("Expected status cancelled, got %s", status)
 	}
 }
 

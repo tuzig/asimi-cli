@@ -8,7 +8,7 @@ import (
 )
 
 // Schema version for migrations
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 // Type aliases - use types from internal/config as the single source of truth
 type (
@@ -245,7 +245,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at INTEGER NOT NULL
 );
 
-INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (5, unixepoch());
+INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (6, unixepoch());
 `
 
 // Migration1to2 contains the SQL to migrate from schema version 1 to 2
@@ -341,5 +341,22 @@ CREATE INDEX IF NOT EXISTS idx_ritual_executions_session ON ritual_executions(se
 
 -- Update schema version
 INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (5, unixepoch());
+`
+
+// Migration5to6 removes edicts.status column and adds edicts.cancelled_at column
+// Status is now derived from seals and zhengming tables
+const Migration5to6 = `
+-- Add cancelled_at column to edicts
+ALTER TABLE edicts ADD COLUMN cancelled_at INTEGER;
+
+-- Migrate existing cancelled edicts (status = 'cancelled' -> cancelled_at = unixepoch())
+-- Note: We use a fixed timestamp for historical cancelled edicts
+UPDATE edicts SET cancelled_at = (SELECT MAX(created_at) FROM edicts) WHERE status = 'cancelled';
+
+-- Drop the status column
+ALTER TABLE edicts DROP COLUMN status;
+
+-- Update schema version
+INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (6, unixepoch());
 `
 

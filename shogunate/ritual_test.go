@@ -2005,7 +2005,6 @@ func TestRitualSessionIDTracking(t *testing.T) {
 	testEdict := storage.Edict{
 		SessionID: "session-initial",
 		Intent:    "Test session tracking",
-		Status:    storage.EdictActive,
 	}
 	if err := db.Create(&testEdict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)

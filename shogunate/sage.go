@@ -149,7 +149,7 @@ func (c *Sage) Tasks() chan<- *Task { return c.tasks }
 // Tools returns the Sage's LLM tools — read-only access plus zhengming and review tools
 func (c *Sage) Tools() []Tool {
 	toolList := []Tool{
-		tools.GetEdictStatusTool{Manager: c},
+		tools.GetEdictStatusTool{Manager: c, DB: c.db},
 		tools.ListEdictsTool{DB: c.db},
 		&SuggestEdictTool{sage: c},
 		&QueryCourtTool{db: c.db},
@@ -508,10 +508,15 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 	query.Find(&edicts)
 
 	edictSummaries := make([]map[string]interface{}, len(edicts))
+	sealService := storage.NewSealService(t.db)
 	for i, e := range edicts {
+		status, err := sealService.GetEdictStatus(e.EdictID)
+		if err != nil {
+			status = storage.EdictActive
+		}
 		edictSummaries[i] = map[string]interface{}{
 			"edict_id": e.EdictID,
-			"status":   string(e.Status),
+			"status":   string(status),
 			"intent":   truncateForCourt(e.Intent, 120),
 		}
 	}
@@ -689,13 +694,25 @@ func (c *Sage) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := c.db.Distinct("edicts.*").
 		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
-		Where("forge_manifests.status = ? AND edicts.status = ?",
-			storage.ManifestQuenched, storage.EdictActive).
+		Where("forge_manifests.status = ?", storage.ManifestQuenched).
 		Find(&edicts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edicts with quenched manifests: %w", err)
 	}
-	return edicts, nil
+	
+	// Filter out sealed/cancelled edicts using derived status
+	sealService := storage.NewSealService(c.db)
+	var activeEdicts []storage.Edict
+	for _, e := range edicts {
+		status, err := sealService.GetEdictStatus(e.EdictID)
+		if err != nil {
+			continue
+		}
+		if status == storage.EdictActive || status == storage.EdictBlocked {
+			activeEdicts = append(activeEdicts, e)
+		}
+	}
+	return activeEdicts, nil
 }
 
 // --- Diff Review Methods (migrated from Censor) ---

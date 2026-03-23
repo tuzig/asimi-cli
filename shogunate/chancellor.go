@@ -447,7 +447,7 @@ func (c *Chancellor) Tools() []Tool {
 		tools.AsimiSQLTool{DBPath: c.getDBPath()},
 		tools.UpdateEdictTool{Manager: c},
 		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, Notify: zhengmingNotify},
-		tools.GetEdictStatusTool{Manager: c},
+		tools.GetEdictStatusTool{Manager: c, DB: c.db},
 		tools.ListEdictsTool{DB: c.db},
 		tools.TransitionEdictTool{DB: c.db},
 		InvokeMinisterTool{chancellor: c},
@@ -622,9 +622,10 @@ func (c *Chancellor) SetCensorSeal(edictID uint, sealed bool) error {
 
 // CancelEdict marks an edict as cancelled
 func (c *Chancellor) CancelEdict(edictID uint, cancelledBy, reason string) error {
+	now := time.Now()
 	result := c.db.Model(&storage.Edict{}).
 		Where("edict_id = ?", edictID).
-		Update("status", storage.EdictCancelled)
+		Update("cancelled_at", now)
 	if result.Error != nil {
 		return fmt.Errorf("failed to cancel edict: %w", result.Error)
 	}

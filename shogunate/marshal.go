@@ -162,13 +162,14 @@ func (m *Marshal) GetPendingIncidents() ([]storage.MarshalIncident, error) {
 // Note: Marshal doesn't participate in normal edict flow, but handles incidents
 func (m *Marshal) execute(ctx context.Context, edictID uint) (bool, error) {
 	// Marshal's Execute is called for 'assassination' type edicts (hotfixes)
-	edict, err := m.GetEdict(edictID)
-	if err != nil {
-		return false, fmt.Errorf("get edict: %w", err)
-	}
-
 	// Check if this is a hotfix edict created by an incident
-	if edict.Status == storage.EdictActive {
+	sealService := storage.NewSealService(m.db)
+	status, err := sealService.GetEdictStatus(edictID)
+	if err != nil {
+		return false, fmt.Errorf("get edict status: %w", err)
+	}
+	
+	if status == storage.EdictActive {
 		// Hotfix needs expedited processing
 		m.logger.Info("marshal expediting hotfix", "edict_id", edictID)
 		return true, nil

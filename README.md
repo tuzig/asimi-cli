@@ -158,6 +158,37 @@ Asimi is just starting out. It's been used to develop itself since version 0.1.0
 
 ## 🛠️ Development
 
+### Contributor Installation
+
+To develop Asimi itself:
+
+1. **Fork and clone:**
+   ```bash
+   gh repo fork afittestide/asimi-cli --clone
+   cd asimi-cli
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   just bootstrap    # Installs golangci-lint, goimports
+   ```
+
+3. **Build and run:**
+   ```bash
+   just build        # Build binary
+   just run          # Run with debug logging to ./asimi.log
+   ```
+
+4. **Initialize sandbox (first run):**
+   ```bash
+   just build-sandbox
+   ```
+
+5. **Run tests:**
+   ```bash
+   just test
+   ```
+
 ## Principles
 
 - Before the 🦙 comes the dev

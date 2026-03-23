@@ -21,7 +21,6 @@ func TestRitualRecoveryDetection(t *testing.T) {
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test recovery",
-		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -138,7 +137,6 @@ func TestRitualRecoveryNoAbortedExecution(t *testing.T) {
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test fresh start",
-		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -205,7 +203,6 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test all complete",
-		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -304,7 +301,6 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test retry",
-		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -404,7 +400,6 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test log",
-		Status: storage.EdictActive,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)

@@ -1134,15 +1134,16 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 
 	// Check edict status before executing step - abort if sealed or cancelled
 	if exec.EdictID != 0 {
-		var edict storage.Edict
-		if err := r.db.First(&edict, "edict_id = ?", exec.EdictID).Error; err == nil {
-			if edict.Status == storage.EdictSealed || edict.Status == storage.EdictCancelled {
+		sealService := storage.NewSealService(r.db)
+		status, err := sealService.GetEdictStatus(exec.EdictID)
+		if err == nil {
+			if status == storage.EdictSealed || status == storage.EdictCancelled {
 				r.logger.Info("aborting ritual step due to edict state change",
 					"ritual", exec.RitualName,
 					"step", step.Name,
 					"edict_id", exec.EdictID,
-					"edict_status", edict.Status)
-				return "", fmt.Errorf("ritual aborted: edict %d is %s", exec.EdictID, edict.Status)
+					"edict_status", status)
+				return "", fmt.Errorf("ritual aborted: edict %d is %s", exec.EdictID, status)
 			}
 		}
 	}
@@ -1668,11 +1669,13 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 	// 2. Full edict details
 	edict, clarifications, err := r.getEdictDetails(ctx, exec.EdictID)
 	if err == nil && edict != nil {
+		sealService := storage.NewSealService(r.db)
+		status, _ := sealService.GetEdictStatus(exec.EdictID)
 		fmt.Fprintf(&buf, "# Edict\n\n")
 		fmt.Fprintf(&buf, "```json\n")
 		fmt.Fprintf(&buf, "{\n")
-		fmt.Fprintf(&buf, "  \"edict_id\": %q,\n", edict.EdictID)
-		fmt.Fprintf(&buf, "  \"status\": %q\n", edict.Status)
+		fmt.Fprintf(&buf, "  \"edict_id\": %d,\n", edict.EdictID)
+		fmt.Fprintf(&buf, "  \"status\": %q\n", status)
 		fmt.Fprintf(&buf, "}\n")
 		fmt.Fprintf(&buf, "```\n\n")
 		fmt.Fprintf(&buf, "## Intent\n\n%s\n\n", edict.Intent)
@@ -1791,29 +1794,46 @@ func (r *RitualRunner) arrangeGetEdict(edictID uint) (interface{}, error) {
 	if err := r.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
 		return nil, err
 	}
+	sealService := storage.NewSealService(r.db)
+	status, err := sealService.GetEdictStatus(edictID)
+	if err != nil {
+		status = storage.EdictActive // default if error
+	}
 	return map[string]interface{}{
 		"edict_id": edict.EdictID,
 		"intent":   edict.Intent,
-		"status":   string(edict.Status),
+		"status":   string(status),
 	}, nil
 }
 
 func (r *RitualRunner) arrangeGetCourtStatus(edictID uint) (interface{}, error) {
+	// Get all edicts and filter by derived status
 	var edicts []storage.Edict
-	if err := r.db.Where("status NOT IN ?", []string{"sealed", "cancelled"}).Find(&edicts).Error; err != nil {
+	if err := r.db.Find(&edicts).Error; err != nil {
 		return nil, err
 	}
-	result := make([]map[string]interface{}, len(edicts))
-	for i, e := range edicts {
-		result[i] = map[string]interface{}{
+	
+	sealService := storage.NewSealService(r.db)
+	var result []map[string]interface{}
+	
+	for _, e := range edicts {
+		status, err := sealService.GetEdictStatus(e.EdictID)
+		if err != nil {
+			continue // skip edicts with errors
+		}
+		// Only include non-sealed and non-cancelled edicts
+		if status == storage.EdictSealed || status == storage.EdictCancelled {
+			continue
+		}
+		result = append(result, map[string]interface{}{
 			"edict_id":   e.EdictID,
 			"session_id": e.SessionID,
 			"issue_ref":  e.IssueRef,
 			"intent":     e.Intent,
-			"status":     string(e.Status),
+			"status":     string(status),
 			"created_at": e.CreatedAt,
 			"updated_at": e.UpdatedAt,
-		}
+		})
 	}
 	return result, nil
 }
@@ -1965,17 +1985,17 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 	}
 	switch fn {
 	case "seal_edict":
-		return r.db.Model(&storage.Edict{}).
-			Where("edict_id = ? AND status = ?", exec.EdictID, storage.EdictActive).
-			Update("status", storage.EdictSealed).Error
+		// Sealing is now done via the seal chain - grant ruler seal
+		sealService := storage.NewSealService(r.db)
+		return sealService.GrantSeal(exec.EdictID, "ruler", storage.JSON{"ritual": exec.RitualName})
 	case "block_edict":
-		return r.db.Model(&storage.Edict{}).
-			Where("edict_id = ? AND status = ?", exec.EdictID, storage.EdictActive).
-			Update("status", storage.EdictBlocked).Error
+		// Blocking is now done via zhengming - create a pending zhengming request
+		// This is handled by the request_zhengming case below
+		return nil
 	case "unblock_edict":
-		return r.db.Model(&storage.Edict{}).
-			Where("edict_id = ? AND status = ?", exec.EdictID, storage.EdictBlocked).
-			Update("status", storage.EdictActive).Error
+		// Unblocking happens automatically when zhengming is answered
+		// No action needed here
+		return nil
 	case "request_zhengming":
 		// Use the chancellor for zhengming requests, as it's the minister that interacts with the ruler
 		// and has a corresponding tab for displaying zhengming questions

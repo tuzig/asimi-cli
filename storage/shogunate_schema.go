@@ -56,6 +56,7 @@ func (s *StringArray) Scan(value interface{}) error {
 }
 
 // EdictStatus represents the current status of an edict
+// This is derived from seals and zhengming tables, not stored in edicts table
 type EdictStatus string
 
 const (
@@ -66,15 +67,16 @@ const (
 )
 
 // Edict represents a high-level task/issue being processed by the Shogunate
+// Status is derived from seals and zhengming tables - see EdictStatus type
 type Edict struct {
-	EdictID   uint        `gorm:"primaryKey;autoIncrement;column:edict_id"`
-	SessionID string      `gorm:"column:session_id;index"`
-	IssueRef  string      `gorm:"column:issue_ref"`
-	Summary   string      `gorm:"column:summary"`
-	Intent    string      `gorm:"column:intent"`
-	Status    EdictStatus `gorm:"column:status"`
-	CreatedAt time.Time   `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt time.Time   `gorm:"column:updated_at;autoUpdateTime"`
+	EdictID     uint       `gorm:"primaryKey;autoIncrement;column:edict_id"`
+	SessionID   string     `gorm:"column:session_id;index"`
+	IssueRef    string     `gorm:"column:issue_ref"`
+	Summary     string     `gorm:"column:summary"`
+	Intent      string     `gorm:"column:intent"`
+	CancelledAt *time.Time `gorm:"column:cancelled_at"` // NULL = not cancelled, timestamp = cancelled at this time
+	CreatedAt   time.Time  `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt   time.Time  `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName returns the table name for Edict
@@ -95,9 +97,6 @@ type Seal struct {
 func (Seal) TableName() string {
 	return "seals"
 }
-
-// DeprecationNote: Edict.Status is a denormalized cache.
-// The seal chain in the seals table is the source of truth for an edict's state.
 
 // ZhengmingQuestion represents a single question with predefined answer options
 type ZhengmingQuestion struct {

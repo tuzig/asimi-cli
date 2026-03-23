@@ -435,11 +435,8 @@ func (m *MinisterBase) RequestZhengming(edictID uint, questions storage.Zhengmin
 	}
 
 	// Block the edict while zhengming is pending
-	if edictID != 0 {
-		m.db.Model(&storage.Edict{}).
-			Where("edict_id = ? AND status = ?", edictID, storage.EdictActive).
-			Update("status", storage.EdictBlocked)
-	}
+	// Note: Status is now derived from zhengming table, so we don't need to update edicts table
+	// The GetEdictStatus method will automatically return "blocked" when there's a pending zhengming
 
 	// Emit zhengming_requested event
 	m.EmitEvent(edictID, "zhengming_requested", storage.JSON{
@@ -517,12 +514,9 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 			slog.Warn("failed to append clarification to edict", "edict_id", req.EdictID, "error", err)
 		}
 
-		pending, err := m.IsZhengmingPending(req.EdictID)
-		if err == nil && !pending {
-			m.db.Model(&storage.Edict{}).
-				Where("edict_id = ? AND status = ?", req.EdictID, storage.EdictBlocked).
-				Update("status", storage.EdictActive)
-		}
+		// Note: Status is now derived from zhengming table
+		// When zhengming is answered, GetEdictStatus will automatically return "active"
+		// No need to update edicts table
 	}
 
 	// Emit zhengming_answered event
