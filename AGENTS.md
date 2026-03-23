@@ -9,6 +9,7 @@
 - **No build tags**: Keep builds simple
 - **Short, meaningful names**: Follow Go conventions
 - **Inline comments**: Only for non-trivial code
+- **Commit message **: start with "bug:", "feat:" or "chore:", follow by short description and end with "e123" for edict 123
 
 ## Common Commands
 
