@@ -123,6 +123,10 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("edict_id is required")
 	}
 
+	if t.DB == nil {
+		return "", fmt.Errorf("database connection not initialized")
+	}
+
 	edict, err := t.Manager.GetEdict(params.EdictID)
 	if err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
@@ -203,6 +207,10 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 
 	if params.Limit <= 0 {
 		params.Limit = 20
+	}
+
+	if t.DB == nil {
+		return "", fmt.Errorf("database connection not initialized")
 	}
 
 	var edicts []storage.Edict
@@ -305,6 +313,10 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 	}
 	if params.Status == "" {
 		return "", fmt.Errorf("status is required")
+	}
+
+	if t.DB == nil {
+		return "", fmt.Errorf("database connection not initialized")
 	}
 
 	// Validate status

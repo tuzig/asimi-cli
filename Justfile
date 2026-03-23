@@ -16,7 +16,8 @@ build:
 # Run with debug logging
 run:
     rm -f asimi.log
-    go run . --debug
+    go build .
+    ./asimi --debug
 
 # Run all tests (skips git-altering tests locally)
 test:
