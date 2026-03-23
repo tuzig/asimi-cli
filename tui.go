@@ -1313,13 +1313,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
 				cmds = append(cmds, waitCmd)
 			}
-			tab := m.tabs.ActiveTab()
-			if tab.Cancel != nil {
-				tab.Cancel()
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			tab.Ctx = ctx
-			tab.Cancel = cancel
+			ctx := m.tabs.ActiveTab().Ctx
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
