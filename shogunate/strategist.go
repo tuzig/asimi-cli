@@ -8,7 +8,6 @@ import (
 
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // StrategistRole defines the Strategist's identity and capabilities
@@ -216,13 +215,24 @@ func (s *Strategist) decompose(ctx context.Context, edict *storage.Edict) ([]sto
 		}}, nil
 	}
 
-	// Use LLM to decompose
-	prompt := fmt.Sprintf("Decompose this task into 3-7 atomic, testable steps:\n\n%s", edict.Intent)
-	messages := []llms.MessageContent{
-		llms.TextParts(llms.ChatMessageTypeSystem, StrategistRole),
-		llms.TextParts(llms.ChatMessageTypeHuman, prompt),
+	// Create a session with tools so the LLM can call insert_ling
+	session, err := CreateSessionWithOpts(s, s.model, s.config, s.notify, CreateSessionOpts{
+		EdictID: edict.EdictID,
+		TabID:   "strategist",
+		Scratchpad: "",
+	})
+	if err != nil {
+		s.logger.Warn("failed to create session for decomposition, using fallback", "error", err)
+		return []storage.Ling{{
+			EdictID:     edict.EdictID,
+			Description: edict.Intent,
+			Status:      storage.LingPending,
+		}}, nil
 	}
-	resp, err := s.model.GenerateContent(ctx, messages)
+
+	// Use streaming to allow the LLM to call insert_ling tool
+	prompt := "Decompose this edict into atomic, testable ling (task orders). Use the insert_ling tool for each step."
+	_, err = session.AskWithStreaming(ctx, prompt, nil)
 	if err != nil {
 		s.logger.Warn("LLM decomposition failed, using fallback", "error", err)
 		return []storage.Ling{{
@@ -231,15 +241,24 @@ func (s *Strategist) decompose(ctx context.Context, edict *storage.Edict) ([]sto
 			Status:      storage.LingPending,
 		}}, nil
 	}
-	response := resp.Choices[0].Content
 
-	// Parse LLM response into ling
-	// For now, treat response as a single ling
-	return []storage.Ling{{
-		EdictID:     edict.EdictID,
-		Description: response,
-		Status:      storage.LingPending,
-	}}, nil
+	// Retrieve the ling that were inserted via the tool
+	lingList, err := s.GetLingForEdict(edict.EdictID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve inserted ling: %w", err)
+	}
+
+	if len(lingList) == 0 {
+		// Fallback if no ling were inserted
+		s.logger.Warn("no ling inserted by LLM, using fallback")
+		return []storage.Ling{{
+			EdictID:     edict.EdictID,
+			Description: edict.Intent,
+			Status:      storage.LingPending,
+		}}, nil
+	}
+
+	return lingList, nil
 }
 
 // validateDependencies ensures ling form a DAG (no cycles)

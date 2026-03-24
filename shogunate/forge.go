@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
@@ -209,14 +210,17 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 	var session *Session
 
 	if f.model != nil {
-		if task.Session != nil {
-			// Multi-turn: continue existing session
-			session = task.Session
-			session.SetNotify(notify)
-			_, taskErr = session.AskWithStreaming(ctx, task.Work, nil)
+		// Get pending lings for this edict
+		pendingLings, err := f.GetPendingLing(task.EdictID)
+		if err != nil {
+			f.logger.Error("failed to get pending lings", "error", err)
+			taskErr = err
+		} else if len(pendingLings) > 0 {
+			// Execute lings in dependency order
+			output, taskErr = f.executeLings(ctx, task, pendingLings, notify)
 		} else {
-			// First invocation: create new session
-			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify)
+			// Fallback: no lings, execute task.Work directly (backward compatibility)
+			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify, task.Session)
 		}
 	} else {
 		output = "forge task acknowledged (no LLM configured)"
@@ -237,25 +241,169 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 	}
 }
 
-// streamTask creates a session and streams the task through the LLM.
+// streamTask creates a session (or reuses existing) and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (f *Forge) streamTask(ctx context.Context, work string, edictID uint, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
-	session, err := CreateSessionWithOpts(f, f.model, f.config, notify, CreateSessionOpts{
-		EdictID:    edictID,
-		TabID:      "chancellor",
-		Scratchpad: scratchpad,
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create forge session: %w", err)
-	}
+func (f *Forge) streamTask(ctx context.Context, work string, edictID uint, scratchpad string, notify internal.NotifyFunc, existingSession *Session) (*Session, string, error) {
+	var session *Session
+	var err error
 
-	_, err = session.AskWithStreaming(ctx, work, nil)
-	if err != nil {
-		return session, "", err
+	if existingSession != nil {
+		// Reuse existing session for multi-turn conversation
+		session = existingSession
+		session.SetNotify(notify)
+		_, err = session.AskWithStreaming(ctx, work, nil)
+		if err != nil {
+			return session, "", err
+		}
+	} else {
+		// Create new session for first invocation
+		session, err = CreateSessionWithOpts(f, f.model, f.config, notify, CreateSessionOpts{
+			EdictID:    edictID,
+			TabID:      "chancellor",
+			Scratchpad: scratchpad,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create forge session: %w", err)
+		}
+
+		_, err = session.AskWithStreaming(ctx, work, nil)
+		if err != nil {
+			return session, "", err
+		}
 	}
 
 	f.logger.Info("forge task completed")
 	return session, "", nil
+}
+
+// executeLings processes lings in dependency order
+func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Ling, notify internal.NotifyFunc) (string, error) {
+	// Build dependency graph and sort topologically
+	sortedLings, err := f.topologicalSort(lings)
+	if err != nil {
+		return "", fmt.Errorf("failed to sort lings: %w", err)
+	}
+
+	var results []string
+	completedLingIDs := make(map[string]bool)
+
+	for _, ling := range sortedLings {
+		// Check if dependencies are satisfied
+		if !f.dependenciesSatisfied(ling, completedLingIDs) {
+			f.logger.Warn("ling dependencies not satisfied, skipping",
+				"ling_id", ling.LingID,
+				"dependencies", ling.Dependencies)
+			continue
+		}
+
+		// Execute this ling
+		f.logger.Info("executing ling",
+			"ling_id", ling.LingID,
+			"description", ling.Description)
+
+		// Build work prompt for this specific ling
+		lingWork := fmt.Sprintf("Execute this task order (ling):\n\n%s", ling.Description)
+
+		// Create or reuse session for this ling
+		var session *Session
+		var output string
+		var lingErr error
+
+		if task.Session != nil {
+			session = task.Session
+			session.SetNotify(notify)
+			_, lingErr = session.AskWithStreaming(ctx, lingWork, nil)
+		} else {
+			session, output, lingErr = f.streamTask(ctx, lingWork, task.EdictID, task.Scratchpad, notify, nil)
+		}
+
+		// Update task.Session for multi-ling continuity
+		task.Session = session
+
+		if lingErr != nil {
+			// Mark ling as blocked/failed
+			f.SaveLingResult(&ling, output, lingErr)
+			return strings.Join(results, "\n"), fmt.Errorf("ling %s failed: %w", ling.LingID, lingErr)
+		}
+
+		// Mark ling as completed
+		if err := f.MarkLingCompleted(ling.LingID); err != nil {
+			f.logger.Error("failed to mark ling completed",
+				"ling_id", ling.LingID,
+				"error", err)
+		}
+
+		// Save result
+		if err := f.SaveLingResult(&ling, output, nil); err != nil {
+			f.logger.Error("failed to save ling result",
+				"ling_id", ling.LingID,
+				"error", err)
+		}
+
+		results = append(results, fmt.Sprintf("✓ Ling %s: %s", ling.LingID, ling.Description))
+		completedLingIDs[ling.LingID] = true
+	}
+
+	return strings.Join(results, "\n"), nil
+}
+
+// topologicalSort sorts lings by dependencies (DAG) using Kahn's algorithm
+func (f *Forge) topologicalSort(lings []storage.Ling) ([]storage.Ling, error) {
+	// Build adjacency map
+	lingMap := make(map[string]storage.Ling)
+	inDegree := make(map[string]int)
+	graph := make(map[string][]string)
+
+	for _, ling := range lings {
+		lingMap[ling.LingID] = ling
+		inDegree[ling.LingID] = 0
+	}
+
+	// Build graph: dependency → dependent
+	for _, ling := range lings {
+		for _, dep := range ling.Dependencies {
+			graph[dep] = append(graph[dep], ling.LingID)
+			inDegree[ling.LingID]++
+		}
+	}
+
+	// Kahn's algorithm
+	var queue []string
+	for _, ling := range lings {
+		if inDegree[ling.LingID] == 0 {
+			queue = append(queue, ling.LingID)
+		}
+	}
+
+	var sorted []storage.Ling
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		sorted = append(sorted, lingMap[current])
+
+		for _, neighbor := range graph[current] {
+			inDegree[neighbor]--
+			if inDegree[neighbor] == 0 {
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+
+	if len(sorted) != len(lings) {
+		return nil, fmt.Errorf("circular dependency detected in lings")
+	}
+
+	return sorted, nil
+}
+
+// dependenciesSatisfied checks if all dependencies are completed
+func (f *Forge) dependenciesSatisfied(ling storage.Ling, completed map[string]bool) bool {
+	for _, dep := range ling.Dependencies {
+		if !completed[dep] {
+			return false
+		}
+	}
+	return true
 }
 
 // --- Forge Specialized Tools ---
@@ -286,11 +434,25 @@ func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("edict_id and file_path are required")
 	}
 
+	// Auto-populate ling_id if not provided (use most recent pending ling)
+	if params.LingID == "" {
+		pendingLings, err := t.forge.GetPendingLing(params.EdictID)
+		if err != nil {
+			return "", fmt.Errorf("failed to get pending lings for auto-population: %w", err)
+		}
+		if len(pendingLings) > 0 {
+			params.LingID = pendingLings[0].LingID
+			t.forge.logger.Info("auto-populated ling_id",
+				"ling_id", params.LingID,
+				"file_path", params.FilePath)
+		}
+	}
+
 	manifestID, err := t.forge.StageManifest(params.EdictID, params.LingID, params.FilePath, params.FuncName, params.ContentSHA)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Created manifest %s for file %s", manifestID, params.FilePath), nil
+	return fmt.Sprintf("Created manifest %s for file %s (ling: %s)", manifestID, params.FilePath, params.LingID), nil
 }
 
 func (t *CreateManifestTool) ParameterSchema() map[string]any {

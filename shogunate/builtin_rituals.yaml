@@ -46,54 +46,56 @@
   background:
     - the edict details
   steps:
-    - name: strategist
+    - name: strategizing
       minister: strategist
       act: |
-        Analyze edict {{ .edict_id }} and produce a technical Battle Plan.
+        Analyze the edict below and produce a technical Battle Plan.
         Break down the work into clear phases with dependencies.
         Identify risks and architectural decisions.
       on_failure: zhengming
 
-    - name: forge
+    - name: forging
       minister: forge
       given:
         - the manifests
       act: |
         Execute the Battle Plan for edict {{ .edict_id }}.
         Implement changes according to the Strategist's design.
-      depends_on: [strategist]
+      depends_on: [strategizing]
       on_failure: retry
 
-    - name: judge
+    - name: judgement
       minister: judge
       given:
         - the manifests
       act: |
-        Run the Trials for edict {{ .edict_id }}.
+        Run the Trials for the edict.
         Execute all tests and validate the Forge's work.
         If the Judge fails, the Forge must return to the anvil.
       then:
         - "!git diff"
         - record the judge's seal
-      depends_on: [forge]
+      depends_on: [forging]
       on_failure: goto
-      on_failure_target: forge
+      on_failure_target: forging
 
-    - name: sage
+    - name: censorship
       minister: sage
       given:
         - the manifests
         - the verdicts
         - the earth status
       act: |
-        Review the implemented code in this ritual.
+        Review the code changes in this ritual.
         Verify it adheres to the Imperial Code (project standards).
         Veto if the code violates conventions or introduces risk.
-      depends_on: [judge]
+      then:
+        - record the sage's seal
+      depends_on: [judgement]
       on_failure: goto
-      on_failure_target: forge
+      on_failure_target: forging
   then:
-    - record the sage's seal
+    # TODO: what does it do?
     - the edict awaits the ruler's seal
 
 - name: dawn-audience
@@ -236,10 +238,10 @@
         - build the sandbox
       on_failure: retry
 
-    - name: judge-verifies
+    - name: sandbox-ready
       minister: judge
       act: |
-        Verify the project infrastructure is sound.
+        Verify the sandbox infrastructure is sound by running tests.
         
         If tests or lint fail, the infrastructure is broken.
         Provide clear feedback on what must be fixed.
@@ -247,7 +249,7 @@
         If verification passes, record the Judge's Seal.
       depends_on: [establish-infrastructure]
       then:
-        - "!just test"
+        - the sandbox is ready
       on_failure: goto
       on_failure_target: establish-infrastructure
 
@@ -268,7 +270,7 @@
         Record precedents for any new conventions established.
         
         If review passes, record the Sage's Seal.
-      depends_on: [judge-verifies]
+      depends_on: [sandbox-ready]
       on_failure: goto
       on_failure_target: establish-infrastructure
       then:

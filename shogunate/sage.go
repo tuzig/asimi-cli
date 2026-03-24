@@ -271,15 +271,8 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 	var session *Session
 
 	if c.model != nil {
-		if task.Session != nil {
-			// Multi-turn: continue existing session
-			session = task.Session
-			session.SetNotify(notify)
-			_, taskErr = session.AskWithStreaming(ctx, task.Work, nil)
-		} else {
-			// First invocation: create new session
-			session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify)
-		}
+		// Single call handles both new and existing session cases
+		session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify, task.Session)
 	} else {
 		output = "sage task acknowledged (no LLM configured)"
 	}
@@ -300,21 +293,35 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 	}
 }
 
-// streamTask creates a session and streams the task through the LLM.
+// streamTask creates a session (or reuses existing) and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (c *Sage) streamTask(ctx context.Context, work string, edictID uint, scratchpad string, notify internal.NotifyFunc) (*Session, string, error) {
-	session, err := CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
-		EdictID:    edictID,
-		TabID:      "chancellor",
-		Scratchpad: scratchpad,
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create sage session: %w", err)
-	}
+func (c *Sage) streamTask(ctx context.Context, work string, edictID uint, scratchpad string, notify internal.NotifyFunc, existingSession *Session) (*Session, string, error) {
+	var session *Session
+	var err error
 
-	_, err = session.AskWithStreaming(ctx, work, nil)
-	if err != nil {
-		return session, "", err
+	if existingSession != nil {
+		// Reuse existing session for multi-turn conversation
+		session = existingSession
+		session.SetNotify(notify)
+		_, err = session.AskWithStreaming(ctx, work, nil)
+		if err != nil {
+			return session, "", err
+		}
+	} else {
+		// Create new session for first invocation
+		session, err = CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
+			EdictID:    edictID,
+			TabID:      "chancellor",
+			Scratchpad: scratchpad,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create sage session: %w", err)
+		}
+
+		_, err = session.AskWithStreaming(ctx, work, nil)
+		if err != nil {
+			return session, "", err
+		}
 	}
 
 	c.logger.Info("sage task completed")
@@ -699,7 +706,7 @@ func (c *Sage) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edicts with quenched manifests: %w", err)
 	}
-	
+
 	// Filter out sealed/cancelled edicts using derived status
 	sealService := storage.NewSealService(c.db)
 	var activeEdicts []storage.Edict

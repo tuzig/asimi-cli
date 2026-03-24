@@ -531,6 +531,7 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 
 // EmitEvent records an event in the Tian ledger and delivers it via channel when available.
 func (m *MinisterBase) EmitEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) error {
+	slog.Debug("Emitting event", "type", eventType, "edict", edictID)
 	if m.publish != nil {
 		_ = m.publish(edictID, eventType, payload)
 		return nil

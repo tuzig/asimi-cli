@@ -106,5 +106,7 @@ func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 }
 func HostRun(ctx context.Context, in Input) (Output, error) {
 	runner := NewHostRunner()
-	return runner.Run(ctx, in)
+	out, err := runner.Run(ctx, in)
+	slog.Debug("Run a host command", "cmd", in.Command, "err", err, "out", out)
+	return out, err
 }

@@ -193,6 +193,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"a clear working directory", "check_clean_working_directory", "working_directory_clean"},
 		{"the infrastructure templates", "get_infrastructure_templates", "infrastructure_templates"},
 		{"build the sandbox", "build_sandbox", "sandbox_build"},
+		{"the sandbox is ready", "verify_sandbox_ready", "sandbox_ready"},
 		{"the project metadata", "get_project_metadata", "project_metadata"},
 	}
 	for _, b := range builtins {
@@ -664,11 +665,10 @@ func (RitualStepState) TableName() string {
 // Start begins execution of a ritual
 func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uint, inputs map[string]string, notify internal.NotifyFunc) (*RitualExecution, error) {
 	def := r.registry.Get(ritualName)
-	if def == nil {
-		return nil, fmt.Errorf("ritual not found: %s", ritualName)
-	}
-
 	// Validate required inputs
+	if def == nil {
+		return nil, fmt.Errorf("failed to get ritual %s", ritualName)
+	}
 	for name, inputDef := range def.Inputs {
 		if inputDef.Required {
 			if _, ok := inputs[name]; !ok {
@@ -1809,6 +1809,8 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 		return r.getInfrastructureTemplates(ctx)
 	case "build_sandbox":
 		return r.buildSandbox(ctx)
+	case "verify_sandbox_ready":
+		return r.verifySandboxReady(ctx)
 	case "get_project_metadata":
 		return r.getProjectMetadata(ctx)
 	default:
@@ -2058,6 +2060,26 @@ func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 		return nil, fmt.Errorf("failed to build the sandbox image: %w", err)
 	}
 	return map[string]string{"status": "built", "output": output.Output}, nil
+}
+
+// verifySandboxReady builds the sandbox and appends RCA guidance on failure
+func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, error) {
+	output, err := runners.HostRun(ctx, runners.Input{
+		Command:        "just build-sandbox",
+		Description:    "build the sandbox",
+		BypassApproval: true,
+	})
+	if err == nil {
+		// TODO: load the sandbox using podman runner and use it to run `just build`
+		return map[string]string{
+			"status": "ready",
+			"output": output.Output,
+		}, nil
+	}
+	return map[string]string{
+		"status": "failed",
+		"output": "sandbox verification failed. Start RCA with output and .agents/sandbox/Dockerfile: " + output.Output,
+	}, fmt.Errorf("sandbox verification failed: %w", err)
 }
 
 // getProjectMetadata captures repository information for use in ritual templates
