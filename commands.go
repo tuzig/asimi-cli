@@ -26,12 +26,6 @@ var initializePrompt string
 //go:embed prompts/compact.txt
 var compactPrompt string
 
-//go:embed dotagents/sandbox/bashrc
-var sandboxBashrc string
-
-//go:embed dotagents/Justfile
-var defaultJustfile string
-
 // InitTemplateData holds data for the initialization prompt template
 type InitTemplateData struct {
 	ProjectName  string

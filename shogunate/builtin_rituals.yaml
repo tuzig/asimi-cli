@@ -74,6 +74,7 @@
         If the Judge fails, the Forge must return to the anvil.
       then:
         - "!git diff"
+        - record the judge's seal
       depends_on: [forge]
       on_failure: goto
       on_failure_target: forge
@@ -90,17 +91,16 @@
         Veto if the code violates conventions or introduces risk.
       depends_on: [judge]
       on_failure: goto
-      on_failure_target: strategist
+      on_failure_target: forge
   then:
-    - record the judge's seal
     - record the sage's seal
     - the edict awaits the ruler's seal
 
 - name: dawn-audience
   description: "Startup ritual - Chancellor reports court status on Shogunate boot, then requests zhengming"
   max_retries: 2
-  # triggers:
-  #  - event: shogunate_ready
+  triggers:
+    - event: shogunate_ready
   steps:
     - name: summarize-and-next
       minister: chancellor
@@ -217,29 +217,27 @@
         - the project metadata
         - the infrastructure templates
       act: |
-        Establish Asimi project infrastructure.
+        Customize the infrastructure files created below:
         
-        If clearMode is true, first remove existing infrastructure files.
+        Created directories: {{.directories}}
+        Created files: {{.template_files}}
         
-        Use the templates above as a foundation, then customize for this project:
-        - Justfile starting with: PROJECT_NAME := "{{.project_slug}}"
-        - .agents/asimi.conf with: image_name = "localhost/asimi-sandbox-{{.project_slug}}:latest"
-        - {{.agentsFile}} with language and build conventions
-        - .agents/sandbox/Dockerfile with development environment
-        - .agents/sandbox/bashrc with shell configuration
+        Customize for this project:
+        - Justfile: Set PROJECT_NAME := "{{.project_slug}}"
+        - .agents/asimi.conf: Set image_name = "localhost/asimi-sandbox-{{.project_slug}}:latest"
+        - .agents/sandbox/Dockerfile: Replace {{.BaseImage}} with detected language image
+        - .agents/sandbox/bashrc: Adjust for project needs
+        - {{.agentsFile}}: Add language and build conventions
         
-        Analyze the codebase to customize templates for:
-        - Primary language: {{.project_name}}
-        - Branch: {{.branch}}
+        Detect primary language from codebase (Gemfile→ruby, go.mod→go, requirements.txt→python).
         
-        Report what files were created or updated.
+        Report what files were customized.
+      then:
+        - build the sandbox
       on_failure: retry
 
     - name: judge-verifies
       minister: judge
-      given:
-        - the earth status
-        - a built sandbox
       act: |
         Verify the project infrastructure is sound.
         

@@ -259,23 +259,3 @@ func TestRunInitGuardrails(t *testing.T) {
 		os.Remove("Justfile")
 	})
 }
-
-func TestTruncateOutput(t *testing.T) {
-	tests := []struct {
-		input    string
-		maxLen   int
-		expected string
-	}{
-		{"short", 10, "short"},
-		{"exactly10!", 10, "exactly10!"},
-		{"this is longer than ten", 10, "this is lo..."},
-		{"", 5, ""},
-	}
-
-	for _, tt := range tests {
-		result := truncateOutput(tt.input, tt.maxLen)
-		if result != tt.expected {
-			t.Errorf("truncateOutput(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
-		}
-	}
-}

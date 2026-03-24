@@ -3,6 +3,7 @@ package shogunate
 import (
 	"bytes"
 	"context"
+    _ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,18 @@ import (
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
+
+//go:embed dotagents/Justfile
+var dotagentsJustfile string
+
+//go:embed dotagents/asimi.conf
+var dotagentsAsimiConf string
+
+//go:embed dotagents/sandbox/Dockerfile
+var dotagentsDockerfile string
+
+//go:embed dotagents/sandbox/bashrc
+var dotagentsBashrc string
 
 // RitualStepMsg notifies the UI of ritual step progress
 type RitualStepMsg struct {
@@ -1993,71 +2006,45 @@ func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) 
 
 // checkCleanWorkingDirectory verifies the working directory is clean (no unstaged changes)
 func (r *RitualRunner) checkCleanWorkingDirectory(ctx context.Context) (interface{}, error) {
-	output, err := runners.HostRun(ctx, runners.Input{
-		Command:        "git status --porcelain",
-		Description:    "check working directory is clean",
-		BypassApproval: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to check git status: %w", err)
-	}
-	if output.Output != "" {
-		return nil, fmt.Errorf("working directory is not clean:\n%s", output.Output)
+	repoInfo := repo.GetRepoInfo()
+	if !repoInfo.IsClean() {
+		return nil, fmt.Errorf("working directory is not clean: %v", repoInfo)
 	}
 	return map[string]string{"status": "clean"}, nil
 }
 
-// getInfrastructureTemplates returns embedded template content for infrastructure files
+// getInfrastructureTemplates creates infrastructure files from embedded templates and returns their paths
 func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interface{}, error) {
-	templates := map[string]string{
-		"asimi.conf": `[project]
-name = "{{.ProjectName}}"
-language = "go"
-
-[session]
-agents_file = "AGENTS.md"
-`,
-		"bashrc": `# Asimi sandbox shell configuration
-export PATH="$HOME/go/bin:$PATH"
-export GOPATH="$HOME/go"
-`,
-		"Justfile": `# Asimi project Justfile
-
-run:
-    @echo "Running project..."
-    go run ./...
-
-build:
-    @echo "Building project..."
-    go build -o bin/asimi ./...
-
-test:
-    @echo "Running tests..."
-    go test -v ./...
-
-lint:
-    @echo "Running linter..."
-    golangci-lint run
-
-fmt:
-    @echo "Formatting code..."
-    gofmt -w -s .
-`,
-		"Dockerfile": `FROM golang:1.21-alpine
-
-RUN apk add --no-cache git curl just
-
-WORKDIR /workspace
-
-COPY go.mod go.sum ./
-RUN go mod download
-
-COPY . .
-
-CMD ["/bin/sh"]
-`,
+	// Ensure directory structure exists using host runner
+	if _, err := runners.HostRun(ctx, runners.Input{
+		Command:        "mkdir -p .agents/sandbox",
+		Description:    "create .agents/sandbox directory structure",
+		BypassApproval: true,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create .agents/sandbox directory: %w", err)
 	}
-	return templates, nil
+
+	// Write embedded templates to project root
+	files := map[string]string{
+		"Justfile":               dotagentsJustfile,
+		".agents/asimi.conf":     dotagentsAsimiConf,
+		".agents/sandbox/Dockerfile": dotagentsDockerfile,
+		".agents/sandbox/bashrc": dotagentsBashrc,
+	}
+
+	// Write files and track created paths
+	createdFiles := []string{}
+	for destPath, content := range files {
+		if err := os.WriteFile(destPath, []byte(content), 0o644); err != nil {
+			return nil, fmt.Errorf("failed to write %s: %w", destPath, err)
+		}
+		createdFiles = append(createdFiles, destPath)
+	}
+
+	return map[string]interface{}{
+		"template_files": createdFiles,
+		"directories":    []string{".agents", ".agents/sandbox"},
+	}, nil
 }
 
 // checkBuiltSandbox verifies the sandbox container image exists
@@ -2074,7 +2061,15 @@ func (r *RitualRunner) checkBuiltSandbox(ctx context.Context) (interface{}, erro
 		return nil, fmt.Errorf("failed to check docker images: %w", err)
 	}
 	if output.Output == "" {
-		return nil, fmt.Errorf("sandbox container image not found - run 'just build-sandbox' first")
+		// TODO 
+		output, err = runners.HostRun(ctx, runners.Input{
+			Command:        "just build-sandbox",
+			Description:    "bulid the sandbox",
+			BypassApproval: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build the sandbox image: %w", err)
+		}
 	}
 	return map[string]string{"status": "built", "image": output.Output}, nil
 }
@@ -2099,12 +2094,12 @@ func (r *RitualRunner) getProjectMetadata(ctx context.Context) (interface{}, err
 	}
 
 	return map[string]string{
-		"project_slug":   repoInfo.Slug,
-		"project_name":   projectName,
-		"branch":         repoInfo.Branch,
-		"host":           host,
-		"org":            org,
-		"project":        project,
+		"project_slug": repoInfo.Slug,
+		"project_name": projectName,
+		"branch":       repoInfo.Branch,
+		"host":         host,
+		"org":          org,
+		"project":      project,
 	}, nil
 }
 

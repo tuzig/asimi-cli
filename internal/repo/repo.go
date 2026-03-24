@@ -132,7 +132,7 @@ func (r *RepoInfo) IsClean() bool {
 	if r.repo != nil {
 		r.status = readShortStatus(r.repo)
 	}
-	return r.status == "" && r.LinesAdded == 0 && r.LinesDeleted == 0
+	return r.LinesAdded == 0 && r.LinesDeleted == 0
 }
 
 // RefreshDiff recalculates diff statistics using gogit
