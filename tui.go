@@ -2403,50 +2403,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prompt().Focus()
 		return m, nil
 
-	// Init workflow messages
-	case startInitWorkflowMsg:
-		// Start the init workflow asynchronously
-		m.sessionActive = true
-		return m, runInitWorkflowAsync(&m, msg.ClearMode, msg.AgentsFile)
-
-	case initWorkflowProgressMsg:
-		// Update UI with workflow progress
-		m.tabs.Content().Chat.AddMessage(msg.message)
-		return m, nil
-
-	case initWorkflowCompleteMsg:
-		// Workflow completed
-		if msg.success {
-			m.tabs.Content().Chat.AddMessage(msg.message)
-			m.commandLine.AddToast("Initialization complete!", "success", 3*time.Second)
-
-			// Start a fresh session without clearing the screen
-			m.saveSession()
-			m.sessionActive = true
-			m.tabs.Content().Chat.Indent = 0
-			m.initHistory()
-			m.stopStreaming()
-			if session := m.getCurrentSession(); session != nil {
-				session.ClearHistory()
-			}
-
-			// Try to upgrade to sandbox (async) in case it wasn't already done
-			m.repoInfo.RefreshDiff()
-			return m, func() tea.Msg {
-				upgraded := false // TODO: we need to tryUpgradeToSandbox(m.config)
-				return sandboxUpgradeMsg{upgraded: upgraded}
-			}
-		}
-		m.repoInfo.RefreshDiff()
-		return m, nil
-
-	case initWorkflowErrorMsg:
-		// Workflow failed
-		slog.Error("Init workflow failed", "error", msg.err)
-		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("%s❌ Initialization failed: %v", systemPrefix, msg.err))
-		m.commandLine.AddToast("Initialization failed", "error", 5*time.Second)
-		return m, nil
-
 	}
 
 	// Restore focus to prompt if no modals are active and view is chat
