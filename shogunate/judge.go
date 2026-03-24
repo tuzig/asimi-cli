@@ -155,7 +155,7 @@ func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edicts with pending manifests: %w", err)
 	}
-	
+
 	// Filter out sealed/cancelled edicts using derived status
 	sealService := storage.NewSealService(j.db)
 	var activeEdicts []storage.Edict

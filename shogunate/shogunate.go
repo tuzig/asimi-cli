@@ -77,7 +77,7 @@ type Shogunate struct {
 	config *config.ShogunateConfig
 	runner runners.Runner
 
-	ministers    map[string]Minister
+	ministers   map[string]Minister
 	ritualGuard *RitualGuard
 
 	notify        internal.NotifyFunc
@@ -86,7 +86,7 @@ type Shogunate struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	rulingCtx   func() context.Context
+	rulingCtx     func() context.Context
 	backgroundCtx context.Context
 }
 
@@ -117,9 +117,9 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 
 	// Wire up the ritual guard — it owns all ritual/event infrastructure
 	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
-		Base:       newBase(),
-		Chancellor: chancellor,
-		Runner:     runner,
+		Base:        newBase(),
+		Chancellor:  chancellor,
+		Runner:      runner,
 		GetMinister: s.GetMinister,
 		StreamingCtx: func() context.Context {
 			if s.rulingCtx != nil {
@@ -497,6 +497,7 @@ func (s *Shogunate) ResetRuling() {
 		ch.ResetSession()
 	}
 }
+
 // ResetHunting resets the hunting session
 func (s *Shogunate) ResetHunting() {
 	if s == nil {

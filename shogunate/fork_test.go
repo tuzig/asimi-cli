@@ -69,9 +69,9 @@ func TestValidateForkRitual(t *testing.T) {
 				Name: "fork-valid",
 				Steps: []RitualStep{
 					{
-						Name:     "fork-step",
-						Fork:     &ForkDef{Over: "work_units", BatchSize: 5},
-						Work:     []RitualStep{{Name: "work", Minister: "forge", Task: "do work"}},
+						Name: "fork-step",
+						Fork: &ForkDef{Over: "work_units", BatchSize: 5},
+						Work: []RitualStep{{Name: "work", Minister: "forge", Task: "do work"}},
 					},
 				},
 			},

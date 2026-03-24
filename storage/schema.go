@@ -359,4 +359,3 @@ ALTER TABLE edicts DROP COLUMN status;
 -- Update schema version
 INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (6, unixepoch());
 `
-

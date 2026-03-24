@@ -192,7 +192,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the ruler approves", "request_zhengming", "approved"},
 		{"a clear working directory", "check_clean_working_directory", "working_directory_clean"},
 		{"the infrastructure templates", "get_infrastructure_templates", "infrastructure_templates"},
-		{"a built sandbox", "check_built_sandbox", "sandbox_built"},
+		{"build the sandbox", "build_sandbox", "sandbox_build"},
 		{"the project metadata", "get_project_metadata", "project_metadata"},
 	}
 	for _, b := range builtins {
@@ -1807,8 +1807,8 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 		return r.checkCleanWorkingDirectory(ctx)
 	case "get_infrastructure_templates":
 		return r.getInfrastructureTemplates(ctx)
-	case "check_built_sandbox":
-		return r.checkBuiltSandbox(ctx)
+	case "build_sandbox":
+		return r.buildSandbox(ctx)
 	case "get_project_metadata":
 		return r.getProjectMetadata(ctx)
 	default:
@@ -2048,30 +2048,16 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 }
 
 // checkBuiltSandbox verifies the sandbox container image exists
-func (r *RitualRunner) checkBuiltSandbox(ctx context.Context) (interface{}, error) {
-	if r.runner == nil {
-		return nil, fmt.Errorf("no runner configured")
-	}
+func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 	output, err := runners.HostRun(ctx, runners.Input{
-		Command:        "podman images --format '{{.Repository}}:{{.Tag}}' | grep asimi-sandbox",
-		Description:    "check if sandbox image exists",
+		Command:        "just build-sandbox",
+		Description:    "bulid the sandbox",
 		BypassApproval: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to check docker images: %w", err)
+		return nil, fmt.Errorf("failed to build the sandbox image: %w", err)
 	}
-	if output.Output == "" {
-		// TODO 
-		output, err = runners.HostRun(ctx, runners.Input{
-			Command:        "just build-sandbox",
-			Description:    "bulid the sandbox",
-			BypassApproval: true,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to build the sandbox image: %w", err)
-		}
-	}
-	return map[string]string{"status": "built", "image": output.Output}, nil
+	return map[string]string{"status": "built", "output": output.Output}, nil
 }
 
 // getProjectMetadata captures repository information for use in ritual templates

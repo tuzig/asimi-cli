@@ -26,7 +26,7 @@ type Chancellor struct {
 	taskChan      chan *Task
 
 	// Run() loop fields
-	RulingSession  *Session            // Persistent edict-free session for direct chat
+	RulingSession *Session // Persistent edict-free session for direct chat
 }
 
 // NewChancellor creates a new Chancellor minister

@@ -227,12 +227,12 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 		if err != nil {
 			status = storage.EdictActive
 		}
-		
+
 		// Apply status filter
 		if params.Status != "" && string(status) != params.Status {
 			continue
 		}
-		
+
 		results = append(results, map[string]any{
 			"edict_id": e.EdictID,
 			"status":   string(status),

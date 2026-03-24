@@ -58,7 +58,7 @@ func TestTransitionEdictTool_Cancel(t *testing.T) {
 	if updated.CancelledAt == nil {
 		t.Errorf("Expected cancelled_at to be set")
 	}
-	
+
 	// Verify derived status is cancelled
 	sealService := storage.NewSealService(db)
 	status, err := sealService.GetEdictStatus(edict.EdictID)
@@ -111,7 +111,7 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 	if result == "" {
 		t.Fatal("Expected non-empty result")
 	}
-	
+
 	// Verify edict is now sealed
 	sealService := storage.NewSealService(db)
 	status, err := sealService.GetEdictStatus(edict.EdictID)
@@ -168,7 +168,7 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 			t.Fatalf("failed to create edict: %v", err)
 		}
 	}
-	
+
 	// Create a pending zhengming for the second edict to make it blocked
 	zhengming := storage.Zhengming{
 		RequestID:  "test-blocked",
@@ -180,7 +180,7 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 	if err := db.Create(&zhengming).Error; err != nil {
 		t.Fatalf("failed to create zhengming: %v", err)
 	}
-	
+
 	// Seal the fourth edict
 	sealService := storage.NewSealService(db)
 	if err := sealService.GrantSeal(edicts[3].EdictID, "judge", storage.JSON{}); err != nil {

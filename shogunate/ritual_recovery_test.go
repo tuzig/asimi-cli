@@ -12,12 +12,12 @@ import (
 // TestRitualRecoveryDetection tests that aborted executions are detected for recovery
 func TestRitualRecoveryDetection(t *testing.T) {
 	db := setupRitualTestDB(t)
-	
+
 	// Migrate edict table (not done by setupRitualTestDB)
 	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
 		t.Fatalf("failed to migrate edict table: %v", err)
 	}
-	
+
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test recovery",
@@ -47,7 +47,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		CurrentStep: 1,
 		State:       RitualStateAborted,
 		Data: storage.JSON{
-			"inputs": map[string]interface{}{"edict_id": edictID},
+			"inputs":        map[string]interface{}{"edict_id": edictID},
 			"given_context": map[string]interface{}{"step1_result": "completed"},
 		},
 	}).Error
@@ -128,12 +128,12 @@ func TestRitualRecoveryDetection(t *testing.T) {
 // TestRitualRecoveryNoAbortedExecution tests that fresh start occurs when no aborted execution exists
 func TestRitualRecoveryNoAbortedExecution(t *testing.T) {
 	db := setupRitualTestDB(t)
-	
+
 	// Migrate edict table
 	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
 		t.Fatalf("failed to migrate edict table: %v", err)
 	}
-	
+
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test fresh start",
@@ -194,12 +194,12 @@ func TestRitualRecoveryNoAbortedExecution(t *testing.T) {
 // TestRitualRecoveryAllStepsComplete tests that recovery is skipped if all steps completed
 func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 	db := setupRitualTestDB(t)
-	
+
 	// Migrate edict table
 	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
 		t.Fatalf("failed to migrate edict table: %v", err)
 	}
-	
+
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test all complete",
@@ -292,12 +292,12 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 // TestRitualRecoveryWithRetry tests that steps with retries are considered incomplete
 func TestRitualRecoveryWithRetry(t *testing.T) {
 	db := setupRitualTestDB(t)
-	
+
 	// Migrate edict table
 	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
 		t.Fatalf("failed to migrate edict table: %v", err)
 	}
-	
+
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test retry",
@@ -391,12 +391,12 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 // TestRitualRecoveryLogMessage tests that recovery logs appropriate messages
 func TestRitualRecoveryLogMessage(t *testing.T) {
 	db := setupRitualTestDB(t)
-	
+
 	// Migrate edict table
 	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
 		t.Fatalf("failed to migrate edict table: %v", err)
 	}
-	
+
 	// Create test edict
 	edict := storage.Edict{
 		Intent: "Test log",

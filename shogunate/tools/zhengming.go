@@ -36,7 +36,7 @@ func (t RequestZhengmingTool) Description() string {
 
 func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID   uint                      `json:"edict_id"`
+		EdictID   uint                        `json:"edict_id"`
 		Questions []storage.ZhengmingQuestion `json:"questions"`
 		Priority  string                      `json:"priority"`
 	}

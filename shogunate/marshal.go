@@ -168,7 +168,7 @@ func (m *Marshal) execute(ctx context.Context, edictID uint) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("get edict status: %w", err)
 	}
-	
+
 	if status == storage.EdictActive {
 		// Hotfix needs expedited processing
 		m.logger.Info("marshal expediting hotfix", "edict_id", edictID)

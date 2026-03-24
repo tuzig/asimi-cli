@@ -193,7 +193,7 @@ func (s *Strategist) formatPlanForReview(lingList []storage.Ling) string {
 	var sb strings.Builder
 	sb.WriteString("Strategic Plan\n")
 	sb.WriteString("==============\n\n")
-	
+
 	for i, ling := range lingList {
 		sb.WriteString(fmt.Sprintf("%d. %s", i+1, ling.Description))
 		if len(ling.Dependencies) > 0 {
@@ -201,7 +201,7 @@ func (s *Strategist) formatPlanForReview(lingList []storage.Ling) string {
 		}
 		sb.WriteString("\n")
 	}
-	
+
 	return sb.String()
 }
 
