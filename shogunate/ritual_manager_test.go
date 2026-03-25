@@ -349,7 +349,7 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if len(notifications) != 1 {
 		t.Fatalf("expected 1 notification, got %d", len(notifications))
 	}
-	if notifications[0].Message != "Minister judge granted seal on edict 2" {
+	if notifications[0].Message != "Minister judge sealed edict 2" {
 		t.Errorf("unexpected message: %s", notifications[0].Message)
 	}
 	mu.Unlock()
@@ -429,7 +429,7 @@ func TestRitualGuard_BuildEventNotification(t *testing.T) {
 				EdictID: 3,
 				Payload: map[string]interface{}{"minister_id": "sage"},
 			},
-			expectMsg:   "Minister sage granted seal on edict 3",
+			expectMsg:   "Minister sage sealed edict 3",
 			expectTabID: "chancellor",
 		},
 		{

@@ -279,7 +279,11 @@ func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg 
 		if minister == "" {
 			minister = "Unknown"
 		}
-		msg.Message = fmt.Sprintf("Minister %s granted seal on edict %d", minister, event.EdictID)
+		if minister == "ruler" {
+			msg.Message = fmt.Sprintf("Ruler sealed edict %d", event.EdictID)
+		} else {
+			msg.Message = fmt.Sprintf("Minister %s sealed edict %d", minister, event.EdictID)
+		}
 
 	case storage.EventManifestCommitted:
 		msg.Message = fmt.Sprintf("Forge committed manifest for edict %d", event.EdictID)
