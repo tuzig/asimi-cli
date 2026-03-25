@@ -4,7 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"math/rand"
+	"time"
 
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -75,9 +76,10 @@ func (s *Strategist) Tools() []Tool {
 
 // InsertLing creates a new task order for an edict
 func (s *Strategist) InsertLing(ling *storage.Ling) error {
-	// Generate ling ID if not set
+	// Generate ling ID with random component to ensure uniqueness
 	if ling.LingID == "" {
-		ling.LingID = GenerateID("ling", fmt.Sprintf("%d", ling.EdictID), ling.Description)
+		ling.LingID = GenerateID("ling", fmt.Sprintf("%d", ling.EdictID),
+			ling.Description, time.Now().String(), fmt.Sprintf("%d", rand.Int63()))
 	}
 
 	if err := s.db.Create(ling).Error; err != nil {
@@ -110,155 +112,41 @@ func (s *Strategist) LingExistsForEdict(edictID uint) (bool, error) {
 	return count > 0, nil
 }
 
-// --- Execute Logic ---
-
-// execute runs the Strategist's planning logic for an edict (internal method)
-func (s *Strategist) execute(ctx context.Context, edictID uint) (bool, error) {
-	// Check if ling already exist (idempotency)
-	exists, err := s.LingExistsForEdict(edictID)
-	if err != nil {
-		return false, fmt.Errorf("check existing ling: %w", err)
-	}
-	if exists {
-		s.logger.Info("ling already exist, phase sealed", "edict_id", edictID)
-		return true, nil
+// streamTask creates a session (or reuses existing) and streams the task through the LLM.
+func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, string, error) {
+	notify := s.notify
+	if task.Notify != nil {
+		notify = task.Notify
 	}
 
-	// Get the edict
-	edict, err := s.GetEdict(edictID)
-	if err != nil {
-		return false, fmt.Errorf("get edict: %w", err)
-	}
+	var session *Session
+	var err error
 
-	// Check for ambiguity
-	if s.isAmbiguous(edict.Intent) {
-		questions := storage.ZhengmingQuestions{{
-			Text:    fmt.Sprintf("The edict \"%s\" is too brief. What should it do?", edict.Intent),
-			Options: []string{"Let me expand the requirements", "Proceed with best guess", "Cancel this edict"},
-		}}
-
-		requestID, err := s.RequestZhengming(edictID, questions, storage.PriorityUrgent)
+	if task.Session != nil {
+		session = task.Session
+		session.SetNotify(notify)
+		_, err = session.AskWithStreaming(ctx, task.Work, nil)
 		if err != nil {
-			return false, fmt.Errorf("request zhengming: %w", err)
+			return session, "", err
+		}
+	} else {
+		session, err = CreateSessionWithOpts(s, s.model, s.config, notify, CreateSessionOpts{
+			EdictID:    task.EdictID,
+			TabID:      "strategist",
+			Scratchpad: task.Scratchpad,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create strategist session: %w", err)
 		}
 
-		// Notify TUI
-		// TODO: Check if this can move to RequestZhengming?
-		if s.notify != nil {
-			s.notify(ZhengmingPendingMsg{
-				RequestID:  requestID,
-				EdictID:    edictID,
-				MinisterID: "strategist",
-				Questions:  questions,
-				Priority:   storage.PriorityUrgent,
-			})
-		}
-
-		// Return false to indicate we're waiting for clarification
-		// The ritual will pause and resume when zhengming_answered event is received
-		return false, nil
-	}
-
-	// Decompose into ling
-	lingList, err := s.decompose(ctx, edict)
-	if err != nil {
-		return false, fmt.Errorf("decompose: %w", err)
-	}
-
-	// Validate dependencies form a DAG
-	if err := s.validateDependencies(lingList); err != nil {
-		return false, fmt.Errorf("invalid dependencies: %w", err)
-	}
-
-	// Insert ling
-	for _, ling := range lingList {
-		if err := s.InsertLing(&ling); err != nil {
-			return false, fmt.Errorf("insert ling: %w", err)
+		_, err = session.AskWithStreaming(ctx, task.Work, nil)
+		if err != nil {
+			return session, "", err
 		}
 	}
 
-	s.logger.Info("planning complete", "edict_id", edictID, "ling_count", len(lingList))
-	return true, nil
-}
-
-// isAmbiguous checks if the intent has obvious ambiguity markers
-func (s *Strategist) isAmbiguous(intent string) bool {
-	// Simple heuristic: very short intents are likely ambiguous
-	return len(intent) < 20
-}
-
-// formatPlanForReview formats a list of ling into a human-readable plan for review
-func (s *Strategist) formatPlanForReview(lingList []storage.Ling) string {
-	var sb strings.Builder
-	sb.WriteString("Strategic Plan\n")
-	sb.WriteString("==============\n\n")
-
-	for i, ling := range lingList {
-		sb.WriteString(fmt.Sprintf("%d. %s", i+1, ling.Description))
-		if len(ling.Dependencies) > 0 {
-			sb.WriteString(fmt.Sprintf(" (depends on: %v)", ling.Dependencies))
-		}
-		sb.WriteString("\n")
-	}
-
-	return sb.String()
-}
-
-// decompose breaks down an edict into executable ling
-func (s *Strategist) decompose(ctx context.Context, edict *storage.Edict) ([]storage.Ling, error) {
-	if s.model == nil {
-		// Fallback: create a single ling for the whole edict
-		return []storage.Ling{{
-			EdictID:     edict.EdictID,
-			Description: edict.Intent,
-			Status:      storage.LingPending,
-		}}, nil
-	}
-
-	// Create a session with tools so the LLM can call insert_ling
-	session, err := CreateSessionWithOpts(s, s.model, s.config, s.notify, CreateSessionOpts{
-		EdictID: edict.EdictID,
-		TabID:   "strategist",
-		Scratchpad: "",
-	})
-	if err != nil {
-		s.logger.Warn("failed to create session for decomposition, using fallback", "error", err)
-		return []storage.Ling{{
-			EdictID:     edict.EdictID,
-			Description: edict.Intent,
-			Status:      storage.LingPending,
-		}}, nil
-	}
-
-	// Use streaming to allow the LLM to call insert_ling tool
-	prompt := "Decompose this edict into atomic, testable ling (task orders). Use the insert_ling tool for each step."
-	_, err = session.AskWithStreaming(ctx, prompt, nil)
-	if err != nil {
-		s.logger.Warn("LLM decomposition failed, using fallback", "error", err)
-		return []storage.Ling{{
-			EdictID:     edict.EdictID,
-			Description: edict.Intent,
-			Status:      storage.LingPending,
-		}}, nil
-	}
-
-	// Retrieve the ling that were inserted via the tool
-	lingList, err := s.GetLingForEdict(edict.EdictID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve inserted ling: %w", err)
-	}
-
-	if len(lingList) == 0 {
-		// Fallback if no ling were inserted
-		s.logger.Warn("no ling inserted by LLM, using fallback")
-		return []storage.Ling{{
-			EdictID:     edict.EdictID,
-			Description: edict.Intent,
-			Status:      storage.LingPending,
-		}}, nil
-	}
-
-	return lingList, nil
+	s.logger.Info("strategist task completed")
+	return session, "", nil
 }
 
 // validateDependencies ensures ling form a DAG (no cycles)
@@ -329,21 +217,34 @@ func (s *Strategist) processTask(ctx context.Context, task *Task) {
 		"edict_id", task.EdictID,
 		"work", task.Work)
 
-	// Execute the planning logic
-	sealed, err := s.execute(ctx, task.EdictID)
+	var output string
+	var taskErr error
+	var session *Session
 
-	// Send result back to Chancellor
+	if s.model != nil {
+		session, output, taskErr = s.streamTask(ctx, task)
+	} else {
+		output = "strategist task acknowledged (no LLM configured)"
+	}
+
+	// Validate ling dependencies after session completes
+	if taskErr == nil {
+		lingList, err := s.GetLingForEdict(task.EdictID)
+		if err == nil && len(lingList) > 0 {
+			if err := s.validateDependencies(lingList); err != nil {
+				taskErr = fmt.Errorf("invalid dependencies: %w", err)
+			}
+		}
+	}
+
 	result := Result{
 		MinisterID: s.ID(),
-		Sealed:     sealed,
-		Err:        err,
+		Sealed:     true,
+		Output:     output,
+		Session:    session,
+		Err:        taskErr,
 	}
 
-	if sealed {
-		result.Output = "planning complete"
-	}
-
-	// Send result (non-blocking)
 	select {
 	case task.Done <- result:
 	default:

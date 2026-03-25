@@ -97,7 +97,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	// Status is now derived - new edicts are active by default (no seals, no zhengming, not cancelled)
 }
 
-func TestStrategist_DecomposeEdict(t *testing.T) {
+func TestStrategist_ProcessTask(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -107,78 +107,25 @@ func TestStrategist_DecomposeEdict(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
-	// Create strategist
+	// Create strategist (no LLM)
 	strategist := NewStrategist(base)
 
-	// Execute planning (internal method)
-	sealed, err := strategist.execute(ctx, edict.EdictID)
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
+	// Send task via processTask with ritual-built Work
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:        ctx,
+		EdictID:    edict.EdictID,
+		Work:       "Analyze the edict and produce a Battle Plan.",
+		Scratchpad: "# Edict\nImplement user authentication",
+		Done:       doneCh,
 	}
-	if !sealed {
-		t.Error("Expected sealed after decomposition")
-	}
 
-	// Check ling was created
-	ling, err := strategist.GetLingForEdict(edict.EdictID)
-	if err != nil {
-		t.Fatalf("Failed to get ling: %v", err)
-	}
-	if len(ling) == 0 {
-		t.Error("Expected at least one ling")
-	}
-}
+	strategist.processTask(ctx, task)
+	result := <-doneCh
 
-func TestStrategist_AmbiguousIntent(t *testing.T) {
-	db := setupMinisterTestDB(t)
-	ctx := context.Background()
-
-	// Create edict with ambiguous intent
-	base := NewMinisterBase(db, nil, nil)
-	edict, err := CreateEdictForTest(db, "Fix it")
-	assert.NoError(t, err)
-	assert.NotNil(t, edict)
-
-	// Create strategist
-	strategist := NewStrategist(base)
-
-	// Capture notifications to get the requestID
-	var notifiedMsg ZhengmingPendingMsg
-	var notifyMu sync.Mutex
-	var answered sync.WaitGroup
-	answered.Add(1)
-	strategist.SetNotify(func(msg any) {
-		notifyMu.Lock()
-		defer notifyMu.Unlock()
-		if m, ok := msg.(ZhengmingPendingMsg); ok {
-			notifiedMsg = m
-			// Answer via the full DB path (HandleZhengmingResponse)
-			go func() {
-				defer answered.Done()
-				strategist.HandleZhengmingResponse(ctx, m.RequestID, "Let me expand the requirements")
-			}()
-		}
-	})
-
-	// Execute - should request zhengming and return immediately (not sealed)
-	sealed, err := strategist.execute(ctx, edict.EdictID)
-	require.NoError(t, err)
-	assert.False(t, sealed, "expected not sealed for ambiguous intent")
-
-	// Verify notification was sent with structured questions
-	notifyMu.Lock()
-	assert.NotEmpty(t, notifiedMsg.RequestID, "expected zhengming notification")
-	assert.NotEmpty(t, notifiedMsg.Questions, "expected structured questions")
-	notifyMu.Unlock()
-
-	// Wait for the answer to be processed
-	answered.Wait()
-
-	// Verify the DB was updated with answer and answered_at
-	var req storage.Zhengming
-	require.NoError(t, db.First(&req, "request_id = ?", notifiedMsg.RequestID).Error)
-	assert.Equal(t, storage.ZhengmingAnswered, req.Status)
-	assert.NotNil(t, req.AnsweredAt, "answered_at should be set")
+	assert.NoError(t, result.Err)
+	assert.True(t, result.Sealed)
+	assert.Contains(t, result.Output, "no LLM configured")
 }
 
 func TestJudge_VerdictFlow(t *testing.T) {
