@@ -172,7 +172,6 @@ func runInteractiveMode() error {
 	}
 
 	// fire an event to get the shogunate going
-	// NOTE: EventShogunateStarted is now fired in tui.go after LLM model initialization completes
 	// to avoid race condition where health check runs before model is ready
 	_, runErr := tuiProgram.Run()
 

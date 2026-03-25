@@ -1227,6 +1227,114 @@ func TestRunThenStep_Multiple(t *testing.T) {
 	}
 }
 
+func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
+	db := setupRitualTestDB(t)
+	
+	// Migrate edict and manifest tables
+	if err := db.AutoMigrate(&storage.Edict{}, &storage.ForgeManifest{}); err != nil {
+		t.Fatalf("failed to migrate edict/manifest tables: %v", err)
+	}
+	
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
+
+	// Create test edict
+	edict := storage.Edict{
+		SessionID: "test-session",
+		Intent:    "Test manifest staging",
+	}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Create test manifests for 3 files
+	manifests := []storage.ForgeManifest{
+		{ManifestID: "manifest-1", EdictID: edict.EdictID, FilePath: "shogunate/ritual.go", Status: storage.ManifestForged},
+		{ManifestID: "manifest-2", EdictID: edict.EdictID, FilePath: "shogunate/builtin_rituals.yaml", Status: storage.ManifestForged},
+		{ManifestID: "manifest-3", EdictID: edict.EdictID, FilePath: "shogunate/chancellor.go", Status: storage.ManifestForged},
+	}
+	for i := range manifests {
+		if err := db.Create(&manifests[i]).Error; err != nil {
+			t.Fatalf("failed to create manifest %d: %v", i, err)
+		}
+	}
+
+	// Mock runner to capture git add command
+	var stagedFiles string
+	mockRunner := &mockCmdRunner{
+		output:   "",
+		exitCode: "0",
+		onRun: func(cmd string) {
+			// Extract files from git add command
+			if strings.HasPrefix(cmd, "git add ") {
+				stagedFiles = strings.TrimPrefix(cmd, "git add ")
+			}
+		},
+	}
+	runner = NewRitualRunner(registry, nil, nil, db, mockRunner, nil)
+
+	// Create execution
+	exec := &RitualExecution{
+		ID:         "test-await-ruler-seal",
+		RitualName: "swift-strike",
+		EdictID:    edict.EdictID,
+	}
+
+	// Call await_ruler_seal handler
+	err := runner.runBuiltinThen(context.Background(), exec, "await_ruler_seal")
+	if err != nil {
+		t.Fatalf("runBuiltinThen(await_ruler_seal) error: %v", err)
+	}
+
+	// Verify only manifest files were staged
+	expectedFiles := "shogunate/ritual.go shogunate/builtin_rituals.yaml shogunate/chancellor.go"
+	if stagedFiles != expectedFiles {
+		t.Errorf("expected staged files %q, got %q", expectedFiles, stagedFiles)
+	}
+}
+
+func TestAwaitRulerSeal_NoManifests(t *testing.T) {
+	db := setupRitualTestDB(t)
+	
+	// Migrate edict and manifest tables
+	if err := db.AutoMigrate(&storage.Edict{}, &storage.ForgeManifest{}); err != nil {
+		t.Fatalf("failed to migrate edict/manifest tables: %v", err)
+	}
+	
+	registry := NewRitualRegistry()
+
+	// Create test edict with no manifests
+	edict := storage.Edict{
+		SessionID: "test-session",
+		Intent:    "Test no manifests",
+	}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Mock runner - should not be called
+	mockRunner := &mockCmdRunner{
+		output:   "",
+		exitCode: "0",
+		onRun: func(cmd string) {
+			t.Errorf("git add should not be called when no manifests exist, but got: %s", cmd)
+		},
+	}
+	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil)
+
+	exec := &RitualExecution{
+		ID:         "test-await-ruler-seal-empty",
+		RitualName: "swift-strike",
+		EdictID:    edict.EdictID,
+	}
+
+	// Call await_ruler_seal handler - should not error
+	err := runner.runBuiltinThen(context.Background(), exec, "await_ruler_seal")
+	if err != nil {
+		t.Fatalf("runBuiltinThen(await_ruler_seal) error with no manifests: %v", err)
+	}
+}
+
 func TestLoadBuiltinRituals(t *testing.T) {
 	rituals, err := LoadEmbeddedRituals()
 	if err != nil {
@@ -1570,9 +1678,13 @@ type mockCmdRunner struct {
 	output   string
 	exitCode string
 	err      error
+	onRun    func(string) // optional callback to capture command
 }
 
 func (m *mockCmdRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
+	if m.onRun != nil {
+		m.onRun(input.Command)
+	}
 	if m.err != nil {
 		return runners.Output{}, m.err
 	}

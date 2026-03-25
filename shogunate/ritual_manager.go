@@ -14,9 +14,10 @@ import (
 
 // HealthCheckResult represents the result of a startup health check
 type HealthCheckResult struct {
-	VersionOK   bool              `json:"version_ok"`
-	ModelOK     bool              `json:"model_ok"`
-	SandboxOK   bool              `json:"sandbox_ok"`
+	OK          bool              `json:"ok"`
+	ModelOK     bool              `json:"model_ok,omitempty"`
+	SandboxOK   bool              `json:"sandbox_ok,omitempty"`
+	Output      []string          `json:"output,omitempty"`
 	Failures    []string          `json:"failures,omitempty"`
 	Remediation map[string]string `json:"remediation,omitempty"`
 }
@@ -44,6 +45,15 @@ const (
 	// RitualContextBackground indicates a ritual running independently (event-driven).
 	RitualContextBackground RitualContextType = "background"
 )
+
+// EventNotificationMsg notifies the UI of significant Shogunate events
+type EventNotificationMsg struct {
+	TabID     string
+	EventType storage.ShogunateEvent
+	EdictID   uint
+	Message   string
+	Payload   map[string]interface{}
+}
 
 // RitualGuard processes events and owns ritual/event infrastructure
 type RitualGuard struct {
@@ -185,6 +195,9 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 	}
 	rg.eventRegistry.Dispatch(event)
 
+	// Send notification for significant events
+	rg.notifyEvent(event)
+
 	// Handle ritual enactment (from chancellor's enact_ritual tool)
 	if event.Type == storage.EventRitualEnacted {
 		ritualName, _ := event.Payload["ritual_name"].(string)
@@ -195,9 +208,9 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 			}
 		}
 		go func() {
-			// Rituals use background context so they survive new user messages on the Ruling tab.
-			// TODO: if this was enacted by the rulingSession, make it a foreground context
-			ctx := rg.backgroundCtx()
+			// Manual ritual invocations use streaming context so they're bound to the Ruling tab lifecycle.
+			// This allows CTRL-C to abort the ritual properly.
+			ctx := rg.streamingCtx()
 			rg.startRitual(ctx, ritualName, event.EdictID, inputs, RitualContextForeground)
 		}()
 		return
@@ -219,12 +232,77 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 			edictID := event.EdictID
 			inputs := map[string]string{"edict_id": fmt.Sprint(edictID)}
 			go func(r *RitualDef) {
-				// Event-driven rituals use background context (independent from Ruling tab)
-				ctx := rg.backgroundCtx()
-				rg.startRitual(ctx, r.Name, edictID, inputs, RitualContextBackground)
+				rg.startRitual(rg.streamingCtx(), r.Name, edictID, inputs, RitualContextForeground)
 			}(ritual)
 		}
 	}
+}
+
+// notifyEvent sends a notification to the UI for significant events
+func (rg *RitualGuard) notifyEvent(event Event) {
+	if rg.notify == nil {
+		return
+	}
+	msg := rg.buildEventNotification(event)
+	if msg.Message != "" {
+		rg.notify(msg)
+	}
+}
+
+// buildEventNotification maps event types to user-friendly notification messages
+func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg {
+	msg := EventNotificationMsg{
+		TabID:     "chancellor", // Default to chancellor/ruling tab
+		EventType: event.Type,
+		EdictID:   event.EdictID,
+		Payload:   event.Payload,
+	}
+
+	// Build message based on event type
+	switch event.Type {
+	case storage.EventEdictCreated:
+		intent, _ := event.Payload["intent"].(string)
+		if intent == "" {
+			intent = "New edict"
+		}
+		// Truncate long intents for display
+		if len(intent) > 60 {
+			intent = intent[:57] + "..."
+		}
+		msg.Message = fmt.Sprintf("Edict %d created: %s", event.EdictID, intent)
+
+	case storage.EventEdictSealed:
+		msg.Message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", event.EdictID)
+
+	case storage.EventSealGranted:
+		minister, _ := event.Payload["minister_id"].(string)
+		if minister == "" {
+			minister = "Unknown"
+		}
+		msg.Message = fmt.Sprintf("Minister %s granted seal on edict %d", minister, event.EdictID)
+
+	case storage.EventManifestCommitted:
+		msg.Message = fmt.Sprintf("Forge committed manifest for edict %d", event.EdictID)
+
+	case storage.EventZhengmingNeeded:
+		summary, _ := event.Payload["summary"].(string)
+		if summary == "" {
+			summary = "clarification needed"
+		}
+		msg.Message = fmt.Sprintf("Zhengming requested for edict %d: %s", event.EdictID, summary)
+
+	case storage.EventZhengmingAnswered:
+		if event.EdictID == 0 {
+			msg.Message = fmt.Sprintf("Zhengming answered for the court")
+		} else {
+			msg.Message = fmt.Sprintf("Zhengming answered for edict %d", event.EdictID)
+		}
+
+	case storage.EventEdictCancelled:
+		msg.Message = fmt.Sprintf("Edict %d cancelled", event.EdictID)
+	}
+
+	return msg
 }
 
 // Subscribe registers a handler for an event type.
@@ -235,19 +313,18 @@ func (rg *RitualGuard) Subscribe(eventType storage.ShogunateEvent, handler Event
 // RunHealthCheck performs startup health checks and returns the result
 func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 	result := &HealthCheckResult{
-		VersionOK:   true,
-		ModelOK:     true,
-		SandboxOK:   true,
+		Output:    []string{},
+		OK:     true,
 		Failures:    []string{},
 		Remediation: map[string]string{},
 	}
 
-	latest := event.Payload["latest_version"].(*selfupdate.Release)
-	hasUpdate := event.Payload["has_update"].(bool)
+	latest, _ := event.Payload["latest_version"].(*selfupdate.Release)
+	hasUpdate, _ := event.Payload["has_update"].(bool)
 
 	// Check 1: Version - Verify we can check for updates
 	// For dev versions, skip the check but still provide remediation info
-	if hasUpdate {
+	if hasUpdate && latest != nil {
 		result.Failures = append(result.Failures, fmt.Sprintf("Version %s available", latest.Version))
 	}
 	// Always provide version remediation message
@@ -328,20 +405,19 @@ func (rg *RitualGuard) getSandboxImageName() string {
 // handleStartup handles the shogunate_started event by running health checks
 func (rg *RitualGuard) handleStartup(event Event) {
 	result := rg.RunHealthCheck(event)
-	if result.ModelOK && result.SandboxOK {
+	if !result.OK {
 		// All checks passed - publish shogunate_ready event and notify via MinisterCompletedMsg
-		rg.notify(MinisterCompletedMsg{
-			MinisterID: "ritual_guard",
-			Output:     "Health checks passed: model and sandbox",
-		})
-	} else {
-		// Health check failed - notify via MinisterCompletedMsg with error details
 		rg.notify(MinisterCompletedMsg{
 			MinisterID: "ritual_guard",
 			Output:     "Health checks failed",
 			Error:      fmt.Errorf("%s", strings.Join(result.Failures, ", ")),
 		})
+		return
 	}
+	rg.notify(MinisterCompletedMsg{
+		MinisterID: "ritual_guard",
+		Output:     strings.Join(result.Output, "\n"),
+	})
 	// TODO: fix model health check and move this into the if above
 	rg.PublishEvent(0, storage.EventShogunateReady, storage.JSON{"checks": result})
 }
@@ -527,7 +603,8 @@ func (rg *RitualGuard) MoveToDLQ(event storage.TianEvent, errMsg string, retryCo
 	return nil
 }
 
-// scanForStaleRituals finds running rituals on sealed/cancelled edicts and aborts them
+// scanForStaleRituals finds running rituals on sealed/cancelled edicts and aborts them,
+// as well as rituals older than 1 hour (except edict 145)
 func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 	if rg.db == nil || rg.ritualRunner == nil {
 		return

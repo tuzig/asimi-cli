@@ -3,7 +3,7 @@ package shogunate
 import (
 	"bytes"
 	"context"
-    _ "embed"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +20,7 @@ import (
 	cucumberexpressions "github.com/cucumber/cucumber-expressions/go/v19"
 
 	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
@@ -195,6 +196,9 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"build the sandbox", "build_sandbox", "sandbox_build"},
 		{"the sandbox is ready", "verify_sandbox_ready", "sandbox_ready"},
 		{"the project metadata", "get_project_metadata", "project_metadata"},
+		{"the edict awaits ruler's seal", "await_ruler_seal", "awaiting_seal"},
+		{"record the judge's seal", "record_judge_seal", ""},
+		{"record the sage's seal", "record_sage_seal", ""},
 	}
 	for _, b := range builtins {
 		_ = r.Register(b.pattern, b.handlerKey, b.outputKey) // builtin patterns are known-good
@@ -2028,10 +2032,10 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 
 	// Write embedded templates to project root
 	files := map[string]string{
-		"Justfile":               dotagentsJustfile,
-		".agents/asimi.conf":     dotagentsAsimiConf,
+		"Justfile":                   dotagentsJustfile,
+		".agents/asimi.conf":         dotagentsAsimiConf,
 		".agents/sandbox/Dockerfile": dotagentsDockerfile,
-		".agents/sandbox/bashrc": dotagentsBashrc,
+		".agents/sandbox/bashrc":     dotagentsBashrc,
 	}
 
 	// Write files and track created paths
@@ -2070,15 +2074,44 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 		BypassApproval: true,
 	})
 	if err == nil {
-		// TODO: load the sandbox using podman runner and use it to run `just build`
-		return map[string]string{
-			"status": "ready",
-			"output": output.Output,
-		}, nil
+		// Reload the runner to pick up the newly built sandbox image
+		// TODO: Find a better way then reloading the config
+		cfg, loadErr := config.LoadConfig()
+		if loadErr != nil {
+			output.Output = "Failed to load configuration " + loadErr.Error()
+			goto fail
+		}
+		repoInfo := repo.GetRepoInfo()
+		r.runner = runners.InitShellRunner(&cfg.Sandbox, repoInfo)
+		if r.runner == nil {
+			output.Output = "container runner not available"
+			goto fail
+		}
+		if r.runner.RunnerType() != "podman" {
+			output.Output = "failed to bring the container up"
+			goto fail
+		}
+
+		// Run `just build` inside the sandbox to verify it works
+		output, err = r.runner.Run(ctx, runners.Input{
+			Command:        "just build",
+			Description:    "verify sandbox by building inside container",
+			BypassApproval: true,
+		})
+		if err == nil {
+			return map[string]string{
+				"status": "ready",
+				"output": output.Output,
+			}, nil
+		}
+
 	}
+fail:
 	return map[string]string{
 		"status": "failed",
-		"output": "sandbox verification failed. Start RCA with output and .agents/sandbox/Dockerfile: " + output.Output,
+		"output": `sandbox verification failed.
+			Start RCA with .agents/sandbox/Dockerfile and verification output:` +
+			output.Output,
 	}, fmt.Errorf("sandbox verification failed: %w", err)
 }
 
@@ -2199,6 +2232,68 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 		exec.Data["pending_zhengming"] = requestID
 		// Return sentinel so the caller can block until the ruler answers
 		return ErrZhengmingPending
+	case "the changes are staged":
+		// Stage all changes in the working directory (Borderlands → Middle Kingdom)
+		if r.runner == nil {
+			return fmt.Errorf("no runner configured for staging changes")
+		}
+		output, err := r.runner.Run(ctx, runners.Input{
+			Command:        "git add -A",
+			Description:    "stage all changes (Borderlands → Middle Kingdom)",
+			BypassApproval: true,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to stage changes: %w", err)
+		}
+		if output.ExitCode != "0" {
+			return fmt.Errorf("git add failed (exit %s): %s", output.ExitCode, output.Output)
+		}
+		return nil
+	case "await_ruler_seal":
+		// Stage only files from manifests (not git add -A)
+		var manifests []storage.ForgeManifest
+		if err := r.db.Where("edict_id = ?", exec.EdictID).Find(&manifests).Error; err != nil {
+			return fmt.Errorf("failed to query manifests: %w", err)
+		}
+
+		if len(manifests) > 0 {
+			// Extract file paths
+			files := make([]string, len(manifests))
+			for i, m := range manifests {
+				files[i] = m.FilePath
+			}
+
+			// Stage specific files
+			cmd := "git add " + strings.Join(files, " ")
+			output, err := r.runner.Run(ctx, runners.Input{
+				Command:        cmd,
+				Description:    "stage manifest files",
+				BypassApproval: true,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to stage manifests: %w", err)
+			}
+			if output.ExitCode != "0" {
+				return fmt.Errorf("git add failed (exit %s): %s", output.ExitCode, output.Output)
+			}
+		}
+
+		// TODO: Raise event - awaiting ruler's seat
+		return nil
+	case "record the judge's seal":
+		// Record the judge's seal on the edict
+		sealService := storage.NewSealService(r.db)
+		if err := sealService.GrantSeal(exec.EdictID, "judge", storage.JSON{"ritual": exec.RitualName}); err != nil {
+			return fmt.Errorf("failed to record judge's seal: %w", err)
+		}
+		return nil
+	case "record the sage's seal":
+		// Record the sage's seal on the edict
+		sealService := storage.NewSealService(r.db)
+		if err := sealService.GrantSeal(exec.EdictID, "sage", storage.JSON{"ritual": exec.RitualName}); err != nil {
+			return fmt.Errorf("failed to record sage's seal: %w", err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown then function: %s", fn)
 	}

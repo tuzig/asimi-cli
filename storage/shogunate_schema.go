@@ -174,7 +174,6 @@ const (
 	EventShogunateReady    ShogunateEvent = "shogunate_ready"
 	EventEdictAssigned     ShogunateEvent = "edict_assigned"
 	EventEdictCreated      ShogunateEvent = "edict_created"
-	EventPhaseChanged      ShogunateEvent = "phase_changed"
 	EventForgeCommitted    ShogunateEvent = "forge_committed"
 	EventManifestCommitted ShogunateEvent = "manifest_committed"
 	EventManifestRejected  ShogunateEvent = "manifest_rejected"

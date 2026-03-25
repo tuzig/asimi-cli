@@ -1771,6 +1771,33 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case shogunate.EventNotificationMsg:
+		chat := m.tabs.ChatByTab(msg.TabID)
+		chat.AddToRawHistory("EVENT_NOTIFICATION",
+			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictID, msg.Message))
+
+		// Use appropriate icon based on event type
+		icon := "📋" // Default
+		switch msg.EventType {
+		case storage.EventEdictCreated:
+			icon = "📜"
+		case storage.EventEdictSealed:
+			icon = "✅"
+		case storage.EventSealGranted:
+			icon = "🔒"
+		case storage.EventManifestCommitted:
+			icon = "🔨"
+		case storage.EventZhengmingNeeded:
+			icon = "❓"
+		case storage.EventZhengmingAnswered:
+			icon = "💬"
+		case storage.EventEdictCancelled:
+			icon = "⛔"
+		}
+
+		chat.AddMessage(fmt.Sprintf("%s%s %s", systemPrefix, icon, msg.Message))
+		return m, nil
+
 	case shogunate.StreamDoneMsg:
 		return m, nil
 
@@ -2205,6 +2232,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.shogunate.ConfigureModel(msg.model, cfg, repoInfo)
 			slog.Info("Shogunate configured with LLM model")
 		}
+
+		// Fire shogunate_started event to trigger wakeup ritual and health checks
+		m.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{})
 
 	case llmInitErrorMsg:
 		// LLM initialization failed

@@ -10,13 +10,13 @@
   background:
     - the edict details
   steps:
-    - name: forge
+    - name: forging
       minister: forge
       act: |
         Implement the changes for the edict below.
         Focus on minimal, targeted changes to fulfill the intent.
       on_failure: retry
-    - name: judge
+    - name: judging
       minister: judge
       given:
         - the manifests
@@ -26,13 +26,24 @@
         and that non trivial changes are justified by the edict.
         If tests fail, provide clear feedback for the Forge on what needs to be fixed.
         If changes are not covered by test, add the missing tests and write them so they ensure the changed code will always work.
-      depends_on: [forge]
+      depends_on: [forging]
       on_failure: goto
-      on_failure_target: forge
+      on_failure_target: forging
+    - name: censoring
+      minister: sage
+      given:
+        - the manifests
+        - the verdicts
+      act: |
+        Review the code changes for this edict.
+        Verify adherence to Imperial Code and project conventions.
+        Record precedents for any significant decisions.
+        Veto if changes violate conventions or introduce risk.
+      depends_on: [judging]
+      on_failure: goto
+      on_failure_target: forging
   then:
-    - record the judge's seal
-    - record the sage's seal
-    - the edict awaits the ruler's seal
+    - the edict awaits ruler's seal
 
 - name: castle-siege
   description: "A medium complexity 地 change with planning"
@@ -95,8 +106,7 @@
       on_failure: goto
       on_failure_target: forging
   then:
-    # TODO: what does it do?
-    - the edict awaits the ruler's seal
+    - the edict awaits ruler's seal
 
 - name: dawn-audience
   description: "Startup ritual - Chancellor reports court status on Shogunate boot, then requests zhengming"
