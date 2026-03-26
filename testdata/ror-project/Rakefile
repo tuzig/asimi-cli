@@ -1,0 +1,4 @@
+# Rakefile for Ruby on Rails project
+require_relative "config/application"
+
+Rails.application.load_tasks

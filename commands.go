@@ -353,9 +353,15 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
-	// Use the new workflow-based implementation
+	if model.shogunate == nil {
+		return func() tea.Msg {
+			return showContextMsg{content: "No model connection available. Please ensure a session is active."}
+		}
+	}
+	// Use edict 1 (Court Infrastructure) for project-init ritual
 	payload := storage.JSON{
 		"ritual_name": "project-init",
+		"edict_id":    1,
 	}
 	model.raiseShogunateEvent(storage.EventRitualEnacted, payload)
 	return nil

@@ -36,16 +36,6 @@ CRITICAL RULES:
 - Escalate urgent Zhengming that times out
 - Move failed events to DLQ after retries`
 
-// RitualContextType distinguishes between foreground and background ritual executions.
-type RitualContextType string
-
-const (
-	// RitualContextForeground indicates a ritual tied to the Ruling tab lifecycle (manual invoke).
-	RitualContextForeground RitualContextType = "foreground"
-	// RitualContextBackground indicates a ritual running independently (event-driven).
-	RitualContextBackground RitualContextType = "background"
-)
-
 // EventNotificationMsg notifies the UI of significant Shogunate events
 type EventNotificationMsg struct {
 	TabID     string
@@ -67,22 +57,21 @@ type RitualGuard struct {
 	batchSize      int
 	flatlineAge    time.Duration
 	// Dependency injection (replaces *Shogunate back-reference)
-	getMinister   func(id string) Minister
-	streamingCtx  func() context.Context
-	backgroundCtx func() context.Context
-	version       string // Application version for health checks
+	getMinister  func(id string) Minister
+	streamingCtx func() context.Context
+	version      string // Application version for health checks
 }
 
 // RitualGuardOpts configures a new RitualGuard.
 type RitualGuardOpts struct {
 	Base *MinisterBase
 	// TODO: remove chancellor as we have GetMinister("chancellor")
-	Chancellor    *Chancellor
-	Runner        runners.Runner
-	GetMinister   func(id string) Minister
-	StreamingCtx  func() context.Context
-	BackgroundCtx func() context.Context
-	Version       string // Application version for health checks
+	Chancellor      *Chancellor
+	Runner          runners.Runner
+	GetMinister     func(id string) Minister
+	OnRunnerUpgrade func(runners.Runner) // propagates runner changes back to shogunate
+	StreamingCtx    func() context.Context
+	Version         string // Application version for health checks
 }
 
 // NewRitualGuard creates a new Ritual Guard that owns all ritual/event infrastructure.
@@ -101,10 +90,9 @@ func NewRitualGuard(opts RitualGuardOpts) *RitualGuard {
 		maxRetries:     3,
 		batchSize:      100,
 		flatlineAge:    5 * time.Minute,
-		getMinister:    opts.GetMinister,
-		streamingCtx:   opts.StreamingCtx,
-		backgroundCtx:  opts.BackgroundCtx,
-		version:        opts.Version,
+		getMinister:  opts.GetMinister,
+		streamingCtx: opts.StreamingCtx,
+		version:      opts.Version,
 	}
 
 	// Create ritual runner with injected functions
@@ -116,6 +104,7 @@ func NewRitualGuard(opts RitualGuardOpts) *RitualGuard {
 		opts.Runner,
 		opts.Base.logger,
 	)
+	rg.ritualRunner.onRunnerUpgrade = opts.OnRunnerUpgrade
 
 	return rg
 }
@@ -163,14 +152,14 @@ func (rg *RitualGuard) PublishEvent(edictID uint, eventType storage.ShogunateEve
 	return edictID
 }
 
-// startRitual starts and runs a ritual with the given context type.
-func (rg *RitualGuard) startRitual(ctx context.Context, ritualName string, edictID uint, inputs map[string]string, contextType RitualContextType) {
+// startRitual starts and runs a ritual using the Ruling tab's streaming context.
+func (rg *RitualGuard) startRitual(ritualName string, edictID uint, inputs map[string]string) {
+	ctx := rg.streamingCtx()
 	exec, err := rg.ritualRunner.Start(ctx, ritualName, edictID, inputs, rg.notify)
 	if err != nil {
 		rg.logger.Warn("failed to start ritual", "ritual", ritualName, "error", err)
 		return
 	}
-	exec.ContextType = contextType
 	if err := rg.ritualRunner.Run(ctx, exec); err != nil {
 		rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
 		// TODO: notification should be pushed down to Ritual
@@ -181,14 +170,14 @@ func (rg *RitualGuard) startRitual(ctx context.Context, ritualName string, edict
 				ExecutionID: exec.ID,
 				EdictID:     edictID,
 				Status:      "ritual_failed",
-				Message:     err.Error(),
+				Message:     getRulersError(err),
 			})
 		}
 	}
 }
 
 // DispatchEvent dispatches an event to all subscribers and triggers event-driven rituals.
-// Event-driven rituals use backgroundCtx to run independently from the Ruling tab lifecycle.
+// All rituals run sequentially on the Ruling tab's streaming context.
 func (rg *RitualGuard) DispatchEvent(event Event) {
 	if rg.eventRegistry == nil {
 		return
@@ -207,12 +196,7 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 				inputs[k] = fmt.Sprintf("%v", v)
 			}
 		}
-		go func() {
-			// Manual ritual invocations use streaming context so they're bound to the Ruling tab lifecycle.
-			// This allows CTRL-C to abort the ritual properly.
-			ctx := rg.streamingCtx()
-			rg.startRitual(ctx, ritualName, event.EdictID, inputs, RitualContextForeground)
-		}()
+		rg.startRitual(ritualName, event.EdictID, inputs)
 		return
 	}
 	if event.Type == storage.EventShogunateStarted {
@@ -220,7 +204,7 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 	}
 
 	// Trigger event-driven rituals
-	if rg.ritualRegistry != nil && rg.ritualRunner != nil && rg.backgroundCtx != nil {
+	if rg.ritualRegistry != nil && rg.ritualRunner != nil {
 		rituals := rg.ritualRegistry.GetByEvent(string(event.Type))
 		sourceRitual, _ := event.Payload["ritual"].(string)
 		for _, ritual := range rituals {
@@ -231,9 +215,7 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 			}
 			edictID := event.EdictID
 			inputs := map[string]string{"edict_id": fmt.Sprint(edictID)}
-			go func(r *RitualDef) {
-				rg.startRitual(rg.streamingCtx(), r.Name, edictID, inputs, RitualContextForeground)
-			}(ritual)
+			rg.startRitual(ritual.Name, edictID, inputs)
 		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -934,4 +935,53 @@ func TestBuildSystemPrompt_GivenContext(t *testing.T) {
 	if strings.Contains(prompt, "# Given Context") {
 		t.Errorf("Expected no scratchpad without scratchpad param, got:\n%s", prompt)
 	}
+}
+
+// TestEnsureCourtInfrastructureEdict verifies that edict 1 is created on shogunate initialization
+func TestEnsureCourtInfrastructureEdict(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	// Verify edict 1 doesn't exist yet
+	var count int64
+	db.Model(&storage.Edict{}).Where("edict_id = ?", 1).Count(&count)
+	assert.Equal(t, int64(0), count, "edict 1 should not exist before shogunate creation")
+
+	// Create shogunate - this should create edict 1
+	cfg := config.DefaultShogunateConfig()
+	shogunate := NewShogunate(db, cfg, nil, nil)
+	require.NotNil(t, shogunate)
+
+	// Verify edict 1 was created
+	var edict storage.Edict
+	err := db.First(&edict, "edict_id = ?", 1).Error
+	assert.NoError(t, err, "edict 1 should exist after shogunate creation")
+	assert.Equal(t, "Court Infrastructure - reserved for system-level operations (init, bootstrap, etc.)", edict.Intent)
+	assert.Equal(t, "Court Infrastructure", edict.Summary)
+	assert.Equal(t, "court-infra", edict.IssueRef)
+
+	// Verify creating shogunate again doesn't create duplicate (idempotent)
+	shogunate2 := NewShogunate(db, cfg, nil, nil)
+	require.NotNil(t, shogunate2)
+
+	var count2 int64
+	db.Model(&storage.Edict{}).Where("edict_id = ?", 1).Count(&count2)
+	assert.Equal(t, int64(1), count2, "edict 1 should still exist only once")
+}
+
+// TestCreateEdict_DoesNotReserveEdict1 verifies that user edicts don't use edict 1
+func TestCreateEdict_DoesNotReserveEdict1(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	// Create shogunate with edict 1 already created
+	cfg := config.DefaultShogunateConfig()
+	shogunate := NewShogunate(db, cfg, nil, nil)
+
+	// Create a user edict
+	userEdict, err := shogunate.CreateEdict("user-issue", "Implement user feature")
+	assert.NoError(t, err)
+	assert.NotNil(t, userEdict)
+
+	// User edict should NOT be edict 1 (it should get auto-incremented ID)
+	assert.NotEqual(t, uint(1), userEdict.EdictID, "user edicts should not use reserved edict 1")
+	assert.Greater(t, userEdict.EdictID, uint(1), "user edict should have ID > 1")
 }

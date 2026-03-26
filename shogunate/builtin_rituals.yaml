@@ -152,9 +152,6 @@
         Produce a comprehensive code review report summarizing findings from both judge and sage.
         Highlight any blocking issues and suggest improvements.
       depends_on: [judge]
-  then:
-    - record the sage's seal
-    - the edict is sealed
 
 - name: lint-fix
   description: "Fix linter errors in parallel using fork/join"
@@ -229,20 +226,18 @@
         - the project metadata
         - the infrastructure templates
       act: |
-        Customize the infrastructure files created below:
-        
-        Created directories: {{.directories}}
-        Created files: {{.template_files}}
-        
+        Customize the infrastructure template files IN PLACE. Do NOT rewrite files from scratch —
+        use file_edit to modify specific lines while keeping all existing recipes and structure.
+
         Customize for this project:
-        - Justfile: Set PROJECT_NAME := "{{.project_slug}}"
+        - Justfile: Set PROJECT_NAME := "{{.project_slug}}", fill in TBD recipes. KEEP the build-sandbox and clean-sandbox recipes unchanged.
         - .agents/asimi.conf: Set image_name = "localhost/asimi-sandbox-{{.project_slug}}:latest"
-        - .agents/sandbox/Dockerfile: Replace {{.BaseImage}} with detected language image
+        - .agents/sandbox/Dockerfile: Replace CHANGE_ME with detected language base image (e.g. ruby:3.2, golang:1.22, python:3.12)
         - .agents/sandbox/bashrc: Adjust for project needs
         - {{.agentsFile}}: Add language and build conventions
-        
+
         Detect primary language from codebase (Gemfile→ruby, go.mod→go, requirements.txt→python).
-        
+
         Report what files were customized.
       then:
         - build the sandbox
@@ -285,4 +280,4 @@
       on_failure_target: establish-infrastructure
       then:
         - record the sage's seal
-        - "!git add {{.agentsFile}} Justfile .agents/"
+        - the infrastructure is staged

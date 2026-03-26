@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 
@@ -2026,4 +2028,264 @@ func TestEscapeDuringStreaming_StopsWaiting(t *testing.T) {
 	// Verify streaming was stopped
 	require.False(t, updatedModel.tabs.ActiveTab().Streaming, "streaming should be stopped after ESC")
 	require.False(t, updatedModel.waitingForResponse)
+}
+
+// TestInitCommandE2E verifies that typing :init in the TUI triggers the
+// project-init ritual through the full Shogunate event pipeline:
+// event dispatch → background checks → infrastructure template creation →
+// minister execution → git staging.
+func TestInitCommandE2E(t *testing.T) {
+	skipIfNotCI(t)
+
+	// 1. Set up a clean git repo in a temp directory
+	tmpDir := t.TempDir()
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(tmpDir))
+	t.Cleanup(func() { os.Chdir(originalWd) })
+	initTestGitRepo(t, tmpDir)
+
+	// Create AGENTS.md so the final "git add AGENTS.md Justfile .agents/" succeeds
+	require.NoError(t, os.WriteFile("AGENTS.md", []byte("# Project agents config\n"), 0644))
+	runTestGitCommand(t, tmpDir, "add", "AGENTS.md")
+	runTestGitCommand(t, tmpDir, "commit", "-m", "add AGENTS.md")
+
+	// 2. Set up infrastructure
+	db := setupTestGormDB(t)
+	// Provide enough responses for all minister steps (forge, judge, sage)
+	llm := fake.NewFakeLLM([]string{
+		"Infrastructure customized for the project.",
+		"Sandbox verified successfully.",
+		"Infrastructure review passed.",
+	})
+	runner := runners.NewHostRunner()
+
+	// 3. Create and start Shogunate with a host runner for bash then-steps
+	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
+	require.NoError(t, shog.Start(context.Background()))
+	t.Cleanup(func() { shog.Stop() })
+
+	// Keep only project-init ritual — clear startup/event-driven rituals
+	// so they don't interfere with the test
+	reg := shog.GetRitualRegistry()
+	initDef := reg.Get("project-init")
+	require.NotNil(t, initDef, "project-init ritual should be registered")
+	reg.Clear()
+	require.NoError(t, reg.Register(initDef))
+
+	// 4. Configure model so the ministers can create sessions
+	sessionCfg := &shogunate.SessionConfig{
+		LLM: config.LLMConfig{MaxTurns: 1},
+	}
+	shog.ConfigureModel(llm, sessionCfg, repo.RepoInfo{})
+
+	// 5. Create TUI model wired to the Shogunate
+	tuiConfig := mockConfig()
+	tuiConfig.LLM.Provider = "none" // Prevent Init() from overwriting test LLM
+	ri := &repo.RepoInfo{}
+	model := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, shog)
+	model.persistentPromptHistory = nil
+	model.initHistory()
+
+	// 6. Launch teatest program
+	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 50))
+
+	// 7. Wire Shogunate notifications to the Bubble Tea program
+	shog.SetNotify(func(msg any) { tm.Send(msg) })
+
+	// 8. Type :init and press Enter
+	tm.Type(":init")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// 9. Wait for establish-infrastructure to complete (step 1/3).
+	// The sandbox-ready step will fail with a fake LLM (can't build real image),
+	// so we only verify the event pipeline and infrastructure creation.
+	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		output := string(bts)
+		return strings.Contains(output, "1/3: establish-infrastructure")
+	}, teatest.WithCheckInterval(100*time.Millisecond), teatest.WithDuration(10*time.Second))
+
+	// 10. Verify infrastructure files were created on disk
+	for _, path := range []string{
+		"Justfile",
+		"AGENTS.md",
+		".agents/asimi.conf",
+		".agents/sandbox/Dockerfile",
+		".agents/sandbox/bashrc",
+	} {
+		_, err := os.Stat(path)
+		assert.NoError(t, err, "expected %s to exist after :init", path)
+	}
+
+	// 11. Verify files are staged (the ritual's final then-step runs "git add")
+	gitStatus := exec.Command("git", "status", "--porcelain")
+	gitStatus.Dir = tmpDir
+	statusOut, err := gitStatus.Output()
+	require.NoError(t, err)
+	status := string(statusOut)
+	assert.Contains(t, status, "Justfile", "Justfile should be staged after :init")
+	assert.Contains(t, status, ".agents/", ".agents/ should be staged after :init")
+
+	// 12. Clean up — send quit
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	time.Sleep(200 * time.Millisecond)
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+}
+
+// detectLLMProvider returns provider name, model, and API key from environment.
+// Returns empty strings if no LLM is configured.
+func detectLLMProvider() (provider, model, apiKey string) {
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		return "anthropic", "claude-sonnet-4-20250514", key
+	}
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		return "openai", "gpt-4.1-mini", key
+	}
+	return "", "", ""
+}
+
+// TestInitRitualWithLLM_E2E tests the full :init flow with a real LLM
+// against the testdata/ror-project demo. Only runs when LLM_E2E=1 is set.
+func TestInitRitualWithLLM_E2E(t *testing.T) {
+	if os.Getenv("LLM_E2E") == "" {
+		t.Skip("set LLM_E2E=1 to run real LLM integration tests")
+	}
+
+	provider, model, apiKey := detectLLMProvider()
+	if provider == "" {
+		t.Skip("no LLM API key found (set ANTHROPIC_API_KEY or OPENAI_API_KEY)")
+	}
+	t.Logf("using %s/%s", provider, model)
+
+	// 1. Set up a clean git repo with the ror-project demo
+	tmpDir := t.TempDir()
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	srcDir := filepath.Join(originalWd, "testdata", "ror-project")
+	// Copy demo project files into tmpDir
+	cpCmd := exec.Command("cp", "-r", srcDir+"/.", tmpDir)
+	require.NoError(t, cpCmd.Run(), "failed to copy testdata/ror-project")
+
+	require.NoError(t, os.Chdir(tmpDir))
+	t.Cleanup(func() { os.Chdir(originalWd) })
+	initTestGitRepo(t, tmpDir)
+	// Give the repo a remote so project_slug is populated
+	runTestGitCommand(t, tmpDir, "remote", "add", "origin", "https://github.com/testorg/ror-demo.git")
+
+	// 2. Set up infrastructure with a real LLM
+	db := setupTestGormDB(t)
+	runner := runners.NewHostRunner()
+
+	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
+	require.NoError(t, shog.Start(context.Background()))
+	t.Cleanup(func() { shog.Stop() })
+
+	// Keep only project-init ritual — clear before Init() fires
+	// EventShogunateStarted so startup rituals don't interfere
+	reg := shog.GetRitualRegistry()
+	initDef := reg.Get("project-init")
+	require.NotNil(t, initDef, "project-init ritual should be registered")
+	reg.Clear()
+	require.NoError(t, reg.Register(initDef))
+
+	// 3. Create TUI with real LLM config
+	tuiConfig := mockConfig()
+	tuiConfig.LLM.Provider = provider
+	tuiConfig.LLM.Model = model
+	tuiConfig.LLM.APIKey = apiKey
+	tuiConfig.LLM.MaxTurns = 10
+	ri := &repo.RepoInfo{}
+	tuiModel := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, shog)
+	tuiModel.persistentPromptHistory = nil
+	tuiModel.initHistory()
+
+	// 4. Launch teatest — Init() will connect to the real LLM
+	tm := teatest.NewTestModel(t, tuiModel, teatest.WithInitialTermSize(200, 50))
+	shog.SetNotify(func(msg any) { tm.Send(msg) })
+
+	// 5. Wait for LLM to connect (status bar shows ✅ when connected)
+	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		return strings.Contains(string(bts), "✅")
+	}, teatest.WithCheckInterval(200*time.Millisecond), teatest.WithDuration(15*time.Second))
+
+	// 6. Type :init and press Enter
+	tm.Type(":init")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// 7. Wait for the ritual to complete (or fail) — must finish before sandbox smoke test
+	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		output := string(bts)
+		return strings.Contains(output, "Ritual project-init completed") ||
+			strings.Contains(output, "Ritual project-init failed")
+	}, teatest.WithCheckInterval(1*time.Second), teatest.WithDuration(5*time.Minute))
+
+	// 8. Verify infrastructure files were created and customized
+	for _, path := range []string{
+		"Justfile",
+		".agents/asimi.conf",
+		".agents/sandbox/Dockerfile",
+		".agents/sandbox/bashrc",
+	} {
+		_, err := os.Stat(path)
+		assert.NoError(t, err, "expected %s to exist after :init", path)
+	}
+
+	// Verify the Dockerfile was customized — should have a real base image, not {{.BaseImage}}
+	dockerfileContent, err := os.ReadFile(".agents/sandbox/Dockerfile")
+	if assert.NoError(t, err) {
+		assert.NotContains(t, string(dockerfileContent), "CHANGE_ME",
+			"Dockerfile should have been customized by the LLM")
+		assert.Contains(t, string(dockerfileContent), "FROM ",
+			"Dockerfile should contain a FROM instruction with a real image")
+	}
+
+	// 9. Verify files are staged
+	gitStatus := exec.Command("git", "status", "--porcelain")
+	gitStatus.Dir = tmpDir
+	statusOut, err := gitStatus.Output()
+	require.NoError(t, err)
+	status := string(statusOut)
+	assert.Contains(t, status, "Justfile", "Justfile should be staged after :init")
+	assert.Contains(t, status, ".agents/", ".agents/ should be staged after :init")
+
+	// 10. Sandbox smoke test — verify the container is running
+	tm.Type(":!echo $container")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		return strings.Contains(string(bts), "podman")
+	}, teatest.WithCheckInterval(500*time.Millisecond), teatest.WithDuration(30*time.Second))
+
+	// 11. Clean up
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	time.Sleep(200 * time.Millisecond)
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+}
+
+func initTestGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	runTestGitCommand(t, dir, "init")
+	runTestGitCommand(t, dir, "config", "user.email", "test@test.com")
+	runTestGitCommand(t, dir, "config", "user.name", "Test")
+
+	if err := os.WriteFile(dir+"/initial.txt", []byte("initial"), 0644); err != nil {
+		t.Fatalf("Failed to create initial file: %v", err)
+	}
+	runTestGitCommand(t, dir, "add", "-A")
+	runTestGitCommand(t, dir, "commit", "-m", "initial")
+}
+
+func runTestGitCommand(t *testing.T, dir string, args ...string) {
+	t.Helper()
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_DATE=2024-01-01T00:00:00Z",
+		"GIT_COMMITTER_DATE=2024-01-01T00:00:00Z",
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\nOutput: %s", args, err, output)
+	}
 }

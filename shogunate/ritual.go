@@ -86,6 +86,18 @@ type ZhengmingAnswer struct {
 	EdictID   uint
 }
 
+// getRulersError returns a user-friendly error message.
+// Context cancellation errors are translated to "cancelled by ruler".
+func getRulersError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled by ruler"
+	}
+	return err.Error()
+}
+
 // RitualDef represents a YAML-defined ritual
 type RitualDef struct {
 	Name        string              `yaml:"name"`
@@ -197,6 +209,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the sandbox is ready", "verify_sandbox_ready", "sandbox_ready"},
 		{"the project metadata", "get_project_metadata", "project_metadata"},
 		{"the edict awaits ruler's seal", "await_ruler_seal", "awaiting_seal"},
+		{"the infrastructure is staged", "stage_infrastructure", "infrastructure_staged"},
 		{"record the judge's seal", "record_judge_seal", ""},
 		{"record the sage's seal", "record_sage_seal", ""},
 	}
@@ -508,14 +521,15 @@ func LoadRitualsFromDir(dir string) ([]*RitualDef, error) {
 
 // RitualRunner executes rituals
 type RitualRunner struct {
-	registry     *RitualRegistry
-	stepDefs     *StepDefRegistry
-	getMinister  func(id string) Minister
-	publishEvent func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint
-	db           *gorm.DB
-	runner       runners.Runner
-	logger       *slog.Logger
-	maxRetries   int
+	registry        *RitualRegistry
+	stepDefs        *StepDefRegistry
+	getMinister     func(id string) Minister
+	publishEvent    func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint
+	onRunnerUpgrade func(runners.Runner) // propagates runner changes back to shogunate
+	db              *gorm.DB
+	runner          runners.Runner
+	logger          *slog.Logger
+	maxRetries      int
 
 	pendingZhengming   map[string]chan ZhengmingAnswer
 	pendingZhengmingMu sync.Mutex
@@ -627,7 +641,6 @@ type RitualExecution struct {
 	CurrentStep int               `gorm:"column:current_step"`
 	State       RitualState       `gorm:"column:state"`
 	Data        storage.JSON      `gorm:"column:data;type:json"`
-	ContextType RitualContextType `gorm:"column:context_type"`
 	CreatedAt   time.Time         `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt   time.Time         `gorm:"column:updated_at;autoUpdateTime"`
 
@@ -674,12 +687,11 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uin
 		return nil, fmt.Errorf("failed to get ritual %s", ritualName)
 	}
 	for name, inputDef := range def.Inputs {
-		if inputDef.Required {
-			if _, ok := inputs[name]; !ok {
-				if inputDef.Default == "" {
-					return nil, fmt.Errorf("required input %q not provided", name)
-				}
+		if _, ok := inputs[name]; !ok {
+			if inputDef.Default != "" {
 				inputs[name] = inputDef.Default
+			} else if inputDef.Required {
+				return nil, fmt.Errorf("required input %q not provided", name)
 			}
 		}
 	}
@@ -996,7 +1008,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 					StepIndex:   exec.CurrentStep,
 					TotalSteps:  len(exec.def.Steps),
 					Status:      "failed",
-					Message:     err.Error(),
+					Message:     getRulersError(err),
 				})
 			}
 
@@ -1024,7 +1036,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 						StepIndex:   exec.CurrentStep,
 						TotalSteps:  len(exec.def.Steps),
 						Status:      "ritual_failed",
-						Message:     err.Error(),
+						Message:     getRulersError(err),
 					})
 				}
 				// Emit ritual_failed Tian event
@@ -1796,7 +1808,7 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 		}
 		return r.arrangeGetEdict(exec.EdictID)
 	case "get_court_status":
-		return r.arrangeGetCourtStatus(exec.EdictID)
+		return r.getCourtStatus(exec.EdictID)
 	case "get_manifests":
 		return r.arrangeGetManifests(exec.EdictID)
 	case "get_verdicts":
@@ -1839,34 +1851,25 @@ func (r *RitualRunner) arrangeGetEdict(edictID uint) (interface{}, error) {
 	}, nil
 }
 
-func (r *RitualRunner) arrangeGetCourtStatus(edictID uint) (interface{}, error) {
-	// Get all edicts and filter by derived status
-	var edicts []storage.Edict
-	if err := r.db.Find(&edicts).Error; err != nil {
-		return nil, err
-	}
-
-	sealService := storage.NewSealService(r.db)
+func (r *RitualRunner) getCourtStatus(edictID uint) (interface{}, error) {
+	// Use a single SQL query to fetch and filter edicts by derived status
 	var result []map[string]interface{}
-
-	for _, e := range edicts {
-		status, err := sealService.GetEdictStatus(e.EdictID)
-		if err != nil {
-			continue // skip edicts with errors
-		}
-		// Only include non-sealed and non-cancelled edicts
-		if status == storage.EdictSealed || status == storage.EdictCancelled {
-			continue
-		}
-		result = append(result, map[string]interface{}{
-			"edict_id":   e.EdictID,
-			"session_id": e.SessionID,
-			"issue_ref":  e.IssueRef,
-			"intent":     e.Intent,
-			"status":     string(status),
-			"created_at": e.CreatedAt,
-			"updated_at": e.UpdatedAt,
-		})
+	query := `
+SELECT 
+    e.edict_id, e.session_id, e.issue_ref, e.intent, e.created_at, e.updated_at,
+    CASE 
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.minister_id = 'ruler') THEN 'sealed'
+        WHEN EXISTS (SELECT 1 FROM zhengming_requests z WHERE z.edict_id = e.edict_id AND z.status = 'pending') THEN 'blocked'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.minister_id = 'confucius') THEN 'active'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.minister_id = 'judge') THEN 'active'
+        ELSE 'active'
+    END as status
+FROM edicts e
+WHERE NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.minister_id = 'ruler')
+ORDER BY e.updated_at DESC
+`
+	if err := r.db.Raw(query).Scan(&result).Error; err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -1943,54 +1946,34 @@ func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) 
 		"earth_status:borderlands":    "",
 	}
 
-	if r.runner == nil {
-		return result, nil // Return empty values if no runner available
+	// Git operations always run on host (not in sandbox)
+	gitRun := func(cmd, desc string) string {
+		output, err := runners.HostRun(ctx, runners.Input{
+			Command:        cmd,
+			Description:    desc,
+			BypassApproval: true,
+		})
+		if err == nil {
+			return output.Output
+		}
+		return ""
 	}
 
-	// The capital: git log (recent commits)
-	capitalOutput, err := r.runner.Run(ctx, runners.Input{
-		Command:        "git log --oneline -20",
-		Description:    "get capital status (git log)",
-		BypassApproval: true,
-	})
-	if err == nil {
-		result["earth_status:capital"] = capitalOutput.Output
-	}
-
-	// The middle kingdom: git diff --staged
-	middleKingdomOutput, err := r.runner.Run(ctx, runners.Input{
-		Command:        "git diff --staged",
-		Description:    "get middle kingdom (git diff --staged)",
-		BypassApproval: true,
-	})
-	if err == nil {
-		result["earth_status:middle_kingdom"] = middleKingdomOutput.Output
-	}
-
-	// The borderlands: git diff
-	borderlandsOutput, err := r.runner.Run(ctx, runners.Input{
-		Command:        "git diff",
-		Description:    "get earth status: borderlands (git diff)",
-		BypassApproval: true,
-	})
-	if err == nil {
-		result["earth_status:borderlands"] = borderlandsOutput.Output
-	}
+	result["earth_status:capital"] = gitRun("git log --oneline -20", "get capital status (git log)")
+	result["earth_status:middle_kingdom"] = gitRun("git diff --staged", "get middle kingdom (git diff --staged)")
+	result["earth_status:borderlands"] = gitRun("git diff", "get earth status: borderlands (git diff)")
 
 	return result, nil
 }
 
 // getBorderlands captures unstaged changes and untracked files.
 func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) {
-	if r.runner == nil {
-		return "", nil
-	}
 	result := map[string]string{
 		"borderlands:changes":   "",
 		"borderlands:untracked": "",
 	}
-	// Unstaged changes
-	diff, err := r.runner.Run(ctx, runners.Input{
+	// Git operations always run on host
+	diff, err := runners.HostRun(ctx, runners.Input{
 		Command:        "git diff",
 		Description:    "get borderlands (git diff)",
 		BypassApproval: true,
@@ -1998,8 +1981,7 @@ func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) 
 	if err == nil {
 		result["borderlands:changes"] = diff.Output
 	}
-	// Untracked files
-	untracked, err := r.runner.Run(ctx, runners.Input{
+	untracked, err := runners.HostRun(ctx, runners.Input{
 		Command:        "git ls-files --others --exclude-standard",
 		Description:    "get borderlands (untracked files)",
 		BypassApproval: true,
@@ -2038,9 +2020,13 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 		".agents/sandbox/bashrc":     dotagentsBashrc,
 	}
 
-	// Write files and track created paths
+	// Write files that don't already exist and track created paths
 	createdFiles := []string{}
 	for destPath, content := range files {
+		if _, err := os.Stat(destPath); err == nil {
+			// File already exists (e.g. from a previous attempt) — don't overwrite LLM customizations
+			continue
+		}
 		if err := os.WriteFile(destPath, []byte(content), 0o644); err != nil {
 			return nil, fmt.Errorf("failed to write %s: %w", destPath, err)
 		}
@@ -2073,6 +2059,10 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 		Description:    "build the sandbox",
 		BypassApproval: true,
 	})
+	if err == nil && output.ExitCode != "0" {
+		r.logger.Warn("build-sandbox failed", "exit_code", output.ExitCode, "output", output.Output)
+		err = fmt.Errorf("build-sandbox exited with code %s: %s", output.ExitCode, output.Output)
+	}
 	if err == nil {
 		// Reload the runner to pick up the newly built sandbox image
 		// TODO: Find a better way then reloading the config
@@ -2083,6 +2073,9 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 		}
 		repoInfo := repo.GetRepoInfo()
 		r.runner = runners.InitShellRunner(&cfg.Sandbox, repoInfo)
+		if r.runner != nil && r.onRunnerUpgrade != nil {
+			r.onRunnerUpgrade(r.runner)
+		}
 		if r.runner == nil {
 			output.Output = "container runner not available"
 			goto fail
@@ -2099,6 +2092,19 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 			BypassApproval: true,
 		})
 		if err == nil {
+			// Run `just test` as non-blocking smoke test
+			testOutput, testErr := r.runner.Run(ctx, runners.Input{
+				Command:        "just test",
+				Description:    "smoke test: verify tests run in sandbox",
+				BypassApproval: true,
+			})
+			if testErr == nil && testOutput.ExitCode != "0" {
+				r.logger.Warn("just test failed (non-blocking during init)",
+					"exit_code", testOutput.ExitCode,
+					"output", testOutput.Output)
+				// Don't return error - tests are optional during project init
+				// They may fail due to missing dependencies or incomplete setup
+			}
 			return map[string]string{
 				"status": "ready",
 				"output": output.Output,
@@ -2119,23 +2125,35 @@ fail:
 func (r *RitualRunner) getProjectMetadata(ctx context.Context) (interface{}, error) {
 	repoInfo := repo.GetRepoInfo()
 
+	// Use ProjectRoot if available, fall back to cwd for remote URL lookup
+	root := repoInfo.ProjectRoot
+	if root == "" {
+		root, _ = os.Getwd()
+	}
+
 	// Parse host, org, project from remote URL
 	host, org, project := "local", "local", "unknown"
-	if remote, err := repo.GitRemoteOriginURL(repoInfo.ProjectRoot); err == nil && remote != "" {
+	if remote, err := repo.GitRemoteOriginURL(root); err == nil && remote != "" {
 		host, org, project = parseHostOrgProject(remote)
 	}
 
+	// Derive slug: prefer repoInfo.Slug, fall back to org-project from remote
+	slug := repoInfo.Slug
+	if slug == "" && org != "local" && project != "unknown" {
+		slug = org + "-" + project
+	}
+
 	// Extract project name from slug
-	projectName := repoInfo.Slug
-	if idx := strings.LastIndex(repoInfo.Slug, "/"); idx >= 0 {
-		projectName = repoInfo.Slug[idx+1:]
+	projectName := slug
+	if idx := strings.LastIndex(slug, "-"); idx >= 0 {
+		projectName = slug[idx+1:]
 	}
 	if projectName == "" {
 		projectName = "unknown"
 	}
 
 	return map[string]string{
-		"project_slug": repoInfo.Slug,
+		"project_slug": slug,
 		"project_name": projectName,
 		"branch":       repoInfo.Branch,
 		"host":         host,
@@ -2172,6 +2190,28 @@ func parseHostOrgProject(remote string) (host, org, project string) {
 
 // runBuiltinThen runs a builtin then function (extensible via step registry)
 func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution, fn string) error {
+	// Non-edict operations run regardless of EdictID
+	switch fn {
+	case "verify_sandbox_ready":
+		_, err := r.verifySandboxReady(ctx)
+		return err
+	case "stage_infrastructure":
+		// Stage infrastructure files on the host (git runs on host, not in sandbox)
+		output, err := runners.HostRun(ctx, runners.Input{
+			Command:        "git add AGENTS.md Justfile .agents/",
+			Description:    "stage infrastructure files",
+			BypassApproval: true,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to stage infrastructure: %w", err)
+		}
+		if output.ExitCode != "0" {
+			return fmt.Errorf("git add failed (exit %s): %s", output.ExitCode, output.Output)
+		}
+		return nil
+	}
+
+	// Edict-specific operations require an active edict
 	if exec.EdictID == 0 {
 		r.logger.Debug("skipping edict operation for system ritual", "fn", fn)
 		return nil
@@ -2533,9 +2573,14 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 	data := map[string]interface{}{
 		"edict_id": exec.EdictID,
 	}
-	// Merge inputs into template data
+	// Merge inputs into template data (map[string]string from Start(), map[string]interface{} after DB round-trip)
 	if exec.Data != nil {
-		if inputs, ok := exec.Data["inputs"].(map[string]interface{}); ok {
+		switch inputs := exec.Data["inputs"].(type) {
+		case map[string]interface{}:
+			for k, v := range inputs {
+				data[k] = v
+			}
+		case map[string]string:
 			for k, v := range inputs {
 				data[k] = v
 			}

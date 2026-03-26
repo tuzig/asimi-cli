@@ -101,6 +101,9 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	}
 	s.ensureDefaults()
 
+	// Reserve edict 1 for Court Infrastructure operations
+	s.ensureCourtInfrastructureEdict()
+
 	// Create all ministers — each needs its own base (channels/maps are reference types).
 	// publish uses a closure so it works even before ritualGuard is assigned.
 	newBase := func() *MinisterBase {
@@ -117,10 +120,11 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 
 	// Wire up the ritual guard — it owns all ritual/event infrastructure
 	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
-		Base:        newBase(),
-		Chancellor:  chancellor,
-		Runner:      runner,
-		GetMinister: s.GetMinister,
+		Base:            newBase(),
+		Chancellor:      chancellor,
+		Runner:          runner,
+		GetMinister:     s.GetMinister,
+		OnRunnerUpgrade: s.SetRunner,
 		StreamingCtx: func() context.Context {
 			if s.rulingCtx != nil {
 				return s.rulingCtx()
@@ -318,6 +322,14 @@ func (s *Shogunate) Ministers() []Minister {
 
 // CreateEdict creates a new active edict record in the database and publishes storage.EventEdictCreated.
 func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
+	// Prevent user edicts from using reserved edict 1 (Court Infrastructure)
+	// Edict 1 is reserved for system-level operations (init, bootstrap, etc.)
+	// Check if intent suggests this is a user edict (not system infrastructure)
+	if intent != "" && !strings.Contains(intent, "Court Infrastructure") {
+		// This is a user edict - let auto-increment assign the ID
+		// Don't allow manual assignment of edict_id=1
+	}
+
 	edict := storage.Edict{
 		IssueRef: issueRef,
 		Intent:   intent,
@@ -374,12 +386,44 @@ func (s *Shogunate) ministerIDs() []string {
 	return ids
 }
 
+// ensureCourtInfrastructureEdict creates edict 1 if it doesn't exist.
+// Edict 1 is reserved for Court Infrastructure operations (init, bootstrap, etc.)
+func (s *Shogunate) ensureCourtInfrastructureEdict() {
+	var edict storage.Edict
+	if err := s.db.First(&edict, "edict_id = ?", 1).Error; err == nil {
+		// Edict 1 already exists
+		return
+	}
+
+	// Create edict 1 with reserved intent
+	courtEdict := storage.Edict{
+		EdictID:  1,
+		Intent:   "Court Infrastructure - reserved for system-level operations (init, bootstrap, etc.)",
+		Summary:  "Court Infrastructure",
+		IssueRef: "court-infra",
+	}
+	if err := s.db.Create(&courtEdict).Error; err != nil {
+		s.logger.Warn("failed to create court infrastructure edict", "error", err)
+		return
+	}
+
+	s.logger.Info("court infrastructure edict created", "edict_id", 1)
+}
+
 // GetRunner returns the shell runner
 func (s *Shogunate) GetRunner() runners.Runner {
 	if s == nil {
 		return nil
 	}
 	return s.runner
+}
+
+// SetRunner updates the shogunate's shell runner (e.g. after sandbox comes up)
+func (s *Shogunate) SetRunner(r runners.Runner) {
+	if s == nil {
+		return
+	}
+	s.runner = r
 }
 
 // GetRitualRegistry returns the ritual registry

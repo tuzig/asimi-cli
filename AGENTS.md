@@ -11,6 +11,15 @@
 - **Inline comments**: Only for non-trivial code
 - **Commit message **: start with "bug:", "feat:" or "chore:", follow by short description and end with "e123" for edict 123
 
+## Reserved Edict IDs
+
+**Edict 1** is reserved for **Court Infrastructure** operations:
+- System-level operations (init, bootstrap, project setup)
+- Infrastructure decisions and precedents
+- The `:init` command uses edict 1 for the `project-init` ritual
+
+This ensures system operations have proper audit trails and prevents edict_id=0 from breaking precedent tracking.
+
 ## Common Commands
 
 ```bash
