@@ -59,7 +59,7 @@ func (f *Forge) Tools() []Tool {
 		&CreateManifestTool{forge: f},
 	}
 	// Add file-based tools
-	for _, t := range tools.GetFileTools() {
+	for _, t := range tools.GetFileTools(f.config.LLM) {
 		toolList = append(toolList, t)
 	}
 	// Add shell command tool if runner is available
@@ -181,6 +181,7 @@ func (f *Forge) Run(ctx context.Context) {
 			f.logger.Info("forge stopped")
 			return
 		case task := <-f.tasks:
+			// TODO: This looks off, too much context management
 			merged, mergedCancel := context.WithCancel(ctx)
 			if task.Ctx != nil {
 				context.AfterFunc(task.Ctx, func() { mergedCancel() })

@@ -2052,8 +2052,10 @@ func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 	return map[string]string{"status": "built", "output": output.Output}, nil
 }
 
-// verifySandboxReady builds the sandbox and appends RCA guidance on failure
+// verifySandboxReady builds the sandbox and verifies it is ready for use.
+// It distinguishes between configuration failures (blocking) and transient failures (non-blocking).
 func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, error) {
+	// Step 1: Build the sandbox container image
 	output, err := runners.HostRun(ctx, runners.Input{
 		Command:        "just build-sandbox",
 		Description:    "build the sandbox",
@@ -2063,62 +2065,95 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 		r.logger.Warn("build-sandbox failed", "exit_code", output.ExitCode, "output", output.Output)
 		err = fmt.Errorf("build-sandbox exited with code %s: %s", output.ExitCode, output.Output)
 	}
-	if err == nil {
-		// Reload the runner to pick up the newly built sandbox image
-		// TODO: Find a better way then reloading the config
-		cfg, loadErr := config.LoadConfig()
-		if loadErr != nil {
-			output.Output = "Failed to load configuration " + loadErr.Error()
-			goto fail
-		}
-		repoInfo := repo.GetRepoInfo()
-		r.runner = runners.InitShellRunner(&cfg.Sandbox, repoInfo)
-		if r.runner != nil && r.onRunnerUpgrade != nil {
-			r.onRunnerUpgrade(r.runner)
-		}
-		if r.runner == nil {
-			output.Output = "container runner not available"
-			goto fail
-		}
-		if r.runner.RunnerType() != "podman" {
-			output.Output = "failed to bring the container up"
-			goto fail
-		}
-
-		// Run `just build` inside the sandbox to verify it works
-		output, err = r.runner.Run(ctx, runners.Input{
-			Command:        "just build",
-			Description:    "verify sandbox by building inside container",
-			BypassApproval: true,
-		})
-		if err == nil {
-			// Run `just test` as non-blocking smoke test
-			testOutput, testErr := r.runner.Run(ctx, runners.Input{
-				Command:        "just test",
-				Description:    "smoke test: verify tests run in sandbox",
-				BypassApproval: true,
-			})
-			if testErr == nil && testOutput.ExitCode != "0" {
-				r.logger.Warn("just test failed (non-blocking during init)",
-					"exit_code", testOutput.ExitCode,
-					"output", testOutput.Output)
-				// Don't return error - tests are optional during project init
-				// They may fail due to missing dependencies or incomplete setup
-			}
-			return map[string]string{
-				"status": "ready",
-				"output": output.Output,
-			}, nil
-		}
-
+	if err != nil {
+		return map[string]string{
+			"status": "failed",
+			"output": "sandbox build failed. Start RCA with .agents/sandbox/Dockerfile and build output:\n" + output.Output,
+		}, fmt.Errorf("sandbox build failed: %w", err)
 	}
-fail:
+
+	// Step 2: Reload the runner to pick up the newly built sandbox image
+	// TODO: Find a better way then reloading the config
+	cfg, loadErr := config.LoadConfig()
+	if loadErr != nil {
+		return map[string]string{
+			"status": "failed",
+			"output": "failed to load configuration: " + loadErr.Error(),
+		}, fmt.Errorf("failed to load configuration: %w", loadErr)
+	}
+	repoInfo := repo.GetRepoInfo()
+	r.runner = runners.InitShellRunner(&cfg.Sandbox, repoInfo)
+	if r.runner == nil {
+		return map[string]string{
+			"status": "failed",
+			"output": "container runner not available",
+		}, fmt.Errorf("container runner not available")
+	}
+	if r.runner.RunnerType() != "podman" {
+		return map[string]string{
+			"status": "failed",
+			"output": "failed to bring the container up",
+		}, fmt.Errorf("container runner type is %s, expected podman", r.runner.RunnerType())
+	}
+
+	// Step 3: Install dependencies inside the sandbox (BLOCKING - configuration failure)
+	installOutput, installErr := r.runner.Run(ctx, runners.Input{
+		Command:        "just install",
+		Description:    "install dependencies in sandbox",
+		BypassApproval: true,
+	})
+	if installErr == nil && installOutput.ExitCode != "0" {
+		r.logger.Error("just install failed",
+			"exit_code", installOutput.ExitCode,
+			"output", installOutput.Output)
+		return map[string]string{
+			"status": "failed",
+			"output": "dependency installation failed. Start RCA with dependency versions and install output:\n" + installOutput.Output,
+		}, fmt.Errorf("just install failed with exit code %s: %s", installOutput.ExitCode, installOutput.Output)
+	}
+	if installErr != nil {
+		r.logger.Error("just install failed", "error", installErr)
+		return map[string]string{
+			"status": "failed",
+			"output": "dependency installation failed: " + installErr.Error(),
+		}, fmt.Errorf("just install failed: %w", installErr)
+	}
+
+	// Step 4: Build inside the sandbox to verify it works (BLOCKING)
+	output, err = r.runner.Run(ctx, runners.Input{
+		Command:        "just build",
+		Description:    "verify sandbox by building inside container",
+		BypassApproval: true,
+	})
+	if err == nil && output.ExitCode != "0" {
+		r.logger.Warn("just build failed", "exit_code", output.ExitCode, "output", output.Output)
+		err = fmt.Errorf("just build exited with code %s: %s", output.ExitCode, output.Output)
+	}
+	if err != nil {
+		return map[string]string{
+			"status": "failed",
+			"output": "sandbox build failed. Start RCA with build output:\n" + output.Output,
+		}, fmt.Errorf("sandbox build failed: %w", err)
+	}
+
+	// Step 5: Run tests as non-blocking smoke test (TRANSIENT - may fail due to incomplete test data)
+	testOutput, testErr := r.runner.Run(ctx, runners.Input{
+		Command:        "just test",
+		Description:    "smoke test: verify tests run in sandbox",
+		BypassApproval: true,
+	})
+	if testErr == nil && testOutput.ExitCode != "0" {
+		r.logger.Warn("just test failed (non-blocking)",
+			"exit_code", testOutput.ExitCode,
+			"output", testOutput.Output)
+		// Don't return error - tests are optional during sandbox verification
+		// They may fail due to missing test data or incomplete setup, not sandbox issues
+	}
+
 	return map[string]string{
-		"status": "failed",
-		"output": `sandbox verification failed.
-			Start RCA with .agents/sandbox/Dockerfile and verification output:` +
-			output.Output,
-	}, fmt.Errorf("sandbox verification failed: %w", err)
+		"status": "ready",
+		"output": output.Output,
+	}, nil
 }
 
 // getProjectMetadata captures repository information for use in ritual templates

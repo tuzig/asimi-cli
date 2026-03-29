@@ -86,8 +86,7 @@ type Shogunate struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	rulingCtx     func() context.Context
-	backgroundCtx context.Context
+	rulingCtx func() context.Context
 }
 
 // NewShogunate creates a new Shogunate coordinator.
@@ -130,9 +129,6 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 				return s.rulingCtx()
 			}
 			return s.ctx
-		},
-		BackgroundCtx: func() context.Context {
-			return s.backgroundCtx
 		},
 	})
 
@@ -241,7 +237,6 @@ func (s *Shogunate) Start(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	s.ctx, s.cancel = context.WithCancel(ctx)
-	s.backgroundCtx = context.Background()
 
 	// Load rituals
 	if err := s.ritualGuard.LoadRituals(); err != nil {
@@ -457,14 +452,6 @@ func (s *Shogunate) SetRulingCtx(fn func() context.Context) {
 		return
 	}
 	s.rulingCtx = fn
-}
-
-// GetBackgroundCtx returns the background context for event-driven rituals.
-func (s *Shogunate) GetBackgroundCtx() context.Context {
-	if s == nil {
-		return context.Background()
-	}
-	return s.backgroundCtx
 }
 
 // SubmitPrompt routes a prompt to the specified minister by ID.

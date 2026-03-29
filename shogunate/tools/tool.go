@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/afittestide/asimi/internal/config"
 )
 
 // Tool defines a tool that can be invoked by ministers
@@ -82,9 +84,9 @@ func ValidatePathWithinProject(path string) error {
 }
 
 // GetFileTools returns the list of file-based tools for use by ministers.
-func GetFileTools() []Tool {
+func GetFileTools(llmConfig config.LLMConfig) []Tool {
 	return []Tool{
-		ReadFileTool{},
+		NewReadFileTool(llmConfig),
 		WriteFileTool{},
 		GlobTool{},
 		ReplaceTextTool{},
@@ -94,19 +96,19 @@ func GetFileTools() []Tool {
 }
 
 // GetROTools returns read-only tools for exploration and research.
-func GetROTools() []Tool {
+func GetROTools(llmConfig config.LLMConfig) []Tool {
 	return []Tool{
 		GlobTool{},
-		ReadFileTool{},
+		NewReadFileTool(llmConfig),
 		ReadManyFilesTool{},
 		GrepTool{},
 	}
 }
 
 // GetEditTools returns read/write tools for code editing (no shell).
-func GetEditTools() []Tool {
+func GetEditTools(llmConfig config.LLMConfig) []Tool {
 	return []Tool{
-		ReadFileTool{},
+		NewReadFileTool(llmConfig),
 		WriteFileTool{},
 		ReplaceTextTool{},
 		GlobTool{},

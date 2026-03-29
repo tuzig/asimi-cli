@@ -40,6 +40,9 @@ func DefaultConfig() Config {
 		Storage: StorageConfig{
 			DatabasePath: dbPath,
 		},
+		LLM: LLMConfig{
+			MaxFileSize: 51200, // Default: 50KB
+		},
 		History: HistoryConfig{
 			Enabled:      true,
 			MaxSessions:  50,

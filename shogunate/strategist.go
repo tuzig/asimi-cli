@@ -59,15 +59,26 @@ func (s *Strategist) SystemPrompt() string {
 
 // Tools returns the Strategist's LLM tools for interactive sessions
 func (s *Strategist) Tools() []Tool {
+	var zhengmingNotify tools.ZhengmingNotifyFunc
+	zhengmingNotify = func(requestID string, edictID uint, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
+		s.notify(ZhengmingPendingMsg{
+			RequestID:  requestID,
+			EdictID:    edictID,
+			MinisterID: ministerID,
+			Questions:  questions,
+			Priority:   priority,
+		})
+	}
+
 	toolList := []Tool{
 		// Ling management tools
 		&InsertLingTool{strategist: s},
 		&ListLingTool{strategist: s},
 		&UpdateLingStatusTool{strategist: s},
-		tools.RequestZhengmingTool{MinisterID: s.ministerID, Requester: s, Notify: s.notify},
+		tools.RequestZhengmingTool{MinisterID: s.ministerID, Requester: s, Notify: zhengmingNotify},
 	}
 	// Add read-only file tools
-	for _, t := range tools.GetROTools() {
+	for _, t := range tools.GetROTools(s.config.LLM) {
 		toolList = append(toolList, t)
 	}
 	return toolList

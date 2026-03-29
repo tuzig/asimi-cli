@@ -64,7 +64,7 @@ func (j *Judge) Tools() []Tool {
 		&UpdateManifestStatusTool{judge: j},
 	}
 	// Add edit tools (read, write, edit, list, grep)
-	for _, t := range tools.GetEditTools() {
+	for _, t := range tools.GetEditTools(j.config.LLM) {
 		toolList = append(toolList, t)
 	}
 	// Add shell command tool if runner is available

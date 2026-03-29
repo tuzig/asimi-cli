@@ -79,7 +79,7 @@ func (m *Marshal) Tools() []Tool {
 		&GetManifestByCommitTool{marshal: m},
 	}
 	// Add read-only tools (read_file, list_files, grep)
-	for _, t := range tools.GetROTools() {
+	for _, t := range tools.GetROTools(m.config.LLM) {
 		toolList = append(toolList, t)
 	}
 	// Add shell command tool if runner is available

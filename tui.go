@@ -1730,20 +1730,22 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.RitualName, msg.StepName, msg.StepIndex+1, msg.TotalSteps, msg.Status))
 		switch msg.Status {
 		case "started":
-			m := ""
+			text := ""
 			if msg.StepName == "" {
-				m = fmt.Sprintf("%sRitual %s started",
+				text = fmt.Sprintf("%sRitual %s started",
 					ritualPrefix, msg.RitualName)
 				if msg.EdictID != 0 {
-					m = fmt.Sprintf("%s for edict %d",
-						m, msg.EdictID)
+					text = fmt.Sprintf("%s for edict %d",
+						text, msg.EdictID)
 				}
 				chat.Indent++
+				// Mark the tab as streaming so CTRL-C can cancel the ritual
+				m.tabs.SetStreamingTabByTab(msg.TabID)
 			} else {
-				m = fmt.Sprintf("%s %d/%d: %s",
+				text = fmt.Sprintf("%s %d/%d: %s",
 					ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName)
 			}
-			chat.AddMessage(m)
+			chat.AddMessage(text)
 		case "completed":
 			chat.AddMessage(fmt.Sprintf("%s%s %d/%d: %s ",
 				ritualPrefix, checkPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
@@ -2234,7 +2236,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Fire shogunate_started event to trigger wakeup ritual and health checks
-		m.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{})
+		latest, hasUpdate, _ := CheckForUpdates(version)
+		m.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{
+			"latest_version":  latest.Version,
+			"has_update":      hasUpdate,
+			"current_version": version})
 
 	case llmInitErrorMsg:
 		// LLM initialization failed

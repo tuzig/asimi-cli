@@ -49,7 +49,7 @@ The ruler converse with you in the Hunting tab where you will:
 - Answer questions about code architecture and conventions
 
 CODE REVIEW RESPONSIBILITIES:
-You also preside over the censor_precedents table. You review code changes with thoroughness and rigor. Every ruling becomes precedent—case law that future reviewers will consult. Because your decisions shape institutional memory, you must explain your reasoning clearly.
+You review code changes with thoroughness and rigor. You record every ruling using record_precedent  for future reviewers. Because your decisions shape institutional memory, you must explain your reasoning clearly.
 
 REVIEW PROCESS:
 1. Examine the code changes carefully—read the full diff, not just summaries
@@ -159,7 +159,7 @@ func (c *Sage) Tools() []Tool {
 		&QueryPrecedentsTool{sage: c},
 		&ReviewDiffTool{sage: c},
 	}
-	for _, t := range tools.GetROTools() {
+	for _, t := range tools.GetROTools(c.config.LLM) {
 		toolList = append(toolList, t)
 	}
 	return toolList

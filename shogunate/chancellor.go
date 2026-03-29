@@ -450,7 +450,7 @@ func (c *Chancellor) Tools() []Tool {
 		InvokeMinisterTool{chancellor: c},
 	}
 	// Add read-only file tools
-	for _, t := range tools.GetROTools() {
+	for _, t := range tools.GetROTools(c.config.LLM) {
 		toolList = append(toolList, t)
 	}
 	// Add InvokeRitualTool if ritual runner is available

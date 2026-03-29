@@ -46,6 +46,7 @@ type LLMConfig struct {
 	AuthToken                  string `koanf:"auth_token"`
 	RefreshToken               string `koanf:"refresh_token"`
 	ExperimentalModels         bool   `koanf:"experimental_models"`
+	MaxFileSize                int    `koanf:"max_file_size"` // Maximum file size to read fully (bytes)
 }
 
 // HistoryConfig holds persistent history configuration

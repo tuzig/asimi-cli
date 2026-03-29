@@ -1,4 +1,5 @@
-# This template is customized by project-init ritual based on detected language
+# This template is customized by project-init ritual based on the project's language
+# and tool set. 
 
 PROJECT_NAME := "CHANGE_ME"
 
