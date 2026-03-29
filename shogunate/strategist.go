@@ -64,6 +64,7 @@ func (s *Strategist) Tools() []Tool {
 		&InsertLingTool{strategist: s},
 		&ListLingTool{strategist: s},
 		&UpdateLingStatusTool{strategist: s},
+		tools.RequestZhengmingTool{MinisterID: s.ministerID, Requester: s, Notify: s.notify},
 	}
 	// Add read-only file tools
 	for _, t := range tools.GetROTools() {

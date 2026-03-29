@@ -2,25 +2,14 @@ package shogunate
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	"github.com/rhysd/go-github-selfupdate/selfupdate"
 )
-
-// HealthCheckResult represents the result of a startup health check
-type HealthCheckResult struct {
-	OK          bool              `json:"ok"`
-	ModelOK     bool              `json:"model_ok,omitempty"`
-	SandboxOK   bool              `json:"sandbox_ok,omitempty"`
-	Output      []string          `json:"output,omitempty"`
-	Failures    []string          `json:"failures,omitempty"`
-	Remediation map[string]string `json:"remediation,omitempty"`
-}
 
 // RitualGuardPrompt defines the Ritual Guard's identity
 const RitualGuardPrompt = `禁军，Jìnjūn. You are commanding ritual execution and event handling
@@ -291,6 +280,16 @@ func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg 
 	return msg
 }
 
+// HealthCheckResult contains structured health check diagnostics
+type HealthCheckResult struct {
+	OK          bool              `json:"ok"`
+	ModelOK     bool              `json:"model_ok,omitempty"`
+	SandboxOK   bool              `json:"sandbox_ok,omitempty"`
+	VersionOK   bool              `json:"version_ok,omitempty"`
+	Failures    []string          `json:"failures,omitempty"`
+	Remediation map[string]string `json:"remediation,omitempty"`
+}
+
 // Subscribe registers a handler for an event type.
 func (rg *RitualGuard) Subscribe(eventType storage.ShogunateEvent, handler EventHandler) {
 	rg.eventRegistry.Subscribe(eventType, handler)
@@ -299,37 +298,53 @@ func (rg *RitualGuard) Subscribe(eventType storage.ShogunateEvent, handler Event
 // RunHealthCheck performs startup health checks and returns the result
 func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 	result := &HealthCheckResult{
-		Output:    []string{},
-		OK:     true,
-		Failures:    []string{},
-		Remediation: map[string]string{},
+		OK:          true,
+		Remediation: make(map[string]string),
+	}
+	
+	info := func(text string) {
+		rg.notify(MinisterCompletedMsg{
+			MinisterID: "ritual_guard",
+			Output:     text,
+		})
+	}
+	fail := func(text string) {
+		result.OK = false
+		result.Failures = append(result.Failures, text)
+		rg.notify(MinisterCompletedMsg{
+			MinisterID: "ritual_guard",
+			Error:      errors.New(text),
+		})
 	}
 
-	latest, _ := event.Payload["latest_version"].(*selfupdate.Release)
+	latest, _ := event.Payload["latest_version"].(string)
 	hasUpdate, _ := event.Payload["has_update"].(bool)
+	current, _ := event.Payload["current_version"].(string)
 
-	// Check 1: Version - Verify we can check for updates
-	// For dev versions, skip the check but still provide remediation info
-	if hasUpdate && latest != nil {
-		result.Failures = append(result.Failures, fmt.Sprintf("Version %s available", latest.Version))
+	// Check 1: Version
+	if hasUpdate && latest != "" {
+		result.VersionOK = false
+		result.Remediation["version"] = "Run `:update` to upgrade to " + latest
+		info(fmt.Sprintf("Asimi Update available: %s\n\tRun `:update` to get it", latest))
+	} else {
+		result.VersionOK = true
+		info(fmt.Sprintf("Running latest Asimi version %s", current))
 	}
-	// Always provide version remediation message
-	result.Remediation["version"] = "Run `:update` to check for updates"
 
 	// Check 2: Model - Verify LLM connectivity with actual ping
 	if rg.chancellor != nil {
 		base := rg.chancellor.MinisterBase
 		if base == nil || base.model == nil {
 			result.ModelOK = false
-			result.Failures = append(result.Failures, "LLM model not configured")
-			result.Remediation["model"] = "Configure your LLM provider in ~/.config/asimi/config.yaml or run :config"
+			result.Remediation["model"] = "Configure LLM model in settings"
+			fail("✗ LLM model not configured")
+		} else if !rg.pingLLM(base) {
+			result.ModelOK = false
+			result.Remediation["model"] = "Check LLM API endpoint and credentials"
+			fail("✗ LLM model not responsive")
 		} else {
-			// Create a session and send a ping to verify connectivity
-			if !rg.pingLLM(base) {
-				result.ModelOK = false
-				result.Failures = append(result.Failures, "LLM model not responsive")
-				result.Remediation["model"] = "Check your LLM API key and network connectivity, or run :config"
-			}
+			result.ModelOK = true
+			info("✓ Model connectivity check passed")
 		}
 	}
 
@@ -337,8 +352,11 @@ func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 	imageName := rg.getSandboxImageName()
 	if !runners.IsPodmanAvailable(imageName) {
 		result.SandboxOK = false
-		result.Failures = append(result.Failures, "Sandbox image not found: "+imageName)
-		result.Remediation["sandbox"] = "Run `:init` to build the sandbox image"
+		result.Remediation["sandbox"] = "Run `just build-sandbox` to create the image"
+		fail(fmt.Sprintf("Sandbox image not found: %s", imageName))
+	} else {
+		result.SandboxOK = true
+		info("✓ Sandbox image check passed")
 	}
 
 	return result
@@ -391,21 +409,18 @@ func (rg *RitualGuard) getSandboxImageName() string {
 // handleStartup handles the shogunate_started event by running health checks
 func (rg *RitualGuard) handleStartup(event Event) {
 	result := rg.RunHealthCheck(event)
-	if !result.OK {
-		// All checks passed - publish shogunate_ready event and notify via MinisterCompletedMsg
-		rg.notify(MinisterCompletedMsg{
-			MinisterID: "ritual_guard",
-			Output:     "Health checks failed",
-			Error:      fmt.Errorf("%s", strings.Join(result.Failures, ", ")),
-		})
+	if result.OK {
+		rg.PublishEvent(0, storage.EventShogunateReady, storage.JSON{"checks": result})
 		return
 	}
-	rg.notify(MinisterCompletedMsg{
-		MinisterID: "ritual_guard",
-		Output:     strings.Join(result.Output, "\n"),
+	// Health checks failed - request zhengming for user intervention
+	summary := fmt.Sprintf("Health checks failed: %d issue(s) detected", len(result.Failures))
+	rg.PublishEvent(0, storage.EventZhengmingNeeded, storage.JSON{
+		"summary":     summary,
+		"failures":    result.Failures,
+		"remediation": result.Remediation,
+		"checks":      result,
 	})
-	// TODO: fix model health check and move this into the if above
-	rg.PublishEvent(0, storage.EventShogunateReady, storage.JSON{"checks": result})
 }
 
 // --- Ritual management ---

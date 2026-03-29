@@ -63,6 +63,7 @@
         Analyze the edict below and produce a technical Battle Plan.
         Break down the work into clear phases with dependencies.
         Identify risks and architectural decisions.
+        End this step with a fresh crop of lings or zhengming
       on_failure: zhengming
 
     - name: forging

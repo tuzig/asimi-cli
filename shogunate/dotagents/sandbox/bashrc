@@ -40,6 +40,3 @@ git() {
 }
 alias ll="ls -l"
 export TERM="dumb"
-
-# Smoke test: run just install on shell startup (non-blocking)
-just install >/dev/null 2>&1 || echo "⚠️  Warning: 'just install' failed. Run manually if needed."
