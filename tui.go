@@ -1593,7 +1593,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Streaming has started — capture edict ID for multi-turn
 		m.tabs.SetStreamingTabByTab(msg.TabID)
 		if msg.EdictID != 0 {
-			m.currentEdictKey = storage.EdictKey{EdictID: msg.EdictID}
+			m.currentEdictKey = m.shogunate.EdictKey(msg.EdictID)
 			m.tabs.SetActiveEdictID(msg.EdictID)
 		}
 		chat := m.tabs.ChatByTab(msg.TabID)

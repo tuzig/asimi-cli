@@ -26,15 +26,6 @@ var initializePrompt string
 //go:embed prompts/compact.txt
 var compactPrompt string
 
-// InitTemplateData holds data for the initialization prompt template
-type InitTemplateData struct {
-	ProjectName  string
-	ProjectSlug  string
-	MissingFiles []string
-	ClearMode    bool
-	AgentsFile   string // The agents file name (AGENTS.md or CLAUDE.md)
-}
-
 // Command represents a slash command
 type Command struct {
 	Name        string
@@ -861,19 +852,22 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 	}
 
+	// Build full EdictKey with username and project context
+	key := model.shogunate.EdictKey(edictID)
+
 	// Validate edict exists BEFORE seal lookup
 	if chancellorMinister := model.shogunate.GetMinister("chancellor"); chancellorMinister != nil {
 		if chancellor, ok := chancellorMinister.(*shogunate.Chancellor); ok {
-			if _, err := chancellor.GetEdict(storage.EdictKey{EdictID: edictID}); err != nil {
+			if _, err := chancellor.GetEdict(key); err != nil {
 				return func() tea.Msg {
-					return showSystemMsg(fmt.Sprintf("Edict '%d' not found", edictID))
+					return showSystemMsg(fmt.Sprintf("Edict not found %v", key))
 				}
 			}
 		}
 	}
 
 	// Get current seals for the edict
-	seals, err := sealService.GetSeals(storage.EdictKey{EdictID: edictID})
+	seals, err := sealService.GetSeals(key)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Failed to get seals for %d: %v", edictID, err))
@@ -944,7 +938,7 @@ func grantRulerSealCmd(model *TUIModel, edictID uint, notes string) tea.Cmd {
 			"timestamp": time.Now().Format(time.RFC3339),
 		}
 
-		edictKey := storage.EdictKey{EdictID: edictID}
+		edictKey := model.shogunate.EdictKey(edictID)
 		if err := sealService.GrantSeal(edictKey, "ruler", metadata); err != nil {
 			return showSystemMsg(fmt.Sprintf("Failed to grant Ruler's seal: %v", err))
 		}

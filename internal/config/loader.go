@@ -41,7 +41,7 @@ func DefaultConfig() Config {
 			DatabasePath: dbPath,
 		},
 		LLM: LLMConfig{
-			MaxFileSize: 51200, // Default: 50KB
+			MaxToolOutput: 51200, // Default: 50KB
 		},
 		History: HistoryConfig{
 			Enabled:      true,

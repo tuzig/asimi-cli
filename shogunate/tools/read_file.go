@@ -34,7 +34,7 @@ type ReadFileTool struct {
 // NewReadFileTool creates a new ReadFileTool with configuration
 func NewReadFileTool(config config.LLMConfig) *ReadFileTool {
 	return &ReadFileTool{
-		maxFileSize: config.MaxFileSize,
+		maxFileSize: config.MaxToolOutput,
 	}
 }
 

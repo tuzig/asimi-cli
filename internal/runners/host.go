@@ -56,7 +56,7 @@ func (r *HostRunner) Run(ctx context.Context, input Input) (Output, error) {
 	runErr := cmd.Run()
 
 	// Populate stdout and stderr separately
-	output.Output = stdout.String() + "\n" + stderr.String()
+	output.Output = TruncateOutput(stdout.String()+"\n"+stderr.String(), DefaultMaxOutputSize)
 
 	if runErr != nil {
 		if ctx.Err() != nil {

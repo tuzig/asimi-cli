@@ -3,8 +3,10 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"time"
+
 
 	koanftoml "github.com/knadh/koanf/parsers/toml/v2"
 	"github.com/knadh/koanf/providers/file"
@@ -20,6 +22,7 @@ type Config struct {
 	History   HistoryConfig    `koanf:"history"`
 	Session   SessionConfig    `koanf:"session"`
 	Sandbox   SandboxConfig    `koanf:"sandbox"`
+	Shogunate ShogunateConfig  `koanf:"shogunate"`
 }
 
 // StorageConfig holds storage configuration
@@ -46,7 +49,7 @@ type LLMConfig struct {
 	AuthToken                  string `koanf:"auth_token"`
 	RefreshToken               string `koanf:"refresh_token"`
 	ExperimentalModels         bool   `koanf:"experimental_models"`
-	MaxFileSize                int    `koanf:"max_file_size"` // Maximum file size to read fully (bytes)
+	MaxToolOutput              int    `koanf:"max_tool_output"` // Maximum tool output size in bytes (read_file, shell, etc.)
 }
 
 // HistoryConfig holds persistent history configuration
