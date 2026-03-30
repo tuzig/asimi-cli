@@ -102,6 +102,8 @@ type SandboxConfig struct {
 	SafeRunOnHost []string `koanf:"safe_run_on_host"`
 	// AdditionalMounts are extra volume mounts for the container
 	AdditionalMounts []Mount `koanf:"additional_mounts"`
+	// PassthroughEnv is a list of host environment variable names to forward into the sandbox
+	PassthroughEnv []string `koanf:"passthrough_env"`
 }
 
 // ShogunateConfig holds configuration for the Shogunate.

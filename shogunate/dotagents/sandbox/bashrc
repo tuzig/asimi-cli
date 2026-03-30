@@ -40,3 +40,5 @@ git() {
 }
 alias ll="ls -l"
 export TERM="dumb"
+# for ruby projects:
+# export BUNDLE_RETRY=0

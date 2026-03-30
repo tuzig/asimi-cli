@@ -329,6 +329,11 @@ func (r *PodmanRunner) createContainer(ctx context.Context) error {
 	terminal := true
 	s.Terminal = &terminal
 	s.Env = map[string]string{"TERM": "dumb"}
+	for _, name := range r.config.PassthroughEnv {
+		if val, ok := os.LookupEnv(name); ok {
+			s.Env[name] = val
+		}
+	}
 
 	s.Command = []string{"bash", "-i"}
 	stdinOpen := true

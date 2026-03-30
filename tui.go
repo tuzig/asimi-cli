@@ -1738,26 +1738,28 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 					text = fmt.Sprintf("%s for edict %d",
 						text, msg.EdictID)
 				}
-				chat.Indent++
 				// Mark the tab as streaming so CTRL-C can cancel the ritual
 				m.tabs.SetStreamingTabByTab(msg.TabID)
 			} else {
-				text = fmt.Sprintf("%s %d/%d: %s",
-					ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName)
+				if msg.TotalSteps == 1 {
+					text = fmt.Sprintf("single step: %s", msg.StepName)
+				} else {
+					text = fmt.Sprintf("step: %d/%d: %s",
+						msg.StepIndex+1, msg.TotalSteps, msg.StepName)
+				}
 			}
 			chat.AddMessage(text)
+			if msg.StepName == "" {
+				chat.Indent++
+			}
 		case "completed":
-			chat.AddMessage(fmt.Sprintf("%s%s %d/%d: %s ",
-				ritualPrefix, checkPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+			chat.AppendToLastMessage(" " + checkPrefix)
 		case "failed":
-			chat.AddMessage(fmt.Sprintf("%s %d/%d: %s failed: %s",
-				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName, msg.Message))
+			chat.AppendToLastMessage(" X")
 		case "aborted":
-			chat.AddMessage(fmt.Sprintf("%s %d/%d: %s ABORT",
-				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+			chat.AppendToLastMessage(" ABORTED")
 		case "retrying":
-			chat.AddMessage(fmt.Sprintf("%s %d/%d: %s retrying",
-				ritualPrefix, msg.StepIndex+1, msg.TotalSteps, msg.StepName))
+			chat.AppendToLastMessage(" retrying")
 		case "cmd_running":
 			chat.AddMessage(fmt.Sprintf("%s Running: %s", cmdRunningPrefix, msg.Message))
 		case "cmd_done":

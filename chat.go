@@ -75,7 +75,7 @@ const (
 	systemPrefix          = "🛠️  "
 	checkPrefix           = "✓"
 	cmdRunningPrefix      = "⚡"
-	cmdDonePrefix         = "✅"
+	cmdDonePrefix         = "✓"
 	treeFinalPrefix       = " ╰ "
 	treeMidPrefix         = " │ "
 
