@@ -12,15 +12,15 @@ import (
 
 // execute runs the Sage's ethics review for an edict (internal method)
 // Returns: sealed (phase complete), review summary, error
-func (c *Sage) execute(ctx context.Context, edictID uint) (bool, *ReviewSummary, error) {
+func (c *Sage) execute(ctx context.Context, key storage.EdictKey) (bool, *ReviewSummary, error) {
 	// Check if there are any rejections
-	noRejections, err := c.NoRejections(edictID)
+	noRejections, err := c.NoRejections(key)
 	if err != nil {
 		return false, nil, fmt.Errorf("check rejections: %w", err)
 	}
 
 	// Get quenched manifests to review
-	manifests, err := c.GetQuenchedManifests(edictID)
+	manifests, err := c.GetQuenchedManifests(key)
 	if err != nil {
 		return false, nil, fmt.Errorf("get quenched manifests: %w", err)
 	}
@@ -28,14 +28,14 @@ func (c *Sage) execute(ctx context.Context, edictID uint) (bool, *ReviewSummary,
 	if len(manifests) == 0 {
 		// No manifests to review, phase complete if no rejections
 		if noRejections {
-			c.logger.Info("sage review complete, no rejections", "edict_id", edictID)
+			c.logger.Info("sage review complete, no rejections", "edict_id", key.EdictID)
 			return true, &ReviewSummary{
 				Approved:       true,
 				ManifestsCount: 0,
 				Reasoning:      "No manifests to review",
 			}, nil
 		}
-		c.logger.Info("sage review blocked by rejections", "edict_id", edictID)
+		c.logger.Info("sage review blocked by rejections", "edict_id", key.EdictID)
 		return false, &ReviewSummary{
 			Approved:  false,
 			Reasoning: "Review blocked by previous rejections",
@@ -57,7 +57,7 @@ func (c *Sage) execute(ctx context.Context, edictID uint) (bool, *ReviewSummary,
 	}
 
 	// Check again for rejections
-	noRejections, err = c.NoRejections(edictID)
+	noRejections, err = c.NoRejections(key)
 	if err != nil {
 		return false, nil, fmt.Errorf("check rejections after review: %w", err)
 	}

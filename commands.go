@@ -194,7 +194,7 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 		tab := model.tabs.ActiveTab()
 		switch tab.Type {
 		case TabRuling:
-			model.currentEdictID = 0
+			model.currentEdictKey = storage.EdictKey{}
 			model.shogunate.ResetRuling()
 		case TabHunting:
 			model.shogunate.ResetHunting()
@@ -310,7 +310,7 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 
 	if s := model.getCurrentSession(); s != nil {
 		session = s
-		slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictID)
+		slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictKey.EdictID)
 	}
 
 	if session == nil {
@@ -838,8 +838,8 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 	} else {
 		// Default to current edict if in Ruling tab
-		if model.currentEdictID != 0 {
-			edictID = model.currentEdictID
+		if model.currentEdictKey.EdictID != 0 {
+			edictID = model.currentEdictKey.EdictID
 		} else {
 			return func() tea.Msg {
 				return showSystemMsg("Usage: :seal [edict_id] [notes] - provide edict_id")
@@ -864,7 +864,7 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 	// Validate edict exists BEFORE seal lookup
 	if chancellorMinister := model.shogunate.GetMinister("chancellor"); chancellorMinister != nil {
 		if chancellor, ok := chancellorMinister.(*shogunate.Chancellor); ok {
-			if _, err := chancellor.GetEdict(edictID); err != nil {
+			if _, err := chancellor.GetEdict(storage.EdictKey{EdictID: edictID}); err != nil {
 				return func() tea.Msg {
 					return showSystemMsg(fmt.Sprintf("Edict '%d' not found", edictID))
 				}
@@ -873,7 +873,7 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 	}
 
 	// Get current seals for the edict
-	seals, err := sealService.GetSeals(edictID)
+	seals, err := sealService.GetSeals(storage.EdictKey{EdictID: edictID})
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Failed to get seals for %d: %v", edictID, err))
@@ -944,7 +944,8 @@ func grantRulerSealCmd(model *TUIModel, edictID uint, notes string) tea.Cmd {
 			"timestamp": time.Now().Format(time.RFC3339),
 		}
 
-		if err := sealService.GrantSeal(edictID, "ruler", metadata); err != nil {
+		edictKey := storage.EdictKey{EdictID: edictID}
+		if err := sealService.GrantSeal(edictKey, "ruler", metadata); err != nil {
 			return showSystemMsg(fmt.Sprintf("Failed to grant Ruler's seal: %v", err))
 		}
 
@@ -954,10 +955,10 @@ func grantRulerSealCmd(model *TUIModel, edictID uint, notes string) tea.Cmd {
 			"notes":       notes,
 			"timestamp":   metadata["timestamp"],
 		}
-		model.shogunate.PublishEvent(edictID, storage.EventSealGranted, payload)
+		model.shogunate.PublishEvent(edictKey, storage.EventSealGranted, payload)
 
 		// Re-query seals to show fresh seal chain with Ruler's seal
-		updatedSeals, err := sealService.GetSeals(edictID)
+		updatedSeals, err := sealService.GetSeals(edictKey)
 		if err != nil {
 			return showSystemMsg(fmt.Sprintf("Ruler's seal granted to %d (failed to refresh seal chain: %v)", edictID, err))
 		}

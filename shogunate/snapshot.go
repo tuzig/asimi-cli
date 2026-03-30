@@ -53,7 +53,7 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 
 	// Rituals from the ritual runner (all states)
 	if rr := s.GetRitualRunner(); rr != nil {
-		execs, err := rr.ListExecutions(0)
+		execs, err := rr.ListExecutions(storage.EdictKey{})
 		if err == nil {
 			for _, ex := range execs {
 				age := time.Since(ex.CreatedAt)

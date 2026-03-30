@@ -14,9 +14,9 @@ import (
 
 // EdictManager provides edict management capabilities
 type EdictManager interface {
-	GetEdict(edictID uint) (*storage.Edict, error)
-	AppendToIntent(edictID uint, clarification string) error
-	EmitEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) error
+	GetEdict(key storage.EdictKey) (*storage.Edict, error)
+	AppendToIntent(key storage.EdictKey, clarification string) error
+	EmitEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) error
 }
 
 // UpdateEdictTool refines an existing edict's intent (Chancellor only).
@@ -36,6 +36,8 @@ func (t UpdateEdictTool) Description() string {
 func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID       uint   `json:"edict_id"`
+		Username      string `json:"username"`
+		Project       string `json:"project"`
 		Clarification string `json:"clarification"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
@@ -49,12 +51,13 @@ func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("clarification is required")
 	}
 
-	// Verify edict exists
-	if _, err := t.Manager.GetEdict(params.EdictID); err != nil {
+	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+
+	if _, err := t.Manager.GetEdict(key); err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 
-	if err := t.Manager.AppendToIntent(params.EdictID, params.Clarification); err != nil {
+	if err := t.Manager.AppendToIntent(key, params.Clarification); err != nil {
 		return "", fmt.Errorf("update edict: %w", err)
 	}
 
@@ -113,7 +116,9 @@ func (t GetEdictStatusTool) Description() string {
 
 func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID uint `json:"edict_id"`
+		EdictID  uint   `json:"edict_id"`
+		Username string `json:"username"`
+		Project  string `json:"project"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -127,16 +132,16 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("database connection not initialized")
 	}
 
-	edict, err := t.Manager.GetEdict(params.EdictID)
+	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	edict, err := t.Manager.GetEdict(key)
 	if err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 
-	// Derive status from seals and zhengming tables
 	sealService := storage.NewSealService(t.DB)
-	status, err := sealService.GetEdictStatus(params.EdictID)
+	status, err := sealService.GetEdictStatus(edict.Key())
 	if err != nil {
-		status = storage.EdictActive // default if error
+		status = storage.EdictActive
 	}
 
 	result := map[string]any{
@@ -223,7 +228,7 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 	sealService := storage.NewSealService(t.DB)
 	var results []map[string]any
 	for _, e := range edicts {
-		status, err := sealService.GetEdictStatus(e.EdictID)
+		status, err := sealService.GetEdictStatus(e.Key())
 		if err != nil {
 			status = storage.EdictActive
 		}
@@ -333,33 +338,29 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 
-	// Get current derived status
+	key := edict.Key()
 	sealService := storage.NewSealService(t.DB)
-	currentStatus, err := sealService.GetEdictStatus(params.EdictID)
+	currentStatus, err := sealService.GetEdictStatus(key)
 	if err != nil {
 		return "", fmt.Errorf("get edict status: %w", err)
 	}
 
-	// Validate transition from blocked
 	if currentStatus == storage.EdictBlocked {
 		if params.Status != "active" && params.Status != "cancelled" {
 			return "", fmt.Errorf("blocked edicts can only be transitioned to active (unblock) or cancelled (reject)")
 		}
 	}
 
-	// Perform transition based on target status
 	switch params.Status {
 	case "cancelled":
-		// Set cancelled_at timestamp
 		now := time.Now()
 		if err := t.DB.Model(&storage.Edict{}).
-			Where("edict_id = ?", params.EdictID).
+			Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 			Update("cancelled_at", now).Error; err != nil {
 			return "", fmt.Errorf("cancel edict: %w", err)
 		}
 	case "sealed":
-		// Grant ruler seal (completes the seal chain)
-		if err := sealService.GrantSeal(params.EdictID, "ruler", storage.JSON{"transitioned_by": "transition_edict"}); err != nil {
+		if err := sealService.GrantSeal(key, "ruler", storage.JSON{"transitioned_by": "transition_edict"}); err != nil {
 			return "", fmt.Errorf("seal edict: %w", err)
 		}
 	case "active", "blocked":

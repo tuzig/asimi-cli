@@ -16,11 +16,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// Event is a dispatched event carrying type, edict, and payload.
+// Event is a dispatched event carrying type, edict key, and payload.
 type Event struct {
-	Type    storage.ShogunateEvent
-	EdictID uint
-	Payload map[string]interface{}
+	Type     storage.ShogunateEvent
+	EdictKey storage.EdictKey
+	Payload  map[string]interface{}
 }
 
 // EventHandler handles dispatched events.
@@ -60,7 +60,7 @@ func (r *EventRegistry) Dispatch(event Event) {
 // DrainedEvent describes a single event recovered from the DB at startup.
 type DrainedEvent struct {
 	EventType storage.ShogunateEvent
-	EdictID   uint
+	EdictKey  storage.EdictKey
 	Payload   map[string]interface{}
 }
 
@@ -77,7 +77,7 @@ type Shogunate struct {
 	config *config.ShogunateConfig
 	runner runners.Runner
 
-	ministers   map[string]Minister
+	ministers map[string]Minister
 	ritualGuard *RitualGuard
 
 	notify        internal.NotifyFunc
@@ -107,8 +107,8 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	// publish uses a closure so it works even before ritualGuard is assigned.
 	newBase := func() *MinisterBase {
 		base := NewMinisterBase(db, runner, logger)
-		base.publish = func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint {
-			return s.PublishEvent(edictID, eventType, payload)
+		base.publish = func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
+			return s.PublishEvent(key, eventType, payload)
 		}
 		return base
 	}
@@ -139,16 +139,16 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
 		requestID, _ := e.Payload["request_id"].(string)
 		answer, _ := e.Payload["answer"].(string)
-		edictID := e.EdictID
+		key := e.EdictKey
 
 		// 1. Try to deliver to a waiting ritual first
 		if requestID != "" && s.ritualGuard.DeliverZhengmingAnswer(ZhengmingAnswer{
 			RequestID: requestID,
 			Answer:    answer,
-			EdictID:   edictID,
+			EdictID:   key.EdictID,
 		}) {
 			s.logger.Info("zhengming answer delivered to ritual runner",
-				"request_id", requestID, "edict_id", edictID)
+				"request_id", requestID, "edict_id", key.EdictID)
 			return
 		}
 
@@ -182,7 +182,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 
 		// 3. Handle system ritual path (e.g., wakeup) — no edict, user chose a path forward
-		if edictID == 0 && answer != "" {
+		if key.EdictID == 0 && answer != "" {
 			if edict, err := s.CreateEdict("", answer); err != nil {
 				s.logger.Warn("failed to create edict from zhengming answer", "error", err)
 			} else {
@@ -193,7 +193,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 
 		// 4. Forward to chancellor as fallback for legacy path
 		s.logger.Info("Default forwarding zhengming answer to chancellot")
-		go chancellor.handleZhengmingAnswered(s.ctx, e.EdictID, e.Payload)
+		go chancellor.handleZhengmingAnswered(s.ctx, key, e.Payload)
 	})
 
 	s.ministers["strategist"] = NewStrategist(newBase())
@@ -315,31 +315,41 @@ func (s *Shogunate) Ministers() []Minister {
 	return active
 }
 
+// EdictKey returns the current context as an EdictKey with the given edict ID.
+func (s *Shogunate) EdictKey(edictID uint) storage.EdictKey {
+	return storage.EdictKey{EdictID: edictID, Username: s.config.Username, Project: s.config.Project}
+}
+
+// nextEdictID returns the next available edict ID (MAX+1).
+func (s *Shogunate) nextEdictID() uint {
+	var maxID uint
+	s.db.Model(&storage.Edict{}).Select("COALESCE(MAX(edict_id), 0)").Scan(&maxID)
+	return maxID + 1
+}
+
 // CreateEdict creates a new active edict record in the database and publishes storage.EventEdictCreated.
 func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
-	// Prevent user edicts from using reserved edict 1 (Court Infrastructure)
-	// Edict 1 is reserved for system-level operations (init, bootstrap, etc.)
-	// Check if intent suggests this is a user edict (not system infrastructure)
-	if intent != "" && !strings.Contains(intent, "Court Infrastructure") {
-		// This is a user edict - let auto-increment assign the ID
-		// Don't allow manual assignment of edict_id=1
-	}
-
 	edict := storage.Edict{
+		EdictID:  s.nextEdictID(),
+		Username: s.config.Username,
+		Project:  s.config.Project,
 		IssueRef: issueRef,
 		Intent:   intent,
 	}
 	if err := s.db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
 	}
-	s.PublishEvent(edict.EdictID, storage.EventEdictCreated, storage.JSON{"intent": intent})
+	s.PublishEvent(edict.Key(), storage.EventEdictCreated, storage.JSON{"intent": intent})
 	return &edict, nil
 }
 
 // CreateEdictForTest creates an edict without publishing events (for unit tests).
 func CreateEdictForTest(db *gorm.DB, intent string) (*storage.Edict, error) {
+	var maxID uint
+	db.Model(&storage.Edict{}).Select("COALESCE(MAX(edict_id), 0)").Scan(&maxID)
 	edict := storage.Edict{
-		Intent: intent,
+		EdictID: maxID + 1,
+		Intent:  intent,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
@@ -348,11 +358,11 @@ func CreateEdictForTest(db *gorm.DB, intent string) (*storage.Edict, error) {
 }
 
 // PublishEvent delegates to RitualGuard.
-func (s *Shogunate) PublishEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint {
+func (s *Shogunate) PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 	if s == nil || s.ritualGuard == nil {
-		return edictID
+		return key.EdictID
 	}
-	return s.ritualGuard.PublishEvent(edictID, eventType, payload)
+	return s.ritualGuard.PublishEvent(key, eventType, payload)
 }
 
 // DispatchEvent delegates to RitualGuard.
@@ -385,14 +395,14 @@ func (s *Shogunate) ministerIDs() []string {
 // Edict 1 is reserved for Court Infrastructure operations (init, bootstrap, etc.)
 func (s *Shogunate) ensureCourtInfrastructureEdict() {
 	var edict storage.Edict
-	if err := s.db.First(&edict, "edict_id = ?", 1).Error; err == nil {
-		// Edict 1 already exists
+	if err := s.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", 1, s.config.Username, s.config.Project).Error; err == nil {
 		return
 	}
 
-	// Create edict 1 with reserved intent
 	courtEdict := storage.Edict{
 		EdictID:  1,
+		Username: s.config.Username,
+		Project:  s.config.Project,
 		Intent:   "Court Infrastructure - reserved for system-level operations (init, bootstrap, etc.)",
 		Summary:  "Court Infrastructure",
 		IssueRef: "court-infra",

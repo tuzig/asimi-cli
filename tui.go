@@ -57,7 +57,7 @@ type TUIModel struct {
 	shogunate    *shogunate.Shogunate
 
 	// Shogunate integration
-	currentEdictID uint // Tracks current edict for multi-turn conversations
+	currentEdictKey storage.EdictKey // Tracks current edict for multi-turn conversations
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -1095,7 +1095,7 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 	p := &shogunate.Prompt{
 		Ctx:          ctx,
 		Message:      prompt,
-		EdictID:      m.currentEdictID,
+		EdictKey:     m.currentEdictKey,
 		TabID:        tab.Target,
 		ContextFiles: contextFiles,
 	}
@@ -1593,7 +1593,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Streaming has started — capture edict ID for multi-turn
 		m.tabs.SetStreamingTabByTab(msg.TabID)
 		if msg.EdictID != 0 {
-			m.currentEdictID = msg.EdictID
+			m.currentEdictKey = storage.EdictKey{EdictID: msg.EdictID}
 			m.tabs.SetActiveEdictID(msg.EdictID)
 		}
 		chat := m.tabs.ChatByTab(msg.TabID)
@@ -1698,7 +1698,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shogunate.MinisterInvokingMsg:
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("MINISTER_INVOKING",
-			fmt.Sprintf("Minister %s invoked for edict %d", msg.MinisterID, msg.EdictID))
+			fmt.Sprintf("Minister %s invoked for edict %d", msg.MinisterID, msg.EdictKey.EdictID))
 		chat.Indent++
 		taskPreview := msg.Task
 		if len(taskPreview) > 60 {
@@ -1778,7 +1778,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shogunate.EventNotificationMsg:
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("EVENT_NOTIFICATION",
-			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictID, msg.Message))
+			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictKey.EdictID, msg.Message))
 
 		// Use appropriate icon based on event type
 		icon := "📋" // Default
@@ -1810,8 +1810,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.AddMessage(fmt.Sprintf("%sRecovered %d event(s) from previous session:", systemPrefix, len(msg.Events)))
 		for _, ev := range msg.Events {
 			detail := fmt.Sprintf("%s  %s", systemPrefix, ev.EventType)
-			if ev.EdictID != 0 {
-				detail += fmt.Sprintf(" [edict:%d]", ev.EdictID)
+			if ev.EdictKey.EdictID != 0 {
+				detail += fmt.Sprintf(" [edict:%d]", ev.EdictKey.EdictID)
 			}
 			chat.AddMessage(detail)
 		}
@@ -2613,8 +2613,8 @@ func (m *TUIModel) updateComponentDimensions() {
 	m.prompt().SetHeight(promptHeight)
 
 	// Update status info
-	// TODO: move this to a proper place and drop the currentEdictID
-	if m.shogunate != nil && m.currentEdictID != 0 {
+	// TODO: move this to a proper place and drop the currentEdictKey
+	if m.shogunate != nil && m.currentEdictKey.EdictID != 0 {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
@@ -2995,7 +2995,7 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 }
 
 func (m *TUIModel) raiseShogunateEvent(event storage.ShogunateEvent, params storage.JSON) {
-	m.shogunate.PublishEvent(m.currentEdictID, event, params)
+	m.shogunate.PublishEvent(m.currentEdictKey, event, params)
 }
 
 // jsonEscape escapes a string for use in JSON

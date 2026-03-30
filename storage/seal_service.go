@@ -19,8 +19,8 @@ func NewSealService(db *gorm.DB) *SealService {
 }
 
 // GrantSeal records a minister's seal on an edict
-func (s *SealService) GrantSeal(edictID uint, ministerID string, metadata JSON) error {
-	if edictID == 0 {
+func (s *SealService) GrantSeal(key EdictKey, ministerID string, metadata JSON) error {
+	if key.EdictID == 0 {
 		return fmt.Errorf("edict_id is required")
 	}
 	if ministerID == "" {
@@ -30,7 +30,9 @@ func (s *SealService) GrantSeal(edictID uint, ministerID string, metadata JSON) 
 	sealID := uuid.New().String()
 	seal := Seal{
 		SealID:     sealID,
-		EdictID:    edictID,
+		EdictID:    key.EdictID,
+		Username:   key.Username,
+		Project:    key.Project,
 		MinisterID: ministerID,
 		SealedAt:   time.Now(),
 		Metadata:   metadata,
@@ -44,9 +46,9 @@ func (s *SealService) GrantSeal(edictID uint, ministerID string, metadata JSON) 
 }
 
 // GetSeals retrieves all seals for an edict
-func (s *SealService) GetSeals(edictID uint) ([]Seal, error) {
+func (s *SealService) GetSeals(key EdictKey) ([]Seal, error) {
 	var seals []Seal
-	err := s.db.Where("edict_id = ?", edictID).
+	err := s.db.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Order("sealed_at ASC").
 		Find(&seals).Error
 	if err != nil {
@@ -56,10 +58,10 @@ func (s *SealService) GetSeals(edictID uint) ([]Seal, error) {
 }
 
 // HasSeal checks if a specific minister has sealed an edict
-func (s *SealService) HasSeal(edictID uint, ministerID string) (bool, error) {
+func (s *SealService) HasSeal(key EdictKey, ministerID string) (bool, error) {
 	var count int64
 	err := s.db.Model(&Seal{}).
-		Where("edict_id = ? AND minister_id = ?", edictID, ministerID).
+		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.EdictID, key.Username, key.Project, ministerID).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check seal: %w", err)
@@ -68,12 +70,12 @@ func (s *SealService) HasSeal(edictID uint, ministerID string) (bool, error) {
 }
 
 // GetMissingSeals returns the list of required seals that are missing
-func (s *SealService) GetMissingSeals(edictID uint) ([]string, error) {
+func (s *SealService) GetMissingSeals(key EdictKey) ([]string, error) {
 	requiredMinisters := []string{"judge", "sage", "ruler"}
 	var missing []string
 
 	for _, ministerID := range requiredMinisters {
-		hasSeal, err := s.HasSeal(edictID, ministerID)
+		hasSeal, err := s.HasSeal(key, ministerID)
 		if err != nil {
 			return nil, err
 		}
@@ -86,18 +88,18 @@ func (s *SealService) GetMissingSeals(edictID uint) ([]string, error) {
 }
 
 // IsPendingAscension checks if an edict has judge and sage seals but is awaiting ruler seal
-func (s *SealService) IsPendingAscension(edictID uint) (bool, error) {
-	hasJudge, err := s.HasSeal(edictID, "judge")
+func (s *SealService) IsPendingAscension(key EdictKey) (bool, error) {
+	hasJudge, err := s.HasSeal(key, "judge")
 	if err != nil {
 		return false, err
 	}
 
-	hasSage, err := s.HasSeal(edictID, "sage")
+	hasSage, err := s.HasSeal(key, "sage")
 	if err != nil {
 		return false, err
 	}
 
-	hasRuler, err := s.HasSeal(edictID, "ruler")
+	hasRuler, err := s.HasSeal(key, "ruler")
 	if err != nil {
 		return false, err
 	}
@@ -106,12 +108,12 @@ func (s *SealService) IsPendingAscension(edictID uint) (bool, error) {
 }
 
 // GetSealStatus returns a map of minister IDs to their seal status
-func (s *SealService) GetSealStatus(edictID uint) (map[string]bool, error) {
+func (s *SealService) GetSealStatus(key EdictKey) (map[string]bool, error) {
 	status := make(map[string]bool)
 	requiredMinisters := []string{"judge", "sage", "ruler"}
 
 	for _, ministerID := range requiredMinisters {
-		hasSeal, err := s.HasSeal(edictID, ministerID)
+		hasSeal, err := s.HasSeal(key, ministerID)
 		if err != nil {
 			return nil, err
 		}
@@ -122,23 +124,16 @@ func (s *SealService) GetSealStatus(edictID uint) (map[string]bool, error) {
 }
 
 // GetEdictStatus derives the status of an edict from seals and zhengming tables
-// Status derivation rules:
-// - cancelled: edict.CancelledAt is not null
-// - sealed: has ruler seal (implies judge and sage seals too)
-// - blocked: has pending zhengming request
-// - active: default (no ruler seal, not blocked, not cancelled)
-func (s *SealService) GetEdictStatus(edictID uint) (EdictStatus, error) {
-	// First check if edict is cancelled
+func (s *SealService) GetEdictStatus(key EdictKey) (EdictStatus, error) {
 	var edict Edict
-	if err := s.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+	if err := s.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 	if edict.CancelledAt != nil {
 		return EdictCancelled, nil
 	}
 
-	// Check if edict is sealed (has ruler seal)
-	hasRuler, err := s.HasSeal(edictID, "ruler")
+	hasRuler, err := s.HasSeal(key, "ruler")
 	if err != nil {
 		return "", err
 	}
@@ -146,10 +141,9 @@ func (s *SealService) GetEdictStatus(edictID uint) (EdictStatus, error) {
 		return EdictSealed, nil
 	}
 
-	// Check if edict is blocked (has pending zhengming)
 	var zhengmingCount int64
 	err = s.db.Model(&Zhengming{}).
-		Where("edict_id = ? AND status = ?", edictID, ZhengmingPending).
+		Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, ZhengmingPending).
 		Count(&zhengmingCount).Error
 	if err != nil {
 		return "", fmt.Errorf("check zhengming: %w", err)
@@ -158,13 +152,12 @@ func (s *SealService) GetEdictStatus(edictID uint) (EdictStatus, error) {
 		return EdictBlocked, nil
 	}
 
-	// Default: active
 	return EdictActive, nil
 }
 
 // IsEdictSealed checks if an edict has all three seals (judge, sage, ruler)
-func (s *SealService) IsEdictSealed(edictID uint) (bool, error) {
-	status, err := s.GetEdictStatus(edictID)
+func (s *SealService) IsEdictSealed(key EdictKey) (bool, error) {
+	status, err := s.GetEdictStatus(key)
 	if err != nil {
 		return false, err
 	}
@@ -172,8 +165,8 @@ func (s *SealService) IsEdictSealed(edictID uint) (bool, error) {
 }
 
 // IsEdictBlocked checks if an edict has pending zhengming requests
-func (s *SealService) IsEdictBlocked(edictID uint) (bool, error) {
-	status, err := s.GetEdictStatus(edictID)
+func (s *SealService) IsEdictBlocked(key EdictKey) (bool, error) {
+	status, err := s.GetEdictStatus(key)
 	if err != nil {
 		return false, err
 	}
@@ -181,8 +174,8 @@ func (s *SealService) IsEdictBlocked(edictID uint) (bool, error) {
 }
 
 // IsEdictCancelled checks if an edict is cancelled
-func (s *SealService) IsEdictCancelled(edictID uint) (bool, error) {
-	status, err := s.GetEdictStatus(edictID)
+func (s *SealService) IsEdictCancelled(key EdictKey) (bool, error) {
+	status, err := s.GetEdictStatus(key)
 	if err != nil {
 		return false, err
 	}

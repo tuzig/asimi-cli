@@ -188,11 +188,11 @@ func (c *Sage) GetSession() *Session {
 }
 
 // GetEdict retrieves an edict (satisfies EdictManager for GetEdictStatusTool)
-func (c *Sage) GetEdict(edictID uint) (*storage.Edict, error) {
+func (c *Sage) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 	var edict storage.Edict
-	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+	if err := c.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("edict not found: %d", edictID)
+			return nil, fmt.Errorf("edict not found: %d", key.EdictID)
 		}
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
@@ -255,7 +255,7 @@ func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 }
 
 func (c *Sage) processTask(ctx context.Context, task *Task) {
-	c.logger.Info("sage processing task", "edict_id", task.EdictID, "work", task.Work)
+	c.logger.Info("sage processing task", "edict_id", task.EdictKey.EdictID, "work", task.Work)
 
 	// Inject failure accumulator into context so tools can flag soft failures
 	ctx, failureBuf := CtxWithFailure(ctx)
@@ -272,7 +272,7 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 
 	if c.model != nil {
 		// Single call handles both new and existing session cases
-		session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify, task.Session)
+		session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session)
 	} else {
 		output = "sage task acknowledged (no LLM configured)"
 	}
@@ -289,13 +289,13 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 	select {
 	case task.Done <- result:
 	default:
-		c.logger.Warn("done channel full", "edict_id", task.EdictID)
+		c.logger.Warn("done channel full", "edict_id", task.EdictKey.EdictID)
 	}
 }
 
 // streamTask creates a session (or reuses existing) and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (c *Sage) streamTask(ctx context.Context, work string, edictID uint, scratchpad string, notify internal.NotifyFunc, existingSession *Session) (*Session, string, error) {
+func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session) (*Session, string, error) {
 	var session *Session
 	var err error
 
@@ -310,7 +310,7 @@ func (c *Sage) streamTask(ctx context.Context, work string, edictID uint, scratc
 	} else {
 		// Create new session for first invocation
 		session, err = CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
-			EdictID:    edictID,
+			EdictKey:   key,
 			TabID:      "chancellor",
 			Scratchpad: scratchpad,
 		})
@@ -416,8 +416,8 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 		Options: []string{"Approve edict", "Reject"},
 	}}
 
-	var edictID uint
-	requestID, err := t.sage.RequestZhengming(edictID, questions, priority)
+	var key storage.EdictKey
+	requestID, err := t.sage.RequestZhengming(key, questions, priority)
 	if err != nil {
 		return "", fmt.Errorf("failed to suggest edict: %w", err)
 	}
@@ -426,7 +426,7 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 	if t.sage.notify != nil {
 		t.sage.notify(ZhengmingPendingMsg{
 			RequestID:  requestID,
-			EdictID:    edictID,
+			EdictKey:   key,
 			MinisterID: t.sage.ministerID,
 			Questions:  questions,
 			Priority:   priority,
@@ -497,8 +497,10 @@ of what's happening in the Shogunate.`
 
 func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID uint   `json:"edict_id"`
-		Scope   string `json:"scope"` // "active", "all", or specific edict_id
+		EdictID  uint   `json:"edict_id"`
+		Username string `json:"username"`
+		Project  string `json:"project"`
+		Scope    string `json:"scope"` // "active", "all", or specific edict_id
 	}
 	json.Unmarshal([]byte(input), &params)
 
@@ -508,7 +510,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 	var edicts []storage.Edict
 	query := t.db.Order("created_at DESC").Limit(20)
 	if params.EdictID != 0 {
-		query = query.Where("edict_id = ?", params.EdictID)
+		query = query.Where("edict_id = ? AND username = ? AND project = ?", params.EdictID, params.Username, params.Project)
 	} else if params.Scope != "all" {
 		query = query.Where("status NOT IN ?", []string{"sealed", "cancelled"})
 	}
@@ -517,7 +519,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 	edictSummaries := make([]map[string]interface{}, len(edicts))
 	sealService := storage.NewSealService(t.db)
 	for i, e := range edicts {
-		status, err := sealService.GetEdictStatus(e.EdictID)
+		status, err := sealService.GetEdictStatus(storage.EdictKey{EdictID: e.EdictID, Username: e.Username, Project: e.Project})
 		if err != nil {
 			status = storage.EdictActive
 		}
@@ -533,7 +535,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 	sealSummaries := make([]map[string]interface{}, len(edicts))
 	for i, e := range edicts {
 		var seals []storage.Seal
-		t.db.Where("edict_id = ?", e.EdictID).Order("sealed_at ASC").Find(&seals)
+		t.db.Where("edict_id = ? AND username = ? AND project = ?", e.EdictID, e.Username, e.Project).Order("sealed_at ASC").Find(&seals)
 		sealList := make([]map[string]interface{}, len(seals))
 		for j, seal := range seals {
 			sealList[j] = map[string]interface{}{
@@ -614,9 +616,9 @@ func truncateForCourt(s string, maxLen int) string {
 // --- Database Methods (migrated from Censor) ---
 
 // GetQuenchedManifests retrieves all quenched manifests ready for ethics review
-func (c *Sage) GetQuenchedManifests(edictID uint) ([]storage.ForgeManifest, error) {
+func (c *Sage) GetQuenchedManifests(key storage.EdictKey) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
-	err := c.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestQuenched).
+	err := c.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.ManifestQuenched).
 		Order("created_at ASC").
 		Find(&manifests).Error
 	if err != nil {
@@ -626,10 +628,10 @@ func (c *Sage) GetQuenchedManifests(edictID uint) ([]storage.ForgeManifest, erro
 }
 
 // NoRejections checks if there are any rejected manifests for an edict
-func (c *Sage) NoRejections(edictID uint) (bool, error) {
+func (c *Sage) NoRejections(key storage.EdictKey) (bool, error) {
 	var count int64
 	err := c.db.Model(&storage.ForgeManifest{}).
-		Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
+		Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.ManifestRejected).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check rejections: %w", err)
@@ -700,7 +702,7 @@ func (c *Sage) QueryPrecedentsByPrinciple(principle string, limit int) ([]storag
 func (c *Sage) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := c.db.Distinct("edicts.*").
-		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id").
+		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id AND forge_manifests.username = edicts.username AND forge_manifests.project = edicts.project").
 		Where("forge_manifests.status = ?", storage.ManifestQuenched).
 		Find(&edicts).Error
 	if err != nil {
@@ -711,7 +713,7 @@ func (c *Sage) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 	sealService := storage.NewSealService(c.db)
 	var activeEdicts []storage.Edict
 	for _, e := range edicts {
-		status, err := sealService.GetEdictStatus(e.EdictID)
+		status, err := sealService.GetEdictStatus(storage.EdictKey{EdictID: e.EdictID, Username: e.Username, Project: e.Project})
 		if err != nil {
 			continue
 		}
@@ -903,6 +905,8 @@ func (t *RecordPrecedentTool) Description() string {
 func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID   uint   `json:"edict_id"`
+		Username  string `json:"username"`
+		Project   string `json:"project"`
 		Approved  bool   `json:"approved"`
 		Reasoning string `json:"reasoning"`
 	}
@@ -913,8 +917,10 @@ func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, e
 		return "", fmt.Errorf("edict_id and reasoning are required")
 	}
 
+	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+
 	// Get quenched manifests to review
-	manifests, err := t.sage.GetQuenchedManifests(params.EdictID)
+	manifests, err := t.sage.GetQuenchedManifests(key)
 	if err != nil {
 		return "", err
 	}
@@ -942,14 +948,14 @@ func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, e
 	status := "approved"
 	if !params.Approved {
 		status = "rejected"
-		AddFailure(ctx, fmt.Sprintf("rejected edict %d: %s", params.EdictID, params.Reasoning))
+		AddFailure(ctx, fmt.Sprintf("rejected edict %d: %s", key.EdictID, params.Reasoning))
 	} else {
 		// Grant Sage's seal when approved
-		if err := t.sage.grantSeal(params.EdictID, storage.JSON{"reason": params.Reasoning}); err != nil {
-			t.sage.logger.Warn("failed to grant sage seal", "edict_id", params.EdictID, "error", err)
+		if err := t.sage.grantSeal(key, storage.JSON{"reason": params.Reasoning}); err != nil {
+			t.sage.logger.Warn("failed to grant sage seal", "edict_id", key.EdictID, "error", err)
 		}
 	}
-	return fmt.Sprintf("Recorded precedent (%s) for edict %d: %s", status, params.EdictID, params.Reasoning), nil
+	return fmt.Sprintf("Recorded precedent (%s) for edict %d: %s", status, key.EdictID, params.Reasoning), nil
 }
 
 func (t *RecordPrecedentTool) ParameterSchema() map[string]any {
@@ -984,7 +990,9 @@ func (t *ListQuenchedManifestsTool) Description() string {
 
 func (t *ListQuenchedManifestsTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID uint `json:"edict_id"`
+		EdictID  uint   `json:"edict_id"`
+		Username string `json:"username"`
+		Project  string `json:"project"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -993,7 +1001,8 @@ func (t *ListQuenchedManifestsTool) Call(ctx context.Context, input string) (str
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	manifests, err := t.sage.GetQuenchedManifests(params.EdictID)
+	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	manifests, err := t.sage.GetQuenchedManifests(key)
 	if err != nil {
 		return "", err
 	}

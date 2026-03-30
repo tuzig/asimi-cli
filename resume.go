@@ -306,7 +306,7 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	m.tabs.SwitchToTabType(targetTabType)
 
 	// Clear current edict ID (resumed sessions are edict-free)
-	m.currentEdictID = 0
+	m.currentEdictKey = storage.EdictKey{}
 
 	// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
 	m.tabs.Content().Chat.Clear()

@@ -524,7 +524,7 @@ type RitualRunner struct {
 	registry        *RitualRegistry
 	stepDefs        *StepDefRegistry
 	getMinister     func(id string) Minister
-	publishEvent    func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint
+	publishEvent    func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint
 	onRunnerUpgrade func(runners.Runner) // propagates runner changes back to shogunate
 	db              *gorm.DB
 	runner          runners.Runner
@@ -539,7 +539,7 @@ type RitualRunner struct {
 func NewRitualRunner(
 	registry *RitualRegistry,
 	getMinister func(id string) Minister,
-	publishEvent func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint,
+	publishEvent func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint,
 	db *gorm.DB,
 	runner runners.Runner,
 	logger *slog.Logger,
@@ -637,6 +637,8 @@ type RitualExecution struct {
 	ID          string            `gorm:"primaryKey;column:id"`
 	RitualName  string            `gorm:"column:ritual_name"`
 	EdictID     uint              `gorm:"column:edict_id;index"`
+	Username    string            `gorm:"column:username"`
+	Project     string            `gorm:"column:project"`
 	SessionID   string            `gorm:"column:session_id"`
 	CurrentStep int               `gorm:"column:current_step"`
 	State       RitualState       `gorm:"column:state"`
@@ -680,7 +682,7 @@ func (RitualStepState) TableName() string {
 }
 
 // Start begins execution of a ritual
-func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uint, inputs map[string]string, notify internal.NotifyFunc) (*RitualExecution, error) {
+func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage.EdictKey, inputs map[string]string, notify internal.NotifyFunc) (*RitualExecution, error) {
 	def := r.registry.Get(ritualName)
 	// Validate required inputs
 	if def == nil {
@@ -700,13 +702,13 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uin
 	var previousExec *RitualExecution
 	var recoveryData storage.JSON
 	var recoveryFirstIncompleteStep int = -1
-	if err := r.db.Where("edict_id = ? AND ritual_name = ? AND state IN (?, ?)", edictID, ritualName, RitualStateAborted, RitualStateStopped).
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND ritual_name = ? AND state IN (?, ?)", key.EdictID, key.Username, key.Project, ritualName, RitualStateAborted, RitualStateStopped).
 		Order("updated_at DESC").
 		First(&previousExec).Error; err == nil {
 		// Found aborted execution - attempt recovery
 		r.logger.Info("found aborted ritual execution for recovery",
 			"ritual", ritualName,
-			"edict_id", edictID,
+			"edict_id", key.EdictID,
 			"previous_execution_id", previousExec.ID,
 			"state", previousExec.State)
 
@@ -755,9 +757,11 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uin
 
 	// Create execution record
 	exec := &RitualExecution{
-		ID:          GenerateID("ritual", ritualName, fmt.Sprint(edictID), time.Now().String()),
+		ID:          GenerateID("ritual", ritualName, fmt.Sprint(key.EdictID), time.Now().String()),
 		RitualName:  ritualName,
-		EdictID:     edictID,
+		EdictID:     key.EdictID,
+		Username:    key.Username,
+		Project:     key.Project,
 		CurrentStep: 0,
 		State:       RitualStatePending,
 		Data:        storage.JSON{"inputs": inputs},
@@ -772,7 +776,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uin
 			minister := r.getMinister("chancellor")
 			if minister != nil {
 				type zhengmingGate interface {
-					RequestZhengming(uint, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+					RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
 				}
 				gate, ok := minister.(zhengmingGate)
 				if ok {
@@ -780,13 +784,13 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uin
 						Text:    fmt.Sprintf("Ritual '%s' was previously aborted at step %d/%d. Recover from step %d (preserving %d completed steps)?", ritualName, recoveryFirstIncompleteStep, len(def.Steps), recoveryFirstIncompleteStep, recoveryFirstIncompleteStep),
 						Options: []string{"Recover from step " + strconv.Itoa(recoveryFirstIncompleteStep), "Start fresh from step 0"},
 					}}
-					requestID, err := gate.RequestZhengming(edictID, questions, storage.PriorityUrgent)
+					requestID, err := gate.RequestZhengming(key, questions, storage.PriorityUrgent)
 					if err == nil {
 						// Notify UI of zhengming request
 						if exec.notify != nil {
 							exec.notify(ZhengmingPendingMsg{
 								RequestID:  requestID,
-								EdictID:    edictID,
+								EdictKey:   key,
 								MinisterID: "chancellor",
 								Questions:  questions,
 								Priority:   storage.PriorityUrgent,
@@ -808,7 +812,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uin
 							exec.State = RitualStateCompleted
 							r.saveExecution(exec)
 							// Generate a fresh execution ID and reset state
-							exec.ID = GenerateID("ritual", ritualName, fmt.Sprint(edictID), time.Now().String())
+							exec.ID = GenerateID("ritual", ritualName, fmt.Sprint(key.EdictID), time.Now().String())
 							exec.State = RitualStatePending
 							// Clear recovery data to start fresh
 							previousExec = nil
@@ -866,13 +870,13 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, edictID uin
 		r.logger.Info("ritual started (recovery mode)",
 			"ritual", ritualName,
 			"execution_id", exec.ID,
-			"edict_id", edictID,
+			"edict_id", key.EdictID,
 			"from_step", exec.CurrentStep)
 	} else {
 		r.logger.Info("ritual started",
 			"ritual", ritualName,
 			"execution_id", exec.ID,
-			"edict_id", edictID)
+			"edict_id", key.EdictID)
 	}
 
 	steps := 0
@@ -908,7 +912,8 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	r.saveExecution(exec)
 
 	// Emit ritual_started Tian event
-	r.emitEvent(exec.EdictID, storage.EventRitualStarted, storage.JSON{
+	execKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+	r.emitEvent(execKey, storage.EventRitualStarted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 	})
@@ -1013,7 +1018,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			}
 
 			// Emit step_failed Tian event
-			r.emitEvent(exec.EdictID, storage.EventStepFailed, storage.JSON{
+			r.emitEvent(execKey, storage.EventStepFailed, storage.JSON{
 				"ritual":       exec.RitualName,
 				"execution_id": exec.ID,
 				"step":         step.Name,
@@ -1041,7 +1046,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 				}
 				// Emit ritual_failed Tian event
 				lastStepOutput := getLastStepOutput(exec)
-				r.emitEvent(exec.EdictID, storage.EventRitualFailed, storage.JSON{
+				r.emitEvent(execKey, storage.EventRitualFailed, storage.JSON{
 					"ritual":           exec.RitualName,
 					"execution_id":     exec.ID,
 					"step":             step.Name,
@@ -1068,7 +1073,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			})
 		}
 		// Emit step_completed Tian event
-		r.emitEvent(exec.EdictID, storage.EventStepCompleted, storage.JSON{
+		r.emitEvent(execKey, storage.EventStepCompleted, storage.JSON{
 			"ritual":       exec.RitualName,
 			"execution_id": exec.ID,
 			"step":         step.Name,
@@ -1127,7 +1132,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	}
 	// Emit ritual_completed Tian event
 	lastStepOutput := getLastStepOutput(exec)
-	r.emitEvent(exec.EdictID, storage.EventRitualCompleted, storage.JSON{
+	r.emitEvent(execKey, storage.EventRitualCompleted, storage.JSON{
 		"ritual":           exec.RitualName,
 		"execution_id":     exec.ID,
 		"last_step_output": lastStepOutput,
@@ -1162,6 +1167,8 @@ func (step *RitualStep) resolveMaxRetries(def *RitualDef) int {
 
 // executeStep runs a single ritual step using the Given → Act → Then model
 func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
+	execKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+
 	// Check if this is a fork step
 	if step.Fork != nil {
 		return r.executeForkStep(ctx, exec, step)
@@ -1170,7 +1177,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	// Check edict status before executing step - abort if sealed or cancelled
 	if exec.EdictID != 0 {
 		sealService := storage.NewSealService(r.db)
-		status, err := sealService.GetEdictStatus(exec.EdictID)
+		status, err := sealService.GetEdictStatus(execKey)
 		if err == nil {
 			if status == storage.EdictSealed || status == storage.EdictCancelled {
 				r.logger.Info("aborting ritual step due to edict state change",
@@ -1204,7 +1211,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		})
 	}
 	// Emit step_started Tian event
-	r.emitEvent(exec.EdictID, storage.EventStepStarted, storage.JSON{
+	r.emitEvent(execKey, storage.EventStepStarted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 		"step":         step.Name,
@@ -1306,6 +1313,7 @@ type ForkResult struct {
 
 // executeForkStep executes a fork/join parallel step
 func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
+	execKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
 	r.saveExecution(exec)
 
 	r.logger.Info("executing fork step",
@@ -1329,7 +1337,7 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 	}
 
 	// Emit step_started Tian event
-	r.emitEvent(exec.EdictID, storage.EventStepStarted, storage.JSON{
+	r.emitEvent(execKey, storage.EventStepStarted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 		"step":         step.Name,
@@ -1413,7 +1421,7 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 	}
 
 	// Emit step_completed Tian event
-	r.emitEvent(exec.EdictID, storage.EventStepCompleted, storage.JSON{
+	r.emitEvent(execKey, storage.EventStepCompleted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
 		"step":         step.Name,
@@ -1531,6 +1539,8 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 		ID:         exec.ID,
 		RitualName: exec.RitualName,
 		EdictID:    exec.EdictID,
+		Username:   exec.Username,
+		Project:    exec.Project,
 		Data:       storage.JSON{},
 		def:        exec.def,
 		stepStates: exec.stepStates,
@@ -1606,7 +1616,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	doneChan := make(chan Result, 1)
 	t := &Task{
 		Ctx:        ctx,
-		EdictID:    exec.EdictID,
+		EdictKey:   storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project},
 		Work:       work,
 		Scratchpad: scratchpad,
 		Session:    session,
@@ -1702,10 +1712,11 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 	fmt.Fprintf(&buf, "**Step:** %s (%d/%d)\n\n", step.Name, stepNum, totalSteps)
 
 	// 2. Full edict details
-	edict, clarifications, err := r.getEdictDetails(ctx, exec.EdictID)
+	scratchKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+	edict, clarifications, err := r.getEdictDetails(ctx, scratchKey)
 	if err == nil && edict != nil {
 		sealService := storage.NewSealService(r.db)
-		status, _ := sealService.GetEdictStatus(exec.EdictID)
+		status, _ := sealService.GetEdictStatus(scratchKey)
 		fmt.Fprintf(&buf, "# Edict\n\n")
 		fmt.Fprintf(&buf, "```json\n")
 		fmt.Fprintf(&buf, "{\n")
@@ -1784,15 +1795,15 @@ func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string
 }
 
 // getEdictDetails retrieves full edict information including clarification history
-func (r *RitualRunner) getEdictDetails(ctx context.Context, edictID uint) (*storage.Edict, []storage.Zhengming, error) {
+func (r *RitualRunner) getEdictDetails(ctx context.Context, key storage.EdictKey) (*storage.Edict, []storage.Zhengming, error) {
 	var edict storage.Edict
-	if err := r.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+	if err := r.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
 		return nil, nil, err
 	}
 
 	// Get clarification history
 	var clarifications []storage.Zhengming
-	r.db.Where("edict_id = ? AND status = ?", edictID, storage.ZhengmingAnswered).
+	r.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.ZhengmingAnswered).
 		Order("created_at ASC").
 		Find(&clarifications)
 
@@ -1801,20 +1812,21 @@ func (r *RitualRunner) getEdictDetails(ctx context.Context, edictID uint) (*stor
 
 // runBuiltinGiven runs a builtin given function and returns the result
 func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {
+	givenKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
 	switch fn {
 	case "get_edict":
 		if exec.EdictID == 0 {
 			return map[string]string{"status": "no edict (system event)"}, nil
 		}
-		return r.arrangeGetEdict(exec.EdictID)
+		return r.arrangeGetEdict(givenKey)
 	case "get_court_status":
-		return r.getCourtStatus(exec.EdictID)
+		return r.getCourtStatus(givenKey)
 	case "get_manifests":
-		return r.arrangeGetManifests(exec.EdictID)
+		return r.arrangeGetManifests(givenKey)
 	case "get_verdicts":
-		return r.arrangeGetVerdicts(exec.EdictID)
+		return r.arrangeGetVerdicts(givenKey)
 	case "get_precedents":
-		return r.arrangeGetPrecedents(exec.EdictID)
+		return r.arrangeGetPrecedents(givenKey)
 	case "get_earth_status":
 		return r.getEarthStatus(ctx)
 	case "get_borderlands":
@@ -1834,13 +1846,13 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 	}
 }
 
-func (r *RitualRunner) arrangeGetEdict(edictID uint) (interface{}, error) {
+func (r *RitualRunner) arrangeGetEdict(key storage.EdictKey) (interface{}, error) {
 	var edict storage.Edict
-	if err := r.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+	if err := r.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
 		return nil, err
 	}
 	sealService := storage.NewSealService(r.db)
-	status, err := sealService.GetEdictStatus(edictID)
+	status, err := sealService.GetEdictStatus(key)
 	if err != nil {
 		status = storage.EdictActive // default if error
 	}
@@ -1851,7 +1863,7 @@ func (r *RitualRunner) arrangeGetEdict(edictID uint) (interface{}, error) {
 	}, nil
 }
 
-func (r *RitualRunner) getCourtStatus(edictID uint) (interface{}, error) {
+func (r *RitualRunner) getCourtStatus(key storage.EdictKey) (interface{}, error) {
 	// Use a single SQL query to fetch and filter edicts by derived status
 	var result []map[string]interface{}
 	query := `
@@ -1874,9 +1886,9 @@ ORDER BY e.updated_at DESC
 	return result, nil
 }
 
-func (r *RitualRunner) arrangeGetManifests(edictID uint) (interface{}, error) {
+func (r *RitualRunner) arrangeGetManifests(key storage.EdictKey) (interface{}, error) {
 	var manifests []storage.ForgeManifest
-	if err := r.db.Where("edict_id = ?", edictID).Find(&manifests).Error; err != nil {
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Find(&manifests).Error; err != nil {
 		return nil, err
 	}
 	result := make([]map[string]interface{}, len(manifests))
@@ -1898,10 +1910,10 @@ func (r *RitualRunner) arrangeGetManifests(edictID uint) (interface{}, error) {
 	return result, nil
 }
 
-func (r *RitualRunner) arrangeGetVerdicts(edictID uint) (interface{}, error) {
+func (r *RitualRunner) arrangeGetVerdicts(key storage.EdictKey) (interface{}, error) {
 	var verdicts []storage.JudgeVerdict
 	err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = judge_verdicts.manifest_id").
-		Where("forge_manifests.edict_id = ?", edictID).
+		Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", key.EdictID, key.Username, key.Project).
 		Find(&verdicts).Error
 	if err != nil {
 		return nil, err
@@ -1917,10 +1929,10 @@ func (r *RitualRunner) arrangeGetVerdicts(edictID uint) (interface{}, error) {
 	return result, nil
 }
 
-func (r *RitualRunner) arrangeGetPrecedents(edictID uint) (interface{}, error) {
+func (r *RitualRunner) arrangeGetPrecedents(key storage.EdictKey) (interface{}, error) {
 	var precedents []storage.CensorPrecedent
 	err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
-		Where("forge_manifests.edict_id = ?", edictID).
+		Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", key.EdictID, key.Username, key.Project).
 		Find(&precedents).Error
 	if err != nil {
 		return nil, err
@@ -2251,11 +2263,12 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 		r.logger.Debug("skipping edict operation for system ritual", "fn", fn)
 		return nil
 	}
+	thenKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
 	switch fn {
 	case "seal_edict":
 		// Sealing is now done via the seal chain - grant ruler seal
 		sealService := storage.NewSealService(r.db)
-		return sealService.GrantSeal(exec.EdictID, "ruler", storage.JSON{"ritual": exec.RitualName})
+		return sealService.GrantSeal(thenKey, "ruler", storage.JSON{"ritual": exec.RitualName})
 	case "block_edict":
 		// Blocking is now done via zhengming - create a pending zhengming request
 		// This is handled by the request_zhengming case below
@@ -2272,7 +2285,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 			return fmt.Errorf("minister not found: chancellor")
 		}
 		type zhengmingGate interface {
-			RequestZhengming(uint, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+			RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
 		}
 		gate, ok := minister.(zhengmingGate)
 		if !ok {
@@ -2287,14 +2300,14 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 			Text:    fmt.Sprintf("The %s has completed work on edict %d. Do you approve?", stepName, exec.EdictID),
 			Options: []string{"Approve and proceed", "Let me clarify", "Reject"},
 		}}
-		requestID, err := gate.RequestZhengming(exec.EdictID, questions, storage.PriorityUrgent)
+		requestID, err := gate.RequestZhengming(thenKey, questions, storage.PriorityUrgent)
 		if err != nil {
 			return fmt.Errorf("failed to request zhengming: %w", err)
 		}
 		if exec.notify != nil {
 			exec.notify(ZhengmingPendingMsg{
 				RequestID:  requestID,
-				EdictID:    exec.EdictID,
+				EdictKey:   thenKey,
 				MinisterID: "chancellor",
 				Questions:  questions,
 				Priority:   storage.PriorityUrgent,
@@ -2327,7 +2340,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 	case "await_ruler_seal":
 		// Stage only files from manifests (not git add -A)
 		var manifests []storage.ForgeManifest
-		if err := r.db.Where("edict_id = ?", exec.EdictID).Find(&manifests).Error; err != nil {
+		if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", thenKey.EdictID, thenKey.Username, thenKey.Project).Find(&manifests).Error; err != nil {
 			return fmt.Errorf("failed to query manifests: %w", err)
 		}
 
@@ -2358,14 +2371,14 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 	case "record the judge's seal":
 		// Record the judge's seal on the edict
 		sealService := storage.NewSealService(r.db)
-		if err := sealService.GrantSeal(exec.EdictID, "judge", storage.JSON{"ritual": exec.RitualName}); err != nil {
+		if err := sealService.GrantSeal(thenKey, "judge", storage.JSON{"ritual": exec.RitualName}); err != nil {
 			return fmt.Errorf("failed to record judge's seal: %w", err)
 		}
 		return nil
 	case "record the sage's seal":
 		// Record the sage's seal on the edict
 		sealService := storage.NewSealService(r.db)
-		if err := sealService.GrantSeal(exec.EdictID, "sage", storage.JSON{"ritual": exec.RitualName}); err != nil {
+		if err := sealService.GrantSeal(thenKey, "sage", storage.JSON{"ritual": exec.RitualName}); err != nil {
 			return fmt.Errorf("failed to record sage's seal: %w", err)
 		}
 		return nil
@@ -2554,14 +2567,16 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 
 // emitEvent records a Tian event from the ritual runner.
 // Routes through publishEvent for channel delivery when available.
-func (r *RitualRunner) emitEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) {
+func (r *RitualRunner) emitEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) {
 	if r.publishEvent != nil {
-		r.publishEvent(edictID, eventType, payload)
+		r.publishEvent(key, eventType, payload)
 		return
 	}
 	// Fallback: DB-only (for tests without shogunate)
 	event := storage.TianEvent{
-		EdictID:   edictID,
+		EdictID:   key.EdictID,
+		Username:  key.Username,
+		Project:   key.Project,
 		EventType: eventType,
 		Payload:   payload,
 	}
@@ -2582,7 +2597,8 @@ func (r *RitualRunner) invokeReportFailure(ctx context.Context, exec *RitualExec
 		"error":       err.Error(),
 	}
 	go func() {
-		failExec, startErr := r.Start(ctx, "report_failure", exec.EdictID, inputs, nil)
+		failKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+		failExec, startErr := r.Start(ctx, "report_failure", failKey, inputs, nil)
 		if startErr != nil {
 			r.logger.Warn("failed to start report_failure ritual", "error", startErr)
 			return
@@ -2704,11 +2720,11 @@ func (r *RitualRunner) GetExecution(executionID string) (*RitualExecution, error
 }
 
 // ListExecutions lists executions for an edict
-func (r *RitualRunner) ListExecutions(edictID uint) ([]RitualExecution, error) {
+func (r *RitualRunner) ListExecutions(key storage.EdictKey) ([]RitualExecution, error) {
 	var executions []RitualExecution
 	query := r.db.Order("created_at DESC")
-	if edictID != 0 {
-		query = query.Where("edict_id = ?", edictID)
+	if key.EdictID != 0 {
+		query = query.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project)
 	}
 	if err := query.Find(&executions).Error; err != nil {
 		return nil, err

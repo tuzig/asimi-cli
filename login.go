@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/storage"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -1022,7 +1023,7 @@ func handleLogoutCommand(model *TUIModel, args []string) tea.Cmd {
 		model.config.LLM.APIKey = ""
 
 		// Clear the session state
-		model.currentEdictID = 0
+		model.currentEdictKey = storage.EdictKey{}
 		model.sessionActive = false
 
 		// Update status line

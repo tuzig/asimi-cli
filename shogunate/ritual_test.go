@@ -22,6 +22,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func testEK(id uint) storage.EdictKey { return storage.EdictKey{EdictID: id} }
+
 func TestParseRitual(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -511,7 +513,7 @@ func TestRitualStreamMessages(t *testing.T) {
 
 	// Start the ritual
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "test-stream", 1, map[string]string{"edict_id": "1"}, notify)
+	exec, err := runner.Start(ctx, "test-stream", testEK(1), map[string]string{"edict_id": "1"}, notify)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -607,7 +609,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "multi-step", 2, nil, notify)
+	exec, err := runner.Start(ctx, "multi-step", testEK(2), nil, notify)
 	if err != nil {
 		t.Fatalf("Failed to start: %v", err)
 	}
@@ -662,7 +664,7 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	exec, _ := runner.Start(ctx, "fail-ritual", 3, nil, notify)
+	exec, _ := runner.Start(ctx, "fail-ritual", testEK(3), nil, notify)
 	err := runner.Run(ctx, exec)
 
 	// Should fail
@@ -765,7 +767,7 @@ func TestRitualGotoPassesErrorMessage(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "goto-error-test", 4, nil, nil)
+	exec, err := runner.Start(ctx, "goto-error-test", testEK(4), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -864,7 +866,7 @@ func TestRitualGotoPassesOutputAndError(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "goto-output-error-test", 5, nil, nil)
+	exec, err := runner.Start(ctx, "goto-output-error-test", testEK(5), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -964,7 +966,7 @@ func TestRitualGotoSessionReuse(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "goto-session-test", 6, nil, nil)
+	exec, err := runner.Start(ctx, "goto-session-test", testEK(6), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -1027,7 +1029,7 @@ func TestRitualGotoPreservesOutputOnFailure(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "preserve-output-test", 7, nil, nil)
+	exec, err := runner.Start(ctx, "preserve-output-test", testEK(7), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -1213,7 +1215,7 @@ func TestRunThenStep_Multiple(t *testing.T) {
 	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil)
 
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "multi-then", 8, nil, nil)
+	exec, err := runner.Start(ctx, "multi-then", testEK(8), nil, nil)
 	if err != nil {
 		t.Fatalf("Start error: %v", err)
 	}
@@ -1240,6 +1242,7 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 
 	// Create test edict
 	edict := storage.Edict{
+		EdictID:   1,
 		SessionID: "test-session",
 		Intent:    "Test manifest staging",
 	}
@@ -1305,6 +1308,7 @@ func TestAwaitRulerSeal_NoManifests(t *testing.T) {
 
 	// Create test edict with no manifests
 	edict := storage.Edict{
+		EdictID:   1,
 		SessionID: "test-session",
 		Intent:    "Test no manifests",
 	}
@@ -1402,7 +1406,7 @@ func TestBackgroundGiven(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "bg-test", 9, nil, notify)
+	exec, err := runner.Start(ctx, "bg-test", testEK(9), nil, notify)
 	if err != nil {
 		t.Fatalf("Start error: %v", err)
 	}
@@ -1781,7 +1785,7 @@ func TestRitualZhengmingPausesTimeout(t *testing.T) {
 		}
 	}
 
-	exec, err := runner.Start(ctx, "zhengming-pause", 10, nil, notify)
+	exec, err := runner.Start(ctx, "zhengming-pause", testEK(10), nil, notify)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -1853,7 +1857,7 @@ func TestRitualTimeoutWithoutZhengming(t *testing.T) {
 
 	notify := func(msg any) {}
 
-	exec, err := runner.Start(ctx, "timeout-test", 11, nil, notify)
+	exec, err := runner.Start(ctx, "timeout-test", testEK(11), nil, notify)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}

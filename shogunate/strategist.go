@@ -60,10 +60,10 @@ func (s *Strategist) SystemPrompt() string {
 // Tools returns the Strategist's LLM tools for interactive sessions
 func (s *Strategist) Tools() []Tool {
 	var zhengmingNotify tools.ZhengmingNotifyFunc
-	zhengmingNotify = func(requestID string, edictID uint, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
+	zhengmingNotify = func(requestID string, key storage.EdictKey, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
 		s.notify(ZhengmingPendingMsg{
 			RequestID:  requestID,
-			EdictID:    edictID,
+			EdictKey:   key,
 			MinisterID: ministerID,
 			Questions:  questions,
 			Priority:   priority,
@@ -90,7 +90,7 @@ func (s *Strategist) Tools() []Tool {
 func (s *Strategist) InsertLing(ling *storage.Ling) error {
 	// Generate ling ID with random component to ensure uniqueness
 	if ling.LingID == "" {
-		ling.LingID = GenerateID("ling", fmt.Sprintf("%d", ling.EdictID),
+		ling.LingID = GenerateID("ling", fmt.Sprintf("%d", ling.EdictID), ling.Username, ling.Project,
 			ling.Description, time.Now().String(), fmt.Sprintf("%d", rand.Int63()))
 	}
 
@@ -101,9 +101,9 @@ func (s *Strategist) InsertLing(ling *storage.Ling) error {
 }
 
 // GetLingForEdict retrieves all ling for an edict
-func (s *Strategist) GetLingForEdict(edictID uint) ([]storage.Ling, error) {
+func (s *Strategist) GetLingForEdict(key storage.EdictKey) ([]storage.Ling, error) {
 	var ling []storage.Ling
-	err := s.db.Where("edict_id = ?", edictID).
+	err := s.db.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Order("created_at ASC").
 		Find(&ling).Error
 	if err != nil {
@@ -113,10 +113,10 @@ func (s *Strategist) GetLingForEdict(edictID uint) ([]storage.Ling, error) {
 }
 
 // LingExistsForEdict checks if any ling exists for an edict
-func (s *Strategist) LingExistsForEdict(edictID uint) (bool, error) {
+func (s *Strategist) LingExistsForEdict(key storage.EdictKey) (bool, error) {
 	var count int64
 	err := s.db.Model(&storage.Ling{}).
-		Where("edict_id = ?", edictID).
+		Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check ling existence: %w", err)
@@ -143,7 +143,7 @@ func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, stri
 		}
 	} else {
 		session, err = CreateSessionWithOpts(s, s.model, s.config, notify, CreateSessionOpts{
-			EdictID:    task.EdictID,
+			EdictKey:   task.EdictKey,
 			TabID:      "strategist",
 			Scratchpad: task.Scratchpad,
 		})
@@ -226,7 +226,7 @@ func (s *Strategist) Run(ctx context.Context) {
 // processTask handles a single task
 func (s *Strategist) processTask(ctx context.Context, task *Task) {
 	s.logger.Info("strategist processing task",
-		"edict_id", task.EdictID,
+		"edict_id", task.EdictKey.EdictID,
 		"work", task.Work)
 
 	var output string
@@ -241,7 +241,7 @@ func (s *Strategist) processTask(ctx context.Context, task *Task) {
 
 	// Validate ling dependencies after session completes
 	if taskErr == nil {
-		lingList, err := s.GetLingForEdict(task.EdictID)
+		lingList, err := s.GetLingForEdict(task.EdictKey)
 		if err == nil && len(lingList) > 0 {
 			if err := s.validateDependencies(lingList); err != nil {
 				taskErr = fmt.Errorf("invalid dependencies: %w", err)
@@ -260,7 +260,7 @@ func (s *Strategist) processTask(ctx context.Context, task *Task) {
 	select {
 	case task.Done <- result:
 	default:
-		s.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
+		s.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.EdictID)
 	}
 }
 
@@ -280,6 +280,8 @@ func (t *InsertLingTool) Description() string {
 func (t *InsertLingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID      uint     `json:"edict_id"`
+		Username     string   `json:"username"`
+		Project      string   `json:"project"`
 		Description  string   `json:"description"`
 		Dependencies []string `json:"dependencies,omitempty"`
 	}
@@ -295,6 +297,8 @@ func (t *InsertLingTool) Call(ctx context.Context, input string) (string, error)
 
 	ling := &storage.Ling{
 		EdictID:      params.EdictID,
+		Username:     params.Username,
+		Project:      params.Project,
 		Description:  params.Description,
 		Dependencies: storage.StringArray(params.Dependencies),
 		Status:       storage.LingPending,
@@ -314,6 +318,14 @@ func (t *InsertLingTool) ParameterSchema() map[string]any {
 			"edict_id": map[string]any{
 				"type":        "integer",
 				"description": "The edict ID this ling belongs to",
+			},
+			"username": map[string]any{
+				"type":        "string",
+				"description": "The username",
+			},
+			"project": map[string]any{
+				"type":        "string",
+				"description": "The project name",
 			},
 			"description": map[string]any{
 				"type":        "string",
@@ -349,7 +361,9 @@ func (t *ListLingTool) Description() string {
 
 func (t *ListLingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID uint `json:"edict_id"`
+		EdictID  uint   `json:"edict_id"`
+		Username string `json:"username"`
+		Project  string `json:"project"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -358,7 +372,8 @@ func (t *ListLingTool) Call(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	lingList, err := t.strategist.GetLingForEdict(params.EdictID)
+	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	lingList, err := t.strategist.GetLingForEdict(key)
 	if err != nil {
 		return "", err
 	}
@@ -381,6 +396,14 @@ func (t *ListLingTool) ParameterSchema() map[string]any {
 			"edict_id": map[string]any{
 				"type":        "integer",
 				"description": "The edict ID to list ling for",
+			},
+			"username": map[string]any{
+				"type":        "string",
+				"description": "The username",
+			},
+			"project": map[string]any{
+				"type":        "string",
+				"description": "The project name",
 			},
 		},
 		"required": []string{"edict_id"},

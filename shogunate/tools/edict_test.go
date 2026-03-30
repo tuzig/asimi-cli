@@ -31,7 +31,8 @@ func TestTransitionEdictTool_Cancel(t *testing.T) {
 
 	// Create an edict
 	edict := storage.Edict{
-		Intent: "Test edict",
+		EdictID: 1,
+		Intent:  "Test edict",
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -61,7 +62,7 @@ func TestTransitionEdictTool_Cancel(t *testing.T) {
 
 	// Verify derived status is cancelled
 	sealService := storage.NewSealService(db)
-	status, err := sealService.GetEdictStatus(edict.EdictID)
+	status, err := sealService.GetEdictStatus(edict.Key())
 	if err != nil {
 		t.Fatalf("Failed to get edict status: %v", err)
 	}
@@ -75,7 +76,8 @@ func TestTransitionEdictTool_InvalidStatus(t *testing.T) {
 
 	// Create an edict
 	edict := storage.Edict{
-		Intent: "Test edict",
+		EdictID: 1,
+		Intent:  "Test edict",
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -95,7 +97,8 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 
 	// Create an edict (not blocked)
 	edict := storage.Edict{
-		Intent: "Test edict",
+		EdictID: 1,
+		Intent:  "Test edict",
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -114,7 +117,7 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 
 	// Verify edict is now sealed
 	sealService := storage.NewSealService(db)
-	status, err := sealService.GetEdictStatus(edict.EdictID)
+	status, err := sealService.GetEdictStatus(edict.Key())
 	if err != nil {
 		t.Fatalf("Failed to get edict status: %v", err)
 	}
@@ -158,10 +161,10 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 
 	// Create edicts
 	edicts := []storage.Edict{
-		{Intent: "Active edict"},
-		{Intent: "Blocked edict"},
-		{Intent: "Another blocked"},
-		{Intent: "Sealed edict"},
+		{EdictID: 1, Intent: "Active edict"},
+		{EdictID: 2, Intent: "Blocked edict"},
+		{EdictID: 3, Intent: "Another blocked"},
+		{EdictID: 4, Intent: "Sealed edict"},
 	}
 	for i := range edicts {
 		if err := db.Create(&edicts[i]).Error; err != nil {
@@ -183,13 +186,13 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 
 	// Seal the fourth edict
 	sealService := storage.NewSealService(db)
-	if err := sealService.GrantSeal(edicts[3].EdictID, "judge", storage.JSON{}); err != nil {
+	if err := sealService.GrantSeal(edicts[3].Key(), "judge", storage.JSON{}); err != nil {
 		t.Fatalf("failed to grant judge seal: %v", err)
 	}
-	if err := sealService.GrantSeal(edicts[3].EdictID, "sage", storage.JSON{}); err != nil {
+	if err := sealService.GrantSeal(edicts[3].Key(), "sage", storage.JSON{}); err != nil {
 		t.Fatalf("failed to grant sage seal: %v", err)
 	}
-	if err := sealService.GrantSeal(edicts[3].EdictID, "ruler", storage.JSON{}); err != nil {
+	if err := sealService.GrantSeal(edicts[3].Key(), "ruler", storage.JSON{}); err != nil {
 		t.Fatalf("failed to grant ruler seal: %v", err)
 	}
 

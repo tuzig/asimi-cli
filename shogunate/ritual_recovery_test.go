@@ -26,6 +26,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		t.Fatalf("failed to create edict: %v", err)
 	}
 	edictID := edict.EdictID
+	edictKey := edict.Key()
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -95,7 +96,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 
 	// Start ritual - should detect aborted execution
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "test-recovery", edictID, map[string]string{}, nil)
+	exec, err := runner.Start(ctx, "test-recovery", edictKey, map[string]string{}, nil)
 	if err != nil {
 		t.Fatalf("failed to start ritual: %v", err)
 	}
@@ -141,7 +142,7 @@ func TestRitualRecoveryNoAbortedExecution(t *testing.T) {
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
-	edictID := edict.EdictID
+	edictKey := edict.Key()
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -170,7 +171,7 @@ func TestRitualRecoveryNoAbortedExecution(t *testing.T) {
 
 	// Start ritual - should start fresh (no aborted execution)
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "test-fresh", edictID, map[string]string{}, nil)
+	exec, err := runner.Start(ctx, "test-fresh", edictKey, map[string]string{}, nil)
 	if err != nil {
 		t.Fatalf("failed to start ritual: %v", err)
 	}
@@ -208,6 +209,7 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 		t.Fatalf("failed to create edict: %v", err)
 	}
 	edictID := edict.EdictID
+	edictKey := edict.Key()
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -273,7 +275,7 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 
 	// Start ritual - should start fresh since all steps completed
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "test-all-complete", edictID, map[string]string{}, nil)
+	exec, err := runner.Start(ctx, "test-all-complete", edictKey, map[string]string{}, nil)
 	if err != nil {
 		t.Fatalf("failed to start ritual: %v", err)
 	}
@@ -306,6 +308,7 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 		t.Fatalf("failed to create edict: %v", err)
 	}
 	edictID := edict.EdictID
+	edictKey := edict.Key()
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -372,7 +375,7 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 
 	// Start ritual - should recover from step 2 (has retries)
 	ctx := context.Background()
-	exec, err := runner.Start(ctx, "test-retry", edictID, map[string]string{}, nil)
+	exec, err := runner.Start(ctx, "test-retry", edictKey, map[string]string{}, nil)
 	if err != nil {
 		t.Fatalf("failed to start ritual: %v", err)
 	}
@@ -405,6 +408,7 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 		t.Fatalf("failed to create edict: %v", err)
 	}
 	edictID := edict.EdictID
+	edictKey := edict.Key()
 
 	// Create ritual definition
 	ritual := &RitualDef{
@@ -463,7 +467,7 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 
 	// Start ritual
 	ctx := context.Background()
-	_, err = runner.Start(ctx, "test-log", edictID, map[string]string{}, nil)
+	_, err = runner.Start(ctx, "test-log", edictKey, map[string]string{}, nil)
 	if err != nil {
 		t.Fatalf("failed to start ritual: %v", err)
 	}

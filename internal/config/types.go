@@ -13,13 +13,13 @@ import (
 
 // Config represents the application configuration structure
 type Config struct {
-	Storage StorageConfig `koanf:"storage"`
-	Logging LoggingConfig `koanf:"logging"`
-	UI      UIConfig      `koanf:"ui"`
-	LLM     LLMConfig     `koanf:"llm"`
-	History HistoryConfig `koanf:"history"`
-	Session SessionConfig `koanf:"session"`
-	Sandbox SandboxConfig `koanf:"sandbox"`
+	Storage   StorageConfig    `koanf:"storage"`
+	Logging   LoggingConfig    `koanf:"logging"`
+	UI        UIConfig         `koanf:"ui"`
+	LLM       LLMConfig        `koanf:"llm"`
+	History   HistoryConfig    `koanf:"history"`
+	Session   SessionConfig    `koanf:"session"`
+	Sandbox   SandboxConfig    `koanf:"sandbox"`
 }
 
 // StorageConfig holds storage configuration
@@ -110,13 +110,20 @@ type SandboxConfig struct {
 type ShogunateConfig struct {
 	PollInterval  time.Duration `koanf:"poll_interval"`
 	RitualTimeout time.Duration `koanf:"ritual_timeout"`
+	Username      string        `koanf:"username"` // OS username for edict scoping
+	Project       string        `koanf:"project"`  // project slug for edict scoping
 }
 
 // DefaultShogunateConfig returns the default configuration.
 func DefaultShogunateConfig() *ShogunateConfig {
+	username := "guest"
+	if u, err := user.Current(); err == nil {
+		username = u.Username
+	}
 	return &ShogunateConfig{
 		PollInterval:  5 * time.Second,
 		RitualTimeout: 30 * time.Second,
+		Username:      username,
 	}
 }
 

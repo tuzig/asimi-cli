@@ -55,6 +55,13 @@ func (s *StringArray) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, s)
 }
 
+// EdictKey is the composite primary key for an edict (edict_id, username, project).
+type EdictKey struct {
+	EdictID  uint   `json:"edict_id"`
+	Username string `json:"username"`
+	Project  string `json:"project"`
+}
+
 // EdictStatus represents the current status of an edict
 // This is derived from seals and zhengming tables, not stored in edicts table
 type EdictStatus string
@@ -68,8 +75,11 @@ const (
 
 // Edict represents a high-level task/issue being processed by the Shogunate
 // Status is derived from seals and zhengming tables - see EdictStatus type
+// Primary key is composite: (edict_id, username, project)
 type Edict struct {
-	EdictID     uint       `gorm:"primaryKey;autoIncrement;column:edict_id"`
+	EdictID     uint       `gorm:"primaryKey;column:edict_id"`
+	Username    string     `gorm:"primaryKey;column:username"`
+	Project     string     `gorm:"primaryKey;column:project"`
 	SessionID   string     `gorm:"column:session_id;index"`
 	IssueRef    string     `gorm:"column:issue_ref"`
 	Summary     string     `gorm:"column:summary"`
@@ -77,6 +87,11 @@ type Edict struct {
 	CancelledAt *time.Time `gorm:"column:cancelled_at"` // NULL = not cancelled, timestamp = cancelled at this time
 	CreatedAt   time.Time  `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt   time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+// Key returns the composite key for this edict.
+func (e *Edict) Key() EdictKey {
+	return EdictKey{EdictID: e.EdictID, Username: e.Username, Project: e.Project}
 }
 
 // TableName returns the table name for Edict
@@ -88,6 +103,8 @@ func (Edict) TableName() string {
 type Seal struct {
 	SealID     string    `gorm:"primaryKey;column:seal_id"`
 	EdictID    uint      `gorm:"column:edict_id;index"`
+	Username   string    `gorm:"column:username"`
+	Project    string    `gorm:"column:project"`
 	MinisterID string    `gorm:"column:minister_id"` // "judge", "sage", "ruler"
 	SealedAt   time.Time `gorm:"column:sealed_at;autoCreateTime"`
 	Metadata   JSON      `gorm:"column:metadata;type:json"` // Optional: verdict_id, precedent_id, etc.
@@ -150,6 +167,8 @@ const (
 type Zhengming struct {
 	RequestID  string             `gorm:"primaryKey;column:request_id"`
 	EdictID    uint               `gorm:"column:edict_id;index"`
+	Username   string             `gorm:"column:username"`
+	Project    string             `gorm:"column:project"`
 	MinisterID string             `gorm:"column:minister_id"`
 	Questions  ZhengmingQuestions `gorm:"column:question;type:text"`
 	Answer     string             `gorm:"column:answer"`
@@ -197,6 +216,8 @@ const (
 type TianEvent struct {
 	ID        uint           `gorm:"primaryKey;autoIncrement"`
 	EdictID   uint           `gorm:"column:edict_id;index"`
+	Username  string         `gorm:"column:username"`
+	Project   string         `gorm:"column:project"`
 	EventType ShogunateEvent `gorm:"column:event_type"`
 	Payload   JSON           `gorm:"column:payload;type:json"`
 	CreatedAt time.Time      `gorm:"column:created_at;autoCreateTime"`
@@ -212,6 +233,8 @@ type TianEventDLQ struct {
 	ID           uint           `gorm:"primaryKey;autoIncrement"`
 	OriginalID   uint           `gorm:"column:original_id"`
 	EdictID      uint           `gorm:"column:edict_id;index"`
+	Username     string         `gorm:"column:username"`
+	Project      string         `gorm:"column:project"`
 	EventType    ShogunateEvent `gorm:"column:event_type"`
 	Payload      JSON           `gorm:"column:payload;type:json"`
 	ErrorMessage string         `gorm:"column:error_message"`
@@ -238,6 +261,8 @@ const (
 type Ling struct {
 	LingID       string      `gorm:"primaryKey;column:ling_id"`
 	EdictID      uint        `gorm:"column:edict_id;index"`
+	Username     string      `gorm:"column:username"`
+	Project      string      `gorm:"column:project"`
 	Description  string      `gorm:"column:description"`
 	Dependencies StringArray `gorm:"column:dependencies;type:json"`
 	Status       LingStatus  `gorm:"column:status"`
@@ -264,6 +289,8 @@ const (
 type ForgeManifest struct {
 	ManifestID string         `gorm:"primaryKey;column:manifest_id"`
 	EdictID    uint           `gorm:"column:edict_id;index"`
+	Username   string         `gorm:"column:username"`
+	Project    string         `gorm:"column:project"`
 	LingID     string         `gorm:"column:ling_id"`
 	FilePath   string         `gorm:"column:file_path"`
 	FuncName   string         `gorm:"column:func_name"`
@@ -331,6 +358,8 @@ type MarshalIncident struct {
 	IncidentID string    `gorm:"primaryKey;column:incident_id"`
 	CommitHash string    `gorm:"column:commit_hash;index"`
 	EdictID    uint      `gorm:"column:edict_id;index"`
+	Username   string    `gorm:"column:username"`
+	Project    string    `gorm:"column:project"`
 	RCASummary string    `gorm:"column:rca_summary"`
 	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt  time.Time `gorm:"column:updated_at;autoUpdateTime"`
@@ -345,6 +374,8 @@ func (MarshalIncident) TableName() string {
 type RulerCouncil struct {
 	CouncilID  string    `gorm:"primaryKey;column:council_id"`
 	EdictID    uint      `gorm:"column:edict_id;index"`
+	Username   string    `gorm:"column:username"`
+	Project    string    `gorm:"column:project"`
 	Decision   string    `gorm:"column:decision"`
 	Approved   bool      `gorm:"column:approved"`
 	ApprovedBy string    `gorm:"column:approved_by"`

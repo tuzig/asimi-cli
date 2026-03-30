@@ -97,7 +97,7 @@ type InvokeMinisterTool struct {
 type MinisterInvokingMsg struct {
 	TabID      string
 	MinisterID string
-	EdictID    uint
+	EdictKey   storage.EdictKey
 	Task       string
 }
 
@@ -105,7 +105,7 @@ type MinisterInvokingMsg struct {
 type MinisterCompletedMsg struct {
 	TabID      string
 	MinisterID string
-	EdictID    uint
+	EdictKey   storage.EdictKey
 	Output     string
 	Sealed     bool
 	Error      error
@@ -124,9 +124,11 @@ func (t InvokeMinisterTool) Description() string {
 
 func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		MinisterID string `json:"minister_id"`
-		EdictID    uint   `json:"edict_id"`
-		Work       string `json:"task"` // JSON field is "task" for backwards compatibility
+		MinisterID string           `json:"minister_id"`
+		EdictID    uint             `json:"edict_id"`
+		Username   string           `json:"username"`
+		Project    string           `json:"project"`
+		Work       string           `json:"task"` // JSON field is "task" for backwards compatibility
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -142,6 +144,12 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("task is required")
 	}
 
+	key := storage.EdictKey{
+		EdictID:  params.EdictID,
+		Username: params.Username,
+		Project:  params.Project,
+	}
+
 	logger := t.chancellor.logger
 	if logger == nil {
 		logger = slog.Default()
@@ -152,7 +160,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		t.chancellor.notify(MinisterInvokingMsg{
 			TabID:      "chancellor",
 			MinisterID: params.MinisterID,
-			EdictID:    params.EdictID,
+			EdictKey:   key,
 			Task:       params.Work,
 		})
 	}
@@ -165,7 +173,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 			t.chancellor.notify(MinisterCompletedMsg{
 				TabID:      "chancellor",
 				MinisterID: params.MinisterID,
-				EdictID:    params.EdictID,
+				EdictKey:   key,
 				Error:      err,
 			})
 		}
@@ -177,9 +185,9 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 
 	// Create Task with per-call done channel
 	task := &Task{
-		EdictID: params.EdictID,
-		Work:    params.Work,
-		Done:    doneChan,
+		EdictKey: key,
+		Work:     params.Work,
+		Done:     doneChan,
 	}
 
 	// Send task to minister
@@ -188,7 +196,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	case minister.Tasks() <- task:
 		logger.Info("task sent to minister",
 			"minister", params.MinisterID,
-			"edict_id", params.EdictID,
+			"edict_id", key.EdictID,
 			"work", truncateString(params.Work, 50))
 	case <-ctx.Done():
 		return "", fmt.Errorf("minister %s failed: context cancelled while sending task to %s", params.MinisterID, params.MinisterID)
@@ -204,7 +212,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 			t.chancellor.notify(MinisterCompletedMsg{
 				TabID:      "chancellor",
 				MinisterID: params.MinisterID,
-				EdictID:    params.EdictID,
+				EdictKey:   key,
 				Error:      err,
 			})
 		}
@@ -219,13 +227,13 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 			t.chancellor.notify(MinisterCompletedMsg{
 				TabID:      "chancellor",
 				MinisterID: params.MinisterID,
-				EdictID:    params.EdictID,
+				EdictKey:   key,
 				Error:      result.Err,
 			})
 		}
 		logger.Error("task returned error",
 			"minister", params.MinisterID,
-			"edict_id", params.EdictID,
+			"edict_id", key.EdictID,
 			"error", result.Err)
 		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, result.Err)
 	}
@@ -235,7 +243,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		t.chancellor.notify(MinisterCompletedMsg{
 			TabID:      "chancellor",
 			MinisterID: params.MinisterID,
-			EdictID:    params.EdictID,
+			EdictKey:   key,
 			Output:     params.Work,
 			Sealed:     true,
 		})
@@ -243,13 +251,13 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 
 	logger.Info("task completed",
 		"minister", params.MinisterID,
-		"edict_id", params.EdictID,
+		"edict_id", key.EdictID,
 		"sealed", result.Sealed,
 		"output_len", len(result.Output))
 
 	resultMap := map[string]any{
 		"minister_id": params.MinisterID,
-		"edict_id":    params.EdictID,
+		"edict_id":    key.EdictID,
 		"status":      "completed",
 		"sealed":      result.Sealed,
 		"output":      result.Output,
@@ -321,6 +329,8 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	var params struct {
 		RitualName string            `json:"ritual_name"`
 		EdictID    uint              `json:"edict_id"`
+		Username   string            `json:"username"`
+		Project    string            `json:"project"`
 		Inputs     map[string]string `json:"inputs"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
@@ -331,11 +341,17 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		return "", fmt.Errorf("ritual_name is required")
 	}
 
+	key := storage.EdictKey{
+		EdictID:  params.EdictID,
+		Username: params.Username,
+		Project:  params.Project,
+	}
+
 	if params.Inputs == nil {
 		params.Inputs = make(map[string]string)
 	}
 	// Add edict_id to inputs for template expansion
-	params.Inputs["edict_id"] = fmt.Sprintf("%d", params.EdictID)
+	params.Inputs["edict_id"] = fmt.Sprintf("%d", key.EdictID)
 
 	logger := t.chancellor.logger
 	if logger == nil {
@@ -353,18 +369,18 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 		"ritual_name": params.RitualName,
 		"inputs":      inputsPayload,
 	}
-	if err := t.chancellor.EmitEvent(params.EdictID, storage.EventRitualEnacted, payload); err != nil {
+	if err := t.chancellor.EmitEvent(key, storage.EventRitualEnacted, payload); err != nil {
 		logger.Warn("failed to emit ritual_enacted event", "error", err)
 	}
 
 	logger.Info("ritual enacted",
 		"ritual", params.RitualName,
-		"edict_id", params.EdictID)
+		"edict_id", key.EdictID)
 
 	result := map[string]any{
 		"status":      "enacted and reported. stay quiet and trust the ritual to wake you up when done",
 		"ritual_name": params.RitualName,
-		"edict_id":    params.EdictID,
+		"edict_id":    key.EdictID,
 	}
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil
@@ -430,10 +446,10 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 func (c *Chancellor) Tools() []Tool {
 	// Create zhengming notify wrapper
 	var zhengmingNotify tools.ZhengmingNotifyFunc
-	zhengmingNotify = func(requestID string, edictID uint, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
+	zhengmingNotify = func(requestID string, key storage.EdictKey, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
 		c.notify(ZhengmingPendingMsg{
 			RequestID:  requestID,
-			EdictID:    edictID,
+			EdictKey:   key,
 			MinisterID: ministerID,
 			Questions:  questions,
 			Priority:   priority,
@@ -477,12 +493,12 @@ func getLastStepOutput(exec *RitualExecution) string {
 
 // RunRitual runs a ritual synchronously, blocking until completion or failure.
 // Uses the caller's ctx so CTRL-C propagates properly.
-func (c *Chancellor) RunRitual(ctx context.Context, ritualName string, edictID uint, inputs map[string]string) (*RitualExecution, error) {
+func (c *Chancellor) RunRitual(ctx context.Context, ritualName string, key storage.EdictKey, inputs map[string]string) (*RitualExecution, error) {
 	if c.shogunate == nil || c.shogunate.GetRitualRunner() == nil {
 		return nil, fmt.Errorf("ritual runner not available")
 	}
 
-	exec, err := c.shogunate.GetRitualRunner().Start(ctx, ritualName, edictID, inputs, c.notify)
+	exec, err := c.shogunate.GetRitualRunner().Start(ctx, ritualName, key, inputs, c.notify)
 	if err != nil {
 		return nil, err
 	}
@@ -548,13 +564,13 @@ func (c *Chancellor) SetShogunate(s *Shogunate) {
 // SubscribeToEvents registers the Chancellor's event handlers directly with the RitualGuard.
 func (c *Chancellor) SubscribeToEvents(rg *RitualGuard) {
 	rg.Subscribe(storage.EventEdictCreated, func(e Event) {
-		c.handleEdictCreated(c.shogunate.ctx, e.EdictID)
+		c.handleEdictCreated(c.shogunate.ctx, e.EdictKey)
 	})
 	rg.Subscribe(storage.EventRitualCompleted, func(e Event) {
-		c.handleRitualCompleted(c.shogunate.ctx, e.EdictID, e.Payload)
+		c.handleRitualCompleted(c.shogunate.ctx, e.EdictKey, e.Payload)
 	})
 	rg.Subscribe(storage.EventRitualFailed, func(e Event) {
-		c.handleRitualFailed(c.shogunate.ctx, e.EdictID, e.Payload)
+		c.handleRitualFailed(c.shogunate.ctx, e.EdictKey, e.Payload)
 	})
 }
 
@@ -578,11 +594,11 @@ func (c *Chancellor) RestoreSession(msgs []llms.MessageContent) error {
 // --- Edict Management ---
 
 // GetEdict retrieves an edict by ID
-func (c *Chancellor) GetEdict(edictID uint) (*storage.Edict, error) {
+func (c *Chancellor) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 	var edict storage.Edict
-	if err := c.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+	if err := c.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("edict not found: %d", edictID)
+			return nil, fmt.Errorf("edict not found: %d", key.EdictID)
 		}
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
@@ -590,44 +606,44 @@ func (c *Chancellor) GetEdict(edictID uint) (*storage.Edict, error) {
 }
 
 // SetChancellorSeal sets or clears the Chancellor's seal on an edict
-func (c *Chancellor) SetChancellorSeal(edictID uint, sealed bool) error {
+func (c *Chancellor) SetChancellorSeal(key storage.EdictKey, sealed bool) error {
 	result := c.db.Model(&storage.Edict{}).
-		Where("edict_id = ?", edictID).
+		Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Update("chancellor_seal", sealed)
 	if result.Error != nil {
 		return fmt.Errorf("failed to set chancellor seal: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %d", edictID)
+		return fmt.Errorf("edict not found: %d", key.EdictID)
 	}
 	return nil
 }
 
 // SetCensorSeal sets or clears the Censor's seal on an edict
-func (c *Chancellor) SetCensorSeal(edictID uint, sealed bool) error {
+func (c *Chancellor) SetCensorSeal(key storage.EdictKey, sealed bool) error {
 	result := c.db.Model(&storage.Edict{}).
-		Where("edict_id = ?", edictID).
+		Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Update("censor_seal", sealed)
 	if result.Error != nil {
 		return fmt.Errorf("failed to set censor seal: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %d", edictID)
+		return fmt.Errorf("edict not found: %d", key.EdictID)
 	}
 	return nil
 }
 
 // CancelEdict marks an edict as cancelled
-func (c *Chancellor) CancelEdict(edictID uint, cancelledBy, reason string) error {
+func (c *Chancellor) CancelEdict(key storage.EdictKey, cancelledBy, reason string) error {
 	now := time.Now()
 	result := c.db.Model(&storage.Edict{}).
-		Where("edict_id = ?", edictID).
+		Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Update("cancelled_at", now)
 	if result.Error != nil {
 		return fmt.Errorf("failed to cancel edict: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %d", edictID)
+		return fmt.Errorf("edict not found: %d", key.EdictID)
 	}
 	return nil
 }
@@ -635,11 +651,11 @@ func (c *Chancellor) CancelEdict(edictID uint, cancelledBy, reason string) error
 // --- Zhengming (Clarification) Management ---
 
 // GetPendingZhengming retrieves all pending clarification requests for an edict
-func (c *Chancellor) GetPendingZhengming(edictID uint) ([]storage.Zhengming, error) {
+func (c *Chancellor) GetPendingZhengming(key storage.EdictKey) ([]storage.Zhengming, error) {
 	var requests []storage.Zhengming
 	query := c.db.Where("status = ?", storage.ZhengmingPending).Order("created_at ASC")
-	if edictID != 0 {
-		query = query.Where("edict_id = ?", edictID)
+	if key.EdictID != 0 {
+		query = query.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project)
 	}
 	if err := query.Find(&requests).Error; err != nil {
 		return nil, fmt.Errorf("failed to get pending zhengming: %w", err)
@@ -650,9 +666,9 @@ func (c *Chancellor) GetPendingZhengming(edictID uint) ([]storage.Zhengming, err
 // --- Manifest and Ling Management ---
 
 // GetAllManifestsForEdict retrieves all manifests for an edict (Chancellor privilege)
-func (c *Chancellor) GetAllManifestsForEdict(edictID uint) ([]storage.ForgeManifest, error) {
+func (c *Chancellor) GetAllManifestsForEdict(key storage.EdictKey) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
-	err := c.db.Where("edict_id = ?", edictID).
+	err := c.db.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Order("created_at ASC").
 		Find(&manifests).Error
 	if err != nil {
@@ -662,9 +678,9 @@ func (c *Chancellor) GetAllManifestsForEdict(edictID uint) ([]storage.ForgeManif
 }
 
 // GetAllLingForEdict retrieves all ling for an edict (Chancellor privilege)
-func (c *Chancellor) GetAllLingForEdict(edictID uint) ([]storage.Ling, error) {
+func (c *Chancellor) GetAllLingForEdict(key storage.EdictKey) ([]storage.Ling, error) {
 	var ling []storage.Ling
-	err := c.db.Where("edict_id = ?", edictID).
+	err := c.db.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Order("created_at ASC").
 		Find(&ling).Error
 	if err != nil {
@@ -688,17 +704,17 @@ func (c *Chancellor) ResetLingStatus(lingID string, status storage.LingStatus) e
 }
 
 // CancelEdictWithContext cancels an edict (context-aware variant)
-func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID uint, cancelledBy, reason string) error {
-	if err := c.CancelEdict(edictID, cancelledBy, reason); err != nil {
+func (c *Chancellor) CancelEdictWithContext(ctx context.Context, key storage.EdictKey, cancelledBy, reason string) error {
+	if err := c.CancelEdict(key, cancelledBy, reason); err != nil {
 		return err
 	}
 
-	c.EmitEvent(edictID, "edict_cancelled", storage.JSON{
+	c.EmitEvent(key, "edict_cancelled", storage.JSON{
 		"cancelled_by": cancelledBy,
 		"reason":       reason,
 	})
 
-	c.logger.Info("edict cancelled", "edict_id", edictID, "by", cancelledBy)
+	c.logger.Info("edict cancelled", "edict_id", key.EdictID, "by", cancelledBy)
 	return nil
 }
 
@@ -706,25 +722,25 @@ func (c *Chancellor) CancelEdictWithContext(ctx context.Context, edictID uint, c
 
 // processPrompt handles a single prompt from the Ruler
 func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
-	edictID := prompt.EdictID
-	if edictID != 0 {
+	key := prompt.EdictKey
+	if key.EdictID != 0 {
 		// Edict-bound prompt — append to intent
-		if err := c.AppendToIntent(edictID, prompt.Message); err != nil {
-			c.logger.Warn("failed to append to intent", "edict_id", edictID, "error", err)
+		if err := c.AppendToIntent(key, prompt.Message); err != nil {
+			c.logger.Warn("failed to append to intent", "edict_id", key.EdictID, "error", err)
 		}
 	}
-	// When edictID == 0, this is a ruling session (edict-free chat).
+	// When EdictID == 0, this is a ruling session (edict-free chat).
 	// No edict is created — the Chancellor can create one on-demand via tools.
 
 	// Notify TUI of edict ID before streaming begins
-	c.notify(StreamStartMsg{TabID: "chancellor", EdictID: edictID})
+	c.notify(StreamStartMsg{TabID: "chancellor", EdictID: key.EdictID})
 
 	// Call LLM with streaming
-	c.brewWithStreaming(ctx, edictID, prompt.Message, prompt.ContextFiles)
+	c.brewWithStreaming(ctx, key, prompt.Message, prompt.ContextFiles)
 }
 
 // brewWithStreaming delegates to Session for LLM interaction
-func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID uint, prompt string, contextFiles map[string]string) {
+func (c *Chancellor) brewWithStreaming(ctx context.Context, key storage.EdictKey, prompt string, contextFiles map[string]string) {
 	if c.model == nil {
 		c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("LLM not configured")})
 		return
@@ -746,8 +762,8 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID uint, prompt
 
 	// Pass edictID in prompt context, not session
 	fullPrompt := prompt
-	if edictID != 0 {
-		fullPrompt = fmt.Sprintf("[Context: edict %d]\n\n%s", edictID, prompt)
+	if key.EdictID != 0 {
+		fullPrompt = fmt.Sprintf("[Context: edict %d]\n\n%s", key.EdictID, prompt)
 	}
 
 	_, err := c.RulingSession.AskWithStreaming(ctx, fullPrompt, contextFiles)
@@ -761,7 +777,7 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, edictID uint, prompt
 // processTask handles a task from the ritual runner or other ministers.
 func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 	c.logger.Info("chancellor processing task",
-		"edict_id", task.EdictID,
+		"edict_id", task.EdictKey.EdictID,
 		"work", truncateString(task.Work, 50))
 
 	var output string
@@ -797,94 +813,94 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 		select {
 		case task.Done <- result:
 		default:
-			c.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
+			c.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.EdictID)
 		}
 	}
 }
 
 // handleEdictCreated sends the new edict to the chancellor LLM to choose and enact the appropriate ritual.
-func (c *Chancellor) handleEdictCreated(ctx context.Context, edictID uint) {
-	c.logger.Info("handling edict created", "edict_id", edictID)
+func (c *Chancellor) handleEdictCreated(ctx context.Context, key storage.EdictKey) {
+	c.logger.Info("handling edict created", "edict_id", key.EdictID)
 
-	edict, err := c.GetEdict(edictID)
+	edict, err := c.GetEdict(key)
 	if err != nil {
-		c.logger.Error("failed to get edict", "edict_id", edictID, "error", err)
+		c.logger.Error("failed to get edict", "edict_id", key.EdictID, "error", err)
 		return
 	}
 
-	work := fmt.Sprintf("New edict %d: %s\n\nChoose the appropriate ritual and enact it.", edictID, edict.Intent)
+	work := fmt.Sprintf("New edict %d: %s\n\nChoose the appropriate ritual and enact it.", key.EdictID, edict.Intent)
 	task := &Task{
-		Ctx:     ctx,
-		EdictID: edictID,
-		Work:    work,
-		Done:    make(chan Result, 1),
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     work,
+		Done:     make(chan Result, 1),
 	}
 
 	select {
 	case c.taskChan <- task:
 	default:
-		c.logger.Warn("chancellor task channel full", "edict_id", edictID)
+		c.logger.Warn("chancellor task channel full", "edict_id", key.EdictID)
 	}
 }
 
 // handleRitualCompleted processes a completed ritual event
-func (c *Chancellor) handleRitualCompleted(ctx context.Context, edictID uint, payload map[string]interface{}) {
-	c.logger.Info("handling ritual completed", "edict_id", edictID, "payload", payload)
+func (c *Chancellor) handleRitualCompleted(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
+	c.logger.Info("handling ritual completed", "edict_id", key.EdictID, "payload", payload)
 
 	// Extract last_step_output from payload and append to RulingSession
 	if lastStepOutput, ok := payload["last_step_output"].(string); ok && lastStepOutput != "" {
 		if c.RulingSession != nil {
 			c.RulingSession.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual completed. Last step output:\n%s", lastStepOutput))
-			c.logger.Debug("appended ritual completion to RulingSession", "edict_id", edictID)
+			c.logger.Debug("appended ritual completion to RulingSession", "edict_id", key.EdictID)
 		}
 	}
 
-	c.logger.Debug("ritual completed - edict may need synthesis", "edict_id", edictID)
+	c.logger.Debug("ritual completed - edict may need synthesis", "edict_id", key.EdictID)
 }
 
 // handleZhengmingAnswered resumes the chancellor's work on an edict after clarification
-func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, edictID uint, payload map[string]interface{}) {
+func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
 	answer, _ := payload["answer"].(string)
-	if edictID == 0 || answer == "" {
+	if key.EdictID == 0 || answer == "" {
 		return
 	}
-	c.logger.Info("handling zhengming answered", "edict_id", edictID, "answer", answer)
+	c.logger.Info("handling zhengming answered", "edict_id", key.EdictID, "answer", answer)
 
-	edict, err := c.GetEdict(edictID)
+	edict, err := c.GetEdict(key)
 	if err != nil {
-		c.logger.Error("failed to get edict for zhengming resumption", "edict_id", edictID, "error", err)
+		c.logger.Error("failed to get edict for zhengming resumption", "edict_id", key.EdictID, "error", err)
 		return
 	}
 
-	work := fmt.Sprintf("Resume edict %d: %s\n\nThe clarification has been answered. Continue from where you left off.", edictID, edict.Intent)
+	work := fmt.Sprintf("Resume edict %d: %s\n\nThe clarification has been answered. Continue from where you left off.", key.EdictID, edict.Intent)
 	task := &Task{
-		Ctx:     ctx,
-		EdictID: edictID,
-		Work:    work,
-		Done:    make(chan Result, 1),
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     work,
+		Done:     make(chan Result, 1),
 	}
 
 	select {
 	case c.taskChan <- task:
 	default:
-		c.logger.Warn("chancellor task channel full", "edict_id", edictID)
+		c.logger.Warn("chancellor task channel full", "edict_id", key.EdictID)
 	}
 }
 
 // handleRitualFailed processes a failed ritual event
-func (c *Chancellor) handleRitualFailed(ctx context.Context, edictID uint, payload map[string]interface{}) {
-	c.logger.Error("handling ritual failed", "edict_id", edictID, "payload", payload)
+func (c *Chancellor) handleRitualFailed(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
+	c.logger.Error("handling ritual failed", "edict_id", key.EdictID, "payload", payload)
 
 	// Extract last_step_output and error from payload and append to RulingSession
 	if lastStepOutput, ok := payload["last_step_output"].(string); ok && lastStepOutput != "" {
 		if c.RulingSession != nil {
 			errMsg, _ := payload["error"].(string)
 			c.RulingSession.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual failed. Error: %s\nLast step output:\n%s", errMsg, lastStepOutput))
-			c.logger.Debug("appended ritual failure to RulingSession", "edict_id", edictID)
+			c.logger.Debug("appended ritual failure to RulingSession", "edict_id", key.EdictID)
 		}
 	}
 
-	c.logger.Debug("ritual failed - may need zhengming or retry", "edict_id", edictID)
+	c.logger.Debug("ritual failed - may need zhengming or retry", "edict_id", key.EdictID)
 }
 
 // truncateString truncates a string to maxLen characters

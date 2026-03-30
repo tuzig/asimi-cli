@@ -334,6 +334,11 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to migrate edict_id to uint: %w", err)
 	}
 
+	// Migrate edicts to composite primary key (edict_id, username, project)
+	if err := storage.MigrateEdictCompositePK(db, params.Logger); err != nil {
+		return nil, fmt.Errorf("failed to migrate edict composite PK: %w", err)
+	}
+
 	// Auto-migrate Shogunate tables
 	if err := db.AutoMigrate(
 		&storage.Edict{},
@@ -364,6 +369,7 @@ type ShogunateParams struct {
 	Lifecycle fx.Lifecycle
 	GormDB    *gorm.DB
 	Config    *Config
+	RepoInfo  *repo.RepoInfo
 	Runner    runners.Runner
 	Logger    *slog.Logger
 }
@@ -372,8 +378,16 @@ type ShogunateParams struct {
 func ProvideShogunate(params ShogunateParams) *shogunate.Shogunate {
 	params.Logger.Info("initializing Shogunate")
 
-	// Get Shogunate config (use defaults if not configured)
+	// Start with defaults, then overlay config file values
 	cfg := config.DefaultShogunateConfig()
+	if params.Config.Shogunate.Username != "" {
+		cfg.Username = params.Config.Shogunate.Username
+	}
+	if params.Config.Shogunate.Project != "" {
+		cfg.Project = params.Config.Shogunate.Project
+	} else if params.RepoInfo.Slug != "" {
+		cfg.Project = params.RepoInfo.Slug
+	}
 
 	s := shogunate.NewShogunate(params.GormDB, cfg, params.Runner, params.Logger)
 	// notify is set later via s.SetNotify(program.Send) once the TUI program is created

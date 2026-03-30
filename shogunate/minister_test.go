@@ -92,7 +92,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	// Verify edict was created
-	edict2, err := chancellor.GetEdict(edict.EdictID)
+	edict2, err := chancellor.GetEdict(edict.Key())
 	assert.NoError(t, err)
 	assert.NotNil(t, edict2)
 	// Status is now derived - new edicts are active by default (no seals, no zhengming, not cancelled)
@@ -115,7 +115,7 @@ func TestStrategist_ProcessTask(t *testing.T) {
 	doneCh := make(chan Result, 1)
 	task := &Task{
 		Ctx:        ctx,
-		EdictID:    edict.EdictID,
+		EdictKey:   edict.Key(),
 		Work:       "Analyze the edict and produce a Battle Plan.",
 		Scratchpad: "# Edict\nImplement user authentication",
 		Done:       doneCh,
@@ -140,7 +140,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, err := forge.StageManifest(edict.EdictID, "", "test.go", "TestFunc", "hash1")
+	manifestID, err := forge.StageManifest(edict.Key(), "", "test.go", "TestFunc", "hash1")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, manifestID)
 
@@ -148,7 +148,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	judge := NewJudge(base, nil)
 
 	// Execute judgment (internal method)
-	sealed, err := judge.execute(ctx, edict.EdictID)
+	sealed, err := judge.execute(ctx, edict.Key())
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	}
 
 	// Check manifest is quenched
-	allQuenched, _ := judge.AllManifestsQuenched(edict.EdictID)
+	allQuenched, _ := judge.AllManifestsQuenched(edict.Key())
 	if !allQuenched {
 		t.Error("Expected all manifests quenched")
 	}
@@ -174,7 +174,7 @@ func TestSage_ReviewFlow(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, err := forge.StageManifest(edict.EdictID, "", "review.go", "ReviewFunc", "hash2")
+	manifestID, err := forge.StageManifest(edict.Key(), "", "review.go", "ReviewFunc", "hash2")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, manifestID)
 
@@ -186,7 +186,7 @@ func TestSage_ReviewFlow(t *testing.T) {
 	sage := NewSage(base, nil)
 
 	// Execute review (internal method)
-	sealed, summary, err := sage.execute(ctx, edict.EdictID)
+	sealed, summary, err := sage.execute(ctx, edict.Key())
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestSage_ReviewFlow(t *testing.T) {
 	}
 
 	// Check no rejections
-	noReject, _ := sage.NoRejections(edict.EdictID)
+	noReject, _ := sage.NoRejections(edict.Key())
 	if !noReject {
 		t.Error("Expected no rejections")
 	}
@@ -215,7 +215,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	forge := NewForge(base)
-	manifestID, err := forge.StageManifest(edict.EdictID, "", "prod.go", "ProdFunc", "hash3")
+	manifestID, err := forge.StageManifest(edict.Key(), "", "prod.go", "ProdFunc", "hash3")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, manifestID)
 	// Set commit_hash directly for marshal incident lookup
@@ -251,15 +251,15 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "Feature to cancel")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
-	err = chancellor.CancelEdictWithContext(ctx, edict.EdictID, "@user", "No longer needed")
+	err = chancellor.CancelEdictWithContext(ctx, edict.Key(), "@user", "No longer needed")
 	if err != nil {
 		t.Fatalf("Failed to cancel: %v", err)
 	}
 
 	// Check cancelled
-	edict, _ = chancellor.GetEdict(edict.EdictID)
+	edict, _ = chancellor.GetEdict(edict.Key())
 	sealService := storage.NewSealService(db)
-	status, err := sealService.GetEdictStatus(edict.EdictID)
+	status, err := sealService.GetEdictStatus(edict.Key())
 	if err != nil {
 		t.Fatalf("Failed to get edict status: %v", err)
 	}
@@ -610,7 +610,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected MinisterInvokingMsg, got %T", notifications[0])
 	}
-	if invoking.MinisterID != "notifier" || invoking.EdictID != 1 || invoking.Task != "notify me" {
+	if invoking.MinisterID != "notifier" || invoking.EdictKey.EdictID != 1 || invoking.Task != "notify me" {
 		t.Errorf("Unexpected invoking msg: %+v", invoking)
 	}
 
@@ -619,7 +619,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected MinisterCompletedMsg, got %T", notifications[1])
 	}
-	if completed.MinisterID != "notifier" || completed.EdictID != 1 || completed.Error != nil {
+	if completed.MinisterID != "notifier" || completed.EdictKey.EdictID != 1 || completed.Error != nil {
 		t.Errorf("Unexpected completed msg: %+v", completed)
 	}
 	if !completed.Sealed {
@@ -707,7 +707,7 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
 	// With edict ID — should appear in system prompt alongside Realm and role text
-	prompt := buildSystemPrompt(fake, nil, 123456)
+	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{EdictID: 123456})
 	if !strings.Contains(prompt, "Current Edict: 123456") {
 		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
 	}
@@ -719,7 +719,7 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	}
 
 	// Without edict ID — should not contain "Current Edict"
-	prompt = buildSystemPrompt(fake, nil, 0)
+	prompt = buildSystemPrompt(fake, nil, storage.EdictKey{})
 	if strings.Contains(prompt, "Current Edict") {
 		t.Errorf("Expected no edict ID in system prompt, got:\n%s", prompt)
 	}
@@ -734,7 +734,7 @@ func TestBuildSystemPrompt_Scratchpad(t *testing.T) {
 		scratchpad:   "# Available Rituals\n- implement: Run implementation",
 	}
 
-	prompt := buildSystemPrompt(fake, nil, 0)
+	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{})
 	if !regexp.MustCompile(`--- .* Scratchpad ---`).MatchString(prompt) {
 		t.Errorf("Expected scratchpad heading matching '--- .* Scratchpad ---', got:\n%s", prompt)
 	}
@@ -785,7 +785,7 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	shogunate.GetRitualRegistry().Register(&RitualDef{Name: "castle-siege", Description: "The Castle Siege (L)"})
 	chancellor.SetShogunate(shogunate)
 
-	prompt := buildSystemPrompt(chancellor, nil, 0)
+	prompt := buildSystemPrompt(chancellor, nil, storage.EdictKey{})
 
 	if !strings.Contains(prompt, "swift-strike") {
 		t.Errorf("Expected ritual name 'swift-strike' in system prompt, got:\n%s", prompt)
@@ -919,7 +919,7 @@ func TestBuildSystemPrompt_GivenContext(t *testing.T) {
 	})
 
 	// With scratchpad — edict intent should appear in system prompt
-	prompt := buildSystemPrompt(fake, nil, 42, scratchpad)
+	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{EdictID: 42}, scratchpad)
 	if !strings.Contains(prompt, "Implement dark mode for the dashboard") {
 		t.Errorf("Expected edict intent in system prompt, got:\n%s", prompt)
 	}
@@ -931,7 +931,7 @@ func TestBuildSystemPrompt_GivenContext(t *testing.T) {
 	}
 
 	// Without given context — should not contain "Given Context"
-	prompt = buildSystemPrompt(fake, nil, 42)
+	prompt = buildSystemPrompt(fake, nil, storage.EdictKey{EdictID: 42})
 	if strings.Contains(prompt, "# Given Context") {
 		t.Errorf("Expected no scratchpad without scratchpad param, got:\n%s", prompt)
 	}

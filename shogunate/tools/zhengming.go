@@ -11,11 +11,11 @@ import (
 
 // ZhengmingRequester provides clarification request capabilities
 type ZhengmingRequester interface {
-	RequestZhengming(edictID uint, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
+	RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
 }
 
 // ZhengmingNotifyFunc is a callback for notifying about zhengming requests
-type ZhengmingNotifyFunc func(requestID string, edictID uint, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority)
+type ZhengmingNotifyFunc func(requestID string, key storage.EdictKey, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority)
 
 // RequestZhengmingTool requests clarification from the user.
 type RequestZhengmingTool struct {
@@ -61,14 +61,14 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 		priority = storage.ZhengmingPriority(params.Priority)
 	}
 
-	requestID, err := t.Requester.RequestZhengming(params.EdictID, storage.ZhengmingQuestions(params.Questions), priority)
+	key := storage.EdictKey{EdictID: params.EdictID}
+	requestID, err := t.Requester.RequestZhengming(key, storage.ZhengmingQuestions(params.Questions), priority)
 	if err != nil {
 		return "", fmt.Errorf("request zhengming: %w", err)
 	}
 
-	// Notify TUI with structured questions
 	if t.Notify != nil {
-		t.Notify(requestID, params.EdictID, t.MinisterID, params.Questions, priority)
+		t.Notify(requestID, key, t.MinisterID, params.Questions, priority)
 	}
 
 	// Return immediately with pending status - no blocking

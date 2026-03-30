@@ -13,6 +13,8 @@ import (
 	"github.com/afittestide/asimi/storage"
 )
 
+func ek(id uint) storage.EdictKey { return storage.EdictKey{EdictID: id} }
+
 // TestExecuteForkStep_Parallel tests parallel fork execution
 func TestExecuteForkStep_Parallel(t *testing.T) {
 	db := setupRitualTestDB(t)
@@ -97,7 +99,7 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "fork-parallel-test", 1, nil, nil)
+	exec, err := runner.Start(ctx, "fork-parallel-test", ek(1), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -185,7 +187,7 @@ func TestExecuteForkStep_Sequential(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "fork-sequential-test", 2, nil, nil)
+	exec, err := runner.Start(ctx, "fork-sequential-test", ek(2), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -275,7 +277,7 @@ func TestExecuteForkStep_WithLimit(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "fork-limit-test", 3, nil, nil)
+	exec, err := runner.Start(ctx, "fork-limit-test", ek(3), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -486,7 +488,7 @@ func TestExecuteForkItem(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "fork-item-test", 4, nil, nil)
+	exec, err := runner.Start(ctx, "fork-item-test", ek(4), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -577,7 +579,7 @@ func TestExecuteForkStep_FailureHandling(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "fork-failure-test", 5, nil, nil)
+	exec, err := runner.Start(ctx, "fork-failure-test", ek(5), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -677,7 +679,7 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 		}
 	}
 
-	exec, err := runner.Start(ctx, "fork-notify-test", 6, nil, notify)
+	exec, err := runner.Start(ctx, "fork-notify-test", ek(6), nil, notify)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -779,7 +781,7 @@ func TestExecuteForkStep_TemplateExpansion(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "fork-template-test", 7, nil, nil)
+	exec, err := runner.Start(ctx, "fork-template-test", ek(7), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}
@@ -881,7 +883,7 @@ func TestExecuteForkStep_Cancelation(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	exec, err := runner.Start(ctx, "fork-cancel-test", 8, nil, nil)
+	exec, err := runner.Start(ctx, "fork-cancel-test", ek(8), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
 	}

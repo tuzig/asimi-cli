@@ -29,7 +29,7 @@ CRITICAL RULES:
 type EventNotificationMsg struct {
 	TabID     string
 	EventType storage.ShogunateEvent
-	EdictID   uint
+	EdictKey  storage.EdictKey
 	Message   string
 	Payload   map[string]interface{}
 }
@@ -122,10 +122,12 @@ func (rg *RitualGuard) Tasks() chan<- *Task {
 // --- Event lifecycle ---
 
 // PublishEvent persists an event to the DB and sends it to the event channel.
-func (rg *RitualGuard) PublishEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint {
+func (rg *RitualGuard) PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 	if rg.db != nil {
 		dbEvent := storage.TianEvent{
-			EdictID:   edictID,
+			EdictID:   key.EdictID,
+			Username:  key.Username,
+			Project:   key.Project,
 			EventType: eventType,
 			Payload:   payload,
 		}
@@ -134,17 +136,17 @@ func (rg *RitualGuard) PublishEvent(edictID uint, eventType storage.ShogunateEve
 		}
 	}
 	select {
-	case rg.eventCh <- Event{Type: eventType, EdictID: edictID, Payload: map[string]interface{}(payload)}:
+	case rg.eventCh <- Event{Type: eventType, EdictKey: key, Payload: map[string]interface{}(payload)}:
 	default:
 		rg.logger.Warn("event channel full, persisted to DB only", "type", eventType)
 	}
-	return edictID
+	return key.EdictID
 }
 
 // startRitual starts and runs a ritual using the Ruling tab's streaming context.
-func (rg *RitualGuard) startRitual(ritualName string, edictID uint, inputs map[string]string) {
+func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inputs map[string]string) {
 	ctx := rg.streamingCtx()
-	exec, err := rg.ritualRunner.Start(ctx, ritualName, edictID, inputs, rg.notify)
+	exec, err := rg.ritualRunner.Start(ctx, ritualName, key, inputs, rg.notify)
 	if err != nil {
 		rg.logger.Warn("failed to start ritual", "ritual", ritualName, "error", err)
 		return
@@ -157,7 +159,7 @@ func (rg *RitualGuard) startRitual(ritualName string, edictID uint, inputs map[s
 				TabID:       "chancellor",
 				RitualName:  ritualName,
 				ExecutionID: exec.ID,
-				EdictID:     edictID,
+				EdictID:     key.EdictID,
 				Status:      "ritual_failed",
 				Message:     getRulersError(err),
 			})
@@ -185,7 +187,7 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 				inputs[k] = fmt.Sprintf("%v", v)
 			}
 		}
-		rg.startRitual(ritualName, event.EdictID, inputs)
+		rg.startRitual(ritualName, event.EdictKey, inputs)
 		return
 	}
 	if event.Type == storage.EventShogunateStarted {
@@ -202,9 +204,8 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 					"ritual", ritual.Name, "event", event.Type)
 				continue
 			}
-			edictID := event.EdictID
-			inputs := map[string]string{"edict_id": fmt.Sprint(edictID)}
-			rg.startRitual(ritual.Name, edictID, inputs)
+			inputs := map[string]string{"edict_id": fmt.Sprint(event.EdictKey.EdictID)}
+			rg.startRitual(ritual.Name, event.EdictKey, inputs)
 		}
 	}
 }
@@ -225,9 +226,11 @@ func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg 
 	msg := EventNotificationMsg{
 		TabID:     "chancellor", // Default to chancellor/ruling tab
 		EventType: event.Type,
-		EdictID:   event.EdictID,
+		EdictKey:  event.EdictKey,
 		Payload:   event.Payload,
 	}
+
+	edictID := event.EdictKey.EdictID
 
 	// Build message based on event type
 	switch event.Type {
@@ -240,10 +243,10 @@ func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg 
 		if len(intent) > 60 {
 			intent = intent[:57] + "..."
 		}
-		msg.Message = fmt.Sprintf("Edict %d created: %s", event.EdictID, intent)
+		msg.Message = fmt.Sprintf("Edict %d created: %s", edictID, intent)
 
 	case storage.EventEdictSealed:
-		msg.Message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", event.EdictID)
+		msg.Message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", edictID)
 
 	case storage.EventSealGranted:
 		minister, _ := event.Payload["minister_id"].(string)
@@ -251,30 +254,30 @@ func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg 
 			minister = "Unknown"
 		}
 		if minister == "ruler" {
-			msg.Message = fmt.Sprintf("Ruler sealed edict %d", event.EdictID)
+			msg.Message = fmt.Sprintf("Ruler sealed edict %d", edictID)
 		} else {
-			msg.Message = fmt.Sprintf("Minister %s sealed edict %d", minister, event.EdictID)
+			msg.Message = fmt.Sprintf("Minister %s sealed edict %d", minister, edictID)
 		}
 
 	case storage.EventManifestCommitted:
-		msg.Message = fmt.Sprintf("Forge committed manifest for edict %d", event.EdictID)
+		msg.Message = fmt.Sprintf("Forge committed manifest for edict %d", edictID)
 
 	case storage.EventZhengmingNeeded:
 		summary, _ := event.Payload["summary"].(string)
 		if summary == "" {
 			summary = "clarification needed"
 		}
-		msg.Message = fmt.Sprintf("Zhengming requested for edict %d: %s", event.EdictID, summary)
+		msg.Message = fmt.Sprintf("Zhengming requested for edict %d: %s", edictID, summary)
 
 	case storage.EventZhengmingAnswered:
-		if event.EdictID == 0 {
+		if edictID == 0 {
 			msg.Message = fmt.Sprintf("Zhengming answered for the court")
 		} else {
-			msg.Message = fmt.Sprintf("Zhengming answered for edict %d", event.EdictID)
+			msg.Message = fmt.Sprintf("Zhengming answered for edict %d", edictID)
 		}
 
 	case storage.EventEdictCancelled:
-		msg.Message = fmt.Sprintf("Edict %d cancelled", event.EdictID)
+		msg.Message = fmt.Sprintf("Edict %d cancelled", edictID)
 	}
 
 	return msg
@@ -409,13 +412,14 @@ func (rg *RitualGuard) getSandboxImageName() string {
 // handleStartup handles the shogunate_started event by running health checks
 func (rg *RitualGuard) handleStartup(event Event) {
 	result := rg.RunHealthCheck(event)
+	zeroKey := storage.EdictKey{}
 	if result.OK {
-		rg.PublishEvent(0, storage.EventShogunateReady, storage.JSON{"checks": result})
+		rg.PublishEvent(zeroKey, storage.EventShogunateReady, storage.JSON{"checks": result})
 		return
 	}
 	// Health checks failed - request zhengming for user intervention
 	summary := fmt.Sprintf("Health checks failed: %d issue(s) detected", len(result.Failures))
-	rg.PublishEvent(0, storage.EventZhengmingNeeded, storage.JSON{
+	rg.PublishEvent(zeroKey, storage.EventZhengmingNeeded, storage.JSON{
 		"summary":     summary,
 		"failures":    result.Failures,
 		"remediation": result.Remediation,
@@ -520,14 +524,15 @@ func (rg *RitualGuard) DrainUnprocessedEvents() []DrainedEvent {
 	var drained []DrainedEvent
 	for _, event := range events {
 		t := event.EventType
+		key := storage.EdictKey{EdictID: event.EdictID, Username: event.Username, Project: event.Project}
 		rg.DispatchEvent(Event{
-			Type:    t,
-			EdictID: event.EdictID,
-			Payload: map[string]interface{}(event.Payload),
+			Type:     t,
+			EdictKey: key,
+			Payload:  map[string]interface{}(event.Payload),
 		})
 		drained = append(drained, DrainedEvent{
 			EventType: t,
-			EdictID:   event.EdictID,
+			EdictKey:  key,
 			Payload:   map[string]interface{}(event.Payload),
 		})
 		if err := rg.SaveCheckpoint(event.ID); err != nil {
@@ -592,6 +597,8 @@ func (rg *RitualGuard) MoveToDLQ(event storage.TianEvent, errMsg string, retryCo
 	dlqEntry := storage.TianEventDLQ{
 		OriginalID:   event.ID,
 		EdictID:      event.EdictID,
+		Username:     event.Username,
+		Project:      event.Project,
 		EventType:    event.EventType,
 		Payload:      event.Payload,
 		ErrorMessage: errMsg,
@@ -651,7 +658,8 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 	staleStatuses := make(map[uint]storage.EdictStatus)
 
 	for _, edict := range edicts {
-		status, err := sealService.GetEdictStatus(edict.EdictID)
+		edictKey := storage.EdictKey{EdictID: edict.EdictID, Username: edict.Username, Project: edict.Project}
+		status, err := sealService.GetEdictStatus(edictKey)
 		if err != nil {
 			continue
 		}
@@ -696,7 +704,8 @@ func (rg *RitualGuard) abortRitual(ctx context.Context, exec *RitualExecution, r
 
 	// Emit ritual_aborted event
 	if rg.ritualRunner != nil {
-		rg.ritualRunner.emitEvent(exec.EdictID, storage.EventRitualAborted, storage.JSON{
+		abortKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+		rg.ritualRunner.emitEvent(abortKey, storage.EventRitualAborted, storage.JSON{
 			"ritual":       exec.RitualName,
 			"execution_id": exec.ID,
 			"reason":       reason,

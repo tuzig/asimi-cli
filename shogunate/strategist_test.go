@@ -94,7 +94,7 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 	runner := shog.GetRitualRunner()
 	require.NotNil(t, runner)
 
-	exec, err := runner.Start(ctx, "castle-siege", edict.EdictID,
+	exec, err := runner.Start(ctx, "castle-siege", edict.Key(),
 		map[string]string{"edict_id": "1"}, nil)
 	require.NoError(t, err)
 

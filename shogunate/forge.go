@@ -70,9 +70,9 @@ func (f *Forge) Tools() []Tool {
 }
 
 // GetPendingLing retrieves all pending ling for an edict
-func (f *Forge) GetPendingLing(edictID uint) ([]storage.Ling, error) {
+func (f *Forge) GetPendingLing(key storage.EdictKey) ([]storage.Ling, error) {
 	var ling []storage.Ling
-	err := f.db.Where("edict_id = ? AND status = ?", edictID, storage.LingPending).
+	err := f.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.LingPending).
 		Order("created_at ASC").
 		Find(&ling).Error
 	if err != nil {
@@ -96,12 +96,14 @@ func (f *Forge) MarkLingCompleted(lingID string) error {
 }
 
 // StageManifest creates a staged manifest (not yet committed to git)
-func (f *Forge) StageManifest(edictID uint, lingID, filePath, funcName, contentSHA string) (string, error) {
-	manifestID := GenerateID("manifest", fmt.Sprintf("%d", edictID), lingID, filePath)
+func (f *Forge) StageManifest(key storage.EdictKey, lingID, filePath, funcName, contentSHA string) (string, error) {
+	manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.EdictID), lingID, filePath)
 
 	manifest := storage.ForgeManifest{
 		ManifestID: manifestID,
-		EdictID:    edictID,
+		EdictID:    key.EdictID,
+		Username:   key.Username,
+		Project:    key.Project,
 		LingID:     lingID,
 		FilePath:   filePath,
 		FuncName:   funcName,
@@ -129,9 +131,9 @@ func (f *Forge) DeleteForgedManifest(manifestID string) error {
 }
 
 // GetRejectedManifests retrieves all rejected manifests for an edict
-func (f *Forge) GetRejectedManifests(edictID uint) ([]storage.ForgeManifest, error) {
+func (f *Forge) GetRejectedManifests(key storage.EdictKey) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
-	err := f.db.Where("edict_id = ? AND status = ?", edictID, storage.ManifestRejected).
+	err := f.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.ManifestRejected).
 		Order("created_at DESC").
 		Find(&manifests).Error
 	if err != nil {
@@ -197,7 +199,7 @@ func (f *Forge) Run(ctx context.Context) {
 // which may generate tool calls that the Forge executes.
 func (f *Forge) processTask(ctx context.Context, task *Task) {
 	f.logger.Info("forge processing task",
-		"edict_id", task.EdictID,
+		"edict_id", task.EdictKey.EdictID,
 		"work", task.Work)
 
 	// Use task-level notify override for routing (e.g., ritual → Ruling tab)
@@ -212,7 +214,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 	if f.model != nil {
 		// Get pending lings for this edict
-		pendingLings, err := f.GetPendingLing(task.EdictID)
+		pendingLings, err := f.GetPendingLing(task.EdictKey)
 		if err != nil {
 			f.logger.Error("failed to get pending lings", "error", err)
 			taskErr = err
@@ -221,7 +223,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 			output, taskErr = f.executeLings(ctx, task, pendingLings, notify)
 		} else {
 			// Fallback: no lings, execute task.Work directly (backward compatibility)
-			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictID, task.Scratchpad, notify, task.Session)
+			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session)
 		}
 	} else {
 		output = "forge task acknowledged (no LLM configured)"
@@ -238,13 +240,13 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 	select {
 	case task.Done <- result:
 	default:
-		f.logger.Warn("done channel full, dropping result", "edict_id", task.EdictID)
+		f.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.EdictID)
 	}
 }
 
 // streamTask creates a session (or reuses existing) and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (f *Forge) streamTask(ctx context.Context, work string, edictID uint, scratchpad string, notify internal.NotifyFunc, existingSession *Session) (*Session, string, error) {
+func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session) (*Session, string, error) {
 	var session *Session
 	var err error
 
@@ -259,7 +261,7 @@ func (f *Forge) streamTask(ctx context.Context, work string, edictID uint, scrat
 	} else {
 		// Create new session for first invocation
 		session, err = CreateSessionWithOpts(f, f.model, f.config, notify, CreateSessionOpts{
-			EdictID:    edictID,
+			EdictKey:   key,
 			TabID:      "chancellor",
 			Scratchpad: scratchpad,
 		})
@@ -315,7 +317,7 @@ func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Li
 			session.SetNotify(notify)
 			_, lingErr = session.AskWithStreaming(ctx, lingWork, nil)
 		} else {
-			session, output, lingErr = f.streamTask(ctx, lingWork, task.EdictID, task.Scratchpad, notify, nil)
+			session, output, lingErr = f.streamTask(ctx, lingWork, task.EdictKey, task.Scratchpad, notify, nil)
 		}
 
 		// Update task.Session for multi-ling continuity
@@ -423,6 +425,8 @@ func (t *CreateManifestTool) Description() string {
 func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID    uint   `json:"edict_id"`
+		Username   string `json:"username"`
+		Project    string `json:"project"`
 		LingID     string `json:"ling_id"`
 		FilePath   string `json:"file_path"`
 		FuncName   string `json:"func_name"`
@@ -435,9 +439,11 @@ func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("edict_id and file_path are required")
 	}
 
+	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+
 	// Auto-populate ling_id if not provided (use most recent pending ling)
 	if params.LingID == "" {
-		pendingLings, err := t.forge.GetPendingLing(params.EdictID)
+		pendingLings, err := t.forge.GetPendingLing(key)
 		if err != nil {
 			return "", fmt.Errorf("failed to get pending lings for auto-population: %w", err)
 		}
@@ -449,7 +455,7 @@ func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, er
 		}
 	}
 
-	manifestID, err := t.forge.StageManifest(params.EdictID, params.LingID, params.FilePath, params.FuncName, params.ContentSHA)
+	manifestID, err := t.forge.StageManifest(key, params.LingID, params.FilePath, params.FuncName, params.ContentSHA)
 	if err != nil {
 		return "", err
 	}
@@ -461,6 +467,8 @@ func (t *CreateManifestTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id":    map[string]any{"type": "integer", "description": "The edict ID this manifest belongs to"},
+			"username":    map[string]any{"type": "string", "description": "The username"},
+			"project":     map[string]any{"type": "string", "description": "The project name"},
 			"ling_id":     map[string]any{"type": "string", "description": "The ling ID this manifest implements"},
 			"file_path":   map[string]any{"type": "string", "description": "Path to the modified file"},
 			"func_name":   map[string]any{"type": "string", "description": "Name of the function being modified (optional)"},

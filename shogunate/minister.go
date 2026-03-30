@@ -35,13 +35,13 @@ var ministerTmpl = template.Must(template.New("minister").Parse(systemBase))
 
 // ZhengmingConn provides clarification request capabilities (behavioral interface)
 type ZhengmingConn interface {
-	RequestZhengming(edictID uint, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
-	IsZhengmingPending(edictID uint) (bool, error)
+	RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
+	IsZhengmingPending(key storage.EdictKey) (bool, error)
 }
 
 // EventEmitter emits events to the Ritual Guard's ledger (behavioral interface)
 type EventEmitter interface {
-	EmitEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) error
+	EmitEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) error
 }
 
 // === UNIFIED TYPES ===
@@ -50,7 +50,7 @@ type EventEmitter interface {
 type Prompt struct {
 	Ctx          context.Context   // Per-prompt context for cancellation (CTRL-C)
 	Message      string            // The Ruler's words
-	EdictID      uint              // Empty = new edict, set = continue existing
+	EdictKey     storage.EdictKey  // Zero = new edict, set = continue existing
 	TabID        string            // Tab target for stream routing
 	ContextFiles map[string]string // Files loaded via @ references
 }
@@ -58,7 +58,7 @@ type Prompt struct {
 // Task carries work from Chancellor to a Minister
 type Task struct {
 	Ctx        context.Context     // Per-task cancellation (e.g. CTRL-C)
-	EdictID    uint                // The edict this task belongs to
+	EdictKey   storage.EdictKey   // The edict this task belongs to
 	Work       string              // Specific instructions for the minister (renamed from Task to avoid Task.Task)
 	Scratchpad string              // Pre-formatted markdown added to the context
 	Session    *Session            // Existing session for multi-turn (nil = create new)
@@ -157,8 +157,8 @@ type RCAAnalyzer interface {
 
 // RCAReport contains the results of root cause analysis
 type RCAReport struct {
-	Summary string
-	EdictID uint
+	Summary  string
+	EdictKey storage.EdictKey
 }
 
 // --- Tool Interface ---
@@ -175,7 +175,7 @@ type Tool interface {
 // ZhengmingPendingMsg notifies the UI of a pending clarification request
 type ZhengmingPendingMsg struct {
 	RequestID  string
-	EdictID    uint
+	EdictKey   storage.EdictKey
 	MinisterID string
 	Questions  storage.ZhengmingQuestions
 	Priority   storage.ZhengmingPriority
@@ -202,7 +202,7 @@ type MinisterBase struct {
 	logger     *slog.Logger
 	notify     internal.NotifyFunc
 	prompts    chan *Prompt
-	publish    func(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
+	publish    func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
 
 	zhengmingMu       sync.Mutex
 	onZhengmingRaised func()
@@ -257,26 +257,24 @@ func (m *MinisterBase) RepoInfo() repo.RepoInfo {
 
 // CreateSessionOpts holds optional parameters for CreateSession.
 type CreateSessionOpts struct {
-	EdictID    uint
+	EdictKey   storage.EdictKey
 	TabID      string
 	Scratchpad string // Pre-formatted markdown context from ritual
 }
 
 // CreateSession creates a session for a minister with composed system prompt.
-// The system prompt is built from the shared template with the minister's role injected.
-// edictID is optional — when provided, it's included in the scratchpad context.
-func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, tabID string, edictID ...uint) (*Session, error) {
-	eid := uint(0)
-	if len(edictID) > 0 {
-		eid = edictID[0]
+func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, tabID string, keys ...storage.EdictKey) (*Session, error) {
+	key := storage.EdictKey{}
+	if len(keys) > 0 {
+		key = keys[0]
 	}
-	systemPrompt := buildSystemPrompt(minister, config, eid)
+	systemPrompt := buildSystemPrompt(minister, config, key)
 	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, tabID)
 }
 
 // CreateSessionWithOpts creates a session with extended options including given context.
 func CreateSessionWithOpts(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
-	systemPrompt := buildSystemPrompt(minister, config, opts.EdictID, opts.Scratchpad)
+	systemPrompt := buildSystemPrompt(minister, config, opts.EdictKey, opts.Scratchpad)
 	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, opts.TabID)
 }
 
@@ -284,15 +282,15 @@ func CreateSessionWithOpts(minister Minister, model llms.Model, config *SessionC
 // with the minister's Role, Scratchpad, and project context from AGENTS.md.
 // If edictID is non-empty, it's prepended to the scratchpad.
 // Optional args, when provided, is appended to the scratchpad.
-func buildSystemPrompt(minister Minister, config *SessionConfig, edictID uint, args ...string) string {
+func buildSystemPrompt(minister Minister, config *SessionConfig, key storage.EdictKey, args ...string) string {
 	agentsFile := "AGENTS.md"
 	if config != nil && config.AgentsFile != "" {
 		agentsFile = config.AgentsFile
 	}
 
 	scratchpad := minister.Scratchpad()
-	if edictID != 0 {
-		scratchpad = fmt.Sprintf("# Current Edict: %d\n\n%s", edictID, scratchpad)
+	if key.EdictID != 0 {
+		scratchpad = fmt.Sprintf("# Current Edict: %d\n\n%s", key.EdictID, scratchpad)
 	}
 	if len(args) > 0 && args[0] != "" {
 		scratchpad += "\n\n" + args[0]
@@ -405,12 +403,14 @@ func generateIdempotencyKey(parts ...string) string {
 }
 
 // RequestZhengming creates a clarification request
-func (m *MinisterBase) RequestZhengming(edictID uint, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (string, error) {
-	requestID := GenerateID("zhengming", fmt.Sprintf("%d", edictID), m.ministerID, fmt.Sprintf("%v", questions), time.Now().String())
+func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (string, error) {
+	requestID := GenerateID("zhengming", fmt.Sprintf("%d", key.EdictID), m.ministerID, fmt.Sprintf("%v", questions), time.Now().String())
 
 	req := storage.Zhengming{
 		RequestID:  requestID,
-		EdictID:    edictID,
+		EdictID:    key.EdictID,
+		Username:   key.Username,
+		Project:    key.Project,
 		MinisterID: m.ministerID,
 		Questions:  questions,
 		Priority:   priority,
@@ -434,12 +434,8 @@ func (m *MinisterBase) RequestZhengming(edictID uint, questions storage.Zhengmin
 		cb()
 	}
 
-	// Block the edict while zhengming is pending
-	// Note: Status is now derived from zhengming table, so we don't need to update edicts table
-	// The GetEdictStatus method will automatically return "blocked" when there's a pending zhengming
-
 	// Emit zhengming_requested event
-	m.EmitEvent(edictID, "zhengming_requested", storage.JSON{
+	m.EmitEvent(key, "zhengming_requested", storage.JSON{
 		"request_id":  requestID,
 		"minister_id": m.ministerID,
 		"questions":   questions,
@@ -450,10 +446,10 @@ func (m *MinisterBase) RequestZhengming(edictID uint, questions storage.Zhengmin
 }
 
 // IsZhengmingPending checks if there are pending clarification requests for an edict
-func (m *MinisterBase) IsZhengmingPending(edictID uint) (bool, error) {
+func (m *MinisterBase) IsZhengmingPending(key storage.EdictKey) (bool, error) {
 	var count int64
 	err := m.db.Model(&storage.Zhengming{}).
-		Where("edict_id = ? AND status = ?", edictID, storage.ZhengmingPending).
+		Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.ZhengmingPending).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check pending zhengming: %w", err)
@@ -481,16 +477,16 @@ func (m *MinisterBase) AnswerZhengming(requestID, answer string) error {
 }
 
 // AppendToIntent appends clarification to the edict's intent
-func (m *MinisterBase) AppendToIntent(edictID uint, clarification string) error {
+func (m *MinisterBase) AppendToIntent(key storage.EdictKey, clarification string) error {
 	var edict storage.Edict
-	if err := m.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+	if err := m.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
 		return fmt.Errorf("failed to get edict: %w", err)
 	}
 
 	newIntent := edict.Intent + "\n\n---\n**Clarification:**\n" + clarification
 
 	result := m.db.Model(&storage.Edict{}).
-		Where("edict_id = ?", edictID).
+		Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
 		Update("intent", newIntent)
 	if result.Error != nil {
 		return fmt.Errorf("failed to append to intent: %w", result.Error)
@@ -509,18 +505,15 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 		return fmt.Errorf("get request: %w", err)
 	}
 
+	reqKey := storage.EdictKey{EdictID: req.EdictID, Username: req.Username, Project: req.Project}
 	if req.EdictID != 0 {
-		if err := m.AppendToIntent(req.EdictID, answer); err != nil {
+		if err := m.AppendToIntent(reqKey, answer); err != nil {
 			slog.Warn("failed to append clarification to edict", "edict_id", req.EdictID, "error", err)
 		}
-
-		// Note: Status is now derived from zhengming table
-		// When zhengming is answered, GetEdictStatus will automatically return "active"
-		// No need to update edicts table
 	}
 
 	// Emit zhengming_answered event
-	m.EmitEvent(req.EdictID, "zhengming_answered", storage.JSON{
+	m.EmitEvent(reqKey, "zhengming_answered", storage.JSON{
 		"request_id": requestID,
 		"answer":     answer,
 		"edict_id":   req.EdictID,
@@ -530,16 +523,17 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 }
 
 // EmitEvent records an event in the Tian ledger and delivers it via channel when available.
-func (m *MinisterBase) EmitEvent(edictID uint, eventType storage.ShogunateEvent, payload storage.JSON) error {
-	slog.Debug("Emitting event", "type", eventType, "edict", edictID)
+func (m *MinisterBase) EmitEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) error {
+	slog.Debug("Emitting event", "type", eventType, "edict", key.EdictID)
 	if m.publish != nil {
-		_ = m.publish(edictID, eventType, payload)
+		_ = m.publish(key, eventType, payload)
 		return nil
 	}
-	// TODO: remove the fallback, test should pass a publish stub
 	// Fallback: DB-only (for tests/standalone)
 	event := storage.TianEvent{
-		EdictID:   edictID,
+		EdictID:   key.EdictID,
+		Username:  key.Username,
+		Project:   key.Project,
 		EventType: eventType,
 		Payload:   payload,
 	}
@@ -550,22 +544,22 @@ func (m *MinisterBase) EmitEvent(edictID uint, eventType storage.ShogunateEvent,
 }
 
 // grantSeal records the minister's seal on an edict
-func (m *MinisterBase) grantSeal(edictID uint, metadata storage.JSON) error {
-	// Check if minister already sealed this edict
-	hasSeal, err := m.hasSeal(edictID)
+func (m *MinisterBase) grantSeal(key storage.EdictKey, metadata storage.JSON) error {
+	hasSeal, err := m.hasSeal(key)
 	if err != nil {
 		return fmt.Errorf("check existing seal: %w", err)
 	}
 	if hasSeal {
-		m.logger.Debug("seal already granted", "edict_id", edictID, "minister_id", m.ministerID)
+		m.logger.Debug("seal already granted", "edict_id", key.EdictID, "minister_id", m.ministerID)
 		return nil
 	}
 
-	// Create seal with metadata
-	sealID := GenerateID("seal", fmt.Sprintf("%d", edictID), m.ministerID)
+	sealID := GenerateID("seal", fmt.Sprintf("%d", key.EdictID), m.ministerID)
 	seal := storage.Seal{
 		SealID:     sealID,
-		EdictID:    edictID,
+		EdictID:    key.EdictID,
+		Username:   key.Username,
+		Project:    key.Project,
 		MinisterID: m.ministerID,
 		SealedAt:   time.Now(),
 		Metadata:   metadata,
@@ -575,21 +569,20 @@ func (m *MinisterBase) grantSeal(edictID uint, metadata storage.JSON) error {
 		return fmt.Errorf("failed to grant seal: %w", err)
 	}
 
-	// Emit event
-	m.EmitEvent(edictID, storage.EventSealGranted, storage.JSON{
+	m.EmitEvent(key, storage.EventSealGranted, storage.JSON{
 		"minister_id": m.ministerID,
 		"seal_id":     sealID,
 	})
 
-	m.logger.Info("seal granted", "edict_id", edictID, "seal_id", sealID)
+	m.logger.Info("seal granted", "edict_id", key.EdictID, "seal_id", sealID)
 	return nil
 }
 
 // hasSeal checks if the minister has already sealed this edict
-func (m *MinisterBase) hasSeal(edictID uint) (bool, error) {
+func (m *MinisterBase) hasSeal(key storage.EdictKey) (bool, error) {
 	var count int64
 	err := m.db.Model(&storage.Seal{}).
-		Where("edict_id = ? AND minister_id = ?", edictID, m.ministerID).
+		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.EdictID, key.Username, key.Project, m.ministerID).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check seal: %w", err)
@@ -597,12 +590,12 @@ func (m *MinisterBase) hasSeal(edictID uint) (bool, error) {
 	return count > 0, nil
 }
 
-// GetEdict retrieves an edict by ID
-func (m *MinisterBase) GetEdict(edictID uint) (*storage.Edict, error) {
+// GetEdict retrieves an edict by composite key
+func (m *MinisterBase) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 	var edict storage.Edict
-	if err := m.db.First(&edict, "edict_id = ?", edictID).Error; err != nil {
+	if err := m.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("edict not found: %d", edictID)
+			return nil, fmt.Errorf("edict not found: %d", key.EdictID)
 		}
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}

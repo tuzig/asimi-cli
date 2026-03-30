@@ -33,7 +33,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 
 	edictVar := storage.Edict{Intent: "Test"}
 	db.Create(&edictVar)
-	edictID := edictVar.EdictID
+	edictKey := edictVar.Key()
 
 	ritual := &RitualDef{
 		Name: "test",
@@ -120,7 +120,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 	// === PHASE 1: START AND ABORT ===
 	// Start ritual, let forge complete, then abort
 	ctx1, cancel1 := context.WithCancel(context.Background())
-	exec1, _ := runner.Start(ctx1, "test", edictID, nil, nil)
+	exec1, _ := runner.Start(ctx1, "test", edictKey, nil, nil)
 	runErrCh := make(chan error, 1)
 	go func() { runErrCh <- runner.Run(ctx1, exec1) }()
 
@@ -142,7 +142,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
 
-	exec2, _ := runner.Start(ctx2, "test", edictID, nil, nil)
+	exec2, _ := runner.Start(ctx2, "test", edictKey, nil, nil)
 
 	// Verify recovery mode is enabled
 	if !exec2.RecoveryMode {
@@ -244,7 +244,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 
 	edictVar := storage.Edict{Intent: "Test mid-step abort"}
 	db.Create(&edictVar)
-	edictID := edictVar.EdictID
+	edictKey := edictVar.Key()
 
 	ritual := &RitualDef{
 		Name: "test-midstep",
@@ -327,7 +327,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 
 	// === PHASE 1: Start and abort during judge step ===
 	ctx1, cancel1 := context.WithCancel(context.Background())
-	exec1, _ := runner.Start(ctx1, "test-midstep", edictID, nil, nil)
+	exec1, _ := runner.Start(ctx1, "test-midstep", edictKey, nil, nil)
 	runErrCh := make(chan error, 1)
 	go func() { runErrCh <- runner.Run(ctx1, exec1) }()
 
@@ -351,7 +351,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
 
-	exec2, _ := runner.Start(ctx2, "test-midstep", edictID, nil, nil)
+	exec2, _ := runner.Start(ctx2, "test-midstep", edictKey, nil, nil)
 
 	// Verify recovery mode
 	if !exec2.RecoveryMode {
