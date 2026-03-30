@@ -1816,9 +1816,10 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 	switch fn {
 	case "get_edict":
 		if exec.EdictID == 0 {
+			r.logger.Warn("failed to get edict", "key", givenKey)
 			return map[string]string{"status": "no edict (system event)"}, nil
 		}
-		return r.arrangeGetEdict(givenKey)
+		return r.getEdict(givenKey)
 	case "get_court_status":
 		return r.getCourtStatus(givenKey)
 	case "get_manifests":
@@ -1846,7 +1847,7 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 	}
 }
 
-func (r *RitualRunner) arrangeGetEdict(key storage.EdictKey) (interface{}, error) {
+func (r *RitualRunner) getEdict(key storage.EdictKey) (interface{}, error) {
 	var edict storage.Edict
 	if err := r.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
 		return nil, err

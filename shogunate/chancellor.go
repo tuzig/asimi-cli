@@ -828,7 +828,7 @@ func (c *Chancellor) handleEdictCreated(ctx context.Context, key storage.EdictKe
 		return
 	}
 
-	work := fmt.Sprintf("New edict %d: %s\n\nChoose the appropriate ritual and enact it.", key.EdictID, edict.Intent)
+	work := fmt.Sprintf("A new edict was create: %d. Based on the intent that follows chose the appropriate ritual and enact it: %s", key.EdictID, edict.Intent)
 	task := &Task{
 		Ctx:      ctx,
 		EdictKey: key,

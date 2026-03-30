@@ -369,7 +369,7 @@ type ShogunateParams struct {
 	Lifecycle fx.Lifecycle
 	GormDB    *gorm.DB
 	Config    *Config
-	RepoInfo  *repo.RepoInfo
+	RepoInfo  repo.RepoInfo
 	Runner    runners.Runner
 	Logger    *slog.Logger
 }
