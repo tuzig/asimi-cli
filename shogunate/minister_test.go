@@ -83,7 +83,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	// Create chancellor
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	// Create an edict (starts in brewing phase)
@@ -103,7 +103,7 @@ func TestStrategist_ProcessTask(t *testing.T) {
 	ctx := context.Background()
 
 	// Create edict
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	edict, err := CreateEdictForTest(db, "Implement user authentication with login and logout")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
@@ -134,7 +134,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create edict and manifest
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	edict, err := CreateEdictForTest(db, "Test feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
@@ -168,7 +168,7 @@ func TestSage_ReviewFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create quenched manifest
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	edict, err := CreateEdictForTest(db, "Review feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
@@ -209,7 +209,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: create edict and manifest
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	edict, err := CreateEdictForTest(db, "Production feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
@@ -245,7 +245,7 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	edict, err := CreateEdictForTest(db, "Feature to cancel")
@@ -308,7 +308,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	defer cancel()
 
 	// Create Chancellor and Shogunate
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	// Create a simple Shogunate with just Forge for this test
@@ -379,7 +379,7 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 	shogunate := &Shogunate{
 		db: db,
@@ -404,7 +404,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	tool := InvokeMinisterTool{chancellor: chancellor}
@@ -419,7 +419,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 
 // TestInvokeMinisterTool_InvalidJSON tests error handling for malformed JSON input
 func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
@@ -434,7 +434,7 @@ func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
 
 // TestInvokeMinisterTool_MissingMinisterID tests error handling for missing minister_id
 func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
@@ -449,7 +449,7 @@ func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
 
 // TestInvokeMinisterTool_MissingEdictID tests error handling for missing edict_id
 func TestInvokeMinisterTool_MissingEdictID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 	tool := InvokeMinisterTool{chancellor: chancellor}
 
@@ -468,7 +468,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister that returns an error in Result
@@ -502,7 +502,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister with a full task channel (buffer 0, no reader)
@@ -531,7 +531,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister that accepts but never replies
@@ -567,7 +567,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	// Collect notifications
@@ -632,7 +632,7 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	var mu sync.Mutex
@@ -702,7 +702,7 @@ func TestInvokeMinisterTool_Format(t *testing.T) {
 
 // TestBuildSystemPrompt_EdictID verifies the edict ID is injected into the scratchpad
 func TestBuildSystemPrompt_EdictID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
@@ -727,7 +727,7 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 
 // TestBuildSystemPrompt_Scratchpad verifies scratchpad is included with minister ID heading
 func TestBuildSystemPrompt_Scratchpad(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 
 	fake := &fakeMinisterWithScratchpad{
 		fakeMinister: fakeMinister{MinisterBase: base, id: "strategist"},
@@ -772,14 +772,14 @@ func (f *fakeMinister) Run(ctx context.Context) {}
 // contains ritual names and descriptions from the registry.
 func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	shogunate := &Shogunate{
 		db:        db,
 		ministers: map[string]Minister{chancellor.ID(): chancellor},
 	}
-	rgBase := NewMinisterBase(db, nil, nil)
+	rgBase := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	shogunate.ritualGuard = NewRitualGuard(RitualGuardOpts{Base: rgBase})
 	shogunate.GetRitualRegistry().Register(&RitualDef{Name: "swift-strike", Description: "The Swift Strike (S)"})
 	shogunate.GetRitualRegistry().Register(&RitualDef{Name: "castle-siege", Description: "The Castle Siege (L)"})
@@ -805,7 +805,7 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 func TestChancellor_GetDBPath(t *testing.T) {
 	db, expectedPath := setupMinisterTestDBWithPath(t)
 
-	base := NewMinisterBase(db, nil, nil)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	// Call getDBPath and verify it returns the correct path
@@ -822,7 +822,7 @@ func TestChancellor_GetDBPath(t *testing.T) {
 
 // TestChancellor_GetDBPath_NilDB tests getDBPath returns empty string when db is nil
 func TestChancellor_GetDBPath_NilDB(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
 	gotPath := chancellor.getDBPath()
@@ -906,7 +906,7 @@ func TestFormatGivenContext_StringValues(t *testing.T) {
 // TestBuildSystemPrompt_GivenContext verifies that pre-formatted given context
 // from a ritual is included in the system prompt when passed to buildSystemPrompt.
 func TestBuildSystemPrompt_GivenContext(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil)
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 	fake := &fakeMinister{MinisterBase: base, id: "forge"}
 
 	// Simulate what the ritual does: format given context map → markdown string

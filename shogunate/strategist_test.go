@@ -77,7 +77,7 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 	}
 
 	shog := &Shogunate{ministers: ministers, logger: slog.Default()}
-	base := NewMinisterBase(db, nil, slog.Default())
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	shog.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
 		GetMinister: shog.GetMinister,

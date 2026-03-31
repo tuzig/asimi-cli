@@ -57,7 +57,7 @@ func newTestShogunate(t *testing.T, db *gorm.DB) *Shogunate {
 		logger:    slog.Default(),
 		ministers: make(map[string]Minister),
 	}
-	base := NewMinisterBase(db, nil, slog.Default())
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 	s.ritualGuard = rg
 	return s
@@ -145,7 +145,7 @@ func TestDBPersistence(t *testing.T) {
 func TestBackpressure(t *testing.T) {
 	db := setupEventTestDB(t)
 	// Use a tiny channel to force backpressure
-	base := NewMinisterBase(db, nil, slog.Default())
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 	// Replace the default channel with a tiny one
 	rg.eventCh = make(chan Event, 2)
@@ -250,7 +250,7 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 	db := setupEventTestDB(t)
 	s := newTestShogunate(t, db)
 
-	base := NewMinisterBase(db, nil, slog.Default())
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	base.publish = s.PublishEvent
 
 	err := base.EmitEvent(storage.EdictKey{EdictID: 10}, "edict_assigned", storage.JSON{"from": "minister"})
@@ -279,7 +279,7 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 func TestMinisterBaseEmitEvent_Fallback(t *testing.T) {
 	db := setupEventTestDB(t)
 
-	base := NewMinisterBase(db, nil, slog.Default())
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	// No publish set — should fall back to DB-only
 
 	err := base.EmitEvent(storage.EdictKey{EdictID: 20}, "edict_created", storage.JSON{"from": "fallback"})
@@ -297,7 +297,7 @@ func TestMinisterBaseEmitEvent_Fallback(t *testing.T) {
 // TestRitualGuard_EventNotification tests that significant events trigger notifications
 func TestRitualGuard_EventNotification(t *testing.T) {
 	db := setupEventTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default())
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 
 	// Collect notifications
@@ -393,7 +393,7 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 // TestRitualGuard_BuildEventNotification tests the message building for different event types
 func TestRitualGuard_BuildEventNotification(t *testing.T) {
 	db := setupEventTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default())
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 
 	tests := []struct {

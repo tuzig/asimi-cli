@@ -704,7 +704,7 @@ func (rg *RitualGuard) abortRitual(ctx context.Context, exec *RitualExecution, r
 
 	// Emit ritual_aborted event
 	if rg.ritualRunner != nil {
-		abortKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+		abortKey := exec.EdictKey()
 		rg.ritualRunner.emitEvent(abortKey, storage.EventRitualAborted, storage.JSON{
 			"ritual":       exec.RitualName,
 			"execution_id": exec.ID,

@@ -661,6 +661,11 @@ func (RitualExecution) TableName() string {
 	return "ritual_executions"
 }
 
+// EdictKey returns the storage.EdictKey for this execution.
+func (e *RitualExecution) EdictKey() storage.EdictKey {
+	return storage.EdictKey{EdictID: e.EdictID, Username: e.Username, Project: e.Project}
+}
+
 // RitualStepState tracks the state of a step within an execution
 type RitualStepState struct {
 	ID          uint   `gorm:"primaryKey;autoIncrement"`
@@ -912,7 +917,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	r.saveExecution(exec)
 
 	// Emit ritual_started Tian event
-	execKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+	execKey := exec.EdictKey()
 	r.emitEvent(execKey, storage.EventRitualStarted, storage.JSON{
 		"ritual":       exec.RitualName,
 		"execution_id": exec.ID,
@@ -1167,7 +1172,7 @@ func (step *RitualStep) resolveMaxRetries(def *RitualDef) int {
 
 // executeStep runs a single ritual step using the Given → Act → Then model
 func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
-	execKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+	execKey := exec.EdictKey()
 
 	// Check if this is a fork step
 	if step.Fork != nil {
@@ -1313,7 +1318,7 @@ type ForkResult struct {
 
 // executeForkStep executes a fork/join parallel step
 func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
-	execKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+	execKey := exec.EdictKey()
 	r.saveExecution(exec)
 
 	r.logger.Info("executing fork step",
@@ -1616,7 +1621,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	doneChan := make(chan Result, 1)
 	t := &Task{
 		Ctx:        ctx,
-		EdictKey:   storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project},
+		EdictKey:   exec.EdictKey(),
 		Work:       work,
 		Scratchpad: scratchpad,
 		Session:    session,
@@ -1712,7 +1717,7 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 	fmt.Fprintf(&buf, "**Step:** %s (%d/%d)\n\n", step.Name, stepNum, totalSteps)
 
 	// 2. Full edict details
-	scratchKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+	scratchKey := exec.EdictKey()
 	edict, clarifications, err := r.getEdictDetails(ctx, scratchKey)
 	if err == nil && edict != nil {
 		sealService := storage.NewSealService(r.db)
@@ -1812,7 +1817,7 @@ func (r *RitualRunner) getEdictDetails(ctx context.Context, key storage.EdictKey
 
 // runBuiltinGiven runs a builtin given function and returns the result
 func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecution, fn string) (interface{}, error) {
-	givenKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+	givenKey := exec.EdictKey()
 	switch fn {
 	case "get_edict":
 		if exec.EdictID == 0 {
@@ -1850,6 +1855,7 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 func (r *RitualRunner) getEdict(key storage.EdictKey) (interface{}, error) {
 	var edict storage.Edict
 	if err := r.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
+		r.logger.Warn("Ritual runner failed to get edict", "key", key)
 		return nil, err
 	}
 	sealService := storage.NewSealService(r.db)
@@ -2264,7 +2270,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 		r.logger.Debug("skipping edict operation for system ritual", "fn", fn)
 		return nil
 	}
-	thenKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+	thenKey := exec.EdictKey()
 	switch fn {
 	case "seal_edict":
 		// Sealing is now done via the seal chain - grant ruler seal
@@ -2598,7 +2604,7 @@ func (r *RitualRunner) invokeReportFailure(ctx context.Context, exec *RitualExec
 		"error":       err.Error(),
 	}
 	go func() {
-		failKey := storage.EdictKey{EdictID: exec.EdictID, Username: exec.Username, Project: exec.Project}
+		failKey := exec.EdictKey()
 		failExec, startErr := r.Start(ctx, "report_failure", failKey, inputs, nil)
 		if startErr != nil {
 			r.logger.Warn("failed to start report_failure ritual", "error", startErr)

@@ -106,7 +106,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	// Create all ministers — each needs its own base (channels/maps are reference types).
 	// publish uses a closure so it works even before ritualGuard is assigned.
 	newBase := func() *MinisterBase {
-		base := NewMinisterBase(db, runner, logger)
+		base := NewMinisterBase(db, runner, logger, s.config.Username, s.config.Project)
 		base.publish = func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 			return s.PublishEvent(key, eventType, payload)
 		}

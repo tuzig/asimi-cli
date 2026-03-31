@@ -22,7 +22,9 @@ type EdictManager interface {
 // UpdateEdictTool refines an existing edict's intent (Chancellor only).
 // Only the Ruler creates edicts via SubmitEdict; the Chancellor refines them.
 type UpdateEdictTool struct {
-	Manager EdictManager
+	Manager  EdictManager
+	Username string
+	Project  string
 }
 
 func (t UpdateEdictTool) Name() string {
@@ -36,8 +38,6 @@ func (t UpdateEdictTool) Description() string {
 func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID       uint   `json:"edict_id"`
-		Username      string `json:"username"`
-		Project       string `json:"project"`
 		Clarification string `json:"clarification"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
@@ -51,7 +51,7 @@ func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("clarification is required")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{EdictID: params.EdictID, Username: t.Username, Project: t.Project}
 
 	if _, err := t.Manager.GetEdict(key); err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
@@ -102,8 +102,10 @@ func (t UpdateEdictTool) ParameterSchema() map[string]any {
 
 // GetEdictStatusTool retrieves the status of an edict.
 type GetEdictStatusTool struct {
-	Manager EdictManager
-	DB      *gorm.DB
+	Manager  EdictManager
+	DB       *gorm.DB
+	Username string
+	Project  string
 }
 
 func (t GetEdictStatusTool) Name() string {
@@ -116,9 +118,7 @@ func (t GetEdictStatusTool) Description() string {
 
 func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID  uint   `json:"edict_id"`
-		Username string `json:"username"`
-		Project  string `json:"project"`
+		EdictID uint `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -132,7 +132,7 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("database connection not initialized")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{EdictID: params.EdictID, Username: t.Username, Project: t.Project}
 	edict, err := t.Manager.GetEdict(key)
 	if err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
@@ -192,7 +192,9 @@ func (t GetEdictStatusTool) ParameterSchema() map[string]any {
 
 // ListEdictsTool lists all edicts with optional filtering.
 type ListEdictsTool struct {
-	DB *gorm.DB
+	DB       *gorm.DB
+	Username string
+	Project  string
 }
 
 func (t ListEdictsTool) Name() string {
@@ -219,7 +221,7 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 	}
 
 	var edicts []storage.Edict
-	query := t.DB.Order("created_at DESC").Limit(params.Limit)
+	query := t.DB.Where("username = ? AND project = ?", t.Username, t.Project).Order("created_at DESC").Limit(params.Limit)
 	if err := query.Find(&edicts).Error; err != nil {
 		return "", fmt.Errorf("list edicts: %w", err)
 	}
@@ -292,7 +294,9 @@ func truncateString(s string, maxLen int) string {
 
 // TransitionEdictTool transitions an edict to a new status (e.g., unblock or reject).
 type TransitionEdictTool struct {
-	DB *gorm.DB
+	DB       *gorm.DB
+	Username string
+	Project  string
 }
 
 func (t TransitionEdictTool) Name() string {
@@ -334,7 +338,7 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 
 	// Verify edict exists
 	var edict storage.Edict
-	if err := t.DB.First(&edict, "edict_id = ?", params.EdictID).Error; err != nil {
+	if err := t.DB.First(&edict, "edict_id = ? AND username = ? AND project = ?", params.EdictID, t.Username, t.Project).Error; err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 

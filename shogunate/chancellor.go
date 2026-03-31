@@ -124,11 +124,9 @@ func (t InvokeMinisterTool) Description() string {
 
 func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		MinisterID string           `json:"minister_id"`
-		EdictID    uint             `json:"edict_id"`
-		Username   string           `json:"username"`
-		Project    string           `json:"project"`
-		Work       string           `json:"task"` // JSON field is "task" for backwards compatibility
+		MinisterID string `json:"minister_id"`
+		EdictID    uint   `json:"edict_id"`
+		Work       string `json:"task"` // JSON field is "task" for backwards compatibility
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -146,8 +144,8 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 
 	key := storage.EdictKey{
 		EdictID:  params.EdictID,
-		Username: params.Username,
-		Project:  params.Project,
+		Username: t.chancellor.username,
+		Project:  t.chancellor.project,
 	}
 
 	logger := t.chancellor.logger
@@ -185,6 +183,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 
 	// Create Task with per-call done channel
 	task := &Task{
+		Ctx:      ctx,
 		EdictKey: key,
 		Work:     params.Work,
 		Done:     doneChan,
@@ -329,8 +328,6 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	var params struct {
 		RitualName string            `json:"ritual_name"`
 		EdictID    uint              `json:"edict_id"`
-		Username   string            `json:"username"`
-		Project    string            `json:"project"`
 		Inputs     map[string]string `json:"inputs"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
@@ -343,8 +340,8 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 
 	key := storage.EdictKey{
 		EdictID:  params.EdictID,
-		Username: params.Username,
-		Project:  params.Project,
+		Username: t.chancellor.username,
+		Project:  t.chancellor.project,
 	}
 
 	if params.Inputs == nil {
@@ -458,11 +455,11 @@ func (c *Chancellor) Tools() []Tool {
 
 	toolList := []Tool{
 		tools.AsimiSQLTool{DBPath: c.getDBPath()},
-		tools.UpdateEdictTool{Manager: c},
-		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, Notify: zhengmingNotify},
-		tools.GetEdictStatusTool{Manager: c, DB: c.db},
-		tools.ListEdictsTool{DB: c.db},
-		tools.TransitionEdictTool{DB: c.db},
+		tools.UpdateEdictTool{Manager: c, Username: c.username, Project: c.project},
+		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, Notify: zhengmingNotify, Username: c.username, Project: c.project},
+		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.username, Project: c.project},
+		tools.ListEdictsTool{DB: c.db, Username: c.username, Project: c.project},
+		tools.TransitionEdictTool{DB: c.db, Username: c.username, Project: c.project},
 		InvokeMinisterTool{chancellor: c},
 	}
 	// Add read-only file tools
@@ -597,8 +594,9 @@ func (c *Chancellor) RestoreSession(msgs []llms.MessageContent) error {
 func (c *Chancellor) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 	var edict storage.Edict
 	if err := c.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
+		c.logger.Warn("Edict not found", "key", key)
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("edict not found: %d", key.EdictID)
+			return nil, fmt.Errorf("edict %d not found", key.EdictID)
 		}
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}

@@ -22,6 +22,8 @@ type RequestZhengmingTool struct {
 	MinisterID string
 	Requester  ZhengmingRequester
 	Notify     ZhengmingNotifyFunc
+	Username   string
+	Project    string
 }
 
 func (t RequestZhengmingTool) Name() string {
@@ -61,7 +63,7 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 		priority = storage.ZhengmingPriority(params.Priority)
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID}
+	key := storage.EdictKey{EdictID: params.EdictID, Username: t.Username, Project: t.Project}
 	requestID, err := t.Requester.RequestZhengming(key, storage.ZhengmingQuestions(params.Questions), priority)
 	if err != nil {
 		return "", fmt.Errorf("request zhengming: %w", err)

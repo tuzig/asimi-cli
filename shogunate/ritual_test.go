@@ -22,7 +22,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func testEK(id uint) storage.EdictKey { return storage.EdictKey{EdictID: id} }
+func testEK(id uint) storage.EdictKey {
+	return storage.EdictKey{EdictID: id, Username: "testuser", Project: "testproject"}
+}
 
 func TestParseRitual(t *testing.T) {
 	tests := []struct {
@@ -1526,7 +1528,7 @@ func newRitualTestShogunateWithDB(t *testing.T, db *gorm.DB, output string, err 
 		ministers: ministers,
 		logger:    slog.Default(),
 	}
-	base := NewMinisterBase(db, nil, slog.Default())
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
 		GetMinister: s.GetMinister,

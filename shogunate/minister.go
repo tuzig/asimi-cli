@@ -206,10 +206,12 @@ type MinisterBase struct {
 
 	zhengmingMu       sync.Mutex
 	onZhengmingRaised func()
+	username string
+	project string
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
-func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger) *MinisterBase {
+func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, username string, project string) *MinisterBase {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -218,6 +220,8 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger) *M
 		runner:  runner,
 		logger:  logger,
 		prompts: make(chan *Prompt),
+		username: username,
+		project: project,
 	}
 }
 

@@ -20,7 +20,9 @@ func TestRitualRecoveryDetection(t *testing.T) {
 
 	// Create test edict
 	edict := storage.Edict{
-		Intent: "Test recovery",
+		Intent:   "Test recovery",
+		Username: "testuser",
+		Project:  "testproject",
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -45,6 +47,8 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		ID:          abortedExecID,
 		RitualName:  "test-recovery",
 		EdictID:     edictID,
+		Username:    "testuser",
+		Project:     "testproject",
 		CurrentStep: 1,
 		State:       RitualStateAborted,
 		Data: storage.JSON{
@@ -137,7 +141,9 @@ func TestRitualRecoveryNoAbortedExecution(t *testing.T) {
 
 	// Create test edict
 	edict := storage.Edict{
-		Intent: "Test fresh start",
+		Intent:   "Test fresh start",
+		Username: "testuser",
+		Project:  "testproject",
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -203,7 +209,9 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 
 	// Create test edict
 	edict := storage.Edict{
-		Intent: "Test all complete",
+		Intent:   "Test all complete",
+		Username: "testuser",
+		Project:  "testproject",
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -227,6 +235,8 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 		ID:          abortedExecID,
 		RitualName:  "test-all-complete",
 		EdictID:     edictID,
+		Username:    "testuser",
+		Project:     "testproject",
 		CurrentStep: 2,
 		State:       RitualStateAborted,
 		Data:        storage.JSON{"inputs": map[string]interface{}{"edict_id": edictID}},
@@ -302,7 +312,9 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 
 	// Create test edict
 	edict := storage.Edict{
-		Intent: "Test retry",
+		Intent:   "Test retry",
+		Username: "testuser",
+		Project:  "testproject",
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -327,6 +339,8 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 		ID:          abortedExecID,
 		RitualName:  "test-retry",
 		EdictID:     edictID,
+		Username:    "testuser",
+		Project:     "testproject",
 		CurrentStep: 2,
 		State:       RitualStateAborted,
 		Data:        storage.JSON{"inputs": map[string]interface{}{"edict_id": edictID}},
@@ -402,7 +416,9 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 
 	// Create test edict
 	edict := storage.Edict{
-		Intent: "Test log",
+		Intent:   "Test log",
+		Username: "testuser",
+		Project:  "testproject",
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
@@ -426,6 +442,8 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 		ID:          abortedExecID,
 		RitualName:  "test-log",
 		EdictID:     edictID,
+		Username:    "testuser",
+		Project:     "testproject",
 		CurrentStep: 1,
 		State:       RitualStateAborted,
 		Data:        storage.JSON{"inputs": map[string]interface{}{"edict_id": edictID}},

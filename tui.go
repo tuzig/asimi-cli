@@ -1768,7 +1768,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			chat.AddMessage(fmt.Sprintf("%sRitual %s completed", ritualPrefix, msg.RitualName))
 			chat.Indent--
 		case "ritual_failed":
-			chat.AddMessage(fmt.Sprintf("%sRitual %s failed: %s", ritualPrefix, msg.RitualName, msg.Message))
+			chat.AddMessage(fmt.Sprintf("%s Ritual %s failed: %s", completeFailurePrefix, msg.RitualName, msg.Message))
 			if chat.Indent > 0 {
 				chat.Indent--
 			}

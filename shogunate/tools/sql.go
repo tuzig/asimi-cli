@@ -92,7 +92,7 @@ func (t AsimiSQLTool) Format(input, result string, err error) string {
 		q = q[:37] + "..."
 	}
 
-	msg := utils.NewMsgBlockBuilder("SQL")
+	msg := utils.NewMsgBlockBuilder("AsimiSQL")
 	msg.WriteLn()
 
 	if err != nil {

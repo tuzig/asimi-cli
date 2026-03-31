@@ -13,7 +13,9 @@ import (
 	"github.com/afittestide/asimi/storage"
 )
 
-func ek(id uint) storage.EdictKey { return storage.EdictKey{EdictID: id} }
+func ek(id uint) storage.EdictKey {
+	return storage.EdictKey{EdictID: id, Username: "testuser", Project: "testproject"}
+}
 
 // TestExecuteForkStep_Parallel tests parallel fork execution
 func TestExecuteForkStep_Parallel(t *testing.T) {
