@@ -144,7 +144,7 @@ func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, stri
 	} else {
 		session, err = CreateSessionWithOpts(s, s.model, s.config, notify, CreateSessionOpts{
 			EdictKey:   task.EdictKey,
-			TabID:      "strategist",
+			TabID:      "chancellor",
 			Scratchpad: task.Scratchpad,
 		})
 		if err != nil {
