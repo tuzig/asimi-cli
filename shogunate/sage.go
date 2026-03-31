@@ -149,8 +149,8 @@ func (c *Sage) Tasks() chan<- *Task { return c.tasks }
 // Tools returns the Sage's LLM tools — read-only access plus zhengming and review tools
 func (c *Sage) Tools() []Tool {
 	toolList := []Tool{
-		tools.GetEdictStatusTool{Manager: c, DB: c.db},
-		tools.ListEdictsTool{DB: c.db},
+		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.Username(), Project: c.Project()},
+		tools.ListEdictsTool{DB: c.db, Username: c.Username(), Project: c.Project()},
 		&SuggestEdictTool{sage: c},
 		&QueryCourtTool{db: c.db},
 		// Review and precedent tools
@@ -416,7 +416,11 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 		Options: []string{"Approve edict", "Reject"},
 	}}
 
-	var key storage.EdictKey
+	key := storage.EdictKey{
+		EdictID:  1, // use the court as default
+		Username: t.sage.Username(),
+		Project:  t.sage.Project(),
+	}
 	requestID, err := t.sage.RequestZhengming(key, questions, priority)
 	if err != nil {
 		return "", fmt.Errorf("failed to suggest edict: %w", err)

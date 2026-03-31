@@ -248,6 +248,16 @@ func (m *MinisterBase) Logger() *slog.Logger {
 	return m.logger
 }
 
+// Username returns the minister's username.
+func (m *MinisterBase) Username() string {
+	return m.username
+}
+
+// Project returns the minister's project name.
+func (m *MinisterBase) Project() string {
+	return m.project
+}
+
 // Scratchpad returns dynamic per-minister context. Default is empty.
 // Ministers can override this to provide context like available rituals, rules, etc.
 func (m *MinisterBase) Scratchpad() string {

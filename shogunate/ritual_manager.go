@@ -412,14 +412,18 @@ func (rg *RitualGuard) getSandboxImageName() string {
 // handleStartup handles the shogunate_started event by running health checks
 func (rg *RitualGuard) handleStartup(event Event) {
 	result := rg.RunHealthCheck(event)
-	zeroKey := storage.EdictKey{}
+	courtKey := storage.EdictKey{
+		EdictID: 1,
+		Username: rg.username,
+		Project: rg.project,
+	}
 	if result.OK {
-		rg.PublishEvent(zeroKey, storage.EventShogunateReady, storage.JSON{"checks": result})
+		rg.PublishEvent(courtKey, storage.EventShogunateReady, storage.JSON{"checks": result})
 		return
 	}
 	// Health checks failed - request zhengming for user intervention
 	summary := fmt.Sprintf("Health checks failed: %d issue(s) detected", len(result.Failures))
-	rg.PublishEvent(zeroKey, storage.EventZhengmingNeeded, storage.JSON{
+	rg.PublishEvent(courtKey, storage.EventZhengmingNeeded, storage.JSON{
 		"summary":     summary,
 		"failures":    result.Failures,
 		"remediation": result.Remediation,

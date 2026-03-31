@@ -2995,7 +2995,18 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 }
 
 func (m *TUIModel) raiseShogunateEvent(event storage.ShogunateEvent, params storage.JSON) {
-	m.shogunate.PublishEvent(m.currentEdictKey, event, params)
+	if m.shogunate == nil {
+		slog.Warn("Failed to raise event as shogunate is nil", "event", event)
+		return
+	}
+	var key storage.EdictKey
+	switch event {
+	case storage.EventShogunateStarted, storage.EventShogunateReady:
+		key = m.shogunate.CourtEdictKey()
+	default:
+		key = m.currentEdictKey
+	}
+	m.shogunate.PublishEvent(key, event, params)
 }
 
 // jsonEscape escapes a string for use in JSON

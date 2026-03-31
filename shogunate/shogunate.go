@@ -320,6 +320,12 @@ func (s *Shogunate) EdictKey(edictID uint) storage.EdictKey {
 	return storage.EdictKey{EdictID: edictID, Username: s.config.Username, Project: s.config.Project}
 }
 
+// CourtEdictKey returns the Court Infrastructure edict key (edict 1).
+// This is used for system-level operations like startup events.
+func (s *Shogunate) CourtEdictKey() storage.EdictKey {
+	return storage.EdictKey{EdictID: 1, Username: s.config.Username, Project: s.config.Project}
+}
+
 // nextEdictID returns the next available edict ID (MAX+1).
 func (s *Shogunate) nextEdictID() uint {
 	var maxID uint
