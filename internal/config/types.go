@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+
 	koanftoml "github.com/knadh/koanf/parsers/toml/v2"
 	"github.com/knadh/koanf/providers/file"
 	koanf "github.com/knadh/koanf/v2"
@@ -14,14 +15,14 @@ import (
 
 // Config represents the application configuration structure
 type Config struct {
-	Storage   StorageConfig   `koanf:"storage"`
-	Logging   LoggingConfig   `koanf:"logging"`
-	UI        UIConfig        `koanf:"ui"`
-	LLM       LLMConfig       `koanf:"llm"`
-	History   HistoryConfig   `koanf:"history"`
-	Session   SessionConfig   `koanf:"session"`
-	Sandbox   SandboxConfig   `koanf:"sandbox"`
-	Shogunate ShogunateConfig `koanf:"shogunate"`
+	Storage   StorageConfig    `koanf:"storage"`
+	Logging   LoggingConfig    `koanf:"logging"`
+	UI        UIConfig         `koanf:"ui"`
+	LLM       LLMConfig        `koanf:"llm"`
+	History   HistoryConfig    `koanf:"history"`
+	Session   SessionConfig    `koanf:"session"`
+	Sandbox   SandboxConfig    `koanf:"sandbox"`
+	Shogunate ShogunateConfig  `koanf:"shogunate"`
 }
 
 // StorageConfig holds storage configuration
@@ -106,8 +107,6 @@ type SandboxConfig struct {
 	AdditionalMounts []Mount `koanf:"additional_mounts"`
 	// PassthroughEnv is a list of host environment variable names to forward into the sandbox
 	PassthroughEnv []string `koanf:"passthrough_env"`
-	// PortMirroring is a list of ports to mirror from host to container with same port number
-	PortMirroring []uint16 `koanf:"port_mirroring"`
 }
 
 // ShogunateConfig holds configuration for the Shogunate.
