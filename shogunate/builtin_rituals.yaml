@@ -232,7 +232,7 @@
         - Justfile: Set PROJECT_NAME := "{{.project_slug}}", fill in TBD recipes. KEEP the build-sandbox and clean-sandbox recipes unchanged.
         - .agents/asimi.conf: Set image_name = "localhost/asimi-sandbox-{{.project_slug}}:latest"
         - .agents/sandbox/Dockerfile: Replace CHANGE_ME with detected language base image (e.g. ruby:3.2, golang:1.22, python:3.12)
-        - .agents/sandbox/bashrc: Adjust for project needs
+        - .agents/sandbox/bashrc: Adjust for project needs. Set URLs pointing to local host port XYZ to host.containers.internal:XYZ
         - {{.agentsFile}}: Add language and build conventions
         Detect primary language from codebase (Gemfile→ruby, go.mod→go, requirements.txt→python).
         Report what files were customized.
