@@ -236,7 +236,8 @@
         - {{.agentsFile}}: Add language and build conventions
         Detect primary language from codebase (Gemfile→ruby, go.mod→go, requirements.txt→python).
         Report what files were customized.
-        - If the sandbox requires an a env var add it to .agents/asimi.conf. For example, when install from gitlab.com fails, add to the `sandbox` section `passthrough_env = ["GITLAB_TOKEN"]`
+        - If the sandbox requires an a env var add it to .agents/asimi.conf. For example, when install from gitlab.com fails, add to the `sandbox` section: `passthrough_env = ["GITLAB_TOKEN"]`
+        - If the sandbox requires a service on a port, add it to .agents/asimi.conf. For example when it requires redis add to `sandbox` section: `port_mirroring = [6379]`
       then:
         - build the sandbox
       on_failure: retry

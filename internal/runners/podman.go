@@ -17,6 +17,7 @@ import (
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 
 	"github.com/afittestide/asimi/internal/repo"
+	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/podman/v5/pkg/bindings"
 	"github.com/containers/podman/v5/pkg/bindings/containers"
 	"github.com/containers/podman/v5/pkg/specgen"
@@ -364,6 +365,20 @@ func (r *PodmanRunner) createContainer(ctx context.Context) error {
 	}
 
 	s.Mounts = mounts
+
+	// Add port mirroring if configured
+	if len(r.config.PortMirroring) > 0 {
+		slog.Debug("adding port mirroring", "ports", r.config.PortMirroring)
+		for _, port := range r.config.PortMirroring {
+			s.PortMappings = append(s.PortMappings, nettypes.PortMapping{
+				HostIP:        "0.0.0.0",
+				HostPort:      port,
+				ContainerPort: port,
+				Protocol:      "tcp",
+				Range:         1,
+			})
+		}
+	}
 
 	slog.Debug("calling CreateWithSpec")
 	createResponse, err := containers.CreateWithSpec(r.conn, s, nil)
