@@ -237,6 +237,7 @@
         Detect primary language from codebase (Gemfile→ruby, go.mod→go, requirements.txt→python).
         Report what files were customized.
         - If the sandbox requires an a env var add it to .agents/asimi.conf. For example, when install from gitlab.com fails, add to the `sandbox` section `passthrough_env = ["GITLAB_TOKEN"]`
+        - If the only thing left is to build the sandbox, finish and it'll be built
       then:
         - build the sandbox
       on_failure: retry
