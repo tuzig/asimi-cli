@@ -334,6 +334,11 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to migrate edict_id to uint: %w", err)
 	}
 
+	// Migrate edicts to composite primary key (edict_id, username, project)
+	if err := storage.MigrateEdictCompositePK(db, params.Logger); err != nil {
+		return nil, fmt.Errorf("failed to migrate edict composite PK: %w", err)
+	}
+
 	// Auto-migrate Shogunate tables
 	if err := db.AutoMigrate(
 		&storage.Edict{},
