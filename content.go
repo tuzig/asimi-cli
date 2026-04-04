@@ -607,7 +607,7 @@ func (c *ContentComponent) ShowSealSelection(edicts []storage.UnsealedEdict) tea
 			return nil
 		}
 		return func() tea.Msg {
-			return sealSelectedMsg{edictID: edict.EdictID}
+			return sealSelectedMsg{edictID: edict.ID}
 		}
 	}
 

@@ -28,14 +28,14 @@ func (c *Sage) execute(ctx context.Context, key storage.EdictKey) (bool, *Review
 	if len(manifests) == 0 {
 		// No manifests to review, phase complete if no rejections
 		if noRejections {
-			c.logger.Info("sage review complete, no rejections", "edict_id", key.EdictID)
+			c.logger.Info("sage review complete, no rejections", "edict_id", key.ID)
 			return true, &ReviewSummary{
 				Approved:       true,
 				ManifestsCount: 0,
 				Reasoning:      "No manifests to review",
 			}, nil
 		}
-		c.logger.Info("sage review blocked by rejections", "edict_id", key.EdictID)
+		c.logger.Info("sage review blocked by rejections", "edict_id", key.ID)
 		return false, &ReviewSummary{
 			Approved:  false,
 			Reasoning: "Review blocked by previous rejections",

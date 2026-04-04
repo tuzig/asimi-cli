@@ -20,8 +20,8 @@ func NewSealService(db *gorm.DB) *SealService {
 
 // GrantSeal records a minister's seal on an edict
 func (s *SealService) GrantSeal(key EdictKey, ministerID string, metadata JSON) error {
-	if key.EdictID == 0 {
-		return fmt.Errorf("edict_id is required")
+	if key.ID == 0 {
+		return fmt.Errorf("id is required")
 	}
 	if ministerID == "" {
 		return fmt.Errorf("minister_id is required")
@@ -30,7 +30,7 @@ func (s *SealService) GrantSeal(key EdictKey, ministerID string, metadata JSON) 
 	sealID := uuid.New().String()
 	seal := Seal{
 		SealID:     sealID,
-		EdictID:    key.EdictID,
+		EdictID:    key.ID,
 		Username:   key.Username,
 		Project:    key.Project,
 		MinisterID: ministerID,
@@ -48,7 +48,7 @@ func (s *SealService) GrantSeal(key EdictKey, ministerID string, metadata JSON) 
 // GetSeals retrieves all seals for an edict
 func (s *SealService) GetSeals(key EdictKey) ([]Seal, error) {
 	var seals []Seal
-	err := s.db.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
+	err := s.db.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
 		Order("sealed_at ASC").
 		Find(&seals).Error
 	if err != nil {
@@ -61,7 +61,7 @@ func (s *SealService) GetSeals(key EdictKey) ([]Seal, error) {
 func (s *SealService) HasSeal(key EdictKey, ministerID string) (bool, error) {
 	var count int64
 	err := s.db.Model(&Seal{}).
-		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.EdictID, key.Username, key.Project, ministerID).
+		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.ID, key.Username, key.Project, ministerID).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check seal: %w", err)
@@ -126,7 +126,7 @@ func (s *SealService) GetSealStatus(key EdictKey) (map[string]bool, error) {
 // GetEdictStatus derives the status of an edict from seals and zhengming tables
 func (s *SealService) GetEdictStatus(key EdictKey) (EdictStatus, error) {
 	var edict Edict
-	if err := s.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
+	if err := s.db.First(&edict, "id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Error; err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 	if edict.CancelledAt != nil {
@@ -143,7 +143,7 @@ func (s *SealService) GetEdictStatus(key EdictKey) (EdictStatus, error) {
 
 	var zhengmingCount int64
 	err = s.db.Model(&Zhengming{}).
-		Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, ZhengmingPending).
+		Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, ZhengmingPending).
 		Count(&zhengmingCount).Error
 	if err != nil {
 		return "", fmt.Errorf("check zhengming: %w", err)
@@ -196,8 +196,8 @@ func (s *SealService) ListUnsealedEdicts(username, project string) ([]UnsealedEd
 		SELECT e.* FROM edicts e
 		WHERE e.username = ? AND e.project = ?
 		AND e.cancelled_at IS NULL
-		AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler')
-		ORDER BY e.edict_id DESC`, username, project).Scan(&edicts).Error
+		AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler')
+		ORDER BY e.id DESC`, username, project).Scan(&edicts).Error
 	if err != nil {
 		return nil, fmt.Errorf("list pending seals: %w", err)
 	}
@@ -206,7 +206,7 @@ func (s *SealService) ListUnsealedEdicts(username, project string) ([]UnsealedEd
 	var seals []Seal
 	edictIDs := make([]uint, len(edicts))
 	for i, e := range edicts {
-		edictIDs[i] = e.EdictID
+		edictIDs[i] = e.ID
 	}
 	if len(edictIDs) > 0 {
 		s.db.Where("edict_id IN ? AND username = ? AND project = ? AND minister_id IN ('judge','sage')",
@@ -226,8 +226,8 @@ func (s *SealService) ListUnsealedEdicts(username, project string) ([]UnsealedEd
 	for i, e := range edicts {
 		result[i] = UnsealedEdict{
 			Edict:        e,
-			HasJudgeSeal: sealMap[e.EdictID]["judge"],
-			HasSageSeal:  sealMap[e.EdictID]["sage"],
+			HasJudgeSeal: sealMap[e.ID]["judge"],
+			HasSageSeal:  sealMap[e.ID]["sage"],
 		}
 	}
 	return result, nil

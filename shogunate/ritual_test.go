@@ -23,7 +23,7 @@ import (
 )
 
 func testEK(id uint) storage.EdictKey {
-	return storage.EdictKey{EdictID: id, Username: "testuser", Project: "testproject"}
+	return storage.EdictKey{ID: id, Username: "testuser", Project: "testproject"}
 }
 
 func TestParseRitual(t *testing.T) {
@@ -1242,7 +1242,7 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 
 	// Create test edict
 	edict := storage.Edict{
-		EdictID:   1,
+		ID:        1,
 		SessionID: "test-session",
 		Intent:    "Test manifest staging",
 	}
@@ -1252,9 +1252,9 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 
 	// Create test manifests for 3 files
 	manifests := []storage.ForgeManifest{
-		{ManifestID: "manifest-1", EdictID: edict.EdictID, FilePath: "shogunate/ritual.go", Status: storage.ManifestForged},
-		{ManifestID: "manifest-2", EdictID: edict.EdictID, FilePath: "shogunate/builtin_rituals.yaml", Status: storage.ManifestForged},
-		{ManifestID: "manifest-3", EdictID: edict.EdictID, FilePath: "shogunate/chancellor.go", Status: storage.ManifestForged},
+		{ManifestID: "manifest-1", EdictID: edict.ID, FilePath: "shogunate/ritual.go", Status: storage.ManifestForged},
+		{ManifestID: "manifest-2", EdictID: edict.ID, FilePath: "shogunate/builtin_rituals.yaml", Status: storage.ManifestForged},
+		{ManifestID: "manifest-3", EdictID: edict.ID, FilePath: "shogunate/chancellor.go", Status: storage.ManifestForged},
 	}
 	for i := range manifests {
 		if err := db.Create(&manifests[i]).Error; err != nil {
@@ -1280,7 +1280,7 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 	exec := &RitualExecution{
 		ID:         "test-await-ruler-seal",
 		RitualName: "swift-strike",
-		EdictID:    edict.EdictID,
+		EdictID:    edict.ID,
 	}
 
 	// Call await_ruler_seal handler
@@ -1308,7 +1308,7 @@ func TestAwaitRulerSeal_NoManifests(t *testing.T) {
 
 	// Create test edict with no manifests
 	edict := storage.Edict{
-		EdictID:   1,
+		ID:        1,
 		SessionID: "test-session",
 		Intent:    "Test no manifests",
 	}
@@ -1329,7 +1329,7 @@ func TestAwaitRulerSeal_NoManifests(t *testing.T) {
 	exec := &RitualExecution{
 		ID:         "test-await-ruler-seal-empty",
 		RitualName: "swift-strike",
-		EdictID:    edict.EdictID,
+		EdictID:    edict.ID,
 	}
 
 	// Call await_ruler_seal handler - should not error
@@ -2125,7 +2125,7 @@ func TestRitualSessionIDTracking(t *testing.T) {
 	if err := db.Create(&testEdict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
-	edictID := testEdict.EdictID
+	edictID := testEdict.ID
 
 	// Verify ritual_executions table has session_id column
 	var execResult struct {

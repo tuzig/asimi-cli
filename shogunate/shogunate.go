@@ -145,10 +145,10 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		if requestID != "" && s.ritualGuard.DeliverZhengmingAnswer(ZhengmingAnswer{
 			RequestID: requestID,
 			Answer:    answer,
-			EdictID:   key.EdictID,
+			EdictID:   key.ID,
 		}) {
 			s.logger.Info("zhengming answer delivered to ritual runner",
-				"request_id", requestID, "edict_id", key.EdictID)
+				"request_id", requestID, "edict_id", key.ID)
 			return
 		}
 
@@ -182,11 +182,11 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 
 		// 3. Handle system ritual path (e.g., wakeup) — no edict, user chose a path forward
-		if key.EdictID == 0 && answer != "" {
+		if key.ID == 0 && answer != "" {
 			if edict, err := s.CreateEdict("", answer); err != nil {
 				s.logger.Warn("failed to create edict from zhengming answer", "error", err)
 			} else {
-				s.logger.Info("created edict from zhengming answer", "edict_id", edict.EdictID, "answer", answer)
+				s.logger.Info("created edict from zhengming answer", "edict_id", edict.ID, "answer", answer)
 			}
 			return
 		}
@@ -317,19 +317,19 @@ func (s *Shogunate) Ministers() []Minister {
 
 // EdictKey returns the current context as an EdictKey with the given edict ID.
 func (s *Shogunate) EdictKey(edictID uint) storage.EdictKey {
-	return storage.EdictKey{EdictID: edictID, Username: s.config.Username, Project: s.config.Project}
+	return storage.EdictKey{ID: edictID, Username: s.config.Username, Project: s.config.Project}
 }
 
 // CourtEdictKey returns the Court Infrastructure edict key (edict 1).
 // This is used for system-level operations like startup events.
 func (s *Shogunate) CourtEdictKey() storage.EdictKey {
-	return storage.EdictKey{EdictID: 1, Username: s.config.Username, Project: s.config.Project}
+	return storage.EdictKey{ID: 1, Username: s.config.Username, Project: s.config.Project}
 }
 
 // nextEdictID returns the next available edict ID (MAX+1).
 func (s *Shogunate) nextEdictID() uint {
 	var maxID uint
-	s.db.Model(&storage.Edict{}).Select("COALESCE(MAX(edict_id), 0)").Scan(&maxID)
+	s.db.Model(&storage.Edict{}).Select("COALESCE(MAX(id), 0)").Scan(&maxID)
 	return maxID + 1
 }
 
@@ -337,7 +337,7 @@ func (s *Shogunate) nextEdictID() uint {
 // TODO: Add a "summary" parameter which is already in the Edict
 func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
 	edict := storage.Edict{
-		EdictID:  s.nextEdictID(),
+		ID:       s.nextEdictID(),
 		Username: s.config.Username,
 		Project:  s.config.Project,
 		IssueRef: issueRef,
@@ -348,7 +348,7 @@ func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error)
 	}
 	s.PublishEvent(edict.Key(), storage.EventEdictCreated, storage.JSON{
 		"intent": intent,
-		"id": edict.EdictID,
+		"id": edict.ID,
 	})
 	return &edict, nil
 }
@@ -356,9 +356,9 @@ func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error)
 // CreateEdictForTest creates an edict without publishing events (for unit tests).
 func CreateEdictForTest(db *gorm.DB, intent string) (*storage.Edict, error) {
 	var maxID uint
-	db.Model(&storage.Edict{}).Select("COALESCE(MAX(edict_id), 0)").Scan(&maxID)
+	db.Model(&storage.Edict{}).Select("COALESCE(MAX(id), 0)").Scan(&maxID)
 	edict := storage.Edict{
-		EdictID: maxID + 1,
+		ID: maxID + 1,
 		Intent:  intent,
 	}
 	if err := db.Create(&edict).Error; err != nil {
@@ -370,7 +370,7 @@ func CreateEdictForTest(db *gorm.DB, intent string) (*storage.Edict, error) {
 // PublishEvent delegates to RitualGuard.
 func (s *Shogunate) PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 	if s == nil || s.ritualGuard == nil {
-		return key.EdictID
+		return key.ID
 	}
 	return s.ritualGuard.PublishEvent(key, eventType, payload)
 }
@@ -405,12 +405,12 @@ func (s *Shogunate) ministerIDs() []string {
 // Edict 1 is reserved for Court Infrastructure operations (init, bootstrap, etc.)
 func (s *Shogunate) ensureCourtInfrastructureEdict() {
 	var edict storage.Edict
-	if err := s.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", 1, s.config.Username, s.config.Project).Error; err == nil {
+	if err := s.db.First(&edict, "id = ? AND username = ? AND project = ?", 1, s.config.Username, s.config.Project).Error; err == nil {
 		return
 	}
 
 	courtEdict := storage.Edict{
-		EdictID:  1,
+		ID:       1,
 		Username: s.config.Username,
 		Project:  s.config.Project,
 		Intent:   "Court Infrastructure - reserved for system-level operations (init, bootstrap, etc.)",

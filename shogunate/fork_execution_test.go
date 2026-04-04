@@ -14,7 +14,7 @@ import (
 )
 
 func ek(id uint) storage.EdictKey {
-	return storage.EdictKey{EdictID: id, Username: "testuser", Project: "testproject"}
+	return storage.EdictKey{ID: id, Username: "testuser", Project: "testproject"}
 }
 
 // TestExecuteForkStep_Parallel tests parallel fork execution

@@ -220,7 +220,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, manifestID)
 	// Set commit_hash directly for marshal incident lookup
-	db.Model(&storage.ForgeManifest{}).Where("edict_id = ?", edict.EdictID).
+	db.Model(&storage.ForgeManifest{}).Where("edict_id = ?", edict.ID).
 		Update("commit_hash", "prodcommit789")
 
 	// Create marshal
@@ -335,7 +335,7 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// Invoke the Forge minister with a trivial task
 	// With synchronous blocking, this call blocks until minister replies
-	taskInput := fmt.Sprintf(`{"minister_id": "forge", "edict_id": %d, "task": "please reply with 'hello world'"}`, edict.EdictID)
+	taskInput := fmt.Sprintf(`{"minister_id": "forge", "edict_id": %d, "task": "please reply with 'hello world'"}`, edict.ID)
 	result, err := tool.Call(ctx, taskInput)
 	if err != nil {
 		t.Fatalf("Failed to invoke minister: %v", err)
@@ -365,8 +365,8 @@ func TestHappyFlowE2E(t *testing.T) {
 	if response.MinisterID != "forge" {
 		t.Errorf("Expected MinisterID 'forge', got %s", response.MinisterID)
 	}
-	if response.EdictID != edict.EdictID {
-		t.Errorf("Expected EdictID %d, got %d", edict.EdictID, response.EdictID)
+	if response.EdictID != edict.ID {
+		t.Errorf("Expected EdictID %d, got %d", edict.ID, response.EdictID)
 	}
 	if !response.Sealed {
 		t.Error("Expected Sealed=true from Forge")
@@ -611,7 +611,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected MinisterInvokingMsg, got %T", notifications[0])
 	}
-	if invoking.MinisterID != "notifier" || invoking.EdictKey.EdictID != 1 || invoking.Task != "notify me" {
+	if invoking.MinisterID != "notifier" || invoking.EdictKey.ID != 1 || invoking.Task != "notify me" {
 		t.Errorf("Unexpected invoking msg: %+v", invoking)
 	}
 
@@ -620,7 +620,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected MinisterCompletedMsg, got %T", notifications[1])
 	}
-	if completed.MinisterID != "notifier" || completed.EdictKey.EdictID != 1 || completed.Error != nil {
+	if completed.MinisterID != "notifier" || completed.EdictKey.ID != 1 || completed.Error != nil {
 		t.Errorf("Unexpected completed msg: %+v", completed)
 	}
 	if !completed.Sealed {
@@ -708,7 +708,7 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
 	// With edict ID — should appear in system prompt alongside Realm and role text
-	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{EdictID: 123456})
+	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{ID: 123456})
 	if !strings.Contains(prompt, "Current Edict: 123456") {
 		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
 	}
@@ -1057,7 +1057,7 @@ func TestBuildSystemPrompt_GivenContext(t *testing.T) {
 	})
 
 	// With scratchpad — edict intent should appear in system prompt
-	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{EdictID: 42}, scratchpad)
+	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{ID: 42}, scratchpad)
 	if !strings.Contains(prompt, "Implement dark mode for the dashboard") {
 		t.Errorf("Expected edict intent in system prompt, got:\n%s", prompt)
 	}
@@ -1069,7 +1069,7 @@ func TestBuildSystemPrompt_GivenContext(t *testing.T) {
 	}
 
 	// Without given context — should not contain "Given Context"
-	prompt = buildSystemPrompt(fake, nil, storage.EdictKey{EdictID: 42})
+	prompt = buildSystemPrompt(fake, nil, storage.EdictKey{ID: 42})
 	if strings.Contains(prompt, "# Given Context") {
 		t.Errorf("Expected no scratchpad without scratchpad param, got:\n%s", prompt)
 	}
@@ -1081,7 +1081,7 @@ func TestEnsureCourtInfrastructureEdict(t *testing.T) {
 
 	// Verify edict 1 doesn't exist yet
 	var count int64
-	db.Model(&storage.Edict{}).Where("edict_id = ?", 1).Count(&count)
+	db.Model(&storage.Edict{}).Where("id = ?", 1).Count(&count)
 	assert.Equal(t, int64(0), count, "edict 1 should not exist before shogunate creation")
 
 	// Create shogunate - this should create edict 1
@@ -1091,7 +1091,7 @@ func TestEnsureCourtInfrastructureEdict(t *testing.T) {
 
 	// Verify edict 1 was created
 	var edict storage.Edict
-	err := db.First(&edict, "edict_id = ?", 1).Error
+	err := db.First(&edict, "id = ?", 1).Error
 	assert.NoError(t, err, "edict 1 should exist after shogunate creation")
 	assert.Equal(t, "Court Infrastructure - reserved for system-level operations (init, bootstrap, etc.)", edict.Intent)
 	assert.Equal(t, "Court Infrastructure", edict.Summary)
@@ -1102,7 +1102,7 @@ func TestEnsureCourtInfrastructureEdict(t *testing.T) {
 	require.NotNil(t, shogunate2)
 
 	var count2 int64
-	db.Model(&storage.Edict{}).Where("edict_id = ?", 1).Count(&count2)
+	db.Model(&storage.Edict{}).Where("id = ?", 1).Count(&count2)
 	assert.Equal(t, int64(1), count2, "edict 1 should still exist only once")
 }
 
@@ -1120,6 +1120,6 @@ func TestCreateEdict_DoesNotReserveEdict1(t *testing.T) {
 	assert.NotNil(t, userEdict)
 
 	// User edict should NOT be edict 1 (it should get auto-incremented ID)
-	assert.NotEqual(t, uint(1), userEdict.EdictID, "user edicts should not use reserved edict 1")
-	assert.Greater(t, userEdict.EdictID, uint(1), "user edict should have ID > 1")
+	assert.NotEqual(t, uint(1), userEdict.ID, "user edicts should not use reserved edict 1")
+	assert.Greater(t, userEdict.ID, uint(1), "user edict should have ID > 1")
 }

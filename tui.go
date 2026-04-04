@@ -1698,7 +1698,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shogunate.MinisterInvokingMsg:
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("MINISTER_INVOKING",
-			fmt.Sprintf("Minister %s invoked for edict %d", msg.MinisterID, msg.EdictKey.EdictID))
+			fmt.Sprintf("Minister %s invoked for edict %d", msg.MinisterID, msg.EdictKey.ID))
 		taskPreview := msg.Task
 		if len(taskPreview) > 60 {
 			taskPreview = taskPreview[:57] + "..."
@@ -1778,7 +1778,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shogunate.EventNotificationMsg:
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("EVENT_NOTIFICATION",
-			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictKey.EdictID, msg.Message))
+			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictKey.ID, msg.Message))
 
 		// Use appropriate icon based on event type
 		icon := "📋"   // Default
@@ -1805,7 +1805,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			message = fmt.Sprintf("Edict %d created: %s", id, intent)
 		case storage.EventEdictSealed:
 			icon = "✅"
-			message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", msg.EdictKey.EdictID)
+			message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", msg.EdictKey.ID)
 		case storage.EventSealGranted:
 			icon = sealPrefix
 			minister, _ := msg.Payload["minister_id"].(string)
@@ -1813,9 +1813,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				minister = "Unknown"
 			}
 			if minister == "ruler" {
-				message = fmt.Sprintf("Ruler sealed edict %d", msg.EdictKey.EdictID)
+				message = fmt.Sprintf("Ruler sealed edict %d", msg.EdictKey.ID)
 			} else {
-				message = fmt.Sprintf("Minister %s sealed edict %d", minister, msg.EdictKey.EdictID)
+				message = fmt.Sprintf("Minister %s sealed edict %d", minister, msg.EdictKey.ID)
 			}
 			// Re-query seals to show fresh seal chain with Ruler's seal
 			sealService := m.shogunate.GetSealService()
@@ -1827,24 +1827,24 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case storage.EventManifestCommitted:
 			icon = "🔨"
-			message = fmt.Sprintf("Forge committed manifest for edict %d", msg.EdictKey.EdictID)
+			message = fmt.Sprintf("Forge committed manifest for edict %d", msg.EdictKey.ID)
 		case storage.EventZhengmingNeeded:
 			icon = "❓"
 			summary, _ := msg.Payload["summary"].(string)
 			if summary == "" {
 				summary = "clarification needed"
 			}
-			message = fmt.Sprintf("Zhengming requested for edict %d: %s", msg.EdictKey.EdictID, summary)
+			message = fmt.Sprintf("Zhengming requested for edict %d: %s", msg.EdictKey.ID, summary)
 		case storage.EventZhengmingAnswered:
 			icon = "💬"
-			if msg.EdictKey.EdictID == 0 {
+			if msg.EdictKey.ID == 0 {
 				message = "Zhengming answered for the court"
 			} else {
-				message = fmt.Sprintf("Zhengming answered for edict %d", msg.EdictKey.EdictID)
+				message = fmt.Sprintf("Zhengming answered for edict %d", msg.EdictKey.ID)
 			}
 		case storage.EventEdictCancelled:
 			icon = "⛔"
-			message = fmt.Sprintf("Edict %d cancelled", msg.EdictKey.EdictID)
+			message = fmt.Sprintf("Edict %d cancelled", msg.EdictKey.ID)
 		}
 
 		if message != "" {
@@ -1861,8 +1861,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.AddMessage(fmt.Sprintf("%sRecovered %d event(s) from previous session:", systemPrefix, len(msg.Events)))
 		for _, ev := range msg.Events {
 			detail := fmt.Sprintf("%s  %s", systemPrefix, ev.EventType)
-			if ev.EdictKey.EdictID != 0 {
-				detail += fmt.Sprintf(" [edict:%d]", ev.EdictKey.EdictID)
+			if ev.EdictKey.ID != 0 {
+				detail += fmt.Sprintf(" [edict:%d]", ev.EdictKey.ID)
 			}
 			chat.AddMessage(detail)
 		}
@@ -2674,7 +2674,7 @@ func (m *TUIModel) updateComponentDimensions() {
 
 	// Update status info
 	// TODO: move this to a proper place and drop the currentEdictKey
-	if m.shogunate != nil && m.currentEdictKey.EdictID != 0 {
+	if m.shogunate != nil && m.currentEdictKey.ID != 0 {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)

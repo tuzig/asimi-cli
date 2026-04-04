@@ -301,7 +301,7 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 
 	if s := model.getCurrentSession(); s != nil {
 		session = s
-		slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictKey.EdictID)
+		slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictKey.ID)
 	}
 
 	if session == nil {

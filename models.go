@@ -867,7 +867,7 @@ func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots 
 
 			// Format: "▶ [  3] ⚖✓ 📜· Fix the login bug..."
 			line := fmt.Sprintf("%s[%3d] ⚖%s 📜%s %s",
-				prefix, edict.EdictID,
+				prefix, edict.ID,
 				sealIcon(edict.HasJudgeSeal),
 				sealIcon(edict.HasSageSeal),
 				intent)

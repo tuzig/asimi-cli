@@ -88,7 +88,7 @@ func TestChannelDelivery(t *testing.T) {
 	}()
 
 	// Publish an event
-	s.PublishEvent(storage.EdictKey{EdictID: 1}, storage.EventEdictCreated, storage.JSON{"foo": "bar"})
+	s.PublishEvent(storage.EdictKey{ID: 1}, storage.EventEdictCreated, storage.JSON{"foo": "bar"})
 
 	// Wait briefly for the event to be dispatched
 	time.Sleep(50 * time.Millisecond)
@@ -97,8 +97,8 @@ func TestChannelDelivery(t *testing.T) {
 	if len(received) != 1 {
 		t.Fatalf("expected 1 dispatched event, got %d", len(received))
 	}
-	if received[0].EdictKey.EdictID != 1 {
-		t.Errorf("expected EdictID 1, got %d", received[0].EdictKey.EdictID)
+	if received[0].EdictKey.ID != 1 {
+		t.Errorf("expected EdictID 1, got %d", received[0].EdictKey.ID)
 	}
 	if received[0].Type != storage.EventEdictCreated {
 		t.Errorf("expected type %q, got %q", storage.EventEdictCreated, received[0].Type)
@@ -114,7 +114,7 @@ func TestDBPersistence(t *testing.T) {
 	s := newTestShogunate(t, db)
 
 	// Publish an event (just DB + channel, no consumer needed)
-	s.PublishEvent(storage.EdictKey{EdictID: 2}, "edict_created", storage.JSON{"key": "val"})
+	s.PublishEvent(storage.EdictKey{ID: 2}, "edict_created", storage.JSON{"key": "val"})
 
 	// Verify it's in the database
 	var events []storage.TianEvent
@@ -134,8 +134,8 @@ func TestDBPersistence(t *testing.T) {
 	// Also verify it arrived on the channel
 	select {
 	case ev := <-s.ritualGuard.eventCh:
-		if ev.EdictKey.EdictID != 2 {
-			t.Errorf("channel event EdictID: expected 2, got %d", ev.EdictKey.EdictID)
+		if ev.EdictKey.ID != 2 {
+			t.Errorf("channel event EdictID: expected 2, got %d", ev.EdictKey.ID)
 		}
 	default:
 		t.Error("expected event on channel")
@@ -157,11 +157,11 @@ func TestBackpressure(t *testing.T) {
 	s.ritualGuard = rg
 
 	// Fill the channel
-	s.PublishEvent(storage.EdictKey{EdictID: 1}, "edict_created", storage.JSON{})
-	s.PublishEvent(storage.EdictKey{EdictID: 2}, "edict_created", storage.JSON{})
+	s.PublishEvent(storage.EdictKey{ID: 1}, "edict_created", storage.JSON{})
+	s.PublishEvent(storage.EdictKey{ID: 2}, "edict_created", storage.JSON{})
 
 	// This one should overflow — persists to DB but doesn't block
-	s.PublishEvent(storage.EdictKey{EdictID: 3}, "edict_created", storage.JSON{})
+	s.PublishEvent(storage.EdictKey{ID: 3}, "edict_created", storage.JSON{})
 
 	// Verify all 3 persisted to DB
 	var count int64
@@ -253,7 +253,7 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	base.publish = s.PublishEvent
 
-	err := base.EmitEvent(storage.EdictKey{EdictID: 10}, "edict_assigned", storage.JSON{"from": "minister"})
+	err := base.EmitEvent(storage.EdictKey{ID: 10}, "edict_assigned", storage.JSON{"from": "minister"})
 	if err != nil {
 		t.Fatalf("EmitEvent error: %v", err)
 	}
@@ -268,8 +268,8 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 	// Verify channel
 	select {
 	case ev := <-s.ritualGuard.eventCh:
-		if ev.EdictKey.EdictID != 10 {
-			t.Errorf("expected EdictID 10, got %d", ev.EdictKey.EdictID)
+		if ev.EdictKey.ID != 10 {
+			t.Errorf("expected EdictID 10, got %d", ev.EdictKey.ID)
 		}
 	default:
 		t.Error("expected event on channel")
@@ -282,7 +282,7 @@ func TestMinisterBaseEmitEvent_Fallback(t *testing.T) {
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	// No publish set — should fall back to DB-only
 
-	err := base.EmitEvent(storage.EdictKey{EdictID: 20}, "edict_created", storage.JSON{"from": "fallback"})
+	err := base.EmitEvent(storage.EdictKey{ID: 20}, "edict_created", storage.JSON{"from": "fallback"})
 	if err != nil {
 		t.Fatalf("EmitEvent error: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	// Test EventEdictCreated notification
 	rg.DispatchEvent(Event{
 		Type:     storage.EventEdictCreated,
-		EdictKey: storage.EdictKey{EdictID: 1},
+		EdictKey: storage.EdictKey{ID: 1},
 		Payload:  map[string]interface{}{"intent": "Add new feature"},
 	})
 
@@ -325,8 +325,8 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if len(notifications) != 1 {
 		t.Fatalf("expected 1 notification, got %d", len(notifications))
 	}
-	if notifications[0].EdictKey.EdictID != 1 {
-		t.Errorf("expected EdictID 1, got %d", notifications[0].EdictKey.EdictID)
+	if notifications[0].EdictKey.ID != 1 {
+		t.Errorf("expected EdictID 1, got %d", notifications[0].EdictKey.ID)
 	}
 	if notifications[0].EventType != storage.EventEdictCreated {
 		t.Errorf("expected EventType EventEdictCreated, got %s", notifications[0].EventType)
@@ -340,7 +340,7 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	notifications = nil
 	rg.DispatchEvent(Event{
 		Type:     storage.EventSealGranted,
-		EdictKey: storage.EdictKey{EdictID: 2},
+		EdictKey: storage.EdictKey{ID: 2},
 		Payload:  map[string]interface{}{"minister_id": "judge"},
 	})
 
@@ -362,7 +362,7 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	notifications = nil
 	rg.DispatchEvent(Event{
 		Type:     storage.EventEdictSealed,
-		EdictKey: storage.EdictKey{EdictID: 3},
+		EdictKey: storage.EdictKey{ID: 3},
 		Payload:  map[string]interface{}{},
 	})
 
@@ -375,8 +375,8 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if notifications[0].EventType != storage.EventEdictSealed {
 		t.Errorf("expected EventType EventEdictSealed, got %s", notifications[0].EventType)
 	}
-	if notifications[0].EdictKey.EdictID != 3 {
-		t.Errorf("expected EdictID 3, got %d", notifications[0].EdictKey.EdictID)
+	if notifications[0].EdictKey.ID != 3 {
+		t.Errorf("expected EdictID 3, got %d", notifications[0].EdictKey.ID)
 	}
 	mu.Unlock()
 
@@ -384,7 +384,7 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	notifications = nil
 	rg.DispatchEvent(Event{
 		Type:     storage.EventStepCompleted,
-		EdictKey: storage.EdictKey{EdictID: 4},
+		EdictKey: storage.EdictKey{ID: 4},
 		Payload:  map[string]interface{}{},
 	})
 

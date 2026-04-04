@@ -73,7 +73,7 @@ func (f *Forge) Tools() []Tool {
 // GetPendingLing retrieves all pending ling for an edict
 func (f *Forge) GetPendingLing(key storage.EdictKey) ([]storage.Ling, error) {
 	var ling []storage.Ling
-	err := f.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.LingPending).
+	err := f.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.LingPending).
 		Order("created_at ASC").
 		Find(&ling).Error
 	if err != nil {
@@ -98,11 +98,11 @@ func (f *Forge) MarkLingCompleted(lingID string) error {
 
 // StageManifest creates a staged manifest (not yet committed to git)
 func (f *Forge) StageManifest(key storage.EdictKey, lingID, filePath, funcName, contentSHA string) (string, error) {
-	manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.EdictID), lingID, filePath)
+	manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.ID), lingID, filePath)
 
 	manifest := storage.ForgeManifest{
 		ManifestID: manifestID,
-		EdictID:    key.EdictID,
+		EdictID:    key.ID,
 		Username:   key.Username,
 		Project:    key.Project,
 		LingID:     lingID,
@@ -134,7 +134,7 @@ func (f *Forge) DeleteForgedManifest(manifestID string) error {
 // GetRejectedManifests retrieves all rejected manifests for an edict
 func (f *Forge) GetRejectedManifests(key storage.EdictKey) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
-	err := f.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.ManifestRejected).
+	err := f.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.ManifestRejected).
 		Order("created_at DESC").
 		Find(&manifests).Error
 	if err != nil {
@@ -200,7 +200,7 @@ func (f *Forge) Run(ctx context.Context) {
 // which may generate tool calls that the Forge executes.
 func (f *Forge) processTask(ctx context.Context, task *Task) {
 	f.logger.Info("forge processing task",
-		"edict_id", task.EdictKey.EdictID,
+		"edict_id", task.EdictKey.ID,
 		"work", task.Work)
 
 	// Use task-level notify override for routing (e.g., ritual → Ruling tab)
@@ -241,7 +241,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 	select {
 	case task.Done <- result:
 	default:
-		f.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.EdictID)
+		f.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
 	}
 }
 
@@ -440,7 +440,7 @@ func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("edict_id and file_path are required")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
 
 	// Auto-populate ling_id if not provided (use most recent pending ling)
 	if params.LingID == "" {

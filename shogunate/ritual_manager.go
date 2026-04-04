@@ -125,7 +125,7 @@ func (rg *RitualGuard) Tasks() chan<- *Task {
 func (rg *RitualGuard) PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 	if rg.db != nil {
 		dbEvent := storage.TianEvent{
-			EdictID:   key.EdictID,
+			EdictID:   key.ID,
 			Username:  key.Username,
 			Project:   key.Project,
 			EventType: eventType,
@@ -140,7 +140,7 @@ func (rg *RitualGuard) PublishEvent(key storage.EdictKey, eventType storage.Shog
 	default:
 		rg.logger.Warn("event channel full, persisted to DB only", "type", eventType)
 	}
-	return key.EdictID
+	return key.ID
 }
 
 // startRitual starts and runs a ritual using the Ruling tab's streaming context.
@@ -159,7 +159,7 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 				TabID:       "chancellor",
 				RitualName:  ritualName,
 				ExecutionID: exec.ID,
-				EdictID:     key.EdictID,
+				EdictID:     key.ID,
 				Status:      "ritual_failed",
 				Message:     getRulersError(err),
 			})
@@ -200,7 +200,7 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 					"ritual", ritual.Name, "event", event.Type)
 				continue
 			}
-			inputs := map[string]string{"edict_id": fmt.Sprint(event.EdictKey.EdictID)}
+			inputs := map[string]string{"edict_id": fmt.Sprint(event.EdictKey.ID)}
 			rg.startRitual(ritual.Name, event.EdictKey, inputs)
 		}
 	}
@@ -224,7 +224,7 @@ func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg 
 		Payload:   event.Payload,
 	}
 
-	edictID := event.EdictKey.EdictID
+	edictID := event.EdictKey.ID
 
 	// Build message based on event type
 	switch event.Type {
@@ -501,7 +501,7 @@ func (rg *RitualGuard) DrainUnprocessedEvents() []DrainedEvent {
 	var drained []DrainedEvent
 	for _, event := range events {
 		t := event.EventType
-		key := storage.EdictKey{EdictID: event.EdictID, Username: event.Username, Project: event.Project}
+		key := storage.EdictKey{ID: event.EdictID, Username: event.Username, Project: event.Project}
 		rg.DispatchEvent(Event{
 			Type:     t,
 			EdictKey: key,
@@ -620,7 +620,7 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 
 	// Find edicts that are sealed or cancelled
 	var edicts []storage.Edict
-	if err := rg.db.Where("edict_id IN ?", edictIDs).Find(&edicts).Error; err != nil {
+	if err := rg.db.Where("id IN ?", edictIDs).Find(&edicts).Error; err != nil {
 		rg.logger.Warn("failed to query edicts", "error", err)
 		return
 	}
@@ -635,16 +635,16 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 	staleStatuses := make(map[uint]storage.EdictStatus)
 
 	for _, edict := range edicts {
-		edictKey := storage.EdictKey{EdictID: edict.EdictID, Username: edict.Username, Project: edict.Project}
+		edictKey := storage.EdictKey{ID: edict.ID, Username: edict.Username, Project: edict.Project}
 		status, err := sealService.GetEdictStatus(edictKey)
 		if err != nil {
 			continue
 		}
 		if status == storage.EdictSealed || status == storage.EdictCancelled {
-			staleEdictSet[edict.EdictID] = true
-			staleStatuses[edict.EdictID] = status
+			staleEdictSet[edict.ID] = true
+			staleStatuses[edict.ID] = status
 			rg.logger.Info("detected stale ritual on edict state change",
-				"edict_id", edict.EdictID,
+				"edict_id", edict.ID,
 				"edict_status", status)
 		}
 	}

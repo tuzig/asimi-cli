@@ -55,11 +55,11 @@ func (s *StringArray) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, s)
 }
 
-// EdictKey is the composite primary key for an edict (edict_id, username, project).
+// EdictKey is the composite primary key for an edict (id, username, project).
 type EdictKey struct {
-	EdictID  uint   `json:"edict_id"`
-	Username string `json:"username"`
-	Project  string `json:"project"`
+	ID        uint   `json:"id"`
+	Username  string `json:"username"`
+	Project   string `json:"project"`
 }
 
 // EdictStatus represents the current status of an edict
@@ -75,9 +75,9 @@ const (
 
 // Edict represents a high-level task/issue being processed by the Shogunate
 // Status is derived from seals and zhengming tables - see EdictStatus type
-// Primary key is composite: (edict_id, username, project)
+// Primary key is composite: (id, username, project)
 type Edict struct {
-	EdictID     uint       `gorm:"primaryKey;column:edict_id"`
+	ID          uint       `gorm:"primaryKey;autoIncrement"`
 	Username    string     `gorm:"primaryKey;column:username"`
 	Project     string     `gorm:"primaryKey;column:project"`
 	SessionID   string     `gorm:"column:session_id;index"`
@@ -91,7 +91,7 @@ type Edict struct {
 
 // Key returns the composite key for this edict.
 func (e *Edict) Key() EdictKey {
-	return EdictKey{EdictID: e.EdictID, Username: e.Username, Project: e.Project}
+	return EdictKey{ID: e.ID, Username: e.Username, Project: e.Project}
 }
 
 // TableName returns the table name for Edict

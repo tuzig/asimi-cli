@@ -634,7 +634,7 @@ func (RitualExecution) TableName() string {
 
 // EdictKey returns the storage.EdictKey for this execution.
 func (e *RitualExecution) EdictKey() storage.EdictKey {
-	return storage.EdictKey{EdictID: e.EdictID, Username: e.Username, Project: e.Project}
+	return storage.EdictKey{ID: e.EdictID, Username: e.Username, Project: e.Project}
 }
 
 // RitualStepState tracks the state of a step within an execution
@@ -678,13 +678,13 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 	var previousExec *RitualExecution
 	var recoveryData storage.JSON
 	var recoveryFirstIncompleteStep int = -1
-	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND ritual_name = ? AND state IN (?, ?)", key.EdictID, key.Username, key.Project, ritualName, RitualStateAborted, RitualStateStopped).
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND ritual_name = ? AND state IN (?, ?)", key.ID, key.Username, key.Project, ritualName, RitualStateAborted, RitualStateStopped).
 		Order("updated_at DESC").
 		First(&previousExec).Error; err == nil {
 		// Found aborted execution - attempt recovery
 		r.logger.Info("found aborted ritual execution for recovery",
 			"ritual", ritualName,
-			"edict_id", key.EdictID,
+			"edict_id", key.ID,
 			"previous_execution_id", previousExec.ID,
 			"state", previousExec.State)
 
@@ -733,9 +733,9 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 
 	// Create execution record
 	exec := &RitualExecution{
-		ID:          GenerateID("ritual", ritualName, fmt.Sprint(key.EdictID), time.Now().String()),
+		ID:          GenerateID("ritual", ritualName, fmt.Sprint(key.ID), time.Now().String()),
 		RitualName:  ritualName,
-		EdictID:     key.EdictID,
+		EdictID:     key.ID,
 		Username:    key.Username,
 		Project:     key.Project,
 		CurrentStep: 0,
@@ -788,7 +788,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 							exec.State = RitualStateCompleted
 							r.saveExecution(exec)
 							// Generate a fresh execution ID and reset state
-							exec.ID = GenerateID("ritual", ritualName, fmt.Sprint(key.EdictID), time.Now().String())
+							exec.ID = GenerateID("ritual", ritualName, fmt.Sprint(key.ID), time.Now().String())
 							exec.State = RitualStatePending
 							// Clear recovery data to start fresh
 							previousExec = nil
@@ -846,13 +846,13 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 		r.logger.Info("ritual started (recovery mode)",
 			"ritual", ritualName,
 			"execution_id", exec.ID,
-			"edict_id", key.EdictID,
+			"edict_id", key.ID,
 			"from_step", exec.CurrentStep)
 	} else {
 		r.logger.Info("ritual started",
 			"ritual", ritualName,
 			"execution_id", exec.ID,
-			"edict_id", key.EdictID)
+			"edict_id", key.ID)
 	}
 
 	steps := 0
@@ -1705,7 +1705,7 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 		fmt.Fprintf(&buf, "# Edict\n\n")
 		fmt.Fprintf(&buf, "```json\n")
 		fmt.Fprintf(&buf, "{\n")
-		fmt.Fprintf(&buf, "  \"edict_id\": %d,\n", edict.EdictID)
+		fmt.Fprintf(&buf, "  \"edict_id\": %d,\n", edict.ID)
 		fmt.Fprintf(&buf, "  \"status\": %q\n", status)
 		fmt.Fprintf(&buf, "}\n")
 		fmt.Fprintf(&buf, "```\n\n")
@@ -1782,13 +1782,13 @@ func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string
 // getEdictDetails retrieves full edict information including clarification history
 func (r *RitualRunner) getEdictDetails(ctx context.Context, key storage.EdictKey) (*storage.Edict, []storage.Zhengming, error) {
 	var edict storage.Edict
-	if err := r.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
+	if err := r.db.First(&edict, "id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Error; err != nil {
 		return nil, nil, err
 	}
 
 	// Get clarification history
 	var clarifications []storage.Zhengming
-	r.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.ZhengmingAnswered).
+	r.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.ZhengmingAnswered).
 		Order("created_at ASC").
 		Find(&clarifications)
 
@@ -1834,7 +1834,7 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 
 func (r *RitualRunner) getEdict(key storage.EdictKey) (interface{}, error) {
 	var edict storage.Edict
-	if err := r.db.First(&edict, "edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Error; err != nil {
+	if err := r.db.First(&edict, "id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Error; err != nil {
 		r.logger.Warn("Ritual runner failed to get edict", "key", key)
 		return nil, err
 	}
@@ -1844,7 +1844,7 @@ func (r *RitualRunner) getEdict(key storage.EdictKey) (interface{}, error) {
 		status = storage.EdictActive // default if error
 	}
 	return map[string]interface{}{
-		"edict_id": edict.EdictID,
+		"edict_id": edict.ID,
 		"intent":   edict.Intent,
 		"status":   string(status),
 	}, nil
@@ -1854,17 +1854,17 @@ func (r *RitualRunner) getCourtStatus(key storage.EdictKey) (interface{}, error)
 	// Use a single SQL query to fetch and filter edicts by derived status
 	var result []map[string]interface{}
 	query := `
-SELECT 
-    e.edict_id, e.session_id, e.issue_ref, e.intent, e.created_at, e.updated_at,
-    CASE 
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.minister_id = 'ruler') THEN 'sealed'
-        WHEN EXISTS (SELECT 1 FROM zhengming_requests z WHERE z.edict_id = e.edict_id AND z.status = 'pending') THEN 'blocked'
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.minister_id = 'confucius') THEN 'active'
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.minister_id = 'judge') THEN 'active'
+SELECT
+    e.id, e.session_id, e.issue_ref, e.intent, e.created_at, e.updated_at,
+    CASE
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.minister_id = 'ruler') THEN 'sealed'
+        WHEN EXISTS (SELECT 1 FROM zhengming_requests z WHERE z.edict_id = e.id AND z.status = 'pending') THEN 'blocked'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.minister_id = 'confucius') THEN 'active'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.minister_id = 'judge') THEN 'active'
         ELSE 'active'
     END as status
 FROM edicts e
-WHERE NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.minister_id = 'ruler')
+WHERE NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.minister_id = 'ruler')
 ORDER BY e.updated_at DESC
 `
 	if err := r.db.Raw(query).Scan(&result).Error; err != nil {
@@ -1875,7 +1875,7 @@ ORDER BY e.updated_at DESC
 
 func (r *RitualRunner) arrangeGetManifests(key storage.EdictKey) (interface{}, error) {
 	var manifests []storage.ForgeManifest
-	if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).Find(&manifests).Error; err != nil {
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Find(&manifests).Error; err != nil {
 		return nil, err
 	}
 	result := make([]map[string]interface{}, len(manifests))
@@ -1900,7 +1900,7 @@ func (r *RitualRunner) arrangeGetManifests(key storage.EdictKey) (interface{}, e
 func (r *RitualRunner) arrangeGetVerdicts(key storage.EdictKey) (interface{}, error) {
 	var verdicts []storage.JudgeVerdict
 	err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = judge_verdicts.manifest_id").
-		Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", key.EdictID, key.Username, key.Project).
+		Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", key.ID, key.Username, key.Project).
 		Find(&verdicts).Error
 	if err != nil {
 		return nil, err
@@ -1919,7 +1919,7 @@ func (r *RitualRunner) arrangeGetVerdicts(key storage.EdictKey) (interface{}, er
 func (r *RitualRunner) arrangeGetPrecedents(key storage.EdictKey) (interface{}, error) {
 	var precedents []storage.CensorPrecedent
 	err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
-		Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", key.EdictID, key.Username, key.Project).
+		Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", key.ID, key.Username, key.Project).
 		Find(&precedents).Error
 	if err != nil {
 		return nil, err
@@ -2360,7 +2360,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 	case "await_ruler_seal":
 		// Stage only files from manifests (not git add -A)
 		var manifests []storage.ForgeManifest
-		if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", thenKey.EdictID, thenKey.Username, thenKey.Project).Find(&manifests).Error; err != nil {
+		if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", thenKey.ID, thenKey.Username, thenKey.Project).Find(&manifests).Error; err != nil {
 			return fmt.Errorf("failed to query manifests: %w", err)
 		}
 
@@ -2594,7 +2594,7 @@ func (r *RitualRunner) emitEvent(key storage.EdictKey, eventType storage.Shoguna
 	}
 	// Fallback: DB-only (for tests without shogunate)
 	event := storage.TianEvent{
-		EdictID:   key.EdictID,
+		EdictID:   key.ID,
 		Username:  key.Username,
 		Project:   key.Project,
 		EventType: eventType,
@@ -2743,8 +2743,8 @@ func (r *RitualRunner) GetExecution(executionID string) (*RitualExecution, error
 func (r *RitualRunner) ListExecutions(key storage.EdictKey) ([]RitualExecution, error) {
 	var executions []RitualExecution
 	query := r.db.Order("created_at DESC")
-	if key.EdictID != 0 {
-		query = query.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project)
+	if key.ID != 0 {
+		query = query.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project)
 	}
 	if err := query.Find(&executions).Error; err != nil {
 		return nil, err

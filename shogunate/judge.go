@@ -79,7 +79,7 @@ func (j *Judge) Tools() []Tool {
 // GetPendingManifests retrieves all pending manifests for an edict
 func (j *Judge) GetPendingManifests(key storage.EdictKey) ([]storage.ForgeManifest, error) {
 	var manifests []storage.ForgeManifest
-	err := j.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.EdictID, key.Username, key.Project, storage.ManifestForged).
+	err := j.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.ManifestForged).
 		Order("created_at ASC").
 		Find(&manifests).Error
 	if err != nil {
@@ -92,7 +92,7 @@ func (j *Judge) GetPendingManifests(key storage.EdictKey) ([]storage.ForgeManife
 func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 	var pendingCount int64
 	err := j.db.Model(&storage.ForgeManifest{}).
-		Where("edict_id = ? AND username = ? AND project = ? AND status != ?", key.EdictID, key.Username, key.Project, storage.ManifestQuenched).
+		Where("edict_id = ? AND username = ? AND project = ? AND status != ?", key.ID, key.Username, key.Project, storage.ManifestQuenched).
 		Count(&pendingCount).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check quenched status: %w", err)
@@ -101,7 +101,7 @@ func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 	// Also check that at least one manifest exists
 	var totalCount int64
 	err = j.db.Model(&storage.ForgeManifest{}).
-		Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
+		Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
 		Count(&totalCount).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to count manifests: %w", err)
@@ -149,7 +149,7 @@ func (j *Judge) UpdateManifestStatus(manifestID string, status storage.ManifestS
 func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := j.db.Distinct("edicts.*").
-		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.edict_id AND forge_manifests.username = edicts.username AND forge_manifests.project = edicts.project").
+		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.id AND forge_manifests.username = edicts.username AND forge_manifests.project = edicts.project").
 		Where("forge_manifests.status = ?", storage.ManifestForged).
 		Find(&edicts).Error
 	if err != nil {
@@ -160,7 +160,7 @@ func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 	sealService := storage.NewSealService(j.db)
 	var activeEdicts []storage.Edict
 	for _, e := range edicts {
-		status, err := sealService.GetEdictStatus(storage.EdictKey{EdictID: e.EdictID, Username: e.Username, Project: e.Project})
+		status, err := sealService.GetEdictStatus(storage.EdictKey{ID: e.ID, Username: e.Username, Project: e.Project})
 		if err != nil {
 			continue
 		}
@@ -181,7 +181,7 @@ func (j *Judge) execute(ctx context.Context, key storage.EdictKey) (bool, error)
 		return false, fmt.Errorf("check quenched: %w", err)
 	}
 	if allQuenched {
-		j.logger.Info("all manifests quenched, judgment complete", "edict_id", key.EdictID)
+		j.logger.Info("all manifests quenched, judgment complete", "edict_id", key.ID)
 		return true, nil
 	}
 
@@ -192,7 +192,7 @@ func (j *Judge) execute(ctx context.Context, key storage.EdictKey) (bool, error)
 	}
 
 	if len(manifests) == 0 {
-		j.logger.Info("no pending manifests", "edict_id", key.EdictID)
+		j.logger.Info("no pending manifests", "edict_id", key.ID)
 		return false, nil
 	}
 
@@ -212,7 +212,7 @@ func (j *Judge) execute(ctx context.Context, key storage.EdictKey) (bool, error)
 	// If all manifests passed, grant the Judge's seal
 	if allQuenched {
 		if err := j.grantSeal(key, storage.JSON{"type": "judgment_complete"}); err != nil {
-			j.logger.Warn("failed to grant judge seal", "edict_id", key.EdictID, "error", err)
+			j.logger.Warn("failed to grant judge seal", "edict_id", key.ID, "error", err)
 		}
 	}
 
@@ -295,7 +295,7 @@ func (j *Judge) Run(ctx context.Context) {
 // processTask handles a single task
 func (j *Judge) processTask(ctx context.Context, task *Task) {
 	j.logger.Info("judge processing task",
-		"edict_id", task.EdictKey.EdictID,
+		"edict_id", task.EdictKey.ID,
 		"work", task.Work)
 
 	// Execute the judgment logic
@@ -316,7 +316,7 @@ func (j *Judge) processTask(ctx context.Context, task *Task) {
 	select {
 	case task.Done <- result:
 	default:
-		j.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.EdictID)
+		j.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
 	}
 }
 
@@ -349,7 +349,7 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
 
 	// Get manifests for this edict
 	manifests, err := t.judge.GetPendingManifests(key)
@@ -433,7 +433,7 @@ func (t *ListPendingManifestsTool) Call(ctx context.Context, input string) (stri
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
 	manifests, err := t.judge.GetPendingManifests(key)
 	if err != nil {
 		return "", err

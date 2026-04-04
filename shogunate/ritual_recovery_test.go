@@ -27,7 +27,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
-	edictID := edict.EdictID
+	edictID := edict.ID
 	edictKey := edict.Key()
 
 	// Create ritual definition
@@ -216,7 +216,7 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
-	edictID := edict.EdictID
+	edictID := edict.ID
 	edictKey := edict.Key()
 
 	// Create ritual definition
@@ -319,7 +319,7 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
-	edictID := edict.EdictID
+	edictID := edict.ID
 	edictKey := edict.Key()
 
 	// Create ritual definition
@@ -423,7 +423,7 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
-	edictID := edict.EdictID
+	edictID := edict.ID
 	edictKey := edict.Key()
 
 	// Create ritual definition

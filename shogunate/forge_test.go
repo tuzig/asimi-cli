@@ -50,7 +50,7 @@ func TestForge_ExecutesLingNotRawWork(t *testing.T) {
 
 	ling := &storage.Ling{
 		LingID:       "ling-1",
-		EdictID:      edict.EdictID,
+		EdictID:      edict.ID,
 		Username:     "testuser",
 		Project:      "testproject",
 		Description:  "Create user model with CRUD fields",

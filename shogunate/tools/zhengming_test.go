@@ -42,7 +42,7 @@ func TestRequestZhengmingTool_KeyIncludesUsernameAndProject(t *testing.T) {
 	if mock.capturedKey.Project != "afittestide-asimi-cli" {
 		t.Errorf("expected project 'afittestide-asimi-cli', got %q", mock.capturedKey.Project)
 	}
-	if mock.capturedKey.EdictID != 42 {
-		t.Errorf("expected edict_id 42, got %d", mock.capturedKey.EdictID)
+	if mock.capturedKey.ID != 42 {
+		t.Errorf("expected edict_id 42, got %d", mock.capturedKey.ID)
 	}
 }

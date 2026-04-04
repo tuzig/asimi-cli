@@ -51,7 +51,7 @@ func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("clarification is required")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: t.Username, Project: t.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.Username, Project: t.Project}
 
 	if _, err := t.Manager.GetEdict(key); err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
@@ -132,7 +132,7 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("database connection not initialized")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: t.Username, Project: t.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.Username, Project: t.Project}
 	edict, err := t.Manager.GetEdict(key)
 	if err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
@@ -145,7 +145,7 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 	}
 
 	result := map[string]any{
-		"edict_id": edict.EdictID,
+		"edict_id": edict.ID,
 		"status":   string(status),
 		"intent":   edict.Intent,
 	}
@@ -241,7 +241,7 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 		}
 
 		results = append(results, map[string]any{
-			"edict_id": e.EdictID,
+			"edict_id": e.ID,
 			"status":   string(status),
 			"intent":   truncateString(e.Intent, 100),
 		})
@@ -338,7 +338,7 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 
 	// Verify edict exists
 	var edict storage.Edict
-	if err := t.DB.First(&edict, "edict_id = ? AND username = ? AND project = ?", params.EdictID, t.Username, t.Project).Error; err != nil {
+	if err := t.DB.First(&edict, "id = ? AND username = ? AND project = ?", params.EdictID, t.Username, t.Project).Error; err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 
@@ -359,7 +359,7 @@ func (t TransitionEdictTool) Call(ctx context.Context, input string) (string, er
 	case "cancelled":
 		now := time.Now()
 		if err := t.DB.Model(&storage.Edict{}).
-			Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
+			Where("id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
 			Update("cancelled_at", now).Error; err != nil {
 			return "", fmt.Errorf("cancel edict: %w", err)
 		}

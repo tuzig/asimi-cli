@@ -103,7 +103,7 @@ func (s *Strategist) InsertLing(ling *storage.Ling) error {
 // GetLingForEdict retrieves all ling for an edict
 func (s *Strategist) GetLingForEdict(key storage.EdictKey) ([]storage.Ling, error) {
 	var ling []storage.Ling
-	err := s.db.Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
+	err := s.db.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
 		Order("created_at ASC").
 		Find(&ling).Error
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *Strategist) GetLingForEdict(key storage.EdictKey) ([]storage.Ling, erro
 func (s *Strategist) LingExistsForEdict(key storage.EdictKey) (bool, error) {
 	var count int64
 	err := s.db.Model(&storage.Ling{}).
-		Where("edict_id = ? AND username = ? AND project = ?", key.EdictID, key.Username, key.Project).
+		Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check ling existence: %w", err)
@@ -226,7 +226,7 @@ func (s *Strategist) Run(ctx context.Context) {
 // processTask handles a single task
 func (s *Strategist) processTask(ctx context.Context, task *Task) {
 	s.logger.Info("strategist processing task",
-		"edict_id", task.EdictKey.EdictID,
+		"edict_id", task.EdictKey.ID,
 		"work", task.Work)
 
 	var output string
@@ -260,7 +260,7 @@ func (s *Strategist) processTask(ctx context.Context, task *Task) {
 	select {
 	case task.Done <- result:
 	default:
-		s.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.EdictID)
+		s.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
 	}
 }
 
@@ -360,7 +360,7 @@ func (t *ListLingTool) Call(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: t.strategist.Username(), Project: t.strategist.Project()}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.strategist.Username(), Project: t.strategist.Project()}
 	lingList, err := t.strategist.GetLingForEdict(key)
 	if err != nil {
 		return "", err

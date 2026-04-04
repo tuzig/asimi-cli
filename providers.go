@@ -331,6 +331,13 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to open GORM database: %w", err)
 	}
 
+	// Rename edict_id → id in edicts table (if the old column exists)
+	if db.Migrator().HasColumn(&storage.Edict{}, "edict_id") {
+		if err := db.Migrator().RenameColumn(&storage.Edict{}, "edict_id", "id"); err != nil {
+			return nil, fmt.Errorf("failed to rename edict_id column: %w", err)
+		}
+	}
+
 	// Auto-migrate Shogunate tables
 	if err := db.AutoMigrate(
 		&storage.Edict{},

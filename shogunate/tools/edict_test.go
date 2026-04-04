@@ -31,7 +31,7 @@ func TestTransitionEdictTool_Cancel(t *testing.T) {
 
 	// Create an edict
 	edict := storage.Edict{
-		EdictID:  1,
+		ID:  1,
 		Username: "testuser",
 		Project:  "testproject",
 		Intent:   "Test edict",
@@ -43,7 +43,7 @@ func TestTransitionEdictTool_Cancel(t *testing.T) {
 	tool := TransitionEdictTool{DB: db, Username: "testuser", Project: "testproject"}
 
 	// Test cancelling
-	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "cancelled", "reason": "no longer needed"}`, edict.EdictID))
+	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "cancelled", "reason": "no longer needed"}`, edict.ID))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestTransitionEdictTool_Cancel(t *testing.T) {
 
 	// Verify edict was cancelled
 	var updated storage.Edict
-	if err := db.First(&updated, "edict_id = ?", edict.EdictID).Error; err != nil {
+	if err := db.First(&updated, "id = ?", edict.ID).Error; err != nil {
 		t.Fatalf("failed to get updated edict: %v", err)
 	}
 	if updated.CancelledAt == nil {
@@ -78,7 +78,7 @@ func TestTransitionEdictTool_InvalidStatus(t *testing.T) {
 
 	// Create an edict
 	edict := storage.Edict{
-		EdictID:  1,
+		ID:  1,
 		Username: "testuser",
 		Project:  "testproject",
 		Intent:   "Test edict",
@@ -90,7 +90,7 @@ func TestTransitionEdictTool_InvalidStatus(t *testing.T) {
 	tool := TransitionEdictTool{DB: db, Username: "testuser", Project: "testproject"}
 
 	// Test invalid status
-	_, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "invalid_status"}`, edict.EdictID))
+	_, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "invalid_status"}`, edict.ID))
 	if err == nil {
 		t.Fatal("Expected error for invalid status")
 	}
@@ -101,7 +101,7 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 
 	// Create an edict (not blocked)
 	edict := storage.Edict{
-		EdictID:  1,
+		ID:  1,
 		Username: "testuser",
 		Project:  "testproject",
 		Intent:   "Test edict",
@@ -113,7 +113,7 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 	tool := TransitionEdictTool{DB: db, Username: "testuser", Project: "testproject"}
 
 	// Test that we can seal a non-blocked edict
-	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "sealed"}`, edict.EdictID))
+	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "status": "sealed"}`, edict.ID))
 	if err != nil {
 		t.Fatalf("Expected no error when sealing edict, got: %v", err)
 	}
@@ -167,10 +167,10 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 
 	// Create edicts
 	edicts := []storage.Edict{
-		{EdictID: 1, Username: "testuser", Project: "testproject", Intent: "Active edict"},
-		{EdictID: 2, Username: "testuser", Project: "testproject", Intent: "Blocked edict"},
-		{EdictID: 3, Username: "testuser", Project: "testproject", Intent: "Another blocked"},
-		{EdictID: 4, Username: "testuser", Project: "testproject", Intent: "Sealed edict"},
+		{ID: 1, Username: "testuser", Project: "testproject", Intent: "Active edict"},
+		{ID: 2, Username: "testuser", Project: "testproject", Intent: "Blocked edict"},
+		{ID: 3, Username: "testuser", Project: "testproject", Intent: "Another blocked"},
+		{ID: 4, Username: "testuser", Project: "testproject", Intent: "Sealed edict"},
 	}
 	for i := range edicts {
 		if err := db.Create(&edicts[i]).Error; err != nil {
@@ -181,7 +181,7 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 	// Create a pending zhengming for the second edict to make it blocked
 	zhengming := storage.Zhengming{
 		RequestID:  "test-blocked",
-		EdictID:    edicts[1].EdictID,
+		EdictID:    edicts[1].ID,
 		Username:   "testuser",
 		Project:    "testproject",
 		MinisterID: "forge",

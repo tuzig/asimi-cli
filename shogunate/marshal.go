@@ -107,7 +107,7 @@ func (m *Marshal) GetManifestByCommit(commitHash string) (*storage.ForgeManifest
 func (m *Marshal) LogIncident(incidentID string, key storage.EdictKey, commitHash, rcaSummary string) error {
 	incident := storage.MarshalIncident{
 		IncidentID: incidentID,
-		EdictID:    key.EdictID,
+		EdictID:    key.ID,
 		Username:   key.Username,
 		Project:    key.Project,
 		CommitHash: commitHash,
@@ -173,7 +173,7 @@ func (m *Marshal) execute(ctx context.Context, key storage.EdictKey) (bool, erro
 
 	if status == storage.EdictActive {
 		// Hotfix needs expedited processing
-		m.logger.Info("marshal expediting hotfix", "edict_id", key.EdictID)
+		m.logger.Info("marshal expediting hotfix", "edict_id", key.ID)
 		return true, nil
 	}
 
@@ -200,10 +200,10 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 	}
 
 	// Try to find the manifest by commit
-	if key.EdictID == 0 {
+	if key.ID == 0 {
 		manifest, err := m.GetManifestByCommit(commitHash)
 		if err == nil && manifest != nil {
-			key = storage.EdictKey{EdictID: manifest.EdictID, Username: manifest.Username, Project: manifest.Project}
+			key = storage.EdictKey{ID: manifest.EdictID, Username: manifest.Username, Project: manifest.Project}
 		}
 	}
 
@@ -213,7 +213,7 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 	}
 
 	// Request Zhengming for hotfix approval
-	if key.EdictID != 0 {
+	if key.ID != 0 {
 		_, err := m.RequestZhengming(key,
 			storage.ZhengmingQuestions{{
 				Text:    fmt.Sprintf("Production incident %s requires hotfix approval.\n\nRCA: %s", incidentID, rcaSummary),
@@ -228,7 +228,7 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 	m.logger.Info("incident logged",
 		"incident_id", incidentID,
 		"commit_hash", commitHash,
-		"edict_id", key.EdictID)
+		"edict_id", key.ID)
 
 	return nil
 }
@@ -256,7 +256,7 @@ func (m *Marshal) Run(ctx context.Context) {
 // processTask handles a single task
 func (m *Marshal) processTask(ctx context.Context, task *Task) {
 	m.logger.Info("marshal processing task",
-		"edict_id", task.EdictKey.EdictID,
+		"edict_id", task.EdictKey.ID,
 		"work", task.Work)
 
 	// Execute the marshal logic
@@ -277,7 +277,7 @@ func (m *Marshal) processTask(ctx context.Context, task *Task) {
 	select {
 	case task.Done <- result:
 	default:
-		m.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.EdictID)
+		m.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
 	}
 }
 
@@ -310,7 +310,7 @@ func (t *CreateIncidentTool) Call(ctx context.Context, input string) (string, er
 	}
 
 	incidentID := GenerateID("incident", params.Description, params.Severity)
-	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
 
 	if err := t.marshal.LogIncident(incidentID, key, "", params.Description); err != nil {
 		return "", err
