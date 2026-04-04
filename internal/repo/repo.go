@@ -342,7 +342,7 @@ func projectSlug(projectRoot string) string {
 		return ""
 	}
 
-	return owner + "-" + repo
+	return owner + "/" + repo
 }
 
 func collectDiffFromGit(repoPath string, opts []string) (int, int) {

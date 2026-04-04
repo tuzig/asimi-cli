@@ -1,4 +1,4 @@
-PROJECT_NAME := "afittestide-asimi-cli"
+PROJECT_NAME := "afittestide/asimi-cli"
 
 # List all available recipes
 default:
