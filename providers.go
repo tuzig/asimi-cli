@@ -306,13 +306,13 @@ func StartTUI(params TUIProgramParams) *tea.Program {
 // GormDBParams holds parameters for GORM database initialization
 type GormDBParams struct {
 	fx.In
-	Config *Config
+	DB     *storage.DB
 	Logger *slog.Logger
 }
 
-// ProvideGormDB creates a GORM database connection sharing the same SQLite file
+// ProvideGormDB wraps the existing SQL connection in GORM
 func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
-	params.Logger.Info("initializing GORM database", "path", params.Config.Storage.DatabasePath)
+	params.Logger.Info("initializing GORM database (reusing existing connection)")
 
 	// Configure GORM logger to use slog (writes to log file, not stdout)
 	var gormLog gormlogger.Interface
@@ -322,21 +322,13 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		gormLog = newSlogGormLogger(params.Logger, gormlogger.Silent)
 	}
 
-	db, err := gorm.Open(sqlite.Open(params.Config.Storage.DatabasePath), &gorm.Config{
+	db, err := gorm.Open(sqlite.New(sqlite.Config{
+		Conn: params.DB.Conn(),
+	}), &gorm.Config{
 		Logger: gormLog,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GORM database: %w", err)
-	}
-
-	// Migrate edict_id columns from TEXT to INTEGER (uint) before AutoMigrate
-	if err := storage.MigrateEdictIDToUint(db, params.Logger); err != nil {
-		return nil, fmt.Errorf("failed to migrate edict_id to uint: %w", err)
-	}
-
-	// Migrate edicts to composite primary key (edict_id, username, project)
-	if err := storage.MigrateEdictCompositePK(db, params.Logger); err != nil {
-		return nil, fmt.Errorf("failed to migrate edict composite PK: %w", err)
 	}
 
 	// Auto-migrate Shogunate tables
@@ -376,7 +368,6 @@ type ShogunateParams struct {
 
 // ProvideShogunate creates the Shogunate coordinator with lifecycle management
 func ProvideShogunate(params ShogunateParams) *shogunate.Shogunate {
-	params.Logger.Info("initializing Shogunate")
 
 	// Start with defaults, then overlay config file values
 	cfg := config.DefaultShogunateConfig()
@@ -388,6 +379,7 @@ func ProvideShogunate(params ShogunateParams) *shogunate.Shogunate {
 	} else if params.RepoInfo.Slug != "" {
 		cfg.Project = params.RepoInfo.Slug
 	}
+	params.Logger.Info("initializing Shogunate", "user", cfg.Username, "project", cfg.Project)
 
 	s := shogunate.NewShogunate(params.GormDB, cfg, params.Runner, params.Logger)
 	// notify is set later via s.SetNotify(program.Send) once the TUI program is created

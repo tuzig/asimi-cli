@@ -7,14 +7,27 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// ListNavigator is the interface that ContentComponent uses for list navigation.
+// Any select window that wants to participate in unified list navigation implements this.
+type ListNavigator interface {
+	GetItemCount() int
+	GetVisibleSlots() int
+	NavNext(current int) int
+	NavPrev(current int) int
+	NavFirst() int
+	NavLast() int
+	NavNearest(index int) int // find nearest selectable to index
+}
+
 // SelectWindow is a generic component for displaying a selectable list of items
 type SelectWindow[T any] struct {
-	Width      int
-	Height     int
-	Items      []T
-	Loading    bool
-	Error      error
-	MaxVisible int
+	Width        int
+	Height       int
+	Items        []T
+	Loading      bool
+	Error        error
+	MaxVisible   int
+	isSelectable func(T) bool // stored filter for ListNavigator methods
 }
 
 // NewSelectWindow creates a new generic select window
@@ -157,6 +170,61 @@ func (s *SelectWindow[T]) CountSelectableItems(isSelectable func(T) bool) int {
 		}
 	}
 	return count
+}
+
+// SetSelectable stores the selectability filter for ListNavigator methods.
+func (s *SelectWindow[T]) SetSelectable(fn func(T) bool) {
+	s.isSelectable = fn
+}
+
+// NavNext implements ListNavigator using the stored isSelectable filter.
+func (s *SelectWindow[T]) NavNext(current int) int {
+	return s.NextSelectableIndex(current, s.isSelectable)
+}
+
+// NavPrev implements ListNavigator using the stored isSelectable filter.
+func (s *SelectWindow[T]) NavPrev(current int) int {
+	return s.PrevSelectableIndex(current, s.isSelectable)
+}
+
+// NavFirst implements ListNavigator using the stored isSelectable filter.
+func (s *SelectWindow[T]) NavFirst() int {
+	return s.FirstSelectableIndex(s.isSelectable)
+}
+
+// NavLast implements ListNavigator using the stored isSelectable filter.
+func (s *SelectWindow[T]) NavLast() int {
+	return s.LastSelectableIndex(s.isSelectable)
+}
+
+// NavNearest finds the nearest selectable index to the given index.
+// Searches forward first, then backward.
+func (s *SelectWindow[T]) NavNearest(index int) int {
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(s.Items) {
+		index = len(s.Items) - 1
+	}
+	if s.isSelectable == nil || len(s.Items) == 0 {
+		return index
+	}
+	if s.isSelectable(s.Items[index]) {
+		return index
+	}
+	// Search forward
+	for i := index + 1; i < len(s.Items); i++ {
+		if s.isSelectable(s.Items[i]) {
+			return i
+		}
+	}
+	// Search backward
+	for i := index - 1; i >= 0; i-- {
+		if s.isSelectable(s.Items[i]) {
+			return i
+		}
+	}
+	return index
 }
 
 // RenderConfig holds callbacks for customization

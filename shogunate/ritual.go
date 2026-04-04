@@ -111,6 +111,9 @@ type RitualDef struct {
 	Then        []string            `yaml:"then,omitempty"` // Ritual-level then steps (run after all steps succeed)
 }
 
+// Rituals is a list of ritual definitions.
+type Rituals []*RitualDef
+
 // RitualTrigger defines when a ritual can be invoked
 type RitualTrigger struct {
 	Event  string `yaml:"event,omitempty"`  // Event type that triggers this ritual
@@ -207,6 +210,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the infrastructure templates", "get_infrastructure_templates", "infrastructure_templates"},
 		{"build the sandbox", "build_sandbox", "sandbox_build"},
 		{"the sandbox is ready", "verify_sandbox_ready", "sandbox_ready"},
+		{"the sandbox is healthy", "verify_sandbox_ready", "sandbox_healthy"},
 		{"the project metadata", "get_project_metadata", "project_metadata"},
 		{"the edict awaits ruler's seal", "await_ruler_seal", "awaiting_seal"},
 		{"the infrastructure is staged", "stage_infrastructure", "infrastructure_staged"},
@@ -246,31 +250,6 @@ func (r *StepDefRegistry) Match(text string) (*StepDef, error) {
 		}
 	}
 	return nil, nil
-}
-
-// LoadStepDefsFromFile loads user-defined step definitions from a YAML file
-func (r *StepDefRegistry) LoadStepDefsFromFile(path string) error {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("reading step definitions: %w", err)
-	}
-	var defs []struct {
-		Pattern string `yaml:"pattern"`
-		Command string `yaml:"command"`
-		Key     string `yaml:"key"`
-	}
-	if err := yaml.Unmarshal(data, &defs); err != nil {
-		return fmt.Errorf("parsing step definitions: %w", err)
-	}
-	for _, d := range defs {
-		if err := r.Register(d.Pattern, d.Command, d.Key); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // RitualRegistry stores loaded rituals
@@ -415,15 +394,7 @@ func ValidateRitual(def *RitualDef) error {
 					return fmt.Errorf("ritual %q: fork step %q work[%d] requires act or task", def.Name, step.Name, i)
 				}
 			}
-		} else {
-			// Regular step: requires minister and act
-			if step.Minister == "" {
-				return fmt.Errorf("ritual %q: step %q requires minister", def.Name, step.Name)
-			}
-			if step.Act == "" && step.Task == "" {
-				return fmt.Errorf("ritual %q: step %q requires act or task", def.Name, step.Name)
-			}
-		}
+		} 
 	}
 
 	// Check for circular dependencies
@@ -477,7 +448,7 @@ func checkCircularDeps(def *RitualDef) error {
 }
 
 // LoadRitualsFromDir loads all .yaml/.yml files from a directory
-func LoadRitualsFromDir(dir string) ([]*RitualDef, error) {
+func LoadRitualsFromDir(dir string) (Rituals, error) {
 	var rituals []*RitualDef
 
 	entries, err := os.ReadDir(dir)
@@ -1599,12 +1570,21 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 
 // executeMinisterStep invokes a minister for a task
 func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
+	actTemplate := step.Act
+	if actTemplate == "" {
+		actTemplate = step.Task
+	}
+	act := r.expandTemplate(actTemplate, exec)
+
+	// Skip minister call when act is empty
+	if act == "" {
+		return "", nil
+	}
+
 	minister := r.getMinister(step.Minister)
 	if minister == nil {
 		return "", fmt.Errorf("minister not found: %s", step.Minister)
 	}
-
-	act := r.expandTemplate(step.Act, exec)
 
 	// Dynamic work prompt — rebuilt every invocation (fresh context)
 	work := r.buildWorkPrompt(exec, act)

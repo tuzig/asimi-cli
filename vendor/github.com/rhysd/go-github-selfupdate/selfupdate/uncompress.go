@@ -6,13 +6,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
+	"github.com/ulikunitz/xz"
 	"io"
 	"io/ioutil"
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/ulikunitz/xz"
 )
 
 func matchExecutableName(cmd, target string) bool {

@@ -76,7 +76,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("logout", "Logout from current provider and clear credentials", handleLogoutCommand)
 	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [hunting|<minister>|ritual <run_id>])", handleTabNewCommand)
 	registry.RegisterCommand("tabclose", "Close the current tab", handleTabCloseCommand)
-	registry.RegisterCommand("seal", "Grant Ruler's seal to an edict (usage: :seal [edict_id] [notes])", handleSealCommand)
+	registry.RegisterCommand("seal", "Grant Ruler's seal to an edict (usage: :seal [edict_id] | :seal to select)", handleSealCommand)
 
 	return registry
 }
@@ -812,32 +812,6 @@ func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
 
 // handleSealCommand grants the Ruler's seal to an edict
 func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
-	// Parse arguments: :seal [edict_id] [notes]
-	var edictID uint
-	var notes string
-
-	if len(args) > 0 {
-		parsed, err := strconv.ParseUint(args[0], 10, 64)
-		if err != nil {
-			return func() tea.Msg {
-				return showSystemMsg(fmt.Sprintf("Invalid edict ID '%s': must be a number", args[0]))
-			}
-		}
-		edictID = uint(parsed)
-		if len(args) > 1 {
-			notes = strings.Join(args[1:], " ")
-		}
-	} else {
-		// Default to current edict if in Ruling tab
-		if model.currentEdictKey.EdictID != 0 {
-			edictID = model.currentEdictKey.EdictID
-		} else {
-			return func() tea.Msg {
-				return showSystemMsg("Usage: :seal [edict_id] [notes] - provide edict_id")
-			}
-		}
-	}
-
 	// Get seal service from shogunate
 	if model.shogunate == nil {
 		return func() tea.Msg {
@@ -850,6 +824,36 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 		return func() tea.Msg {
 			return showSystemMsg("Seal service not available")
 		}
+	}
+
+	// If no args, show selection of pending edicts
+	if len(args) == 0 {
+		key := model.shogunate.EdictKey(0)
+		return func() tea.Msg {
+			edicts, err := sealService.ListUnsealedEdicts(
+				key.Username,
+				key.Project,
+			)
+			if err != nil {
+				return showSystemMsg(fmt.Sprintf("Failed to list pending edicts: %v", err))
+			}
+			return sealedEdictsLoadedMsg{edicts: edicts}
+		}
+	}
+
+	// Parse arguments: :seal [edict_id] [notes]
+	var edictID uint
+	var notes string
+
+	parsed, err := strconv.ParseUint(args[0], 10, 64)
+	if err != nil {
+		return func() tea.Msg {
+			return showSystemMsg(fmt.Sprintf("Invalid edict ID '%s': must be a number", args[0]))
+		}
+	}
+	edictID = uint(parsed)
+	if len(args) > 1 {
+		notes = strings.Join(args[1:], " ")
 	}
 
 	// Build full EdictKey with username and project context
@@ -958,6 +962,7 @@ func grantRulerSealCmd(model *TUIModel, edictID uint, notes string) tea.Cmd {
 		}
 
 		updatedSealChainMsg := renderSealChain(updatedSeals, 60)
-		return showSystemMsg(fmt.Sprintf("Ruler's seal granted to %d\n%s", edictID, updatedSealChainMsg))
+		return showContextMsg{content: sealPrefix +
+			fmt.Sprintf("Ruler's sealed e%d\n  %s", edictID, updatedSealChainMsg)}
 	}
 }
