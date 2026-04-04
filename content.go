@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/storage"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -430,6 +431,7 @@ const (
 	ViewHelp
 	ViewModels
 	ViewResume
+	ViewSeal
 )
 
 // NavigationMode represents how navigation works in the current view
@@ -446,33 +448,35 @@ type ContentComponent struct {
 	width      int
 	height     int
 
-	// Sub-components (now simplified - no navigation logic)
-	Chat   *ChatComponent
-	help   HelpWindow
-	models ModelsWindow
-	resume ResumeWindow
+	// Sub-components
+	Chat       *ChatComponent
+	help       HelpWindow
+	models     ModelsWindow
+	resume     ResumeWindow
+	sealSelect SealSelectWindow
 
 	// Unified navigation state
 	navMode      NavigationMode
-	viewport     viewport.Model // For text navigation
-	selectedItem int            // For list navigation
-	scrollOffset int            // For list navigation
+	activeList   ListNavigator           // current list view for NavList mode
+	onSelect     func(index int) tea.Cmd // called on enter in list mode
+	viewport     viewport.Model          // For text navigation
+	selectedItem int                     // For list navigation
+	scrollOffset int                     // For list navigation
 }
 
 // NewContentComponent creates a new content component
 func NewContentComponent(width, height int, markdownEnabled bool) ContentComponent {
 	return ContentComponent{
-		activeView:   ViewChat,
-		width:        width,
-		height:       height,
-		Chat:         NewChatComponent(width, height, markdownEnabled),
-		help:         NewHelpWindow(),
-		models:       NewModelsWindow(),
-		resume:       NewResumeWindow(),
-		navMode:      NavText,
-		viewport:     viewport.New(width, height),
-		selectedItem: 0,
-		scrollOffset: 0,
+		activeView: ViewChat,
+		width:      width,
+		height:     height,
+		Chat:       NewChatComponent(width, height, markdownEnabled),
+		help:       NewHelpWindow(),
+		models:     NewModelsWindow(),
+		resume:     NewResumeWindow(),
+		sealSelect: NewSealSelectWindow(),
+		navMode:    NavText,
+		viewport:   viewport.New(width, height),
 	}
 }
 
@@ -487,6 +491,7 @@ func (c *ContentComponent) SetSize(width, height int) {
 	c.help.SetSize(width, h)
 	c.models.SetSize(width, h)
 	c.resume.SetSize(width, h)
+	c.sealSelect.SetSize(width, h)
 }
 
 // GetActiveView returns the current view type
@@ -545,9 +550,22 @@ func (c *ContentComponent) ShowModels(models []AnthropicModel, currentModel stri
 func (c *ContentComponent) ShowUnifiedModels(models []Model, currentModel string) tea.Cmd {
 	c.activeView = ViewModels
 	c.navMode = NavList
+	c.activeList = &c.models.SelectWindow
 	c.models.SetModels(models, currentModel)
 	c.selectedItem = c.models.GetInitialSelection()
 	c.scrollOffset = 0
+	c.onSelect = func(index int) tea.Cmd {
+		model := c.models.GetSelectedModel(index)
+		if model == nil || !IsModelSelectable(*model) {
+			return nil
+		}
+		if model.OnSelect != nil {
+			return model.OnSelect
+		}
+		return func() tea.Msg {
+			return modelSelectedMsg{model: model, onSelect: model.OnSelect}
+		}
+	}
 
 	return func() tea.Msg {
 		return ChangeModeMsg{NewMode: "select"}
@@ -558,15 +576,44 @@ func (c *ContentComponent) ShowUnifiedModels(models []Model, currentModel string
 func (c *ContentComponent) ShowResume(sessions []shogunate.Session) tea.Cmd {
 	c.activeView = ViewResume
 	c.navMode = NavList
+	c.activeList = &c.resume.SelectWindow
 	c.resume.SetSessions(sessions)
 	c.selectedItem = 0
 	c.scrollOffset = 0
-
-	changeModeCmd := func() tea.Msg {
-		return ChangeModeMsg{NewMode: "select"}
+	c.onSelect = func(index int) tea.Cmd {
+		session := c.resume.GetSelectedSession(index)
+		if session == nil {
+			return nil
+		}
+		return c.resume.LoadSession(session.ID)
 	}
 
-	return changeModeCmd
+	return func() tea.Msg {
+		return ChangeModeMsg{NewMode: "select"}
+	}
+}
+
+// ShowSealSelection switches to seal selection view
+func (c *ContentComponent) ShowSealSelection(edicts []storage.UnsealedEdict) tea.Cmd {
+	c.activeView = ViewSeal
+	c.navMode = NavList
+	c.activeList = &c.sealSelect.SelectWindow
+	c.sealSelect.SetItems(edicts)
+	c.selectedItem = 0
+	c.scrollOffset = 0
+	c.onSelect = func(index int) tea.Cmd {
+		edict := c.sealSelect.GetSelectedItem(index)
+		if edict == nil {
+			return nil
+		}
+		return func() tea.Msg {
+			return sealSelectedMsg{edictID: edict.EdictID}
+		}
+	}
+
+	return func() tea.Msg {
+		return ChangeModeMsg{NewMode: "select"}
+	}
 }
 
 // SetModelsLoading shows loading state for models
@@ -691,58 +738,31 @@ func (c *ContentComponent) handleTextNavigation(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// handleListNavigation handles navigation for list views (models, resume)
+// handleListNavigation handles navigation for list views (models, resume, seal)
 func (c *ContentComponent) handleListNavigation(msg tea.KeyMsg) tea.Cmd {
-	var itemCount int
-	var visibleSlots int
-
-	switch c.activeView {
-	case ViewModels:
-		itemCount = c.models.GetItemCount()
-		visibleSlots = c.models.GetVisibleSlots()
-	case ViewResume:
-		itemCount = c.resume.GetItemCount()
-		visibleSlots = c.resume.GetVisibleSlots()
-	default:
+	nav := c.activeList
+	if nav == nil {
 		return nil
 	}
 
+	itemCount := nav.GetItemCount()
+	visibleSlots := nav.GetVisibleSlots()
 	var scrollInfoCmd tea.Cmd
 
 	switch msg.String() {
 	case "j", "down":
-		var newIndex int
-		if c.activeView == ViewModels {
-			newIndex = c.models.NextSelectableIndex(c.selectedItem, IsModelSelectable)
-		} else {
-			if c.selectedItem < itemCount-1 {
-				newIndex = c.selectedItem + 1
-			} else {
-				newIndex = c.selectedItem
-			}
-		}
+		newIndex := nav.NavNext(c.selectedItem)
 		if newIndex != c.selectedItem {
 			c.selectedItem = newIndex
-			// Scroll if needed
 			if c.selectedItem >= c.scrollOffset+visibleSlots {
 				c.scrollOffset = c.selectedItem - visibleSlots + 1
 			}
 			scrollInfoCmd = c.getScrollInfoCmd()
 		}
 	case "k", "up":
-		var newIndex int
-		if c.activeView == ViewModels {
-			newIndex = c.models.PrevSelectableIndex(c.selectedItem, IsModelSelectable)
-		} else {
-			if c.selectedItem > 0 {
-				newIndex = c.selectedItem - 1
-			} else {
-				newIndex = c.selectedItem
-			}
-		}
+		newIndex := nav.NavPrev(c.selectedItem)
 		if newIndex != c.selectedItem {
 			c.selectedItem = newIndex
-			// Scroll if needed
 			if c.selectedItem < c.scrollOffset {
 				c.scrollOffset = c.selectedItem
 			}
@@ -753,30 +773,11 @@ func (c *ContentComponent) handleListNavigation(msg tea.KeyMsg) tea.Cmd {
 		if move < 1 {
 			move = 1
 		}
-		targetIndex := c.selectedItem + move
-		if targetIndex >= itemCount {
-			targetIndex = itemCount - 1
+		target := c.selectedItem + move
+		if target >= itemCount {
+			target = itemCount - 1
 		}
-		// For models, find the nearest selectable item at or after target
-		if c.activeView == ViewModels {
-			for i := targetIndex; i < itemCount; i++ {
-				if IsModelSelectable(c.models.Items[i]) {
-					targetIndex = i
-					break
-				}
-			}
-			// If no selectable item found forward, search backward
-			if !IsModelSelectable(c.models.Items[targetIndex]) {
-				for i := targetIndex; i >= 0; i-- {
-					if IsModelSelectable(c.models.Items[i]) {
-						targetIndex = i
-						break
-					}
-				}
-			}
-		}
-		c.selectedItem = targetIndex
-		// Adjust scroll
+		c.selectedItem = nav.NavNearest(target)
 		if c.selectedItem >= c.scrollOffset+visibleSlots {
 			c.scrollOffset = c.selectedItem - visibleSlots + 1
 		}
@@ -786,82 +787,42 @@ func (c *ContentComponent) handleListNavigation(msg tea.KeyMsg) tea.Cmd {
 		if move < 1 {
 			move = 1
 		}
-		targetIndex := c.selectedItem - move
-		if targetIndex < 0 {
-			targetIndex = 0
+		target := c.selectedItem - move
+		if target < 0 {
+			target = 0
 		}
-		// For models, find the nearest selectable item at or before target
-		if c.activeView == ViewModels {
-			for i := targetIndex; i >= 0; i-- {
-				if IsModelSelectable(c.models.Items[i]) {
-					targetIndex = i
-					break
-				}
-			}
-			// If no selectable item found backward, search forward
-			if !IsModelSelectable(c.models.Items[targetIndex]) {
-				for i := targetIndex; i < itemCount; i++ {
-					if IsModelSelectable(c.models.Items[i]) {
-						targetIndex = i
-						break
-					}
-				}
-			}
-		}
-		c.selectedItem = targetIndex
-		// Adjust scroll
+		c.selectedItem = nav.NavNearest(target)
 		if c.selectedItem < c.scrollOffset {
 			c.scrollOffset = c.selectedItem
 		}
 		scrollInfoCmd = c.getScrollInfoCmd()
 	case "g", "home":
-		if c.activeView == ViewModels {
-			c.selectedItem = c.models.FirstSelectableIndex(IsModelSelectable)
-		} else {
-			c.selectedItem = 0
-		}
+		c.selectedItem = nav.NavFirst()
 		c.scrollOffset = 0
 		scrollInfoCmd = c.getScrollInfoCmd()
 	case "G", "end":
-		if c.activeView == ViewModels {
-			c.selectedItem = c.models.LastSelectableIndex(IsModelSelectable)
-		} else {
-			c.selectedItem = itemCount - 1
-		}
+		c.selectedItem = nav.NavLast()
 		if c.selectedItem >= visibleSlots {
 			c.scrollOffset = c.selectedItem - visibleSlots + 1
 		}
 		scrollInfoCmd = c.getScrollInfoCmd()
 	case "enter":
-		// Handle selection
-		switch c.activeView {
-		case ViewModels:
-			if model := c.models.GetSelectedModel(c.selectedItem); model != nil && IsModelSelectable(*model) {
-				showChatCmd := c.ShowChat()
-				// If model has a custom OnSelect handler, use it instead of the default
-				if model.OnSelect != nil {
-					return tea.Batch(showChatCmd, model.OnSelect)
-				}
-				return tea.Batch(
-					showChatCmd,
-					func() tea.Msg {
-						return modelSelectedMsg{model: model,
-							onSelect: model.OnSelect}
-					},
-				)
-			}
-		case ViewResume:
-			if session := c.resume.GetSelectedSession(c.selectedItem); session != nil {
-				showChatCmd := c.ShowChat()
-				return tea.Batch(
-					showChatCmd,
-					c.resume.LoadSession(session.ID),
-				)
-			}
-		}
+		return c.handleListSelect()
 	}
 
 	return scrollInfoCmd
+}
+
+// handleListSelect handles enter/selection for the active list view
+func (c *ContentComponent) handleListSelect() tea.Cmd {
+	if c.onSelect == nil {
+		return nil
+	}
+	cmd := c.onSelect(c.selectedItem)
+	if cmd == nil {
+		return nil
+	}
+	return tea.Batch(c.ShowChat(), cmd)
 }
 
 // getScrollInfoCmd returns a command that sends scroll info as a message
@@ -880,6 +841,8 @@ func (c *ContentComponent) View() string {
 		return c.renderModelsView()
 	case ViewResume:
 		return c.renderResumeView()
+	case ViewSeal:
+		return c.renderSealView()
 	}
 	return ""
 }
@@ -922,6 +885,18 @@ func (c *ContentComponent) renderModelsView() string {
 // renderResumeView renders the session selection view
 func (c *ContentComponent) renderResumeView() string {
 	content := c.resume.RenderList(c.selectedItem, c.scrollOffset, c.resume.GetVisibleSlots())
+
+	// Apply height constraint to prevent overflow clipping from the top
+	// Use height-1 to account for the title line
+	return lipgloss.NewStyle().
+		Height(c.height - 1).
+		MaxHeight(c.height - 1).
+		Render(content)
+}
+
+// renderSealView renders the seal selection view
+func (c *ContentComponent) renderSealView() string {
+	content := c.sealSelect.RenderList(c.selectedItem, c.scrollOffset, c.sealSelect.GetVisibleSlots())
 
 	// Apply height constraint to prevent overflow clipping from the top
 	// Use height-1 to account for the title line

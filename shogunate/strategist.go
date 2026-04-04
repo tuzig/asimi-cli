@@ -280,8 +280,6 @@ func (t *InsertLingTool) Description() string {
 func (t *InsertLingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID      uint     `json:"edict_id"`
-		Username     string   `json:"username"`
-		Project      string   `json:"project"`
 		Description  string   `json:"description"`
 		Dependencies []string `json:"dependencies,omitempty"`
 	}
@@ -297,8 +295,8 @@ func (t *InsertLingTool) Call(ctx context.Context, input string) (string, error)
 
 	ling := &storage.Ling{
 		EdictID:      params.EdictID,
-		Username:     params.Username,
-		Project:      params.Project,
+		Username:     t.strategist.Username(),
+		Project:      t.strategist.Project(),
 		Description:  params.Description,
 		Dependencies: storage.StringArray(params.Dependencies),
 		Status:       storage.LingPending,
@@ -318,14 +316,6 @@ func (t *InsertLingTool) ParameterSchema() map[string]any {
 			"edict_id": map[string]any{
 				"type":        "integer",
 				"description": "The edict ID this ling belongs to",
-			},
-			"username": map[string]any{
-				"type":        "string",
-				"description": "The username",
-			},
-			"project": map[string]any{
-				"type":        "string",
-				"description": "The project name",
 			},
 			"description": map[string]any{
 				"type":        "string",
@@ -361,9 +351,7 @@ func (t *ListLingTool) Description() string {
 
 func (t *ListLingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID  uint   `json:"edict_id"`
-		Username string `json:"username"`
-		Project  string `json:"project"`
+		EdictID uint `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -372,7 +360,7 @@ func (t *ListLingTool) Call(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	key := storage.EdictKey{EdictID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{EdictID: params.EdictID, Username: t.strategist.Username(), Project: t.strategist.Project()}
 	lingList, err := t.strategist.GetLingForEdict(key)
 	if err != nil {
 		return "", err
@@ -396,14 +384,6 @@ func (t *ListLingTool) ParameterSchema() map[string]any {
 			"edict_id": map[string]any{
 				"type":        "integer",
 				"description": "The edict ID to list ling for",
-			},
-			"username": map[string]any{
-				"type":        "string",
-				"description": "The username",
-			},
-			"project": map[string]any{
-				"type":        "string",
-				"description": "The project name",
 			},
 		},
 		"required": []string{"edict_id"},

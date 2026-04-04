@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -626,6 +627,7 @@ func NewModelsWindow() ModelsWindow {
 	sw := NewSelectWindow[Model]()
 	sw.Height = 15
 	sw.SetSize(70, 15)
+	sw.SetSelectable(IsModelSelectable)
 
 	return ModelsWindow{
 		SelectWindow: sw,
@@ -801,6 +803,84 @@ func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 type modelSelectedMsg struct {
 	model    *Model
 	onSelect tea.Cmd
+}
+
+// Message types for seal selection
+type sealSelectedMsg struct {
+	edictID uint
+}
+
+type sealedEdictsLoadedMsg struct {
+	edicts []storage.UnsealedEdict
+}
+
+// SealSelectWindow displays a selectable list of edicts pending the Ruler's seal
+type SealSelectWindow struct {
+	SelectWindow[storage.UnsealedEdict]
+}
+
+// NewSealSelectWindow creates a new seal selection window
+func NewSealSelectWindow() SealSelectWindow {
+	sw := NewSelectWindow[storage.UnsealedEdict]()
+	sw.Height = 15
+	sw.SetSize(70, 15)
+	return SealSelectWindow{SelectWindow: sw}
+}
+
+// sealIcon returns a checkmark or empty indicator for a seal
+func sealIcon(has bool) string {
+	if has {
+		return "✓"
+	}
+	return "·"
+}
+
+// RenderList renders the seal selection list
+func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int) string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#F952F9")).
+		Background(lipgloss.Color("#000000")).
+		Padding(0, 1)
+
+	config := RenderConfig[storage.UnsealedEdict]{
+		ConstructTitle: func(selectedIndex, totalItems int) string {
+			return titleStyle.Render(fmt.Sprintf("Select edict to seal [%3d/%3d]:", selectedIndex+1, totalItems))
+		},
+		OnEmpty: func(sb *strings.Builder) {
+			sb.WriteString("No edicts awaiting seal\n")
+		},
+		RenderItem: func(i int, edict storage.UnsealedEdict, isSelected bool, sb *strings.Builder) {
+			prefix := "  "
+			if isSelected {
+				prefix = "▶ "
+			}
+
+			// Truncate intent for display (first line only, max 50 chars)
+			intent := edict.Intent
+			if nl := strings.Index(intent, "\n"); nl != -1 {
+				intent = intent[:nl]
+			}
+			if len(intent) > 50 {
+				intent = intent[:47] + "..."
+			}
+
+			// Format: "▶ [  3] ⚖✓ 📜· Fix the login bug..."
+			line := fmt.Sprintf("%s[%3d] ⚖%s 📜%s %s",
+				prefix, edict.EdictID,
+				sealIcon(edict.HasJudgeSeal),
+				sealIcon(edict.HasSageSeal),
+				intent)
+
+			style := lipgloss.NewStyle()
+			if isSelected {
+				style = style.Foreground(lipgloss.Color("62")).Bold(true)
+			}
+			sb.WriteString(style.Render(line) + "\n")
+		},
+	}
+
+	return s.Render(selectedIndex, scrollOffset, config)
 }
 
 // Message types for model loading

@@ -16,6 +16,7 @@ import (
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -830,6 +831,143 @@ func TestChancellor_GetDBPath_NilDB(t *testing.T) {
 		t.Errorf("getDBPath() with nil db = %q, want empty string", gotPath)
 	}
 }
+
+// TestCheckSandboxHealth tests the sandbox health check function
+func TestCheckSandboxHealth(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	t.Run("nil_shogunate", func(t *testing.T) {
+		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+		chancellor := NewChancellor(base)
+		err := chancellor.CheckSandboxHealth(ctx)
+		if err == nil {
+			t.Error("Expected error when shogunate is nil")
+		}
+		if !strings.Contains(err.Error(), "shogunate not configured") {
+			t.Errorf("Expected 'shogunate not configured', got: %v", err)
+		}
+	})
+
+	t.Run("nil_runner", func(t *testing.T) {
+		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+		chancellor := NewChancellor(base)
+		shogunate := &Shogunate{}
+		chancellor.SetShogunate(shogunate)
+
+		err := chancellor.CheckSandboxHealth(ctx)
+		if err == nil {
+			t.Error("Expected error when runner is nil")
+		}
+		if !strings.Contains(err.Error(), "shell runner not available") {
+			t.Errorf("Expected 'shell runner not available', got: %v", err)
+		}
+	})
+
+	t.Run("successful_health_check", func(t *testing.T) {
+		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+		chancellor := NewChancellor(base)
+
+		// Create a mock runner that returns Linux
+		mockRunner := &mockHealthCheckRunner{
+			output:   "Linux",
+			exitCode: "0",
+		}
+		shogunate := &Shogunate{}
+		shogunate.runner = mockRunner
+		chancellor.SetShogunate(shogunate)
+
+		err := chancellor.CheckSandboxHealth(ctx)
+		if err != nil {
+			t.Errorf("Expected nil error for healthy sandbox, got: %v", err)
+		}
+	})
+
+	t.Run("non_zero_exit_code", func(t *testing.T) {
+		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+		chancellor := NewChancellor(base)
+
+		mockRunner := &mockHealthCheckRunner{
+			output:   "",
+			exitCode: "1",
+		}
+		shogunate := &Shogunate{}
+		shogunate.runner = mockRunner
+		chancellor.SetShogunate(shogunate)
+
+		err := chancellor.CheckSandboxHealth(ctx)
+		if err == nil {
+			t.Error("Expected error for non-zero exit code")
+		}
+		if !strings.Contains(err.Error(), "uname exited with 1") {
+			t.Errorf("Expected 'uname exited with 1', got: %v", err)
+		}
+	})
+
+	t.Run("missing_linux_in_output", func(t *testing.T) {
+		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+		chancellor := NewChancellor(base)
+
+		mockRunner := &mockHealthCheckRunner{
+			output:   "Darwin",
+			exitCode: "0",
+		}
+		shogunate := &Shogunate{}
+		shogunate.runner = mockRunner
+		chancellor.SetShogunate(shogunate)
+
+		err := chancellor.CheckSandboxHealth(ctx)
+		if err == nil {
+			t.Error("Expected error when Linux not in output")
+		}
+		if !strings.Contains(err.Error(), "expected Linux in output") {
+			t.Errorf("Expected 'expected Linux in output', got: %v", err)
+		}
+	})
+
+	t.Run("runner_run_error", func(t *testing.T) {
+		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+		chancellor := NewChancellor(base)
+
+		mockRunner := &mockHealthCheckRunner{
+			runErr: errors.New("container not running"),
+		}
+		shogunate := &Shogunate{}
+		shogunate.runner = mockRunner
+		chancellor.SetShogunate(shogunate)
+
+		err := chancellor.CheckSandboxHealth(ctx)
+		if err == nil {
+			t.Error("Expected error when runner.Run fails")
+		}
+		if !strings.Contains(err.Error(), "container not running") {
+			t.Errorf("Expected 'container not running', got: %v", err)
+		}
+	})
+}
+
+// mockHealthCheckRunner is a mock runner for testing CheckSandboxHealth
+type mockHealthCheckRunner struct {
+	output   string
+	exitCode string
+	runErr   error
+}
+
+func (m *mockHealthCheckRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
+	if m.runErr != nil {
+		return runners.Output{}, m.runErr
+	}
+	return runners.Output{
+		Output:   m.output,
+		ExitCode: m.exitCode,
+	}, nil
+}
+
+func (m *mockHealthCheckRunner) AllowFallback(bool)                      {}
+func (m *mockHealthCheckRunner) Close(context.Context) error           { return nil }
+func (m *mockHealthCheckRunner) Restart(context.Context) error        { return nil }
+func (m *mockHealthCheckRunner) RunnerType() string                   { return "mock" }
+func (m *mockHealthCheckRunner) SetMessageChannel(msgChan chan<- runners.Msg) {}
 
 func TestZhengmingMultipleQuestions(t *testing.T) {
 	questions := []storage.ZhengmingQuestion{

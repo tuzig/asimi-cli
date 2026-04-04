@@ -190,10 +190,6 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 		rg.startRitual(ritualName, event.EdictKey, inputs)
 		return
 	}
-	if event.Type == storage.EventShogunateStarted {
-		rg.handleStartup(event)
-	}
-
 	// Trigger event-driven rituals
 	if rg.ritualRegistry != nil && rg.ritualRunner != nil {
 		rituals := rg.ritualRegistry.GetByEvent(string(event.Type))
@@ -216,9 +212,7 @@ func (rg *RitualGuard) notifyEvent(event Event) {
 		return
 	}
 	msg := rg.buildEventNotification(event)
-	if msg.Message != "" {
-		rg.notify(msg)
-	}
+	rg.notify(msg)
 }
 
 // buildEventNotification maps event types to user-friendly notification messages
@@ -409,27 +403,6 @@ func (rg *RitualGuard) getSandboxImageName() string {
 	return "localhost/asimi-sandbox:latest"
 }
 
-// handleStartup handles the shogunate_started event by running health checks
-func (rg *RitualGuard) handleStartup(event Event) {
-	result := rg.RunHealthCheck(event)
-	courtKey := storage.EdictKey{
-		EdictID: 1,
-		Username: rg.username,
-		Project: rg.project,
-	}
-	if result.OK {
-		rg.PublishEvent(courtKey, storage.EventShogunateReady, storage.JSON{"checks": result})
-		return
-	}
-	// Health checks failed - request zhengming for user intervention
-	summary := fmt.Sprintf("Health checks failed: %d issue(s) detected", len(result.Failures))
-	rg.PublishEvent(courtKey, storage.EventZhengmingNeeded, storage.JSON{
-		"summary":     summary,
-		"failures":    result.Failures,
-		"remediation": result.Remediation,
-		"checks":      result,
-	})
-}
 
 // --- Ritual management ---
 

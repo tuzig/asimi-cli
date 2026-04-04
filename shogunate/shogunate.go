@@ -334,6 +334,7 @@ func (s *Shogunate) nextEdictID() uint {
 }
 
 // CreateEdict creates a new active edict record in the database and publishes storage.EventEdictCreated.
+// TODO: Add a "summary" parameter which is already in the Edict
 func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
 	edict := storage.Edict{
 		EdictID:  s.nextEdictID(),
@@ -345,7 +346,10 @@ func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error)
 	if err := s.db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
 	}
-	s.PublishEvent(edict.Key(), storage.EventEdictCreated, storage.JSON{"intent": intent})
+	s.PublishEvent(edict.Key(), storage.EventEdictCreated, storage.JSON{
+		"intent": intent,
+		"id": edict.EdictID,
+	})
 	return &edict, nil
 }
 

@@ -210,7 +210,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the infrastructure templates", "get_infrastructure_templates", "infrastructure_templates"},
 		{"build the sandbox", "build_sandbox", "sandbox_build"},
 		{"the sandbox is ready", "verify_sandbox_ready", "sandbox_ready"},
-		{"the sandbox is healthy", "verify_sandbox_ready", "sandbox_healthy"},
+		{"the sandbox is healthy", "verify_sandbox_up", "sandbox_healthy"},
 		{"the project metadata", "get_project_metadata", "project_metadata"},
 		{"the edict awaits ruler's seal", "await_ruler_seal", "awaiting_seal"},
 		{"the infrastructure is staged", "stage_infrastructure", "infrastructure_staged"},
@@ -2051,12 +2051,36 @@ func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 	return map[string]string{"status": "built", "output": output.Output}, nil
 }
 
-// verifySandboxReady builds the sandbox and verifies it is ready for use.
+// verifySandboxUp runs a quick smoke test and verify it's on linux
 // It distinguishes between configuration failures (blocking) and transient failures (non-blocking).
+func (r *RitualRunner) verifySandboxUp(ctx context.Context) (interface{}, error) {
+	output, err := r.runner.Run(ctx, runners.Input{
+		Command:        "echo $container",
+		Description:    "print podman if in a sandbox",
+		BypassApproval: true,
+	})
+	if err != nil {
+		return map[string]string{
+			"status": "failed",
+			"output": "sandbox is broken. to fix :init\n" + output.Output,
+		}, fmt.Errorf("sandbox smoke test failed: %w", err)
+	}
+	if !strings.Contains(output.Output, "podman") {
+		return map[string]string{
+			"status": "failed",
+			"output": "container env var has no podman: " + output.Output,
+		}, fmt.Errorf("sandbox smoke test failed: %w", err)
+	}
+	return map[string]string{
+		"status": "ready",
+		"output": output.Output,
+	}, nil
+}
+
 func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, error) {
 	// Step 1: Build the sandbox container image
-	output, err := runners.HostRun(ctx, runners.Input{
-		Command:        "just build-sandbox",
+	output, err := r.runner.Run(ctx, runners.Input{
+		Command:        "uname",
 		Description:    "build the sandbox",
 		BypassApproval: true,
 	})
@@ -2069,6 +2093,12 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 			"status": "failed",
 			"output": "sandbox build failed. Start RCA with .agents/sandbox/Dockerfile and build output:\n" + output.Output,
 		}, fmt.Errorf("sandbox build failed: %w", err)
+	}
+	if !strings.Contains(output.Output, "Linux") {
+		return map[string]string{
+			"status": "failed",
+			"output": "uname output has no Linux: " + output.Output,
+		}, fmt.Errorf("sandbox smoke test failed: %w", err)
 	}
 
 	// Step 2: Reload the runner to pick up the newly built sandbox image
@@ -2226,6 +2256,9 @@ func parseHostOrgProject(remote string) (host, org, project string) {
 func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution, fn string) error {
 	// Non-edict operations run regardless of EdictID
 	switch fn {
+	case "verify_sandbox_up":
+		_, err := r.verifySandboxUp(ctx)
+		return err
 	case "verify_sandbox_ready":
 		_, err := r.verifySandboxReady(ctx)
 		return err

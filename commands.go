@@ -955,14 +955,6 @@ func grantRulerSealCmd(model *TUIModel, edictID uint, notes string) tea.Cmd {
 		}
 		model.shogunate.PublishEvent(edictKey, storage.EventSealGranted, payload)
 
-		// Re-query seals to show fresh seal chain with Ruler's seal
-		updatedSeals, err := sealService.GetSeals(edictKey)
-		if err != nil {
-			return showSystemMsg(fmt.Sprintf("Ruler's seal granted to %d (failed to refresh seal chain: %v)", edictID, err))
-		}
-
-		updatedSealChainMsg := renderSealChain(updatedSeals, 60)
-		return showContextMsg{content: sealPrefix +
-			fmt.Sprintf("Ruler's sealed e%d\n  %s", edictID, updatedSealChainMsg)}
+		return nil
 	}
 }

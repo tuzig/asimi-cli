@@ -113,11 +113,24 @@
   description: "Startup ritual - Chancellor reports court status on Shogunate boot, then requests zhengming"
   max_retries: 2
   triggers:
-    - event: shogunate_ready
+    - event: shogunate_started
   steps:
-    - name: summarize-and-next
+    - name: ping-model
       minister: chancellor
+      act: |
+        this is a smoke test. please reply with `pong`
+    - name: check-sandbox
+      then:
+        - the sandbox is healthy
+    - name: check-asimi-version
+      given:
+        # - Asimi's versions
+        - "!echo WIP"
+      # then:
+        # - notify on version update
+    - name: summarize-and-next
       on_failure: retry
+      minister: chancellor
       given:
         - the earth status
         - the court status

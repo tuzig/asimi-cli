@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -190,7 +191,8 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	}
 
 	// Send task to minister
-	timeout := 5 * time.Minute
+	// TODO: replace this based of e222
+	timeout := 15 * time.Minute
 	select {
 	case minister.Tasks() <- task:
 		logger.Info("task sent to minister",
@@ -713,6 +715,34 @@ func (c *Chancellor) CancelEdictWithContext(ctx context.Context, key storage.Edi
 	})
 
 	c.logger.Info("edict cancelled", "edict_id", key.EdictID, "by", cancelledBy)
+	return nil
+}
+
+// CheckSandboxHealth verifies the sandbox container is healthy by running uname
+// and checking that "Linux" appears in the output. Returns nil if healthy.
+func (c *Chancellor) CheckSandboxHealth(ctx context.Context) error {
+	if c.shogunate == nil {
+		return fmt.Errorf("shogunate not configured")
+	}
+
+	runner := c.shogunate.GetRunner()
+	if runner == nil {
+		return fmt.Errorf("shell runner not available")
+	}
+
+	result, err := runner.Run(ctx, runners.Input{
+		Command:     "uname",
+		Description: "sandbox health check",
+	})
+	if err != nil {
+		return fmt.Errorf("sandbox health check failed: %w", err)
+	}
+	if result.ExitCode != "0" {
+		return fmt.Errorf("sandbox health check failed: uname exited with %s", result.ExitCode)
+	}
+	if !strings.Contains(result.Output, "Linux") {
+		return fmt.Errorf("sandbox health check failed: expected Linux in output, got: %s", result.Output)
+	}
 	return nil
 }
 

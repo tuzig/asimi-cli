@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/afittestide/asimi/internal"
@@ -447,12 +448,15 @@ func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, er
 		if err != nil {
 			return "", fmt.Errorf("failed to get pending lings for auto-population: %w", err)
 		}
+		slog.Info("Forge got a list of lings per edict", "key", key, "lings", pendingLings)
 		if len(pendingLings) > 0 {
 			params.LingID = pendingLings[0].LingID
 			t.forge.logger.Info("auto-populated ling_id",
 				"ling_id", params.LingID,
 				"file_path", params.FilePath)
 		}
+	} else {
+		slog.Info("Forge is working on ling", "params", params)
 	}
 
 	manifestID, err := t.forge.StageManifest(key, params.LingID, params.FilePath, params.FuncName, params.ContentSHA)

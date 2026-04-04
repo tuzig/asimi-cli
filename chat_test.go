@@ -30,9 +30,9 @@ func TestChatComponent_UpdateLastToolCallEmoji(t *testing.T) {
 
 		assert.True(t, updated)
 		// First message should be unchanged
-		assert.Contains(t, chat.Messages[1].Content, "✓")
+		assert.Contains(t, chat.Messages[0].Content, "✓")
 		// Last message should be updated
-		assert.Contains(t, chat.Messages[2].Content, "🙋")
+		assert.Contains(t, chat.Messages[1].Content, "🙋")
 	})
 
 	t.Run("no update when command not found", func(t *testing.T) {

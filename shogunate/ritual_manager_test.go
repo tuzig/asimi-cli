@@ -295,6 +295,7 @@ func TestMinisterBaseEmitEvent_Fallback(t *testing.T) {
 }
 
 // TestRitualGuard_EventNotification tests that significant events trigger notifications
+// Message formatting is handled by the TUI layer; ritual_manager only routes notifiable events.
 func TestRitualGuard_EventNotification(t *testing.T) {
 	db := setupEventTestDB(t)
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
@@ -330,8 +331,8 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if notifications[0].EventType != storage.EventEdictCreated {
 		t.Errorf("expected EventType EventEdictCreated, got %s", notifications[0].EventType)
 	}
-	if notifications[0].Message != "Edict 1 created: Add new feature" {
-		t.Errorf("unexpected message: %s", notifications[0].Message)
+	if notifications[0].TabID != "chancellor" {
+		t.Errorf("expected TabID chancellor, got %s", notifications[0].TabID)
 	}
 	mu.Unlock()
 
@@ -349,8 +350,11 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if len(notifications) != 1 {
 		t.Fatalf("expected 1 notification, got %d", len(notifications))
 	}
-	if notifications[0].Message != "Minister judge sealed edict 2" {
-		t.Errorf("unexpected message: %s", notifications[0].Message)
+	if notifications[0].EventType != storage.EventSealGranted {
+		t.Errorf("expected EventType EventSealGranted, got %s", notifications[0].EventType)
+	}
+	if notifications[0].Payload["minister_id"] != "judge" {
+		t.Errorf("expected minister_id judge in payload, got %v", notifications[0].Payload["minister_id"])
 	}
 	mu.Unlock()
 
@@ -368,12 +372,15 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if len(notifications) != 1 {
 		t.Fatalf("expected 1 notification, got %d", len(notifications))
 	}
-	if notifications[0].Message != "Edict 3 sealed and ascended to Heaven" {
-		t.Errorf("unexpected message: %s", notifications[0].Message)
+	if notifications[0].EventType != storage.EventEdictSealed {
+		t.Errorf("expected EventType EventEdictSealed, got %s", notifications[0].EventType)
+	}
+	if notifications[0].EdictKey.EdictID != 3 {
+		t.Errorf("expected EdictID 3, got %d", notifications[0].EdictKey.EdictID)
 	}
 	mu.Unlock()
 
-	// Test that non-notifiable events don't trigger notifications
+	// All events are forwarded to the TUI
 	notifications = nil
 	rg.DispatchEvent(Event{
 		Type:     storage.EventStepCompleted,
@@ -384,101 +391,11 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	mu.Lock()
-	if len(notifications) != 0 {
-		t.Fatalf("expected 0 notifications for non-notifiable event, got %d", len(notifications))
+	if len(notifications) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notifications))
+	}
+	if notifications[0].EventType != storage.EventStepCompleted {
+		t.Errorf("expected EventType EventStepCompleted, got %s", notifications[0].EventType)
 	}
 	mu.Unlock()
-}
-
-// TestRitualGuard_BuildEventNotification tests the message building for different event types
-func TestRitualGuard_BuildEventNotification(t *testing.T) {
-	db := setupEventTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
-	rg := NewRitualGuard(RitualGuardOpts{Base: base})
-
-	tests := []struct {
-		name        string
-		event       Event
-		expectMsg   string
-		expectTabID string
-	}{
-		{
-			name: "edict_created",
-			event: Event{
-				Type:     storage.EventEdictCreated,
-				EdictKey: storage.EdictKey{EdictID: 1},
-				Payload:  map[string]interface{}{"intent": "Test intent"},
-			},
-			expectMsg:   "Edict 1 created: Test intent",
-			expectTabID: "chancellor",
-		},
-		{
-			name: "edict_sealed",
-			event: Event{
-				Type:     storage.EventEdictSealed,
-				EdictKey: storage.EdictKey{EdictID: 2},
-				Payload:  map[string]interface{}{},
-			},
-			expectMsg:   "Edict 2 sealed and ascended to Heaven",
-			expectTabID: "chancellor",
-		},
-		{
-			name: "seal_granted",
-			event: Event{
-				Type:     storage.EventSealGranted,
-				EdictKey: storage.EdictKey{EdictID: 3},
-				Payload:  map[string]interface{}{"minister_id": "sage"},
-			},
-			expectMsg:   "Minister sage sealed edict 3",
-			expectTabID: "chancellor",
-		},
-		{
-			name: "zhengming_needed",
-			event: Event{
-				Type:     storage.EventZhengmingNeeded,
-				EdictKey: storage.EdictKey{EdictID: 4},
-				Payload:  map[string]interface{}{"summary": "Need clarification"},
-			},
-			expectMsg:   "Zhengming requested for edict 4: Need clarification",
-			expectTabID: "chancellor",
-		},
-		{
-			name: "zhengming_answered",
-			event: Event{
-				Type:     storage.EventZhengmingAnswered,
-				EdictKey: storage.EdictKey{EdictID: 5},
-				Payload:  map[string]interface{}{},
-			},
-			expectMsg:   "Zhengming answered for edict 5",
-			expectTabID: "chancellor",
-		},
-		{
-			name: "edict_cancelled",
-			event: Event{
-				Type:     storage.EventEdictCancelled,
-				EdictKey: storage.EdictKey{EdictID: 6},
-				Payload:  map[string]interface{}{},
-			},
-			expectMsg:   "Edict 6 cancelled",
-			expectTabID: "chancellor",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			msg := rg.buildEventNotification(tt.event)
-			if msg.Message != tt.expectMsg {
-				t.Errorf("expected message %q, got %q", tt.expectMsg, msg.Message)
-			}
-			if msg.TabID != tt.expectTabID {
-				t.Errorf("expected TabID %q, got %q", tt.expectTabID, msg.TabID)
-			}
-			if msg.EdictKey.EdictID != tt.event.EdictKey.EdictID {
-				t.Errorf("expected EdictID %d, got %d", tt.event.EdictKey.EdictID, msg.EdictKey.EdictID)
-			}
-			if msg.EventType != tt.event.Type {
-				t.Errorf("expected EventType %s, got %s", tt.event.Type, msg.EventType)
-			}
-		})
-	}
 }

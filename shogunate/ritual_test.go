@@ -253,15 +253,14 @@ func TestValidateRitual(t *testing.T) {
 			errMsg:  "unknown step",
 		},
 		{
-			name: "missing minister",
+			name: "default minister",
 			ritual: &RitualDef{
 				Name: "no-minister",
 				Steps: []RitualStep{
 					{Name: "step1", Task: "do something"},
 				},
 			},
-			wantErr: true,
-			errMsg:  "requires minister",
+			wantErr: false,
 		},
 		{
 			name: "missing act",
@@ -271,8 +270,7 @@ func TestValidateRitual(t *testing.T) {
 					{Name: "step1", Minister: "forge"},
 				},
 			},
-			wantErr: true,
-			errMsg:  "requires act or task",
+			wantErr: false,
 		},
 		{
 			name: "circular dependency - self reference",
@@ -417,24 +415,27 @@ steps:
 	}
 }
 
-func TestLoadRitualsFromDir_Invalid(t *testing.T) {
+func TestLoadRitualsFromDir_OptionalMinister(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create an invalid ritual file
-	invalidRitual := `
-name: invalid
+	noMinister := `
+name: no-minister
 steps:
-  - name: step1
-    task: Do something
+  - name: check-sandbox
+    then:
+      - the sandbox is smoking
 `
-	if err := os.WriteFile(filepath.Join(dir, "invalid.yaml"), []byte(invalidRitual), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "no_minister.yaml"), []byte(noMinister), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Load should fail
-	_, err := LoadRitualsFromDir(dir)
-	if err == nil {
-		t.Error("expected error for invalid ritual")
+	rituals, err := LoadRitualsFromDir(dir)
+	if err != nil {
+		t.Fatalf("LoadRitualsFromDir error = %v", err)
+	}
+	minister := rituals[0].Steps[0].Minister
+	if minister != "" {
+		t.Fatalf("Step without minister should remain empty, got %q", minister)
 	}
 }
 
@@ -459,11 +460,8 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 	if dawnAudience == nil {
 		t.Fatal("dawn-audience ritual not found")
 	}
-	if len(dawnAudience.Steps) != 1 {
-		t.Errorf("dawn-audience: expected 1 step, got %d", len(dawnAudience.Steps))
-	}
-	if dawnAudience.Steps[0].Minister != "chancellor" {
-		t.Errorf("dawn-audience: expected minister 'chancellor', got %q", dawnAudience.Steps[0].Minister)
+	if len(dawnAudience.Steps) != 4 {
+		t.Errorf("dawn-audience: expected 4 steps, got %d", len(dawnAudience.Steps))
 	}
 }
 

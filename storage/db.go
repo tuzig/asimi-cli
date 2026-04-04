@@ -92,31 +92,8 @@ func (db *DB) getSchemaVersion() (int, error) {
 
 // runMigrations runs all necessary migrations from currentVersion to SchemaVersion
 func (db *DB) runMigrations(currentVersion int) error {
-	// Run migrations in order
-	for v := currentVersion + 1; v <= SchemaVersion; v++ {
-		slog.Info("Running database migration", "from_version", v-1, "to_version", v)
-
-		var migrationSQL string
-		switch v {
-		case 2:
-			migrationSQL = Migration1to2
-		case 3:
-			migrationSQL = Migration2to3
-		case 4:
-			migrationSQL = Migration3to4
-		case 5:
-			migrationSQL = Migration4to5
-		case 6:
-			migrationSQL = Migration5to6
-		default:
-			return fmt.Errorf("unknown migration version: %d", v)
-		}
-
-		if _, err := db.conn.Exec(migrationSQL); err != nil {
-			return fmt.Errorf("failed to run migration to version %d: %w", v, err)
-		}
-	}
-
+	// No migrations needed - schema version 1 is the base schema
+	// Single-user deployment means database can be rebuilt from scratch
 	return nil
 }
 

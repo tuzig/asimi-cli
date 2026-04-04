@@ -13,7 +13,7 @@ import (
 var builtinRitualsYAML []byte
 
 // LoadBuiltinRituals loads the embedded builtin rituals from the YAML file
-func LoadEmbeddedRituals() ([]*RitualDef, error) {
+func LoadEmbeddedRituals() (Rituals, error) {
 	var rituals []*RitualDef
 	if err := yaml.Unmarshal(builtinRitualsYAML, &rituals); err != nil {
 		return nil, fmt.Errorf("failed to parse builtin rituals YAML: %w", err)
@@ -31,7 +31,7 @@ func LoadEmbeddedRituals() ([]*RitualDef, error) {
 // 2. User home config: $HOME/.config/asimi/rituals.yaml
 // 3. Project config: .agents/rituals.yaml
 // Later sources override earlier ones by name.
-func LoadAllRituals(projectDir string) ([]*RitualDef, error) {
+func LoadAllRituals(projectDir string) (Rituals, error) {
 	byName := make(map[string]*RitualDef)
 
 	// 1. Embedded builtins

@@ -67,11 +67,13 @@ type ChatComponent struct {
 }
 
 const (
+	userPrefix            = "👑  "
 	approvalPrefix        = "🙋"
 	asimiPrefix           = "🎏  "
 	completeSuccessPrefix = "🐉  "
 	completeFailurePrefix = "🦐  "
 	failureToken          = "[[FAILURE]]"
+	sealPrefix            = "🥂  "
 	systemPrefix          = "🛠️  "
 	checkPrefix           = "✓"
 	cmdRunningPrefix      = "⚡"
@@ -174,24 +176,6 @@ func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
 	return NewChatComponentWithStatus(width, height, markdownEnabled, func() string { return "insert" })
 }
 
-// NewChatComponentWithStatus creates a new chat component with a status callback
-// newSessionMessage builds the initial "New session at" message with sandbox status
-func newSessionMessage() string {
-	msg := NewChatMsgBuilder(courtPrefix + " Shogunate session at " + time.Now().Format("2 January, 3:04 PM MST"))
-	msg.WriteLn()
-
-	/* TODO: figure our a way to get the shell runner info
-	info := getShellRunnerInfo()
-	if info.Type == "host" {
-		msg.WriteLn("⚠️ no sandbox, many approvals ahead")
-		msg.WriteLn("please run `just build-sandbox` or `:init` and start a new session")
-	} else {
-		msg.WriteLn("sandbox is ready")
-	}
-	*/
-	return msg.String()
-}
-
 func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStatus func() string) *ChatComponent {
 	// Viewport is 1 column narrower to leave room for the gutter
 	vp := viewport.New(width-1, height)
@@ -236,9 +220,7 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 // Clear resets the chat component to its initial state without recreating the markdown renderer.
 // This is much faster than creating a new ChatComponent when you just need to clear the chat.
 func (c *ChatComponent) Clear() {
-	ms := newSessionMessage()
-
-	c.Messages = []ChatMessage{{Content: ms, Indent: 0}}
+	c.Messages = []ChatMessage{}
 	c.AutoScroll = true
 	c.UserScrolled = false
 	c.ScrollLocked = false
@@ -246,8 +228,6 @@ func (c *ChatComponent) Clear() {
 	c.TouchDragging = false
 	c.rawSessionHistory = make([]string, 0)
 	c.toolCallMessageIndex = make(map[string]int)
-
-	c.Viewport.SetContent(ms)
 	c.Viewport.GotoTop()
 }
 
@@ -584,7 +564,7 @@ func (c *ChatComponent) UpdateContent() {
 				Foreground(lipgloss.Color("#F952F9")) // Terminal7 prompt border
 
 			wrapWidth := c.Width - 1 // -1 for gutter
-			const indentSpaces = 8
+			const indentSpaces = 0
 			if wrapWidth > indentSpaces {
 				wrapWidth -= indentSpaces
 			}
@@ -599,7 +579,7 @@ func (c *ChatComponent) UpdateContent() {
 				lines[i] = userIndent + lines[i]
 			}
 
-			rendered = messageStyle.Render(strings.Join(lines, "\n"))
+			rendered = messageStyle.Render(fmt.Sprintf("%s %s", userPrefix, strings.Join(lines, "\n")))
 
 		case MessageTypeAI, MessageTypeAISuccess, MessageTypeAIFailure:
 			// Render AI messages with markdown using Type field

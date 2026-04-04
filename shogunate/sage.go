@@ -157,7 +157,7 @@ func (c *Sage) Tools() []Tool {
 		&RecordPrecedentTool{sage: c},
 		&ListQuenchedManifestsTool{sage: c},
 		&QueryPrecedentsTool{sage: c},
-		&ReviewDiffTool{sage: c},
+
 	}
 	for _, t := range tools.GetROTools(c.config.LLM) {
 		toolList = append(toolList, t)
@@ -364,6 +364,9 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 	if params.Suggestion == "" {
 		return "", fmt.Errorf("suggestion is required")
 	}
+	if params.Summary == "" {
+		return "", fmt.Errorf("summary is required")
+	}
 
 	priority := storage.PriorityNormal
 	if params.Priority == "urgent" {
@@ -470,7 +473,7 @@ func (t *SuggestEdictTool) ParameterSchema() map[string]any {
 			},
 			"summary": map[string]any{
 				"type":        "string",
-				"description": "A short one-line summary of the suggestion for display in the prompt UI.",
+				"description": "A short one-line summary to help the ruler recall the edict",
 			},
 			"priority": map[string]any{
 				"type":        "string",
@@ -482,7 +485,7 @@ func (t *SuggestEdictTool) ParameterSchema() map[string]any {
 				"description": "Supporting evidence: file:line references, patterns found, etc.",
 			},
 		},
-		"required": []string{"suggestion"},
+		"required": []string{"suggestion", "summary"},
 	}
 }
 
@@ -1099,79 +1102,4 @@ func (t *QueryPrecedentsTool) Format(input, result string, err error) string {
 	return fmt.Sprintf("Query Precedents: %s\n", result)
 }
 
-// ReviewDiffTool provides ad-hoc diff review capability for use in conversations
-type ReviewDiffTool struct {
-	sage *Sage
-}
 
-func (t *ReviewDiffTool) Name() string { return "review_diff" }
-
-func (t *ReviewDiffTool) Description() string {
-	return "Reviews a code diff for ethics and quality issues. Returns structured findings without recording precedents. Input: JSON with 'diff' (the diff string to review)."
-}
-
-func (t *ReviewDiffTool) Call(ctx context.Context, input string) (string, error) {
-	var params struct {
-		Diff string `json:"diff"`
-	}
-	if err := json.Unmarshal([]byte(input), &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
-	}
-	if params.Diff == "" {
-		return "", fmt.Errorf("diff is required")
-	}
-
-	result, err := t.sage.ReviewDiff(ctx, params.Diff)
-	if err != nil {
-		return "", fmt.Errorf("review failed: %w", err)
-	}
-
-	// Format the result as a readable string
-	var output strings.Builder
-	if result.Approved {
-		output.WriteString("APPROVED\n\n")
-	} else {
-		output.WriteString("REJECTED\n\n")
-	}
-
-	if len(result.Findings) > 0 {
-		output.WriteString("Findings:\n")
-		for i, f := range result.Findings {
-			output.WriteString(fmt.Sprintf("%d. [%s] %s", i+1, f.Severity, f.Message))
-			if f.File != "" {
-				output.WriteString(fmt.Sprintf(" (%s", f.File))
-				if f.Line > 0 {
-					output.WriteString(fmt.Sprintf(":%d", f.Line))
-				}
-				output.WriteString(")")
-			}
-			if f.Principle != "" {
-				output.WriteString(fmt.Sprintf(" [%s]", f.Principle))
-			}
-			output.WriteString("\n")
-		}
-		output.WriteString("\n")
-	}
-
-	output.WriteString("Reasoning:\n")
-	output.WriteString(result.Reasoning)
-
-	return output.String(), nil
-}
-
-func (t *ReviewDiffTool) ParameterSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"diff": map[string]any{"type": "string", "description": "The diff string to review"},
-		},
-		"required": []string{"diff"},
-	}
-}
-
-func (t *ReviewDiffTool) Format(input, result string, err error) string {
-	if err != nil {
-		return fmt.Sprintf("Review Diff: Error: %v\n", err)
-	}
-	return fmt.Sprintf("Review Diff:\n%s\n", result)
-}
