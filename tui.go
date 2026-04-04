@@ -1699,12 +1699,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat := m.tabs.ChatByTab(msg.TabID)
 		chat.AddToRawHistory("MINISTER_INVOKING",
 			fmt.Sprintf("Minister %s invoked for edict %d", msg.MinisterID, msg.EdictKey.EdictID))
-		chat.Indent++
 		taskPreview := msg.Task
 		if len(taskPreview) > 60 {
 			taskPreview = taskPreview[:57] + "..."
 		}
-		chat.AddMessage(fmt.Sprintf("%s%s: %s", ministerPrefix, msg.MinisterID, taskPreview))
+		chat.AddMessage(fmt.Sprintf("%s:  %s", msg.MinisterID, taskPreview))
+		chat.Indent++
 		return m, nil
 
 	case shogunate.MinisterCompletedMsg:
@@ -1781,25 +1781,76 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictKey.EdictID, msg.Message))
 
 		// Use appropriate icon based on event type
-		icon := "📋" // Default
+		icon := "📋"   // Default
+		message := "" // What about msg.Message ?
 		switch msg.EventType {
+		case storage.EventShogunateStarted:
+			icon = courtPrefix
+			message = "Shogunate dawn at " + time.Now().Format("2 January, 3:04 PM MST")
+		case storage.EventShogunateReady:
+			icon = courtPrefix
+			message = "READY at " + time.Now().Format("2 January, 3:04 PM MST")
 		case storage.EventEdictCreated:
 			icon = "📜"
+			intent, _ := msg.Payload["intent"].(string)
+			id, _ := msg.Payload["id"].(uint)
+			if intent == "" {
+				intent = "New edict"
+			}
+			// Truncate long intents for display
+			// TODO: Replace it with and edict's summary
+			if len(intent) > 60 {
+				intent = intent[:57] + "..."
+			}
+			message = fmt.Sprintf("Edict %d created: %s", id, intent)
 		case storage.EventEdictSealed:
 			icon = "✅"
+			message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", msg.EdictKey.EdictID)
 		case storage.EventSealGranted:
-			icon = "🔒"
+			icon = sealPrefix
+			minister, _ := msg.Payload["minister_id"].(string)
+			if minister == "" {
+				minister = "Unknown"
+			}
+			if minister == "ruler" {
+				message = fmt.Sprintf("Ruler sealed edict %d", msg.EdictKey.EdictID)
+			} else {
+				message = fmt.Sprintf("Minister %s sealed edict %d", minister, msg.EdictKey.EdictID)
+			}
+			// Re-query seals to show fresh seal chain with Ruler's seal
+			sealService := m.shogunate.GetSealService()
+			updatedSeals, err := sealService.GetSeals(msg.EdictKey)
+			if err != nil {
+				message += fmt.Sprintf("\n  (failed to refresh seal chain: %v)", err)
+			} else {
+				message += fmt.Sprintf("\n  %s", renderSealChain(updatedSeals, 60))
+			}
 		case storage.EventManifestCommitted:
 			icon = "🔨"
+			message = fmt.Sprintf("Forge committed manifest for edict %d", msg.EdictKey.EdictID)
 		case storage.EventZhengmingNeeded:
 			icon = "❓"
+			summary, _ := msg.Payload["summary"].(string)
+			if summary == "" {
+				summary = "clarification needed"
+			}
+			message = fmt.Sprintf("Zhengming requested for edict %d: %s", msg.EdictKey.EdictID, summary)
 		case storage.EventZhengmingAnswered:
 			icon = "💬"
+			if msg.EdictKey.EdictID == 0 {
+				message = "Zhengming answered for the court"
+			} else {
+				message = fmt.Sprintf("Zhengming answered for edict %d", msg.EdictKey.EdictID)
+			}
 		case storage.EventEdictCancelled:
 			icon = "⛔"
+			message = fmt.Sprintf("Edict %d cancelled", msg.EdictKey.EdictID)
 		}
 
-		chat.AddMessage(fmt.Sprintf("%s%s %s", systemPrefix, icon, msg.Message))
+		if message != "" {
+			// TODO: refactor to the bubbletea way and return a function with the next line
+			chat.AddMessage(fmt.Sprintf("%s %s", icon, message))
+		}
 		return m, nil
 
 	case shogunate.StreamDoneMsg:
@@ -2061,6 +2112,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionsLoadedMsg:
 		return m, m.tabs.Content().ShowResume(msg.sessions)
+
+	case sealedEdictsLoadedMsg:
+		return m, m.tabs.Content().ShowSealSelection(msg.edicts)
+
+	case sealSelectedMsg:
+		// Grant the ruler's seal to the selected edict
+		return m, grantRulerSealCmd(&m, msg.edictID, "")
 
 	case ChangeModeMsg:
 		// Centralized mode change handling
@@ -2349,10 +2407,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Info("successfully upgraded from host to sandbox runner")
 			m.commandLine.AddToast("🐳 Sandbox now available", "info", 3000)
 			// Refresh the first message to show the updated sandbox status
+			/* TODO: Remove
 			if len(m.tabs.Content().Chat.Messages) > 0 {
 				m.tabs.Content().Chat.Messages[0] = ChatMessage{Content: newSessionMessage(), Indent: 0}
 				m.tabs.Content().Chat.UpdateContent()
 			}
+			*/
 		}
 		return m, nil
 

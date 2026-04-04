@@ -357,15 +357,14 @@ func TestPromptComponent(t *testing.T) {
 func TestChatComponent(t *testing.T) {
 	chat := NewChatComponent(50, 10, false)
 
-	// Should have initial title message
-	require.Equal(t, 1, len(chat.Messages))
-	require.Contains(t, chat.Messages[0].Content, "Shogunate session")
+	// Should start with no messages
+	require.Equal(t, 0, len(chat.Messages))
 
 	// Test adding a message
 	testMessage := "Test message"
 	chat.AddMessage(testMessage)
-	require.Equal(t, 2, len(chat.Messages))
-	require.Equal(t, testMessage, chat.Messages[1].Content)
+	require.Equal(t, 1, len(chat.Messages))
+	require.Equal(t, testMessage, chat.Messages[0].Content)
 
 	// Test dimensions
 	chat.SetSize(60, 15)
@@ -1162,7 +1161,7 @@ func TestStartConversationMsg_InitialMessages(t *testing.T) {
 	// Add some messages to the chat
 	model.tabs.Content().Chat.AddMessage("existing message 1")
 	model.tabs.Content().Chat.AddMessage("existing message 2")
-	require.Len(t, model.tabs.Content().Chat.Messages, 3) // Welcome + 2 messages
+	require.Len(t, model.tabs.Content().Chat.Messages, 2) // 2 messages (no welcome message)
 
 	// Create a startConversationMsg with initialMessages
 	msg := startConversationMsg{
@@ -1179,10 +1178,10 @@ func TestStartConversationMsg_InitialMessages(t *testing.T) {
 	require.True(t, ok, "Expected TUIModel")
 
 	// Verify that the chat was cleared and initialMessages were added
-	// The chat should have: Welcome message + 2 initial messages
-	require.Len(t, updatedModelValue.tabs.Content().Chat.Messages, 3)
-	require.Contains(t, updatedModelValue.tabs.Content().Chat.Messages[1].Content, "Initial message 1")
-	require.Contains(t, updatedModelValue.tabs.Content().Chat.Messages[2].Content, "Initial message 2")
+	// The chat should have: 2 initial messages (no welcome message)
+	require.Len(t, updatedModelValue.tabs.Content().Chat.Messages, 2)
+	require.Contains(t, updatedModelValue.tabs.Content().Chat.Messages[0].Content, "Initial message 1")
+	require.Contains(t, updatedModelValue.tabs.Content().Chat.Messages[1].Content, "Initial message 2")
 }
 
 // TestHistoryNavigation_WithArrowKeys tests arrow key handling
@@ -1276,8 +1275,8 @@ func TestSaveHistoryPresentState(t *testing.T) {
 
 	require.True(t, model.historySaved)
 	require.Equal(t, "current prompt", model.historyPendingPrompt)
-	// Chat has welcome message + 2 added messages = 3 total
-	require.Equal(t, 3, model.historyPresentChatSnapshot)
+	// Chat has 2 added messages (no welcome message)
+	require.Equal(t, 2, model.historyPresentChatSnapshot)
 	// Session snapshot is 0 when no shogunate session is configured
 	// (newTestModel doesn't set up shogunate, so getCurrentSession returns nil)
 	require.Equal(t, 0, model.historyPresentSessionSnapshot)
