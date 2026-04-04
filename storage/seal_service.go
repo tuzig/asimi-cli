@@ -181,3 +181,54 @@ func (s *SealService) IsEdictCancelled(key EdictKey) (bool, error) {
 	}
 	return status == EdictCancelled, nil
 }
+
+// UnsealedEdict is an edict with its minister seal status
+type UnsealedEdict struct {
+	Edict
+	HasJudgeSeal bool
+	HasSageSeal  bool
+}
+
+// ListUnsealedEdicts returns all edicts the ruler hasn't sealed yet, with judge/sage seal status
+func (s *SealService) ListUnsealedEdicts(username, project string) ([]UnsealedEdict, error) {
+	var edicts []Edict
+	err := s.db.Raw(`
+		SELECT e.* FROM edicts e
+		WHERE e.username = ? AND e.project = ?
+		AND e.cancelled_at IS NULL
+		AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.edict_id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler')
+		ORDER BY e.edict_id DESC`, username, project).Scan(&edicts).Error
+	if err != nil {
+		return nil, fmt.Errorf("list pending seals: %w", err)
+	}
+
+	// Fetch all non-ruler seals for these edicts in one query
+	var seals []Seal
+	edictIDs := make([]uint, len(edicts))
+	for i, e := range edicts {
+		edictIDs[i] = e.EdictID
+	}
+	if len(edictIDs) > 0 {
+		s.db.Where("edict_id IN ? AND username = ? AND project = ? AND minister_id IN ('judge','sage')",
+			edictIDs, username, project).Find(&seals)
+	}
+
+	// Build seal lookup: edictID -> set of minister_ids
+	sealMap := make(map[uint]map[string]bool)
+	for _, seal := range seals {
+		if sealMap[seal.EdictID] == nil {
+			sealMap[seal.EdictID] = make(map[string]bool)
+		}
+		sealMap[seal.EdictID][seal.MinisterID] = true
+	}
+
+	result := make([]UnsealedEdict, len(edicts))
+	for i, e := range edicts {
+		result[i] = UnsealedEdict{
+			Edict:        e,
+			HasJudgeSeal: sealMap[e.EdictID]["judge"],
+			HasSageSeal:  sealMap[e.EdictID]["sage"],
+		}
+	}
+	return result, nil
+}
