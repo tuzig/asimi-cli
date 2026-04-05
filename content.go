@@ -594,7 +594,7 @@ func (c *ContentComponent) ShowResume(sessions []shogunate.Session) tea.Cmd {
 }
 
 // ShowSealSelection switches to seal selection view
-func (c *ContentComponent) ShowSealSelection(edicts []storage.UnsealedEdict) tea.Cmd {
+func (c *ContentComponent) ShowSealSelection(edicts []storage.ActiveEdict) tea.Cmd {
 	c.activeView = ViewSeal
 	c.navMode = NavList
 	c.activeList = &c.sealSelect.SelectWindow

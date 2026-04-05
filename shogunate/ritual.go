@@ -1863,7 +1863,7 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 
 func (r *RitualRunner) getUnsealedEdicts(ctx context.Context, exec *RitualExecution) (interface{}, error) {
 	sealService := storage.NewSealService(r.db)
-	edicts, err := sealService.ListUnsealedEdicts(exec.Username, exec.Project)
+	edicts, err := sealService.ListActiveEdicts(exec.Username, exec.Project)
 	if err != nil {
 		return nil, err
 	}

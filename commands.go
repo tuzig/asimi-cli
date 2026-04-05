@@ -831,7 +831,7 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 	if len(args) == 0 {
 		key := model.shogunate.EdictKey(0)
 		return func() tea.Msg {
-			edicts, err := sealService.ListUnsealedEdicts(
+			edicts, err := sealService.ListActiveEdicts(
 				key.Username,
 				key.Project,
 			)

@@ -811,17 +811,17 @@ type sealSelectedMsg struct {
 }
 
 type sealedEdictsLoadedMsg struct {
-	edicts []storage.UnsealedEdict
+	edicts []storage.ActiveEdict
 }
 
 // SealSelectWindow displays a selectable list of edicts pending the Ruler's seal
 type SealSelectWindow struct {
-	SelectWindow[storage.UnsealedEdict]
+	SelectWindow[storage.ActiveEdict]
 }
 
 // NewSealSelectWindow creates a new seal selection window
 func NewSealSelectWindow() SealSelectWindow {
-	sw := NewSelectWindow[storage.UnsealedEdict]()
+	sw := NewSelectWindow[storage.ActiveEdict]()
 	sw.Height = 15
 	sw.SetSize(70, 15)
 	return SealSelectWindow{SelectWindow: sw}
@@ -843,14 +843,14 @@ func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots 
 		Background(lipgloss.Color("#000000")).
 		Padding(0, 1)
 
-	config := RenderConfig[storage.UnsealedEdict]{
+	config := RenderConfig[storage.ActiveEdict]{
 		ConstructTitle: func(selectedIndex, totalItems int) string {
 			return titleStyle.Render(fmt.Sprintf("Select edict to seal [%3d/%3d]:", selectedIndex+1, totalItems))
 		},
 		OnEmpty: func(sb *strings.Builder) {
 			sb.WriteString("No edicts awaiting seal\n")
 		},
-		RenderItem: func(i int, edict storage.UnsealedEdict, isSelected bool, sb *strings.Builder) {
+		RenderItem: func(i int, edict storage.ActiveEdict, isSelected bool, sb *strings.Builder) {
 			prefix := "  "
 			if isSelected {
 				prefix = "▶ "
