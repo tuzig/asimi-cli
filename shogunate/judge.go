@@ -425,7 +425,7 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.judge.username, Project: t.judge.project}
 
 	// Get manifests for this edict
 	manifests, err := t.judge.GetPendingManifests(key)
@@ -468,8 +468,6 @@ func (t *RecordVerdictTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{"type": "integer", "description": "The edict ID"},
-			"username": map[string]any{"type": "string", "description": "The username"},
-			"project":  map[string]any{"type": "string", "description": "The project name"},
 			"ling_id":  map[string]any{"type": "string", "description": "Optional Ling ID to record verdict for"},
 			"passed":   map[string]any{"type": "boolean", "description": "Whether the tests passed"},
 			"details":  map[string]any{"type": "string", "description": "Additional details about the verdict"},

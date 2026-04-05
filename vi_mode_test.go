@@ -279,9 +279,9 @@ func TestViNormalModeGtSwitchesTab(t *testing.T) {
 	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true
 
-	// App starts with 3 tabs (Shogunate, Ruling, Hunting), active tab 1 (Ruling)
-	assert.Equal(t, 3, model.tabs.TabCount(), "Should start with 3 tabs")
-	assert.Equal(t, 1, model.tabs.activeTab, "Should start on Ruling tab")
+	// App starts with 5 tabs (Shogunate, Chancellor, Sage, Forge, Judge), active tab 1 (Chancellor)
+	assert.Equal(t, 5, model.tabs.TabCount(), "Should start with 5 tabs")
+	assert.Equal(t, 1, model.tabs.activeTab, "Should start on Chancellor tab")
 
 	// Enter normal mode
 	model.prompt().EnterViNormalMode()
