@@ -136,6 +136,7 @@ type RitualStep struct {
 	Given           []string          `yaml:"given,omitempty"`             // Given steps: "!" prefix = bash, else matched via step registry
 	Act             string            `yaml:"act,omitempty"`               // The action: task text, command, or prompt
 	Then            []string          `yaml:"then,omitempty"`              // Then steps: "!" prefix = bash, else matched via step registry
+	Out             string            `yaml:"out,omitempty"`               // Output template rendered after then steps
 	Task            string            `yaml:"task,omitempty"`              // Alias for Act (backward compat)
 	DependsOn       []string          `yaml:"depends_on,omitempty"`        // Steps that must complete first
 	OnFailure       string            `yaml:"on_failure,omitempty"`        // retry, zhengming, goto, abort
@@ -219,7 +220,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"record the sage's seal", "record_sage_seal", ""},
 		{"the unsealed edicts", "get_unsealed_edicts", "unsealed_edicts"},
 		{"a heaven's snapshot", "get_heaven_snapshot", "heaven_snapshot"},
-		{"warn if not latest Asimi version", "check_asimi_version", "asimi_version"},
+		{"Asimi's versions", "check_asimi_version", "asimi_version"},
 	}
 	for _, b := range builtins {
 		_ = r.Register(b.pattern, b.handlerKey, b.outputKey) // builtin patterns are known-good
@@ -1277,6 +1278,24 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 				StepName:    entry.Key,
 				Status:      "cmd_done",
 				Message:     raw,
+			})
+		}
+	}
+
+	// === OUT ===
+	if step.Out != "" {
+		out := r.expandTemplate(step.Out, exec)
+		if exec.notify != nil {
+			exec.notify(RitualStepMsg{
+				TabID:       "chancellor",
+				RitualName:  exec.RitualName,
+				ExecutionID: exec.ID,
+				EdictID:     exec.EdictID,
+				StepName:    step.Name,
+				StepIndex:   exec.CurrentStep,
+				TotalSteps:  len(exec.def.Steps),
+				Status:      "info",
+				Message:     out,
 			})
 		}
 	}
@@ -2487,14 +2506,14 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 
 		// TODO: Raise event - awaiting ruler's seat
 		return nil
-	case "record the judge's seal":
+	case "record_judge_seal":
 		// Record the judge's seal on the edict
 		sealService := storage.NewSealService(r.db)
 		if err := sealService.GrantSeal(thenKey, "judge", storage.JSON{"ritual": exec.RitualName}); err != nil {
 			return fmt.Errorf("failed to record judge's seal: %w", err)
 		}
 		return nil
-	case "record the sage's seal":
+	case "record_sage_seal":
 		// Record the sage's seal on the edict
 		sealService := storage.NewSealService(r.db)
 		if err := sealService.GrantSeal(thenKey, "sage", storage.JSON{"ritual": exec.RitualName}); err != nil {

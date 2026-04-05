@@ -123,8 +123,14 @@
       then:
         - the sandbox is healthy
     - name: check-asimi-version
-      then:
-        - warn if not latest Asimi version
+      given:
+        - Asimi's versions
+      out: |
+        {{- if .asimi_version.has_update }}
+        ⚠ Update available: {{ .asimi_version.latest_version }} (current {{ .asimi_version.current_version }}) — run :update
+        {{- else }}
+        Running latest Asimi version {{ .asimi_version.current_version }}
+        {{- end }}
     - name: summarize-and-next
       on_failure: retry
       minister: chancellor

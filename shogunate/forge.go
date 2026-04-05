@@ -290,10 +290,14 @@ func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Li
 
 	var results []string
 	completedLingIDs := make(map[string]bool)
+	inBatch := make(map[string]bool, len(lings))
+	for _, l := range lings {
+		inBatch[l.LingID] = true
+	}
 
 	for _, ling := range sortedLings {
 		// Check if dependencies are satisfied
-		if !f.dependenciesSatisfied(ling, completedLingIDs) {
+		if !f.dependenciesSatisfied(ling, completedLingIDs, inBatch) {
 			f.logger.Warn("ling dependencies not satisfied, skipping",
 				"ling_id", ling.LingID,
 				"dependencies", ling.Dependencies)
@@ -306,7 +310,7 @@ func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Li
 			"description", ling.Description)
 
 		// Build work prompt for this specific ling
-		lingWork := fmt.Sprintf("Execute this task order (ling):\n\n%s", ling.Description)
+		lingWork := ling.Description
 
 		// Create or reuse session for this ling
 		var session *Session
@@ -363,9 +367,14 @@ func (f *Forge) topologicalSort(lings []storage.Ling) ([]storage.Ling, error) {
 		inDegree[ling.LingID] = 0
 	}
 
-	// Build graph: dependency → dependent
+	// Build graph: dependency → dependent.
+	// Deps not in lingMap are already completed (filtered out by GetPendingLing's
+	// status=pending predicate on retry) — treat them as satisfied, not as a cycle.
 	for _, ling := range lings {
 		for _, dep := range ling.Dependencies {
+			if _, ok := lingMap[dep]; !ok {
+				continue
+			}
 			graph[dep] = append(graph[dep], ling.LingID)
 			inDegree[ling.LingID]++
 		}
@@ -400,9 +409,14 @@ func (f *Forge) topologicalSort(lings []storage.Ling) ([]storage.Ling, error) {
 	return sorted, nil
 }
 
-// dependenciesSatisfied checks if all dependencies are completed
-func (f *Forge) dependenciesSatisfied(ling storage.Ling, completed map[string]bool) bool {
+// dependenciesSatisfied checks if all dependencies are completed.
+// Deps not present in inBatch were completed in a previous forge attempt
+// (filtered out by GetPendingLing) and are treated as already satisfied.
+func (f *Forge) dependenciesSatisfied(ling storage.Ling, completed map[string]bool, inBatch map[string]bool) bool {
 	for _, dep := range ling.Dependencies {
+		if !inBatch[dep] {
+			continue
+		}
 		if !completed[dep] {
 			return false
 		}

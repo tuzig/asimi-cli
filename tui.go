@@ -1255,7 +1255,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
 			// User is submitting a historical prompt - rollback to that state
 			entry := m.sessionPromptHistory[m.historyCursor]
-			m.stopStreaming()
+			m.stopStreamingTab(m.tabs.ActiveTab().Target)
 			if session := m.getCurrentSession(); session != nil {
 				session.RollbackTo(entry.SessionSnapshot)
 			}
@@ -1468,7 +1468,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
 			entry := m.sessionPromptHistory[m.historyCursor]
-			m.stopStreaming()
+			m.stopStreamingTab(m.tabs.ActiveTab().Target)
 			if session := m.getCurrentSession(); session != nil {
 				session.RollbackTo(entry.SessionSnapshot)
 			}
@@ -1515,13 +1515,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
 				cmds = append(cmds, waitCmd)
 			}
-			tab := m.tabs.ActiveTab()
-			if tab.Cancel != nil {
-				tab.Cancel()
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			tab.Ctx = ctx
-			tab.Cancel = cancel
+			ctx := m.tabs.ActiveTab().Ctx
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
@@ -1549,15 +1543,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		return m, tea.Batch(cmds...)
-
-	case responseMsg:
-		chat := m.tabs.Content().Chat
-		chat.AddToRawHistory("AI_RESPONSE", string(msg))
-		m.stopStreaming()
-		// Use AddAIChunk for non-streaming AI responses
-		chat.AddAIChunk(string(msg))
-		chat.FinalizeLastAIMessage()
-		m.repoInfo.RefreshDiff()
 
 	case runners.ToolCallScheduledMsg:
 		chat := m.tabs.ChatByTab(msg.TabID)
@@ -1631,10 +1616,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, guardrailCmd
 
 	case shogunate.StreamInterruptedMsg:
-		// Streaming was interrupted by user
+		// Session already stopped — just reset UI state, don't re-cancel ctx.
 		m.tabs.ChatByTab(msg.TabID).AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
-		m.stopStreamingTab(msg.TabID)
+		m.clearStreamingTab(msg.TabID)
 		m.streamCompleteCallback = nil // Clear callback on interrupt
 		m.repoInfo.RefreshDiff()
 
@@ -1648,7 +1633,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Toast will be automatically truncated by commandline component if needed
 		m.commandLine.AddToast(fullError, "error", time.Second*5)
 		m.status.SetError() // Update status icon to show error
-		m.stopStreamingTab(msg.TabID)
+		// Session already stopped — just reset UI state, don't re-cancel ctx.
+		m.clearStreamingTab(msg.TabID)
 		m.repoInfo.RefreshDiff()
 
 		/* TODO: Add the message bellow
@@ -1667,7 +1653,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.Content))
 		slog.Warn("streamMaxTokensReachedMsg", "content_length", len(msg.Content))
 		chat.AddMessage("\n\n⚠️  Response truncated due to length limit")
-		m.stopStreamingTab(msg.TabID)
+		// Session already stopped — just reset UI state, don't re-cancel ctx.
+		m.clearStreamingTab(msg.TabID)
 		m.streamCompleteCallback = nil // Clear callback on max tokens
 		m.repoInfo.RefreshDiff()
 
@@ -2320,7 +2307,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Reset prompt history and waiting state
 			m.initHistory()
-			m.stopStreaming()
+			m.stopStreamingTab(m.tabs.ActiveTab().Target)
 
 			// Reset session conversation history
 			if session := m.getCurrentSession(); session != nil {
@@ -2372,13 +2359,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Add initialization message if this is an init command (has a prompt and callback)
 		// If there's a prompt, send it to the AI
 		if msg.prompt != "" {
-			tab := m.tabs.ActiveTab()
-			if tab.Cancel != nil {
-				tab.Cancel()
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			tab.Ctx = ctx
-			tab.Cancel = cancel
+			ctx := m.tabs.ActiveTab().Ctx
 			m.sessionActive = true
 
 			var streamCmd tea.Cmd
@@ -3019,6 +3000,16 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 // stopStreamingTab cancels streaming on a single tab by target ID.
 func (m *TUIModel) stopStreamingTab(tabTarget string) {
 	m.tabs.CancelTabByID(tabTarget)
+	if !m.tabs.AnyStreaming() {
+		m.stopWaitingForResponse()
+	}
+}
+
+// clearStreamingTab resets UI streaming state for a tab without touching its
+// context. Use this when the session has already stopped itself (interrupted,
+// errored, max-tokens) — cancelling again only creates feedback loops.
+func (m *TUIModel) clearStreamingTab(tabTarget string) {
+	m.tabs.ClearStreamingByTab(tabTarget)
 	if !m.tabs.AnyStreaming() {
 		m.stopWaitingForResponse()
 	}

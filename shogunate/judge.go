@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 )
@@ -57,11 +58,25 @@ func (j *Judge) SystemPrompt() string {
 
 // Tools returns the Judge's LLM tools for interactive sessions
 func (j *Judge) Tools() []Tool {
+	var zhengmingNotify tools.ZhengmingNotifyFunc
+	zhengmingNotify = func(requestID string, key storage.EdictKey, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
+		if j.notify != nil {
+			j.notify(ZhengmingPendingMsg{
+				RequestID:  requestID,
+				EdictKey:   key,
+				MinisterID: ministerID,
+				Questions:  questions,
+				Priority:   priority,
+			})
+		}
+	}
+
 	toolList := []Tool{
 		// Specialized Judge tools for verdict management
 		&RecordVerdictTool{judge: j},
 		&ListPendingManifestsTool{judge: j},
 		&UpdateManifestStatusTool{judge: j},
+		tools.RequestZhengmingTool{MinisterID: j.ministerID, Requester: j, Notify: zhengmingNotify, Username: j.username, Project: j.project},
 	}
 	// Add edit tools (read, write, edit, list, grep)
 	for _, t := range tools.GetEditTools(j.config.LLM) {
@@ -292,24 +307,54 @@ func (j *Judge) Run(ctx context.Context) {
 	}
 }
 
-// processTask handles a single task
+// processTask handles a single task. When an LLM is configured, Judge reasons
+// through the pending manifests via its tools (shell tests, record_verdict,
+// update_manifest_status). Without an LLM, it falls back to deterministic CI.
 func (j *Judge) processTask(ctx context.Context, task *Task) {
 	j.logger.Info("judge processing task",
 		"edict_id", task.EdictKey.ID,
 		"work", task.Work)
 
-	// Execute the judgment logic
-	sealed, err := j.execute(ctx, task.EdictKey)
+	notify := j.notify
+	if task.Notify != nil {
+		notify = task.Notify
+	}
 
-	// Send result back to Chancellor
+	var output string
+	var taskErr error
+	var session *Session
+	sealed := false
+
+	if j.model != nil {
+		session, output, taskErr = j.streamTask(ctx, task, notify)
+		// After the LLM finishes, check if all manifests are quenched to grant the seal
+		if taskErr == nil {
+			allQuenched, err := j.AllManifestsQuenched(task.EdictKey)
+			if err != nil {
+				j.logger.Warn("failed to check quenched status", "error", err)
+			} else if allQuenched {
+				if err := j.grantSeal(task.EdictKey, storage.JSON{"type": "judgment_complete"}); err != nil {
+					j.logger.Warn("failed to grant judge seal", "edict_id", task.EdictKey.ID, "error", err)
+				}
+				sealed = true
+			}
+		}
+	} else {
+		// Fallback: deterministic CI execution (used by tests and no-LLM setups)
+		var err error
+		sealed, err = j.execute(ctx, task.EdictKey)
+		taskErr = err
+		if sealed {
+			output = "judgment complete"
+		}
+	}
+
 	result := Result{
 		MinisterID: j.ID(),
 		Sealed:     sealed,
-		Err:        err,
-	}
-
-	if sealed {
-		result.Output = "judgment complete"
+		Output:     output,
+		Session:    session,
+		Err:        taskErr,
 	}
 
 	// Send result (non-blocking)
@@ -318,6 +363,37 @@ func (j *Judge) processTask(ctx context.Context, task *Task) {
 	default:
 		j.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
 	}
+}
+
+// streamTask creates (or reuses) a session and streams the task through the LLM.
+func (j *Judge) streamTask(ctx context.Context, task *Task, notify internal.NotifyFunc) (*Session, string, error) {
+	var session *Session
+	var err error
+
+	if task.Session != nil {
+		session = task.Session
+		session.SetNotify(notify)
+		_, err = session.AskWithStreaming(ctx, task.Work, nil)
+		if err != nil {
+			return session, "", err
+		}
+	} else {
+		session, err = CreateSessionWithOpts(j, j.model, j.config, notify, CreateSessionOpts{
+			EdictKey:   task.EdictKey,
+			TabID:      "chancellor",
+			Scratchpad: task.Scratchpad,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create judge session: %w", err)
+		}
+		_, err = session.AskWithStreaming(ctx, task.Work, nil)
+		if err != nil {
+			return session, "", err
+		}
+	}
+
+	j.logger.Info("judge task completed")
+	return session, "", nil
 }
 
 // --- Judge Specialized Tools ---
