@@ -29,8 +29,8 @@ func TestListActiveEdicts_ORSemantics(t *testing.T) {
 	// Create test edicts
 	edicts := []Edict{
 		{ID: 1, Username: "testuser", Project: "testproject", Intent: "Active edict (un-cancelled, unsealed)"},
-		{ID: 2, Username: "testuser", Project: "testproject", Intent: "Cancelled but unsealed (NEW: should be included)"},
-		{ID: 3, Username: "testuser", Project: "testproject", Intent: "Sealed but un-cancelled (NEW: should be included)"},
+		{ID: 2, Username: "testuser", Project: "testproject", Intent: "Cancelled but unsealed (should NOT be included)"},
+		{ID: 3, Username: "testuser", Project: "testproject", Intent: "Sealed but un-cancelled (should NOT be included)"},
 		{ID: 4, Username: "testuser", Project: "testproject", Intent: "Sealed and cancelled (should NOT be included)"},
 	}
 	for i := range edicts {
@@ -59,14 +59,14 @@ func TestListActiveEdicts_ORSemantics(t *testing.T) {
 	// Then cancel edict 4
 	db.Model(&Edict{}).Where("id = ?", 4).Update("cancelled_at", &now)
 
-	// Test ListActiveEdicts - should return edicts 1, 2, 3 (not 4)
+	// Test ListActiveEdicts - should return only edict 1 (un-cancelled AND unsealed)
 	activeEdicts, err := svc.ListActiveEdicts("testuser", "testproject")
 	if err != nil {
 		t.Fatalf("ListActiveEdicts failed: %v", err)
 	}
 
-	if len(activeEdicts) != 3 {
-		t.Errorf("Expected 3 active edicts, got %d", len(activeEdicts))
+	if len(activeEdicts) != 1 {
+		t.Errorf("Expected 1 active edict, got %d", len(activeEdicts))
 	}
 
 	// Build a map of returned edict IDs for easy checking
@@ -80,14 +80,14 @@ func TestListActiveEdicts_ORSemantics(t *testing.T) {
 		t.Error("Expected edict 1 (active) to be included")
 	}
 
-	// Edict 2 should be included (cancelled but unsealed) - NEW OR BEHAVIOR
-	if !returnedIDs[2] {
-		t.Error("Expected edict 2 (cancelled, unsealed) to be included due to OR semantics")
+	// Edict 2 should NOT be included (cancelled)
+	if returnedIDs[2] {
+		t.Error("Edict 2 (cancelled) should NOT be included")
 	}
 
-	// Edict 3 should be included (un-cancelled but sealed) - NEW OR BEHAVIOR
-	if !returnedIDs[3] {
-		t.Error("Expected edict 3 (sealed, un-cancelled) to be included due to OR semantics")
+	// Edict 3 should NOT be included (sealed with ruler seal)
+	if returnedIDs[3] {
+		t.Error("Edict 3 (sealed with ruler seal) should NOT be included")
 	}
 
 	// Edict 4 should NOT be included (cancelled AND sealed)
