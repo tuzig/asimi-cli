@@ -183,7 +183,6 @@ func runInteractiveMode() error {
 	return nil
 }
 
-type responseMsg string
 type errMsg struct{ err error }
 
 // llmInitSuccessMsg is sent when LLM initialization completes successfully

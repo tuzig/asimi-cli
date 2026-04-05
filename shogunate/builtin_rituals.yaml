@@ -123,20 +123,16 @@
       then:
         - the sandbox is healthy
     - name: check-asimi-version
-      given:
-        # - Asimi's versions
-        - "!echo WIP"
-      # then:
-        # - notify on version update
+      then:
+        - warn if not latest Asimi version
     - name: summarize-and-next
       on_failure: retry
       minister: chancellor
       given:
-        # - the intent # unsealed edicts
-        # - the heaven # age and latest commit of "main" branch 
-        # TODO: remove "status"
+        - the unsealed edicts
+        - a heaven's snapshot
         - the earth status
-        - the court status # recent ritual executions and event log
+        - the court status
       act: |
         Given the information below, provide a succinct report on 三界.
         finish by calling request_zhengming with a single question: "best path forward?" with

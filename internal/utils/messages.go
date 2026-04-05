@@ -2,19 +2,9 @@
 package utils
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 )
-
-// MustJSON marshals a value to JSON, returning "null" on error.
-func MustJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "null"
-	}
-	return string(b)
-}
 
 // Tree prefix constants for visual formatting
 const (

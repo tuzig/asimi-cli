@@ -23,6 +23,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/storage"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -216,6 +217,9 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the infrastructure is staged", "stage_infrastructure", "infrastructure_staged"},
 		{"record the judge's seal", "record_judge_seal", ""},
 		{"record the sage's seal", "record_sage_seal", ""},
+		{"the unsealed edicts", "get_unsealed_edicts", "unsealed_edicts"},
+		{"a heaven's snapshot", "get_heaven_snapshot", "heaven_snapshot"},
+		{"warn if not latest Asimi version", "check_asimi_version", "asimi_version"},
 	}
 	for _, b := range builtins {
 		_ = r.Register(b.pattern, b.handlerKey, b.outputKey) // builtin patterns are known-good
@@ -1827,9 +1831,104 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 		return r.verifySandboxReady(ctx)
 	case "get_project_metadata":
 		return r.getProjectMetadata(ctx)
+	case "get_unsealed_edicts":
+		return r.getUnsealedEdicts(ctx, exec)
+	case "get_heaven_snapshot":
+		return r.getHeavenSnapshot(ctx)
+	case "check_asimi_version":
+		return r.checkAsimiVersion(ctx)
 	default:
 		return nil, fmt.Errorf("unknown given function: %s", fn)
 	}
+}
+
+func (r *RitualRunner) getUnsealedEdicts(ctx context.Context, exec *RitualExecution) (interface{}, error) {
+	sealService := storage.NewSealService(r.db)
+	edicts, err := sealService.ListUnsealedEdicts(exec.Username, exec.Project)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, len(edicts))
+	for i, e := range edicts {
+		result[i] = map[string]interface{}{
+			"edict_id":    e.ID,
+			"summary":     e.IssueRef,
+			"status":      "active",
+			"updated_at":  e.UpdatedAt,
+			"has_judge":   e.HasJudgeSeal,
+			"has_sage":    e.HasSageSeal,
+		}
+	}
+	return result, nil
+}
+
+func (r *RitualRunner) getHeavenSnapshot(ctx context.Context) (interface{}, error) {
+	repoInfo := repo.GetRepoInfo()
+
+	// Get the main branch name (default to "main")
+	branch := repoInfo.BranchSlugOrDefault()
+
+	// Get latest commit info from upstream branch
+	output, err := runners.HostRun(ctx, runners.Input{
+		Command:        fmt.Sprintf("git log -1 --format='%%H' origin/%s", branch),
+		Description:    "get latest commit on upstream branch",
+		BypassApproval: true,
+	})
+	latestCommit := ""
+	if err == nil {
+		latestCommit = strings.TrimSpace(output.Output)
+		if len(latestCommit) > 7 {
+			latestCommit = latestCommit[:7]
+		}
+	}
+
+	// Calculate age of the commit
+	ageStr := ""
+	output2, err := runners.HostRun(ctx, runners.Input{
+		Command:        fmt.Sprintf("git log -1 --format='%%cr' origin/%s", branch),
+		Description:    "get age of upstream commit",
+		BypassApproval: true,
+	})
+	if err == nil {
+		ageStr = strings.TrimSpace(output2.Output)
+	}
+
+	return map[string]string{
+		"branch":        branch,
+		"latest_commit": latestCommit,
+		"age":           ageStr,
+	}, nil
+}
+
+func (r *RitualRunner) checkAsimiVersion(ctx context.Context) (interface{}, error) {
+	latest, hasUpdate, err := utils.CheckForUpdates()
+	if err != nil {
+		r.logger.Debug("asimi version check failed", "error", err)
+		return map[string]interface{}{
+			"current_version": utils.AsimiVersion,
+			"has_update":      false,
+			"error":           err.Error(),
+		}, nil
+	}
+
+	result := map[string]interface{}{
+		"current_version": utils.AsimiVersion,
+		"latest_version":  latest.Version.String(),
+		"has_update":      hasUpdate,
+		"url":             latest.URL,
+	}
+
+	if hasUpdate {
+		r.logger.Info("asimi update available",
+			"current", utils.AsimiVersion,
+			"latest", latest.Version,
+			"url", latest.URL,
+		)
+	} else {
+		r.logger.Debug("running latest asimi version", "version", utils.AsimiVersion)
+	}
+
+	return result, nil
 }
 
 func (r *RitualRunner) getEdict(key storage.EdictKey) (interface{}, error) {
@@ -2401,6 +2500,10 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 		if err := sealService.GrantSeal(thenKey, "sage", storage.JSON{"ritual": exec.RitualName}); err != nil {
 			return fmt.Errorf("failed to record sage's seal: %w", err)
 		}
+		return nil
+	case "check_asimi_version":
+		// Warn if not running the latest Asimi version - non-blocking check
+		// This is handled as a "then" step that logs a warning but doesn't fail
 		return nil
 	default:
 		return fmt.Errorf("unknown then function: %s", fn)

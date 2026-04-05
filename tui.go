@@ -13,6 +13,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -2296,7 +2297,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Fire shogunate_started event to trigger wakeup ritual and health checks
-		latest, hasUpdate, _ := CheckForUpdates(version)
+		latest, hasUpdate, _ := utils.CheckForUpdates()
 		m.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{
 			"latest_version":  latest.Version,
 			"has_update":      hasUpdate,

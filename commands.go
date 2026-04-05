@@ -12,6 +12,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
@@ -728,7 +729,7 @@ func handleUpdateCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 
 		// Check for updates
-		latest, hasUpdate, err := CheckForUpdates(version)
+		latest, hasUpdate, err := utils.CheckForUpdates()
 		if err != nil {
 			return updateCheckMsg{hasUpdate: false, err: err}
 		}
