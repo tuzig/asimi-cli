@@ -11,7 +11,7 @@ func TestChatComponent_StartBlock(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
 		// Start with one message
 		chat.AddMessage("header message")
-		
+
 		// Start a block with height limit of 5
 		// Block records len(messages)-1 = 0
 		chat.StartBlock(5)
@@ -24,7 +24,7 @@ func TestChatComponent_StartBlock(t *testing.T) {
 	t.Run("starts block with unlimited height (0)", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
 		chat.AddMessage("first")
-		
+
 		// Start an unlimited block
 		chat.StartBlock(0)
 
@@ -35,7 +35,7 @@ func TestChatComponent_StartBlock(t *testing.T) {
 
 	t.Run("multiple blocks with different heights", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		
+
 		// First block: after 2 messages, block starts at index 1
 		chat.AddMessage("block1-msg1")
 		chat.AddMessage("block1-msg2")
