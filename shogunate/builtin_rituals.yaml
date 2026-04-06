@@ -145,7 +145,7 @@
         finish by calling request_zhengming with a single question: "best path forward?" with
         a few options for a clear next step. e.g, "commit middle kingdom", "review borderlands".
         
-- name: borderland-review
+- name: review-borderland
   description: |
     Code review - judge and sage review the borderlands before
     staging
@@ -154,12 +154,13 @@
   background:
     - the borderlands
   steps:
-    - name: judge
+    - name: judgement
       minister: judge
       act: |
         If the tests pass, ensure 
-        the changes in the borderlands and middle kingdom are covered by tests
-    - name: sage
+        the changes in the borderlands and middle kingdom are covered by tests.
+        Censoring is next so don't stage, commit nor push. 
+    - name: censoring
       minister: sage
       act: |
         Review the manifests and the code changes below.
