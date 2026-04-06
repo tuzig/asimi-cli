@@ -64,6 +64,7 @@ func setupMinisterTestDBWithPath(t *testing.T) (*gorm.DB, string) {
 		&storage.TianEventDLQ{},
 		&storage.Ling{},
 		&storage.ForgeManifest{},
+		&storage.Seal{},
 		&storage.JudgeVerdict{},
 		&storage.CensorPrecedent{},
 		&storage.MarshalIncident{},

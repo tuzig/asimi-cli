@@ -125,6 +125,24 @@ func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 	return totalCount > 0 && pendingCount == 0, nil
 }
 
+// sealIfComplete checks whether all manifests for the edict are quenched
+// and, if so, grants the Judge's seal. Returns true when sealed.
+func (j *Judge) sealIfComplete(key storage.EdictKey) bool {
+	allQuenched, err := j.AllManifestsQuenched(key)
+	if err != nil {
+		j.logger.Warn("failed to check quenched status", "error", err)
+		return false
+	}
+	if !allQuenched {
+		return false
+	}
+	if err := j.grantSeal(key, storage.JSON{"type": "judgment_complete"}); err != nil {
+		j.logger.Warn("failed to grant judge seal", "edict_id", key.ID, "error", err)
+		return false
+	}
+	return true
+}
+
 // InsertVerdict records a CI judgment for a manifest
 func (j *Judge) InsertVerdict(manifestID, testSuite string, outcome storage.VerdictOutcome, evidence storage.JSON) (string, error) {
 	verdictID := GenerateID("verdict", manifestID, testSuite)
@@ -218,20 +236,7 @@ func (j *Judge) execute(ctx context.Context, key storage.EdictKey) (bool, error)
 		}
 	}
 
-	// Check again if all are now quenched
-	allQuenched, err = j.AllManifestsQuenched(key)
-	if err != nil {
-		return false, fmt.Errorf("check quenched after judging: %w", err)
-	}
-
-	// If all manifests passed, grant the Judge's seal
-	if allQuenched {
-		if err := j.grantSeal(key, storage.JSON{"type": "judgment_complete"}); err != nil {
-			j.logger.Warn("failed to grant judge seal", "edict_id", key.ID, "error", err)
-		}
-	}
-
-	return allQuenched, nil
+	return j.sealIfComplete(key), nil
 }
 
 // judgeManifest runs CI for a single manifest
@@ -327,17 +332,8 @@ func (j *Judge) processTask(ctx context.Context, task *Task) {
 
 	if j.model != nil {
 		session, output, taskErr = j.streamTask(ctx, task, notify)
-		// After the LLM finishes, check if all manifests are quenched to grant the seal
 		if taskErr == nil {
-			allQuenched, err := j.AllManifestsQuenched(task.EdictKey)
-			if err != nil {
-				j.logger.Warn("failed to check quenched status", "error", err)
-			} else if allQuenched {
-				if err := j.grantSeal(task.EdictKey, storage.JSON{"type": "judgment_complete"}); err != nil {
-					j.logger.Warn("failed to grant judge seal", "edict_id", task.EdictKey.ID, "error", err)
-				}
-				sealed = true
-			}
+			sealed = j.sealIfComplete(task.EdictKey)
 		}
 	} else {
 		// Fallback: deterministic CI execution (used by tests and no-LLM setups)
@@ -473,9 +469,8 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 			return "", fmt.Errorf("failed to update manifest status: %w", err)
 		}
 	}
-	// TODO: Add sealing of the edict
-
-	return fmt.Sprintf("Recorded verdict (passed=%v) for edict %d", params.Passed, params.EdictID), nil
+	sealed := t.judge.sealIfComplete(key)
+	return fmt.Sprintf("Recorded verdict (passed=%v) for edict %d (sealed=%v)", params.Passed, params.EdictID, sealed), nil
 }
 
 func (t *RecordVerdictTool) ParameterSchema() map[string]any {

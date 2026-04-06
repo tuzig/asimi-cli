@@ -204,6 +204,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the precedents", "get_precedents", "precedents"},
 		{"the earth status", "get_earth_status", "earth_status"},
 		{"the borderlands", "get_borderlands", "borderlands"},
+		{"manifests for the borderlands", "create_borderland_manifests", "borderland_manifests"},
 		{"the edict is sealed", "seal_edict", "sealed"},
 		{"the edict is blocked", "block_edict", "blocked"},
 		{"the edict is unblocked", "unblock_edict", "unblocked"},
@@ -1756,6 +1757,8 @@ func (r *RitualRunner) runBuiltinGiven(ctx context.Context, exec *RitualExecutio
 		return r.getEarthStatus(ctx)
 	case "get_borderlands":
 		return r.getBorderlands(ctx)
+	case "create_borderland_manifests":
+		return r.createBorderlandManifests(ctx, exec)
 	case "check_clean_working_directory":
 		return r.checkCleanWorkingDirectory(ctx)
 	case "get_infrastructure_templates":
@@ -2023,6 +2026,54 @@ func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) 
 		result["borderlands:untracked"] = untracked.Output
 	}
 	return result, nil
+}
+
+// createBorderlandManifests creates forge manifests from unstaged changes.
+// It runs git diff --name-only to get changed files, then creates a ForgeManifest
+// for each one so the judge can verdict against them through the standard pipeline.
+func (r *RitualRunner) createBorderlandManifests(ctx context.Context, exec *RitualExecution) (interface{}, error) {
+	key := exec.EdictKey()
+
+	output, err := r.runner.Run(ctx, runners.Input{
+		Command:        "git diff --name-only",
+		Description:    "list borderland changed files",
+		BypassApproval: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only: %w", err)
+	}
+
+	files := strings.Split(strings.TrimSpace(output.Output), "\n")
+	var manifests []map[string]interface{}
+	for _, f := range files {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.ID), "borderland", f)
+		manifest := storage.ForgeManifest{
+			ManifestID: manifestID,
+			EdictID:    key.ID,
+			Username:   key.Username,
+			Project:    key.Project,
+			FilePath:   f,
+			Status:     storage.ManifestForged,
+		}
+		if err := r.db.Create(&manifest).Error; err != nil {
+			return nil, fmt.Errorf("failed to create borderland manifest for %s: %w", f, err)
+		}
+		manifests = append(manifests, map[string]interface{}{
+			"manifest_id": manifestID,
+			"edict_id":    key.ID,
+			"file_path":   f,
+			"status":      string(storage.ManifestForged),
+		})
+	}
+
+	if len(manifests) == 0 {
+		return "no borderland changes found", nil
+	}
+	return manifests, nil
 }
 
 // checkCleanWorkingDirectory verifies the working directory is clean (no unstaged changes)

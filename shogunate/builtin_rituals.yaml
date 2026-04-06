@@ -156,10 +156,13 @@
   steps:
     - name: judgement
       minister: judge
+      given:
+        - manifests for the borderlands
       act: |
-        If the tests pass, ensure 
+        If the tests pass, ensure
         the changes in the borderlands and middle kingdom are covered by tests.
-        Censoring is next so don't stage, commit nor push. 
+        Use record_verdict to record pass/fail for this edict.
+        Censoring is next so don't stage, commit nor push.
     - name: censoring
       minister: sage
       act: |
