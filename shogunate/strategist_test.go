@@ -26,7 +26,7 @@ func (m *capturingMinister) ID() string           { return m.id }
 func (m *capturingMinister) SystemPrompt() string { return "" }
 func (m *capturingMinister) Title() string        { return m.id }
 func (m *capturingMinister) Tools() []Tool        { return nil }
-func (m *capturingMinister) Tasks() chan<- *Task   { return m.tasksCh }
+func (m *capturingMinister) Tasks() chan<- *Task  { return m.tasksCh }
 func (m *capturingMinister) Run(ctx context.Context) {
 	for {
 		select {

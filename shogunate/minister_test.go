@@ -963,10 +963,10 @@ func (m *mockHealthCheckRunner) Run(ctx context.Context, input runners.Input) (r
 	}, nil
 }
 
-func (m *mockHealthCheckRunner) AllowFallback(bool)                      {}
-func (m *mockHealthCheckRunner) Close(context.Context) error           { return nil }
-func (m *mockHealthCheckRunner) Restart(context.Context) error        { return nil }
-func (m *mockHealthCheckRunner) RunnerType() string                   { return "mock" }
+func (m *mockHealthCheckRunner) AllowFallback(bool)                           {}
+func (m *mockHealthCheckRunner) Close(context.Context) error                  { return nil }
+func (m *mockHealthCheckRunner) Restart(context.Context) error                { return nil }
+func (m *mockHealthCheckRunner) RunnerType() string                           { return "mock" }
 func (m *mockHealthCheckRunner) SetMessageChannel(msgChan chan<- runners.Msg) {}
 
 func TestZhengmingMultipleQuestions(t *testing.T) {
@@ -1122,4 +1122,24 @@ func TestCreateEdict_DoesNotReserveEdict1(t *testing.T) {
 	// User edict should NOT be edict 1 (it should get auto-incremented ID)
 	assert.NotEqual(t, uint(1), userEdict.ID, "user edicts should not use reserved edict 1")
 	assert.Greater(t, userEdict.ID, uint(1), "user edict should have ID > 1")
+}
+
+// TestMinisterBase_SessionMethods tests the session getter, setter, and reset methods.
+func TestMinisterBase_SessionMethods(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+
+	// Initially nil
+	assert.Nil(t, base.Session())
+
+	// Create a mock session
+	mockSess := &Session{ID: "test-session"}
+
+	// Set session
+	base.SetSession(mockSess)
+	assert.NotNil(t, base.Session())
+	assert.Equal(t, "test-session", base.Session().ID)
+
+	// Reset session
+	base.ResetSession()
+	assert.Nil(t, base.Session())
 }

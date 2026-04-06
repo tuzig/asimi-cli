@@ -31,7 +31,7 @@ func TestTransitionEdictTool_Cancel(t *testing.T) {
 
 	// Create an edict
 	edict := storage.Edict{
-		ID:  1,
+		ID:       1,
 		Username: "testuser",
 		Project:  "testproject",
 		Intent:   "Test edict",
@@ -78,7 +78,7 @@ func TestTransitionEdictTool_InvalidStatus(t *testing.T) {
 
 	// Create an edict
 	edict := storage.Edict{
-		ID:  1,
+		ID:       1,
 		Username: "testuser",
 		Project:  "testproject",
 		Intent:   "Test edict",
@@ -101,7 +101,7 @@ func TestTransitionEdictTool_BlockedToSealed(t *testing.T) {
 
 	// Create an edict (not blocked)
 	edict := storage.Edict{
-		ID:  1,
+		ID:       1,
 		Username: "testuser",
 		Project:  "testproject",
 		Intent:   "Test edict",

@@ -43,7 +43,7 @@ var dotagentsBashrc string
 
 // RitualStepMsg notifies the UI of ritual step progress
 type RitualStepMsg struct {
-	TabID       string
+	ChannelID   string
 	RitualName  string
 	ExecutionID string
 	EdictID     uint
@@ -399,7 +399,7 @@ func ValidateRitual(def *RitualDef) error {
 					return fmt.Errorf("ritual %q: fork step %q work[%d] requires act or task", def.Name, step.Name, i)
 				}
 			}
-		} 
+		}
 	}
 
 	// Check for circular dependencies
@@ -610,17 +610,17 @@ func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecuti
 
 // RitualExecution tracks a running ritual instance
 type RitualExecution struct {
-	ID          string            `gorm:"primaryKey;column:id"`
-	RitualName  string            `gorm:"column:ritual_name"`
-	EdictID     uint              `gorm:"column:edict_id;index"`
-	Username    string            `gorm:"column:username"`
-	Project     string            `gorm:"column:project"`
-	SessionID   string            `gorm:"column:session_id"`
-	CurrentStep int               `gorm:"column:current_step"`
-	State       RitualState       `gorm:"column:state"`
-	Data        storage.JSON      `gorm:"column:data;type:json"`
-	CreatedAt   time.Time         `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt   time.Time         `gorm:"column:updated_at;autoUpdateTime"`
+	ID          string       `gorm:"primaryKey;column:id"`
+	RitualName  string       `gorm:"column:ritual_name"`
+	EdictID     uint         `gorm:"column:edict_id;index"`
+	Username    string       `gorm:"column:username"`
+	Project     string       `gorm:"column:project"`
+	SessionID   string       `gorm:"column:session_id"`
+	CurrentStep int          `gorm:"column:current_step"`
+	State       RitualState  `gorm:"column:state"`
+	Data        storage.JSON `gorm:"column:data;type:json"`
+	CreatedAt   time.Time    `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt   time.Time    `gorm:"column:updated_at;autoUpdateTime"`
 
 	// Runtime (not persisted)
 	def        *RitualDef
@@ -640,6 +640,21 @@ func (RitualExecution) TableName() string {
 // EdictKey returns the storage.EdictKey for this execution.
 func (e *RitualExecution) EdictKey() storage.EdictKey {
 	return storage.EdictKey{ID: e.EdictID, Username: e.Username, Project: e.Project}
+}
+
+// Notify sends a ritual step message, pre-filling common fields from e.
+// If no notify function is set, this is a no-op.
+func (e *RitualExecution) Notify(msg RitualStepMsg) {
+	if e.notify != nil {
+		msg.ChannelID = "chancellor"
+		msg.RitualName = e.RitualName
+		msg.ExecutionID = e.ID
+		msg.EdictID = e.EdictID
+		if e.def != nil {
+			msg.TotalSteps = len(e.def.Steps)
+		}
+		e.notify(msg)
+	}
 }
 
 // RitualStepState tracks the state of a step within an execution
@@ -865,18 +880,10 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 		steps = len(exec.def.Steps)
 	}
 
-	if exec.notify != nil {
-		exec.notify(RitualStepMsg{
-			TabID:       "chancellor",
-			RitualName:  exec.RitualName,
-			ExecutionID: exec.ID,
-			EdictID:     exec.EdictID,
-			TotalSteps:  steps,
-			Status:      "started",
-		})
-	} else {
-		r.logger.Warn("Can't notify a ritual has started", "name", exec.RitualName)
-	}
+	exec.Notify(RitualStepMsg{
+		TotalSteps: steps,
+		Status:     "started",
+	})
 	return exec, nil
 }
 
@@ -907,34 +914,22 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			r.saveExecution(exec)
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
-		if exec.notify != nil {
-			exec.notify(RitualStepMsg{
-				TabID:       "chancellor",
-				RitualName:  exec.RitualName,
-				ExecutionID: exec.ID,
-				EdictID:     exec.EdictID,
-				StepName:    entry.Key,
-				Status:      "cmd_running",
-				Message:     raw,
-			})
-		}
+		exec.Notify(RitualStepMsg{
+			StepName: entry.Key,
+			Status:   "cmd_running",
+			Message:  raw,
+		})
 		result, err := r.runGivenStep(ctx, exec, entry)
 		if err != nil {
 			exec.State = RitualStateFailed
 			r.saveExecution(exec)
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
-		if exec.notify != nil {
-			exec.notify(RitualStepMsg{
-				TabID:       "chancellor",
-				RitualName:  exec.RitualName,
-				ExecutionID: exec.ID,
-				EdictID:     exec.EdictID,
-				StepName:    entry.Key,
-				Status:      "cmd_done",
-				Message:     raw,
-			})
-		}
+		exec.Notify(RitualStepMsg{
+			StepName: entry.Key,
+			Status:   "cmd_done",
+			Message:  raw,
+		})
 		storeGivenResult(exec, entry.Key, result)
 	}
 
@@ -943,16 +938,10 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		case <-ctx.Done():
 			exec.State = RitualStateAborted
 			r.saveExecution(exec)
-			if exec.notify != nil {
-				exec.notify(RitualStepMsg{
-					TabID:       "chancellor",
-					RitualName:  exec.RitualName,
-					ExecutionID: exec.ID,
-					EdictID:     exec.EdictID,
-					Status:      "ritual_failed",
-					Message:     "aborted by user",
-				})
-			}
+			exec.Notify(RitualStepMsg{
+				Status:  "ritual_failed",
+				Message: "aborted by user",
+			})
 			return ctx.Err()
 		default:
 		}
@@ -965,38 +954,23 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 			// Context cancelled (user interrupt) — abort without cascading events
 			if ctx.Err() != nil {
-				if exec.notify != nil {
-					exec.notify(RitualStepMsg{
-						TabID:       "chancellor",
-						RitualName:  exec.RitualName,
-						ExecutionID: exec.ID,
-						EdictID:     exec.EdictID,
-						StepName:    step.Name,
-						StepIndex:   exec.CurrentStep,
-						TotalSteps:  len(exec.def.Steps),
-						Status:      "aborted",
-						Message:     "aborted by user",
-					})
-				}
+				exec.Notify(RitualStepMsg{
+					StepName:  step.Name,
+					StepIndex: exec.CurrentStep,
+					Status:    "aborted",
+					Message:   "aborted by user",
+				})
 				exec.State = RitualStateAborted
 				r.saveExecution(exec)
 				return err
 			}
 
-			// Notify: step failed
-			if exec.notify != nil {
-				exec.notify(RitualStepMsg{
-					TabID:       "chancellor",
-					RitualName:  exec.RitualName,
-					ExecutionID: exec.ID,
-					EdictID:     exec.EdictID,
-					StepName:    step.Name,
-					StepIndex:   exec.CurrentStep,
-					TotalSteps:  len(exec.def.Steps),
-					Status:      "failed",
-					Message:     getRulersError(err),
-				})
-			}
+			exec.Notify(RitualStepMsg{
+				StepName:  step.Name,
+				StepIndex: exec.CurrentStep,
+				Status:    "failed",
+				Message:   getRulersError(err),
+			})
 
 			// Emit step_failed Tian event
 			r.emitEvent(execKey, storage.EventStepFailed, storage.JSON{
@@ -1011,20 +985,12 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			if !r.handleFailure(ctx, exec, step, err) {
 				exec.State = RitualStateFailed
 				r.saveExecution(exec)
-				// Notify UI so Indent is decremented
-				if exec.notify != nil {
-					exec.notify(RitualStepMsg{
-						TabID:       "chancellor",
-						RitualName:  exec.RitualName,
-						ExecutionID: exec.ID,
-						EdictID:     exec.EdictID,
-						StepName:    step.Name,
-						StepIndex:   exec.CurrentStep,
-						TotalSteps:  len(exec.def.Steps),
-						Status:      "ritual_failed",
-						Message:     getRulersError(err),
-					})
-				}
+				exec.Notify(RitualStepMsg{
+					StepName:  step.Name,
+					StepIndex: exec.CurrentStep,
+					Status:    "ritual_failed",
+					Message:   getRulersError(err),
+				})
 				// Emit ritual_failed Tian event
 				lastStepOutput := getLastStepOutput(exec)
 				r.emitEvent(execKey, storage.EventRitualFailed, storage.JSON{
@@ -1039,20 +1005,12 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			continue
 		}
 
-		// Notify: step completed
-		if exec.notify != nil {
-			exec.notify(RitualStepMsg{
-				TabID:       "chancellor",
-				RitualName:  exec.RitualName,
-				ExecutionID: exec.ID,
-				EdictID:     exec.EdictID,
-				StepName:    step.Name,
-				StepIndex:   exec.CurrentStep,
-				TotalSteps:  len(exec.def.Steps),
-				Status:      "completed",
-				Message:     result,
-			})
-		}
+		exec.Notify(RitualStepMsg{
+			StepName:  step.Name,
+			StepIndex: exec.CurrentStep,
+			Status:    "completed",
+			Message:   result,
+		})
 		// Emit step_completed Tian event
 		r.emitEvent(execKey, storage.EventStepCompleted, storage.JSON{
 			"ritual":       exec.RitualName,
@@ -1098,31 +1056,27 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 	exec.State = RitualStateCompleted
 	r.saveExecution(exec)
 
-	// Notify: ritual completed
-	if exec.notify != nil {
-		exec.notify(RitualStepMsg{
-			TabID:       "chancellor",
-			RitualName:  exec.RitualName,
-			ExecutionID: exec.ID,
-			EdictID:     exec.EdictID,
-			StepName:    "",
-			StepIndex:   len(exec.def.Steps),
-			TotalSteps:  len(exec.def.Steps),
-			Status:      "ritual_completed",
-		})
-	}
+	duration := time.Since(exec.CreatedAt).Round(time.Millisecond)
+
+	exec.Notify(RitualStepMsg{
+		StepIndex: len(exec.def.Steps),
+		Status:    "ritual_completed",
+		Message:   duration.String(),
+	})
 	// Emit ritual_completed Tian event
 	lastStepOutput := getLastStepOutput(exec)
 	r.emitEvent(execKey, storage.EventRitualCompleted, storage.JSON{
 		"ritual":           exec.RitualName,
 		"execution_id":     exec.ID,
 		"last_step_output": lastStepOutput,
+		"duration":         duration.String(),
 	})
 
 	r.logger.Info("ritual completed",
 		"ritual", exec.RitualName,
 		"execution_id", exec.ID,
-		"edict_id", exec.EdictID)
+		"edict_id", exec.EdictID,
+		"duration", duration)
 
 	return nil
 }
@@ -1156,6 +1110,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	}
 
 	// Check edict status before executing step - abort if sealed or cancelled
+	// TODO: move to the top of the ritual, before background handling
 	if exec.EdictID != 0 {
 		sealService := storage.NewSealService(r.db)
 		status, err := sealService.GetEdictStatus(execKey)
@@ -1178,19 +1133,11 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		"step", step.Name,
 		"minister", step.Minister)
 
-	// Notify: step started
-	if exec.notify != nil {
-		exec.notify(RitualStepMsg{
-			TabID:       "chancellor",
-			RitualName:  exec.RitualName,
-			ExecutionID: exec.ID,
-			EdictID:     exec.EdictID,
-			StepName:    step.Name,
-			StepIndex:   exec.CurrentStep,
-			TotalSteps:  len(exec.def.Steps),
-			Status:      "started",
-		})
-	}
+	exec.Notify(RitualStepMsg{
+		StepName:  step.Name,
+		StepIndex: exec.CurrentStep,
+		Status:    "started",
+	})
 	// Emit step_started Tian event
 	r.emitEvent(execKey, storage.EventStepStarted, storage.JSON{
 		"ritual":       exec.RitualName,
@@ -1241,17 +1188,11 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		if err != nil {
 			return "", fmt.Errorf("then %q failed: %w", raw, err)
 		}
-		if exec.notify != nil {
-			exec.notify(RitualStepMsg{
-				TabID:       "chancellor",
-				RitualName:  exec.RitualName,
-				ExecutionID: exec.ID,
-				EdictID:     exec.EdictID,
-				StepName:    entry.Key,
-				Status:      "cmd_running",
-				Message:     raw,
-			})
-		}
+		exec.Notify(RitualStepMsg{
+			StepName: entry.Key,
+			Status:   "cmd_running",
+			Message:  raw,
+		})
 		if err := r.runThenStep(ctx, exec, entry); errors.Is(err, ErrZhengmingPending) {
 			// Block until the ruler answers the zhengming
 			requestID, ok := exec.Data["pending_zhengming"].(string)
@@ -1269,35 +1210,22 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		} else if err != nil {
 			return "", fmt.Errorf("then %q failed: %w", raw, err)
 		}
-		if exec.notify != nil {
-			exec.notify(RitualStepMsg{
-				TabID:       "chancellor",
-				RitualName:  exec.RitualName,
-				ExecutionID: exec.ID,
-				EdictID:     exec.EdictID,
-				StepName:    entry.Key,
-				Status:      "cmd_done",
-				Message:     raw,
-			})
-		}
+		exec.Notify(RitualStepMsg{
+			StepName: entry.Key,
+			Status:   "cmd_done",
+			Message:  raw,
+		})
 	}
 
 	// === OUT ===
 	if step.Out != "" {
 		out := r.expandTemplate(step.Out, exec)
-		if exec.notify != nil {
-			exec.notify(RitualStepMsg{
-				TabID:       "chancellor",
-				RitualName:  exec.RitualName,
-				ExecutionID: exec.ID,
-				EdictID:     exec.EdictID,
-				StepName:    step.Name,
-				StepIndex:   exec.CurrentStep,
-				TotalSteps:  len(exec.def.Steps),
-				Status:      "info",
-				Message:     out,
-			})
-		}
+		exec.Notify(RitualStepMsg{
+			StepName:  step.Name,
+			StepIndex: exec.CurrentStep,
+			Status:    "info",
+			Message:   out,
+		})
 	}
 
 	return actResult, nil
@@ -1321,19 +1249,12 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 		"over", step.Fork.Over)
 
 	// Notify: fork started
-	if exec.notify != nil {
-		exec.notify(RitualStepMsg{
-			TabID:       "chancellor",
-			RitualName:  exec.RitualName,
-			ExecutionID: exec.ID,
-			EdictID:     exec.EdictID,
-			StepName:    step.Name,
-			StepIndex:   exec.CurrentStep,
-			TotalSteps:  len(exec.def.Steps),
-			Status:      "started",
-			Message:     fmt.Sprintf("fork over %s", step.Fork.Over),
-		})
-	}
+	exec.Notify(RitualStepMsg{
+		StepName:  step.Name,
+		StepIndex: exec.CurrentStep,
+		Status:    "started",
+		Message:   fmt.Sprintf("fork over %s", step.Fork.Over),
+	})
 
 	// Emit step_started Tian event
 	r.emitEvent(execKey, storage.EventStepStarted, storage.JSON{
@@ -1405,19 +1326,12 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 	summary := fmt.Sprintf("Fork completed: %d successful, %d failed", len(forkOut), len(forkErr))
 
 	// Notify: fork completed
-	if exec.notify != nil {
-		exec.notify(RitualStepMsg{
-			TabID:       "chancellor",
-			RitualName:  exec.RitualName,
-			ExecutionID: exec.ID,
-			EdictID:     exec.EdictID,
-			StepName:    step.Name,
-			StepIndex:   exec.CurrentStep,
-			TotalSteps:  len(exec.def.Steps),
-			Status:      "completed",
-			Message:     summary,
-		})
-	}
+	exec.Notify(RitualStepMsg{
+		StepName:  step.Name,
+		StepIndex: exec.CurrentStep,
+		Status:    "completed",
+		Message:   summary,
+	})
 
 	// Emit step_completed Tian event
 	r.emitEvent(execKey, storage.EventStepCompleted, storage.JSON{
@@ -1630,9 +1544,11 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		Session:    session,
 		Done:       doneChan,
 		Notify:     exec.notify, // Route minister output to Ruling tab
+		ChannelID:  "chancellor",
 	}
 
 	// Set up zhengming signal so we can pause the timeout
+	// TODO: simplify
 	zhengmingSig := make(chan struct{}, 1)
 	if setter, ok := minister.(interface{ SetOnZhengmingRaised(func()) }); ok {
 		setter.SetOnZhengmingRaised(func() {
@@ -1653,6 +1569,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 
 	// Wait for result with pausable timeout
 	stepIdx := exec.CurrentStep
+	// TODO: move constant to to conf
 	timer := time.NewTimer(15 * time.Minute)
 	defer timer.Stop()
 
@@ -1870,12 +1787,12 @@ func (r *RitualRunner) getUnsealedEdicts(ctx context.Context, exec *RitualExecut
 	result := make([]map[string]interface{}, len(edicts))
 	for i, e := range edicts {
 		result[i] = map[string]interface{}{
-			"edict_id":    e.ID,
-			"summary":     e.IssueRef,
-			"status":      "active",
-			"updated_at":  e.UpdatedAt,
-			"has_judge":   e.HasJudgeSeal,
-			"has_sage":    e.HasSageSeal,
+			"edict_id":   e.ID,
+			"summary":    e.IssueRef,
+			"status":     "active",
+			"updated_at": e.UpdatedAt,
+			"has_judge":  e.HasJudgeSeal,
+			"has_sage":   e.HasSageSeal,
 		}
 	}
 	return result, nil
@@ -2650,19 +2567,12 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 		if exec.stepStates[exec.CurrentStep].RetryCount < maxRetries {
 			exec.stepStates[exec.CurrentStep].RetryCount++
 			// Notify: retrying
-			if exec.notify != nil {
-				exec.notify(RitualStepMsg{
-					TabID:       "chancellor",
-					RitualName:  exec.RitualName,
-					ExecutionID: exec.ID,
-					EdictID:     exec.EdictID,
-					StepName:    step.Name,
-					StepIndex:   exec.CurrentStep,
-					TotalSteps:  len(exec.def.Steps),
-					Status:      "retrying",
-					Message:     fmt.Sprintf("attempt %d/%d", exec.stepStates[exec.CurrentStep].RetryCount, maxRetries),
-				})
-			}
+			exec.Notify(RitualStepMsg{
+				StepName:  step.Name,
+				StepIndex: exec.CurrentStep,
+				Status:    "retrying",
+				Message:   fmt.Sprintf("attempt %d/%d", exec.stepStates[exec.CurrentStep].RetryCount, maxRetries),
+			})
 			r.logger.Info("retrying step",
 				"step", step.Name,
 				"attempt", exec.stepStates[exec.CurrentStep].RetryCount)

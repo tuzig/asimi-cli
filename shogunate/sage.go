@@ -120,7 +120,6 @@ type Sage struct {
 	*MinisterBase
 	shogunate *Shogunate
 	tasks     chan *Task
-	session   *Session
 	linter    Linter
 }
 
@@ -157,7 +156,6 @@ func (c *Sage) Tools() []Tool {
 		&RecordPrecedentTool{sage: c},
 		&ListQuenchedManifestsTool{sage: c},
 		&QueryPrecedentsTool{sage: c},
-
 	}
 	for _, t := range tools.GetROTools(c.config.LLM) {
 		toolList = append(toolList, t)
@@ -165,9 +163,9 @@ func (c *Sage) Tools() []Tool {
 	return toolList
 }
 
-// ResetSession nils out the hunting session so the next prompt creates a fresh one
+// ResetSession clears the Sage's session (delegates to MinisterBase)
 func (c *Sage) ResetSession() {
-	c.session = nil
+	c.MinisterBase.ResetSession()
 }
 
 // RestoreSession creates a fully-wired hunting session and injects loaded history
@@ -178,13 +176,13 @@ func (c *Sage) RestoreSession(msgs []llms.MessageContent) error {
 	}
 	sess.SetMessages(msgs)
 	sess.TabType = "hunting"
-	c.session = sess
+	c.MinisterBase.SetSession(sess)
 	return nil
 }
 
-// GetSession returns the Sage's hunting session
+// GetSession returns the Sage's session (from MinisterBase)
 func (c *Sage) GetSession() *Session {
-	return c.session
+	return c.MinisterBase.Session()
 }
 
 // GetEdict retrieves an edict (satisfies EdictManager for GetEdictStatusTool)
@@ -230,28 +228,29 @@ func (c *Sage) Run(ctx context.Context) {
 
 func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 	if c.model == nil {
-		c.notify(StreamErrorMsg{TabID: "sage", Err: fmt.Errorf("LLM not configured")})
+		c.notify(StreamErrorMsg{ChannelID: "sage", Err: fmt.Errorf("LLM not configured")})
 		return
 	}
 
-	if c.session == nil {
+	if c.MinisterBase.Session() == nil {
 		var err error
-		c.session, err = CreateSession(c, c.model, c.config, c.notify, "sage")
+		sess, err := CreateSession(c, c.model, c.config, c.notify, "sage")
 		if err != nil {
-			c.notify(StreamErrorMsg{TabID: "sage", Err: fmt.Errorf("failed to create session: %w", err)})
+			c.notify(StreamErrorMsg{ChannelID: "sage", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
-		c.session.TabType = "hunting"
+		sess.TabType = "hunting"
+		c.MinisterBase.SetSession(sess)
 	}
 
-	c.notify(StreamStartMsg{TabID: "sage", EdictID: 0})
+	c.notify(StreamStartMsg{ChannelID: "sage", EdictID: 0})
 
-	_, err := c.session.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
+	_, err := c.MinisterBase.Session().AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
 	if err != nil && ctx.Err() == nil {
-		c.notify(StreamErrorMsg{TabID: "sage", Err: err})
+		c.notify(StreamErrorMsg{ChannelID: "sage", Err: err})
 		return
 	}
-	c.notify(StreamDoneMsg{TabID: "sage"})
+	c.notify(StreamDoneMsg{ChannelID: "sage"})
 }
 
 func (c *Sage) processTask(ctx context.Context, task *Task) {
@@ -272,7 +271,7 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 
 	if c.model != nil {
 		// Single call handles both new and existing session cases
-		session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session)
+		session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
 	} else {
 		output = "sage task acknowledged (no LLM configured)"
 	}
@@ -295,24 +294,52 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session (or reuses existing) and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session) (*Session, string, error) {
+func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string) (*Session, string, error) {
 	var session *Session
 	var err error
 
 	if existingSession != nil {
 		// Reuse existing session for multi-turn conversation
 		session = existingSession
-		session.SetNotify(notify)
+		// Derive ChannelID from existing session's routing target
+		sessionChannelID := session.ChannelID()
+		if sessionChannelID == "" {
+			sessionChannelID = channelID
+		}
+		if sessionChannelID == "" {
+			sessionChannelID = "sage"
+		}
+		session.SetNotify(notify, sessionChannelID)
+		_, err = session.AskWithStreaming(ctx, work, nil)
+		if err != nil {
+			return session, "", err
+		}
+	} else if c.MinisterBase.Session() != nil {
+		// Reuse embedded session
+		session = c.MinisterBase.Session()
+		// Derive ChannelID from session or parameter
+		sessionChannelID := session.ChannelID()
+		if sessionChannelID == "" {
+			sessionChannelID = channelID
+		}
+		if sessionChannelID == "" {
+			sessionChannelID = "sage"
+		}
+		session.SetNotify(notify, sessionChannelID)
 		_, err = session.AskWithStreaming(ctx, work, nil)
 		if err != nil {
 			return session, "", err
 		}
 	} else {
 		// Create new session for first invocation
+		// Use passed channelID if provided, otherwise default to "sage"
+		if channelID == "" {
+			channelID = "sage"
+		}
 		session, err = CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
-			EdictKey:   key,
-			TabID:      "chancellor",
-			Scratchpad: scratchpad,
+			EdictKey:    key,
+			ChannelID:   channelID,
+			Scratchpad:  scratchpad,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create sage session: %w", err)
@@ -746,17 +773,24 @@ func (c *Sage) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, erro
 		}, nil
 	}
 
-	// Create a session for the review
-	session, err := CreateSession(c, c.model, c.config, c.notify, "chancellor")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create sage session: %w", err)
+	// Create or reuse session for the review
+	var sess *Session
+	var err error
+	if c.MinisterBase.Session() != nil {
+		sess = c.MinisterBase.Session()
+	} else {
+		sess, err = CreateSession(c, c.model, c.config, c.notify, "sage")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create sage session: %w", err)
+		}
+		c.MinisterBase.SetSession(sess)
 	}
 
 	// Build the review prompt
 	reviewPrompt := c.buildReviewPrompt(diff)
 
 	// Get the review from the LLM
-	response, err := session.AskWithStreaming(ctx, reviewPrompt, nil)
+	response, err := sess.AskWithStreaming(ctx, reviewPrompt, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get LLM review: %w", err)
 	}
@@ -1101,5 +1135,3 @@ func (t *QueryPrecedentsTool) Format(input, result string, err error) string {
 	}
 	return fmt.Sprintf("Query Precedents: %s\n", result)
 }
-
-

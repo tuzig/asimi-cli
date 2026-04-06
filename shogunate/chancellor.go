@@ -22,12 +22,9 @@ var role string
 
 // Chancellor harmonizes all ministers and manages edict lifecycle
 type Chancellor struct {
-	*MinisterBase // embedded base provides db, llm, config, repoInfo, logger
+	*MinisterBase // embedded base provides db, llm, config, repoInfo, logger, session
 	shogunate     *Shogunate
 	taskChan      chan *Task
-
-	// Run() loop fields
-	RulingSession *Session // Persistent edict-free session for direct chat
 }
 
 // NewChancellor creates a new Chancellor minister
@@ -96,7 +93,7 @@ type InvokeMinisterTool struct {
 
 // MinisterInvokingMsg notifies the user that a minister is being invoked
 type MinisterInvokingMsg struct {
-	TabID      string
+	ChannelID  string
 	MinisterID string
 	EdictKey   storage.EdictKey
 	Task       string
@@ -104,7 +101,7 @@ type MinisterInvokingMsg struct {
 
 // MinisterCompletedMsg notifies the user that a minister completed its task
 type MinisterCompletedMsg struct {
-	TabID      string
+	ChannelID  string
 	MinisterID string
 	EdictKey   storage.EdictKey
 	Output     string
@@ -144,7 +141,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	}
 
 	key := storage.EdictKey{
-		ID:        params.EdictID,
+		ID:       params.EdictID,
 		Username: t.chancellor.username,
 		Project:  t.chancellor.project,
 	}
@@ -157,7 +154,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	// Notify: invoking
 	if t.chancellor.notify != nil {
 		t.chancellor.notify(MinisterInvokingMsg{
-			TabID:      "chancellor",
+			ChannelID:  "chancellor",
 			MinisterID: params.MinisterID,
 			EdictKey:   key,
 			Task:       params.Work,
@@ -170,7 +167,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		err := fmt.Errorf("minister not found: %s", params.MinisterID)
 		if t.chancellor.notify != nil {
 			t.chancellor.notify(MinisterCompletedMsg{
-				TabID:      "chancellor",
+				ChannelID:  "chancellor",
 				MinisterID: params.MinisterID,
 				EdictKey:   key,
 				Error:      err,
@@ -179,15 +176,21 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("minister %s failed: %w", params.MinisterID, err)
 	}
 
+	// Wrap notify with WithChannelID so Forge's session routes to Chancellor's tab
+	wrappedNotify := WithChannelID(t.chancellor.notify, t.chancellor.session, "chancellor")
+
 	// Create per-call done channel (synchronous blocking pattern)
 	doneChan := make(chan Result, 1)
 
-	// Create Task with per-call done channel
+	// Create Task with per-call done channel and wrapped notify
+	// ChannelID ensures streaming routes to Chancellor's tab
 	task := &Task{
-		Ctx:      ctx,
-		EdictKey: key,
-		Work:     params.Work,
-		Done:     doneChan,
+		Ctx:       ctx,
+		EdictKey:  key,
+		Work:      params.Work,
+		Done:      doneChan,
+		Notify:    wrappedNotify,
+		ChannelID: "chancellor",
 	}
 
 	// Send task to minister
@@ -211,7 +214,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		err := fmt.Errorf("minister %s timeout after %v", params.MinisterID, timeout)
 		if t.chancellor.notify != nil {
 			t.chancellor.notify(MinisterCompletedMsg{
-				TabID:      "chancellor",
+				ChannelID:  "chancellor",
 				MinisterID: params.MinisterID,
 				EdictKey:   key,
 				Error:      err,
@@ -226,7 +229,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		// Notify: failed
 		if t.chancellor.notify != nil {
 			t.chancellor.notify(MinisterCompletedMsg{
-				TabID:      "chancellor",
+				ChannelID:  "chancellor",
 				MinisterID: params.MinisterID,
 				EdictKey:   key,
 				Error:      result.Err,
@@ -242,7 +245,7 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 	// Notify: completed
 	if t.chancellor.notify != nil {
 		t.chancellor.notify(MinisterCompletedMsg{
-			TabID:      "chancellor",
+			ChannelID:  "chancellor",
 			MinisterID: params.MinisterID,
 			EdictKey:   key,
 			Output:     params.Work,
@@ -341,7 +344,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	}
 
 	key := storage.EdictKey{
-		ID:        params.EdictID,
+		ID:       params.EdictID,
 		Username: t.chancellor.username,
 		Project:  t.chancellor.project,
 	}
@@ -573,9 +576,9 @@ func (c *Chancellor) SubscribeToEvents(rg *RitualGuard) {
 	})
 }
 
-// ResetSession nils out the interactive session
+// ResetSession clears the Chancellor's session (delegates to MinisterBase)
 func (c *Chancellor) ResetSession() {
-	c.RulingSession = nil
+	c.MinisterBase.ResetSession()
 }
 
 // RestoreSession creates a fully-wired interactive session and injects loaded history
@@ -586,7 +589,7 @@ func (c *Chancellor) RestoreSession(msgs []llms.MessageContent) error {
 	}
 	sess.SetMessages(msgs)
 	sess.TabType = "interactive"
-	c.RulingSession = sess
+	c.MinisterBase.SetSession(sess)
 	return nil
 }
 
@@ -761,7 +764,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 	// No edict is created — the Chancellor can create one on-demand via tools.
 
 	// Notify TUI of edict ID before streaming begins
-	c.notify(StreamStartMsg{TabID: "chancellor", EdictID: key.ID})
+	c.notify(StreamStartMsg{ChannelID: "chancellor", EdictID: key.ID})
 
 	// Call LLM with streaming
 	c.brewWithStreaming(ctx, key, prompt.Message, prompt.ContextFiles)
@@ -770,19 +773,19 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 // brewWithStreaming delegates to Session for LLM interaction
 func (c *Chancellor) brewWithStreaming(ctx context.Context, key storage.EdictKey, prompt string, contextFiles map[string]string) {
 	if c.model == nil {
-		c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("LLM not configured")})
+		c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: fmt.Errorf("LLM not configured")})
 		return
 	}
 
-	// Always use RulingSession — no per-edict sessions
-	if c.RulingSession == nil {
+	// Always use session — no per-edict sessions
+	if c.session == nil {
 		var err error
-		c.RulingSession, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
+		c.session, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
 		if err != nil {
-			c.notify(StreamErrorMsg{TabID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
+			c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
-		c.RulingSession.TabType = "interactive"
+		c.session.TabType = "interactive"
 		c.logger.Info("chancellor created interactive session")
 	}
 
@@ -794,12 +797,12 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, key storage.EdictKey
 		fullPrompt = fmt.Sprintf("[Context: edict %d]\n\n%s", key.ID, prompt)
 	}
 
-	_, err := c.RulingSession.AskWithStreaming(ctx, fullPrompt, contextFiles)
+	_, err := c.session.AskWithStreaming(ctx, fullPrompt, contextFiles)
 	if err != nil && ctx.Err() == nil {
-		c.notify(StreamErrorMsg{TabID: "chancellor", Err: err})
+		c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: err})
 		return
 	}
-	c.notify(StreamDoneMsg{TabID: "chancellor"})
+	c.notify(StreamDoneMsg{ChannelID: "chancellor"})
 }
 
 // processTask handles a task from the ritual runner or other ministers.
@@ -812,19 +815,19 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 	var taskErr error
 
 	if c.model != nil {
-		// Always use RulingSession for task conversation
-		if c.RulingSession == nil {
+		// Always use session for task conversation
+		if c.session == nil {
 			var err error
-			c.RulingSession, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
+			c.session, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
 			if err != nil {
 				taskErr = fmt.Errorf("failed to create session: %w", err)
 			} else {
-				c.RulingSession.TabType = "interactive"
+				c.session.TabType = "interactive"
 			}
 		}
 
 		if taskErr == nil {
-			_, taskErr = c.RulingSession.AskWithStreaming(ctx, task.Work, nil)
+			_, taskErr = c.session.AskWithStreaming(ctx, task.Work, nil)
 		}
 	} else {
 		output = "chancellor task acknowledged (no LLM configured)"
@@ -875,11 +878,11 @@ func (c *Chancellor) handleEdictCreated(ctx context.Context, key storage.EdictKe
 func (c *Chancellor) handleRitualCompleted(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
 	c.logger.Info("handling ritual completed", "edict_id", key.ID, "payload", payload)
 
-	// Extract last_step_output from payload and append to RulingSession
+	// Extract last_step_output from payload and append to session
 	if lastStepOutput, ok := payload["last_step_output"].(string); ok && lastStepOutput != "" {
-		if c.RulingSession != nil {
-			c.RulingSession.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual completed. Last step output:\n%s", lastStepOutput))
-			c.logger.Debug("appended ritual completion to RulingSession", "edict_id", key.ID)
+		if c.session != nil {
+			c.session.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual completed. Last step output:\n%s", lastStepOutput))
+			c.logger.Debug("appended ritual completion to session", "edict_id", key.ID)
 		}
 	}
 
@@ -919,12 +922,12 @@ func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, key storage.Ed
 func (c *Chancellor) handleRitualFailed(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
 	c.logger.Error("handling ritual failed", "edict_id", key.ID, "payload", payload)
 
-	// Extract last_step_output and error from payload and append to RulingSession
+	// Extract last_step_output and error from payload and append to session
 	if lastStepOutput, ok := payload["last_step_output"].(string); ok && lastStepOutput != "" {
-		if c.RulingSession != nil {
+		if c.session != nil {
 			errMsg, _ := payload["error"].(string)
-			c.RulingSession.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual failed. Error: %s\nLast step output:\n%s", errMsg, lastStepOutput))
-			c.logger.Debug("appended ritual failure to RulingSession", "edict_id", key.ID)
+			c.session.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual failed. Error: %s\nLast step output:\n%s", errMsg, lastStepOutput))
+			c.logger.Debug("appended ritual failure to session", "edict_id", key.ID)
 		}
 	}
 

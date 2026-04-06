@@ -372,16 +372,30 @@ func (j *Judge) streamTask(ctx context.Context, task *Task, notify internal.Noti
 
 	if task.Session != nil {
 		session = task.Session
-		session.SetNotify(notify)
+		// Derive ChannelID from existing session's routing target
+		sessionChannelID := session.ChannelID()
+		if sessionChannelID == "" {
+			sessionChannelID = task.ChannelID
+		}
+		if sessionChannelID == "" {
+			sessionChannelID = "judge"
+		}
+		session.SetNotify(notify, sessionChannelID)
 		_, err = session.AskWithStreaming(ctx, task.Work, nil)
 		if err != nil {
 			return session, "", err
 		}
 	} else {
+		// Create new session for first invocation
+		// Use task.ChannelID if provided, otherwise default to "judge"
+		channelID := task.ChannelID
+		if channelID == "" {
+			channelID = "judge"
+		}
 		session, err = CreateSessionWithOpts(j, j.model, j.config, notify, CreateSessionOpts{
-			EdictKey:   task.EdictKey,
-			TabID:      "chancellor",
-			Scratchpad: task.Scratchpad,
+			EdictKey:    task.EdictKey,
+			ChannelID:   channelID,
+			Scratchpad:  task.Scratchpad,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create judge session: %w", err)
@@ -459,6 +473,7 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 			return "", fmt.Errorf("failed to update manifest status: %w", err)
 		}
 	}
+	// TODO: Add sealing of the edict
 
 	return fmt.Sprintf("Recorded verdict (passed=%v) for edict %d", params.Passed, params.EdictID), nil
 }

@@ -8,37 +8,37 @@ import (
 
 // FileSummary represents a summary of any file
 type FileSummary struct {
-	TotalLines   int      `json:"total_lines"`
-	FirstLines   []string `json:"first_lines"`
-	LastLines    []string `json:"last_lines"`
-	LineCount    int      `json:"line_count"`
-	FirstN       int      `json:"first_n"`
-	LastN        int      `json:"last_n"`
-	IsTruncated  bool     `json:"is_truncated"`
-	FileType     string   `json:"file_type"`
+	TotalLines  int      `json:"total_lines"`
+	FirstLines  []string `json:"first_lines"`
+	LastLines   []string `json:"last_lines"`
+	LineCount   int      `json:"line_count"`
+	FirstN      int      `json:"first_n"`
+	LastN       int      `json:"last_n"`
+	IsTruncated bool     `json:"is_truncated"`
+	FileType    string   `json:"file_type"`
 }
 
 // SummarizeFile creates a summary of a file by showing first and last N lines
 func SummarizeFile(content string, firstN, lastN int) *FileSummary {
 	summary := &FileSummary{
-		FirstLines:  []string{},
-		LastLines:   []string{},
-		FirstN:      firstN,
-		LastN:       lastN,
-		FileType:    "generic",
+		FirstLines: []string{},
+		LastLines:  []string{},
+		FirstN:     firstN,
+		LastN:      lastN,
+		FileType:   "generic",
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	lines := []string{}
-	
+
 	// Read all lines
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
-	
+
 	summary.TotalLines = len(lines)
 	summary.LineCount = summary.TotalLines
-	
+
 	// Check if file needs truncation
 	totalToShow := firstN + lastN
 	if summary.TotalLines > totalToShow {
@@ -46,7 +46,7 @@ func SummarizeFile(content string, firstN, lastN int) *FileSummary {
 	} else {
 		summary.IsTruncated = false
 	}
-	
+
 	// Get first N lines, or all lines if not truncated
 	var endFirst int
 	if summary.IsTruncated {
@@ -60,7 +60,7 @@ func SummarizeFile(content string, firstN, lastN int) *FileSummary {
 		summary.FirstLines = lines
 		endFirst = summary.TotalLines // All lines are "first" lines
 	}
-	
+
 	// Get last N lines only if file is truncated
 	if summary.IsTruncated {
 		startLast := summary.TotalLines - lastN
@@ -76,7 +76,7 @@ func SummarizeFile(content string, firstN, lastN int) *FileSummary {
 			summary.LastLines = lines[startLast:]
 		}
 	}
-	
+
 	return summary
 }
 
@@ -89,17 +89,17 @@ func SummarizeTextFile(content string) *FileSummary {
 // FormatFileSummary formats a file summary as a string
 func FormatFileSummary(summary *FileSummary) string {
 	var sb strings.Builder
-	
+
 	sb.WriteString(fmt.Sprintf("File type: %s\n", summary.FileType))
 	sb.WriteString(fmt.Sprintf("Total lines: %d\n", summary.TotalLines))
-	
+
 	if summary.IsTruncated {
-		sb.WriteString(fmt.Sprintf("Showing first %d and last %d lines (file truncated)\n", 
+		sb.WriteString(fmt.Sprintf("Showing first %d and last %d lines (file truncated)\n",
 			summary.FirstN, summary.LastN))
 	} else {
 		sb.WriteString("Showing complete file\n")
 	}
-	
+
 	if len(summary.FirstLines) > 0 {
 		sb.WriteString("\n=== First lines ===\n")
 		for i, line := range summary.FirstLines {
@@ -107,7 +107,7 @@ func FormatFileSummary(summary *FileSummary) string {
 			sb.WriteString(fmt.Sprintf("%6d: %s\n", lineNum, line))
 		}
 	}
-	
+
 	if len(summary.LastLines) > 0 && summary.IsTruncated {
 		sb.WriteString(fmt.Sprintf("\n=== Last %d lines ===\n", len(summary.LastLines)))
 		for i, line := range summary.LastLines {
@@ -115,7 +115,7 @@ func FormatFileSummary(summary *FileSummary) string {
 			sb.WriteString(fmt.Sprintf("%6d: %s\n", lineNum, line))
 		}
 	}
-	
+
 	// Add separator if file was truncated
 	if summary.IsTruncated {
 		linesOmitted := summary.TotalLines - len(summary.FirstLines) - len(summary.LastLines)
@@ -123,7 +123,7 @@ func FormatFileSummary(summary *FileSummary) string {
 			sb.WriteString(fmt.Sprintf("\n... %d lines omitted ...\n", linesOmitted))
 		}
 	}
-	
+
 	return sb.String()
 }
 
@@ -131,7 +131,7 @@ func FormatFileSummary(summary *FileSummary) string {
 func DetectFileType(filename, content string) string {
 	// Check for common file extensions
 	lowerFilename := strings.ToLower(filename)
-	
+
 	switch {
 	case strings.HasSuffix(lowerFilename, ".md"), strings.HasSuffix(lowerFilename, ".markdown"):
 		return "markdown"
@@ -203,24 +203,24 @@ func detectFileTypeFromContent(content string) string {
 	if strings.TrimSpace(content) == "" {
 		return "unknown"
 	}
-	
+
 	// Check for shebang
 	if strings.HasPrefix(content, "#!") {
 		return "script"
 	}
-	
+
 	// Check for XML declaration
 	if strings.HasPrefix(strings.TrimSpace(content), "<?xml") {
 		return "xml"
 	}
-	
+
 	// Check for JSON (starts with { or [)
 	trimmed := strings.TrimSpace(content)
 	if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
-	   (strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
+		(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
 		return "json"
 	}
-	
+
 	// Check for YAML (common patterns)
 	lines := strings.Split(content, "\n")
 	yamlIndicators := 0
@@ -238,7 +238,7 @@ func detectFileTypeFromContent(content string) string {
 			return "yaml"
 		}
 	}
-	
+
 	// Default to text
 	return "text"
 }
@@ -253,18 +253,18 @@ func CreateFileSummary(filename, content string) *FileSummary {
 // FormatSummaryForDisplay formats a file summary for display in read_file tool
 func FormatSummaryForDisplay(filename string, fileSize int64, summary *FileSummary) string {
 	var sb strings.Builder
-	
+
 	sb.WriteString(fmt.Sprintf("File: %s\n", filename))
 	sb.WriteString(fmt.Sprintf("Size: %d bytes\n", fileSize))
 	sb.WriteString(fmt.Sprintf("Type: %s\n", summary.FileType))
 	sb.WriteString(fmt.Sprintf("Lines: %d\n", summary.TotalLines))
-	
+
 	if summary.IsTruncated {
 		sb.WriteString("\n⚠️  File is large. Showing summary only.\n")
 		sb.WriteString("Use offset/limit parameters to read specific sections.\n\n")
 	}
-	
+
 	sb.WriteString(FormatFileSummary(summary))
-	
+
 	return sb.String()
 }

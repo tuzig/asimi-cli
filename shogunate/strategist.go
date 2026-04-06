@@ -136,16 +136,30 @@ func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, stri
 
 	if task.Session != nil {
 		session = task.Session
-		session.SetNotify(notify)
+		// Derive ChannelID from existing session's routing target
+		sessionChannelID := session.ChannelID()
+		if sessionChannelID == "" {
+			sessionChannelID = task.ChannelID
+		}
+		if sessionChannelID == "" {
+			sessionChannelID = "strategist"
+		}
+		session.SetNotify(notify, sessionChannelID)
 		_, err = session.AskWithStreaming(ctx, task.Work, nil)
 		if err != nil {
 			return session, "", err
 		}
 	} else {
+		// Create new session for first invocation
+		// Use task.ChannelID if provided, otherwise default to "strategist"
+		channelID := task.ChannelID
+		if channelID == "" {
+			channelID = "strategist"
+		}
 		session, err = CreateSessionWithOpts(s, s.model, s.config, notify, CreateSessionOpts{
-			EdictKey:   task.EdictKey,
-			TabID:      "chancellor",
-			Scratchpad: task.Scratchpad,
+			EdictKey:    task.EdictKey,
+			ChannelID:   channelID,
+			Scratchpad:  task.Scratchpad,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create strategist session: %w", err)
@@ -323,7 +337,7 @@ func (t *InsertLingTool) ParameterSchema() map[string]any {
 			},
 			"dependencies": map[string]any{
 				"type":        "array",
-				"description": "Array of ling IDs that must complete before this one",
+				"description": "Array of strings containing ling IDs that must complete before this one",
 				"items":       map[string]any{"type": "string"},
 			},
 		},

@@ -331,8 +331,8 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if notifications[0].EventType != storage.EventEdictCreated {
 		t.Errorf("expected EventType EventEdictCreated, got %s", notifications[0].EventType)
 	}
-	if notifications[0].TabID != "chancellor" {
-		t.Errorf("expected TabID chancellor, got %s", notifications[0].TabID)
+	if notifications[0].ChannelID != "chancellor" {
+		t.Errorf("expected ChannelID chancellor, got %s", notifications[0].ChannelID)
 	}
 	mu.Unlock()
 

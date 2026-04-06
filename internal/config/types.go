@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-
 	koanftoml "github.com/knadh/koanf/parsers/toml/v2"
 	"github.com/knadh/koanf/providers/file"
 	koanf "github.com/knadh/koanf/v2"
@@ -15,14 +14,14 @@ import (
 
 // Config represents the application configuration structure
 type Config struct {
-	Storage   StorageConfig    `koanf:"storage"`
-	Logging   LoggingConfig    `koanf:"logging"`
-	UI        UIConfig         `koanf:"ui"`
-	LLM       LLMConfig        `koanf:"llm"`
-	History   HistoryConfig    `koanf:"history"`
-	Session   SessionConfig    `koanf:"session"`
-	Sandbox   SandboxConfig    `koanf:"sandbox"`
-	Shogunate ShogunateConfig  `koanf:"shogunate"`
+	Storage   StorageConfig   `koanf:"storage"`
+	Logging   LoggingConfig   `koanf:"logging"`
+	UI        UIConfig        `koanf:"ui"`
+	LLM       LLMConfig       `koanf:"llm"`
+	History   HistoryConfig   `koanf:"history"`
+	Session   SessionConfig   `koanf:"session"`
+	Sandbox   SandboxConfig   `koanf:"sandbox"`
+	Shogunate ShogunateConfig `koanf:"shogunate"`
 }
 
 // StorageConfig holds storage configuration

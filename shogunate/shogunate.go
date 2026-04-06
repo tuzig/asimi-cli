@@ -66,8 +66,8 @@ type DrainedEvent struct {
 
 // EventsDrainedMsg notifies the TUI that crash-recovery drained events from the DB.
 type EventsDrainedMsg struct {
-	TabID  string
-	Events []DrainedEvent
+	ChannelID string
+	Events    []DrainedEvent
 }
 
 // Shogunate coordinates ministers and manages lifecycle.
@@ -77,7 +77,7 @@ type Shogunate struct {
 	config *config.ShogunateConfig
 	runner runners.Runner
 
-	ministers map[string]Minister
+	ministers   map[string]Minister
 	ritualGuard *RitualGuard
 
 	notify        internal.NotifyFunc
@@ -348,7 +348,7 @@ func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error)
 	}
 	s.PublishEvent(edict.Key(), storage.EventEdictCreated, storage.JSON{
 		"intent": intent,
-		"id": edict.ID,
+		"id":     edict.ID,
 	})
 	return &edict, nil
 }
@@ -358,8 +358,8 @@ func CreateEdictForTest(db *gorm.DB, intent string) (*storage.Edict, error) {
 	var maxID uint
 	db.Model(&storage.Edict{}).Select("COALESCE(MAX(id), 0)").Scan(&maxID)
 	edict := storage.Edict{
-		ID: maxID + 1,
-		Intent:  intent,
+		ID:     maxID + 1,
+		Intent: intent,
 	}
 	if err := db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
@@ -502,7 +502,7 @@ func (s *Shogunate) GetRulingSession() *Session {
 		s.logger.Warn("Failed to get the chancellor in Shogunate.GetCurrentSession")
 		return nil
 	}
-	return ch.RulingSession
+	return ch.session
 }
 
 // GetHuntingSession returns the Sage's hunting session

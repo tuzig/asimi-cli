@@ -726,7 +726,7 @@ func TestSession_SetNotify_UpdatesScheduler(t *testing.T) {
 	var called bool
 	sess.SetNotify(func(msg any) {
 		called = true
-	})
+	}, "")
 
 	// Verify session notify is set
 	assert.NotNil(t, sess.notify)

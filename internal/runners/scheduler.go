@@ -58,7 +58,7 @@ type CoreToolScheduler struct {
 	resultChans map[string]chan ToolCallResult
 	// TODO: refator to a channel
 	notify func(any)
-	tabID  string
+	channelID  string
 }
 
 // NewCoreToolScheduler creates a new CoreToolScheduler
@@ -71,13 +71,13 @@ func NewCoreToolScheduler(toolNotify func(any)) *CoreToolScheduler {
 	}
 }
 
-// SetNotify sets the notification function and tab ID for tool call status updates.
+// SetNotify sets the notification function and channel ID for tool call status updates.
 // This allows the scheduler to be created before the notification target is ready.
-func (s *CoreToolScheduler) SetNotify(notify func(any), tabID string) {
+func (s *CoreToolScheduler) SetNotify(notify func(any), channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.notify = notify
-	s.tabID = tabID
+	s.channelID = channelID
 }
 
 // Schedule adds a new tool call to the scheduler and returns a channel for the result
@@ -101,7 +101,7 @@ func (s *CoreToolScheduler) Schedule(ctx context.Context, tool Tool, input strin
 	s.resultChans[id] = resultChan
 
 	if s.notify != nil {
-		s.notify(ToolCallScheduledMsg{TabID: s.tabID, Call: call})
+		s.notify(ToolCallScheduledMsg{ChannelID: s.channelID, Call: call})
 	}
 	s.processQueue()
 
@@ -120,7 +120,7 @@ func (s *CoreToolScheduler) processQueue() {
 
 	call.Status = StatusExecuting
 	if s.notify != nil {
-		s.notify(ToolCallExecutingMsg{TabID: s.tabID, Call: call})
+		s.notify(ToolCallExecutingMsg{ChannelID: s.channelID, Call: call})
 	}
 
 	go func() {
@@ -139,7 +139,7 @@ func (s *CoreToolScheduler) processQueue() {
 			call.Status = StatusError
 			call.Error = err
 			if s.notify != nil {
-				s.notify(ToolCallErrorMsg{TabID: s.tabID, Call: call})
+				s.notify(ToolCallErrorMsg{ChannelID: s.channelID, Call: call})
 			}
 			if resultChan != nil {
 				resultChan <- ToolCallResult{Error: err}
@@ -148,7 +148,7 @@ func (s *CoreToolScheduler) processQueue() {
 			call.Status = StatusSuccess
 			call.Result = output
 			if s.notify != nil {
-				s.notify(ToolCallSuccessMsg{TabID: s.tabID, Call: call})
+				s.notify(ToolCallSuccessMsg{ChannelID: s.channelID, Call: call})
 			}
 			if resultChan != nil {
 				resultChan <- ToolCallResult{Output: output}
@@ -195,7 +195,7 @@ func (s *CoreToolScheduler) ClearQueue() int {
 
 		// Notify the UI about the aborted call
 		if s.notify != nil {
-			s.notify(ToolCallAbortedMsg{TabID: s.tabID, Call: call})
+			s.notify(ToolCallAbortedMsg{ChannelID: s.channelID, Call: call})
 		}
 
 		// Send error to the result channel
@@ -215,26 +215,26 @@ func (s *CoreToolScheduler) ClearQueue() int {
 
 // Messages for bubbletea
 type ToolCallScheduledMsg struct {
-	TabID string
+	ChannelID string
 	Call  *ToolCall
 }
 type ToolCallExecutingMsg struct {
-	TabID string
+	ChannelID string
 	Call  *ToolCall
 }
 type ToolCallWaitingForApprovalMsg struct {
-	TabID string
+	ChannelID string
 	Call  *ToolCall
 }
 type ToolCallSuccessMsg struct {
-	TabID string
+	ChannelID string
 	Call  *ToolCall
 }
 type ToolCallErrorMsg struct {
-	TabID string
+	ChannelID string
 	Call  *ToolCall
 }
 type ToolCallAbortedMsg struct {
-	TabID string
+	ChannelID string
 	Call  *ToolCall
 }

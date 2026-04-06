@@ -41,5 +41,3 @@ func TestParseVersion(t *testing.T) {
 		})
 	}
 }
-
-

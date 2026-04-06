@@ -20,14 +20,14 @@ func TestSummarizeFile(t *testing.T) {
 			firstN:  3,
 			lastN:   3,
 			expected: &FileSummary{
-				TotalLines:   5,
-				FirstLines:   []string{"line1", "line2", "line3", "line4", "line5"},
-				LastLines:    []string{},
-				LineCount:    5,
-				FirstN:       3,
-				LastN:        3,
-				IsTruncated:  false,
-				FileType:     "generic",
+				TotalLines:  5,
+				FirstLines:  []string{"line1", "line2", "line3", "line4", "line5"},
+				LastLines:   []string{},
+				LineCount:   5,
+				FirstN:      3,
+				LastN:       3,
+				IsTruncated: false,
+				FileType:    "generic",
 			},
 		},
 		{
@@ -54,7 +54,7 @@ func TestSummarizeFile(t *testing.T) {
 			expected: &FileSummary{
 				TotalLines:  20,
 				FirstLines:  generateLines(20), // All lines since not truncated
-				LastLines:   []string{}, // No last lines since all shown in first
+				LastLines:   []string{},        // No last lines since all shown in first
 				LineCount:   20,
 				FirstN:      10,
 				LastN:       10,
@@ -151,9 +151,9 @@ func TestSummarizeTextFile(t *testing.T) {
 	// Generate 150 lines
 	lines := generateLines(150)
 	content := strings.Join(lines, "\n")
-	
+
 	summary := SummarizeTextFile(content)
-	
+
 	// Should show first 50 and last 50 lines (default)
 	if summary.TotalLines != 150 {
 		t.Errorf("TotalLines = %d, want 150", summary.TotalLines)
@@ -190,13 +190,13 @@ func TestDetectFileType(t *testing.T) {
 		{"Python file", "script.py", "print('hello')", "python"},
 		{"Shell script", "script.sh", "echo hello", "shell"},
 		{"Text file", "notes.txt", "some notes", "text"},
-		
+
 		// Content-based detection
 		{"Shebang script", "script", "#!/bin/bash\necho hello", "script"},
 		{"XML from content", "data", "<?xml version='1.0'?>\n<root></root>", "xml"},
 		{"JSON from content", "data", `{"name": "test"}`, "json"},
 		{"YAML from content", "data", "key: value\nanother: value2", "yaml"},
-		
+
 		// Default
 		{"Unknown type", "unknown.xyz", "some content", "text"},
 		{"Empty file", "empty.txt", "", "text"},
@@ -206,7 +206,7 @@ func TestDetectFileType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := DetectFileType(tt.filename, tt.content)
 			if got != tt.want {
-				t.Errorf("DetectFileType(%q, %q) = %q, want %q", 
+				t.Errorf("DetectFileType(%q, %q) = %q, want %q",
 					tt.filename, tt.content[:min(20, len(tt.content))], got, tt.want)
 			}
 		})
@@ -229,7 +229,7 @@ func TestCreateFileSummary(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			summary := CreateFileSummary(tt.filename, tt.content)
-			
+
 			// Direct assertions instead of check function
 			if summary.FileType != "generic" {
 				t.Errorf("FileType = %q, want %q", summary.FileType, "generic")
@@ -249,18 +249,18 @@ func TestCreateFileSummary(t *testing.T) {
 
 func TestFormatFileSummary(t *testing.T) {
 	summary := &FileSummary{
-		TotalLines:   100,
-		FirstLines:   []string{"First line", "Second line", "Third line"},
-		LastLines:    []string{"Line 98", "Line 99", "Line 100"},
-		LineCount:    100,
-		FirstN:       3,
-		LastN:        3,
-		IsTruncated:  true,
-		FileType:     "text",
+		TotalLines:  100,
+		FirstLines:  []string{"First line", "Second line", "Third line"},
+		LastLines:   []string{"Line 98", "Line 99", "Line 100"},
+		LineCount:   100,
+		FirstN:      3,
+		LastN:       3,
+		IsTruncated: true,
+		FileType:    "text",
 	}
 
 	formatted := FormatFileSummary(summary)
-	
+
 	// Check for expected content
 	expectedParts := []string{
 		"File type: text",
@@ -270,13 +270,13 @@ func TestFormatFileSummary(t *testing.T) {
 		"Last 3 lines",
 		"94 lines omitted",
 	}
-	
+
 	for _, part := range expectedParts {
 		if !strings.Contains(formatted, part) {
 			t.Errorf("FormatFileSummary() missing expected part: %q", part)
 		}
 	}
-	
+
 	// Check line numbers are formatted correctly
 	if !strings.Contains(formatted, "     1: First line") {
 		t.Error("FormatFileSummary() missing line number formatting")
@@ -285,18 +285,18 @@ func TestFormatFileSummary(t *testing.T) {
 
 func TestFormatSummaryForDisplay(t *testing.T) {
 	summary := &FileSummary{
-		TotalLines:   500,
-		FirstLines:   []string{"First line"},
-		LastLines:    []string{"Last line"},
-		LineCount:    500,
-		FirstN:       1,
-		LastN:        1,
-		IsTruncated:  true,
-		FileType:     "text",
+		TotalLines:  500,
+		FirstLines:  []string{"First line"},
+		LastLines:   []string{"Last line"},
+		LineCount:   500,
+		FirstN:      1,
+		LastN:       1,
+		IsTruncated: true,
+		FileType:    "text",
 	}
 
 	formatted := FormatSummaryForDisplay("large_file.txt", 102400, summary)
-	
+
 	// Check for expected content
 	expectedParts := []string{
 		"File: large_file.txt",
@@ -306,7 +306,7 @@ func TestFormatSummaryForDisplay(t *testing.T) {
 		"⚠️  File is large",
 		"Use offset/limit parameters",
 	}
-	
+
 	for _, part := range expectedParts {
 		if !strings.Contains(formatted, part) {
 			t.Errorf("FormatSummaryForDisplay() missing expected part: %q", part)
@@ -320,7 +320,7 @@ func generateLines(count int, start ...int) []string {
 	if len(start) > 0 {
 		startNum = start[0]
 	}
-	
+
 	lines := make([]string, count)
 	for i := 0; i < count; i++ {
 		lines[i] = fmt.Sprintf("Line %d", startNum+i)

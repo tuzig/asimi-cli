@@ -84,10 +84,10 @@ func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
 	}
 
 	fileSize := fileInfo.Size()
-	
+
 	// Check if file is too large
 	isLargeFile := t.maxFileSize > 0 && fileSize > int64(t.maxFileSize)
-	
+
 	// If file is large and no offset/limit specified, return summary instead of full content
 	if isLargeFile && params.Offset == 0 && params.Limit == 0 {
 		// File is large and no specific section requested - return summary
@@ -128,7 +128,7 @@ func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
 
 	selectedLines := lines[startLine:endLine]
 	result := strings.Join(selectedLines, "\n")
-	
+
 	// If file is large, prepend metadata
 	if isLargeFile {
 		metadata := t.formatFileMetadata(params.Path, fileSize, totalLines)
@@ -136,7 +136,7 @@ func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
 		metadata += strings.Repeat("=", 50) + "\n"
 		return metadata + result, nil
 	}
-	
+
 	return result, nil
 }
 
@@ -149,13 +149,13 @@ func (t ReadFileTool) handleLargeFile(filePath string, fileSize int64) (string, 
 	}
 
 	contentStr := string(content)
-	
+
 	// Create file summary using our summarizer
 	summary := CreateFileSummary(filePath, contentStr)
-	
+
 	// Format the summary for display
 	formattedSummary := FormatSummaryForDisplay(filePath, fileSize, summary)
-	
+
 	// Build the complete response with metadata
 	var result strings.Builder
 	result.WriteString(t.formatFileMetadata(filePath, fileSize, summary.TotalLines))
@@ -163,29 +163,29 @@ func (t ReadFileTool) handleLargeFile(filePath string, fileSize int64) (string, 
 	result.WriteString("📋 File summary:\n")
 	result.WriteString(strings.Repeat("=", 50) + "\n")
 	result.WriteString(formattedSummary)
-	
+
 	return result.String(), nil
 }
 
 // formatFileMetadata creates a standardized metadata header for large files
 func (t ReadFileTool) formatFileMetadata(filePath string, fileSize int64, totalLines int) string {
 	var metadata strings.Builder
-	
+
 	metadata.WriteString(fmt.Sprintf("⚠️  File is large: %s\n", formatFileSize(fileSize)))
 	metadata.WriteString(fmt.Sprintf("   Size: %d bytes (%.1f KB)\n", fileSize, float64(fileSize)/1024))
 	metadata.WriteString(fmt.Sprintf("   Lines: %d\n", totalLines))
 	metadata.WriteString(fmt.Sprintf("   Max size configured: %d bytes (%.1f KB)\n", t.maxFileSize, float64(t.maxFileSize)/1024))
-	
+
 	// Add file type if we can determine it
 	fileType := "unknown"
 	if content, err := readFirstBytes(filePath, 1024); err == nil {
 		fileType = DetectFileType(filePath, string(content))
 	}
 	metadata.WriteString(fmt.Sprintf("   Type: %s\n", fileType))
-	
+
 	metadata.WriteString("\n💡 Tip: Use offset/limit parameters to read specific sections.")
 	metadata.WriteString("\n      Example: {\"path\": \"file.txt\", \"offset\": 500, \"limit\": 100}")
-	
+
 	return metadata.String()
 }
 
@@ -210,13 +210,13 @@ func readFirstBytes(filePath string, maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	
+
 	buffer := make([]byte, maxBytes)
 	n, err := file.Read(buffer)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
-	
+
 	return buffer[:n], nil
 }
 
@@ -266,7 +266,7 @@ func (t ReadFileTool) Format(input, result string, err error) string {
 					}
 				}
 			}
-			
+
 			if lines > 0 {
 				msg.Writef("Read %d lines (file is large)", lines)
 			} else if strings.Contains(result, "📋 File summary:") {

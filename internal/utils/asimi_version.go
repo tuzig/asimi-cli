@@ -3,10 +3,10 @@ package utils
 
 import (
 	"fmt"
-	"log/slog"
-	"strings"
 	"github.com/blang/semver"
 	"github.com/rhysd/go-github-selfupdate/selfupdate"
+	"log/slog"
+	"strings"
 )
 
 const (
@@ -20,6 +20,7 @@ var AsimiVersion = "0.5.0-rc.1"
 func GetAsimiSlug() string {
 	return fmt.Sprintf("%s/%s", githubOwner, githubRepo)
 }
+
 // ParseVersion parses a version string, handling "v" prefix
 func ParseVersion(v string) (semver.Version, error) {
 	// Remove "v" prefix if present
@@ -52,5 +53,3 @@ func CheckForUpdates() (*selfupdate.Release, bool, error) {
 
 	return latest, true, nil
 }
-
-

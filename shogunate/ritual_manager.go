@@ -27,7 +27,7 @@ CRITICAL RULES:
 
 // EventNotificationMsg notifies the UI of significant Shogunate events
 type EventNotificationMsg struct {
-	TabID     string
+	ChannelID string
 	EventType storage.ShogunateEvent
 	EdictKey  storage.EdictKey
 	Message   string
@@ -79,9 +79,9 @@ func NewRitualGuard(opts RitualGuardOpts) *RitualGuard {
 		maxRetries:     3,
 		batchSize:      100,
 		flatlineAge:    5 * time.Minute,
-		getMinister:  opts.GetMinister,
-		streamingCtx: opts.StreamingCtx,
-		version:      opts.Version,
+		getMinister:    opts.GetMinister,
+		streamingCtx:   opts.StreamingCtx,
+		version:        opts.Version,
 	}
 
 	// Create ritual runner with injected functions
@@ -156,7 +156,7 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 		// TODO: notification should be pushed down to Ritual
 		if rg.notify != nil {
 			rg.notify(RitualStepMsg{
-				TabID:       "chancellor",
+				ChannelID:   "chancellor",
 				RitualName:  ritualName,
 				ExecutionID: exec.ID,
 				EdictID:     key.ID,
@@ -218,7 +218,7 @@ func (rg *RitualGuard) notifyEvent(event Event) {
 // buildEventNotification maps event types to user-friendly notification messages
 func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg {
 	msg := EventNotificationMsg{
-		TabID:     "chancellor", // Default to chancellor/ruling tab
+		ChannelID: "chancellor", // Default to chancellor/ruling tab
 		EventType: event.Type,
 		EdictKey:  event.EdictKey,
 		Payload:   event.Payload,
@@ -298,7 +298,7 @@ func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 		OK:          true,
 		Remediation: make(map[string]string),
 	}
-	
+
 	info := func(text string) {
 		rg.notify(MinisterCompletedMsg{
 			MinisterID: "ritual_guard",
@@ -402,7 +402,6 @@ func (rg *RitualGuard) getSandboxImageName() string {
 	// Fallback to default image name
 	return "localhost/asimi-sandbox:latest"
 }
-
 
 // --- Ritual management ---
 

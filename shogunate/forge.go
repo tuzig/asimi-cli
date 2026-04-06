@@ -224,7 +224,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 			output, taskErr = f.executeLings(ctx, task, pendingLings, notify)
 		} else {
 			// Fallback: no lings, execute task.Work directly (backward compatibility)
-			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session)
+			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
 		}
 	} else {
 		output = "forge task acknowledged (no LLM configured)"
@@ -247,24 +247,36 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 
 // streamTask creates a session (or reuses existing) and streams the task through the LLM.
 // Returns the session for potential reuse in multi-turn conversations.
-func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session) (*Session, string, error) {
+func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string) (*Session, string, error) {
 	var session *Session
 	var err error
 
 	if existingSession != nil {
 		// Reuse existing session for multi-turn conversation
 		session = existingSession
-		session.SetNotify(notify)
+		// Derive ChannelID from existing session's routing target
+		sessionChannelID := session.ChannelID()
+		if sessionChannelID == "" {
+			sessionChannelID = channelID
+		}
+		if sessionChannelID == "" {
+			sessionChannelID = "forge"
+		}
+		session.SetNotify(notify, sessionChannelID)
 		_, err = session.AskWithStreaming(ctx, work, nil)
 		if err != nil {
 			return session, "", err
 		}
 	} else {
 		// Create new session for first invocation
+		// Use passed channelID if provided, otherwise default to "forge"
+		if channelID == "" {
+			channelID = "forge"
+		}
 		session, err = CreateSessionWithOpts(f, f.model, f.config, notify, CreateSessionOpts{
-			EdictKey:   key,
-			TabID:      "chancellor",
-			Scratchpad: scratchpad,
+			EdictKey:    key,
+			ChannelID:   channelID,
+			Scratchpad:  scratchpad,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create forge session: %w", err)
@@ -319,10 +331,10 @@ func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Li
 
 		if task.Session != nil {
 			session = task.Session
-			session.SetNotify(notify)
+			session.SetNotify(notify, session.ChannelID())
 			_, lingErr = session.AskWithStreaming(ctx, lingWork, nil)
 		} else {
-			session, output, lingErr = f.streamTask(ctx, lingWork, task.EdictKey, task.Scratchpad, notify, nil)
+			session, output, lingErr = f.streamTask(ctx, lingWork, task.EdictKey, task.Scratchpad, notify, nil, task.ChannelID)
 		}
 
 		// Update task.Session for multi-ling continuity

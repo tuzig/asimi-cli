@@ -57,9 +57,9 @@ func (s *StringArray) Scan(value interface{}) error {
 
 // EdictKey is the composite primary key for an edict (id, username, project).
 type EdictKey struct {
-	ID        uint   `json:"id"`
-	Username  string `json:"username"`
-	Project   string `json:"project"`
+	ID       uint   `json:"id"`
+	Username string `json:"username"`
+	Project  string `json:"project"`
 }
 
 // EdictStatus represents the current status of an edict

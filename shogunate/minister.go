@@ -49,21 +49,22 @@ type EventEmitter interface {
 // Prompt carries the user's message to the Chancellor
 type Prompt struct {
 	Ctx          context.Context   // Per-prompt context for cancellation (CTRL-C)
-	Message      string            // The Ruler's words
-	EdictKey     storage.EdictKey  // Zero = new edict, set = continue existing
-	TabID        string            // Tab target for stream routing
+	Message      string           // The Ruler's words
+	EdictKey     storage.EdictKey // Zero = new edict, set = continue existing
+	ChannelID    string           // Channel target for stream routing
 	ContextFiles map[string]string // Files loaded via @ references
 }
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
 	Ctx        context.Context     // Per-task cancellation (e.g. CTRL-C)
-	EdictKey   storage.EdictKey   // The edict this task belongs to
+	EdictKey   storage.EdictKey    // The edict this task belongs to
 	Work       string              // Specific instructions for the minister (renamed from Task to avoid Task.Task)
 	Scratchpad string              // Pre-formatted markdown added to the context
 	Session    *Session            // Existing session for multi-turn (nil = create new)
 	Done       chan<- Result       // For completion signal
 	Notify     internal.NotifyFunc // Routing-aware notify override (nil = use minister's default)
+	ChannelID  string              // Routing target for stream messages (set by caller)
 }
 
 // Result signals a Minister has completed a Task
@@ -188,7 +189,7 @@ type ZhengmingAnsweredMsg struct {
 }
 
 // StreamDoneMsg signals that streaming has completed
-type StreamDoneMsg struct{ TabID string }
+type StreamDoneMsg struct{ ChannelID string }
 
 // MinisterBase provides shared functionality for all ministers.
 // Ministers embed this struct to gain database access and session creation capabilities.
@@ -206,8 +207,9 @@ type MinisterBase struct {
 
 	zhengmingMu       sync.Mutex
 	onZhengmingRaised func()
-	username string
-	project string
+	username          string
+	project           string
+	session           *Session // Embedded session for interactive use cases
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
@@ -216,12 +218,12 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, us
 		logger = slog.Default()
 	}
 	return &MinisterBase{
-		db:      db,
-		runner:  runner,
-		logger:  logger,
-		prompts: make(chan *Prompt),
+		db:       db,
+		runner:   runner,
+		logger:   logger,
+		prompts:  make(chan *Prompt),
 		username: username,
-		project: project,
+		project:  project,
 	}
 }
 
@@ -271,25 +273,40 @@ func (m *MinisterBase) RepoInfo() repo.RepoInfo {
 
 // CreateSessionOpts holds optional parameters for CreateSession.
 type CreateSessionOpts struct {
-	EdictKey   storage.EdictKey
-	TabID      string
-	Scratchpad string // Pre-formatted markdown context from ritual
+	EdictKey    storage.EdictKey
+	ChannelID   string
+	Scratchpad  string // Pre-formatted markdown context from ritual
+}
+
+// WithChannelID wraps a notify function to auto-set Session's ChannelID on first invocation.
+// This allows the Session's routing target to be synchronized with whoever is driving it
+// (e.g., Chancellor invoking Forge should route to Chancellor's tab).
+func WithChannelID(notify internal.NotifyFunc, session *Session, channelID string) internal.NotifyFunc {
+	mu := sync.Once{}
+	return func(msg any) {
+		mu.Do(func() {
+			if session != nil && session.ChannelID() == "" {
+				session.SetChannelID(channelID)
+			}
+		})
+		notify(msg)
+	}
 }
 
 // CreateSession creates a session for a minister with composed system prompt.
-func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, tabID string, keys ...storage.EdictKey) (*Session, error) {
+func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, channelID string, keys ...storage.EdictKey) (*Session, error) {
 	key := storage.EdictKey{}
 	if len(keys) > 0 {
 		key = keys[0]
 	}
 	systemPrompt := buildSystemPrompt(minister, config, key)
-	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, tabID)
+	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, channelID)
 }
 
 // CreateSessionWithOpts creates a session with extended options including given context.
 func CreateSessionWithOpts(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
 	systemPrompt := buildSystemPrompt(minister, config, opts.EdictKey, opts.Scratchpad)
-	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, opts.TabID)
+	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, opts.ChannelID)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
@@ -387,6 +404,21 @@ func (m *MinisterBase) SetMinisterConfig(model llms.Model, config *SessionConfig
 // SetNotify sets the notification callback.
 func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 	m.notify = notify
+}
+
+// Session returns the minister's embedded session (may be nil).
+func (m *MinisterBase) Session() *Session {
+	return m.session
+}
+
+// SetSession sets the minister's embedded session.
+func (m *MinisterBase) SetSession(s *Session) {
+	m.session = s
+}
+
+// ResetSession clears the minister's embedded session.
+func (m *MinisterBase) ResetSession() {
+	m.session = nil
 }
 
 // SetOnZhengmingRaised sets a callback invoked when RequestZhengming is called.

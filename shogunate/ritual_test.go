@@ -1231,12 +1231,12 @@ func TestRunThenStep_Multiple(t *testing.T) {
 
 func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 	db := setupRitualTestDB(t)
-	
+
 	// Migrate edict and manifest tables
 	if err := db.AutoMigrate(&storage.Edict{}, &storage.ForgeManifest{}); err != nil {
 		t.Fatalf("failed to migrate edict/manifest tables: %v", err)
 	}
-	
+
 	registry := NewRitualRegistry()
 	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
 
@@ -1298,12 +1298,12 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 
 func TestAwaitRulerSeal_NoManifests(t *testing.T) {
 	db := setupRitualTestDB(t)
-	
+
 	// Migrate edict and manifest tables
 	if err := db.AutoMigrate(&storage.Edict{}, &storage.ForgeManifest{}); err != nil {
 		t.Fatalf("failed to migrate edict/manifest tables: %v", err)
 	}
-	
+
 	registry := NewRitualRegistry()
 
 	// Create test edict with no manifests
