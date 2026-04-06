@@ -351,7 +351,7 @@ func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey
 		}
 	}
 
-	c.logger.Info("sage task completed")
+	c.logger.Info("sage task completed", "channel", channelID)
 	return session, "", nil
 }
 

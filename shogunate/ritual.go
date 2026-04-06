@@ -1543,7 +1543,6 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		Scratchpad: scratchpad,
 		Session:    session,
 		Done:       doneChan,
-		Notify:     exec.notify, // Route minister output to Ruling tab
 		ChannelID:  "chancellor",
 	}
 

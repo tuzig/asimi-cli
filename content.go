@@ -36,6 +36,20 @@ type Tab struct {
 	Cancel    context.CancelFunc // per-tab streaming cancellation
 }
 
+// NewTab creates a Tab with its own context and cancellation.
+// Every tab is an independent, cancellable unit of work.
+func NewTab(label string, tabType TabType, target string, content ContentComponent) Tab {
+	ctx, cancel := context.WithCancel(context.Background())
+	return Tab{
+		Label:   label,
+		Type:    tabType,
+		Target:  target,
+		Content: content,
+		Ctx:     ctx,
+		Cancel:  cancel,
+	}
+}
+
 // TabManager manages multiple tabs, each wrapping a ContentComponent
 type TabManager struct {
 	tabs            []Tab
@@ -46,31 +60,36 @@ type TabManager struct {
 	getStatus       func() string
 }
 
-// NewTabManager creates a TabManager with Shogunate, Ruling, and Hunting tabs.
-// Ruling is the active tab at start.
+// NewTabManager creates a TabManager with 5 tabs per the Shogunate structure:
+// 宰相 Chancellor (ruling/edicts), 孔子 Sage (exploration), 幕府 Shogunate (dashboard),
+// 工部 Forge (builds), 刑部 Judge (tests)
 func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager {
-	shogunateContent := NewContentComponent(w, h, mdEnabled)
-	shogunateContent.Chat.GetStatus = getStatus
-	ruling := NewContentComponent(w, h, mdEnabled)
-	ruling.Chat.GetStatus = getStatus
-	hunting := NewContentComponent(w, h, mdEnabled)
-	hunting.Chat.GetStatus = getStatus
-	rulingCtx, rulingCancel := context.WithCancel(context.Background())
-	huntingCtx, huntingCancel := context.WithCancel(context.Background())
 	return TabManager{
 		tabs: []Tab{
-			{Label: "Monitoring", Type: TabShogunate, Target: "shogunate", Content: shogunateContent},
-			{Label: "Ruling", Type: TabRuling, Target: "chancellor", Content: ruling,
-				Ctx: rulingCtx, Cancel: rulingCancel},
-			{Label: "Hunting", Type: TabHunting, Target: "sage", Content: hunting,
-				Ctx: huntingCtx, Cancel: huntingCancel},
+			NewTab("幕府 Court", TabShogunate, "shogunate",
+				newContentComponent(w, h, mdEnabled, getStatus)),
+			NewTab("宰相 Chancellor", TabRuling, "chancellor",
+				newContentComponent(w, h, mdEnabled, getStatus)),
+			NewTab("孔子 Sage", TabHunting, "sage",
+				newContentComponent(w, h, mdEnabled, getStatus)),
+			NewTab("工部 Forge", TabObserve, "forge",
+				newContentComponent(w, h, mdEnabled, getStatus)),
+			NewTab("刑部 Judge", TabRitual, "judge",
+				newContentComponent(w, h, mdEnabled, getStatus)),
 		},
-		activeTab:       1, // Ruling is the default
+		activeTab:       1,
 		width:           w,
 		height:          h,
 		markdownEnabled: mdEnabled,
 		getStatus:       getStatus,
 	}
+}
+
+// newContentComponent is a helper to create ContentComponent with status getter
+func newContentComponent(w, h int, mdEnabled bool, getStatus func() string) ContentComponent {
+	c := NewContentComponent(w, h, mdEnabled)
+	c.Chat.GetStatus = getStatus
+	return c
 }
 
 // Content returns a pointer to the active tab's ContentComponent
@@ -198,15 +217,8 @@ func (tm *TabManager) SwitchTo(index int) {
 
 // Add creates a new tab and switches to it
 func (tm *TabManager) Add(label string, tabType TabType, target string) {
-	newContent := NewContentComponent(tm.width, tm.height, tm.markdownEnabled)
-	newContent.Chat.GetStatus = tm.getStatus
-	tab := Tab{
-		Label:   label,
-		Type:    tabType,
-		Target:  target,
-		Content: newContent,
-	}
-	tm.tabs = append(tm.tabs, tab)
+	newContent := newContentComponent(tm.width, tm.height, tm.markdownEnabled, tm.getStatus)
+	tm.tabs = append(tm.tabs, NewTab(label, tabType, target, newContent))
 	tm.SwitchTo(len(tm.tabs) - 1)
 }
 

@@ -1097,7 +1097,7 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		Ctx:          ctx,
 		Message:      prompt,
 		EdictKey:     m.currentEdictKey,
-		ChannelID:        tab.Target,
+		ChannelID:    tab.Target,
 		ContextFiles: contextFiles,
 	}
 

@@ -63,7 +63,8 @@ type ChatComponent struct {
 	toolCallMessageIndex map[string]int
 
 	// Indentation for nested workflow output
-	Indent int
+	Indent     int
+	blockLines [][]int
 }
 
 const (
@@ -245,6 +246,12 @@ func (c *ChatComponent) SetSize(width, height int) {
 	c.Style = c.Style.Height(c.Height)
 	c.Viewport.Height = c.Height
 	c.UpdateContent()
+}
+
+// StartBlock starts a block of messages with a height limit. use 0 for unlimited
+func (c *ChatComponent) StartBlock(height int) {
+	currentLine := len(c.Messages) - 1
+	c.blockLines = append(c.blockLines, []int{currentLine, height})
 }
 
 // AddMessage adds a new message to the chat component
