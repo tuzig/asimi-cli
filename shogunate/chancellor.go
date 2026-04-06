@@ -24,7 +24,6 @@ var role string
 type Chancellor struct {
 	*MinisterBase // embedded base provides db, llm, config, repoInfo, logger, session
 	shogunate     *Shogunate
-	taskChan      chan *Task
 }
 
 // NewChancellor creates a new Chancellor minister
@@ -32,7 +31,6 @@ func NewChancellor(base *MinisterBase) *Chancellor {
 	base.ministerID = "chancellor"
 	return &Chancellor{
 		MinisterBase: base,
-		taskChan:     make(chan *Task, 10),
 	}
 }
 
@@ -80,9 +78,6 @@ func (c *Chancellor) Scratchpad() string {
 
 	return b.String()
 }
-
-// Tasks returns the channel for submitting Tasks
-func (c *Chancellor) Tasks() chan<- *Task { return c.taskChan }
 
 // --- InvokeMinisterTool ---
 
@@ -531,31 +526,7 @@ func (c *Chancellor) getDBPath() string {
 
 // Run listens for prompts from the Ruler, tasks from ministers, and events from the Shogunate
 func (c *Chancellor) Run(ctx context.Context) {
-	c.logger.Info("chancellor started, awaiting prompts and events")
-	for {
-		select {
-		case <-ctx.Done():
-			c.logger.Info("chancellor stopped")
-			return
-		case prompt := <-c.PromptsChan():
-			c.logger.Debug("Processing prompt", "prompt", prompt)
-			// Merge lifecycle ctx (shutdown) with per-prompt ctx (CTRL-C):
-			// cancel when either fires.
-			merged, mergedCancel := context.WithCancel(ctx)
-			if prompt.Ctx != nil {
-				context.AfterFunc(prompt.Ctx, func() { mergedCancel() })
-			}
-			c.processPrompt(merged, prompt)
-			mergedCancel()
-		case task := <-c.taskChan:
-			merged, mergedCancel := context.WithCancel(ctx)
-			if task.Ctx != nil {
-				context.AfterFunc(task.Ctx, func() { mergedCancel() })
-			}
-			c.processTask(merged, task)
-			mergedCancel()
-		}
-	}
+	c.RunLoop(ctx, c, c.processPrompt, c.processTask)
 }
 
 // SetShogunate sets the Shogunate reference for minister access
@@ -868,7 +839,7 @@ func (c *Chancellor) handleEdictCreated(ctx context.Context, key storage.EdictKe
 	}
 
 	select {
-	case c.taskChan <- task:
+	case c.tasks <- task:
 	default:
 		c.logger.Warn("chancellor task channel full", "edict_id", key.ID)
 	}
@@ -912,7 +883,7 @@ func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, key storage.Ed
 	}
 
 	select {
-	case c.taskChan <- task:
+	case c.tasks <- task:
 	default:
 		c.logger.Warn("chancellor task channel full", "edict_id", key.ID)
 	}

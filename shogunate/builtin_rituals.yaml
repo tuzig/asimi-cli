@@ -142,8 +142,8 @@
         - the court status
       act: |
         Given the information below, provide a succinct report on 三界.
-        finish by calling request_zhengming with a single question: "best path forward?" with
-        a few options for a clear next step. e.g, "commit middle kingdom", "review borderlands".
+        finish by calling request_zhengming with a single question: "What's our next step?" with
+        a few options for a clear next step. e.g, "review borderlands".
         
 - name: review-borderland
   description: |

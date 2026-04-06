@@ -41,7 +41,6 @@ CRITICAL RULES:
 type Marshal struct {
 	*MinisterBase // embedded base for database access and session creation
 	rca           RCAAnalyzer
-	tasks         chan *Task
 }
 
 // NewMarshal creates a new Marshal minister
@@ -50,13 +49,7 @@ func NewMarshal(base *MinisterBase, rca RCAAnalyzer) *Marshal {
 	return &Marshal{
 		MinisterBase: base,
 		rca:          rca,
-		tasks:        make(chan *Task, 10),
 	}
-}
-
-// Tasks returns the channel for task submission
-func (m *Marshal) Tasks() chan<- *Task {
-	return m.tasks
 }
 
 // ID returns the minister identifier
@@ -235,22 +228,7 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 
 // Run starts the Marshal's task processing loop
 func (m *Marshal) Run(ctx context.Context) {
-	m.logger.Info("marshal started, awaiting tasks")
-
-	for {
-		select {
-		case <-ctx.Done():
-			m.logger.Info("marshal stopped")
-			return
-		case task := <-m.tasks:
-			merged, mergedCancel := context.WithCancel(ctx)
-			if task.Ctx != nil {
-				context.AfterFunc(task.Ctx, func() { mergedCancel() })
-			}
-			m.processTask(merged, task)
-			mergedCancel()
-		}
-	}
+	m.RunLoop(ctx, m, nil, m.processTask)
 }
 
 // processTask handles a single task

@@ -16,7 +16,6 @@ import (
 // When an LLM is configured, it creates sessions to process tasks through tool execution.
 type Forge struct {
 	*MinisterBase // embedded base for database access and session creation
-	tasks         chan *Task
 }
 
 // NewForge creates a new Forge that processes tasks via the Task pattern.
@@ -24,13 +23,7 @@ func NewForge(base *MinisterBase) *Forge {
 	base.ministerID = "forge"
 	return &Forge{
 		MinisterBase: base,
-		tasks:        make(chan *Task, 10),
 	}
-}
-
-// Tasks returns the channel for task submission from Chancellor
-func (f *Forge) Tasks() chan<- *Task {
-	return f.tasks
 }
 
 // ID returns the minister identifier.
@@ -174,25 +167,9 @@ func (f *Forge) InsertLing(ling *storage.Ling) error {
 
 // --- Execute Logic ---
 
-// Run processes incoming Tasks until context is cancelled.
-// Each task is executed and replied to directly via its done channel.
+// Run starts the Forge's processing loop
 func (f *Forge) Run(ctx context.Context) {
-	f.logger.Info("forge started, processing tasks")
-	for {
-		select {
-		case <-ctx.Done():
-			f.logger.Info("forge stopped")
-			return
-		case task := <-f.tasks:
-			// TODO: This looks off, too much context management
-			merged, mergedCancel := context.WithCancel(ctx)
-			if task.Ctx != nil {
-				context.AfterFunc(task.Ctx, func() { mergedCancel() })
-			}
-			f.processTask(merged, task)
-			mergedCancel()
-		}
-	}
+	f.RunLoop(ctx, f, nil, f.processTask)
 }
 
 // processTask handles a task from the Chancellor.
@@ -216,6 +193,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 	if f.model != nil {
 		// Get pending lings for this edict
 		pendingLings, err := f.GetPendingLing(task.EdictKey)
+		f.logger.Info("Got lings", "count", len(pendingLings), "edict", task.EdictKey)
 		if err != nil {
 			f.logger.Error("failed to get pending lings", "error", err)
 			taskErr = err

@@ -91,12 +91,14 @@ type Minister interface {
 	Tools() []Tool
 	// Tasks returns the channel for submitting Tasks
 	Tasks() chan<- *Task
+	// PromptsChan returns the channel for prompts via SubmitPrompt
+	PromptsChan() <-chan *Prompt
 	// SubmitPrompt sends a prompt to the minister
 	SubmitPrompt(p *Prompt)
-	// Run starts the minister's processing loop (blocks until context cancelled)
-	Run(ctx context.Context)
 	// RepoInfo returns the repository information
 	RepoInfo() repo.RepoInfo
+	// Run starts the minister's processing loop (blocks until context cancelled)
+	Run(ctx context.Context)
 }
 
 // --- External Dependencies ---
@@ -203,6 +205,7 @@ type MinisterBase struct {
 	logger     *slog.Logger
 	notify     internal.NotifyFunc
 	prompts    chan *Prompt
+	tasks      chan *Task
 	publish    func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
 
 	zhengmingMu       sync.Mutex
@@ -222,6 +225,7 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, us
 		runner:   runner,
 		logger:   logger,
 		prompts:  make(chan *Prompt),
+		tasks:    make(chan *Task, 10),
 		username: username,
 		project:  project,
 	}
@@ -235,6 +239,84 @@ func (m *MinisterBase) SubmitPrompt(p *Prompt) {
 // PromptsChan returns the receive end of the prompts channel for Run() loops.
 func (m *MinisterBase) PromptsChan() <-chan *Prompt {
 	return m.prompts
+}
+
+// Tasks returns the channel for submitting Tasks.
+func (m *MinisterBase) Tasks() chan<- *Task {
+	return m.tasks
+}
+
+// RunLoop is the shared processing loop for ministers. It listens on both
+// prompts (via SubmitPrompt) and tasks (from Chancellor).
+// The minister parameter is the concrete Minister, used by the default prompt
+// handler to create sessions. processPrompt may be nil — in that case RunLoop
+// uses ProcessPrompt(minister, ...) as the default. processTask may also be nil.
+func (m *MinisterBase) RunLoop(
+	ctx context.Context,
+	minister Minister,
+	processPrompt func(context.Context, *Prompt),
+	processTask func(context.Context, *Task),
+) {
+	if processPrompt == nil {
+		processPrompt = func(ctx context.Context, p *Prompt) {
+			m.ProcessPrompt(ctx, minister, p)
+		}
+	}
+	m.logger.Info("minister started", "minister_id", m.ministerID)
+	for {
+		select {
+		case <-ctx.Done():
+			m.logger.Info("minister stopped", "minister_id", m.ministerID)
+			return
+		case prompt := <-m.PromptsChan():
+			merged, mergedCancel := context.WithCancel(ctx)
+			if prompt.Ctx != nil {
+				context.AfterFunc(prompt.Ctx, func() { mergedCancel() })
+			}
+			processPrompt(merged, prompt)
+			mergedCancel()
+		case task := <-m.tasks:
+			if processTask == nil {
+				m.logger.Warn("received task but no handler", "minister_id", m.ministerID)
+				continue
+			}
+			merged, mergedCancel := context.WithCancel(ctx)
+			if task.Ctx != nil {
+				context.AfterFunc(task.Ctx, func() { mergedCancel() })
+			}
+			processTask(merged, task)
+			mergedCancel()
+		}
+	}
+}
+
+// ProcessPrompt is the shared prompt handler for all ministers.
+// It creates a session if needed and streams the LLM response.
+func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, prompt *Prompt) {
+	if m.model == nil {
+		m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: fmt.Errorf("LLM not configured for %s", m.ministerID)})
+		return
+	}
+
+	if m.session == nil {
+		var err error
+		m.session, err = CreateSession(minister, m.model, m.config, m.notify, m.ministerID)
+		if err != nil {
+			m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: fmt.Errorf("failed to create session: %w", err)})
+			return
+		}
+		m.session.TabType = "interactive"
+		m.logger.Info("created interactive session", "minister_id", m.ministerID)
+	}
+
+	m.notify(StreamStartMsg{ChannelID: m.ministerID, EdictID: prompt.EdictKey.ID})
+
+	_, err := m.session.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
+	if err != nil && ctx.Err() == nil {
+		m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: err})
+		return
+	}
+	m.notify(StreamDoneMsg{ChannelID: m.ministerID})
 }
 
 // Runner returns the shell runner (may be nil)

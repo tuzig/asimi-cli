@@ -85,7 +85,7 @@ const (
 	// Shogunate court branding
 	courtPrefix    = "🏯  "  // Court in session
 	edictPrefix    = "📜  "  // Edict received
-	ministerPrefix = "⚔️  " // Minister invoked
+	ministerPrefix = "🔱  "  // Minister invoked
 	ritualPrefix   = "⛩️  " // Ritual enacted
 )
 
@@ -552,7 +552,7 @@ func (c *ChatComponent) UpdateContent() {
 			// Thinking/reasoning content styling
 			thinkingStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#6A9955")) // Muted green for thoughts
-			builder := NewChatMsgBuilder("💭 ")
+			builder := NewChatMsgBuilder("💭   ")
 			// Word wrap and split into lines (c.Width-1 for gutter, -6 for prefix)
 			wrapped := wordwrap.String(message, c.Width-7)
 			lines := strings.Split(wrapped, "\n")

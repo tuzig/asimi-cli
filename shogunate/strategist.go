@@ -30,7 +30,6 @@ CRITICAL RULES:
 // Strategist decomposes edicts into executable ling (令, task orders)
 type Strategist struct {
 	*MinisterBase // embedded base for database access and session creation
-	tasks         chan *Task
 }
 
 // NewStrategist creates a new Strategist minister
@@ -38,13 +37,7 @@ func NewStrategist(base *MinisterBase) *Strategist {
 	base.ministerID = "strategist"
 	return &Strategist{
 		MinisterBase: base,
-		tasks:        make(chan *Task, 10),
 	}
-}
-
-// Tasks returns the channel for task submission
-func (s *Strategist) Tasks() chan<- *Task {
-	return s.tasks
 }
 
 // ID returns the minister identifier
@@ -219,22 +212,7 @@ func (s *Strategist) validateDependencies(lingList []storage.Ling) error {
 
 // Run starts the Strategist's task processing loop
 func (s *Strategist) Run(ctx context.Context) {
-	s.logger.Info("strategist started, awaiting tasks")
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Info("strategist stopped")
-			return
-		case task := <-s.tasks:
-			merged, mergedCancel := context.WithCancel(ctx)
-			if task.Ctx != nil {
-				context.AfterFunc(task.Ctx, func() { mergedCancel() })
-			}
-			s.processTask(merged, task)
-			mergedCancel()
-		}
-	}
+	s.RunLoop(ctx, s, nil, s.processTask)
 }
 
 // processTask handles a single task

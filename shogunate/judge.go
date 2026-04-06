@@ -28,7 +28,6 @@ CRITICAL RULES:
 type Judge struct {
 	*MinisterBase // embedded base for database access and session creation
 	ci            CIRunner
-	tasks         chan *Task
 }
 
 // NewJudge creates a new Judge minister
@@ -37,13 +36,7 @@ func NewJudge(base *MinisterBase, ci CIRunner) *Judge {
 	return &Judge{
 		MinisterBase: base,
 		ci:           ci,
-		tasks:        make(chan *Task, 10),
 	}
-}
-
-// Tasks returns the channel for task submission
-func (j *Judge) Tasks() chan<- *Task {
-	return j.tasks
 }
 
 // ID returns the minister identifier
@@ -294,22 +287,7 @@ func (j *Judge) judgeManifest(ctx context.Context, key storage.EdictKey, manifes
 
 // Run starts the Judge's task processing loop
 func (j *Judge) Run(ctx context.Context) {
-	j.logger.Info("judge started, awaiting tasks")
-
-	for {
-		select {
-		case <-ctx.Done():
-			j.logger.Info("judge stopped")
-			return
-		case task := <-j.tasks:
-			merged, mergedCancel := context.WithCancel(ctx)
-			if task.Ctx != nil {
-				context.AfterFunc(task.Ctx, func() { mergedCancel() })
-			}
-			j.processTask(merged, task)
-			mergedCancel()
-		}
-	}
+	j.RunLoop(ctx, j, nil, j.processTask)
 }
 
 // processTask handles a single task. When an LLM is configured, Judge reasons

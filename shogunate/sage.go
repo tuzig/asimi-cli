@@ -119,7 +119,6 @@ type Finding struct {
 type Sage struct {
 	*MinisterBase
 	shogunate *Shogunate
-	tasks     chan *Task
 	linter    Linter
 }
 
@@ -128,7 +127,6 @@ func NewSage(base *MinisterBase, linter Linter) *Sage {
 	base.ministerID = "sage"
 	return &Sage{
 		MinisterBase: base,
-		tasks:        make(chan *Task, 10),
 		linter:       linter,
 	}
 }
@@ -141,9 +139,6 @@ func (c *Sage) Title() string { return "Sage" }
 
 // SystemPrompt returns the Sage's system prompt template.
 func (c *Sage) SystemPrompt() string { return SageRole }
-
-// Tasks returns the channel for task submission
-func (c *Sage) Tasks() chan<- *Task { return c.tasks }
 
 // Tools returns the Sage's LLM tools — read-only access plus zhengming and review tools
 func (c *Sage) Tools() []Tool {
@@ -198,32 +193,10 @@ func (c *Sage) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 }
 
 // AppendToIntent is a no-op stub — Sage never modifies edicts (satisfies EdictManager interface)
+
 // Run starts the Sage's processing loop
 func (c *Sage) Run(ctx context.Context) {
-	c.logger.Info("sage started, awaiting prompts")
-	for {
-		select {
-		case <-ctx.Done():
-			c.logger.Info("sage stopped")
-			return
-		case prompt := <-c.PromptsChan():
-			// Merge lifecycle ctx (shutdown) with per-prompt ctx (CTRL-C):
-			// cancel when either fires.
-			merged, mergedCancel := context.WithCancel(ctx)
-			if prompt.Ctx != nil {
-				context.AfterFunc(prompt.Ctx, func() { mergedCancel() })
-			}
-			c.processPrompt(merged, prompt)
-			mergedCancel()
-		case task := <-c.tasks:
-			merged, mergedCancel := context.WithCancel(ctx)
-			if task.Ctx != nil {
-				context.AfterFunc(task.Ctx, func() { mergedCancel() })
-			}
-			c.processTask(merged, task)
-			mergedCancel()
-		}
-	}
+	c.RunLoop(ctx, c, c.processPrompt, c.processTask)
 }
 
 func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
