@@ -6,63 +6,62 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestChatComponent_UpdateLastToolCallEmoji(t *testing.T) {
-	t.Run("update emoji for matching command", func(t *testing.T) {
+func TestChatComponent_StartBlock(t *testing.T) {
+	t.Run("starts block with height limit", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		// Add a tool call message (format: "<emoji> <description>\n │ $ <command>")
-		chat.AddMessage("⚙️ Running command\n │ $ echo hello")
+		// Start with one message
+		chat.AddMessage("header message")
+		
+		// Start a block with height limit of 5
+		// Block records len(messages)-1 = 0
+		chat.StartBlock(5)
 
-		updated := chat.UpdateLastToolCallEmoji("echo hello", "🙋")
-
-		assert.True(t, updated)
-		assert.Contains(t, chat.Messages[len(chat.Messages)-1].Content, "🙋")
-		assert.Contains(t, chat.Messages[len(chat.Messages)-1].Content, "$ echo hello")
-		assert.NotContains(t, chat.Messages[len(chat.Messages)-1].Content, "⚙️")
+		assert.Len(t, chat.blockLines, 1)
+		assert.Equal(t, 0, chat.blockLines[0][0]) // Starting line index
+		assert.Equal(t, 5, chat.blockLines[0][1]) // Height limit
 	})
 
-	t.Run("update emoji for last matching command when multiple exist", func(t *testing.T) {
+	t.Run("starts block with unlimited height (0)", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		// Add multiple tool call messages
-		chat.AddMessage("✓ Running command\n │ $ echo first")
-		chat.AddMessage("⚙️ Running command\n │ $ echo second")
+		chat.AddMessage("first")
+		
+		// Start an unlimited block
+		chat.StartBlock(0)
 
-		updated := chat.UpdateLastToolCallEmoji("echo second", "🙋")
-
-		assert.True(t, updated)
-		// First message should be unchanged
-		assert.Contains(t, chat.Messages[0].Content, "✓")
-		// Last message should be updated
-		assert.Contains(t, chat.Messages[1].Content, "🙋")
+		assert.Len(t, chat.blockLines, 1)
+		assert.Equal(t, 0, chat.blockLines[0][0])
+		assert.Equal(t, 0, chat.blockLines[0][1]) // Unlimited
 	})
 
-	t.Run("no update when command not found", func(t *testing.T) {
+	t.Run("multiple blocks with different heights", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		chat.AddMessage("⚙️ Running command\n │ $ echo hello")
+		
+		// First block: after 2 messages, block starts at index 1
+		chat.AddMessage("block1-msg1")
+		chat.AddMessage("block1-msg2")
+		chat.StartBlock(3)
 
-		updated := chat.UpdateLastToolCallEmoji("echo world", "🙋")
+		// Second block: after 4 total messages, block starts at index 3
+		chat.AddMessage("block2-msg1")
+		chat.AddMessage("block2-msg2")
+		chat.StartBlock(5)
 
-		assert.False(t, updated)
-		// Original message should be unchanged
-		assert.Contains(t, chat.Messages[len(chat.Messages)-1].Content, "⚙️")
+		assert.Len(t, chat.blockLines, 2)
+		// First block starts after 2 messages (at index 1)
+		assert.Equal(t, 1, chat.blockLines[0][0])
+		assert.Equal(t, 3, chat.blockLines[0][1])
+		// Second block starts after 4 messages (at index 3)
+		assert.Equal(t, 3, chat.blockLines[1][0])
+		assert.Equal(t, 5, chat.blockLines[1][1])
 	})
 
-	t.Run("no update when messages are empty", func(t *testing.T) {
+	t.Run("start block on empty chat", func(t *testing.T) {
 		chat := NewChatComponent(80, 20, false)
-		chat.Messages = []ChatMessage{} // Clear all messages
+		// No messages added yet
+		chat.StartBlock(10)
 
-		updated := chat.UpdateLastToolCallEmoji("echo hello", "🙋")
-
-		assert.False(t, updated)
-	})
-
-	t.Run("update to denied emoji", func(t *testing.T) {
-		chat := NewChatComponent(80, 20, false)
-		chat.AddMessage("🙋 Running command\n │ $ rm -rf /")
-
-		updated := chat.UpdateLastToolCallEmoji("rm -rf /", "⛔︎")
-
-		assert.True(t, updated)
-		assert.Contains(t, chat.Messages[len(chat.Messages)-1].Content, "⛔︎")
-		assert.NotContains(t, chat.Messages[len(chat.Messages)-1].Content, "🙋")
+		assert.Len(t, chat.blockLines, 1)
+		assert.Equal(t, -1, chat.blockLines[0][0]) // No messages yet, so -1
+		assert.Equal(t, 10, chat.blockLines[0][1])
 	})
 }
