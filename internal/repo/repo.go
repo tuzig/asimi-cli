@@ -62,11 +62,8 @@ func GetRepoInfo() RepoInfo {
 			projectRoot = cwd
 		}
 	} else {
-		// Not a worktree, use standard project root finding
-		projectRoot, err = findMainRepoRoot(cwd)
-		if err != nil {
-			slog.Warn("findMainRepoRoot failed", "error", err)
-		}
+		// Not a worktree, use current directory
+		projectRoot = cwd
 	}
 
 	// Get current branch and status using go-git

@@ -269,6 +269,7 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 // Returns the session for potential reuse in multi-turn conversations.
 func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string) (*Session, string, error) {
 	var session *Session
+	var output string
 	var err error
 
 	if existingSession != nil {
@@ -283,7 +284,7 @@ func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey
 			sessionChannelID = "sage"
 		}
 		session.SetNotify(notify, sessionChannelID)
-		_, err = session.AskWithStreaming(ctx, work, nil)
+		output, err = session.AskWithStreaming(ctx, work, nil)
 		if err != nil {
 			return session, "", err
 		}
@@ -299,7 +300,7 @@ func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey
 			sessionChannelID = "sage"
 		}
 		session.SetNotify(notify, sessionChannelID)
-		_, err = session.AskWithStreaming(ctx, work, nil)
+		output, err = session.AskWithStreaming(ctx, work, nil)
 		if err != nil {
 			return session, "", err
 		}
@@ -318,14 +319,14 @@ func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey
 			return nil, "", fmt.Errorf("failed to create sage session: %w", err)
 		}
 
-		_, err = session.AskWithStreaming(ctx, work, nil)
+		output, err = session.AskWithStreaming(ctx, work, nil)
 		if err != nil {
 			return session, "", err
 		}
 	}
 
 	c.logger.Info("sage task completed", "channel", channelID)
-	return session, "", nil
+	return session, output, nil
 }
 
 // --- Sage-specific tools ---

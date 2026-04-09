@@ -115,6 +115,7 @@ func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, stri
 	}
 
 	var session *Session
+	var output string
 	var err error
 
 	if task.Session != nil {
@@ -128,7 +129,7 @@ func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, stri
 			sessionChannelID = "strategist"
 		}
 		session.SetNotify(notify, sessionChannelID)
-		_, err = session.AskWithStreaming(ctx, task.Work, nil)
+		output, err = session.AskWithStreaming(ctx, task.Work, nil)
 		if err != nil {
 			return session, "", err
 		}
@@ -148,14 +149,14 @@ func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, stri
 			return nil, "", fmt.Errorf("failed to create strategist session: %w", err)
 		}
 
-		_, err = session.AskWithStreaming(ctx, task.Work, nil)
+		output, err = session.AskWithStreaming(ctx, task.Work, nil)
 		if err != nil {
 			return session, "", err
 		}
 	}
 
 	s.logger.Info("strategist task completed")
-	return session, "", nil
+	return session, output, nil
 }
 
 // validateDependencies ensures ling form a DAG (no cycles)

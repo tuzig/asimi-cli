@@ -329,6 +329,7 @@ func (j *Judge) processTask(ctx context.Context, task *Task) {
 // streamTask creates (or reuses) a session and streams the task through the LLM.
 func (j *Judge) streamTask(ctx context.Context, task *Task, notify internal.NotifyFunc) (*Session, string, error) {
 	var session *Session
+	var output string
 	var err error
 
 	if task.Session != nil {
@@ -342,7 +343,7 @@ func (j *Judge) streamTask(ctx context.Context, task *Task, notify internal.Noti
 			sessionChannelID = "judge"
 		}
 		session.SetNotify(notify, sessionChannelID)
-		_, err = session.AskWithStreaming(ctx, task.Work, nil)
+		output, err = session.AskWithStreaming(ctx, task.Work, nil)
 		if err != nil {
 			return session, "", err
 		}
@@ -361,14 +362,14 @@ func (j *Judge) streamTask(ctx context.Context, task *Task, notify internal.Noti
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create judge session: %w", err)
 		}
-		_, err = session.AskWithStreaming(ctx, task.Work, nil)
+		output, err = session.AskWithStreaming(ctx, task.Work, nil)
 		if err != nil {
 			return session, "", err
 		}
 	}
 
 	j.logger.Info("judge task completed")
-	return session, "", nil
+	return session, output, nil
 }
 
 // --- Judge Specialized Tools ---

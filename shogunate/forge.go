@@ -227,6 +227,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 // Returns the session for potential reuse in multi-turn conversations.
 func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string) (*Session, string, error) {
 	var session *Session
+	var output string
 	var err error
 
 	if existingSession != nil {
@@ -241,7 +242,7 @@ func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKe
 			sessionChannelID = "forge"
 		}
 		session.SetNotify(notify, sessionChannelID)
-		_, err = session.AskWithStreaming(ctx, work, nil)
+		output, err = session.AskWithStreaming(ctx, work, nil)
 		if err != nil {
 			return session, "", err
 		}
@@ -260,14 +261,14 @@ func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKe
 			return nil, "", fmt.Errorf("failed to create forge session: %w", err)
 		}
 
-		_, err = session.AskWithStreaming(ctx, work, nil)
+		output, err = session.AskWithStreaming(ctx, work, nil)
 		if err != nil {
 			return session, "", err
 		}
 	}
 
 	f.logger.Info("forge task completed")
-	return session, "", nil
+	return session, output, nil
 }
 
 // executeLings processes lings in dependency order
