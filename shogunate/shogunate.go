@@ -444,6 +444,14 @@ func (s *Shogunate) SetRunner(r runners.Runner) {
 	s.runner = r
 }
 
+// SetRunnerMessageChannel sets the message channel on the runner for approval requests
+func (s *Shogunate) SetRunnerMessageChannel(msgChan chan<- runners.Msg) {
+	if s == nil || s.runner == nil {
+		return
+	}
+	s.runner.SetMessageChannel(msgChan)
+}
+
 // GetRitualRegistry returns the ritual registry
 func (s *Shogunate) GetRitualRegistry() *RitualRegistry {
 	if s == nil || s.ritualGuard == nil {

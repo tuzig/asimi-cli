@@ -530,7 +530,7 @@ func (r *RitualRunner) verifySandboxUp(ctx context.Context) (interface{}, error)
 	if err != nil {
 		return map[string]string{
 			"status": "failed",
-			"output": "sandbox is broken. to fix :init\n" + output.Output,
+			"output": "sandbox is broken. To fix :init\n" + output.Output,
 		}, fmt.Errorf("sandbox smoke test failed: %w", err)
 	}
 	if !strings.Contains(output.Output, "podman") {

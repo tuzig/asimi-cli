@@ -2173,6 +2173,17 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	db := setupTestGormDB(t)
 	runner := runners.NewHostRunner()
 
+	// Set up auto-approval channel for host commands (e.g., bundle exec rake test)
+	runnerMsgChan := make(chan runners.Msg, 10)
+	runner.SetMessageChannel(runnerMsgChan)
+	go func() {
+		for msg := range runnerMsgChan {
+			if req, ok := msg.(runners.ApprovalRequestMsg); ok {
+				req.ResponseChan <- true // Auto-approve
+			}
+		}
+	}()
+
 	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
 	require.NoError(t, shog.Start(context.Background()))
 	t.Cleanup(func() { shog.Stop() })
