@@ -51,25 +51,12 @@ func (j *Judge) SystemPrompt() string {
 
 // Tools returns the Judge's LLM tools for interactive sessions
 func (j *Judge) Tools() []Tool {
-	var zhengmingNotify tools.ZhengmingNotifyFunc
-	zhengmingNotify = func(requestID string, key storage.EdictKey, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
-		if j.notify != nil {
-			j.notify(ZhengmingPendingMsg{
-				RequestID:  requestID,
-				EdictKey:   key,
-				MinisterID: ministerID,
-				Questions:  questions,
-				Priority:   priority,
-			})
-		}
-	}
-
 	toolList := []Tool{
 		// Specialized Judge tools for verdict management
 		&RecordVerdictTool{judge: j},
 		&ListPendingManifestsTool{judge: j},
 		&UpdateManifestStatusTool{judge: j},
-		tools.RequestZhengmingTool{MinisterID: j.ministerID, Requester: j, Notify: zhengmingNotify, Username: j.username, Project: j.project},
+		tools.RequestZhengmingTool{MinisterID: j.ministerID, Requester: j, WaitForAnswer: j.WaitForZhengming, Username: j.username, Project: j.project},
 	}
 	// Add edit tools (read, write, edit, list, grep)
 	for _, t := range tools.GetEditTools(j.config.LLM) {

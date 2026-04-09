@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal"
+	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
@@ -97,6 +98,10 @@ type Minister interface {
 	SubmitPrompt(p *Prompt)
 	// RepoInfo returns the repository information
 	RepoInfo() repo.RepoInfo
+	// Model returns the minister's LLM model
+	Model() llms.Model
+	// GetConfig returns the minister's LLM configuration
+	GetConfig() internalconfig.LLMConfig
 	// Run starts the minister's processing loop (blocks until context cancelled)
 	Run(ctx context.Context)
 }
@@ -210,7 +215,11 @@ type MinisterBase struct {
 
 	zhengmingMu       sync.Mutex
 	onZhengmingRaised func()
-	username          string
+
+	pendingZhengming   map[string]chan ZhengmingAnswer
+	pendingZhengmingMu sync.Mutex
+
+	username string
 	project           string
 	session           *Session // Embedded session for interactive use cases
 }
@@ -221,13 +230,14 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, us
 		logger = slog.Default()
 	}
 	return &MinisterBase{
-		db:       db,
-		runner:   runner,
-		logger:   logger,
-		prompts:  make(chan *Prompt),
-		tasks:    make(chan *Task, 10),
-		username: username,
-		project:  project,
+		db:               db,
+		runner:           runner,
+		logger:           logger,
+		prompts:          make(chan *Prompt),
+		tasks:            make(chan *Task, 10),
+		username:         username,
+		project:          project,
+		pendingZhengming: make(map[string]chan ZhengmingAnswer),
 	}
 }
 
@@ -488,6 +498,19 @@ func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 	m.notify = notify
 }
 
+// Model returns the minister's LLM model.
+func (m *MinisterBase) Model() llms.Model {
+	return m.model
+}
+
+// GetConfig returns the minister's LLM configuration.
+func (m *MinisterBase) GetConfig() internalconfig.LLMConfig {
+	if m.config != nil {
+		return m.config.LLM
+	}
+	return internalconfig.LLMConfig{}
+}
+
 // Session returns the minister's embedded session (may be nil).
 func (m *MinisterBase) Session() *Session {
 	return m.session
@@ -562,6 +585,17 @@ func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.
 		cb()
 	}
 
+	// Notify UI of pending zhengming
+	if m.notify != nil {
+		m.notify(ZhengmingPendingMsg{
+			RequestID:  requestID,
+			EdictKey:   key,
+			MinisterID: m.ministerID,
+			Questions:  questions,
+			Priority:   priority,
+		})
+	}
+
 	// Emit zhengming_requested event
 	m.EmitEvent(key, "zhengming_requested", storage.JSON{
 		"request_id":  requestID,
@@ -571,6 +605,44 @@ func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.
 	})
 
 	return requestID, nil
+}
+
+// WaitForZhengming blocks until the zhengming answer arrives or ctx is cancelled.
+func (m *MinisterBase) WaitForZhengming(ctx context.Context, requestID string) (string, error) {
+	m.pendingZhengmingMu.Lock()
+	ch := make(chan ZhengmingAnswer, 1)
+	m.pendingZhengming[requestID] = ch
+	m.pendingZhengmingMu.Unlock()
+
+	defer func() {
+		m.pendingZhengmingMu.Lock()
+		delete(m.pendingZhengming, requestID)
+		m.pendingZhengmingMu.Unlock()
+	}()
+
+	select {
+	case answer := <-ch:
+		return answer.Answer, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// DeliverZhengmingAnswer delivers a zhengming answer to a waiting caller.
+// Returns true if the answer was delivered.
+func (m *MinisterBase) DeliverZhengmingAnswer(answer ZhengmingAnswer) bool {
+	m.pendingZhengmingMu.Lock()
+	ch, ok := m.pendingZhengming[answer.RequestID]
+	m.pendingZhengmingMu.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- answer:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsZhengmingPending checks if there are pending clarification requests for an edict

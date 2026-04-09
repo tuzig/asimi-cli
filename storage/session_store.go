@@ -319,7 +319,29 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 	return sessions, nil
 }
 
-// DeleteSession deletes a session and all its messages
+// ClearSession deletes a session and its messages from storage.
+// This explicitly deletes messages first, then the session, ensuring
+// cleanup happens atomically in a transaction.
+func (s *SessionStore) ClearSession(sessionID string) error {
+	tx, err := s.db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec("DELETE FROM messages WHERE session_id = ?", sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to delete messages: %w", err)
+	}
+	_, err = tx.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// DeleteSession deletes a session (messages are cascade deleted by DB)
 func (s *SessionStore) DeleteSession(sessionID string) error {
 	result, err := s.db.conn.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
 	if err != nil {

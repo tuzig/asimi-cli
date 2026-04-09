@@ -184,12 +184,36 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	// Reset the appropriate minister session based on active tab
 	if model.shogunate != nil {
 		tab := model.tabs.ActiveTab()
+		// Get current session ID before resetting
+		var sessionID string
+		if session := model.getCurrentSession(); session != nil {
+			sessionID = session.ID
+		}
+		// Clear session from store - deletes messages and session atomically
+		if sessionID != "" && model.sessionStore != nil {
+			_ = model.sessionStore.ClearSession(sessionID)
+		}
 		switch tab.Type {
 		case TabRuling:
 			model.currentEdictKey = storage.EdictKey{}
 			model.shogunate.ResetRuling()
 		case TabHunting:
 			model.shogunate.ResetHunting()
+		case TabObserve:
+			// Forge tab - reset forge session
+			if m := model.shogunate.GetMinister("forge"); m != nil {
+				if rs, ok := m.(interface{ ResetSession() }); ok {
+					rs.ResetSession()
+				}
+			}
+		case TabRitual:
+			// Judge tab - reset judge session
+			if m := model.shogunate.GetMinister("judge"); m != nil {
+				if rs, ok := m.(interface{ ResetSession() }); ok {
+					rs.ResetSession()
+				}
+			}
+		// TabShogunate has no interactive session to reset
 		}
 	}
 

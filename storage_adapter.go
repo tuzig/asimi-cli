@@ -386,6 +386,18 @@ func (s *SessionStore) CleanupOldSessions() error {
 	return s.store.CleanupOldSessions()
 }
 
+// DeleteSession deletes a session and all its messages from the store
+func (s *SessionStore) DeleteSession(sessionID string) error {
+	return s.store.DeleteSession(sessionID)
+}
+
+// ClearSession deletes a session and its messages atomically.
+// This explicitly deletes messages first, then the session, ensuring
+// cleanup happens in a single transaction.
+func (s *SessionStore) ClearSession(sessionID string) error {
+	return s.store.ClearSession(sessionID)
+}
+
 // Close closes the session store gracefully, waiting for pending saves to complete
 func (s *SessionStore) Close() {
 	s.closeOnce.Do(func() {

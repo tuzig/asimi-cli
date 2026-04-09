@@ -14,6 +14,9 @@
       minister: forge
       act: |
         Implement the changes for the edict below.
+
+        {{ .edict }}
+
         Focus on minimal, targeted changes to fulfill the intent.
       on_failure: retry
     - name: judging
@@ -24,9 +27,15 @@
       act: |
         If any tests were changed, you need to verify that were not weakened
         and that non trivial changes are justified by the edict.
+
+        {{ .manifests }}
+
         If tests fail, provide clear feedback for the Forge on what needs to be fixed.
         If changes are not covered by test, add the missing tests and write them so they ensure the changed code will always work.
         When judgement is done, call record_verdict
+      then:
+        - the verdicts are passed
+        - record the judge's seal
       depends_on: [forging]
       on_failure: goto
       on_failure_target: forging
@@ -37,6 +46,11 @@
         - the verdicts
       act: |
         Review the code changes for this edict.
+
+        {{ .manifests }}
+
+        {{ .verdicts }}
+
         Verify adherence to Imperial Code and project conventions.
         Record precedents for any significant decisions.
         Veto if changes violate conventions or introduce risk.
@@ -62,6 +76,9 @@
       minister: strategist
       act: |
         Analyze the edict below and produce a technical Battle Plan.
+
+        {{ .edict }}
+
         Break down the work into clear phases with dependencies.
         Identify risks and architectural decisions.
         End this step with a fresh crop of lings or zhengming
@@ -72,8 +89,15 @@
       given:
         - the manifests
       act: |
-        Execute the Battle Plan for edict {{ .edict_id }}.
-        Implement changes according to the Strategist's design.
+        Execute the Battle Plan for edict:
+        
+        {{ .edict }}
+
+        Implement changes according to the manifests:
+        
+        {{ .manifests }}
+
+        IMPORTANT - This should be replaced by the lings and not reach the model
       depends_on: [strategizing]
       on_failure: retry
 
@@ -82,10 +106,13 @@
       given:
         - the manifests
       act: |
-        Run the Trials for the edict.
-        Execute all tests and validate the Forge's work.
-        If the Judge fails, the Forge must return to the anvil.
+        Judge the changes made in the manifests:
+
+        {{ .manifests }}
+
+        Make sure test coverage was not diminshed
       then:
+        - the verdicts are passed
         - "!git diff"
         - record the judge's seal
       depends_on: [forging]
@@ -100,6 +127,13 @@
         - the earth status
       act: |
         Review the code changes in this ritual.
+
+        {{ .manifests }}
+
+        {{ .verdicts }}
+
+        {{ .earth_status }}
+
         Verify it adheres to the Imperial Code (project standards).
         Veto if the code violates conventions or introduces risk.
       then:
@@ -142,7 +176,20 @@
         - the court status
       act: |
         Given the information below, provide a succinct report on 三界.
-        finish by calling request_zhengming with a single question: "What's our next step?" with
+
+        ## Unsealed Edicts
+        {{ .unsealed_edicts }}
+
+        ## Heaven's Snapshot
+        {{ .heaven_snapshot }}
+
+        ## Earth Status
+        {{ .earth_status }}
+
+        ## Court Status
+        {{ .court_status }}
+
+        Finish by calling request_zhengming with a single question: "What's our next step?" with
         a few options for a clear next step. e.g, "review borderlands".
         
 - name: review-borderland
@@ -157,16 +204,30 @@
     - name: judgement
       minister: judge
       given:
+        - the borderlands
         - manifests for the borderlands
       act: |
         If the tests pass, ensure
         the changes in the borderlands and middle kingdom are covered by tests.
+
+        {{ .borderlands }}
+
+        {{ .borderland_manifests }}
+
         Use record_verdict to record pass/fail for this edict.
         Censoring is next so don't stage, commit nor push.
     - name: censoring
       minister: sage
+      given:
+        - the borderlands
+        - manifests for the borderlands
       act: |
         Review the manifests and the code changes below.
+
+        {{ .borderlands }}
+
+        {{ .borderland_manifests }}
+
         Check for style violations, security concerns, and architectural issues.
         Record your insights using record_precedent.
         Produce a comprehensive code review report summarizing findings from both judge and sage.

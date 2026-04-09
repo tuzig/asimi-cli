@@ -176,7 +176,7 @@ type StepDefEntry struct {
 type StepDef struct {
 	Pattern    string // cucumber expression pattern
 	HandlerKey string // key used to dispatch to runBuiltinGiven/runBuiltinThen
-	OutputKey  string // key stored in given_context
+	OutputKey  string // key stored in exec.Data
 	expression cucumberexpressions.Expression
 }
 
@@ -219,6 +219,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the infrastructure is staged", "stage_infrastructure", "infrastructure_staged"},
 		{"record the judge's seal", "record_judge_seal", ""},
 		{"record the sage's seal", "record_sage_seal", ""},
+		{"the verdicts are passed", "check_verdicts_passed", ""},
 		{"the unsealed edicts", "get_unsealed_edicts", "unsealed_edicts"},
 		{"a heaven's snapshot", "get_heaven_snapshot", "heaven_snapshot"},
 		{"Asimi's versions", "check_asimi_version", "asimi_version"},
@@ -508,8 +509,6 @@ type RitualRunner struct {
 	logger          *slog.Logger
 	maxRetries      int
 
-	pendingZhengming   map[string]chan ZhengmingAnswer
-	pendingZhengmingMu sync.Mutex
 }
 
 // NewRitualRunner creates a new ritual runner
@@ -533,56 +532,23 @@ func NewRitualRunner(
 		runner:           runner,
 		logger:           logger,
 		maxRetries:       3,
-		pendingZhengming: make(map[string]chan ZhengmingAnswer),
 	}
 }
 
-// registerPendingZhengming creates a channel for a zhengming request and returns it.
-func (r *RitualRunner) registerPendingZhengming(requestID string) chan ZhengmingAnswer {
-	r.pendingZhengmingMu.Lock()
-	defer r.pendingZhengmingMu.Unlock()
-	ch := make(chan ZhengmingAnswer, 1)
-	r.pendingZhengming[requestID] = ch
-	return ch
-}
-
-// removePendingZhengming removes a pending zhengming channel.
-func (r *RitualRunner) removePendingZhengming(requestID string) {
-	r.pendingZhengmingMu.Lock()
-	defer r.pendingZhengmingMu.Unlock()
-	delete(r.pendingZhengming, requestID)
-}
-
-// DeliverZhengmingAnswer delivers a zhengming answer to a waiting ritual.
-// Returns true if the answer was delivered to a pending ritual request.
-func (r *RitualRunner) DeliverZhengmingAnswer(answer ZhengmingAnswer) bool {
-	r.pendingZhengmingMu.Lock()
-	ch, ok := r.pendingZhengming[answer.RequestID]
-	r.pendingZhengmingMu.Unlock()
-	if !ok {
-		return false
-	}
-	select {
-	case ch <- answer:
-		return true
-	default:
-		return false
-	}
-}
-
-// HasPendingZhengming returns true if the given request ID has a pending ritual zhengming.
-func (r *RitualRunner) HasPendingZhengming(requestID string) bool {
-	r.pendingZhengmingMu.Lock()
-	defer r.pendingZhengmingMu.Unlock()
-	_, ok := r.pendingZhengming[requestID]
-	return ok
-}
-
-// waitForZhengming registers a channel, sets ritual state to stopped,
-// blocks until the answer arrives or ctx is cancelled, then restores state.
+// waitForZhengming delegates to the chancellor's MinisterBase blocking wait.
+// It pauses the ritual execution until the answer arrives.
 func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecution, requestID string) (ZhengmingAnswer, error) {
-	ch := r.registerPendingZhengming(requestID)
-	defer r.removePendingZhengming(requestID)
+	minister := r.getMinister("chancellor")
+	if minister == nil {
+		return ZhengmingAnswer{}, fmt.Errorf("chancellor not found for zhengming wait")
+	}
+	type zhengmingWaiter interface {
+		WaitForZhengming(context.Context, string) (string, error)
+	}
+	waiter, ok := minister.(zhengmingWaiter)
+	if !ok {
+		return ZhengmingAnswer{}, fmt.Errorf("chancellor does not support WaitForZhengming")
+	}
 
 	exec.State = RitualStateStopped
 	r.saveExecution(exec)
@@ -592,21 +558,21 @@ func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecuti
 		"execution_id", exec.ID,
 		"request_id", requestID)
 
-	select {
-	case answer := <-ch:
-		exec.State = RitualStateRunning
-		r.saveExecution(exec)
-		r.logger.Info("ritual resumed after zhengming",
-			"ritual", exec.RitualName,
-			"execution_id", exec.ID,
-			"request_id", requestID,
-			"answer", answer.Answer)
-		return answer, nil
-	case <-ctx.Done():
-		exec.State = RitualStateRunning
-		r.saveExecution(exec)
-		return ZhengmingAnswer{}, ctx.Err()
+	answerText, err := waiter.WaitForZhengming(ctx, requestID)
+
+	exec.State = RitualStateRunning
+	r.saveExecution(exec)
+
+	if err != nil {
+		return ZhengmingAnswer{}, err
 	}
+
+	r.logger.Info("ritual resumed after zhengming",
+		"ritual", exec.RitualName,
+		"execution_id", exec.ID,
+		"request_id", requestID,
+		"answer", answerText)
+	return ZhengmingAnswer{RequestID: requestID, Answer: answerText}, nil
 }
 
 // RitualExecution tracks a running ritual instance
@@ -699,7 +665,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 	var previousExec *RitualExecution
 	var recoveryData storage.JSON
 	var recoveryFirstIncompleteStep int = -1
-	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND ritual_name = ? AND state IN (?, ?)", key.ID, key.Username, key.Project, ritualName, RitualStateAborted, RitualStateStopped).
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND ritual_name = ? AND state IN (?, ?, ?)", key.ID, key.Username, key.Project, ritualName, RitualStateAborted, RitualStateStopped, RitualStateFailed).
 		Order("updated_at DESC").
 		First(&previousExec).Error; err == nil {
 		// Found aborted execution - attempt recovery
@@ -783,18 +749,13 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 					}}
 					requestID, err := gate.RequestZhengming(key, questions, storage.PriorityUrgent)
 					if err == nil {
-						// Notify UI of zhengming request
-						if exec.notify != nil {
-							exec.notify(ZhengmingPendingMsg{
-								RequestID:  requestID,
-								EdictKey:   key,
-								MinisterID: "chancellor",
-								Questions:  questions,
-								Priority:   storage.PriorityUrgent,
-							})
+						// Wait for zhengming answer via minister's blocking wait
+						type zhengmingWaiter interface {
+							WaitForZhengming(context.Context, string) (string, error)
 						}
-						// Wait for zhengming answer
-						answer, waitErr := r.waitForZhengming(ctx, exec, requestID)
+						waiter := minister.(zhengmingWaiter)
+						answerText, waitErr := waiter.WaitForZhengming(ctx, requestID)
+						answer := ZhengmingAnswer{RequestID: requestID, Answer: answerText, EdictID: key.ID}
 						if waitErr != nil {
 							r.logger.Warn("recovery zhengming wait failed, starting fresh", "error", waitErr)
 							// Clear recovery data on wait failure
@@ -1077,7 +1038,8 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		"ritual", exec.RitualName,
 		"execution_id", exec.ID,
 		"edict_id", exec.EdictID,
-		"duration", duration)
+		"duration", duration,
+		"data", exec.Data)
 
 	return nil
 }
@@ -1179,8 +1141,10 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		return actResult, err
 	}
 	if exec.Data == nil {
+		r.logger.Debug("exec.Data is nil")
 		exec.Data = storage.JSON{}
 	}
+	r.logger.Debug("updating act_result", "act_result", actResult)
 	exec.Data["act_result"] = actResult
 
 	// === THEN ===
@@ -1350,12 +1314,10 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 
 // getForkWorkUnits retrieves the work units from execution context
 func (r *RitualRunner) getForkWorkUnits(exec *RitualExecution, over string) ([]interface{}, error) {
-	// Look in given_context first
+	// Look directly in exec.Data
 	if exec.Data != nil {
-		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok {
-			if val, ok := given[over]; ok {
-				return r.toInterfaceSlice(val)
-			}
+		if val, ok := exec.Data[over]; ok {
+			return r.toInterfaceSlice(val)
 		}
 		// Also check step_results
 		if stepResults, ok := exec.Data["step_results"].(map[string]interface{}); ok {
@@ -1506,7 +1468,7 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 	return result
 }
 
-// executeMinisterStep invokes a minister for a task
+// executeMinisterStep invokes a minister for a task using a fresh ephemeral session per Act
 func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
 	actTemplate := step.Act
 	if actTemplate == "" {
@@ -1524,105 +1486,56 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		return "", fmt.Errorf("minister not found: %s", step.Minister)
 	}
 
-	// Dynamic work prompt — rebuilt every invocation (fresh context)
-	work := r.buildWorkPrompt(exec, act)
+	// Get minister configuration and model
+	cfg := minister.GetConfig()
+	sessionConfig := &SessionConfig{LLM: cfg}
 
-	// Reuse session if step was already invoked (e.g., goto re-invocation)
-	session := exec.stepStates[exec.CurrentStep].Session
-
-	// Immutable scratchpad — only for session creation
-	scratchpad := ""
-	if session == nil {
-		scratchpad = r.buildEnhancedScratchpad(ctx, exec, step)
-	}
-
-	doneChan := make(chan Result, 1)
-	t := &Task{
-		Ctx:        ctx,
-		EdictKey:   exec.EdictKey(),
-		Work:       work,
-		Scratchpad: scratchpad,
-		Session:    session,
-		Done:       doneChan,
-		ChannelID:  "chancellor",
-	}
-
-	// Set up zhengming signal so we can pause the timeout
-	// TODO: simplify
-	zhengmingSig := make(chan struct{}, 1)
-	if setter, ok := minister.(interface{ SetOnZhengmingRaised(func()) }); ok {
-		setter.SetOnZhengmingRaised(func() {
-			select {
-			case zhengmingSig <- struct{}{}:
-			default:
-			}
-		})
-		defer setter.SetOnZhengmingRaised(nil)
-	}
-
-	// Send task to minister
-	select {
-	case minister.Tasks() <- t:
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-
-	// Wait for result with pausable timeout
-	stepIdx := exec.CurrentStep
-	// TODO: move constant to to conf
-	timer := time.NewTimer(15 * time.Minute)
-	defer timer.Stop()
-
-	for {
-		select {
-		case result := <-doneChan:
-			// Store session for potential reuse and capture session_id
-			if result.Session != nil {
-				exec.stepStates[stepIdx].Session = result.Session
-				exec.stepStates[stepIdx].SessionID = result.Session.ID
-				// Set ritual execution session_id if not already set (primary session)
-				if exec.SessionID == "" {
-					exec.SessionID = result.Session.ID
-				}
-			}
-			if result.Err != nil {
-				return result.Output, result.Err
-			}
-			if result.Failure != "" {
-				return result.Output, fmt.Errorf("%s", result.Failure)
-			}
-			return result.Output, nil
-		case <-zhengmingSig:
-			// Zhengming raised — pause timeout, wait only for completion or cancellation
-			timer.Stop()
-			r.logger.Debug("zhengming raised, pausing step timeout", "step", step.Name)
-			select {
-			case result := <-doneChan:
-				// Store session for potential reuse and capture session_id
-				if result.Session != nil {
-					exec.stepStates[stepIdx].Session = result.Session
-					exec.stepStates[stepIdx].SessionID = result.Session.ID
-					// Set ritual execution session_id if not already set (primary session)
-					if exec.SessionID == "" {
-						exec.SessionID = result.Session.ID
-					}
-				}
-				if result.Err != nil {
-					return result.Output, result.Err
-				}
-				if result.Failure != "" {
-					return result.Output, fmt.Errorf("%s", result.Failure)
-				}
-				return result.Output, nil
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
-		case <-timer.C:
-			return "", fmt.Errorf("minister %s timeout", step.Minister)
-		case <-ctx.Done():
-			return "", ctx.Err()
+	// Create ephemeral session for this Act — forward all messages to the TUI
+	// RitualStepMsg goes through exec.Notify (which sets ChannelID to "chancellor")
+	// StreamChunkMsg and others are forwarded directly with the correct channel
+	notify := func(msg any) {
+		if exec.notify == nil {
+			return
+		}
+		switch m := msg.(type) {
+		case RitualStepMsg:
+			exec.Notify(m)
+		case StreamChunkMsg:
+			m.ChannelID = "chancellor"
+			exec.notify(m)
+		case StreamReasoningChunkMsg:
+			m.ChannelID = "chancellor"
+			exec.notify(m)
+		default:
+			exec.notify(msg)
 		}
 	}
+
+	actSession, err := CreateSession(minister, minister.Model(), sessionConfig, notify, "chancellor", exec.EdictKey())
+	if err != nil {
+		return "", fmt.Errorf("failed to create session for %s: %w", step.Minister, err)
+	}
+	defer actSession.Rollback() // Discard after use
+
+	// Build work prompt with ritual context and previous step results
+	prompt := r.buildWorkPrompt(exec, act)
+
+	// Execute the Act with streaming, with a step timeout
+	stepCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+
+	result, err := actSession.AskWithStreaming(stepCtx, prompt, nil)
+	if err != nil {
+		return result, err
+	}
+
+	// Store result in exec.Data keyed by step name
+	if exec.Data == nil {
+		exec.Data = storage.JSON{}
+	}
+	exec.Data[step.Name] = result
+
+	return result, nil
 }
 
 // buildEnhancedScratchpad creates a unified scratchpad with ritual context, edict details, and previous step results
@@ -1674,7 +1587,7 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 var workPromptTmpl = template.Must(template.New("work").Parse(
 	`# Task
 {{ .Act }}
-{{ if or .step_results .given_context }}
+{{ if .step_results }}
 ---
 # Reference Data
 The following information has already been gathered for you. Use it directly — do NOT call tools to re-fetch this data.
@@ -1683,11 +1596,6 @@ The following information has already been gathered for you. Use it directly —
 {{ range $name, $result := .step_results }}
 ### {{ $name }}
 {{ $result }}
-{{ end }}{{ end }}{{ if .given_context }}
-## Given Context
-{{ range $key, $val := .given_context }}
-### {{ $key }}
-{{ $val }}
 {{ end }}{{ end }}{{ end }}`))
 
 // buildWorkPrompt builds the dynamic work message from step results, given context, and the act.
@@ -1703,12 +1611,6 @@ func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string
 				data["step_results"] = map[string]string{}
 			}
 			data["step_results"].(map[string]string)[ss.Name] = ss.Message
-		}
-	}
-	// Given context
-	if exec.Data != nil {
-		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok {
-			data["given_context"] = given
 		}
 	}
 	var buf bytes.Buffer
@@ -2059,7 +1961,7 @@ func (r *RitualRunner) createBorderlandManifests(ctx context.Context, exec *Ritu
 			FilePath:   f,
 			Status:     storage.ManifestForged,
 		}
-		if err := r.db.Create(&manifest).Error; err != nil {
+		if err := r.db.FirstOrCreate(&manifest).Error; err != nil {
 			return nil, fmt.Errorf("failed to create borderland manifest for %s: %w", f, err)
 		}
 		manifests = append(manifests, map[string]interface{}{
@@ -2127,7 +2029,7 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 	output, err := runners.HostRun(ctx, runners.Input{
 		Command:        "just build-sandbox",
-		Description:    "bulid the sandbox",
+		Description:    "build the sandbox",
 		BypassApproval: true,
 	})
 	if err != nil {
@@ -2409,16 +2311,7 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 		if err != nil {
 			return fmt.Errorf("failed to request zhengming: %w", err)
 		}
-		if exec.notify != nil {
-			exec.notify(ZhengmingPendingMsg{
-				RequestID:  requestID,
-				EdictKey:   thenKey,
-				MinisterID: "chancellor",
-				Questions:  questions,
-				Priority:   storage.PriorityUrgent,
-			})
-		}
-		// Store request_id in execution data
+		// Store request_id in execution data (UI notification via zhengming_requested event)
 		if exec.Data == nil {
 			exec.Data = storage.JSON{}
 		}
@@ -2487,6 +2380,22 @@ func (r *RitualRunner) runBuiltinThen(ctx context.Context, exec *RitualExecution
 			return fmt.Errorf("failed to record sage's seal: %w", err)
 		}
 		return nil
+	case "check_verdicts_passed":
+		// Check all manifests for this edict - fail if any are rejected
+		var manifests []storage.ForgeManifest
+		if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", thenKey.ID, thenKey.Username, thenKey.Project).Find(&manifests).Error; err != nil {
+			return fmt.Errorf("failed to query manifests: %w", err)
+		}
+		var rejected []string
+		for _, m := range manifests {
+			if m.Status == storage.ManifestRejected {
+				rejected = append(rejected, m.FilePath)
+			}
+		}
+		if len(rejected) > 0 {
+			return fmt.Errorf("verdict check failed: %d manifest(s) rejected: %v", len(rejected), rejected)
+		}
+		return nil
 	case "check_asimi_version":
 		// Warn if not running the latest Asimi version - non-blocking check
 		// This is handled as a "then" step that logs a warning but doesn't fail
@@ -2525,24 +2434,19 @@ func (r *RitualRunner) resolveStepDef(raw string) (StepDefEntry, error) {
 	}, nil
 }
 
-// storeGivenResult stores a given step result into exec.Data["given_context"].
-// map[string]string results are flattened into separate colon-delimited keys.
+// storeGivenResult stores a given step result directly into exec.Data.
+// map[string]string results are flattened into the parent object for convenience.
 func storeGivenResult(exec *RitualExecution, key string, result interface{}) {
 	if exec.Data == nil {
 		exec.Data = storage.JSON{}
 	}
-	given, _ := exec.Data["given_context"].(map[string]interface{})
-	if given == nil {
-		given = make(map[string]interface{})
-	}
 	if m, ok := result.(map[string]string); ok {
 		for k, v := range m {
-			given[k] = v
+			exec.Data[k] = v
 		}
 	} else {
-		given[key] = result
+		exec.Data[key] = result
 	}
-	exec.Data["given_context"] = given
 }
 
 // runGivenStep executes a single given step and returns its result
@@ -2726,42 +2630,12 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 	data := map[string]interface{}{
 		"edict_id": exec.EdictID,
 	}
-	// Merge inputs into template data (map[string]string from Start(), map[string]interface{} after DB round-trip)
-	if exec.Data != nil {
-		switch inputs := exec.Data["inputs"].(type) {
-		case map[string]interface{}:
-			for k, v := range inputs {
-				data[k] = v
-			}
-		case map[string]string:
-			for k, v := range inputs {
-				data[k] = v
-			}
-		}
+
+	// Copy all exec.Data into template context
+	for k, v := range exec.Data {
+		data[k] = v
 	}
-	// Merge given context into template data
-	if exec.Data != nil {
-		if given, ok := exec.Data["given_context"].(map[string]interface{}); ok {
-			for k, v := range given {
-				data[k] = v
-			}
-		}
-	}
-	// Merge act result
-	if exec.Data != nil {
-		if ar, ok := exec.Data["act_result"]; ok {
-			data["act_result"] = ar
-		}
-	}
-	// Merge fork context (.fork.out, .fork.err, .item)
-	if exec.Data != nil {
-		if fork, ok := exec.Data["fork"]; ok {
-			data["fork"] = fork
-		}
-		if item, ok := exec.Data["item"]; ok {
-			data["item"] = item
-		}
-	}
+
 	// Build step_results from completed steps
 	stepResults := map[string]interface{}{}
 	for i, ss := range exec.stepStates {
@@ -2769,9 +2643,7 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 			stepResults[ss.Name] = ss.Message
 		}
 	}
-	if len(stepResults) > 0 {
-		data["step_results"] = stepResults
-	}
+	data["step_results"] = stepResults
 
 	tmpl, err := template.New("ritual").Parse(text)
 	if err != nil {
@@ -2784,7 +2656,7 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 		r.logger.Warn("failed to execute template", "error", err, "text", text)
 		return text
 	}
-	return buf.String()
+	return strings.TrimSpace(buf.String())
 }
 
 // saveExecution persists execution state to database

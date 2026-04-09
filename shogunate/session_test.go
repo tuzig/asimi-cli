@@ -18,6 +18,7 @@ type mockLLM struct {
 	response  string          // If set, returns this as a simple response
 	toolCalls []llms.ToolCall // If set, returns these tool calls
 	callCount int             // Track number of GenerateContent calls
+	Err       error           // If set, returns this error
 }
 
 func (m *mockLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
@@ -36,6 +37,10 @@ func (m *mockLLM) Call(ctx context.Context, prompt string, options ...llms.CallO
 
 func (m *mockLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
 	m.callCount++
+
+	if m.Err != nil {
+		return nil, m.Err
+	}
 
 	// Apply streaming if configured
 	callOpts := &llms.CallOptions{}
@@ -1847,4 +1852,260 @@ func TestSession_GetContextInfo_UnknownModel(t *testing.T) {
 
 	assert.Equal(t, "unknown-model-xyz", info.Model)
 	assert.Equal(t, defaultUnknownContextRef, info.TotalTokens)
+}
+
+// --- Test for asimisql large output truncation bug ---
+
+// mockToolLargeOutput simulates a tool that returns very large output,
+// similar to what asimisql would return for large query results.
+type mockToolLargeOutput struct {
+	mockTool
+	outputSize int
+}
+
+func (t *mockToolLargeOutput) Call(ctx context.Context, input string) (string, error) {
+	t.called = true
+	// Return output larger than DefaultMaxOutputSize (50KB)
+	return strings.Repeat("col1|col2|col3|col4\n", t.outputSize/20), nil
+}
+
+// TestSession_ExecuteToolCall_LargeOutputTruncated verifies that large tool output
+// is truncated when executed through Session.executeToolCall(). This is the fix
+// for the bug where asimisql tool output was causing context explosion.
+func TestSession_ExecuteToolCall_LargeOutputTruncated(t *testing.T) {
+	t.Parallel()
+
+	// Create a tool that returns 100KB of output (exceeds DefaultMaxOutputSize of 50KB)
+	largeOutputSize := 100 * 1024
+	tool := &mockToolLargeOutput{
+		mockTool: mockTool{name: "asimisql", output: ""},
+		outputSize: largeOutputSize,
+	}
+
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	sess.scheduler = nil // Use direct execution
+
+	tc := llms.ToolCall{
+		ID:           "tc1",
+		Type:         "function",
+		FunctionCall: &llms.FunctionCall{Name: "asimisql", Arguments: `{"query":"SELECT * FROM edicts"}`},
+	}
+
+	resp := sess.executeToolCall(context.Background(), tool, tc, `{"query":"SELECT * FROM edicts"}`)
+
+	// The output should be truncated to DefaultMaxOutputSize (50KB)
+	assert.Less(t, len(resp.Content), int(runners.DefaultMaxOutputSize)+200,
+		"Tool output should be truncated to roughly DefaultMaxOutputSize")
+
+	// Should contain truncation marker
+	assert.Contains(t, resp.Content, "... +",
+		"Truncated output should contain marker indicating lines were skipped")
+}
+
+// TestSession_ExecuteToolCall_LargeOutputTruncatedViaScheduler verifies truncation
+// works when using the scheduler, which is the normal execution path for tools.
+func TestSession_ExecuteToolCall_LargeOutputTruncatedViaScheduler(t *testing.T) {
+	t.Parallel()
+
+	// Create a tool that returns 100KB of output
+	largeOutputSize := 100 * 1024
+	tool := &mockToolLargeOutput{
+		mockTool: mockTool{name: "asimisql", output: ""},
+		outputSize: largeOutputSize,
+	}
+
+	scheduler := runners.NewCoreToolScheduler(func(any) {})
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, []Tool{tool}, scheduler, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	tc := llms.ToolCall{
+		ID:           "tc1",
+		Type:         "function",
+		FunctionCall: &llms.FunctionCall{Name: "asimisql", Arguments: `{"query":"SELECT * FROM edicts"}`},
+	}
+
+	resp := sess.executeToolCall(context.Background(), tool, tc, `{"query":"SELECT * FROM edicts"}`)
+
+	// Verify truncation occurred
+	assert.Less(t, len(resp.Content), int(runners.DefaultMaxOutputSize)+200,
+		"Tool output via scheduler should be truncated")
+}
+
+// TestSession_ExecuteToolCall_CustomMaxOutput verifies that the MaxToolOutput
+// config option controls the truncation size.
+func TestSession_ExecuteToolCall_CustomMaxOutput(t *testing.T) {
+	t.Parallel()
+
+	customMaxOutput := 10 * 1024 // 10KB
+	cfg := &SessionConfig{
+		LLM: internalconfig.LLMConfig{
+			MaxToolOutput: customMaxOutput,
+		},
+	}
+
+	// Create a tool that returns 100KB of output
+	tool := &mockToolLargeOutput{
+		mockTool: mockTool{name: "asimisql", output: ""},
+		outputSize: 100 * 1024,
+	}
+
+	sess, err := NewSession(&mockLLMNoTools{}, cfg, []Tool{tool}, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	sess.scheduler = nil
+
+	tc := llms.ToolCall{
+		ID:           "tc1",
+		Type:         "function",
+		FunctionCall: &llms.FunctionCall{Name: "asimisql", Arguments: "{}"},
+	}
+
+	resp := sess.executeToolCall(context.Background(), tool, tc, "{}")
+
+	// Output should be truncated to customMaxOutput (10KB)
+	assert.Less(t, len(resp.Content), customMaxOutput+200,
+		"Tool output should respect custom MaxToolOutput config")
+}
+
+// TestSession_Rollback_LeavesOnlySystemPrompt verifies that Rollback()
+// discards all messages except the system prompt.
+func TestSession_Rollback_LeavesOnlySystemPrompt(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system prompt", "")
+	require.NoError(t, err)
+
+	// Initially should have 1 message (system prompt)
+	require.Equal(t, 1, len(sess.messages))
+	assert.Equal(t, llms.ChatMessageTypeSystem, sess.messages[0].Role)
+
+	// Add multiple messages
+	sess.AddMessage(llms.ChatMessageTypeHuman, "Hello")
+	sess.AddMessage(llms.ChatMessageTypeAI, "Hi there")
+	sess.AddMessage(llms.ChatMessageTypeHuman, "How are you?")
+	sess.AddMessage(llms.ChatMessageTypeAI, "I'm doing well")
+
+	// Should now have 5 messages
+	require.Equal(t, 5, len(sess.messages))
+
+	// Rollback should discard all but the system prompt
+	sess.Rollback()
+
+	// Should now have exactly 1 message
+	assert.Equal(t, 1, len(sess.messages), "should have exactly 1 message after rollback")
+	assert.Equal(t, llms.ChatMessageTypeSystem, sess.messages[0].Role, "remaining message should be system prompt")
+}
+
+// TestSession_Rollback_UpdatesTokenCounts verifies that Rollback updates token counts.
+func TestSession_Rollback_UpdatesTokenCounts(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	// Add conversation with content
+	sess.AddMessage(llms.ChatMessageTypeHuman, "Hello world this is a test message for token counting")
+
+	// Get message tokens before rollback
+	infoBefore := sess.GetContextInfo()
+	_ = infoBefore.MessagesTokens // captured for documentation
+
+	sess.Rollback()
+
+	infoAfter := sess.GetContextInfo()
+
+	// After rollback, message tokens should be 0
+	assert.Equal(t, 0, infoAfter.MessagesTokens)
+	// System prompt tokens should remain
+	assert.Equal(t, infoBefore.SystemPromptTokens, infoAfter.SystemPromptTokens)
+}
+
+// TestSession_Rollback_ResetsLoopDetection verifies that Rollback resets loop detection state.
+func TestSession_Rollback_ResetsLoopDetection(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	// Trigger loop detection
+	args := `{"path":"test.txt"}`
+	sess.checkToolCallLoop("read_file", args)
+	sess.checkToolCallLoop("read_file", args)
+
+	require.Equal(t, 2, sess.toolCallRepetitionCount)
+	require.NotEmpty(t, sess.lastToolCallKey)
+
+	sess.Rollback()
+
+	assert.Equal(t, 0, sess.toolCallRepetitionCount, "loop repetition count should be reset")
+	assert.Empty(t, sess.lastToolCallKey, "last tool call key should be reset")
+}
+
+// TestSession_Rollback_Idempotent verifies that calling Rollback multiple times is safe.
+func TestSession_Rollback_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(&mockLLMNoTools{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	sess.AddMessage(llms.ChatMessageTypeHuman, "test")
+
+	sess.Rollback()
+	firstLen := len(sess.messages)
+
+	sess.Rollback()
+	secondLen := len(sess.messages)
+
+	sess.Rollback()
+	thirdLen := len(sess.messages)
+
+	assert.Equal(t, 1, firstLen)
+	assert.Equal(t, firstLen, secondLen)
+	assert.Equal(t, secondLen, thirdLen)
+}
+
+// TestSession_ToolOutputAddedToMessageHistory verifies that truncated output
+// is what gets added to the message history, preventing context explosion.
+func TestSession_ToolOutputAddedToMessageHistory(t *testing.T) {
+	t.Parallel()
+
+	// Create a tool that returns large output
+	tool := &mockToolLargeOutput{
+		mockTool: mockTool{name: "asimisql", output: ""},
+		outputSize: 100 * 1024,
+	}
+
+	// Mock LLM that returns a tool call, then final response
+	llm := &mockLLMWithToolCall{
+		toolCall: llms.ToolCall{
+			ID:           "tc1",
+			Type:         "function",
+			FunctionCall: &llms.FunctionCall{Name: "asimisql", Arguments: `{"query":"SELECT * FROM edicts"}`},
+		},
+		finalResponse: "Query completed",
+	}
+
+	scheduler := runners.NewCoreToolScheduler(func(any) {})
+	sess, err := NewSession(llm, &SessionConfig{}, []Tool{tool}, scheduler, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	_, err = sess.AskWithStreaming(context.Background(), "run query", nil)
+	require.NoError(t, err)
+
+	// Find the tool response in message history
+	var toolResponseSize int
+	for _, msg := range sess.messages {
+		if msg.Role == llms.ChatMessageTypeTool {
+			for _, part := range msg.Parts {
+				if resp, ok := part.(llms.ToolCallResponse); ok {
+					toolResponseSize = len(resp.Content)
+					break
+				}
+			}
+		}
+	}
+
+	// The tool response in message history should be truncated
+	assert.Less(t, toolResponseSize, int(runners.DefaultMaxOutputSize)+200,
+		"Tool response in message history should be truncated to prevent context explosion")
 }

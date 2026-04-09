@@ -441,22 +441,10 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 
 // Tools returns the Chancellor's LLM tools for interactive sessions
 func (c *Chancellor) Tools() []Tool {
-	// Create zhengming notify wrapper
-	var zhengmingNotify tools.ZhengmingNotifyFunc
-	zhengmingNotify = func(requestID string, key storage.EdictKey, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
-		c.notify(ZhengmingPendingMsg{
-			RequestID:  requestID,
-			EdictKey:   key,
-			MinisterID: ministerID,
-			Questions:  questions,
-			Priority:   priority,
-		})
-	}
-
 	toolList := []Tool{
 		tools.AsimiSQLTool{DBPath: c.getDBPath()},
 		tools.UpdateEdictTool{Manager: c, Username: c.username, Project: c.project},
-		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, Notify: zhengmingNotify, Username: c.username, Project: c.project},
+		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, WaitForAnswer: c.WaitForZhengming, Username: c.username, Project: c.project},
 		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.username, Project: c.project},
 		tools.ListEdictsTool{DB: c.db, Username: c.username, Project: c.project},
 		tools.TransitionEdictTool{DB: c.db, Username: c.username, Project: c.project},
@@ -478,11 +466,10 @@ func (c *Chancellor) Tools() []Tool {
 
 // getLastStepOutput returns the full output of the last step that produced a message.
 func getLastStepOutput(exec *RitualExecution) string {
-	for i := len(exec.stepStates) - 1; i >= 0; i-- {
-		if exec.stepStates[i].Message != "" {
-			return exec.stepStates[i].Message
-		}
+	if out, ok := exec.Data["act_result"].(string); ok {
+		return out
 	}
+	slog.Debug("act_result is not a string", "act_result", fmt.Sprintf("%v", exec.Data["act_result"]))
 	return ""
 }
 
@@ -798,7 +785,7 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 		}
 
 		if taskErr == nil {
-			_, taskErr = c.session.AskWithStreaming(ctx, task.Work, nil)
+			output, taskErr = c.session.AskWithStreaming(ctx, task.Work, nil)
 		}
 	} else {
 		output = "chancellor task acknowledged (no LLM configured)"
@@ -848,15 +835,6 @@ func (c *Chancellor) handleEdictCreated(ctx context.Context, key storage.EdictKe
 // handleRitualCompleted processes a completed ritual event
 func (c *Chancellor) handleRitualCompleted(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
 	c.logger.Info("handling ritual completed", "edict_id", key.ID, "payload", payload)
-
-	// Extract last_step_output from payload and append to session
-	if lastStepOutput, ok := payload["last_step_output"].(string); ok && lastStepOutput != "" {
-		if c.session != nil {
-			c.session.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual completed. Last step output:\n%s", lastStepOutput))
-			c.logger.Debug("appended ritual completion to session", "edict_id", key.ID)
-		}
-	}
-
 	c.logger.Debug("ritual completed - edict may need synthesis", "edict_id", key.ID)
 }
 
@@ -892,16 +870,6 @@ func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, key storage.Ed
 // handleRitualFailed processes a failed ritual event
 func (c *Chancellor) handleRitualFailed(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
 	c.logger.Error("handling ritual failed", "edict_id", key.ID, "payload", payload)
-
-	// Extract last_step_output and error from payload and append to session
-	if lastStepOutput, ok := payload["last_step_output"].(string); ok && lastStepOutput != "" {
-		if c.session != nil {
-			errMsg, _ := payload["error"].(string)
-			c.session.AddMessage(llms.ChatMessageTypeAI, fmt.Sprintf("Ritual failed. Error: %s\nLast step output:\n%s", errMsg, lastStepOutput))
-			c.logger.Debug("appended ritual failure to session", "edict_id", key.ID)
-		}
-	}
-
 	c.logger.Debug("ritual failed - may need zhengming or retry", "edict_id", key.ID)
 }
 

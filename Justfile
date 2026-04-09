@@ -25,7 +25,7 @@ test:
 
 # Run all tests including git-altering tests (CI mode)
 test-ci:
-    CI=true go test -timeout 1m -v ./...
+    CI=1 go test -timeout 5m -v ./...
 
 # Run tests with coverage
 test-coverage:

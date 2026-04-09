@@ -2146,9 +2146,7 @@ func detectLLMProvider() (provider, model, apiKey string) {
 // TestInitRitualWithLLM_E2E tests the full :init flow with a real LLM
 // against the testdata/ror-project demo. Only runs when LLM_E2E=1 is set.
 func TestInitRitualWithLLM_E2E(t *testing.T) {
-	if os.Getenv("LLM_E2E") == "" {
-		t.Skip("set LLM_E2E=1 to run real LLM integration tests")
-	}
+	skipIfNotCI(t)
 
 	provider, model, apiKey := detectLLMProvider()
 	if provider == "" {

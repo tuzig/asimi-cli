@@ -232,10 +232,10 @@ func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKe
 	if existingSession != nil {
 		// Reuse existing session for multi-turn conversation
 		session = existingSession
-		// Derive ChannelID from existing session's routing target
-		sessionChannelID := session.ChannelID()
+		// Use caller's channelID if provided, else session's, else default
+		sessionChannelID := channelID
 		if sessionChannelID == "" {
-			sessionChannelID = channelID
+			sessionChannelID = session.ChannelID()
 		}
 		if sessionChannelID == "" {
 			sessionChannelID = "forge"
@@ -300,7 +300,7 @@ func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Li
 			"description", ling.Description)
 
 		// Build work prompt for this specific ling
-		lingWork := ling.Description
+		lingWork := fmt.Sprintf("Execute this ling without thinking too much: %s", ling.Description)
 
 		// Create or reuse session for this ling
 		var session *Session

@@ -86,7 +86,7 @@ func ValidatePathWithinProject(path string) error {
 // GetFileTools returns the list of file-based tools for use by ministers.
 func GetFileTools(llmConfig config.LLMConfig) []Tool {
 	return []Tool{
-		NewReadFileTool(llmConfig),
+		NewReadFileTool(),
 		WriteFileTool{},
 		GlobTool{},
 		ReplaceTextTool{},
@@ -99,7 +99,7 @@ func GetFileTools(llmConfig config.LLMConfig) []Tool {
 func GetROTools(llmConfig config.LLMConfig) []Tool {
 	return []Tool{
 		GlobTool{},
-		NewReadFileTool(llmConfig),
+		NewReadFileTool(),
 		ReadManyFilesTool{},
 		GrepTool{},
 	}
@@ -108,7 +108,7 @@ func GetROTools(llmConfig config.LLMConfig) []Tool {
 // GetEditTools returns read/write tools for code editing (no shell).
 func GetEditTools(llmConfig config.LLMConfig) []Tool {
 	return []Tool{
-		NewReadFileTool(llmConfig),
+		NewReadFileTool(),
 		WriteFileTool{},
 		ReplaceTextTool{},
 		GlobTool{},

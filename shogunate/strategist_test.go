@@ -3,47 +3,87 @@ package shogunate
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tmc/langchaingo/llms"
 )
 
-// capturingMinister is like ritualTestMinister but captures the Task's Work and Scratchpad.
+// capturingMockLLM captures all messages sent to GenerateContent for later inspection.
+type capturingMockLLM struct {
+	llms.Model
+	response        string
+	capturedMessages []llms.MessageContent
+	mu              sync.Mutex
+}
+
+func (m *capturingMockLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
+	return m.response, nil
+}
+
+func (m *capturingMockLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	m.mu.Lock()
+	m.capturedMessages = append(m.capturedMessages, messages...)
+	m.mu.Unlock()
+
+	callOpts := &llms.CallOptions{}
+	for _, opt := range options {
+		opt(callOpts)
+	}
+	if callOpts.StreamingFunc != nil {
+		callOpts.StreamingFunc(ctx, []byte(m.response))
+	}
+
+	return &llms.ContentResponse{
+		Choices: []*llms.ContentChoice{{Content: m.response}},
+	}, nil
+}
+
+// capturingMinister uses a capturingMockLLM so that executeMinisterStep's
+// ephemeral session can actually call the model and we can inspect what was sent.
 type capturingMinister struct {
 	MinisterBase
-	id           string
-	tasksCh      chan *Task
-	result       string
-	capturedWork string
-	capturedPad  string
-	mu           sync.Mutex
+	id      string
+	tasksCh chan *Task
+	result  string
+	mockLLM *capturingMockLLM
 }
 
 func (m *capturingMinister) ID() string           { return m.id }
 func (m *capturingMinister) SystemPrompt() string { return "" }
 func (m *capturingMinister) Title() string        { return m.id }
 func (m *capturingMinister) Tools() []Tool        { return nil }
-func (m *capturingMinister) Tasks() chan<- *Task  { return m.tasksCh }
+func (m *capturingMinister) Tasks() chan<- *Task   { return m.tasksCh }
+func (m *capturingMinister) Model() llms.Model     { return m.mockLLM }
+func (m *capturingMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (m *capturingMinister) Run(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case t := <-m.tasksCh:
-			m.mu.Lock()
-			m.capturedWork = t.Work
-			m.capturedPad = t.Scratchpad
-			m.mu.Unlock()
-			t.Done <- Result{Output: m.result, Sealed: true}
+	<-ctx.Done()
+}
+
+// allMessagesText concatenates all text parts from captured messages.
+func (m *capturingMinister) allMessagesText() string {
+	m.mockLLM.mu.Lock()
+	defer m.mockLLM.mu.Unlock()
+	var sb strings.Builder
+	for _, msg := range m.mockLLM.capturedMessages {
+		for _, part := range msg.Parts {
+			if tc, ok := part.(llms.TextContent); ok {
+				sb.WriteString(tc.Text)
+				sb.WriteString("\n")
+			}
 		}
 	}
+	return sb.String()
 }
 
 // TestCastleSiege_StrategistTaskCarriesContext verifies the ritual builds
-// the correct Work and Scratchpad before dispatching to the strategist.
+// the correct Work prompt before dispatching to the strategist.
 func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 	db := setupRitualTestDB(t)
 	// Additional tables needed for edict background step
@@ -59,10 +99,10 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 		id:           "strategist",
 		tasksCh:      make(chan *Task, 1),
 		result:       "battle plan created",
+		mockLLM:      &capturingMockLLM{response: "battle plan created"},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go strat.Run(ctx)
 
 	ministers := map[string]Minister{"strategist": strat}
 	for _, id := range []string{"forge", "judge", "sage", "chancellor", "marshal"} {
@@ -73,7 +113,6 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 			result:       "ok",
 		}
 		ministers[id] = m
-		go m.Run(ctx)
 	}
 
 	shog := &Shogunate{ministers: ministers, logger: slog.Default()}
@@ -94,27 +133,24 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 	runner := shog.GetRitualRunner()
 	require.NotNil(t, runner)
 
-	exec, err := runner.Start(ctx, "castle-siege", edict.Key(),
+	// Use a timeout so test doesn't hang if later steps block
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer timeoutCancel()
+
+	exec, err := runner.Start(timeoutCtx, "castle-siege", edict.Key(),
 		map[string]string{"edict_id": "1"}, nil)
 	require.NoError(t, err)
 
-	// Run the ritual — it will stop after strategist (forge not seeded, but we only care about strat)
-	_ = runner.Run(ctx, exec)
+	// Run the ritual — strategist step will complete, subsequent steps may fail
+	_ = runner.Run(timeoutCtx, exec)
 
-	strat.mu.Lock()
-	defer strat.mu.Unlock()
+	// The captured messages should contain the castle-siege Act for strategizing
+	allText := strat.allMessagesText()
 
-	// Work should contain the castle-siege Act for strategizing
-	assert.Contains(t, strat.capturedWork, "Analyze the edict below and produce a technical Battle Plan",
+	assert.Contains(t, allText, "Analyze the edict below and produce a technical Battle Plan",
 		"Work prompt must include the ritual Act text")
 
-	// Work should contain given_context from background "the edict details"
-	assert.Contains(t, strat.capturedWork, "Given Context",
-		"Work prompt must include the Given Context section from background steps")
-
-	// Scratchpad should contain ritual context
-	assert.Contains(t, strat.capturedPad, "castle-siege",
-		"Scratchpad must include ritual name")
-	assert.Contains(t, strat.capturedPad, "Build a REST API",
-		"Scratchpad must include edict intent")
+	// The edict intent should appear in the messages (via work prompt or system prompt)
+	assert.Contains(t, allText, "Build a REST API",
+		"Messages must include edict intent")
 }

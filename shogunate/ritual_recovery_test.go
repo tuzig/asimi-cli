@@ -53,7 +53,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		State:       RitualStateAborted,
 		Data: storage.JSON{
 			"inputs":        map[string]interface{}{"edict_id": edictID},
-			"given_context": map[string]interface{}{"step1_result": "completed"},
+			"step1_result": "completed",
 		},
 	}).Error
 	if err != nil {
@@ -120,13 +120,9 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		t.Errorf("expected PreviousExecutionID to be %q, got %q", abortedExecID, exec.PreviousExecutionID)
 	}
 
-	// Verify given_context is preserved
-	givenContext, ok := exec.Data["given_context"].(map[string]interface{})
-	if !ok {
-		t.Fatal("expected given_context to be preserved")
-	}
-	if givenContext["step1_result"] != "completed" {
-		t.Errorf("expected step1_result to be preserved, got %v", givenContext["step1_result"])
+	// Verify step1_result is preserved
+	if exec.Data["step1_result"] != "completed" {
+		t.Errorf("expected step1_result to be preserved, got %v", exec.Data["step1_result"])
 	}
 }
 

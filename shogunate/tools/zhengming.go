@@ -14,16 +14,14 @@ type ZhengmingRequester interface {
 	RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
 }
 
-// ZhengmingNotifyFunc is a callback for notifying about zhengming requests
-type ZhengmingNotifyFunc func(requestID string, key storage.EdictKey, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority)
-
 // RequestZhengmingTool requests clarification from the user.
+// WaitForAnswer blocks until the user responds, returning the actual answer.
 type RequestZhengmingTool struct {
-	MinisterID string
-	Requester  ZhengmingRequester
-	Notify     ZhengmingNotifyFunc
-	Username   string
-	Project    string
+	MinisterID     string
+	Requester      ZhengmingRequester
+	WaitForAnswer  func(ctx context.Context, requestID string) (string, error)
+	Username       string
+	Project        string
 }
 
 func (t RequestZhengmingTool) Name() string {
@@ -69,12 +67,16 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 		return "", fmt.Errorf("request zhengming: %w", err)
 	}
 
-	if t.Notify != nil {
-		t.Notify(requestID, key, t.MinisterID, params.Questions, priority)
+	if t.WaitForAnswer == nil {
+		return fmt.Sprintf(`{"status":"pending","request_id":"%s"}`, requestID), nil
 	}
 
-	// Return immediately with pending status - no blocking
-	return fmt.Sprintf(`{"status":"pending","request_id":"%s"}`, requestID), nil
+	answer, err := t.WaitForAnswer(ctx, requestID)
+	if err != nil {
+		return "", fmt.Errorf("waiting for zhengming answer: %w", err)
+	}
+
+	return fmt.Sprintf(`{"status":"answered","request_id":"%s","answer":"%s"}`, requestID, answer), nil
 }
 
 func (t RequestZhengmingTool) Format(input, result string, err error) string {

@@ -15,7 +15,8 @@ import (
 const StrategistRole = `兵部, and the planner of the shogunate.
 Your domain is strategy and sequence and.
 
-When you are summoned for Planning, you decompose the edict into executable ling (令, task orders) with clear dependencies. You enforce temporal order: no forging until planning is complete.
+When you are summoned for Planning, you decompose the edict into executable ling (令, task orders) with clear dependencies. All changes to a specific file must run in sequence as panellization destroys isolation.
+You enforce temporal order for large efforts.
 
 Speak in milestones and dependency graphs.
 Use the insert_ling tool repeatedly to break a large task into mutiple small ones.
@@ -52,23 +53,12 @@ func (s *Strategist) SystemPrompt() string {
 
 // Tools returns the Strategist's LLM tools for interactive sessions
 func (s *Strategist) Tools() []Tool {
-	var zhengmingNotify tools.ZhengmingNotifyFunc
-	zhengmingNotify = func(requestID string, key storage.EdictKey, ministerID string, questions []storage.ZhengmingQuestion, priority storage.ZhengmingPriority) {
-		s.notify(ZhengmingPendingMsg{
-			RequestID:  requestID,
-			EdictKey:   key,
-			MinisterID: ministerID,
-			Questions:  questions,
-			Priority:   priority,
-		})
-	}
-
 	toolList := []Tool{
 		// Ling management tools
 		&InsertLingTool{strategist: s},
 		&ListLingTool{strategist: s},
 		&UpdateLingStatusTool{strategist: s},
-		tools.RequestZhengmingTool{MinisterID: s.ministerID, Requester: s, Notify: zhengmingNotify},
+		tools.RequestZhengmingTool{MinisterID: s.ministerID, Requester: s, WaitForAnswer: s.WaitForZhengming, Username: s.Username(), Project: s.Project()},
 	}
 	// Add read-only file tools
 	for _, t := range tools.GetROTools(s.config.LLM) {

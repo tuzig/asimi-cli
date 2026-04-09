@@ -274,10 +274,10 @@ func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey
 	if existingSession != nil {
 		// Reuse existing session for multi-turn conversation
 		session = existingSession
-		// Derive ChannelID from existing session's routing target
-		sessionChannelID := session.ChannelID()
+		// Use caller's channelID if provided, else session's, else default
+		sessionChannelID := channelID
 		if sessionChannelID == "" {
-			sessionChannelID = channelID
+			sessionChannelID = session.ChannelID()
 		}
 		if sessionChannelID == "" {
 			sessionChannelID = "sage"
@@ -290,10 +290,10 @@ func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey
 	} else if c.MinisterBase.Session() != nil {
 		// Reuse embedded session
 		session = c.MinisterBase.Session()
-		// Derive ChannelID from session or parameter
-		sessionChannelID := session.ChannelID()
+		// Use caller's channelID if provided, else session's, else default
+		sessionChannelID := channelID
 		if sessionChannelID == "" {
-			sessionChannelID = channelID
+			sessionChannelID = session.ChannelID()
 		}
 		if sessionChannelID == "" {
 			sessionChannelID = "sage"
@@ -429,18 +429,6 @@ func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, erro
 		return "", fmt.Errorf("failed to suggest edict: %w", err)
 	}
 
-	// Notify TUI
-	if t.sage.notify != nil {
-		t.sage.notify(ZhengmingPendingMsg{
-			RequestID:  requestID,
-			EdictKey:   key,
-			MinisterID: t.sage.ministerID,
-			Questions:  questions,
-			Priority:   priority,
-		})
-	}
-
-	// Return immediately - edict creation happens via event handler when user answers
 	return fmt.Sprintf(`{"status":"suggested","request_id":"%s"}`, requestID), nil
 }
 

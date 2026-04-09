@@ -1717,6 +1717,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Ritual %s step %s [%d/%d] %s",
 				msg.RitualName, msg.StepName, msg.StepIndex+1, msg.TotalSteps, msg.Status))
 		switch msg.Status {
+		// TODO: remove this and use a different Msg type
+		case "info":
+			chat.AddMessage(fmt.Sprintf("  %s", msg.Message))
 		case "started":
 			text := ""
 			if msg.StepName == "" {
@@ -1734,6 +1737,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					text = fmt.Sprintf("step: %d/%d: %s",
 						msg.StepIndex+1, msg.TotalSteps, msg.StepName)
+					if msg.Message != "" {
+						text = text + " - " + msg.Message
+					}
 				}
 			}
 			chat.AddMessage(text)
@@ -1741,9 +1747,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				chat.Indent++
 			}
 		case "completed":
-			chat.AppendToLastMessage(" " + checkPrefix)
+			chat.AppendToLastMessage(" - " + checkPrefix)
 		case "failed":
-			chat.AppendToLastMessage(" X")
+			chat.AppendToLastMessage(" - X")
 		case "aborted":
 			chat.AppendToLastMessage(" ABORTED")
 		case "retrying":
@@ -1753,7 +1759,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "cmd_done":
 			chat.AddMessage(fmt.Sprintf("%s %s done", cmdDonePrefix, msg.Message))
 		case "ritual_completed":
-			text := fmt.Sprintf("%sRitual %s completed in %s", ritualPrefix, msg.RitualName, msg.Message)
+			text := fmt.Sprintf("%sRitual %s for edict %d completed in %s",
+				ritualPrefix, msg.RitualName, msg.EdictID, msg.Message)
+			if msg.EdictID == 1 {
+				text = fmt.Sprintf("%sRitual %s for the court completed in %s",
+					ritualPrefix, msg.RitualName, msg.Message)
+			}
 			chat.AddMessage(text)
 			chat.Indent--
 		case "ritual_failed":
@@ -1791,7 +1802,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(intent) > 60 {
 				intent = intent[:57] + "..."
 			}
-			message = fmt.Sprintf("e%d Created:\n    %s", id, intent)
+			message = fmt.Sprintf("Edict %d Created:\n    %s", id, intent)
 		case storage.EventEdictSealed:
 			icon = "✅"
 			message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", msg.EdictKey.ID)

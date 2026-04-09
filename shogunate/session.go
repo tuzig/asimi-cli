@@ -357,6 +357,11 @@ func (s *Session) RollbackTo(snapshot int) {
 	s.toolCallRepetitionCount = 0
 }
 
+// Rollback discards all messages except the system prompt, keeping token counts updated
+func (s *Session) Rollback() {
+	s.RollbackTo(1)
+}
+
 // ClearHistory clears the conversation history but keeps the system message
 func (s *Session) ClearHistory() {
 	if len(s.messages) > 0 && s.messages[0].Role == llms.ChatMessageTypeSystem {
@@ -1012,6 +1017,13 @@ func (s *Session) executeToolCall(ctx context.Context, tool Tool, tc llms.ToolCa
 			Content:    fmt.Sprintf("Error: %v", callErr),
 		}
 	}
+
+	// Apply centralized output sizing as safety net
+	maxOutput := runners.DefaultMaxOutputSize
+	if s.config != nil && s.config.MaxToolOutput > 0 {
+		maxOutput = s.config.MaxToolOutput
+	}
+	out = runners.TruncateOutput(out, maxOutput)
 
 	return llms.ToolCallResponse{
 		ToolCallID: tc.ID,

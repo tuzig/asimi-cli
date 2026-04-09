@@ -4,22 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
 )
 
-// CommandExecutor executes shell commands (for testability)
-type CommandExecutor func(name string, args ...string) *exec.Cmd
-
-// DefaultCommandExecutor is the default command executor using exec.Command
-var DefaultCommandExecutor CommandExecutor = exec.Command
-
 // AsimiSQLTool executes SQL queries against the Shogunate database.
 type AsimiSQLTool struct {
-	DBPath      string
-	ExecCommand CommandExecutor
+	DBPath string
 }
 
 func (t AsimiSQLTool) Name() string {
@@ -61,20 +54,23 @@ func (t AsimiSQLTool) Call(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("query is required")
 	}
 
-	executor := t.ExecCommand
-	if executor == nil {
-		executor = DefaultCommandExecutor
+	// Execute via runner.Run for consistent execution pattern
+	runnerInput := runners.Input{
+		Command:        "sqlite3 " + t.DBPath + " '" + strings.ReplaceAll(params.Query, "'", "'\\''") + "'",
+		Description:    "Execute SQL query",
+		BypassApproval: true,
 	}
 
-	// Execute via sqlite3 command
-	// #nosec G204 - dbPath is controlled by the application
-	cmd := executor("sqlite3", t.DBPath, params.Query)
-	output, err := cmd.CombinedOutput()
+	runnerOutput, err := runners.HostRun(ctx, runnerInput)
 	if err != nil {
-		return "", fmt.Errorf("sqlite3 error: %w: %s", err, string(output))
+		return "", fmt.Errorf("sqlite3 error: %w", err)
 	}
 
-	result := strings.TrimSpace(string(output))
+	if runnerOutput.ExitCode != "0" {
+		return "", fmt.Errorf("sqlite3 error: exit code %s", runnerOutput.ExitCode)
+	}
+
+	result := strings.TrimSpace(runnerOutput.Output)
 	if result == "" {
 		return `{"status":"ok"}`, nil
 	}

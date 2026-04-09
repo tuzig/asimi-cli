@@ -20,6 +20,7 @@ import (
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tmc/langchaingo/llms"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -768,6 +769,8 @@ func (f *fakeMinister) SystemPrompt() string    { return "You are a test ministe
 func (f *fakeMinister) Title() string           { return "Fake" }
 func (f *fakeMinister) Tools() []Tool           { return nil }
 func (f *fakeMinister) Tasks() chan<- *Task     { return f.tasks }
+func (f *fakeMinister) Model() llms.Model       { return nil }
+func (f *fakeMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (f *fakeMinister) Run(ctx context.Context) {}
 
 // TestChancellor_ScratchpadIncludesRituals verifies the Chancellor's system prompt

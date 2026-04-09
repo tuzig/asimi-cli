@@ -141,15 +141,18 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		answer, _ := e.Payload["answer"].(string)
 		key := e.EdictKey
 
-		// 1. Try to deliver to a waiting ritual first
-		if requestID != "" && s.ritualGuard.DeliverZhengmingAnswer(ZhengmingAnswer{
-			RequestID: requestID,
-			Answer:    answer,
-			EdictID:   key.ID,
-		}) {
-			s.logger.Info("zhengming answer delivered to ritual runner",
-				"request_id", requestID, "edict_id", key.ID)
-			return
+		// 1. Try to deliver to a waiting minister (tool or ritual via chancellor)
+		if requestID != "" {
+			zhAnswer := ZhengmingAnswer{RequestID: requestID, Answer: answer, EdictID: key.ID}
+			for id, m := range s.ministers {
+				if mb, ok := m.(interface{ DeliverZhengmingAnswer(ZhengmingAnswer) bool }); ok {
+					if mb.DeliverZhengmingAnswer(zhAnswer) {
+						s.logger.Info("zhengming answer delivered to minister",
+							"minister", id, "request_id", requestID, "edict_id", key.ID)
+						return
+					}
+				}
+			}
 		}
 
 		// 2. Handle "Approve edict" for suggestion-based edict creation
