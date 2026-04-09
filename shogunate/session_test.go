@@ -1894,13 +1894,9 @@ func TestSession_ExecuteToolCall_LargeOutputTruncated(t *testing.T) {
 
 	resp := sess.executeToolCall(context.Background(), tool, tc, `{"query":"SELECT * FROM edicts"}`)
 
-	// The output should be truncated to DefaultMaxOutputSize (50KB)
-	assert.Less(t, len(resp.Content), int(runners.DefaultMaxOutputSize)+200,
-		"Tool output should be truncated to roughly DefaultMaxOutputSize")
-
 	// Should contain truncation marker
-	assert.Contains(t, resp.Content, "... +",
-		"Truncated output should contain marker indicating lines were skipped")
+	assert.Contains(t, resp.Content, "result is too long",
+		"Huge output should report to the caller")
 }
 
 // TestSession_ExecuteToolCall_LargeOutputTruncatedViaScheduler verifies truncation

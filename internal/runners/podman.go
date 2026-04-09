@@ -451,7 +451,6 @@ func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
 	delete(r.outputs, id)
 	r.outputsMu.Unlock()
 
-	output.Output = TruncateOutput(output.Output, DefaultMaxOutputSize)
 	slog.Debug("Run completed successfully")
 	return output, nil
 }

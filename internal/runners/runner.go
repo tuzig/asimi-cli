@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
@@ -113,44 +112,6 @@ func HostRun(ctx context.Context, in Input) (Output, error) {
 	out, err := runner.Run(ctx, in)
 	slog.Debug("Run a host command", "cmd", in.Command, "err", err, "out", out)
 	return out, err
-}
-
-// TruncateOutput caps s at maxBytes, keeping the first and last lines with a
-// "... +N lines ..." marker in the middle. Returns s unchanged if within limit.
-func TruncateOutput(s string, maxBytes int) string {
-	if maxBytes <= 0 || len(s) <= maxBytes {
-		return s
-	}
-
-	lines := strings.Split(s, "\n")
-	if len(lines) <= 40 {
-		// Very few long lines — just do a byte-level chop
-		half := maxBytes / 2
-		return s[:half] + fmt.Sprintf("\n\n... +%d bytes ...\n\n", len(s)-maxBytes) + s[len(s)-half:]
-	}
-
-	// Binary-search for the number of head+tail lines that fit in maxBytes
-	lo, hi := 20, len(lines)/2
-	if lo > hi {
-		lo = hi
-	}
-	best := lo
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		headSize := lineBytes(lines[:mid])
-		tailSize := lineBytes(lines[len(lines)-mid:])
-		if headSize+tailSize <= maxBytes {
-			best = mid
-			lo = mid + 1
-		} else {
-			hi = mid - 1
-		}
-	}
-
-	skipped := len(lines) - 2*best
-	return strings.Join(lines[:best], "\n") +
-		fmt.Sprintf("\n\n... +%d lines ...\n\n", skipped) +
-		strings.Join(lines[len(lines)-best:], "\n")
 }
 
 func lineBytes(lines []string) int {

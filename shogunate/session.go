@@ -1023,7 +1023,7 @@ func (s *Session) executeToolCall(ctx context.Context, tool Tool, tc llms.ToolCa
 	if s.config != nil && s.config.MaxToolOutput > 0 {
 		maxOutput = s.config.MaxToolOutput
 	}
-	out = runners.TruncateOutput(out, maxOutput)
+	out = TruncateOutput(out, maxOutput)
 
 	return llms.ToolCallResponse{
 		ToolCallID: tc.ID,
@@ -1310,3 +1310,44 @@ func GenerateSessionID() string {
 
 	return fmt.Sprintf("%s-%s", timestamp, suffix)
 }
+// TruncateOutput caps s at maxBytes, keeping the first and last lines with a
+// "... +N lines ..." marker in the middle. Returns s unchanged if within limit.
+func TruncateOutput(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+
+	return "result is too long, please improve your call"
+	/*
+	lines := strings.Split(s, "\n")
+	if len(lines) <= 40 {
+		// Very few long lines — just do a byte-level chop
+		half := maxBytes / 2
+		return s[:half] + fmt.Sprintf("\n\n... +%d bytes ...\n\n", len(s)-maxBytes) + s[len(s)-half:]
+	}
+
+	// Binary-search for the number of head+tail lines that fit in maxBytes
+	lo, hi := 20, len(lines)/2
+	if lo > hi {
+		lo = hi
+	}
+	best := lo
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		headSize := lineBytes(lines[:mid])
+		tailSize := lineBytes(lines[len(lines)-mid:])
+		if headSize+tailSize <= maxBytes {
+			best = mid
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+
+	skipped := len(lines) - 2*best
+	return strings.Join(lines[:best], "\n") +
+		fmt.Sprintf("\n\n... +%d lines ...\n\n", skipped) +
+		strings.Join(lines[len(lines)-best:], "\n")
+		*/
+}
+
