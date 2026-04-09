@@ -70,7 +70,7 @@ func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager
 				newContentComponent(w, h, mdEnabled, getStatus)),
 			NewTab("宰相 Chancellor", TabRuling, "chancellor",
 				newContentComponent(w, h, mdEnabled, getStatus)),
-			NewTab("孔子 Sage", TabHunting, "sage",
+			NewTab("聖人 Sage", TabHunting, "sage",
 				newContentComponent(w, h, mdEnabled, getStatus)),
 			NewTab("工部 Forge", TabObserve, "forge",
 				newContentComponent(w, h, mdEnabled, getStatus)),

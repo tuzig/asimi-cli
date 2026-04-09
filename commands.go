@@ -213,7 +213,7 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 					rs.ResetSession()
 				}
 			}
-		// TabShogunate has no interactive session to reset
+			// TabShogunate has no interactive session to reset
 		}
 	}
 

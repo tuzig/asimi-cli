@@ -827,14 +827,6 @@ func NewSealSelectWindow() SealSelectWindow {
 	return SealSelectWindow{SelectWindow: sw}
 }
 
-// sealIcon returns a checkmark or empty indicator for a seal
-func sealIcon(has bool) string {
-	if has {
-		return "✓"
-	}
-	return "·"
-}
-
 // RenderList renders the seal selection list
 func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int) string {
 	titleStyle := lipgloss.NewStyle().
@@ -865,11 +857,23 @@ func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots 
 				intent = intent[:47] + "..."
 			}
 
-			// Format: "▶ [  3] ⚖✓ 📜· Fix the login bug..."
-			line := fmt.Sprintf("%s[%3d] ⚖%s 📜%s %s",
+			// Judge seal: 刑 when present, spaces when absent
+			judge := "  "
+			if edict.HasJudgeSeal {
+				judge = "刑"
+			}
+
+			// Sage seal: 聖 when present, spaces when absent
+			sage := "  "
+			if edict.HasSageSeal {
+				sage = "聖"
+			}
+
+			// Format: "▶ [  3] 刑 聖 Fix the login bug..."
+			line := fmt.Sprintf("%s[%3d] %s %s %s",
 				prefix, edict.ID,
-				sealIcon(edict.HasJudgeSeal),
-				sealIcon(edict.HasSageSeal),
+				judge,
+				sage,
 				intent)
 
 			style := lipgloss.NewStyle()
