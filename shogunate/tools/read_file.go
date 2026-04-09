@@ -111,6 +111,14 @@ func (t ReadFileTool) ParameterSchema() map[string]any {
 				"type":        "string",
 				"description": "Absolute or relative path to the file",
 			},
+			"offset": map[string]any{
+				"type":        "integer",
+				"description": "Line number to start reading from (1-based)",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"description": "Number of lines to read",
+			},
 		},
 		"required": []string{"path"},
 	}
