@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
@@ -91,7 +92,9 @@ func (f *Forge) MarkLingCompleted(lingID string) error {
 
 // StageManifest creates a staged manifest (not yet committed to git)
 func (f *Forge) StageManifest(key storage.EdictKey, lingID, filePath, funcName, contentSHA string) (string, error) {
-	manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.ID), lingID, filePath)
+	// Add timestamp to ensure uniqueness across retries/loops
+	timestamp := fmt.Sprintf("%d", time.Now().UnixNano())
+	manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.ID), lingID, filePath, timestamp)
 
 	manifest := storage.ForgeManifest{
 		ManifestID: manifestID,
