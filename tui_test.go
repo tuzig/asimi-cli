@@ -81,6 +81,33 @@ func TestLLMInitSuccess_FiresShogunateStartedEvent(t *testing.T) {
 	t.Skip("Skipped due to health check bug - expects payload data not provided. Implementation verified manually.")
 }
 
+// TestLLMInitError_AddsMessageToRulingTab tests that LLM initialization errors
+// are properly displayed in the Ruling (Court) tab with helpful guidance.
+// See: tui.go:llmInitErrorMsg handler (line 2307)
+func TestLLMInitError_AddsMessageToRulingTab(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	testErr := errors.New("connection refused")
+
+	// Get initial message count
+	initialCount := len(model.tabs.Ruling().Messages)
+
+	// Send LLM init error
+	newModel, cmd := model.Update(llmInitErrorMsg{err: testErr})
+	_ = cmd // Command is nil (just logging)
+
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Verify message was added to Ruling tab
+	require.Len(t, updatedModel.tabs.Ruling().Messages, initialCount+1)
+
+	// Verify the error message contains helpful guidance
+	lastMsg := updatedModel.tabs.Ruling().Messages[initialCount]
+	require.Contains(t, lastMsg.Content, "LLM initialization failed")
+	require.Contains(t, lastMsg.Content, "connection refused")
+	require.Contains(t, lastMsg.Content, ":help models")
+}
+
 // TestTUIModelWindowSizeMsg tests handling of window size messages
 func TestTUIModelWindowSizeMsg(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
