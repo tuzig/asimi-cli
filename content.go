@@ -141,7 +141,7 @@ func (tm *TabManager) ChatByTab(tabID string) *ChatComponent {
 
 // Ruling returns the Ruling tab's ChatComponent (always index 0)
 func (tm *TabManager) Ruling() *ChatComponent {
-	return tm.tabs[0].Content.Chat
+	return tm.tabs[1].Content.Chat
 }
 
 // SetStreamingTabByTab marks the tab with matching Target as streaming
