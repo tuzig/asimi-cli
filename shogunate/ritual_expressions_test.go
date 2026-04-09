@@ -306,6 +306,11 @@ func TestAwaitRulerSeal_NoManifests(t *testing.T) {
 func TestCheckVerdictsPassed_AllApproved(t *testing.T) {
 	db := setupRitualTestDB(t)
 
+	// Ensure JudgeVerdict table exists for the verdict check query
+	if err := db.AutoMigrate(&storage.JudgeVerdict{}); err != nil {
+		t.Fatalf("Failed to migrate JudgeVerdict: %v", err)
+	}
+
 	// Create manifests with approved status
 	manifest := storage.ForgeManifest{
 		ManifestID: GenerateID("manifest", "1", "test", "file.go"),
@@ -337,6 +342,11 @@ func TestCheckVerdictsPassed_AllApproved(t *testing.T) {
 // TestCheckVerdictsPassed_SomeRejected verifies the handler fails when any manifest is rejected
 func TestCheckVerdictsPassed_SomeRejected(t *testing.T) {
 	db := setupRitualTestDB(t)
+
+	// Ensure JudgeVerdict table exists for the verdict check query
+	if err := db.AutoMigrate(&storage.JudgeVerdict{}); err != nil {
+		t.Fatalf("Failed to migrate JudgeVerdict: %v", err)
+	}
 
 	// Create one approved and one rejected manifest
 	forged := storage.ForgeManifest{
@@ -387,6 +397,11 @@ func TestCheckVerdictsPassed_SomeRejected(t *testing.T) {
 func TestCheckVerdictsPassed_AllRejected(t *testing.T) {
 	db := setupRitualTestDB(t)
 
+	// Ensure JudgeVerdict table exists for the verdict check query
+	if err := db.AutoMigrate(&storage.JudgeVerdict{}); err != nil {
+		t.Fatalf("Failed to migrate JudgeVerdict: %v", err)
+	}
+
 	// Create multiple rejected manifests
 	manifests := []storage.ForgeManifest{
 		{
@@ -433,6 +448,11 @@ func TestCheckVerdictsPassed_AllRejected(t *testing.T) {
 // TestCheckVerdictsPassed_NoManifests verifies the handler passes when no manifests exist
 func TestCheckVerdictsPassed_NoManifests(t *testing.T) {
 	db := setupRitualTestDB(t)
+
+	// Ensure JudgeVerdict table exists for the verdict check query
+	if err := db.AutoMigrate(&storage.JudgeVerdict{}); err != nil {
+		t.Fatalf("Failed to migrate JudgeVerdict: %v", err)
+	}
 
 	registry := NewRitualRegistry()
 	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default())

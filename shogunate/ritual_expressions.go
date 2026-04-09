@@ -876,6 +876,23 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		if len(rejected) > 0 {
 			return fmt.Errorf("verdict check failed: %d manifest(s) rejected: %v", len(rejected), rejected)
 		}
+
+		// Also check JudgeVerdict outcomes - fail if any verdict is failed
+		var failedVerdicts []storage.JudgeVerdict
+		if err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = judge_verdicts.manifest_id").
+			Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ? AND judge_verdicts.outcome = ?",
+				thenKey.ID, thenKey.Username, thenKey.Project, storage.VerdictFailed).
+			Find(&failedVerdicts).Error; err != nil {
+			return fmt.Errorf("failed to query verdicts: %w", err)
+		}
+		if len(failedVerdicts) > 0 {
+			// Collect manifest IDs for error reporting
+			manifestIDs := make([]string, len(failedVerdicts))
+			for i, v := range failedVerdicts {
+				manifestIDs[i] = v.ManifestID
+			}
+			return fmt.Errorf("verdict check failed: %d verdict(s) with failed outcome: %v", len(failedVerdicts), manifestIDs)
+		}
 		return nil
 	case "check_asimi_version":
 		// Warn if not running the latest Asimi version - non-blocking check
