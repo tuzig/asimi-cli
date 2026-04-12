@@ -195,6 +195,7 @@ func (s *SealService) ListActiveEdicts(username, project string) ([]ActiveEdict,
 	err := s.db.Raw(`
 		SELECT e.* FROM edicts e
 		WHERE e.username = ? AND e.project = ?
+		AND e.project != ''
 		AND e.cancelled_at IS NULL
 		AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler')
 		ORDER BY e.id DESC`, username, project).Scan(&edicts).Error

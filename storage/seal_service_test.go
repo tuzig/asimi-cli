@@ -141,3 +141,40 @@ func TestListActiveEdicts_SealStatusPopulated(t *testing.T) {
 		t.Error("Expected HasSageSeal to be false")
 	}
 }
+
+func TestListActiveEdicts_ExcludesEmptyProject(t *testing.T) {
+	db := setupSealServiceTestDB(t)
+	svc := NewSealService(db)
+
+	// Create an edict with empty project
+	emptyProjectEdict := Edict{ID: 1, Username: "testuser", Project: "", Intent: "Empty project edict"}
+	if err := db.Create(&emptyProjectEdict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Create an edict with valid project
+	validProjectEdict := Edict{ID: 2, Username: "testuser", Project: "testproject", Intent: "Valid project edict"}
+	if err := db.Create(&validProjectEdict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// ListActiveEdicts should NOT include the empty project edict
+	activeEdicts, err := svc.ListActiveEdicts("testuser", "testproject")
+	if err != nil {
+		t.Fatalf("ListActiveEdicts failed: %v", err)
+	}
+
+	if len(activeEdicts) != 1 {
+		t.Fatalf("Expected 1 active edict, got %d", len(activeEdicts))
+	}
+
+	if activeEdicts[0].ID != 2 {
+		t.Errorf("Expected edict 2 (valid project) to be included, got edict %d", activeEdicts[0].ID)
+	}
+
+	for _, e := range activeEdicts {
+		if e.Project == "" {
+			t.Error("Edict with empty project should NOT be in active edicts list")
+		}
+	}
+}
