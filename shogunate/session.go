@@ -305,11 +305,7 @@ func (s *Session) ExtractFirstPrompt() string {
 		if msg.Role == llms.ChatMessageTypeHuman {
 			for _, part := range msg.Parts {
 				if textPart, ok := part.(llms.TextContent); ok {
-					prompt := textPart.Text
-					if len(prompt) > 100 {
-						prompt = prompt[:100] + "..."
-					}
-					return prompt
+					return textPart.Text
 				}
 			}
 		}
