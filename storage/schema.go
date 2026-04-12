@@ -1,10 +1,10 @@
 package storage
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // Schema version
@@ -43,7 +43,7 @@ type SessionData struct {
 	WorkingDir   string
 	ProjectSlug  string
 	TabType      string
-	Messages     []llms.MessageContent
+	Messages     json.RawMessage // JSON-encoded message array, agnostic to type
 	ContextFiles map[string]string
 	MessageCount int // Number of messages (for list views, avoids loading full messages)
 }

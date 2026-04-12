@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -304,6 +305,12 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 		}
 	}
 
+	// Serialize messages to JSON (storage stores raw JSON for type agnosticism)
+	messagesJSON, err := json.Marshal(messages)
+	if err != nil {
+		return fmt.Errorf("failed to marshal messages: %w", err)
+	}
+
 	// Convert main.Session to storage.SessionData
 	storageSession := &storage.SessionData{
 		ID:           session.ID,
@@ -315,7 +322,7 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 		WorkingDir:   session.WorkingDir,
 		ProjectSlug:  session.ProjectSlug,
 		TabType:      session.TabType,
-		Messages:     messages,
+		Messages:     messagesJSON,
 		ContextFiles: session.ContextFiles,
 	}
 
@@ -335,6 +342,14 @@ func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 	_ = project
 	_ = branch
 
+	// Deserialize JSON messages to []llms.MessageContent
+	var messages []llms.MessageContent
+	if len(storageSession.Messages) > 0 {
+		if err := json.Unmarshal(storageSession.Messages, &messages); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal messages: %w", err)
+		}
+	}
+
 	// Convert storage.SessionData to shogunate.Session
 	session := &shogunate.Session{
 		ID:           storageSession.ID,
@@ -348,7 +363,7 @@ func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 		TabType:      storageSession.TabType,
 		ContextFiles: storageSession.ContextFiles,
 	}
-	session.SetMessages(storageSession.Messages)
+	session.SetMessages(messages)
 
 	return session, nil
 }
@@ -362,6 +377,14 @@ func (s *SessionStore) ListSessions(limit int) ([]shogunate.Session, error) {
 
 	sessions := make([]shogunate.Session, len(storageSessions))
 	for i, ss := range storageSessions {
+		// Deserialize JSON messages (may be empty for list view)
+		var messages []llms.MessageContent
+		if len(ss.Messages) > 0 {
+			if err := json.Unmarshal(ss.Messages, &messages); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal messages for session %s: %w", ss.ID, err)
+			}
+		}
+
 		sessions[i] = shogunate.Session{
 			ID:           ss.ID,
 			CreatedAt:    ss.CreatedAt,
@@ -375,7 +398,7 @@ func (s *SessionStore) ListSessions(limit int) ([]shogunate.Session, error) {
 			ContextFiles: ss.ContextFiles,
 			MessageCount: ss.MessageCount,
 		}
-		sessions[i].SetMessages(ss.Messages)
+		sessions[i].SetMessages(messages)
 	}
 
 	return sessions, nil

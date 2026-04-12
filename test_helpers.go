@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -26,11 +27,14 @@ func testStorageSessionData(id, prompt string, updated time.Time, messageTexts .
 		messages = append(messages, textMessage(llms.ChatMessageTypeHuman, text))
 	}
 
+	// Serialize messages to JSON for storage
+	messagesJSON, _ := json.Marshal(messages)
+
 	return &storage.SessionData{
 		ID:           id,
 		FirstPrompt:  prompt,
 		LastUpdated:  updated,
-		Messages:     messages,
+		Messages:     messagesJSON,
 		MessageCount: len(messages), // Set MessageCount for list views
 		Model:        "test",
 		CreatedAt:    updated,

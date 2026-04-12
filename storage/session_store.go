@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
 )
 
 // SessionStore handles session persistence
@@ -75,25 +74,30 @@ func (s *SessionStore) SaveSession(session *SessionData, host, org, project, bra
 		return fmt.Errorf("failed to delete old messages: %w", err)
 	}
 
-	// Insert messages
-	for i, msg := range session.Messages {
-		// Serialize entire message to JSON (not just Parts, to preserve type info)
-		contentJSON, err := json.Marshal(msg)
-		if err != nil {
-			return fmt.Errorf("failed to marshal message content: %w", err)
-		}
+	// Serialize messages to JSON
+	// Storage passes bytes through; adapter owns serialization
+	messagesJSON, err := json.Marshal(session.Messages)
+	if err != nil {
+		return fmt.Errorf("failed to marshal messages: %w", err)
+	}
+	session.Messages = messagesJSON
 
-		_, err = tx.Exec(`
-			INSERT INTO messages (session_id, sequence, role, content, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			session.ID,
-			i,
-			string(msg.Role),
-			string(contentJSON),
-			time.Now().Unix(),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to insert message %d: %w", i, err)
+	// Insert individual messages for backward compatibility
+	var rawMsgs []interface{}
+	if err := json.Unmarshal(messagesJSON, &rawMsgs); err == nil && rawMsgs != nil {
+		for i, msgData := range rawMsgs {
+			msgJSON, err := json.Marshal(msgData)
+			if err != nil {
+				return fmt.Errorf("failed to marshal message %d: %w", i, err)
+			}
+			_, err = tx.Exec(`
+				INSERT INTO messages (session_id, sequence, role, content, created_at)
+				VALUES (?, ?, ?, ?, ?)`,
+				session.ID, i, "", string(msgJSON), time.Now().Unix(),
+			)
+			if err != nil {
+				return fmt.Errorf("failed to insert message %d: %w", i, err)
+			}
 		}
 	}
 
@@ -149,12 +153,12 @@ func (s *SessionStore) LoadSession(sessionID string) (*SessionData, string, stri
 	session.CreatedAt = time.Unix(createdAt, 0)
 	session.LastUpdated = time.Unix(lastUpdated, 0)
 	session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
-	session.Messages = []llms.MessageContent{}     // Initialize empty slice
+	session.Messages = json.RawMessage{}           // Initialize empty raw JSON
 	session.ContextFiles = make(map[string]string) // Initialize empty map
 
-	// Load messages
+	// Load messages from the messages table
 	rows, err := s.db.conn.Query(`
-		SELECT role, content
+		SELECT content
 		FROM messages
 		WHERE session_id = ?
 		ORDER BY sequence`,
@@ -165,28 +169,27 @@ func (s *SessionStore) LoadSession(sessionID string) (*SessionData, string, stri
 	}
 	defer rows.Close()
 
+	// Collect message JSON strings
+	var msgJSONs []string
 	for rows.Next() {
-		var role string
-		var contentJSON string
-
-		if err := rows.Scan(&role, &contentJSON); err != nil {
+		var msgJSON string
+		if err := rows.Scan(&msgJSON); err != nil {
 			return nil, "", "", "", "", fmt.Errorf("failed to scan message: %w", err)
 		}
-
-		// Deserialize entire message from JSON
-		var msg llms.MessageContent
-		if err := json.Unmarshal([]byte(contentJSON), &msg); err != nil {
-			return nil, "", "", "", "", fmt.Errorf("failed to unmarshal message content: %w", err)
-		}
-
-		session.Messages = append(session.Messages, msg)
+		msgJSONs = append(msgJSONs, msgJSON)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, "", "", "", "", fmt.Errorf("error iterating messages: %w", err)
 	}
 
-	slog.Debug("Session loaded", "id", sessionID, "messages", len(session.Messages))
+	// Combine into a JSON array - storage passes bytes through
+	// Adapter will deserialize this when constructing the Session
+	if len(msgJSONs) > 0 {
+		session.Messages = json.RawMessage("[" + strings.Join(msgJSONs, ",") + "]")
+	}
+
+	slog.Debug("Session loaded", "id", sessionID, "message_bytes", len(session.Messages))
 	return &session, host, org, project, branch, nil
 }
 
@@ -240,7 +243,7 @@ func (s *SessionStore) ListSessions(host, org, project, branch string, limit int
 		session.LastUpdated = time.Unix(lastUpdated, 0)
 		session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
 		session.MessageCount = messageCount
-		session.Messages = []llms.MessageContent{} // Empty for list view
+		session.Messages = json.RawMessage{}         // Empty for list view
 		session.ContextFiles = make(map[string]string)
 
 		sessions = append(sessions, session)
@@ -306,7 +309,7 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 		session.LastUpdated = time.Unix(lastUpdated, 0)
 		session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
 		session.MessageCount = messageCount
-		session.Messages = []llms.MessageContent{} // Empty for list view
+		session.Messages = json.RawMessage{}         // Empty for list view
 		session.ContextFiles = make(map[string]string)
 
 		sessions = append(sessions, session)
