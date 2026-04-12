@@ -61,6 +61,20 @@ type AnsweringCancelMsg struct {
 	RequestID string
 }
 
+// TODO: replace the next couple of messages with tools.ApproveDocTool
+// AnsweringEditMsg is emitted when the user selects "Edit" to edit a question in $EDITOR
+type AnsweringEditMsg struct {
+	RequestID string
+	Question  string // The question text to edit
+}
+
+// AnsweringEditDoneMsg is emitted after editing is complete, with the (possibly modified) question text
+type AnsweringEditDoneMsg struct {
+	RequestID        string
+	Question         string // The edited question text (may be modified or original if no changes)
+	OriginalQuestion string // The original question text for comparison
+}
+
 // AnsweringState holds state for the answering mode UI
 type AnsweringState struct {
 	RequestID string
@@ -405,6 +419,15 @@ func (p *PromptComponent) ExitAnsweringMode() {
 	p.TextArea.Focus()
 }
 
+// UpdateAnsweringQuestion updates the current question's text and resets selection
+func (p *PromptComponent) UpdateAnsweringQuestion(text string) {
+	if p.answering != nil && p.answering.Current < len(p.answering.Questions) {
+		p.answering.Questions[p.answering.Current].Text = text
+		p.answering.Questions[p.answering.Current].Summary = text
+		p.answering.Questions[p.answering.Current].Selected = 0
+	}
+}
+
 // updateViModeStyle updates the border color based on vi mode state
 // Uses globalTheme.promptOnBorder when focused on prompt (INSERT/COMMAND/LEARNING)
 // Uses globalTheme.promptOffBorder when focused away from prompt (NORMAL/VISUAL/SCROLL)
@@ -738,8 +761,8 @@ func (p PromptComponent) viewAnswering() string {
 	b.WriteString(displayText)
 	b.WriteByte('\n')
 
-	// Render options + "Chat"
-	allOptions := append(q.Options, "Chat")
+	// Render options + "Chat" + "Edit"
+	allOptions := append(q.Options, "Chat", "Edit")
 	for i, opt := range allOptions {
 		if i == q.Selected {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptOnBorder).Render(fmt.Sprintf("  ▶ %s", opt)))
@@ -763,7 +786,7 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 	q := &a.Questions[a.Current]
 
 	// Option selection mode
-	totalOptions := len(q.Options) + 1 // +1 for "Chat"
+	totalOptions := len(q.Options) + 2 // +1 for "Chat", +1 for "Edit"
 	switch keyMsg.String() {
 	case "j", "down":
 		q.Selected = (q.Selected + 1) % totalOptions
@@ -775,6 +798,16 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 			requestID := a.RequestID
 			return p, func() tea.Msg {
 				return AnsweredMsg{RequestID: requestID, Answers: []string{"[chat]"}}
+			}
+		} else if q.Selected == len(q.Options)+1 {
+			// "Edit" selected — open question in external editor
+			requestID := a.RequestID
+			questionText := q.Text
+			if q.Summary != "" {
+				questionText = q.Summary
+			}
+			return p, func() tea.Msg {
+				return AnsweringEditMsg{RequestID: requestID, Question: questionText}
 			}
 		}
 		return p.advanceAnswer(q.Options[q.Selected])

@@ -13,6 +13,12 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash 
 COPY Justfile .
 # Runs as root inside the container — bootstrap must NOT use sudo
 RUN just bootstrap
+# Asimi runtime — appended to /etc/bash.bashrc so the command-wrapper protocol
+# (__asimi_run) used by the podman runner is sourced by every interactive bash
+# shell BEFORE /root/.bashrc, regardless of user customizations.
+COPY .agents/sandbox/asimi_runtime.sh /tmp/asimi_runtime.sh
+RUN cat /tmp/asimi_runtime.sh >> /etc/bash.bashrc && rm /tmp/asimi_runtime.sh
+
 COPY .agents/sandbox/bashrc /root/.bashrc
 
 # Default command: start shell (bashrc handles startup tasks)

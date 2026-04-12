@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	asimitools "github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tmc/langchaingo/llms"
@@ -80,6 +82,38 @@ func (m *capturingMinister) allMessagesText() string {
 		}
 	}
 	return sb.String()
+}
+
+// TestStrategist_ZhengmingRoutesToChancellor verifies that when the Strategist
+// raises a Zhengming request, the question is routed to the Chancellor's ruling tab.
+// This is critical for UX: the Strategist handles planning but clarification questions
+// should appear in the Chancellor's UI where the Ruler is already engaged.
+func TestStrategist_ZhengmingRoutesToChancellor(t *testing.T) {
+	db := setupRitualTestDB(t)
+	require.NoError(t, db.AutoMigrate(&storage.Edict{}))
+
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	strategist := NewStrategist(base)
+
+	// Configure with empty LLM config to avoid nil pointer in GetROTools
+	llmConfig := config.LLMConfig{Provider: "test", Model: "test"}
+	strategist.SetMinisterConfig(nil, &SessionConfig{LLM: llmConfig}, repo.RepoInfo{})
+
+	tools := strategist.Tools()
+	var zhengmingTool asimitools.RequestZhengmingTool
+	for _, t := range tools {
+		if zt, ok := t.(asimitools.RequestZhengmingTool); ok {
+			zhengmingTool = zt
+			break
+		}
+	}
+
+	// The MinisterID must be "chancellor" so the question appears in the Chancellor's tab
+	assert.Equal(t, "chancellor", zhengmingTool.MinisterID,
+		"Strategist's Zhengming must route to Chancellor's tab, not Strategist's")
+
+	// Requester should be the strategist itself (for answer delivery via DeliverZhengming)
+	assert.NotNil(t, zhengmingTool.Requester, "Requester must be set")
 }
 
 // TestCastleSiege_StrategistTaskCarriesContext verifies the ritual builds

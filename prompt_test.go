@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -293,5 +294,99 @@ func TestArrowKeysInInsertMode(t *testing.T) {
 
 	if !prompt.IsViInsertMode() {
 		t.Error("Should still be in insert mode after left arrow")
+	}
+}
+
+// TestAnsweringModeEditOption tests that the Edit option appears and emits the correct message
+func TestAnsweringModeEditOption(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+
+	// Create answering state with a question
+	state := &AnsweringState{
+		RequestID: "test-request-1",
+		Title:     "Zhengming: Sage asks",
+		Questions: []AnsweringQuestion{
+			{
+				Text:     "What would you like to do?",
+				Summary:  "What to do?",
+				Options:  []string{"Accept", "Reject"},
+				Selected: 0,
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	// View should include "Edit" option
+	view := prompt.View()
+	if !strings.Contains(view, "Edit") {
+		t.Error("View should contain 'Edit' option")
+	}
+
+	// Navigate down to Edit option (Options: Accept, Reject, Chat, Edit)
+	// Current selected is 0 (Accept), down to 1 (Reject), down to 2 (Chat), down to 3 (Edit)
+	downMsg := tea.KeyMsg{Type: tea.KeyDown}
+	prompt, _ = prompt.Update(downMsg) // Selected = 1
+	prompt, _ = prompt.Update(downMsg) // Selected = 2
+	prompt, _ = prompt.Update(downMsg) // Selected = 3
+
+	// Press Enter to select Edit
+	enterMsg := tea.KeyMsg{Type: tea.KeyEnter}
+	_, cmd := prompt.Update(enterMsg)
+
+	// Should emit AnsweringEditMsg
+	if cmd == nil {
+		t.Fatal("Expected cmd to emit AnsweringEditMsg")
+	}
+
+	// Execute the command to get the message
+	msg := cmd()
+	if editMsg, ok := msg.(AnsweringEditMsg); ok {
+		if editMsg.RequestID != "test-request-1" {
+			t.Errorf("Expected RequestID 'test-request-1', got %q", editMsg.RequestID)
+		}
+		if editMsg.Question != "What to do?" {
+			t.Errorf("Expected Question 'What to do?' (summary), got %q", editMsg.Question)
+		}
+	} else {
+		t.Fatalf("Expected AnsweringEditMsg, got %T", msg)
+	}
+}
+
+// TestAnsweringModeEditUpdatesQuestion tests that UpdateAnsweringQuestion updates the current question
+func TestAnsweringModeEditUpdatesQuestion(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+
+	// Create answering state
+	state := &AnsweringState{
+		RequestID: "test-request-2",
+		Title:     "Zhengming: Sage asks",
+		Questions: []AnsweringQuestion{
+			{
+				Text:     "Original question text",
+				Summary:  "Original",
+				Options:  []string{"Yes", "No"},
+				Selected: 0,
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	// Update the question
+	modifiedText := "Modified question text"
+	prompt.UpdateAnsweringQuestion(modifiedText)
+
+	// Verify the question was updated
+	if prompt.answering.Questions[0].Text != modifiedText {
+		t.Errorf("Expected Text %q, got %q", modifiedText, prompt.answering.Questions[0].Text)
+	}
+	if prompt.answering.Questions[0].Summary != modifiedText {
+		t.Errorf("Expected Summary %q, got %q", modifiedText, prompt.answering.Questions[0].Summary)
+	}
+
+	// Selection should be reset to 0
+	if prompt.answering.Questions[0].Selected != 0 {
+		t.Errorf("Expected Selected to be reset to 0, got %d", prompt.answering.Questions[0].Selected)
 	}
 }

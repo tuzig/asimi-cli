@@ -199,3 +199,276 @@ func TestForge_TopologicalSort_MissingDepsTreatedAsDone(t *testing.T) {
 		}
 	}
 }
+
+// TestForge_GetFailedVerdicts_QueriesCorrectVerdicts verifies that GetFailedVerdicts
+// returns only failed verdicts for the specified edict, joined with forge_manifests.
+func TestForge_GetFailedVerdicts_QueriesCorrectVerdicts(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	// Create edict
+	edict := &storage.Edict{SessionID: "test-session", Intent: "Build REST API", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	// Create manifest for the edict
+	manifest := &storage.ForgeManifest{
+		ManifestID: "manifest-1",
+		EdictID:    edict.ID,
+		Username:   "testuser",
+		Project:    "testproject",
+		LingID:     "ling-1",
+		FilePath:   "internal/model/user.go",
+		Status:     storage.ManifestForged,
+	}
+	require.NoError(t, db.Create(manifest).Error)
+
+	// Create failed verdict
+	failedVerdict := &storage.JudgeVerdict{
+		VerdictID:  "verdict-failed-1",
+		ManifestID: "manifest-1",
+		TestSuite:  "unit",
+		Outcome:    storage.VerdictFailed,
+		Evidence:   storage.JSON{"error": "test failed", "details": "missing assertion"},
+	}
+	require.NoError(t, db.Create(failedVerdict).Error)
+
+	// Create another manifest with a PASSED verdict
+	manifest2 := &storage.ForgeManifest{
+		ManifestID: "manifest-2",
+		EdictID:    edict.ID,
+		Username:   "testuser",
+		Project:    "testproject",
+		LingID:     "ling-2",
+		FilePath:   "internal/model/user_test.go",
+		Status:     storage.ManifestQuenched,
+	}
+	require.NoError(t, db.Create(manifest2).Error)
+
+	passedVerdict := &storage.JudgeVerdict{
+		VerdictID:  "verdict-passed-1",
+		ManifestID: "manifest-2",
+		TestSuite:  "unit",
+		Outcome:    storage.VerdictPassed,
+		Evidence:   storage.JSON{},
+	}
+	require.NoError(t, db.Create(passedVerdict).Error)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	forge := NewForge(base)
+
+	// Get failed verdicts
+	verdicts, err := forge.GetFailedVerdicts(edict.Key())
+	require.NoError(t, err)
+
+	// Should only return the failed verdict, not the passed one
+	require.Len(t, verdicts, 1)
+	assert.Equal(t, "verdict-failed-1", verdicts[0].VerdictID)
+	assert.Equal(t, storage.VerdictFailed, verdicts[0].Outcome)
+}
+
+// TestForge_GetFailedVerdicts_ReturnsEmptyWhenNoFailures verifies the happy path
+// when there are no failed verdicts.
+func TestForge_GetFailedVerdicts_ReturnsEmptyWhenNoFailures(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	edict := &storage.Edict{SessionID: "test-session", Intent: "Build REST API", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	manifest := &storage.ForgeManifest{
+		ManifestID: "manifest-1",
+		EdictID:    edict.ID,
+		Username:   "testuser",
+		Project:    "testproject",
+		Status:     storage.ManifestQuenched,
+	}
+	require.NoError(t, db.Create(manifest).Error)
+
+	passedVerdict := &storage.JudgeVerdict{
+		VerdictID:  "verdict-passed-1",
+		ManifestID: "manifest-1",
+		Outcome:    storage.VerdictPassed,
+	}
+	require.NoError(t, db.Create(passedVerdict).Error)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	forge := NewForge(base)
+
+	verdicts, err := forge.GetFailedVerdicts(edict.Key())
+	require.NoError(t, err)
+	assert.Empty(t, verdicts)
+}
+
+// TestForge_buildFixPrompt_FormatsEvidenceCorrectly verifies that buildFixPrompt
+// properly formats the verdict evidence into a fix instruction.
+func TestForge_buildFixPrompt_FormatsEvidenceCorrectly(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, "u", "p")
+	forge := NewForge(base)
+
+	verdict := storage.JudgeVerdict{
+		VerdictID:  "verdict-123",
+		ManifestID: "manifest-456",
+		Evidence:   storage.JSON{"error": "missing return statement", "file": "user.go", "line": 42},
+	}
+
+	prompt := forge.buildFixPrompt(verdict)
+
+	// Should reference the manifest ID
+	assert.Contains(t, prompt, "manifest-456")
+	// Should contain the evidence
+	assert.Contains(t, prompt, "missing return statement")
+	assert.Contains(t, prompt, "user.go")
+	// Should have fix instruction
+	assert.Contains(t, prompt, "Focus on minimal")
+}
+
+// TestForge_ProcessTask_FixesFailedVerdictsFirst verifies that when an edict has
+// failed verdicts, processTask calls the LLM with fix prompts instead of
+// executing the normal ling work.
+func TestForge_ProcessTask_FixesFailedVerdictsFirst(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	// Create edict with pending ling
+	edict := &storage.Edict{SessionID: "test-session", Intent: "Build REST API", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	ling := &storage.Ling{
+		LingID:       "ling-1",
+		EdictID:      edict.ID,
+		Username:     "testuser",
+		Project:      "testproject",
+		Description:  "Create user model",
+		Dependencies: storage.StringArray{},
+		Status:       storage.LingPending,
+	}
+	require.NoError(t, db.Create(ling).Error)
+
+	// Create manifest with failed verdict
+	manifest := &storage.ForgeManifest{
+		ManifestID: "manifest-1",
+		EdictID:    edict.ID,
+		Username:   "testuser",
+		Project:    "testproject",
+		LingID:     "ling-1",
+		FilePath:   "user.go",
+		Status:     storage.ManifestForged,
+	}
+	require.NoError(t, db.Create(manifest).Error)
+
+	failedVerdict := &storage.JudgeVerdict{
+		VerdictID:  "verdict-1",
+		ManifestID: "manifest-1",
+		Outcome:    storage.VerdictFailed,
+		Evidence:   storage.JSON{"error": "test failed"},
+	}
+	require.NoError(t, db.Create(failedVerdict).Error)
+
+	// Create capturing mock LLM
+	mock := &capturingForgeLLM{
+		mockLLM: mockLLM{response: "fixed the issue"},
+	}
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	forge := NewForge(base)
+
+	llmConfig := config.LLMConfig{Provider: "test", Model: "test-model"}
+	forge.SetMinisterConfig(mock, &SessionConfig{LLM: llmConfig}, repo.RepoInfo{})
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      context.Background(),
+		EdictKey: edict.Key(),
+		Work:     "Execute normal work",
+		Done:     doneCh,
+	}
+
+	forge.processTask(context.Background(), task)
+
+	result := <-doneCh
+	require.NoError(t, result.Err)
+
+	// Verify that the LLM was called with a fix prompt (containing "test failed")
+	mock.mu.Lock()
+	prompts := make([]string, len(mock.capturedPrompts))
+	copy(prompts, mock.capturedPrompts)
+	mock.mu.Unlock()
+
+	require.NotEmpty(t, prompts, "LLM should have been called")
+
+	// The first prompt should contain the fix instruction (evidence from failed verdict)
+	firstPrompt := prompts[0]
+	assert.Contains(t, firstPrompt, "test failed", "fix prompt should contain verdict evidence")
+	assert.Contains(t, firstPrompt, "manifest-1", "fix prompt should reference manifest")
+}
+
+// TestForge_ProcessTask_SkipsFixLoopWhenNoFailedVerdicts verifies that when there
+// are no failed verdicts, processTask executes the normal ling work.
+func TestForge_ProcessTask_SkipsFixLoopWhenNoFailedVerdicts(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	edict := &storage.Edict{SessionID: "test-session", Intent: "Build REST API", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	ling := &storage.Ling{
+		LingID:       "ling-1",
+		EdictID:      edict.ID,
+		Username:     "testuser",
+		Project:      "testproject",
+		Description:  "Create user model",
+		Dependencies: storage.StringArray{},
+		Status:       storage.LingPending,
+	}
+	require.NoError(t, db.Create(ling).Error)
+
+	// Create manifest with PASSED verdict (not failed)
+	manifest := &storage.ForgeManifest{
+		ManifestID: "manifest-1",
+		EdictID:    edict.ID,
+		Username:   "testuser",
+		Project:    "testproject",
+		LingID:     "ling-1",
+		FilePath:   "user.go",
+		Status:     storage.ManifestQuenched,
+	}
+	require.NoError(t, db.Create(manifest).Error)
+
+	passedVerdict := &storage.JudgeVerdict{
+		VerdictID:  "verdict-1",
+		ManifestID: "manifest-1",
+		Outcome:    storage.VerdictPassed,
+	}
+	require.NoError(t, db.Create(passedVerdict).Error)
+
+	mock := &capturingForgeLLM{
+		mockLLM: mockLLM{response: "ling executed"},
+	}
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	forge := NewForge(base)
+
+	llmConfig := config.LLMConfig{Provider: "test", Model: "test-model"}
+	forge.SetMinisterConfig(mock, &SessionConfig{LLM: llmConfig}, repo.RepoInfo{})
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      context.Background(),
+		EdictKey: edict.Key(),
+		Work:     "Execute normal work",
+		Done:     doneCh,
+	}
+
+	forge.processTask(context.Background(), task)
+
+	result := <-doneCh
+	require.NoError(t, result.Err)
+
+	// Verify ling was executed (not fix loop)
+	mock.mu.Lock()
+	prompts := make([]string, len(mock.capturedPrompts))
+	copy(prompts, mock.capturedPrompts)
+	mock.mu.Unlock()
+
+	require.NotEmpty(t, prompts)
+	// Should contain ling description, not "test failed"
+	lastPrompt := prompts[len(prompts)-1]
+	assert.Contains(t, lastPrompt, "Create user model")
+	assert.NotContains(t, lastPrompt, "test failed")
+}

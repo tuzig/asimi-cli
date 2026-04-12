@@ -27,6 +27,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 
 	_ "modernc.org/sqlite"
@@ -1935,6 +1936,10 @@ func setupTestGormDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	sqlDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
+	// SQLite :memory: databases are per-connection, so pin the pool to a single
+	// connection to ensure all goroutines see the same tables.
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 	t.Cleanup(func() { sqlDB.Close() })
 
 	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
@@ -1954,6 +1959,7 @@ func setupTestGormDB(t *testing.T) *gorm.DB {
 		&storage.MarshalIncident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
+		&storage.Seal{},
 		&shogunate.RitualExecution{},
 		&shogunate.RitualStepState{},
 	)
@@ -2229,6 +2235,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	tuiConfig.LLM.Model = model
 	tuiConfig.LLM.APIKey = apiKey
 	tuiConfig.LLM.MaxTurns = 10
+	tuiConfig.Shogunate.Project = "testorg/ror-demo"
 	ri := &repo.RepoInfo{}
 	tuiModel := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, shog)
 	tuiModel.persistentPromptHistory = nil
@@ -2236,7 +2243,17 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 
 	// 4. Launch teatest — Init() will connect to the real LLM
 	tm := teatest.NewTestModel(t, tuiModel, teatest.WithInitialTermSize(200, 50))
-	shog.SetNotify(func(msg any) { tm.Send(msg) })
+	// Intercept EditorRequest messages before they reach the TUI — teatest's
+	// tea.ExecProcess does not run external commands, so any tool that sends an
+	// EditorRequest (e.g. sage.suggest_edict → approve_doc for large payloads)
+	// would otherwise block forever waiting on ResultChan.
+	shog.SetNotify(func(msg any) {
+		if req, ok := msg.(tools.EditorRequest); ok {
+			req.ResultChan <- errors.New("editor not available in test environment")
+			return
+		}
+		tm.Send(msg)
+	})
 
 	// 5. Wait for LLM to connect (status bar shows ✅ when connected)
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
@@ -2247,12 +2264,21 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	tm.Type(":init")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// 7. Wait for the ritual to complete (or fail) — must finish before sandbox smoke test
+	// 7. Wait for the ritual to complete successfully — a failed ritual must fail the test.
+	// The TUI renders success as "Ritual project-init for edict N completed in X" and
+	// failure as "Ritual project-init failed: ...".
+	var ritualOutput []byte
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
+		ritualOutput = bts
 		output := string(bts)
-		return strings.Contains(output, "Ritual project-init completed") ||
+		return strings.Contains(output, "Ritual project-init for edict") ||
 			strings.Contains(output, "Ritual project-init failed")
 	}, teatest.WithCheckInterval(1*time.Second), teatest.WithDuration(5*time.Minute))
+	seen := string(ritualOutput)
+	require.NotContains(t, seen, "Ritual project-init failed",
+		"project-init must complete successfully (not fail)")
+	require.Contains(t, seen, "completed in",
+		"project-init must reach the completed state")
 
 	// 8. Verify infrastructure files were created and customized
 	for _, path := range []string{
@@ -2262,17 +2288,24 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 		".agents/sandbox/bashrc",
 	} {
 		_, err := os.Stat(path)
-		assert.NoError(t, err, "expected %s to exist after :init", path)
+		require.NoError(t, err, "expected %s to exist after :init", path)
 	}
 
 	// Verify the Dockerfile was customized — should have a real base image, not {{.BaseImage}}
 	dockerfileContent, err := os.ReadFile(".agents/sandbox/Dockerfile")
-	if assert.NoError(t, err) {
-		assert.NotContains(t, string(dockerfileContent), "CHANGE_ME",
-			"Dockerfile should have been customized by the LLM")
-		assert.Contains(t, string(dockerfileContent), "FROM ",
-			"Dockerfile should contain a FROM instruction with a real image")
-	}
+	require.NoError(t, err)
+	require.NotContains(t, string(dockerfileContent), "CHANGE_ME",
+		"Dockerfile should have been customized by the LLM")
+	require.Contains(t, string(dockerfileContent), "FROM ",
+		"Dockerfile should contain a FROM instruction with a real image")
+
+	// Verify Justfile is syntactically valid — catches LLM hallucinations like
+	// invalid recipes. `just --summary` parses the file without running anything
+	// and exits non-zero on parse errors.
+	summaryCmd := exec.Command("just", "--summary")
+	summaryCmd.Dir = tmpDir
+	summaryOut, summaryErr := summaryCmd.CombinedOutput()
+	require.NoError(t, summaryErr, "Justfile should be valid syntax\nOutput: %s", summaryOut)
 
 	// 9. Verify files are staged
 	gitStatus := exec.Command("git", "status", "--porcelain")
@@ -2280,14 +2313,16 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	statusOut, err := gitStatus.Output()
 	require.NoError(t, err)
 	status := string(statusOut)
-	assert.Contains(t, status, "Justfile", "Justfile should be staged after :init")
-	assert.Contains(t, status, ".agents/", ".agents/ should be staged after :init")
+	require.Contains(t, status, "Justfile", "Justfile should be staged after :init")
+	require.Contains(t, status, ".agents/", ".agents/ should be staged after :init")
 
-	// 10. Sandbox smoke test — verify the container is running
-	tm.Type(":!echo $container")
+	// 10. Sandbox smoke test — verify the container runner is upgraded by running
+	// a marker-prefixed command. Using a unique marker avoids false positives from
+	// earlier output (e.g. error messages that mention "podman").
+	tm.Type(`:!echo "SANDBOX_CHECK=$container"`)
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
-		return strings.Contains(string(bts), "podman")
+		return strings.Contains(string(bts), "SANDBOX_CHECK=podman")
 	}, teatest.WithCheckInterval(500*time.Millisecond), teatest.WithDuration(30*time.Second))
 
 	// 11. Clean up
@@ -2323,4 +2358,13 @@ func runTestGitCommand(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %v failed: %v\nOutput: %s", args, err, output)
 	}
+}
+
+// requireCommandSucceeds runs a command and fails the test if it exits non-zero.
+func requireCommandSucceeds(t *testing.T, dir string, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s %v should succeed\nOutput: %s", name, args, output)
 }

@@ -16,30 +16,30 @@ build-sandbox:
 clean-sandbox:
     podman rmi localhost/asimi-sandbox-{{PROJECT_NAME}}:latest
 
-# Install project dependencies (language-specific)
+# Install project dependencies (language-specific) — customize for your project
 install:
-    # TBD - add installation commands
+    @echo "no install step configured"
 
-# Run linter & formatter (language-specific)
+# Run linter & formatter (language-specific) — customize for your project
 lint:
-    # TBD - add linting commands
+    @echo "no lint step configured"
 
-# Run tests (language-specific)
+# Run tests (language-specific) — customize for your project
 test:
-    # TBD - add test commands, if there are no tests, run the linter
+    @echo "no test step configured"
 
-# Start the program or server
+# Start the program or server — customize for your project
 run:
-    # TBD - add run commands
+    @echo "no run step configured"
 
-# Build the project
+# Build the project — customize for your project
 build: install
-    # TBD - add build command
+    @echo "no build step configured"
 
-# Clean build artifacts and caches
+# Clean build artifacts and caches — customize for your project
 clean:
-    # TBD - add clean commands
+    @echo "no clean step configured"
 
-# Install system dependencies
+# Install system dependencies — customize for your project
 bootstrap:
-    # TBD - add multi-os system dependencies install commands
+    @echo "no bootstrap step configured"

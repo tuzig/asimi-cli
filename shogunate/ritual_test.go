@@ -2015,38 +2015,38 @@ func TestCastleSiegeJudgementStepHasVerdictCheck(t *testing.T) {
 	}
 
 	// Find the judgement step
-	var judgementStep *RitualStep
+	var judgingStep *RitualStep
 	for i := range castleSiege.Steps {
-		if castleSiege.Steps[i].Name == "judgement" {
-			judgementStep = &castleSiege.Steps[i]
+		if castleSiege.Steps[i].Name == "judging" {
+			judgingStep = &castleSiege.Steps[i]
 			break
 		}
 	}
-	if judgementStep == nil {
+	if judgingStep == nil {
 		t.Fatal("castle-siege: judgement step not found")
 	}
 
 	// Verify then steps include verdict check BEFORE git diff and seal recording
-	if len(judgementStep.Then) < 3 {
+	if len(judgingStep.Then) < 3 {
 		t.Fatalf("castle-siege judgement: expected at least 3 then steps, got %d: %v",
-			len(judgementStep.Then), judgementStep.Then)
+			len(judgingStep.Then), judgingStep.Then)
 	}
 
 	// Verdict check must come first
-	if judgementStep.Then[0] != "the verdicts are passed" {
+	if judgingStep.Then[0] != "the verdicts are passed" {
 		t.Errorf("castle-siege judgement: first then step should be 'the verdicts are passed', got %q",
-			judgementStep.Then[0])
+			judgingStep.Then[0])
 	}
 
 	// Git diff comes second
-	if judgementStep.Then[1] != "!git diff" {
+	if judgingStep.Then[1] != "!git diff" {
 		t.Errorf("castle-siege judgement: second then step should be '!git diff', got %q",
-			judgementStep.Then[1])
+			judgingStep.Then[1])
 	}
 
 	// Seal recording must come third
-	if judgementStep.Then[2] != "record the judge's seal" {
+	if judgingStep.Then[2] != "record the judge's seal" {
 		t.Errorf("castle-siege judgement: third then step should be 'record the judge's seal', got %q",
-			judgementStep.Then[2])
+			judgingStep.Then[2])
 	}
 }

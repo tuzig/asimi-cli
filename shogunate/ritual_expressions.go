@@ -479,19 +479,49 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 		return nil, fmt.Errorf("failed to create .agents/sandbox directory: %w", err)
 	}
 
+	// Pre-fill project-specific values so the LLM doesn't need to touch these
+	// lines. LLM edits that duplicate keys / headers are a common failure mode
+	// (toml rejects duplicates, just rejects malformed recipes), so we do the
+	// boilerplate substitution deterministically here.
+	//
+	// Slug precedence: shogunate.project from config (set explicitly by the user
+	// via the :init prompt or the project's asimi.conf) → git remote slug →
+	// "local" as a last-ditch fallback. The config value is the source of truth
+	// because the user may have set it before any git remote was configured.
+	slug := ""
+	if cfg, err := config.LoadConfig(); err == nil {
+		slug = cfg.Shogunate.Project
+	}
+	if slug == "" {
+		slug = repo.GetRepoInfo().Slug
+	}
+	if slug == "" {
+		slug = "local"
+	}
+	justfile := strings.Replace(dotagentsJustfile, `PROJECT_NAME := "CHANGE_ME"`,
+		fmt.Sprintf(`PROJECT_NAME := "%s"`, slug), 1)
+	asimiConf := strings.Replace(dotagentsAsimiConf, `image_name = ""`,
+		fmt.Sprintf(`image_name = "localhost/asimi-sandbox-%s:latest"`, slug), 1)
+	asimiConf = strings.Replace(asimiConf, `project = ""`,
+		fmt.Sprintf(`project = "%s"`, slug), 1)
+
+
 	// Write embedded templates to project root
 	files := map[string]string{
-		"Justfile":                   dotagentsJustfile,
-		".agents/asimi.conf":         dotagentsAsimiConf,
-		".agents/sandbox/Dockerfile": dotagentsDockerfile,
-		".agents/sandbox/bashrc":     dotagentsBashrc,
+		"Justfile":                         justfile,
+		".agents/asimi.conf":               asimiConf,
+		".agents/sandbox/Dockerfile":       dotagentsDockerfile,
+		".agents/sandbox/bashrc":           dotagentsBashrc,
+		".agents/sandbox/asimi_runtime.sh": dotagentsAsimiRuntime,
 	}
 
-	// Write files that don't already exist and track created paths
+	// Only seed files that don't already exist — preserve any prior customization
+	// (LLM edits from a previous step, manual user edits, etc.). Retries receive
+	// the Forge's prior output and the failure error in the work prompt, giving the
+	// fresh session enough context to correct its approach without resetting files.
 	createdFiles := []string{}
 	for destPath, content := range files {
 		if _, err := os.Stat(destPath); err == nil {
-			// File already exists (e.g. from a previous attempt) — don't overwrite LLM customizations
 			continue
 		}
 		if err := os.WriteFile(destPath, []byte(content), 0o644); err != nil {
@@ -506,7 +536,10 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 	}, nil
 }
 
-// checkBuiltSandbox verifies the sandbox container image exists
+// buildSandbox builds the sandbox container image via `just build-sandbox`.
+// Infrastructure files are baselined by getInfrastructureTemplates, which the
+// establish-infrastructure step resolves (via its background) before each
+// attempt — including on retry — so this function does not need to reset them.
 func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 	output, err := runners.HostRun(ctx, runners.Input{
 		Command:        "just build-sandbox",
@@ -515,6 +548,10 @@ func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build the sandbox image: %w", err)
+	}
+	if output.ExitCode != "0" {
+		r.logger.Warn("just build-sandbox failed", "exit_code", output.ExitCode, "output", output.Output)
+		return nil, fmt.Errorf("just build-sandbox exited with code %s:\n%s", output.ExitCode, output.Output)
 	}
 	return map[string]string{"status": "built", "output": output.Output}, nil
 }
@@ -537,7 +574,7 @@ func (r *RitualRunner) verifySandboxUp(ctx context.Context) (interface{}, error)
 		return map[string]string{
 			"status": "failed",
 			"output": "container env var has no podman: " + output.Output,
-		}, fmt.Errorf("sandbox smoke test failed: %w", err)
+		}, fmt.Errorf("sandbox smoke test failed. Use `:init` to fix")
 	}
 	return map[string]string{
 		"status": "ready",
@@ -546,30 +583,7 @@ func (r *RitualRunner) verifySandboxUp(ctx context.Context) (interface{}, error)
 }
 
 func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, error) {
-	// Step 1: Build the sandbox container image
-	output, err := r.runner.Run(ctx, runners.Input{
-		Command:        "uname",
-		Description:    "build the sandbox",
-		BypassApproval: true,
-	})
-	if err == nil && output.ExitCode != "0" {
-		r.logger.Warn("build-sandbox failed", "exit_code", output.ExitCode, "output", output.Output)
-		err = fmt.Errorf("build-sandbox exited with code %s: %s", output.ExitCode, output.Output)
-	}
-	if err != nil {
-		return map[string]string{
-			"status": "failed",
-			"output": "sandbox build failed. Start RCA with .agents/sandbox/Dockerfile and build output:\n" + output.Output,
-		}, fmt.Errorf("sandbox build failed: %w", err)
-	}
-	if !strings.Contains(output.Output, "Linux") {
-		return map[string]string{
-			"status": "failed",
-			"output": "uname output has no Linux: " + output.Output,
-		}, fmt.Errorf("sandbox smoke test failed: %w", err)
-	}
-
-	// Step 2: Reload the runner to pick up the newly built sandbox image
+	// Step 1: Reload the runner to pick up the newly built sandbox image
 	// TODO: Find a better way then reloading the config
 	cfg, loadErr := config.LoadConfig()
 	if loadErr != nil {
@@ -591,6 +605,34 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 			"status": "failed",
 			"output": "failed to bring the container up",
 		}, fmt.Errorf("container runner type is %s, expected podman", r.runner.RunnerType())
+	}
+
+	// Propagate runner upgrade to Shogunate and all ministers
+	if r.onRunnerUpgrade != nil {
+		r.onRunnerUpgrade(r.runner)
+	}
+
+	// Step 2: Smoke-test the newly built sandbox container
+	output, err := r.runner.Run(ctx, runners.Input{
+		Command:        "uname",
+		Description:    "smoke test the sandbox",
+		BypassApproval: true,
+	})
+	if err == nil && output.ExitCode != "0" {
+		r.logger.Warn("sandbox smoke test failed", "exit_code", output.ExitCode, "output", output.Output)
+		err = fmt.Errorf("sandbox smoke test exited with code %s: %s", output.ExitCode, output.Output)
+	}
+	if err != nil {
+		return map[string]string{
+			"status": "failed",
+			"output": "sandbox smoke test failed. Start RCA with .agents/sandbox/Dockerfile and build output:\n" + output.Output,
+		}, fmt.Errorf("sandbox smoke test failed: %w", err)
+	}
+	if !strings.Contains(output.Output, "Linux") {
+		return map[string]string{
+			"status": "failed",
+			"output": "uname output has no Linux: " + output.Output,
+		}, fmt.Errorf("sandbox smoke test failed. Use `:init` to fix")
 	}
 
 	// Step 3: Install dependencies inside the sandbox (BLOCKING - configuration failure)
@@ -724,6 +766,9 @@ func parseHostOrgProject(remote string) (host, org, project string) {
 func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn string) error {
 	// Non-edict operations run regardless of EdictID
 	switch fn {
+	case "build_sandbox":
+		_, err := r.buildSandbox(ctx)
+		return err
 	case "verify_sandbox_up":
 		_, err := r.verifySandboxUp(ctx)
 		return err
@@ -731,9 +776,18 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		_, err := r.verifySandboxReady(ctx)
 		return err
 	case "stage_infrastructure":
-		// Stage infrastructure files on the host (git runs on host, not in sandbox)
+		// Stage infrastructure files on the host (git runs on host, not in sandbox).
+		// Only stage files that actually exist — AGENTS.md may not be present if
+		// the LLM chose a different conventions filename, and the core ritual
+		// should still succeed.
+		paths := []string{"Justfile", ".agents/"}
+		for _, p := range []string{"AGENTS.md", "CLAUDE.md"} {
+			if _, err := os.Stat(p); err == nil {
+				paths = append(paths, p)
+			}
+		}
 		output, err := runners.HostRun(ctx, runners.Input{
-			Command:        "git add AGENTS.md Justfile .agents/",
+			Command:        "git add " + strings.Join(paths, " "),
 			Description:    "stage infrastructure files",
 			BypassApproval: true,
 		})

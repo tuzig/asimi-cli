@@ -13,7 +13,7 @@ import (
 
 // StrategistRole defines the Strategist's identity and capabilities
 const StrategistRole = `兵部, and the planner of the shogunate.
-Your domain is strategy and sequence and.
+Your domain is strategy and sequence.
 
 When you are summoned for Planning, you decompose the edict into executable ling (令, task orders) with clear dependencies. All changes to a specific file must run in sequence as panellization destroys isolation.
 You enforce temporal order for large efforts.
@@ -58,7 +58,7 @@ func (s *Strategist) Tools() []Tool {
 		&InsertLingTool{strategist: s},
 		&ListLingTool{strategist: s},
 		&UpdateLingStatusTool{strategist: s},
-		tools.RequestZhengmingTool{MinisterID: s.ministerID, Requester: s, WaitForAnswer: s.WaitForZhengming, Username: s.Username(), Project: s.Project()},
+		tools.RequestZhengmingTool{MinisterID: "chancellor", Requester: s, WaitForAnswer: s.WaitForZhengming, Username: s.Username(), Project: s.Project()},
 	}
 	// Add read-only file tools
 	for _, t := range tools.GetROTools(s.config.LLM) {

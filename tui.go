@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -420,15 +421,11 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle command line input when in command mode or yes/no mode - MUST be before other handlers
-	if m.commandLine.IsInCommandMode() || m.commandLine.IsInYesNoMode() {
+	if m.commandLine.IsInCommandMode() || m.commandLine.IsInYesNoMode() || m.commandLine.IsInInputMode() {
 		cmd, handled := m.commandLine.HandleKey(msg)
 		if handled {
 			// Component handled the key
 			return m, cmd
-		}
-		// Component didn't handle it - in YesNo mode, ignore unhandled keys
-		if m.commandLine.IsInYesNoMode() {
-			return m, nil
 		}
 		return m, nil
 	}
@@ -1746,8 +1743,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.StepName == "" {
 				chat.Indent++
 			}
+		/* TODO: move completed to the beigning of the last message
 		case "completed":
 			chat.AppendToLastMessage(" - " + checkPrefix)
+		*/
 		case "failed":
 			chat.AppendToLastMessage(" - X")
 		case "aborted":
@@ -1887,6 +1886,85 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: []string{"[chat]"}})
 		return m, nil
 
+	case AnsweringEditMsg:
+		// Open the question text in $EDITOR and update it if modified
+		originalText := msg.Question
+		return m, func() tea.Msg {
+			// Create temp file with question content
+			tmpFile, err := os.CreateTemp("", "zhengming_edit_*.md")
+			if err != nil {
+				slog.Error("failed to create temp file for editing", "error", err)
+				return AnsweringEditDoneMsg{RequestID: msg.RequestID, Question: originalText, OriginalQuestion: originalText}
+			}
+			tmpPath := tmpFile.Name()
+			tmpFile.Close()
+
+			if err := os.WriteFile(tmpPath, []byte(originalText), 0644); err != nil {
+				slog.Error("failed to write temp file for editing", "error", err)
+				os.Remove(tmpPath)
+				return AnsweringEditDoneMsg{RequestID: msg.RequestID, Question: originalText, OriginalQuestion: originalText}
+			}
+
+			// Get editor
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = "vi"
+			}
+
+			// Run the editor via tea.ExecProcess
+			cmd := exec.Command(editor, tmpPath)
+			return tea.ExecProcess(cmd, func(err error) tea.Msg {
+				defer os.Remove(tmpPath)
+				if err != nil {
+					slog.Error("editor failed", "error", err)
+					return AnsweringEditDoneMsg{RequestID: msg.RequestID, Question: originalText, OriginalQuestion: originalText}
+				}
+
+				// Read modified content
+				modifiedContent, err := os.ReadFile(tmpPath)
+				if err != nil {
+					slog.Error("failed to read modified file", "error", err)
+					return AnsweringEditDoneMsg{RequestID: msg.RequestID, Question: originalText, OriginalQuestion: originalText}
+				}
+
+				// Trim trailing whitespace for comparison
+				modified := strings.TrimRight(string(modifiedContent), " \t\n\r")
+				original := strings.TrimRight(originalText, " \t\n\r")
+				if modified == original {
+					// No changes, keep original
+					return AnsweringEditDoneMsg{RequestID: msg.RequestID, Question: originalText, OriginalQuestion: originalText}
+				}
+
+				// Update the question with modified content
+				return AnsweringEditDoneMsg{RequestID: msg.RequestID, Question: modified, OriginalQuestion: originalText}
+			})
+		}
+
+	case AnsweringEditDoneMsg:
+		// Exit answering mode
+		m.prompt().ExitAnsweringMode()
+
+		// Check if content was modified
+		modified := strings.TrimRight(msg.Question, " \t\n\r")
+		original := strings.TrimRight(msg.OriginalQuestion, " \t\n\r")
+
+		if modified != original {
+			// Content was modified - send it back to the Sage as a chat message
+			if session := m.getCurrentSession(); session != nil {
+				session.AddMessage("human", msg.Question)
+			}
+			// Cancel the pending zhengming so the Sage can re-suggest with modified content
+			if m.shogunate != nil {
+				for _, minister := range m.shogunate.Ministers() {
+					if base, ok := minister.(interface{ CancelZhengming(string) }); ok {
+						base.CancelZhengming(msg.RequestID)
+						break
+					}
+				}
+			}
+		}
+		return m, nil
+
 	case tools.EditorRequest:
 		// A tool wants to open $EDITOR — suspend the TUI via tea.ExecProcess
 		return m, tea.ExecProcess(msg.Cmd, func(err error) tea.Msg {
@@ -1970,6 +2048,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cancelMsg.WriteLn("Please run :update again when ready")
 		m.tabs.Content().Chat.AddMessage(cancelMsg.String())
 		return m, nil
+
+	case inputResponseMsg:
+		// Handle free text input responses
+		return m, handleProjectNameInput(&m, msg.text)
 
 	case runners.ApprovalRequestMsg:
 		// Store the pending approval request
@@ -2129,7 +2211,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Mode = newMode
 		m.status.SetMode(newMode)
 
-		if newMode != "command" && newMode != "yesno" {
+		if newMode != "command" && newMode != "yesno" && newMode != "input" {
 			m.commandLine.Blur()
 		}
 
@@ -2163,6 +2245,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prompt().EnterViCommandLineMode()
 		case "yesno":
 			m.prompt().Style = m.prompt().Style.BorderForeground(globalTheme.PromptOffBorder)
+		case "input":
+			// Input mode - hide prompt to show command line input
+			m.prompt().Blur()
 		case "learning":
 			m.prompt().EnterViLearningMode()
 		case "select", "resume", "models", "help":
@@ -2303,9 +2388,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"current_version": version})
 
 	case llmInitErrorMsg:
-		// LLM initialization failed
+		// LLM initialization failed - show persistent message in Chancellor's ruling tab
+		m.tabs.Ruling().AddMessage(fmt.Sprintf("%s%s LLM initialization failed: %v\n\nUse `:help models` to learn more.",
+			systemPrefix, completeFailurePrefix, msg.err))
 		slog.Warn("LLM initialization failed", "error", msg.err)
-		m.commandLine.AddToast("Running without a model, use `:models` to set", "warning", 5000)
+		m.commandLine.AddToast("Running without a model, use `:help models` to configure", "warning", 5000)
 
 	case startConversationMsg:
 		// Handle starting a new conversation (used by init, new, and other commands)
@@ -3068,7 +3155,12 @@ func (m *TUIModel) raiseShogunateEvent(event storage.ShogunateEvent, params stor
 	case storage.EventShogunateStarted, storage.EventShogunateReady:
 		key = m.shogunate.CourtEdictKey()
 	default:
-		key = m.currentEdictKey
+		// Derive edict key from payload instead of stale currentEdictKey
+		if edictID, ok := params["edict_id"].(uint); ok {
+			key = m.shogunate.EdictKey(edictID)
+		} else {
+			key = m.currentEdictKey // fallback for backward compatibility
+		}
 	}
 	m.shogunate.PublishEvent(key, event, params)
 }

@@ -358,6 +358,11 @@ func (m *MinisterBase) Scratchpad() string {
 	return ""
 }
 
+// SetRunner updates the shell runner
+func (m *MinisterBase) SetRunner(r runners.Runner) {
+	m.runner = r
+}
+
 // RepoInfo returns the repository information
 func (m *MinisterBase) RepoInfo() repo.RepoInfo {
 	return m.repoInfo
@@ -643,6 +648,13 @@ func (m *MinisterBase) DeliverZhengmingAnswer(answer ZhengmingAnswer) bool {
 	default:
 		return false
 	}
+}
+
+// CancelZhengming cancels a pending zhengming request, unblocking WaitForZhengming with an error.
+func (m *MinisterBase) CancelZhengming(requestID string) {
+	m.pendingZhengmingMu.Lock()
+	defer m.pendingZhengmingMu.Unlock()
+	delete(m.pendingZhengming, requestID)
 }
 
 // IsZhengmingPending checks if there are pending clarification requests for an edict

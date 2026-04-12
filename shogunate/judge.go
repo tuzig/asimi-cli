@@ -83,7 +83,9 @@ func (j *Judge) GetPendingManifests(key storage.EdictKey) ([]storage.ForgeManife
 	return manifests, nil
 }
 
-// AllManifestsQuenched checks if all manifests for an edict are quenched
+// AllManifestsQuenched checks if all manifests for an edict are quenched.
+// For rituals with no manifests (e.g., project-init), it also checks for
+// edict-level verdicts as an alternative completion signal.
 func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 	var pendingCount int64
 	err := j.db.Model(&storage.ForgeManifest{}).
@@ -102,7 +104,22 @@ func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 		return false, fmt.Errorf("failed to count manifests: %w", err)
 	}
 
-	return totalCount > 0 && pendingCount == 0, nil
+	if totalCount > 0 {
+		// Has manifests: all must be quenched
+		return pendingCount == 0, nil
+	}
+
+	// No manifests: check for edict-level verdict (ManifestID = "")
+	var verdictCount int64
+	err = j.db.Model(&storage.JudgeVerdict{}).
+		Where("manifest_id = '' AND test_suite = 'edict'").
+		Count(&verdictCount).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to check edict-level verdicts: %w", err)
+	}
+
+	// Consider quenched if an edict-level verdict exists
+	return verdictCount > 0, nil
 }
 
 // sealIfComplete checks whether all manifests for the edict are quenched
@@ -414,6 +431,8 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 		outcome = storage.VerdictFailed
 	}
 
+	recordedCount := 0
+
 	// Record verdict for each manifest
 	for _, m := range manifests {
 		evidence := storage.JSON{"details": params.Details}
@@ -434,7 +453,25 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 		if err := t.judge.UpdateManifestStatus(m.ManifestID, status, verdictID); err != nil {
 			return "", fmt.Errorf("failed to update manifest status: %w", err)
 		}
+		recordedCount++
 	}
+
+	// If no manifests, record verdict for edict directly (for rituals like project-init)
+	if recordedCount == 0 {
+		verdictID := GenerateID("verdict", fmt.Sprintf("%d", params.EdictID), "edict", "direct")
+		verdict := storage.JudgeVerdict{
+			VerdictID:  verdictID,
+			ManifestID: "", // empty = edict-level verdict
+			TestSuite:  "edict",
+			Outcome:    outcome,
+			Evidence:   storage.JSON{"details": params.Details},
+		}
+		if err := t.judge.db.Create(&verdict).Error; err != nil {
+			return "", fmt.Errorf("failed to record edict verdict: %w", err)
+		}
+		recordedCount++
+	}
+
 	sealed := t.judge.sealIfComplete(key)
 	return fmt.Sprintf("Recorded verdict (passed=%v) for edict %d (sealed=%v)", params.Passed, params.EdictID, sealed), nil
 }

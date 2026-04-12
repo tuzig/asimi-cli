@@ -35,6 +35,27 @@ var dotagentsDockerfile string
 //go:embed dotagents/sandbox/bashrc
 var dotagentsBashrc string
 
+//go:embed dotagents/sandbox/asimi_runtime.sh
+var dotagentsAsimiRuntime string
+
+// EnsureProjectConfig seeds .agents/asimi.conf from the embedded default
+// template if the file does not already exist. It creates .agents/ as needed.
+// This lets callers modify keys in place (via config.SetProjectConfig) without
+// the first write producing a stub file that overrides the full default set.
+func EnsureProjectConfig() error {
+	const path = ".agents/asimi.conf"
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(".agents", 0o755); err != nil {
+		return fmt.Errorf("failed to create .agents directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(dotagentsAsimiConf), 0o644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", path, err)
+	}
+	return nil
+}
+
 // RitualStepMsg notifies the UI of ritual step progress
 type RitualStepMsg struct {
 	ChannelID   string
@@ -649,18 +670,15 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 						answerText, waitErr := waiter.WaitForZhengming(ctx, requestID)
 						answer := ZhengmingAnswer{RequestID: requestID, Answer: answerText, EdictID: key.ID}
 						if waitErr != nil {
-							r.logger.Warn("recovery zhengming wait failed, starting fresh", "error", waitErr)
-							// Clear recovery data on wait failure
-							previousExec = nil
-							recoveryData = nil
-							recoveryFirstIncompleteStep = -1
+							r.logger.Warn("recovery zhengming wait failed", "error", waitErr)
+							return nil, fmt.Errorf("recovery zhengming failed: %w", waitErr)
 						} else if answer.Answer == "Start fresh from step 0" {
 							r.logger.Info("user declined recovery, starting fresh",
 								"ritual", ritualName,
 								"previous_execution_id", previousExec.ID)
 							// Mark the zhengming-saved execution as completed (cleanup)
-							exec.State = RitualStateCompleted
-							r.saveExecution(exec)
+							previousExec.State = RitualStateCompleted
+							r.saveExecution(previousExec)
 							// Generate a fresh execution ID and reset state
 							exec.ID = GenerateID("ritual", ritualName, fmt.Sprint(key.ID), time.Now().String())
 							exec.State = RitualStatePending
@@ -823,6 +841,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 				StepName:  step.Name,
 				StepIndex: exec.CurrentStep,
 				Status:    "failed",
+				// TODO: fix this
 				Message:   getRulersError(err),
 			})
 
@@ -1043,7 +1062,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	for _, raw := range step.Then {
 		entry, err := r.resolveStepDef(raw)
 		if err != nil {
-			return "", fmt.Errorf("then %q failed: %w", raw, err)
+			return actResult, fmt.Errorf("then %q failed: %w", raw, err)
 		}
 		exec.Notify(RitualStepMsg{
 			StepName: entry.Key,
@@ -1059,13 +1078,13 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			}
 			answer, waitErr := r.waitForZhengming(ctx, exec, requestID)
 			if waitErr != nil {
-				return "", fmt.Errorf("then %q zhengming wait failed: %w", raw, waitErr)
+				return actResult, fmt.Errorf("then %q zhengming wait failed: %w", raw, waitErr)
 			}
 			if answer.Answer == "Reject" {
-				return "", fmt.Errorf("then %q zhengming rejected by ruler", raw)
+				return actResult, fmt.Errorf("then %q zhengming rejected by ruler", raw)
 			}
 		} else if err != nil {
-			return "", fmt.Errorf("then %q failed: %w", raw, err)
+			return actResult, err
 		}
 		exec.Notify(RitualStepMsg{
 			StepName: entry.Key,
@@ -1360,7 +1379,9 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 	return result
 }
 
-// executeMinisterStep invokes a minister for a task using a fresh ephemeral session per Act
+// executeMinisterStep invokes a minister for a task, reusing the session on
+// retry so the LLM retains its full conversation history (tool calls, edits,
+// reasoning) from the previous attempt.
 func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
 	actTemplate := step.Act
 	if actTemplate == "" {
@@ -1378,13 +1399,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		return "", fmt.Errorf("minister not found: %s", step.Minister)
 	}
 
-	// Get minister configuration and model
-	cfg := minister.GetConfig()
-	sessionConfig := &SessionConfig{LLM: cfg}
-
-	// Create ephemeral session for this Act — forward all messages to the TUI
-	// RitualStepMsg goes through exec.Notify (which sets ChannelID to "chancellor")
-	// StreamChunkMsg and others are forwarded directly with the correct channel
+	// Forward all messages to the TUI via the ritual's notify
 	notify := func(msg any) {
 		if exec.notify == nil {
 			return
@@ -1403,11 +1418,24 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		}
 	}
 
-	actSession, err := CreateSession(minister, minister.Model(), sessionConfig, notify, "chancellor", exec.EdictKey())
-	if err != nil {
-		return "", fmt.Errorf("failed to create session for %s: %w", step.Minister, err)
+	// Reuse session on retry / goto re-invocation so the LLM keeps its full
+	// conversation history. Create a new one only on the first invocation.
+	actSession := exec.stepStates[exec.CurrentStep].Session
+	if actSession == nil {
+		cfg := minister.GetConfig()
+		sessionConfig := &SessionConfig{LLM: cfg}
+		var err error
+		actSession, err = CreateSession(minister, minister.Model(), sessionConfig, notify, "chancellor", exec.EdictKey())
+		if err != nil {
+			return "", fmt.Errorf("failed to create session for %s: %w", step.Minister, err)
+		}
+		exec.stepStates[exec.CurrentStep].Session = actSession
+	} else {
+		// Retry path — clean up any trailing unmatched tool calls from the
+		// interrupted turn, then update the notify callback.
+		actSession.SanitizeMessages()
+		actSession.SetNotify(notify, "chancellor")
 	}
-	defer actSession.Rollback() // Discard after use
 
 	// Build work prompt with ritual context and previous step results
 	prompt := r.buildWorkPrompt(exec, act)
@@ -1479,7 +1507,15 @@ func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *Ritual
 var workPromptTmpl = template.Must(template.New("work").Parse(
 	`# Task
 {{ .Act }}
-{{ if .step_results }}
+{{ if .previous_failure }}
+---
+# ⚠️ Previous Attempt Failed — Fix and Retry
+Your previous attempt at this step failed with the following error. Analyze the
+error carefully and CHANGE YOUR APPROACH this time — repeating the same edits
+will fail the same way.
+
+{{ .previous_failure }}
+{{ end }}{{ if .step_results }}
 ---
 # Reference Data
 The following information has already been gathered for you. Use it directly — do NOT call tools to re-fetch this data.
@@ -1503,6 +1539,14 @@ func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string
 				data["step_results"] = map[string]string{}
 			}
 			data["step_results"].(map[string]string)[ss.Name] = ss.Message
+		}
+	}
+	// If the current step is being retried, surface the prior failure so the LLM
+	// can correct its approach instead of repeating the same mistake.
+	if exec.CurrentStep < len(exec.stepStates) {
+		curState := exec.stepStates[exec.CurrentStep]
+		if curState.RetryCount > 0 && curState.Message != "" {
+			data["previous_failure"] = curState.Message
 		}
 	}
 	var buf bytes.Buffer
@@ -1578,7 +1622,20 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 		if step.OnFailureTarget != "" {
 			targetIdx := r.stepIndex(exec.def, step.OnFailureTarget)
 			if targetIdx != -1 {
+				maxRetries := step.resolveMaxRetries(exec.def)
+				if maxRetries == 0 {
+					maxRetries = r.maxRetries
+				}
 				state := &exec.stepStates[exec.CurrentStep]
+				if state.RetryCount >= maxRetries {
+					r.logger.Info("goto retries exhausted, aborting",
+						"step", step.Name,
+						"attempts", state.RetryCount,
+						"max", maxRetries)
+					r.invokeReportFailure(ctx, exec, step, err)
+					return false
+				}
+				state.RetryCount++
 				if state.Output != "" {
 					state.Message = fmt.Sprintf("Step '%s' failed.\n\nOutput:\n%s\n\nError: %s",
 						step.Name, state.Output, err.Error())
@@ -1589,7 +1646,9 @@ func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution,
 				exec.CurrentStep = targetIdx
 				r.logger.Info("jumping to step on failure",
 					"from", step.Name,
-					"to", step.OnFailureTarget)
+					"to", step.OnFailureTarget,
+					"attempt", state.RetryCount,
+					"max", maxRetries)
 				return true
 			}
 		}

@@ -27,6 +27,7 @@ type (
 	acceptCompletionMsg   struct{}                // Tab pressed
 	navigateHistoryMsg    struct{ direction int } // For completion or history
 	yesNoResponseMsg      struct{ answer bool }   // true for yes, false for no
+	inputResponseMsg      struct{ text string }   // response from free text input mode
 )
 
 // Mode management - single unified message for all mode changes
@@ -42,6 +43,7 @@ const (
 	CommandLineCommand
 	CommandLineToast
 	CommandLineYesNo
+	CommandLineInput
 )
 
 // CommandLineComponent manages the bottom command line
@@ -62,6 +64,10 @@ type CommandLineComponent struct {
 
 	// Yes/No prompt support
 	yesNoQuestion string // The question being asked
+
+	// Free text input support
+	inputPrompt    string          // The prompt message to display
+	inputTextInput textinput.Model // Text input for free text mode
 }
 
 // NewCommandLineComponent creates a new command line component
@@ -70,10 +76,15 @@ func NewCommandLineComponent() *CommandLineComponent {
 	ti.Prompt = ":"
 	ti.Focus()
 
+	inputTi := textinput.New()
+	inputTi.Prompt = "> "
+	inputTi.Focus()
+
 	return &CommandLineComponent{
 		mode:           CommandLineIdle,
 		toasts:         make([]Toast, 0),
 		textInput:      ti,
+		inputTextInput: inputTi,
 		history:        make([]string, 0),
 		historyCursor:  0,
 		historySaved:   false,
@@ -171,6 +182,33 @@ func (cl *CommandLineComponent) IsInYesNoMode() bool {
 	return cl.mode == CommandLineYesNo
 }
 
+// EnterInputMode enters free text input mode with a prompt message
+func (cl *CommandLineComponent) EnterInputMode(prompt string) tea.Cmd {
+	cl.mode = CommandLineInput
+	cl.inputPrompt = prompt
+	cl.inputTextInput.SetValue("")
+	cl.inputTextInput.Focus()
+	return func() tea.Msg {
+		return ChangeModeMsg{NewMode: "input"}
+	}
+}
+
+// ExitInputMode exits input mode and returns to idle
+func (cl *CommandLineComponent) ExitInputMode() tea.Cmd {
+	cl.mode = CommandLineIdle
+	cl.inputPrompt = ""
+	cl.inputTextInput.SetValue("")
+	cl.inputTextInput.Blur()
+	return func() tea.Msg {
+		return ChangeModeMsg{NewMode: "insert"}
+	}
+}
+
+// IsInInputMode returns true if in free text input mode
+func (cl *CommandLineComponent) IsInInputMode() bool {
+	return cl.mode == CommandLineInput
+}
+
 // SetCommand sets the current command being entered
 func (cl *CommandLineComponent) SetCommand(cmd string) {
 	cl.textInput.SetValue(cmd)
@@ -232,6 +270,15 @@ func (cl *CommandLineComponent) View() string {
 			Foreground(lipgloss.Color("15")).
 			Width(cl.width)
 		return cmdStyle.Render(cl.textInput.View())
+	}
+
+	// Priority 2.5: Show free text input if in input mode
+	if cl.mode == CommandLineInput {
+		promptStyle := lipgloss.NewStyle().
+			Foreground(globalTheme.TextColor).
+			Width(cl.width)
+		displayText := cl.inputPrompt + " " + cl.inputTextInput.View()
+		return promptStyle.Render(displayText)
 	}
 
 	// Priority 3: Show toast if active
@@ -381,6 +428,32 @@ func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		// Ignore other keys in yes/no mode
 		return nil, true
+	}
+
+	// Handle input mode (free text input)
+	if cl.IsInInputMode() {
+		keyStr := msg.String()
+		switch keyStr {
+		case "enter":
+			// Capture text before ExitInputMode clears it
+			text := cl.inputTextInput.Value()
+			return tea.Batch(
+				cl.ExitInputMode(),
+				func() tea.Msg { return inputResponseMsg{text: text} },
+			), true
+		case "esc":
+			// Cancel input mode
+			exitCmd := cl.ExitInputMode()
+			return tea.Batch(
+				exitCmd,
+				func() tea.Msg { return inputResponseMsg{text: ""} },
+			), true
+		default:
+			// Let textinput handle character input
+			var cmd tea.Cmd
+			cl.inputTextInput, cmd = cl.inputTextInput.Update(msg)
+			return cmd, true
+		}
 	}
 
 	if !cl.IsInCommandMode() {

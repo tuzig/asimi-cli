@@ -90,6 +90,70 @@ func (f *Forge) MarkLingCompleted(lingID string) error {
 	return nil
 }
 
+// GetFailedVerdicts retrieves all failed verdicts for an edict that need fixing.
+// It joins with forge_manifests to get context about what failed.
+func (f *Forge) GetFailedVerdicts(key storage.EdictKey) ([]storage.JudgeVerdict, error) {
+	var verdicts []storage.JudgeVerdict
+	err := f.db.Table("judge_verdicts").
+		Joins("JOIN forge_manifests ON forge_manifests.manifest_id = judge_verdicts.manifest_id").
+		Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?",
+			key.ID, key.Username, key.Project).
+		Where("judge_verdicts.outcome = ?", storage.VerdictFailed).
+		Order("judge_verdicts.created_at ASC").
+		Find(&verdicts).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get failed verdicts: %w", err)
+	}
+	return verdicts, nil
+}
+
+// HandleFailedVerdicts fixes any failed verdicts for the task's edict by streaming
+// fix prompts through the LLM. Returns (true, err) if failed verdicts were found
+// and processed (err is non-nil if any fix attempt errored), or (false, nil) if
+// there were no failed verdicts to handle. The caller should treat handled=true
+// as terminal: do NOT execute task.Work, since the original act is what produced
+// the broken state.
+func (f *Forge) HandleFailedVerdicts(ctx context.Context, task *Task, notify internal.NotifyFunc) (bool, error) {
+	failedVerdicts, err := f.GetFailedVerdicts(task.EdictKey)
+	if err != nil {
+		f.logger.Error("failed to query failed verdicts", "error", err)
+		return false, err
+	}
+	if len(failedVerdicts) == 0 {
+		return false, nil
+	}
+
+	f.logger.Info("found failed verdicts, fixing instead of act",
+		"count", len(failedVerdicts),
+		"edict_id", task.EdictKey.ID)
+
+	for _, verdict := range failedVerdicts {
+		f.logger.Info("forge working on verdict",
+			"verdict_id", verdict.VerdictID,
+			"manifest_id", verdict.ManifestID,
+			"edict_id", task.EdictKey.ID)
+		fixWork := f.buildFixPrompt(verdict)
+		session, _, taskErr := f.streamTask(ctx, fixWork, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
+		task.Session = session
+		if taskErr != nil {
+			f.logger.Error("failed to fix verdict", "verdict_id", verdict.VerdictID, "error", taskErr)
+			return true, taskErr
+		}
+	}
+	f.logger.Info("finished fixing verdicts")
+	return true, nil
+}
+
+// buildFixPrompt creates a fix prompt from a failed verdict's evidence
+func (f *Forge) buildFixPrompt(verdict storage.JudgeVerdict) string {
+	evidenceJSON, _ := json.Marshal(verdict.Evidence)
+	return fmt.Sprintf(`A Judge has recorded a failed verdict for manifest %s.
+The verdict contains evidence of what failed: %s
+
+Focus on minimal, targeted changes to fulfill the intent.
+Do not repeat work that already passed judgment.`, verdict.ManifestID, string(evidenceJSON))
+}
+
 // StageManifest creates a staged manifest (not yet committed to git)
 func (f *Forge) StageManifest(key storage.EdictKey, lingID, filePath, funcName, contentSHA string) (string, error) {
 	// Add timestamp to ensure uniqueness across retries/loops
@@ -192,6 +256,25 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 	var output string
 	var taskErr error
 	var session *Session
+
+	// Failed verdicts take priority over normal task work: if any exist for this
+	// edict, fix them and return — do NOT also execute task.Work, since the
+	// original act is what produced the broken state in the first place.
+	handled, fixErr := f.HandleFailedVerdicts(ctx, task, notify)
+	if handled {
+		result := Result{
+			MinisterID: f.ID(),
+			Sealed:     true,
+			Session:    task.Session,
+			Err:        fixErr,
+		}
+		select {
+		case task.Done <- result:
+		default:
+			f.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
+		}
+		return
+	}
 
 	if f.model != nil {
 		// Get pending lings for this edict

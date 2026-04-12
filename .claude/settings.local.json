@@ -11,7 +11,10 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:docs.getbifrost.ai)",
       "Bash(find:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(podman image:*)",
+      "Bash(podman run:*)",
+      "Bash(podman history:*)"
     ]
   }
 }

@@ -110,7 +110,6 @@ type SandboxConfig struct {
 
 // ShogunateConfig holds configuration for the Shogunate.
 type ShogunateConfig struct {
-	PollInterval  time.Duration `koanf:"poll_interval"`
 	RitualTimeout time.Duration `koanf:"ritual_timeout"`
 	Username      string        `koanf:"username"` // OS username for edict scoping
 	Project       string        `koanf:"project"`  // project slug for edict scoping
@@ -123,7 +122,6 @@ func DefaultShogunateConfig() *ShogunateConfig {
 		username = u.Username
 	}
 	return &ShogunateConfig{
-		PollInterval:  5 * time.Second,
 		RitualTimeout: 30 * time.Second,
 		Username:      username,
 	}

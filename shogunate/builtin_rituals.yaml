@@ -81,7 +81,7 @@
 
         Break down the work into clear phases with dependencies.
         Identify risks and architectural decisions.
-        End this step with a fresh crop of lings or zhengming
+        Use insert_ling to record the plan's lings.
       on_failure: zhengming
 
     - name: forging
@@ -101,7 +101,7 @@
       depends_on: [strategizing]
       on_failure: retry
 
-    - name: judgement
+    - name: judging
       minister: judge
       given:
         - the manifests
@@ -110,7 +110,7 @@
 
         {{ .manifests }}
 
-        Make sure test coverage was not diminshed
+        Make sure test coverage was not diminished
       then:
         - the verdicts are passed
         - "!git diff"
@@ -138,7 +138,7 @@
         Veto if the code violates conventions or introduces risk.
       then:
         - record the sage's seal
-      depends_on: [judgement]
+      depends_on: [judging]
       on_failure: goto
       on_failure_target: forging
   then:
@@ -201,7 +201,7 @@
   background:
     - the borderlands
   steps:
-    - name: judgement
+    - name: judging
       minister: judge
       given:
         - the borderlands
@@ -295,9 +295,7 @@
       type: string
       required: false
       default: "AGENTS.md"
-  max_retries: 2
-  background:
-    - a clear working directory
+  max_retries: 5
   steps:
     - name: establish-infrastructure
       minister: forge
@@ -305,34 +303,57 @@
         - the project metadata
         - the infrastructure templates
       act: |
-        Customize the infrastructure template files IN PLACE. Do NOT rewrite files from scratch —
-        use file_edit to modify specific lines while keeping all existing recipes and structure.
-        Customize for this project:
-        - Justfile: Set PROJECT_NAME := "{{.project_slug}}", fill in TBD recipes. KEEP the build-sandbox and clean-sandbox recipes unchanged.
-        - .agents/asimi.conf: Set image_name = "localhost/asimi-sandbox-{{.project_slug}}:latest"
-        - .agents/sandbox/Dockerfile: Replace CHANGE_ME with detected language base image (e.g. ruby:3.2, golang:1.22, python:3.12)
-        - .agents/sandbox/bashrc: Adjust for project needs. Set URLs pointing to local host port XYZ to host.containers.internal:XYZ
-        - {{.agentsFile}}: Add language and build conventions
-        Detect primary language from codebase (Gemfile→ruby, go.mod→go, requirements.txt→python).
-        Report what files were customized.
-        - If the sandbox requires an a env var add it to .agents/asimi.conf. For example, when install from gitlab.com fails, add to the `sandbox` section `passthrough_env = ["GITLAB_TOKEN"]`
-        - If the only thing left is to build the sandbox, finish and it'll be built
+        Customize the infrastructure template files IN PLACE using replace_text to
+        modify specific substrings. Do NOT use write_file on these templates — that
+        rewrites from scratch and is the #1 cause of this ritual failing to converge.
+        Always preserve the existing structure, headers, and any lines you are not
+        explicitly told to touch.
+
+        Detect the primary language from the codebase (Gemfile→ruby, go.mod→go,
+        requirements.txt/pyproject.toml→python, package.json→node, Cargo.toml→rust).
+
+        Required edits:
+        1. Justfile: Fill in the placeholder recipes (`install`, `lint`, `test`, `run`,
+           `build`, `clean`, `bootstrap`) with the real commands for this project's
+           language and tooling. PROJECT_NAME is already set — leave it alone. Do NOT
+           touch the `build-sandbox` or `clean-sandbox` recipes. Be careful with
+           indentation: just is whitespace-sensitive and recipe bodies must use a
+           consistent leading indent (spaces, not mixed tabs).
+        2. .agents/sandbox/Dockerfile: Set the `FROM` line to a sensible
+           base image. Add any extra `RUN` steps needed to install
+           system packages this project needs at build time. Do NOT remove the
+           `COPY .agents/sandbox/asimi_runtime.sh` / `RUN ... bash.bashrc` block —
+           removing it breaks sandbox command execution.
+        3. .agents/sandbox/bashrc: Adjust for project needs. Export any env vars the
+           project expects, set up PATH, and rewrite URLs that point to local host
+           ports `XYZ` to `host.containers.internal:XYZ` so the sandbox can reach
+           services running on the host.
+        4. .agents/asimi.conf: `image_name` is already set correctly. Only edit if the
+           sandbox requires a host env var (e.g. GITLAB_TOKEN) — in that case uncomment
+           and set `passthrough_env` inside the existing `[sandbox]` section. Do NOT
+           add a new `[sandbox]` section or a second `image_name` line — TOML rejects
+           duplicates and the we will fail.
+        5. {{.agentsFile}}: Append language and build conventions (how to run tests,
+           lint, build, the project's coding style, anything a new contributor would
+           need).
+
+        Report which files were customized. If the only remaining task is to build the
+        sandbox, finish and it will be built automatically.
       then:
         - build the sandbox
+        - the sandbox is ready
       on_failure: retry
 
     - name: sandbox-ready
       minister: judge
       act: |
-        Verify the sandbox infrastructure is sound by running tests.
-        
-        If tests or lint fail, the infrastructure is broken.
-        Provide clear feedback on what must be fixed.
-        
-        If verification passes, record the Judge's Seal.
+        Verify the sandbox is operational by running `uname -a`.
+        The output should contain "Linux" (the sandbox runs on Linux, not the host macOS/Darwin).
+
+        If the command runs and returns Linux, the sandbox is ready — record the Judge's Seal.
+        If the command fails or returns a non-Linux kernel, the infrastructure is broken.
+        Use record_verdict with clear feedback on what must be fixed.
       depends_on: [establish-infrastructure]
-      then:
-        - the sandbox is ready
       on_failure: goto
       on_failure_target: establish-infrastructure
 
@@ -343,16 +364,20 @@
         - the verdicts
       act: |
         Review the infrastructure files for quality and convention adherence.
-        
+
         Verify:
         - {{.agentsFile}} follows project conventions
         - Justfile commands are idiomatic
         - Dockerfile is secure and minimal
         - No hardcoded paths or secrets
-        
-        Record precedents for any new conventions established.
-        
-        If review passes, record the Sage's Seal.
+
+        Call record_precedent ONCE with approved=true and a short reasoning to
+        seal the review. Then return a one-sentence confirmation — that is the
+        end of this step.
+
+        Do NOT call suggest_edict, request_zhengming, approve_doc, or any other
+        tool after record_precedent. Project-init is not the place to propose
+        new edicts or conventions — the ritual only needs your seal to move on.
       depends_on: [sandbox-ready]
       on_failure: goto
       on_failure_target: establish-infrastructure

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
@@ -374,13 +375,70 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 			return showContextMsg{content: "No model connection available. Please ensure a session is active."}
 		}
 	}
-	// Use edict 1 (Court Infrastructure) for project-init ritual
+
+	// Check if project name is already set in config
+	if model.config.Shogunate.Project == "" {
+		// Project name is missing - prompt user for it
+		return model.commandLine.EnterInputMode("Enter project name (e.g., owner/repo):")
+	}
+
+	// Project name exists, proceed with creating the edict
+	return createInitEdict(model)
+}
+
+// createInitEdict creates the edict for project-init ritual
+func createInitEdict(model *TUIModel) tea.Cmd {
+	// Use CreateEdictSilent: we already know the ritual (project-init) and will
+	// dispatch it directly below. Publishing EventEdictCreated would make the
+	// chancellor LLM also try to enact a ritual for this edict, starting it twice.
+	edict, err := model.shogunate.CreateEdictSilent("", "Initialize project with Asimi agent configuration")
+	if err != nil {
+		return func() tea.Msg {
+			return showContextMsg{content: fmt.Sprintf("Failed to create edict: %v", err)}
+		}
+	}
 	payload := storage.JSON{
 		"ritual_name": "project-init",
-		"edict_id":    1,
+		"edict_id":    edict.ID,
 	}
 	model.raiseShogunateEvent(storage.EventRitualEnacted, payload)
 	return nil
+}
+
+// handleProjectNameInput handles the user's project name input
+func handleProjectNameInput(model *TUIModel, projectName string) tea.Cmd {
+	if projectName == "" {
+		// User cancelled, abort the init
+		return func() tea.Msg {
+			return showContextMsg{content: "Project initialization cancelled."}
+		}
+	}
+
+	// Seed .agents/asimi.conf from the embedded default template before writing
+	// the project name. Without this, SetProjectConfig would create a stub file
+	// containing only the [shogunate] section, and the ritual's template-seeding
+	// step would later skip the file (since it exists), leaving the user with a
+	// near-empty config missing every default section.
+	if err := shogunate.EnsureProjectConfig(); err != nil {
+		return func() tea.Msg {
+			return showContextMsg{content: fmt.Sprintf("Failed to seed project config: %v", err)}
+		}
+	}
+
+	// Save project name to .agents/asimi.conf
+	if err := config.SetProjectConfig("shogunate", "project", projectName); err != nil {
+		return func() tea.Msg {
+			return showContextMsg{content: fmt.Sprintf("Failed to save project name: %v", err)}
+		}
+	}
+
+	// Reload project config to pick up the new project name
+	if err := model.config.ReloadProjectConf(); err != nil {
+		slog.Warn("Failed to reload config after setting project name", "error", err)
+	}
+
+	// Proceed with creating the init edict
+	return createInitEdict(model)
 }
 
 // startConversationMsg is sent to start a new conversation with optional guardrails

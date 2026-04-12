@@ -255,7 +255,6 @@ func (s *Shogunate) Start(ctx context.Context) error {
 	}
 
 	s.logger.Info("shogunate started",
-		"poll_interval", s.config.PollInterval,
 		"ministers", s.ministerIDs(),
 		"rituals", s.ritualGuard.RitualRegistry().List())
 
@@ -326,7 +325,7 @@ func (s *Shogunate) EdictKey(edictID uint) storage.EdictKey {
 // CourtEdictKey returns the Court Infrastructure edict key (edict 1).
 // This is used for system-level operations like startup events.
 func (s *Shogunate) CourtEdictKey() storage.EdictKey {
-	return storage.EdictKey{ID: 1, Username: s.config.Username, Project: s.config.Project}
+	return storage.EdictKey{ID: 0, Username: s.config.Username, Project: s.config.Project}
 }
 
 // nextEdictID returns the next available edict ID (MAX+1).
@@ -339,6 +338,26 @@ func (s *Shogunate) nextEdictID() uint {
 // CreateEdict creates a new active edict record in the database and publishes storage.EventEdictCreated.
 // TODO: Add a "summary" parameter which is already in the Edict
 func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
+	edict, err := s.createEdict(issueRef, intent)
+	if err != nil {
+		return nil, err
+	}
+	s.PublishEvent(edict.Key(), storage.EventEdictCreated, storage.JSON{
+		"intent": intent,
+		"id":     edict.ID,
+	})
+	return edict, nil
+}
+
+// CreateEdictSilent creates an edict without publishing EventEdictCreated.
+// Use this when the caller already knows which ritual to run and will
+// dispatch it directly, so routing through the chancellor LLM would be
+// redundant and would double-start the ritual.
+func (s *Shogunate) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
+	return s.createEdict(issueRef, intent)
+}
+
+func (s *Shogunate) createEdict(issueRef, intent string) (*storage.Edict, error) {
 	edict := storage.Edict{
 		ID:       s.nextEdictID(),
 		Username: s.config.Username,
@@ -349,10 +368,6 @@ func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error)
 	if err := s.db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
 	}
-	s.PublishEvent(edict.Key(), storage.EventEdictCreated, storage.JSON{
-		"intent": intent,
-		"id":     edict.ID,
-	})
 	return &edict, nil
 }
 
@@ -437,11 +452,18 @@ func (s *Shogunate) GetRunner() runners.Runner {
 }
 
 // SetRunner updates the shogunate's shell runner (e.g. after sandbox comes up)
+// and propagates the change to all ministers so their shell tools run in the container.
 func (s *Shogunate) SetRunner(r runners.Runner) {
 	if s == nil {
 		return
 	}
 	s.runner = r
+	// Propagate to all ministers that implement RunnerSetter
+	for _, m := range s.ministers {
+		if setter, ok := m.(interface{ SetRunner(runners.Runner) }); ok {
+			setter.SetRunner(r)
+		}
+	}
 }
 
 // SetRunnerMessageChannel sets the message channel on the runner for approval requests

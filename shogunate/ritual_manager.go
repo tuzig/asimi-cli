@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
@@ -42,6 +43,7 @@ type RitualGuard struct {
 	ritualRunner   *RitualRunner
 	eventRegistry  *EventRegistry
 	eventCh        chan Event
+	ritualMu       sync.Mutex // serializes ritual execution without blocking the event loop
 	maxRetries     int
 	batchSize      int
 	flatlineAge    time.Duration
@@ -144,27 +146,23 @@ func (rg *RitualGuard) PublishEvent(key storage.EdictKey, eventType storage.Shog
 }
 
 // startRitual starts and runs a ritual using the Ruling tab's streaming context.
+// It runs in a goroutine so ritual execution (including blocking waits for
+// zhengming during recovery) cannot stall the event loop. Rituals remain
+// serialized via ritualMu so only one runs at a time.
 func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inputs map[string]string) {
-	ctx := rg.streamingCtx()
-	exec, err := rg.ritualRunner.Start(ctx, ritualName, key, inputs, rg.notify)
-	if err != nil {
-		rg.logger.Warn("failed to start ritual", "ritual", ritualName, "error", err)
-		return
-	}
-	if err := rg.ritualRunner.Run(ctx, exec); err != nil {
-		rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
-		// TODO: notification should be pushed down to Ritual
-		if rg.notify != nil {
-			rg.notify(RitualStepMsg{
-				ChannelID:   "chancellor",
-				RitualName:  ritualName,
-				ExecutionID: exec.ID,
-				EdictID:     key.ID,
-				Status:      "ritual_failed",
-				Message:     getRulersError(err),
-			})
+	go func() {
+		rg.ritualMu.Lock()
+		defer rg.ritualMu.Unlock()
+		ctx := rg.streamingCtx()
+		exec, err := rg.ritualRunner.Start(ctx, ritualName, key, inputs, rg.notify)
+		if err != nil {
+			rg.logger.Warn("failed to start ritual", "ritual", ritualName, "error", err)
+			return
 		}
-	}
+		if err := rg.ritualRunner.Run(ctx, exec); err != nil {
+			rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
+		}
+	}()
 }
 
 // DispatchEvent dispatches an event to all subscribers and triggers event-driven rituals.
