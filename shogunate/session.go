@@ -285,6 +285,38 @@ func (s *Session) GetContextFiles() map[string]string {
 	return result
 }
 
+// --- Session Persistence Helpers ---
+
+// HasUserContent returns true if the session contains any Human or AI messages.
+// Used to skip saving empty sessions.
+func (s *Session) HasUserContent() bool {
+	for _, msg := range s.messages {
+		if msg.Role == llms.ChatMessageTypeHuman || msg.Role == llms.ChatMessageTypeAI {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractFirstPrompt returns the text of the first Human message,
+// truncated to 100 characters with "..." appended if longer.
+func (s *Session) ExtractFirstPrompt() string {
+	for _, msg := range s.messages {
+		if msg.Role == llms.ChatMessageTypeHuman {
+			for _, part := range msg.Parts {
+				if textPart, ok := part.(llms.TextContent); ok {
+					prompt := textPart.Text
+					if len(prompt) > 100 {
+						prompt = prompt[:100] + "..."
+					}
+					return prompt
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // --- Write Protection ---
 
 // MarkFileAsRead records that a file has been read during this session

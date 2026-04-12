@@ -263,17 +263,12 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 	}
 
 	// Don't save empty sessions (only system messages)
-	messages := session.GetMessages()
-	hasUserContent := false
-	for _, msg := range messages {
-		if msg.Role == llms.ChatMessageTypeHuman || msg.Role == llms.ChatMessageTypeAI {
-			hasUserContent = true
-			break
-		}
-	}
-	if !hasUserContent {
+	if !session.HasUserContent() {
 		return nil // Skip saving empty sessions
 	}
+
+	// Get messages for serialization
+	messages := session.GetMessages()
 
 	// Generate ID and timestamps for new sessions
 	if session.ID == "" {
@@ -286,23 +281,8 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 	session.LastUpdated = now
 
 	// Set FirstPrompt if not set
-	if session.FirstPrompt == "" && len(messages) > 0 {
-		for _, msg := range messages {
-			if msg.Role == llms.ChatMessageTypeHuman {
-				for _, part := range msg.Parts {
-					if textPart, ok := part.(llms.TextContent); ok {
-						session.FirstPrompt = textPart.Text
-						if len(session.FirstPrompt) > 100 {
-							session.FirstPrompt = session.FirstPrompt[:100] + "..."
-						}
-						break
-					}
-				}
-				if session.FirstPrompt != "" {
-					break
-				}
-			}
-		}
+	if session.FirstPrompt == "" {
+		session.FirstPrompt = session.ExtractFirstPrompt()
 	}
 
 	// Serialize messages to JSON (storage stores raw JSON for type agnosticism)
