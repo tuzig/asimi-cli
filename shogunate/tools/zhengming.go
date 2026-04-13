@@ -17,11 +17,11 @@ type ZhengmingRequester interface {
 // RequestZhengmingTool requests clarification from the user.
 // WaitForAnswer blocks until the user responds, returning the actual answer.
 type RequestZhengmingTool struct {
-	MinisterID     string
-	Requester      ZhengmingRequester
-	WaitForAnswer  func(ctx context.Context, requestID string) (string, error)
-	Username       string
-	Project        string
+	MinisterID    string
+	Requester     ZhengmingRequester
+	WaitForAnswer func(ctx context.Context, requestID string) (string, error)
+	Username      string
+	Project       string
 }
 
 func (t RequestZhengmingTool) Name() string {

@@ -9,8 +9,8 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/require"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // TestSessionStore_RoundTrip verifies that messages survive a save/load cycle
@@ -48,37 +48,12 @@ func TestSessionStore_RoundTrip(t *testing.T) {
 	}
 
 	// Add diverse message types
-	messages := []llms.MessageContent{
-		{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: "What is the meaning of life?"},
-			},
-		},
-		{
-			Role: llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: "42"},
-			},
-		},
-		{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: "Analyze this file: /tmp/data.csv"},
-			},
-		},
-		{
-			Role: llms.ChatMessageTypeTool,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: `{"result": "file created at /tmp/test.txt"}`},
-			},
-		},
-		{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: "Now read the file"},
-			},
-		},
+	messages := []schemas.ChatMessage{
+		textMessage(schemas.ChatMessageRoleUser, "What is the meaning of life?"),
+		textMessage(schemas.ChatMessageRoleAssistant, "42"),
+		textMessage(schemas.ChatMessageRoleUser, "Analyze this file: /tmp/data.csv"),
+		textMessage(schemas.ChatMessageRoleTool, `{"result": "file created at /tmp/test.txt"}`),
+		textMessage(schemas.ChatMessageRoleUser, "Now read the file"),
 	}
 	session.SetMessages(messages)
 
@@ -98,17 +73,9 @@ func TestSessionStore_RoundTrip(t *testing.T) {
 	for i, expected := range messages {
 		actual := loadedMessages[i]
 		require.Equal(t, expected.Role, actual.Role, "message %d role should match", i)
-		require.Equal(t, len(expected.Parts), len(actual.Parts), "message %d part count should match", i)
-
-		for j, expectedPart := range expected.Parts {
-			actualPart := actual.Parts[j]
-			// Compare text content (only type used in these tests)
-			if et, ok := expectedPart.(llms.TextContent); ok {
-				at, ok := actualPart.(llms.TextContent)
-				require.True(t, ok, "message %d part %d should be TextContent", i, j)
-				require.Equal(t, et.Text, at.Text, "message %d part %d text should match", i, j)
-			}
-		}
+		require.NotNil(t, actual.Content, "message %d content should not be nil", i)
+		require.NotNil(t, actual.Content.ContentStr, "message %d content string should not be nil", i)
+		require.Equal(t, *expected.Content.ContentStr, *actual.Content.ContentStr, "message %d text should match", i)
 	}
 
 	// Verify metadata
@@ -183,8 +150,8 @@ func TestSessionStore_RoundTrip_SystemMessages(t *testing.T) {
 		Model:       "gpt-4",
 		WorkingDir:  tmpDir,
 	}
-	session.SetMessages([]llms.MessageContent{
-		{Role: llms.ChatMessageTypeSystem, Parts: []llms.ContentPart{llms.TextContent{Text: "You are helpful"}}},
+	session.SetMessages([]schemas.ChatMessage{
+		textMessage(schemas.ChatMessageRoleSystem, "You are helpful"),
 	})
 
 	// Save should skip since no human/AI messages
@@ -220,9 +187,9 @@ func TestSessionStore_ListSessions(t *testing.T) {
 		Model:       "gpt-4",
 		WorkingDir:  tmpDir,
 	}
-	messages := []llms.MessageContent{
-		{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextContent{Text: "Hello"}}},
-		{Role: llms.ChatMessageTypeAI, Parts: []llms.ContentPart{llms.TextContent{Text: "Hi there!"}}},
+	messages := []schemas.ChatMessage{
+		textMessage(schemas.ChatMessageRoleUser, "Hello"),
+		textMessage(schemas.ChatMessageRoleAssistant, "Hi there!"),
 	}
 	session.SetMessages(messages)
 

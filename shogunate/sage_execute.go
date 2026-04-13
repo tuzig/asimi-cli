@@ -99,7 +99,7 @@ func (c *Sage) reviewManifest(ctx context.Context, manifest *storage.ForgeManife
 	}
 
 	// If we have an LLM, use it for diff-based review
-	if c.model != nil {
+	if c.client != nil {
 		return c.reviewManifestWithLLM(ctx, manifest)
 	}
 

@@ -18,9 +18,9 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
+	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tmc/langchaingo/llms"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -764,14 +764,14 @@ type fakeMinister struct {
 	tasks chan *Task
 }
 
-func (f *fakeMinister) ID() string              { return f.id }
-func (f *fakeMinister) SystemPrompt() string    { return "You are a test minister." }
-func (f *fakeMinister) Title() string           { return "Fake" }
-func (f *fakeMinister) Tools() []Tool           { return nil }
-func (f *fakeMinister) Tasks() chan<- *Task     { return f.tasks }
-func (f *fakeMinister) Model() llms.Model       { return nil }
+func (f *fakeMinister) ID() string                  { return f.id }
+func (f *fakeMinister) SystemPrompt() string        { return "You are a test minister." }
+func (f *fakeMinister) Title() string               { return "Fake" }
+func (f *fakeMinister) Tools() []Tool               { return nil }
+func (f *fakeMinister) Tasks() chan<- *Task         { return f.tasks }
+func (f *fakeMinister) Model() *bifrost.Bifrost     { return nil }
 func (f *fakeMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
-func (f *fakeMinister) Run(ctx context.Context) {}
+func (f *fakeMinister) Run(ctx context.Context)     {}
 
 // TestChancellor_ScratchpadIncludesRituals verifies the Chancellor's system prompt
 // contains ritual names and descriptions from the registry.

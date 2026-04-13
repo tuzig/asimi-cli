@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
@@ -17,15 +16,12 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 	isatty "github.com/mattn/go-isatty"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/anthropic"
-	"github.com/tmc/langchaingo/llms/fake"
-	"github.com/tmc/langchaingo/llms/googleai"
-	"github.com/tmc/langchaingo/llms/ollama"
-	"github.com/tmc/langchaingo/llms/openai"
+	bifrost "github.com/maximhq/bifrost/core"
+	"github.com/maximhq/bifrost/core/schemas"
 	"go.uber.org/fx"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
@@ -187,7 +183,7 @@ type errMsg struct{ err error }
 
 // llmInitSuccessMsg is sent when LLM initialization completes successfully
 type llmInitSuccessMsg struct {
-	model llms.Model
+	client *bifrost.Bifrost
 }
 
 // llmInitErrorMsg is sent when LLM initialization fails
@@ -317,239 +313,56 @@ func main() {
 	slog.Debug("[TIMING] Total execution time", "duration", time.Since(startTime))
 }
 
-// getModelClient creates and returns an LLM client based on the configuration
-func getModelClient(config *Config) (llms.Model, error) {
-	// First try to load tokens from keyring if not already in config
-	if config.LLM.AuthToken == "" && config.LLM.APIKey == "" {
-		// Try OAuth tokens first
-		token, err := GetOauthToken(config.LLM.Provider)
-		if err == nil && token != nil {
-			if !IsTokenExpired(token) {
-				// Token is still valid - use it
-				config.LLM.AuthToken = token.AccessToken
-				config.LLM.RefreshToken = token.RefreshToken
-			} else {
-				// Token exists but expired - try to refresh it
-				slog.Info("Token expired, attempting refresh", "provider", config.LLM.Provider)
-
-				// Try to refresh the token
-				if !refreshOAuthToken(config) {
-					// Refresh failed - fall back to API key
-					slog.Warn("Token refresh failed, falling back to API key", "provider", config.LLM.Provider)
-					apiKey, err := GetAPIKeyFromKeyring(config.LLM.Provider)
-					if err == nil && apiKey != "" {
-						config.LLM.APIKey = apiKey
-					}
-				} else {
-					slog.Info("Token refresh successful", "provider", config.LLM.Provider)
-				}
-			}
-		} else {
-			// No token data found - try API key from keyring
-			apiKey, err := GetAPIKeyFromKeyring(config.LLM.Provider)
-			if err == nil && apiKey != "" {
-				config.LLM.APIKey = apiKey
-			}
-		}
-	}
-
-	switch config.LLM.Provider {
-	case "fake":
-		llm := fake.NewFakeLLM([]string{})
-		return llm, nil
-	case "ollama":
-		if err := ensureOllamaConfigured(config.LLM.BaseURL); err != nil {
-			return nil, err
-		}
-		// For Ollama, we can use default options or customize based on config
-		opts := []ollama.Option{
-			ollama.WithModel(config.LLM.Model),
-		}
-
-		if config.LLM.BaseURL != "" {
-			opts = append(opts, ollama.WithServerURL(config.LLM.BaseURL))
-		}
-
-		return ollama.New(opts...)
-	case "openai":
-		// For OpenAI, we need to set the API key
-		opts := []openai.Option{
-			openai.WithModel(config.LLM.Model),
-		}
-
-		if config.LLM.APIKey != "" {
-			opts = append(opts, openai.WithToken(config.LLM.APIKey))
-		}
-
-		if config.LLM.BaseURL != "" {
-			opts = append(opts, openai.WithBaseURL(config.LLM.BaseURL))
-		}
-
-		return openai.New(opts...)
-	case "anthropic":
-		// For Anthropic, we can use either OAuth tokens or API key
-		opts := []anthropic.Option{
-			anthropic.WithModel(config.LLM.Model),
-		}
-
-		// Prefer OAuth access token over API key
-		if config.LLM.AuthToken != "" {
-			// Use the token we already have (either valid or freshly refreshed from above)
-			accessToken := config.LLM.AuthToken
-
-			// Pass placeholder to SDK to bypass API key validation
-			// The real authentication happens in the HTTP transport
-			// We can't use empty string as the SDK validates for non-empty token
-			opts = append(opts, anthropic.WithToken("oauth-placeholder"))
-
-			// Create custom HTTP client with OAuth transport
-			httpClient := &http.Client{
-				Transport: &anthropicOAuthTransport{
-					token:  accessToken,
-					config: config,
-					base:   http.DefaultTransport,
-				},
-			}
-			opts = append(opts, anthropic.WithHTTPClient(httpClient))
-		} else if config.LLM.APIKey != "" {
-			opts = append(opts, anthropic.WithToken(config.LLM.APIKey))
-		}
-
-		if config.LLM.BaseURL != "" {
-			opts = append(opts, anthropic.WithBaseURL(config.LLM.BaseURL))
-		}
-
-		return anthropic.New(opts...)
-	case "googleai":
-		// For GoogleAI, we need to set the API key
-		apiKey := config.LLM.APIKey
-		if apiKey == "" {
-			apiKey = os.Getenv("GEMINI_API_KEY")
-			if apiKey == "" {
-				return nil, fmt.Errorf("missing Google AI API key. Set it in the config file or via GEMINI_API_KEY environment variable")
-			}
-		}
-
-		opts := []googleai.Option{
-			googleai.WithDefaultModel(config.LLM.Model),
-			googleai.WithAPIKey(apiKey),
-		}
-
-		return googleai.New(context.Background(), opts...)
-	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %s", config.LLM.Provider)
-	}
+// initBifrost creates and returns a Bifrost client using the shogunate account
+func initBifrost(ctx context.Context, requestTimeout, streamIdleTimeout int) (*bifrost.Bifrost, error) {
+	return bifrost.Init(ctx, schemas.BifrostConfig{
+		Account: shogunate.NewAccount(requestTimeout, streamIdleTimeout),
+		Logger:  shogunate.NewBifrostLogger(slog.Default()),
+	})
 }
 
-func ensureOllamaConfigured(rawBaseURL string) error {
-	baseURL := rawBaseURL
-	if baseURL == "" {
-		baseURL = "http://127.0.0.1:11434"
-	} else if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
-		baseURL = "http://" + baseURL
-	}
-
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return fmt.Errorf("invalid ollama base URL %q: %w", rawBaseURL, err)
-	}
-	if parsed.Host == "" {
-		return fmt.Errorf("invalid ollama base URL %q: host is empty", rawBaseURL)
-	}
-
-	host := strings.ToLower(parsed.Hostname())
-	isLocalHost := host == "localhost" || host == "127.0.0.1" || host == "::1"
-	if isLocalHost {
-		if _, err := exec.LookPath("ollama"); err != nil {
-			installHint := "Install Ollama from https://ollama.com/download."
-			if runtime.GOOS == "darwin" {
-				installHint = "Install Ollama on macOS via https://ollama.com/download or Homebrew (`brew install ollama`)."
-			}
-			return fmt.Errorf("ollama CLI not found in PATH: %w. %s", err, installHint)
-		}
-	}
-
-	versionURL := parsed.ResolveReference(&url.URL{Path: "/api/version"})
-
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(versionURL.String())
-	if err != nil {
-		startHint := fmt.Sprintf("Ensure the Ollama service is reachable at %s.", parsed.Host)
-		if isLocalHost {
-			startHint = "Ensure the Ollama service is running (start it with `ollama serve`)."
-			if runtime.GOOS == "darwin" {
-				startHint = "Launch the Ollama app or run `ollama serve` to start the background service."
-			}
-		}
-		return fmt.Errorf("unable to reach ollama at %s: %w. %s", versionURL.String(), err, startHint)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("ollama at %s returned status %d", versionURL.String(), resp.StatusCode)
-	}
-
-	return nil
-}
-
-// anthropicOAuthTransport adds OAuth headers for Anthropic API
-type anthropicOAuthTransport struct {
+// authTransport is used by models.go for list_models
+type authTransport struct {
 	token  string
 	config *Config
 	base   http.RoundTripper
 }
 
-func (t *anthropicOAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Check if token needs refresh before making the request
+func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.config != nil && refreshOAuthToken(t.config) {
-		// Token was refreshed, update transport token
 		t.token = t.config.LLM.AuthToken
 	}
-
-	// Clone request to avoid mutating caller's request
 	r := req.Clone(req.Context())
-
-	// Add OAuth Bearer token (overwrite any existing authorization)
 	if t.token != "" {
 		r.Header.Set("Authorization", "Bearer "+t.token)
 	}
-
-	// Add required beta headers exactly as specified
-	// Order matters: oauth-2025-04-20 must come first for OAuth mode
-	r.Header.Set("anthropic-beta",
-		"oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
-
-	// Remove x-api-key header - critical for OAuth to work
+	r.Header.Set("anthropic-beta", "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
 	r.Header.Del("x-api-key")
-	r.Header.Del("X-Api-Key") // Remove all case variations
-
-	// Override URL based on ANTHROPIC_BASE_URL environment variable
+	r.Header.Del("X-Api-Key")
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
 		if parsedURL, err := url.Parse(baseURL + "/v1/messages"); err == nil {
 			r.URL = parsedURL
 		}
 	}
-
 	if t.base == nil {
 		t.base = http.DefaultTransport
 	}
 	return t.base.RoundTrip(r)
 }
 
-// anthropicAPIKeyTransport adds beta headers for API key authentication
-type anthropicAPIKeyTransport struct {
+// apiKeyTransport is used by models.go for list_models
+type apiKeyTransport struct {
 	base http.RoundTripper
 }
 
-func (t *anthropicAPIKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Clone request to avoid mutating caller's request
+func (t *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	r := req.Clone(req.Context())
-
-	// Add beta headers for API key mode (no oauth header)
 	r.Header.Set("anthropic-beta", "claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
-
 	if t.base == nil {
 		t.base = http.DefaultTransport
 	}
 	return t.base.RoundTrip(r)
 }
+
+var _ = (http.RoundTripper)(&authTransport{})
+var _ = (http.RoundTripper)(&apiKeyTransport{})

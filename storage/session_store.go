@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
 )
 
 // SessionStore handles session persistence
@@ -243,7 +242,7 @@ func (s *SessionStore) ListSessions(host, org, project, branch string, limit int
 		session.LastUpdated = time.Unix(lastUpdated, 0)
 		session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
 		session.MessageCount = messageCount
-		session.Messages = json.RawMessage{}         // Empty for list view
+		session.Messages = json.RawMessage{} // Empty for list view
 		session.ContextFiles = make(map[string]string)
 
 		sessions = append(sessions, session)
@@ -309,7 +308,7 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 		session.LastUpdated = time.Unix(lastUpdated, 0)
 		session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
 		session.MessageCount = messageCount
-		session.Messages = json.RawMessage{}         // Empty for list view
+		session.Messages = json.RawMessage{} // Empty for list view
 		session.ContextFiles = make(map[string]string)
 
 		sessions = append(sessions, session)

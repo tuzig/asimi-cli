@@ -312,7 +312,7 @@ func (j *Judge) processTask(ctx context.Context, task *Task) {
 	var session *Session
 	sealed := false
 
-	if j.model != nil {
+	if j.client != nil {
 		session, output, taskErr = j.streamTask(ctx, task, notify)
 		if taskErr == nil {
 			sealed = j.sealIfComplete(task.EdictKey)
@@ -371,10 +371,10 @@ func (j *Judge) streamTask(ctx context.Context, task *Task, notify internal.Noti
 		if channelID == "" {
 			channelID = "judge"
 		}
-		session, err = CreateSessionWithOpts(j, j.model, j.config, notify, CreateSessionOpts{
-			EdictKey:    task.EdictKey,
-			ChannelID:   channelID,
-			Scratchpad:  task.Scratchpad,
+		session, err = CreateSessionWithOpts(j, j.client, j.config, notify, CreateSessionOpts{
+			EdictKey:   task.EdictKey,
+			ChannelID:  channelID,
+			Scratchpad: task.Scratchpad,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create judge session: %w", err)

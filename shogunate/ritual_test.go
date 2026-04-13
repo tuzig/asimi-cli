@@ -16,7 +16,9 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
+	bifrost "github.com/maximhq/bifrost/core"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -729,13 +731,15 @@ func TestRitualGotoPassesErrorMessage(t *testing.T) {
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	go forgeM.Run(ctx)
+	go judgeM.Run(ctx)
 	exec, err := runner.Start(ctx, "goto-error-test", testEK(4), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
@@ -744,9 +748,8 @@ func TestRitualGotoPassesErrorMessage(t *testing.T) {
 	_ = runner.Run(ctx, exec)
 
 	// Forge should have been called at least 2 times (initial + at least 1 retry after goto)
-	forgeModel := forgeM.Model().(*mockLLM)
-	if forgeModel.callCount < 2 {
-		t.Fatalf("Expected forge to be called at least 2 times, got %d", forgeModel.callCount)
+	if forgeM.getCallCount() < 2 {
+		t.Fatalf("Expected forge to be called at least 2 times, got %d", forgeM.getCallCount())
 	}
 }
 
@@ -784,13 +787,15 @@ func TestRitualGotoPassesOutputAndError(t *testing.T) {
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	go forgeM.Run(ctx)
+	go judgeM.Run(ctx)
 	exec, err := runner.Start(ctx, "goto-output-error-test", testEK(5), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
@@ -799,9 +804,8 @@ func TestRitualGotoPassesOutputAndError(t *testing.T) {
 	_ = runner.Run(ctx, exec)
 
 	// Forge should have been called at least 2 times (initial + goto retry)
-	forgeModel := forgeM.Model().(*mockLLM)
-	if forgeModel.callCount < 2 {
-		t.Fatalf("Expected forge to be called at least 2 times, got %d", forgeModel.callCount)
+	if forgeM.getCallCount() < 2 {
+		t.Fatalf("Expected forge to be called at least 2 times, got %d", forgeM.getCallCount())
 	}
 }
 
@@ -839,13 +843,15 @@ func TestRitualGotoCreatesEphemeralSessions(t *testing.T) {
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	go forgeM.Run(ctx)
+	go judgeM.Run(ctx)
 	exec, err := runner.Start(ctx, "goto-session-test", testEK(6), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
@@ -855,9 +861,8 @@ func TestRitualGotoCreatesEphemeralSessions(t *testing.T) {
 
 	// In the new architecture, each invocation uses an ephemeral session.
 	// Verify forge was called multiple times (proving goto retry worked).
-	forgeModel := forgeM.Model().(*mockLLM)
-	if forgeModel.callCount < 2 {
-		t.Fatalf("Expected forge to be called at least 2 times, got %d", forgeModel.callCount)
+	if forgeM.getCallCount() < 2 {
+		t.Fatalf("Expected forge to be called at least 2 times, got %d", forgeM.getCallCount())
 	}
 }
 
@@ -875,7 +880,7 @@ func TestRitualStepPreservesOutputOnFailure(t *testing.T) {
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	// Minister that fails — mockLLM returns error
+	// Minister that fails — returns error
 	forgeM := &ritualTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "forge",
@@ -883,14 +888,16 @@ func TestRitualStepPreservesOutputOnFailure(t *testing.T) {
 		result:       "",
 		err:          fmt.Errorf("something went wrong"),
 	}
+
+	ctx := context.Background()
+	go forgeM.Run(ctx)
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	ctx := context.Background()
 	exec, err := runner.Start(ctx, "preserve-output-test", testEK(7), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
@@ -1013,24 +1020,20 @@ func TestBackgroundGiven(t *testing.T) {
 // ritualTestMinister is a Minister that auto-completes tasks with a configured result.
 type ritualTestMinister struct {
 	MinisterBase
-	id      string
-	tasksCh chan *Task
-	result  string
-	err     error
-	model   *mockLLM
+	id        string
+	tasksCh   chan *Task
+	result    string
+	err       error
+	callCount int
+	mu        sync.Mutex
 }
 
-func (m *ritualTestMinister) ID() string           { return m.id }
-func (m *ritualTestMinister) SystemPrompt() string { return "" }
-func (m *ritualTestMinister) Title() string        { return m.id }
-func (m *ritualTestMinister) Tools() []Tool        { return nil }
-func (m *ritualTestMinister) Tasks() chan<- *Task  { return m.tasksCh }
-func (m *ritualTestMinister) Model() llms.Model {
-	if m.model == nil {
-		m.model = &mockLLM{response: m.result, Err: m.err}
-	}
-	return m.model
-}
+func (m *ritualTestMinister) ID() string                  { return m.id }
+func (m *ritualTestMinister) SystemPrompt() string        { return "" }
+func (m *ritualTestMinister) Title() string               { return m.id }
+func (m *ritualTestMinister) Tools() []Tool               { return nil }
+func (m *ritualTestMinister) Tasks() chan<- *Task         { return m.tasksCh }
+func (m *ritualTestMinister) Model() *bifrost.Bifrost     { return nil }
 func (m *ritualTestMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (m *ritualTestMinister) Run(ctx context.Context) {
 	for {
@@ -1038,9 +1041,17 @@ func (m *ritualTestMinister) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case t := <-m.tasksCh:
+			m.mu.Lock()
+			m.callCount++
+			m.mu.Unlock()
 			t.Done <- Result{Output: m.result, Err: m.err}
 		}
 	}
+}
+func (m *ritualTestMinister) getCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.callCount
 }
 
 // newRitualTestShogunate creates a Shogunate with mock ministers for ritual tests.
@@ -1305,10 +1316,11 @@ func TestRitualMinisterStepCompletes(t *testing.T) {
 	ministers := map[string]Minister{"forge": forgeM}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	go forgeM.Run(ctx)
 
 	shogunate := &Shogunate{
 		ministers: ministers,
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
@@ -1371,10 +1383,11 @@ func TestRitualTimeoutCancelsStep(t *testing.T) {
 	ministers := map[string]Minister{"forge": slowMinister}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	go slowMinister.Run(ctx)
 
 	shogunate := &Shogunate{
 		ministers: ministers,
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
@@ -1392,6 +1405,115 @@ func TestRitualTimeoutCancelsStep(t *testing.T) {
 	}
 }
 
+// TestRitualMinisterStepExecutesLings verifies that ritual minister steps route
+// through the Task pattern, enabling ling processing. This is the primary test
+// for Edict 324's main purpose: ensuring processTask runs, which calls
+// GetPendingLing() and executeLings().
+//
+// The key verification is that the Task arrives at the minister with the correct
+// EdictKey, enabling Forge's GetPendingLing() to find and execute pending lings.
+func TestRitualMinisterStepRoutesThroughTaskPattern(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Add edicts and lings tables for this test
+	require.NoError(t, db.AutoMigrate(&storage.Edict{}, &storage.Ling{}))
+
+	// Create edict with pending ling (simulating strategist output)
+	edict := &storage.Edict{SessionID: "test-session", Intent: "Build REST API", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	ling := &storage.Ling{
+		LingID:       "ling-1",
+		EdictID:      edict.ID,
+		Username:     "testuser",
+		Project:      "testproject",
+		Description:  "Create user model with CRUD fields",
+		Dependencies: storage.StringArray{},
+		Status:       storage.LingPending,
+	}
+	require.NoError(t, db.Create(ling).Error)
+
+	ritual := &RitualDef{
+		Name:        "minister-ling-test",
+		Description: "Test that minister steps use Task pattern with EdictKey",
+		Steps: []RitualStep{
+			{Name: "forge-step", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	// Track if the task was received with the correct EdictKey
+	var receivedTask *Task
+
+	forgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 1),
+		result:       "success",
+	}
+
+	ministers := map[string]Minister{"forge": forgeM}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	// NOTE: Do NOT start go forgeM.Run(ctx) here — this test manually reads
+	// from tasksCh to inspect the task before sending a result back.
+
+	shogunate := &Shogunate{
+		ministers: ministers,
+		logger:    slog.Default(),
+	}
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	shogunate.ritualGuard = NewRitualGuard(RitualGuardOpts{
+		Base:        base,
+		GetMinister: shogunate.GetMinister,
+	})
+
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
+
+	exec, err := runner.Start(ctx, "minister-ling-test", testEK(edict.ID), nil, nil)
+	require.NoError(t, err)
+
+	// Run ritual in background and capture the task
+	go func() {
+		_ = runner.Run(ctx, exec)
+	}()
+
+	// Wait for task to arrive at the minister
+	select {
+	case receivedTask = <-forgeM.tasksCh:
+		// Task received
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timed out waiting for task to arrive at minister")
+	}
+
+	// CRITICAL: Verify the task has the correct EdictKey.
+	// This is the key change from Edict 324 - the EdictKey enables GetPendingLing()
+	// to find pending lings for this edict, which then get executed by executeLings().
+	// Without the EdictKey, processTask cannot look up lings and falls back to
+	// executing task.Work directly.
+	require.NotNil(t, receivedTask, "task should have been received")
+	assert.Equal(t, edict.Key(), receivedTask.EdictKey,
+		"task must have correct EdictKey so Forge can call GetPendingLing()")
+	assert.NotNil(t, receivedTask.Session,
+		"task must have session for multi-turn conversation")
+	assert.NotNil(t, receivedTask.Done,
+		"task must have done channel for result routing")
+
+	// Send result back and verify ritual completes
+	receivedTask.Done <- Result{Output: "success", Err: nil}
+
+	// Wait for ritual to complete
+	for i := 0; i < 50; i++ {
+		if exec.State == RitualStateCompleted || exec.State == RitualStateFailed {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	assert.Equal(t, RitualStateCompleted, exec.State, "ritual should complete successfully")
+}
 
 func TestExpandTemplate_ActResult(t *testing.T) {
 	runner := &RitualRunner{logger: slog.Default()}
@@ -1756,7 +1878,7 @@ func TestExpandTemplate_GivenContextFlattening(t *testing.T) {
 			"asimi_version": map[string]interface{}{
 				"current_version": "1.2.3",
 				"latest_version":  "1.2.4",
-				"has_update":     true,
+				"has_update":      true,
 			},
 			"unsealed_edicts": []map[string]interface{}{
 				{"edict_id": float64(1), "summary": "Test edict"},
@@ -1802,7 +1924,6 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "forge",
 		tasksCh:      make(chan *Task, 1),
-		model:        &mockLLM{response: "forge done"},
 		result:       "forge done",
 	}
 
@@ -1811,9 +1932,12 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "chancellor",
 		tasksCh:      make(chan *Task, 1),
-		model:        &mockLLM{response: "chancellor response"},
 		result:       "chancellor response",
 	}
+
+	ctx := context.Background()
+	go forge.Run(ctx)
+	go chancellor.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{
@@ -1831,7 +1955,6 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
 	// Run the ritual
-	ctx := context.Background()
 	exec, err := runner.Start(ctx, "test-pollution", testEK(1), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)
@@ -1887,15 +2010,16 @@ func TestRitualEphemeralSessionIsDiscarded(t *testing.T) {
 	var sessionCount int
 	var mu sync.Mutex
 
-	// Create a custom mock that tracks session creation
-	mockLLM := &mockLLM{response: "done"}
+	// Create forge minister
 	forge := &ritualTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "forge",
 		tasksCh:      make(chan *Task, 1),
-		model:        mockLLM,
 		result:       "done",
 	}
+
+	ctx := context.Background()
+	go forge.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forge},
@@ -1909,7 +2033,6 @@ func TestRitualEphemeralSessionIsDiscarded(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
 
-	ctx := context.Background()
 	exec, err := runner.Start(ctx, "test-discard", testEK(1), nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to start ritual: %v", err)

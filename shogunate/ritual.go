@@ -421,7 +421,6 @@ type RitualRunner struct {
 	runner          runners.Runner
 	logger          *slog.Logger
 	maxRetries      int
-
 }
 
 // NewRitualRunner creates a new ritual runner
@@ -437,14 +436,14 @@ func NewRitualRunner(
 		logger = slog.Default()
 	}
 	return &RitualRunner{
-		registry:         registry,
-		stepDefs:         NewStepDefRegistry(),
-		getMinister:      getMinister,
-		publishEvent:     publishEvent,
-		db:               db,
-		runner:           runner,
-		logger:           logger,
-		maxRetries:       3,
+		registry:     registry,
+		stepDefs:     NewStepDefRegistry(),
+		getMinister:  getMinister,
+		publishEvent: publishEvent,
+		db:           db,
+		runner:       runner,
+		logger:       logger,
+		maxRetries:   3,
 	}
 }
 
@@ -842,7 +841,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 				StepIndex: exec.CurrentStep,
 				Status:    "failed",
 				// TODO: fix this
-				Message:   getRulersError(err),
+				Message: getRulersError(err),
 			})
 
 			// Emit step_failed Tian event
@@ -949,7 +948,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		"ritual", exec.RitualName,
 		"execution_id", exec.ID,
 		"edict_id", exec.EdictID,
-		"duration", duration,
+		"duration", duration)
 		"data", exec.Data)
 
 	return nil
@@ -1057,6 +1056,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 	}
 	r.logger.Debug("updating act_result", "act_result", actResult)
 	exec.Data["act_result"] = actResult
+	exec.Data[step.Name] = actResult
 
 	// === THEN ===
 	for _, raw := range step.Then {
@@ -1434,8 +1434,8 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		// Retry path — clean up any trailing unmatched tool calls from the
 		// interrupted turn, then update the notify callback.
 		actSession.SanitizeMessages()
-		actSession.SetNotify(notify, "chancellor")
 	}
+	actSession.SetNotify(notify, "chancellor")
 
 	// Build work prompt with ritual context and previous step results
 	prompt := r.buildWorkPrompt(exec, act)
@@ -1444,18 +1444,36 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	stepCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 
-	result, err := actSession.AskWithStreaming(stepCtx, prompt, nil)
-	if err != nil {
-		return result, err
+	// Route act through Task pattern to enable ling processing.
+	// This ensures processTask runs, which calls GetPendingLing() and executeLings().
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      stepCtx,
+		EdictKey: exec.EdictKey(),
+		Work:     prompt,
+		Session:  actSession,
+		Done:     doneCh,
+		Notify:   notify,
 	}
 
-	// Store result in exec.Data keyed by step name
-	if exec.Data == nil {
-		exec.Data = storage.JSON{}
+	select {
+	case minister.Tasks() <- task:
+		// Wait for result on doneCh
+		result, ok := <-doneCh
+		if !ok {
+			return "", fmt.Errorf("task done channel closed for step %s", step.Name)
+		}
+		if result.Err != nil {
+			return result.Output, result.Err
+		}
+		// Update session for potential reuse in next turn
+		if result.Session != nil {
+			exec.stepStates[exec.CurrentStep].Session = result.Session
+		}
+		return result.Output, nil
+	default:
+		return "", fmt.Errorf("minister %s task channel full", step.Minister)
 	}
-	exec.Data[step.Name] = result
-
-	return result, nil
 }
 
 // buildEnhancedScratchpad creates a unified scratchpad with ritual context, edict details, and previous step results
@@ -1572,9 +1590,6 @@ func (r *RitualRunner) getEdictDetails(ctx context.Context, key storage.EdictKey
 
 	return &edict, clarifications, nil
 }
-
-
-
 
 // handleFailure handles step failure based on on_failure action
 func (r *RitualRunner) handleFailure(ctx context.Context, exec *RitualExecution, step RitualStep, err error) bool {

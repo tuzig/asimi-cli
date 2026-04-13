@@ -40,12 +40,12 @@ func TestCheckForUpdates(t *testing.T) {
 
 func TestParseVersion(t *testing.T) {
 	tests := []struct {
-		name       string
-		version    string
-		wantErr    bool
-		wantMajor  uint64
-		wantMinor  uint64
-		wantPatch  uint64
+		name      string
+		version   string
+		wantErr   bool
+		wantMajor uint64
+		wantMinor uint64
+		wantPatch uint64
 	}{
 		{
 			name:      "version with v prefix",

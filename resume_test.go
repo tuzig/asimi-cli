@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
-	"github.com/tmc/langchaingo/llms"
 )
 
 func TestNewResumeWindowDefaults(t *testing.T) {
@@ -115,16 +115,16 @@ func TestSessionTitlePreviewFallbacks(t *testing.T) {
 	session.FirstPrompt = " initial "
 	assert.Equal(t, "initial", sessionTitlePreview(session))
 
-	session.SetMessages([]llms.MessageContent{
-		textMessage(llms.ChatMessageTypeHuman, "User question"),
+	session.SetMessages([]schemas.ChatMessage{
+		textMessage(schemas.ChatMessageRoleUser, "User question"),
 	})
 	assert.Equal(t, "User question", sessionTitlePreview(session))
 }
 
 func testSession(id, prompt string, updated time.Time, messageTexts ...string) shogunate.Session {
-	var messages []llms.MessageContent
+	var messages []schemas.ChatMessage
 	for _, text := range messageTexts {
-		messages = append(messages, textMessage(llms.ChatMessageTypeHuman, text))
+		messages = append(messages, textMessage(schemas.ChatMessageRoleUser, text))
 	}
 
 	s := shogunate.Session{

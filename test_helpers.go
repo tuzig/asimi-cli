@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // skipIfNotCI skips tests that alter git state or change working directories.
@@ -22,9 +22,9 @@ func skipIfNotCI(t *testing.T) {
 
 // testStorageSessionData creates a dummy storage.SessionData for testing
 func testStorageSessionData(id, prompt string, updated time.Time, messageTexts ...string) *storage.SessionData {
-	var messages []llms.MessageContent
+	var messages []schemas.ChatMessage
 	for _, text := range messageTexts {
-		messages = append(messages, textMessage(llms.ChatMessageTypeHuman, text))
+		messages = append(messages, textMessage(schemas.ChatMessageRoleUser, text))
 	}
 
 	// Serialize messages to JSON for storage
@@ -42,12 +42,12 @@ func testStorageSessionData(id, prompt string, updated time.Time, messageTexts .
 	}
 }
 
+func strPtr(s string) *string { return &s }
+
 // textMessage creates a dummy text message for testing
-func textMessage(role llms.ChatMessageType, text string) llms.MessageContent {
-	return llms.MessageContent{
-		Role: role,
-		Parts: []llms.ContentPart{
-			llms.TextContent{Text: text},
-		},
+func textMessage(role schemas.ChatMessageRole, text string) schemas.ChatMessage {
+	return schemas.ChatMessage{
+		Role:    role,
+		Content: &schemas.ChatMessageContent{ContentStr: &text},
 	}
 }

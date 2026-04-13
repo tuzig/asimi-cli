@@ -12,7 +12,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // parseProjectSlug parses a project slug into host, org and project
@@ -322,8 +322,8 @@ func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 	_ = project
 	_ = branch
 
-	// Deserialize JSON messages to []llms.MessageContent
-	var messages []llms.MessageContent
+	// Deserialize JSON messages to []schemas.ChatMessage
+	var messages []schemas.ChatMessage
 	if len(storageSession.Messages) > 0 {
 		if err := json.Unmarshal(storageSession.Messages, &messages); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal messages: %w", err)
@@ -358,7 +358,7 @@ func (s *SessionStore) ListSessions(limit int) ([]shogunate.Session, error) {
 	sessions := make([]shogunate.Session, len(storageSessions))
 	for i, ss := range storageSessions {
 		// Deserialize JSON messages (may be empty for list view)
-		var messages []llms.MessageContent
+		var messages []schemas.ChatMessage
 		if len(ss.Messages) > 0 {
 			if err := json.Unmarshal(ss.Messages, &messages); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal messages for session %s: %w", ss.ID, err)

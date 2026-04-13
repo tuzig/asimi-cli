@@ -21,6 +21,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/storage"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -521,7 +522,7 @@ func refreshOAuthToken(config *Config) bool {
 	}
 
 	// Check if token is expired
-	if !IsTokenExpired(tokenData) {
+	if !shogunate.IsTokenExpired(tokenData) {
 		return false
 	}
 
@@ -618,12 +619,12 @@ func (m *TUIModel) performOAuthLogin(provider string) tea.Cmd {
 		}
 
 		// Initialize LLM with new credentials
-		model, err := getModelClient(m.config)
+		client, err := initBifrost(context.Background(), m.config.LLM.RequestTimeoutSeconds, m.config.LLM.StreamIdleTimeoutSeconds)
 		if err != nil {
 			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 
-		return llmInitSuccessMsg{model: model}
+		return llmInitSuccessMsg{client: client}
 	}
 }
 
@@ -658,12 +659,12 @@ func (m *TUIModel) completeAnthropicOAuth(authCode, verifier string) tea.Cmd {
 		}
 
 		// Initialize LLM with new credentials
-		model, err := getModelClient(m.config)
+		client, err := initBifrost(context.Background(), m.config.LLM.RequestTimeoutSeconds, m.config.LLM.StreamIdleTimeoutSeconds)
 		if err != nil {
 			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 
-		return llmInitSuccessMsg{model: model}
+		return llmInitSuccessMsg{client: client}
 	}
 }
 func runOAuthLoopback(provider string) (accessToken, refreshToken string, expiry time.Time, err error) {

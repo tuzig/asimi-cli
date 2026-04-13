@@ -41,7 +41,9 @@ func DefaultConfig() Config {
 			DatabasePath: dbPath,
 		},
 		LLM: LLMConfig{
-			MaxToolOutput: 51200, // Default: 50KB
+			MaxToolOutput:            51200, // Default: 50KB
+			RequestTimeoutSeconds:    300,
+			StreamIdleTimeoutSeconds: 600,
 		},
 		History: HistoryConfig{
 			Enabled:      true,
@@ -183,7 +185,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Auto-discovery: If no provider is configured, detect from environment variables
-	// Priority: Anthropic > OpenAI > Google AI
+	// Priority: Anthropic > OpenAI > OpenRouter > Google AI
 	if config.LLM.Provider == "" {
 		if anthropicKey := os.Getenv("ANTHROPIC_API_KEY"); anthropicKey != "" {
 			config.LLM.Provider = "anthropic"
@@ -195,6 +197,11 @@ func LoadConfig() (*Config, error) {
 			config.LLM.Model = "gpt-4o"
 			config.LLM.APIKey = openaiKey
 			slog.Info("Auto-configured provider", "provider", "openai", "source", "OPENAI_API_KEY")
+		} else if openrouterKey := os.Getenv("OPENROUTER_API_KEY"); openrouterKey != "" {
+			config.LLM.Provider = "openrouter"
+			config.LLM.Model = "anthropic/claude-sonnet-4"
+			config.LLM.APIKey = openrouterKey
+			slog.Info("Auto-configured provider", "provider", "openrouter", "source", "OPENROUTER_API_KEY")
 		} else if geminiKey := os.Getenv("GEMINI_API_KEY"); geminiKey != "" {
 			config.LLM.Provider = "googleai"
 			config.LLM.Model = "gemini-2.5-flash"
@@ -217,6 +224,10 @@ func LoadConfig() (*Config, error) {
 			}
 		case "openai":
 			if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+				config.LLM.APIKey = key
+			}
+		case "openrouter":
+			if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
 				config.LLM.APIKey = key
 			}
 		case "googleai":

@@ -52,7 +52,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		CurrentStep: 1,
 		State:       RitualStateAborted,
 		Data: storage.JSON{
-			"inputs":        map[string]interface{}{"edict_id": edictID},
+			"inputs":       map[string]interface{}{"edict_id": edictID},
 			"step1_result": "completed",
 		},
 	}).Error

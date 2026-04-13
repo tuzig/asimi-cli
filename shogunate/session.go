@@ -17,8 +17,24 @@ import (
 	"github.com/afittestide/asimi/internal"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/tmc/langchaingo/llms"
+	bifrost "github.com/maximhq/bifrost/core"
+	"github.com/maximhq/bifrost/core/schemas"
 )
+
+func strPtr(s string) *string { return &s }
+func textContent(s string) *schemas.ChatMessageContent {
+	return &schemas.ChatMessageContent{ContentStr: &s}
+}
+
+// responseChoice holds the result of an LLM generation
+type responseChoice struct {
+	Content          string
+	ReasoningContent string
+	StopReason       string
+	ToolCalls        []schemas.ChatAssistantMessageToolCall
+	PromptTokens     int // actual prompt token count from provider (0 if unavailable)
+	CompletionTokens int // actual completion token count from provider (0 if unavailable)
+}
 
 // --- Stream notification message types ---
 
@@ -79,17 +95,17 @@ type Session struct {
 	ProjectSlug string    `json:"project_slug,omitempty"`
 	TabType     string    `json:"tab_type,omitempty"`
 
-	model        llms.Model
+	model        *bifrost.Bifrost
 	config       *internalconfig.LLMConfig
 	tools        []Tool
-	messages     []llms.MessageContent
+	messages     []schemas.ChatMessage
 	notify       internal.NotifyFunc
 	systemPrompt string
 	channelID    string
 
 	// Tool execution
 	toolCatalog map[string]Tool
-	toolDefs    []llms.Tool
+	toolDefs    []schemas.ChatTool
 	scheduler   *runners.CoreToolScheduler
 
 	// Streaming
@@ -114,13 +130,16 @@ type Session struct {
 	memoryFilesTokens  int
 	messagesTokens     int
 
+	// Provider-reported token usage (from last LLM response)
+	lastPromptTokens int // total input tokens reported by provider
+
 	// Session timing
 	startTime time.Time
 }
 
 // NewSession creates a new minister session
 func NewSession(
-	model llms.Model,
+	model *bifrost.Bifrost,
 	cfg *SessionConfig,
 	tools []Tool,
 	scheduler *runners.CoreToolScheduler,
@@ -138,7 +157,7 @@ func NewSession(
 		WorkingDir:   workingDir,
 		model:        model,
 		tools:        tools,
-		messages:     []llms.MessageContent{},
+		messages:     []schemas.ChatMessage{},
 		notify:       notify,
 		systemPrompt: systemPrompt,
 		channelID:    channelID,
@@ -162,11 +181,9 @@ func NewSession(
 
 	// Add system prompt as first message
 	if systemPrompt != "" {
-		session.messages = append(session.messages, llms.MessageContent{
-			Role: llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: systemPrompt},
-			},
+		session.messages = append(session.messages, schemas.ChatMessage{
+			Role:    schemas.ChatMessageRoleSystem,
+			Content: textContent(systemPrompt),
 		})
 	}
 
@@ -189,17 +206,17 @@ func NewSession(
 }
 
 // GetModel returns the LLM model for this session
-func (s *Session) GetModel() llms.Model {
+func (s *Session) GetModel() *bifrost.Bifrost {
 	return s.model
 }
 
 // Messages returns the session messages
-func (s *Session) Messages() []llms.MessageContent {
+func (s *Session) Messages() []schemas.ChatMessage {
 	return s.messages
 }
 
 // SetMessages replaces the session messages (used when loading from storage)
-func (s *Session) SetMessages(msgs []llms.MessageContent) {
+func (s *Session) SetMessages(msgs []schemas.ChatMessage) {
 	s.messages = msgs
 }
 
@@ -225,12 +242,10 @@ func (s *Session) SetChannelID(channelID string) {
 }
 
 // AddMessage adds a message to the session
-func (s *Session) AddMessage(role llms.ChatMessageType, content string) {
-	s.messages = append(s.messages, llms.MessageContent{
-		Role: role,
-		Parts: []llms.ContentPart{
-			llms.TextContent{Text: content},
-		},
+func (s *Session) AddMessage(role schemas.ChatMessageRole, content string) {
+	s.messages = append(s.messages, schemas.ChatMessage{
+		Role:    role,
+		Content: textContent(content),
 	})
 	s.LastUpdated = time.Now()
 }
@@ -239,12 +254,24 @@ func (s *Session) AddMessage(role llms.ChatMessageType, content string) {
 func (s *Session) RegisterShogunateTools(tools []Tool) {
 	for _, tool := range tools {
 		s.toolCatalog[tool.Name()] = tool
-		s.toolDefs = append(s.toolDefs, llms.Tool{
-			Type: "function",
-			Function: &llms.FunctionDefinition{
+		desc := tool.Description()
+
+		var params *schemas.ToolFunctionParameters
+		paramSchema := tool.ParameterSchema()
+		if paramSchema != nil {
+			data, err := json.Marshal(paramSchema)
+			if err == nil {
+				params = &schemas.ToolFunctionParameters{}
+				json.Unmarshal(data, params)
+			}
+		}
+
+		s.toolDefs = append(s.toolDefs, schemas.ChatTool{
+			Type: schemas.ChatToolTypeFunction,
+			Function: &schemas.ChatToolFunction{
 				Name:        tool.Name(),
-				Description: tool.Description(),
-				Parameters:  tool.ParameterSchema(),
+				Description: &desc,
+				Parameters:  params,
 			},
 		})
 	}
@@ -291,7 +318,7 @@ func (s *Session) GetContextFiles() map[string]string {
 // Used to skip saving empty sessions.
 func (s *Session) HasUserContent() bool {
 	for _, msg := range s.messages {
-		if msg.Role == llms.ChatMessageTypeHuman || msg.Role == llms.ChatMessageTypeAI {
+		if msg.Role == schemas.ChatMessageRoleUser || msg.Role == schemas.ChatMessageRoleAssistant {
 			return true
 		}
 	}
@@ -302,11 +329,9 @@ func (s *Session) HasUserContent() bool {
 // truncated to 100 characters with "..." appended if longer.
 func (s *Session) ExtractFirstPrompt() string {
 	for _, msg := range s.messages {
-		if msg.Role == llms.ChatMessageTypeHuman {
-			for _, part := range msg.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
-					return textPart.Text
-				}
+		if msg.Role == schemas.ChatMessageRoleUser {
+			if msg.Content != nil && msg.Content.ContentStr != nil {
+				return *msg.Content.ContentStr
 			}
 		}
 	}
@@ -392,10 +417,10 @@ func (s *Session) Rollback() {
 
 // ClearHistory clears the conversation history but keeps the system message
 func (s *Session) ClearHistory() {
-	if len(s.messages) > 0 && s.messages[0].Role == llms.ChatMessageTypeSystem {
+	if len(s.messages) > 0 && s.messages[0].Role == schemas.ChatMessageRoleSystem {
 		s.messages = s.messages[:1]
 	} else {
-		s.messages = []llms.MessageContent{}
+		s.messages = []schemas.ChatMessage{}
 	}
 	s.lastToolCallKey = ""
 	s.toolCallRepetitionCount = 0
@@ -413,8 +438,10 @@ const (
 	defaultUnknownContextRef = 8192
 )
 
-// extendedModelContextSizes contains context sizes for models not covered by langchaingo.
+// extendedModelContextSizes maps model names to their context window sizes.
+// For OpenRouter models (provider/model format), use the full name as key.
 var extendedModelContextSizes = map[string]int{
+	// Anthropic Claude models
 	"claude-3-5-sonnet-latest":   200_000,
 	"claude-3-5-sonnet":          200_000,
 	"claude-3-opus-20240229":     200_000,
@@ -422,12 +449,34 @@ var extendedModelContextSizes = map[string]int{
 	"claude-3-5-haiku-latest":    200_000,
 	"claude-3-haiku-20240307":    200_000,
 	"claude-sonnet-4-5-20250929": 200_000,
-	"gemini-1.5-flash":           1_000_000,
-	"gemini-1.5-flash-latest":    1_000_000,
-	"gemini-1.5-pro":             2_000_000,
-	"gemini-1.5-pro-latest":      2_000_000,
-	"gemini-pro":                 1_000_000,
-	"gemini-2.0-flash":           1_000_000,
+	// Google Gemini models
+	"gemini-1.5-flash":        1_000_000,
+	"gemini-1.5-flash-latest": 1_000_000,
+	"gemini-1.5-pro":          2_000_000,
+	"gemini-1.5-pro-latest":   2_000_000,
+	"gemini-pro":              1_000_000,
+	"gemini-2.0-flash":        1_000_000,
+}
+
+// openRouterContextSizes maps the model portion (after provider/) of OpenRouter
+// model names to context window sizes. Looked up when the provider is "openrouter".
+var openRouterContextSizes = map[string]int{
+	"anthropic/claude-sonnet-4":     200_000,
+	"anthropic/claude-opus-4":       200_000,
+	"anthropic/claude-haiku-4":      200_000,
+	"openai/gpt-4o":                 128_000,
+	"openai/gpt-4.1":                1_000_000,
+	"openai/gpt-4.1-mini":           1_000_000,
+	"google/gemini-2.5-flash":       1_000_000,
+	"google/gemini-2.5-pro":         1_000_000,
+	"deepseek/deepseek-v3.2":        128_000,
+	"deepseek/deepseek-r1":          128_000,
+	"minimax/minimax-m2.5":          1_000_000,
+	"minimax/minimax-m2.7":          1_000_000,
+	"mistralai/mistral-large-2512":  128_000,
+	"mistralai/devstral-2512:free":  128_000,
+	"moonshotai/kimi-k2-thinking":   128_000,
+	"qwen/qwen3.5-397b-a17b":       128_000,
 }
 
 // ContextInfo holds information about context usage.
@@ -454,7 +503,12 @@ func (s *Session) GetContextInfo() ContextInfo {
 		MessagesTokens:     s.messagesTokens,
 	}
 
-	info.UsedTokens = info.SystemPromptTokens + info.SystemToolsTokens + info.MemoryFilesTokens + info.MessagesTokens
+	// Use provider-reported token count when available (more accurate than estimation)
+	if s.lastPromptTokens > 0 {
+		info.UsedTokens = s.lastPromptTokens
+	} else {
+		info.UsedTokens = info.SystemPromptTokens + info.SystemToolsTokens + info.MemoryFilesTokens + info.MessagesTokens
+	}
 
 	buffer := int(math.Round(float64(info.TotalTokens) * autocompactBufferRatio))
 	maxBuffer := info.TotalTokens - info.UsedTokens
@@ -485,16 +539,19 @@ func (s *Session) getModelName() string {
 
 // getModelContextSize returns the context window size for the current model.
 func (s *Session) getModelContextSize() int {
-	modelName := s.getModelName()
+	modelName := strings.ToLower(s.getModelName())
 
-	if size := llms.GetModelContextSize(modelName); size > 2048 {
+	// Check direct model name match
+	if size, ok := extendedModelContextSizes[modelName]; ok && size > 0 {
 		return size
 	}
 
-	if size, ok := extendedModelContextSizes[strings.ToLower(modelName)]; ok && size > 0 {
+	// Check OpenRouter model names (provider/model format)
+	if size, ok := openRouterContextSizes[modelName]; ok && size > 0 {
 		return size
 	}
 
+	// Provider-based fallback
 	if s.config != nil {
 		switch strings.ToLower(s.config.Provider) {
 		case "anthropic":
@@ -503,6 +560,8 @@ func (s *Session) getModelContextSize() int {
 			return 128_000
 		case "googleai":
 			return 1_000_000
+		case "openrouter":
+			return 128_000
 		}
 	}
 
@@ -522,17 +581,14 @@ func (s *Session) countSystemPromptTokens() int {
 	if len(s.messages) == 0 {
 		return 0
 	}
-	if s.messages[0].Role != llms.ChatMessageTypeSystem {
+	if s.messages[0].Role != schemas.ChatMessageRoleSystem {
 		return 0
 	}
 
-	var content strings.Builder
-	for _, part := range s.messages[0].Parts {
-		if textPart, ok := part.(llms.TextContent); ok {
-			content.WriteString(textPart.Text)
-		}
+	if s.messages[0].Content != nil && s.messages[0].Content.ContentStr != nil {
+		return s.countTokens(*s.messages[0].Content.ContentStr)
 	}
-	return s.countTokens(content.String())
+	return 0
 }
 
 // countSystemToolsTokens counts tokens in tool definitions.
@@ -569,35 +625,36 @@ func (s *Session) countMessagesTokens() int {
 	totalTokens := 0
 	for i := 1; i < len(s.messages); i++ {
 		msg := s.messages[i]
-		for _, part := range msg.Parts {
-			switch p := part.(type) {
-			case llms.TextContent:
-				totalTokens += s.countTokens(p.Text)
-			case llms.ToolCall:
-				if p.FunctionCall != nil {
-					totalTokens += s.countTokens(p.FunctionCall.Name)
-					totalTokens += s.countTokens(p.FunctionCall.Arguments)
+		if msg.Content != nil && msg.Content.ContentStr != nil {
+			totalTokens += s.countTokens(*msg.Content.ContentStr)
+		}
+		if msg.ChatAssistantMessage != nil {
+			for _, tc := range msg.ChatAssistantMessage.ToolCalls {
+				if tc.Function.Name != nil {
+					totalTokens += s.countTokens(*tc.Function.Name)
 				}
-			case llms.ToolCallResponse:
-				totalTokens += s.countTokens(p.Name)
-				totalTokens += s.countTokens(p.Content)
+				totalTokens += s.countTokens(tc.Function.Arguments)
 			}
+		}
+		if msg.ChatToolMessage != nil && msg.ChatToolMessage.ToolCallID != nil {
+			totalTokens += s.countTokens(*msg.ChatToolMessage.ToolCallID)
 		}
 	}
 	return totalTokens
 }
 
-// countTokens provides token counting using langchaingo.
+// countTokens provides a simple word-based token estimation.
 func (s *Session) countTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	return llms.CountTokens(s.getModelName(), text)
+	return len(strings.Fields(text)) * 4 / 3
 }
 
 // GetContextUsagePercent returns the percentage of context used (0-100)
 func (s *Session) GetContextUsagePercent() float64 {
 	info := s.GetContextInfo()
+	slog.Info("geting context info", "channel", s.ChannelID, "info", info)
 	if info.TotalTokens <= 0 {
 		return 0
 	}
@@ -633,21 +690,17 @@ func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (str
 	for i := 1; i < len(s.messages); i++ {
 		msg := s.messages[i]
 		switch msg.Role {
-		case llms.ChatMessageTypeHuman:
+		case schemas.ChatMessageRoleUser:
 			contentBuilder.WriteString("**User:**\n")
-			for _, part := range msg.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
-					contentBuilder.WriteString(textPart.Text)
-					contentBuilder.WriteString("\n\n")
-				}
+			if msg.Content != nil && msg.Content.ContentStr != nil {
+				contentBuilder.WriteString(*msg.Content.ContentStr)
+				contentBuilder.WriteString("\n\n")
 			}
-		case llms.ChatMessageTypeAI:
+		case schemas.ChatMessageRoleAssistant:
 			contentBuilder.WriteString("**Assistant:**\n")
-			for _, part := range msg.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
-					contentBuilder.WriteString(textPart.Text)
-					contentBuilder.WriteString("\n\n")
-				}
+			if msg.Content != nil && msg.Content.ContentStr != nil {
+				contentBuilder.WriteString(*msg.Content.ContentStr)
+				contentBuilder.WriteString("\n\n")
 			}
 		}
 	}
@@ -657,11 +710,11 @@ func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (str
 	originalMessages := s.messages
 	systemMessage := s.messages[0]
 
-	s.messages = []llms.MessageContent{
+	s.messages = []schemas.ChatMessage{
 		systemMessage,
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(fullPrompt)},
+			Role:    schemas.ChatMessageRoleUser,
+			Content: textContent(fullPrompt),
 		},
 	}
 
@@ -677,15 +730,15 @@ func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (str
 		summary = choice.ReasoningContent + "\n\n" + choice.Content
 	}
 
-	s.messages = []llms.MessageContent{
+	s.messages = []schemas.ChatMessage{
 		systemMessage,
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart("Previous conversation summary:\n\n" + summary)},
+			Role:    schemas.ChatMessageRoleUser,
+			Content: textContent("Previous conversation summary:\n\n" + summary),
 		},
 		{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{llms.TextPart("I understand. I have the context from the previous conversation and am ready to continue.")},
+			Role:    schemas.ChatMessageRoleAssistant,
+			Content: textContent("I understand. I have the context from the previous conversation and am ready to continue."),
 		},
 	}
 
@@ -701,22 +754,18 @@ func (s *Session) extractFileChanges() map[string][]string {
 	changes := make(map[string][]string)
 
 	for _, msg := range s.messages {
-		if msg.Role != llms.ChatMessageTypeTool {
+		if msg.Role != schemas.ChatMessageRoleTool {
 			continue
 		}
 
-		for _, part := range msg.Parts {
-			if toolResp, ok := part.(llms.ToolCallResponse); ok {
-				if toolResp.Name == "write_file" || toolResp.Name == "replace_text" {
-					content := toolResp.Content
-					if strings.Contains(content, "Successfully") || strings.Contains(content, "wrote") {
-						lines := strings.Split(content, "\n")
-						for _, line := range lines {
-							if strings.Contains(line, "Successfully") || strings.Contains(line, "wrote") {
-								changes["file-changes"] = append(changes["file-changes"], content)
-								break
-							}
-						}
+		if msg.Content != nil && msg.Content.ContentStr != nil {
+			content := *msg.Content.ContentStr
+			if strings.Contains(content, "Successfully") || strings.Contains(content, "wrote") {
+				lines := strings.Split(content, "\n")
+				for _, line := range lines {
+					if strings.Contains(line, "Successfully") || strings.Contains(line, "wrote") {
+						changes["file-changes"] = append(changes["file-changes"], content)
+						break
 					}
 				}
 			}
@@ -741,7 +790,7 @@ func (s *Session) GetID() string {
 }
 
 // GetMessages returns the session messages (for ExportableSession interface)
-func (s *Session) GetMessages() []llms.MessageContent {
+func (s *Session) GetMessages() []schemas.ChatMessage {
 	return s.messages
 }
 
@@ -784,9 +833,9 @@ func (s *Session) prepareUserMessage(prompt string, contextFiles map[string]stri
 	s.SanitizeMessages()
 
 	fullPrompt := buildPromptWithContext(prompt, contextFiles)
-	s.messages = append(s.messages, llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextPart(fullPrompt)},
+	s.messages = append(s.messages, schemas.ChatMessage{
+		Role:    schemas.ChatMessageRoleUser,
+		Content: textContent(fullPrompt),
 	})
 }
 
@@ -807,63 +856,190 @@ func buildPromptWithContext(userPrompt string, contextFiles map[string]string) s
 // --- LLM Response Generation ---
 
 // generateLLMResponse calls the LLM and returns the response
-func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ctx context.Context, chunk []byte) error, reasoningFunc func(ctx context.Context, reasoningChunk, chunk []byte) error) (*llms.ContentChoice, error) {
-	var callOpts []llms.CallOption
+func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ctx context.Context, chunk []byte) error, reasoningFunc func(ctx context.Context, reasoningChunk, chunk []byte) error) (*responseChoice, error) {
+	autoStr := "auto"
+	maxTokens := 64000
+	params := &schemas.ChatParameters{}
 	if len(s.toolDefs) > 0 {
-		callOpts = append(callOpts, llms.WithTools(s.toolDefs), llms.WithMaxTokens(64000))
-		callOpts = append(callOpts, llms.WithToolChoice("auto"))
+		params.Tools = s.toolDefs
+		params.MaxCompletionTokens = &maxTokens
+		params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &autoStr}
 	}
 
-	if streamingFunc != nil {
-		callOpts = append(callOpts, llms.WithStreamingFunc(streamingFunc))
-	}
-
-	if reasoningFunc != nil {
-		callOpts = append(callOpts, llms.WithStreamingReasoningFunc(reasoningFunc))
+	req := &schemas.BifrostChatRequest{
+		Provider: schemas.ModelProvider(s.Provider),
+		Model:    s.Model,
+		Input:    s.messages,
+		Params:   params,
 	}
 
 	s.SanitizeMessages()
-	resp, err := s.model.GenerateContent(ctx, s.messages, callOpts...)
-	if err != nil {
-		return nil, err
+
+	if streamingFunc != nil {
+		// Streaming path
+		bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+		ch, bifrostErr := s.model.ChatCompletionStreamRequest(bifrostCtx, req)
+		if bifrostErr != nil {
+			return nil, fmt.Errorf("%s", bifrostErr.Error.Message)
+		}
+
+		var content strings.Builder
+		var reasoning strings.Builder
+		var toolCalls []schemas.ChatAssistantMessageToolCall
+		var finishReason string
+		var promptTokens, completionTokens int
+		toolCallMap := make(map[int]*schemas.ChatAssistantMessageToolCall)
+
+		for chunk := range ch {
+			if chunk.BifrostError != nil {
+				return nil, fmt.Errorf("%s", chunk.BifrostError.Error.Message)
+			}
+			if chunk.BifrostChatResponse == nil || len(chunk.BifrostChatResponse.Choices) == 0 {
+				// Check for usage on chunks without choices (some providers send usage separately)
+				if chunk.BifrostChatResponse != nil && chunk.BifrostChatResponse.Usage != nil {
+					promptTokens = chunk.BifrostChatResponse.Usage.PromptTokens
+					completionTokens = chunk.BifrostChatResponse.Usage.CompletionTokens
+				}
+				continue
+			}
+			// Capture usage from any chunk that has it
+			if chunk.BifrostChatResponse.Usage != nil {
+				promptTokens = chunk.BifrostChatResponse.Usage.PromptTokens
+				completionTokens = chunk.BifrostChatResponse.Usage.CompletionTokens
+			}
+			choice := chunk.BifrostChatResponse.Choices[0]
+			if choice.FinishReason != nil {
+				finishReason = *choice.FinishReason
+			}
+			if choice.ChatStreamResponseChoice == nil || choice.ChatStreamResponseChoice.Delta == nil {
+				continue
+			}
+			delta := choice.ChatStreamResponseChoice.Delta
+
+			if delta.Content != nil && *delta.Content != "" {
+				if streamingFunc != nil {
+					if err := streamingFunc(ctx, []byte(*delta.Content)); err != nil {
+						return nil, err
+					}
+				}
+				content.WriteString(*delta.Content)
+			}
+
+			if delta.Reasoning != nil && *delta.Reasoning != "" {
+				if reasoningFunc != nil {
+					reasoningFunc(ctx, []byte(*delta.Reasoning), nil)
+				}
+				reasoning.WriteString(*delta.Reasoning)
+			}
+
+			// Accumulate tool calls from deltas
+			for _, tc := range delta.ToolCalls {
+				idx := int(tc.Index)
+				existing, ok := toolCallMap[idx]
+				if !ok {
+					newTC := schemas.ChatAssistantMessageToolCall{
+						Index: tc.Index,
+						ID:    tc.ID,
+						Type:  tc.Type,
+						Function: schemas.ChatAssistantMessageToolCallFunction{
+							Name:      tc.Function.Name,
+							Arguments: tc.Function.Arguments,
+						},
+					}
+					toolCallMap[idx] = &newTC
+				} else {
+					if tc.ID != nil {
+						existing.ID = tc.ID
+					}
+					if tc.Type != nil {
+						existing.Type = tc.Type
+					}
+					if tc.Function.Name != nil {
+						existing.Function.Name = tc.Function.Name
+					}
+					existing.Function.Arguments += tc.Function.Arguments
+				}
+			}
+		}
+
+		// Collect tool calls in order
+		for i := 0; i < len(toolCallMap); i++ {
+			if tc, ok := toolCallMap[i]; ok {
+				toolCalls = append(toolCalls, *tc)
+			}
+		}
+
+		return &responseChoice{
+			Content:          content.String(),
+			ReasoningContent: reasoning.String(),
+			StopReason:       finishReason,
+			ToolCalls:        toolCalls,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+		}, nil
+	}
+
+	// Non-streaming path
+	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	resp, bifrostErr := s.model.ChatCompletionRequest(bifrostCtx, req)
+	if bifrostErr != nil {
+		return nil, fmt.Errorf("%s", bifrostErr.Error.Message)
 	}
 	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("empty response choices")
 	}
-	return resp.Choices[0], nil
+
+	choice := resp.Choices[0]
+	result := &responseChoice{}
+	if choice.FinishReason != nil {
+		result.StopReason = *choice.FinishReason
+	}
+	if choice.ChatNonStreamResponseChoice != nil && choice.ChatNonStreamResponseChoice.Message != nil {
+		msg := choice.ChatNonStreamResponseChoice.Message
+		if msg.Content != nil && msg.Content.ContentStr != nil {
+			result.Content = *msg.Content.ContentStr
+		}
+		if msg.ChatAssistantMessage != nil {
+			result.ToolCalls = msg.ChatAssistantMessage.ToolCalls
+			if msg.ChatAssistantMessage.Reasoning != nil {
+				result.ReasoningContent = *msg.ChatAssistantMessage.Reasoning
+			}
+		}
+	}
+	if resp.Usage != nil {
+		result.PromptTokens = resp.Usage.PromptTokens
+		result.CompletionTokens = resp.Usage.CompletionTokens
+	}
+	return result, nil
 }
 
 // appendMessage adds LLM response content and tool calls to the message history
-func (s *Session) appendMessage(choice *llms.ContentChoice) {
+func (s *Session) appendMessage(choice *responseChoice) {
 	if choice == nil {
 		return
 	}
 
-	var parts []llms.ContentPart
+	msg := schemas.ChatMessage{
+		Role: schemas.ChatMessageRoleAssistant,
+	}
 
-	// Add text content if present
 	if strings.TrimSpace(choice.Content) != "" {
-		parts = append(parts, llms.TextPart(choice.Content))
+		msg.Content = textContent(choice.Content)
 	}
 
-	// Add tool calls if present
-	for _, toolCall := range choice.ToolCalls {
-		if toolCall.FunctionCall == nil || toolCall.FunctionCall.Name == "" {
-			continue
+	if len(choice.ToolCalls) > 0 {
+		msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{
+			ToolCalls: choice.ToolCalls,
 		}
-		parts = append(parts, llms.ToolCall{
-			ID:           toolCall.ID,
-			Type:         toolCall.Type,
-			FunctionCall: toolCall.FunctionCall,
-		})
-		slog.Debug("appending AI message with tool call", "tool", toolCall.FunctionCall.Name, "tool_call_id", toolCall.ID)
 	}
 
-	if len(parts) > 0 {
-		s.messages = append(s.messages, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: parts,
-		})
+	if msg.Content != nil || msg.ChatAssistantMessage != nil {
+		s.messages = append(s.messages, msg)
+	}
+
+	// Update token counts from provider-reported usage
+	if choice.PromptTokens > 0 {
+		s.lastPromptTokens = choice.PromptTokens
 	}
 }
 
@@ -913,14 +1089,8 @@ func (s *Session) SanitizeMessages() {
 		lastIdx := len(s.messages) - 1
 		lastMsg := s.messages[lastIdx]
 
-		if lastMsg.Role == llms.ChatMessageTypeAI {
-			hasToolCalls := false
-			for _, part := range lastMsg.Parts {
-				if _, ok := part.(llms.ToolCall); ok {
-					hasToolCalls = true
-					break
-				}
-			}
+		if lastMsg.Role == schemas.ChatMessageRoleAssistant {
+			hasToolCalls := lastMsg.ChatAssistantMessage != nil && len(lastMsg.ChatAssistantMessage.ToolCalls) > 0
 
 			if hasToolCalls {
 				slog.Debug("removing unmatched tool call from context")
@@ -929,20 +1099,20 @@ func (s *Session) SanitizeMessages() {
 			}
 		}
 
-		if lastMsg.Role == llms.ChatMessageTypeTool {
+		if lastMsg.Role == schemas.ChatMessageRoleTool {
 			if lastIdx == 0 {
 				slog.Debug("removing tool result without prior messages")
 				s.messages = s.messages[:lastIdx]
 				continue
 			}
 
-			var aiMsg *llms.MessageContent
+			var aiMsg *schemas.ChatMessage
 			for i := lastIdx - 1; i >= 0; i-- {
-				if s.messages[i].Role == llms.ChatMessageTypeAI {
+				if s.messages[i].Role == schemas.ChatMessageRoleAssistant {
 					aiMsg = &s.messages[i]
 					break
 				}
-				if s.messages[i].Role != llms.ChatMessageTypeTool {
+				if s.messages[i].Role != schemas.ChatMessageRoleTool {
 					break
 				}
 			}
@@ -954,26 +1124,29 @@ func (s *Session) SanitizeMessages() {
 			}
 
 			toolCallIDs := make(map[string]struct{})
-			for _, part := range aiMsg.Parts {
-				if tc, ok := part.(llms.ToolCall); ok && tc.ID != "" {
-					toolCallIDs[tc.ID] = struct{}{}
+			if aiMsg.ChatAssistantMessage != nil {
+				for _, tc := range aiMsg.ChatAssistantMessage.ToolCalls {
+					if tc.ID != nil && *tc.ID != "" {
+						toolCallIDs[*tc.ID] = struct{}{}
+					}
 				}
 			}
 
 			slog.Debug("SanitizeMessages checking tool response", "ai_msg_tool_call_ids", toolCallIDs)
 
 			valid := len(toolCallIDs) > 0
-			for _, part := range lastMsg.Parts {
-				if resp, ok := part.(llms.ToolCallResponse); ok {
-					slog.Debug("checking tool response ID", "response_tool_call_id", resp.ToolCallID, "response_name", resp.Name)
-					if _, exists := toolCallIDs[resp.ToolCallID]; !exists || resp.ToolCallID == "" {
-						valid = false
-						if resp.ToolCallID == "" {
-							slog.Debug("tool result invalid: empty ToolCallID", "name", resp.Name)
-						} else {
-							slog.Debug("tool result invalid: ID not found in AI message", "response_id", resp.ToolCallID, "ai_msg_ids", toolCallIDs)
-						}
-						break
+			if lastMsg.ChatToolMessage != nil {
+				toolCallID := ""
+				if lastMsg.ChatToolMessage.ToolCallID != nil {
+					toolCallID = *lastMsg.ChatToolMessage.ToolCallID
+				}
+				slog.Debug("checking tool response ID", "response_tool_call_id", toolCallID)
+				if _, exists := toolCallIDs[toolCallID]; !exists || toolCallID == "" {
+					valid = false
+					if toolCallID == "" {
+						slog.Debug("tool result invalid: empty ToolCallID")
+					} else {
+						slog.Debug("tool result invalid: ID not found in AI message", "response_id", toolCallID, "ai_msg_ids", toolCallIDs)
 					}
 				}
 			}
@@ -995,38 +1168,40 @@ func (s *Session) SanitizeMessages() {
 var toolCallIDCounter int64
 
 // ensureToolCallID returns the tool call ID if valid, or generates a synthetic one.
-func ensureToolCallID(tc *llms.ToolCall, index int) string {
-	if tc.ID != "" {
-		return tc.ID
+func ensureToolCallID(tc *schemas.ChatAssistantMessageToolCall, index int) string {
+	if tc.ID != nil && *tc.ID != "" {
+		return *tc.ID
 	}
 	toolCallIDCounter++
 	syntheticID := fmt.Sprintf("synthetic_%d_%d", time.Now().UnixNano(), toolCallIDCounter)
-	tc.ID = syntheticID
-	slog.Debug("generated synthetic tool call ID", "tool", tc.FunctionCall.Name, "synthetic_id", syntheticID)
+	tc.ID = &syntheticID
+	name := ""
+	if tc.Function.Name != nil {
+		name = *tc.Function.Name
+	}
+	slog.Debug("generated synthetic tool call ID", "tool", name, "synthetic_id", syntheticID)
 	slog.Warn("provider returned empty tool_call_id, using synthetic ID",
 		"index", index,
-		"tool", tc.FunctionCall.Name,
+		"tool", name,
 		"synthetic_id", syntheticID)
 	return syntheticID
 }
 
 // hasToolCallResponse checks if toolMessages already contains a response for the given tool call ID
-func hasToolCallResponse(toolMessages []llms.MessageContent, toolCallID string) bool {
+func hasToolCallResponse(toolMessages []schemas.ChatMessage, toolCallID string) bool {
 	for _, msg := range toolMessages {
-		if msg.Role != llms.ChatMessageTypeTool {
+		if msg.Role != schemas.ChatMessageRoleTool {
 			continue
 		}
-		for _, part := range msg.Parts {
-			if resp, ok := part.(llms.ToolCallResponse); ok && resp.ToolCallID == toolCallID {
-				return true
-			}
+		if msg.ChatToolMessage != nil && msg.ChatToolMessage.ToolCallID != nil && *msg.ChatToolMessage.ToolCallID == toolCallID {
+			return true
 		}
 	}
 	return false
 }
 
 // executeToolCall executes a single tool call and returns the response content
-func (s *Session) executeToolCall(ctx context.Context, tool Tool, tc llms.ToolCall, argsJSON string) llms.ToolCallResponse {
+func (s *Session) executeToolCall(ctx context.Context, tool Tool, toolCallID, toolName, argsJSON string) schemas.ChatMessage {
 	var out string
 	var callErr error
 
@@ -1039,10 +1214,10 @@ func (s *Session) executeToolCall(ctx context.Context, tool Tool, tc llms.ToolCa
 	}
 
 	if callErr != nil {
-		return llms.ToolCallResponse{
-			ToolCallID: tc.ID,
-			Name:       tc.FunctionCall.Name,
-			Content:    fmt.Sprintf("Error: %v", callErr),
+		return schemas.ChatMessage{
+			Role:            schemas.ChatMessageRoleTool,
+			Content:         textContent(fmt.Sprintf("Error: %v", callErr)),
+			ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr(toolCallID)},
 		}
 	}
 
@@ -1053,31 +1228,31 @@ func (s *Session) executeToolCall(ctx context.Context, tool Tool, tc llms.ToolCa
 	}
 	out = TruncateOutput(out, maxOutput)
 
-	return llms.ToolCallResponse{
-		ToolCallID: tc.ID,
-		Name:       tc.FunctionCall.Name,
-		Content:    out,
+	return schemas.ChatMessage{
+		Role:            schemas.ChatMessageRoleTool,
+		Content:         textContent(out),
+		ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr(toolCallID)},
 	}
 }
 
 // processToolCalls handles executing tool calls and building response messages.
-func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCall) ([]llms.MessageContent, bool) {
-	toolMessages := make([]llms.MessageContent, 0, len(toolCalls))
+func (s *Session) processToolCalls(ctx context.Context, toolCalls []schemas.ChatAssistantMessageToolCall) ([]schemas.ChatMessage, bool) {
+	toolMessages := make([]schemas.ChatMessage, 0, len(toolCalls))
 
 	for i := range toolCalls {
 		tc := &toolCalls[i]
-		if tc.FunctionCall == nil {
+		if tc.Function.Name == nil {
 			continue
 		}
 
-		name := tc.FunctionCall.Name
+		name := *tc.Function.Name
 		if name == "" {
 			slog.Debug("skipping tool call with empty name", "index", i)
 			continue
 		}
 
 		ensureToolCallID(tc, i)
-		argsJSON := tc.FunctionCall.Arguments
+		argsJSON := tc.Function.Arguments
 
 		// Check for context cancellation
 		select {
@@ -1085,17 +1260,18 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCal
 			slog.Debug("context cancelled during tool execution", "completed", i, "total", len(toolCalls))
 
 			for _, remainingTC := range toolCalls {
-				if remainingTC.FunctionCall == nil {
+				if remainingTC.Function.Name == nil {
 					continue
 				}
-				if !hasToolCallResponse(toolMessages, remainingTC.ID) {
-					toolMessages = append(toolMessages, llms.MessageContent{
-						Role: llms.ChatMessageTypeTool,
-						Parts: []llms.ContentPart{llms.ToolCallResponse{
-							ToolCallID: remainingTC.ID,
-							Name:       remainingTC.FunctionCall.Name,
-							Content:    "error: session aborted by user",
-						}},
+				remainingID := ""
+				if remainingTC.ID != nil {
+					remainingID = *remainingTC.ID
+				}
+				if !hasToolCallResponse(toolMessages, remainingID) {
+					toolMessages = append(toolMessages, schemas.ChatMessage{
+						Role:            schemas.ChatMessageRoleTool,
+						Content:         textContent("error: session aborted by user"),
+						ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr(remainingID)},
 					})
 				}
 			}
@@ -1106,37 +1282,28 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []llms.ToolCal
 
 		// Check for tool call loops
 		if s.checkToolCallLoop(name, argsJSON) {
-			toolMessages = append(toolMessages, llms.MessageContent{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{llms.ToolCallResponse{
-					ToolCallID: tc.ID,
-					Name:       name,
-					Content:    fmt.Sprintf("error: tool call loop detected after %d attempts, please try a different approach", s.toolCallRepetitionCount),
-				}},
+			toolMessages = append(toolMessages, schemas.ChatMessage{
+				Role:            schemas.ChatMessageRoleTool,
+				Content:         textContent(fmt.Sprintf("error: tool call loop detected after %d attempts, please try a different approach", s.toolCallRepetitionCount)),
+				ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: tc.ID},
 			})
 			return toolMessages, true
 		}
 
 		tool, ok := s.toolCatalog[name]
 		if !ok {
-			toolMessages = append(toolMessages, llms.MessageContent{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{llms.ToolCallResponse{
-					ToolCallID: tc.ID,
-					Name:       name,
-					Content:    fmt.Sprintf("error: unknown tool %q", name),
-				}},
+			toolMessages = append(toolMessages, schemas.ChatMessage{
+				Role:            schemas.ChatMessageRoleTool,
+				Content:         textContent(fmt.Sprintf("error: unknown tool %q", name)),
+				ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: tc.ID},
 			})
 			continue
 		}
 
-		response := s.executeToolCall(ctx, tool, *tc, argsJSON)
+		response := s.executeToolCall(ctx, tool, *tc.ID, name, argsJSON)
 		slog.Debug("Called a tool", "tool", name, "args", argsJSON)
-		slog.Debug("creating tool response message", "tool_call_id", response.ToolCallID, "tool_name", response.Name)
-		toolMessages = append(toolMessages, llms.MessageContent{
-			Role:  llms.ChatMessageTypeTool,
-			Parts: []llms.ContentPart{response},
-		})
+		slog.Debug("creating tool response message", "tool_call_id", *tc.ID, "tool_name", name)
+		toolMessages = append(toolMessages, response)
 	}
 
 	return toolMessages, false
@@ -1238,7 +1405,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 
 		// Ensure tool call IDs before appending to message history
 		for i := range choice.ToolCalls {
-			if choice.ToolCalls[i].FunctionCall != nil && choice.ToolCalls[i].FunctionCall.Name != "" {
+			if choice.ToolCalls[i].Function.Name != nil && *choice.ToolCalls[i].Function.Name != "" {
 				ensureToolCallID(&choice.ToolCalls[i], i)
 			}
 		}
@@ -1279,20 +1446,32 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 // --- Helper Functions ---
 
 // buildLLMTools returns the LLM tool definitions and a catalog by name for execution.
-func buildLLMTools(tools []Tool) ([]llms.Tool, map[string]Tool) {
+func buildLLMTools(tools []Tool) ([]schemas.ChatTool, map[string]Tool) {
 	execCatalog := map[string]Tool{}
-	defs := make([]llms.Tool, 0, len(tools))
+	defs := make([]schemas.ChatTool, 0, len(tools))
 
 	for i := range tools {
 		tool := tools[i]
 		execCatalog[tool.Name()] = tool
+		desc := tool.Description()
 
-		defs = append(defs, llms.Tool{
-			Type: "function",
-			Function: &llms.FunctionDefinition{
+		// Convert map[string]any parameters to ToolFunctionParameters
+		var params *schemas.ToolFunctionParameters
+		paramSchema := tool.ParameterSchema()
+		if paramSchema != nil {
+			data, err := json.Marshal(paramSchema)
+			if err == nil {
+				params = &schemas.ToolFunctionParameters{}
+				json.Unmarshal(data, params)
+			}
+		}
+
+		defs = append(defs, schemas.ChatTool{
+			Type: schemas.ChatToolTypeFunction,
+			Function: &schemas.ChatToolFunction{
 				Name:        tool.Name(),
-				Description: tool.Description(),
-				Parameters:  tool.ParameterSchema(),
+				Description: &desc,
+				Parameters:  params,
 			},
 		})
 	}
@@ -1338,6 +1517,7 @@ func GenerateSessionID() string {
 
 	return fmt.Sprintf("%s-%s", timestamp, suffix)
 }
+
 // TruncateOutput caps s at maxBytes, keeping the first and last lines with a
 // "... +N lines ..." marker in the middle. Returns s unchanged if within limit.
 func TruncateOutput(s string, maxBytes int) string {
@@ -1346,36 +1526,4 @@ func TruncateOutput(s string, maxBytes int) string {
 	}
 
 	return "result is too long, please improve your call"
-	/*
-	lines := strings.Split(s, "\n")
-	if len(lines) <= 40 {
-		// Very few long lines — just do a byte-level chop
-		half := maxBytes / 2
-		return s[:half] + fmt.Sprintf("\n\n... +%d bytes ...\n\n", len(s)-maxBytes) + s[len(s)-half:]
-	}
-
-	// Binary-search for the number of head+tail lines that fit in maxBytes
-	lo, hi := 20, len(lines)/2
-	if lo > hi {
-		lo = hi
-	}
-	best := lo
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		headSize := lineBytes(lines[:mid])
-		tailSize := lineBytes(lines[len(lines)-mid:])
-		if headSize+tailSize <= maxBytes {
-			best = mid
-			lo = mid + 1
-		} else {
-			hi = mid - 1
-		}
-	}
-
-	skipped := len(lines) - 2*best
-	return strings.Join(lines[:best], "\n") +
-		fmt.Sprintf("\n\n... +%d lines ...\n\n", skipped) +
-		strings.Join(lines[len(lines)-best:], "\n")
-		*/
 }
-

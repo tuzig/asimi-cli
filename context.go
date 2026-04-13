@@ -1,6 +1,4 @@
 // Package main implements the /context command for displaying context usage information.
-// This implementation leverages langchaingo's model database and token counting capabilities
-// for improved accuracy, particularly for OpenAI models.
 
 package main
 
@@ -17,11 +15,9 @@ const (
 	defaultUnknownContextRef = 8192
 )
 
-// extendedModelContextSizes contains context sizes for models not covered by langchaingo.
-// langchaingo already covers OpenAI models comprehensively, so we only need to maintain
-// Anthropic and Google models here.
+// extendedModelContextSizes maps model names to their context window sizes.
 var extendedModelContextSizes = map[string]int{
-	// Anthropic Claude models (not in langchaingo)
+	// Anthropic Claude models
 	"claude-3-5-sonnet-latest":   200_000,
 	"claude-3-5-sonnet":          200_000,
 	"claude-3-opus-20240229":     200_000,
@@ -30,7 +26,7 @@ var extendedModelContextSizes = map[string]int{
 	"claude-3-haiku-20240307":    200_000,
 	"claude-sonnet-4-5-20250929": 200_000,
 
-	// Google Gemini models (not in langchaingo)
+	// Google Gemini models
 	"gemini-1.5-flash":        1_000_000,
 	"gemini-1.5-flash-latest": 1_000_000,
 	"gemini-1.5-pro":          2_000_000,

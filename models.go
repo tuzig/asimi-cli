@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/storage"
+	"github.com/afittestide/asimi/shogunate"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -121,7 +122,7 @@ func checkProviderAuth(provider string) ProviderInfo {
 
 	// Check for OAuth token
 	tokenData, err := GetOauthToken(provider)
-	if err == nil && tokenData != nil && !IsTokenExpired(tokenData) {
+	if err == nil && tokenData != nil && !shogunate.IsTokenExpired(tokenData) {
 		info.HasOAuth = true
 	}
 
@@ -319,7 +320,7 @@ func fetchAnthropicModels(config *Config) ([]AnthropicModel, error) {
 	slog.Debug("Fetching Anthropic credentials")
 	tokenData, err := GetOauthToken("anthropic")
 	if err == nil && tokenData != nil {
-		if !IsTokenExpired(tokenData) {
+		if !shogunate.IsTokenExpired(tokenData) {
 			// Token is still valid - use it
 			authToken = tokenData.AccessToken
 			slog.Debug("Using valid OAuth token for Anthropic")
@@ -361,14 +362,14 @@ func fetchAnthropicModels(config *Config) ([]AnthropicModel, error) {
 	client := &http.Client{}
 	if authToken != "" {
 		// Use OAuth authentication
-		client.Transport = &anthropicOAuthTransport{
+		client.Transport = &authTransport{
 			token:  authToken,
 			config: config,
 			base:   http.DefaultTransport,
 		}
 	} else {
 		// Use API key authentication
-		client.Transport = &anthropicAPIKeyTransport{
+		client.Transport = &apiKeyTransport{
 			base: http.DefaultTransport,
 		}
 	}

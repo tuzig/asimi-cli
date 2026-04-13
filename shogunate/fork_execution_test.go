@@ -52,16 +52,18 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 		tasksCh:      make(chan *Task, 1),
 		result:       "work units prepared",
 	}
+	go strategistM.Run(ctx)
 	forgeM := &ritualTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "forge",
 		tasksCh:      make(chan *Task, 10),
 		result:       "processed",
 	}
+	go forgeM.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"strategist": strategistM, "forge": forgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
@@ -131,10 +133,11 @@ func TestExecuteForkStep_Sequential(t *testing.T) {
 		tasksCh:      make(chan *Task, 10),
 		result:       "done",
 	}
+	go forgeM.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
@@ -212,10 +215,11 @@ func TestExecuteForkStep_WithLimit(t *testing.T) {
 		tasksCh:      make(chan *Task, 10),
 		result:       "done",
 	}
+	go forgeM.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
@@ -395,16 +399,18 @@ func TestExecuteForkItem(t *testing.T) {
 		tasksCh:      make(chan *Task, 1),
 		result:       "forge done",
 	}
+	go forgeM.Run(ctx)
 	judgeM := &ritualTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "judge",
 		tasksCh:      make(chan *Task, 1),
 		result:       "judge done",
 	}
+	go judgeM.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
@@ -472,11 +478,12 @@ func TestExecuteForkStep_FailureHandling(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	go forgeM.Run(ctx)
 	defer cancel()
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
@@ -543,10 +550,11 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 		tasksCh:      make(chan *Task, 10),
 		result:       "done",
 	}
+	go forgeM.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
@@ -632,10 +640,11 @@ func TestExecuteForkStep_TemplateExpansion(t *testing.T) {
 		tasksCh:      make(chan *Task, 10),
 		result:       "fixed",
 	}
+	go forgeM.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
@@ -706,18 +715,19 @@ func TestExecuteForkStep_Cancelation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Minister whose model blocks until context is cancelled
+	// Minister that returns context.Canceled error
 	forgeM := &ritualTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "forge",
 		tasksCh:      make(chan *Task, 10),
 		result:       "done",
-		model:        &mockLLM{Err: context.Canceled},
+		err:          context.Canceled,
 	}
+	go forgeM.Run(ctx)
 
 	shog := &Shogunate{
 		ministers: map[string]Minister{"forge": forgeM},
-		logger:   slog.Default(),
+		logger:    slog.Default(),
 	}
 
 	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)

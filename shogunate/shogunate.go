@@ -12,7 +12,8 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
+	bifrost "github.com/maximhq/bifrost/core"
+	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -286,17 +287,17 @@ func (s *Shogunate) GetMinister(id string) Minister {
 	return nil
 }
 
-// ConfigureModel sets the LLM model for all ministers.
-// This should be called once the LLM client is initialized.
-func (s *Shogunate) ConfigureModel(model llms.Model, config *SessionConfig, repoInfo repo.RepoInfo) {
+// ConfigureModel sets the Bifrost client for all ministers.
+// This should be called once the Bifrost client is initialized.
+func (s *Shogunate) ConfigureModel(client *bifrost.Bifrost, config *SessionConfig, repoInfo repo.RepoInfo) {
 	if s == nil {
 		return
 	}
 	for _, minister := range s.Ministers() {
 		if base, ok := minister.(interface {
-			SetMinisterConfig(llms.Model, *SessionConfig, repo.RepoInfo)
+			SetMinisterConfig(*bifrost.Bifrost, *SessionConfig, repo.RepoInfo)
 		}); ok {
-			base.SetMinisterConfig(model, config, repoInfo)
+			base.SetMinisterConfig(client, config, repoInfo)
 		}
 	}
 	s.logger.Info("shogunate model configured", "ministers", s.ministerIDs())
@@ -552,7 +553,7 @@ func (s *Shogunate) GetHuntingSession() *Session {
 
 // RestoreMinisterSession creates a fully-wired session and injects loaded history.
 // Routes to chancellor or sage based on tabType.
-func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []llms.MessageContent) error {
+func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
 	if s == nil {
 		return fmt.Errorf("shogunate not initialized")
 	}

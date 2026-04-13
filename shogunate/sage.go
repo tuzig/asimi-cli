@@ -10,7 +10,7 @@ import (
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
+	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -164,8 +164,8 @@ func (c *Sage) ResetSession() {
 }
 
 // RestoreSession creates a fully-wired hunting session and injects loaded history
-func (c *Sage) RestoreSession(msgs []llms.MessageContent) error {
-	sess, err := CreateSession(c, c.model, c.config, c.notify, "sage")
+func (c *Sage) RestoreSession(msgs []schemas.ChatMessage) error {
+	sess, err := CreateSession(c, c.client, c.config, c.notify, "sage")
 	if err != nil {
 		return err
 	}
@@ -200,14 +200,14 @@ func (c *Sage) Run(ctx context.Context) {
 }
 
 func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
-	if c.model == nil {
+	if c.client == nil {
 		c.notify(StreamErrorMsg{ChannelID: "sage", Err: fmt.Errorf("LLM not configured")})
 		return
 	}
 
 	if c.MinisterBase.Session() == nil {
 		var err error
-		sess, err := CreateSession(c, c.model, c.config, c.notify, "sage")
+		sess, err := CreateSession(c, c.client, c.config, c.notify, "sage")
 		if err != nil {
 			c.notify(StreamErrorMsg{ChannelID: "sage", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
@@ -242,7 +242,7 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 	var taskErr error
 	var session *Session
 
-	if c.model != nil {
+	if c.client != nil {
 		// Single call handles both new and existing session cases
 		session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
 	} else {
@@ -310,10 +310,10 @@ func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey
 		if channelID == "" {
 			channelID = "sage"
 		}
-		session, err = CreateSessionWithOpts(c, c.model, c.config, notify, CreateSessionOpts{
-			EdictKey:    key,
-			ChannelID:   channelID,
-			Scratchpad:  scratchpad,
+		session, err = CreateSessionWithOpts(c, c.client, c.config, notify, CreateSessionOpts{
+			EdictKey:   key,
+			ChannelID:  channelID,
+			Scratchpad: scratchpad,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create sage session: %w", err)
@@ -727,7 +727,7 @@ func (c *Sage) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
 // The Sage's Role() prompt guides the review process.
 func (c *Sage) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, error) {
 	// If no LLM is configured, return a basic result
-	if c.model == nil {
+	if c.client == nil {
 		return &ReviewResult{
 			Approved:  true,
 			Findings:  []Finding{},
@@ -741,7 +741,7 @@ func (c *Sage) ReviewDiff(ctx context.Context, diff string) (*ReviewResult, erro
 	if c.MinisterBase.Session() != nil {
 		sess = c.MinisterBase.Session()
 	} else {
-		sess, err = CreateSession(c, c.model, c.config, c.notify, "sage")
+		sess, err = CreateSession(c, c.client, c.config, c.notify, "sage")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create sage session: %w", err)
 		}

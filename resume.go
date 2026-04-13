@@ -12,7 +12,7 @@ import (
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tmc/langchaingo/llms"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 type sessionsLoadedMsg struct {
@@ -74,17 +74,15 @@ func sessionTitlePreview(session shogunate.Session) string {
 	return truncateSnippet(snippet, 60)
 }
 
-func lastHumanMessage(messages []llms.MessageContent) string {
+func lastHumanMessage(messages []schemas.ChatMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != llms.ChatMessageTypeHuman {
+		if messages[i].Role != schemas.ChatMessageRoleUser {
 			continue
 		}
-		for _, part := range messages[i].Parts {
-			if textPart, ok := part.(llms.TextContent); ok {
-				text := strings.TrimSpace(textPart.Text)
-				if text != "" {
-					return text
-				}
+		if messages[i].Content != nil && messages[i].Content.ContentStr != nil {
+			text := strings.TrimSpace(*messages[i].Content.ContentStr)
+			if text != "" {
+				return text
 			}
 		}
 	}
@@ -313,53 +311,46 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 
 	// Build a map of tool call IDs to their responses for matching
 	allMessages := session.GetMessages()
-	toolResults := make(map[string]llms.ToolCallResponse)
+	toolResults := make(map[string]string)
 	for _, msgContent := range allMessages {
-		if msgContent.Role == llms.ChatMessageTypeTool {
-			for _, part := range msgContent.Parts {
-				if resp, ok := part.(llms.ToolCallResponse); ok {
-					toolResults[resp.ToolCallID] = resp
+		if msgContent.Role == schemas.ChatMessageRoleTool {
+			if msgContent.ChatToolMessage != nil && msgContent.ChatToolMessage.ToolCallID != nil {
+				content := ""
+				if msgContent.Content != nil && msgContent.Content.ContentStr != nil {
+					content = *msgContent.Content.ContentStr
 				}
+				toolResults[*msgContent.ChatToolMessage.ToolCallID] = content
 			}
 		}
 	}
 
 	for _, msgContent := range allMessages {
 		// Skip system messages
-		if msgContent.Role == llms.ChatMessageTypeSystem {
+		if msgContent.Role == schemas.ChatMessageRoleSystem {
 			continue
 		}
 
 		switch msgContent.Role {
-		case llms.ChatMessageTypeHuman:
-			for _, part := range msgContent.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
-					m.tabs.Content().Chat.AddUserMessage(textPart.Text)
-				}
+		case schemas.ChatMessageRoleUser:
+			if msgContent.Content != nil && msgContent.Content.ContentStr != nil {
+				m.tabs.Content().Chat.AddUserMessage(*msgContent.Content.ContentStr)
 			}
 
-		case llms.ChatMessageTypeAI:
+		case schemas.ChatMessageRoleAssistant:
 			// First check for thinking/reasoning content
-			for _, part := range msgContent.Parts {
-				if thinkingPart, ok := part.(llms.ThinkingContent); ok {
-					text := strings.TrimSpace(thinkingPart.Thinking)
-					if text != "" {
-						m.tabs.Content().Chat.AddThinkingChunk(text)
-					}
+			if msgContent.ChatAssistantMessage != nil && msgContent.ChatAssistantMessage.Reasoning != nil {
+				text := strings.TrimSpace(*msgContent.ChatAssistantMessage.Reasoning)
+				if text != "" {
+					m.tabs.Content().Chat.AddThinkingChunk(text)
 				}
 			}
 
 			// Then collect all text content and add as a single message
 			var textContent strings.Builder
-			for _, part := range msgContent.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
-					text := strings.TrimSpace(textPart.Text)
-					if text != "" {
-						if textContent.Len() > 0 {
-							textContent.WriteString("\n")
-						}
-						textContent.WriteString(text)
-					}
+			if msgContent.Content != nil && msgContent.Content.ContentStr != nil {
+				text := strings.TrimSpace(*msgContent.Content.ContentStr)
+				if text != "" {
+					textContent.WriteString(text)
 				}
 			}
 			// Add as a single AI message if there's any non-empty text content
@@ -368,26 +359,35 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 				m.tabs.Content().Chat.FinalizeLastAIMessage()
 			}
 			// Then add tool calls with their results
-			for _, part := range msgContent.Parts {
-				if tc, ok := part.(llms.ToolCall); ok && tc.FunctionCall != nil {
+			if msgContent.ChatAssistantMessage != nil {
+				for _, tc := range msgContent.ChatAssistantMessage.ToolCalls {
 					// Find the corresponding result
 					var result string
 					var toolErr error
-					if resp, exists := toolResults[tc.ID]; exists {
-						if strings.HasPrefix(resp.Content, "Error:") || strings.HasPrefix(resp.Content, "error:") {
-							toolErr = fmt.Errorf("%s", resp.Content)
+					tcID := ""
+					if tc.ID != nil {
+						tcID = *tc.ID
+					}
+					if resp, exists := toolResults[tcID]; exists {
+						if strings.HasPrefix(resp, "Error:") || strings.HasPrefix(resp, "error:") {
+							toolErr = fmt.Errorf("%s", resp)
 						} else {
-							result = resp.Content
+							result = resp
 						}
 					}
 					// Format the tool call with its result
-					formatted := formatToolCallByName(tc.FunctionCall.Name, checkPrefix, tc.FunctionCall.Arguments, result, toolErr)
+					args := tc.Function.Arguments
+					name := ""
+					if tc.Function.Name != nil {
+						name = *tc.Function.Name
+					}
+					formatted := formatToolCallByName(name, checkPrefix, args, result, toolErr)
 					m.tabs.Content().Chat.AddMessage(formatted)
 				}
 			}
 
 		// Skip tool messages as they're already incorporated into tool call display
-		case llms.ChatMessageTypeTool:
+		case schemas.ChatMessageRoleTool:
 			continue
 		}
 	}

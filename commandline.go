@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/storage"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -291,7 +292,7 @@ func (cl *CommandLineComponent) View() string {
 		message := toast.Message
 		availableWidth := cl.width - 2
 		if availableWidth > 0 && len([]rune(message)) > availableWidth {
-			message = TruncateMiddle(message, availableWidth)
+			message = utils.TruncateMiddle(message, availableWidth)
 		}
 
 		contentWidth := lipgloss.Width(message)

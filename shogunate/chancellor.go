@@ -13,7 +13,7 @@ import (
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
+	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -540,8 +540,8 @@ func (c *Chancellor) ResetSession() {
 }
 
 // RestoreSession creates a fully-wired interactive session and injects loaded history
-func (c *Chancellor) RestoreSession(msgs []llms.MessageContent) error {
-	sess, err := CreateSession(c, c.model, c.config, c.notify, "chancellor")
+func (c *Chancellor) RestoreSession(msgs []schemas.ChatMessage) error {
+	sess, err := CreateSession(c, c.client, c.config, c.notify, "chancellor")
 	if err != nil {
 		return err
 	}
@@ -730,7 +730,7 @@ func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
 
 // brewWithStreaming delegates to Session for LLM interaction
 func (c *Chancellor) brewWithStreaming(ctx context.Context, key storage.EdictKey, prompt string, contextFiles map[string]string) {
-	if c.model == nil {
+	if c.client == nil {
 		c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: fmt.Errorf("LLM not configured")})
 		return
 	}
@@ -738,7 +738,7 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, key storage.EdictKey
 	// Always use session — no per-edict sessions
 	if c.session == nil {
 		var err error
-		c.session, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
+		c.session, err = CreateSession(c, c.client, c.config, c.notify, "chancellor")
 		if err != nil {
 			c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
@@ -772,11 +772,11 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 	var output string
 	var taskErr error
 
-	if c.model != nil {
+	if c.client != nil {
 		// Always use session for task conversation
 		if c.session == nil {
 			var err error
-			c.session, err = CreateSession(c, c.model, c.config, c.notify, "chancellor")
+			c.session, err = CreateSession(c, c.client, c.config, c.notify, "chancellor")
 			if err != nil {
 				taskErr = fmt.Errorf("failed to create session: %w", err)
 			} else {

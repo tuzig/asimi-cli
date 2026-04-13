@@ -23,7 +23,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
+	bifrost "github.com/maximhq/bifrost/core"
 	"gorm.io/gorm"
 )
 
@@ -50,9 +50,9 @@ type EventEmitter interface {
 // Prompt carries the user's message to the Chancellor
 type Prompt struct {
 	Ctx          context.Context   // Per-prompt context for cancellation (CTRL-C)
-	Message      string           // The Ruler's words
-	EdictKey     storage.EdictKey // Zero = new edict, set = continue existing
-	ChannelID    string           // Channel target for stream routing
+	Message      string            // The Ruler's words
+	EdictKey     storage.EdictKey  // Zero = new edict, set = continue existing
+	ChannelID    string            // Channel target for stream routing
 	ContextFiles map[string]string // Files loaded via @ references
 }
 
@@ -98,8 +98,8 @@ type Minister interface {
 	SubmitPrompt(p *Prompt)
 	// RepoInfo returns the repository information
 	RepoInfo() repo.RepoInfo
-	// Model returns the minister's LLM model
-	Model() llms.Model
+	// Model returns the minister's Bifrost client
+	Model() *bifrost.Bifrost
 	// GetConfig returns the minister's LLM configuration
 	GetConfig() internalconfig.LLMConfig
 	// Run starts the minister's processing loop (blocks until context cancelled)
@@ -203,7 +203,7 @@ type StreamDoneMsg struct{ ChannelID string }
 type MinisterBase struct {
 	db         *gorm.DB
 	ministerID string
-	model      llms.Model
+	client     *bifrost.Bifrost
 	config     *SessionConfig
 	repoInfo   repo.RepoInfo
 	runner     runners.Runner
@@ -220,8 +220,8 @@ type MinisterBase struct {
 	pendingZhengmingMu sync.Mutex
 
 	username string
-	project           string
-	session           *Session // Embedded session for interactive use cases
+	project  string
+	session  *Session // Embedded session for interactive use cases
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
@@ -303,14 +303,14 @@ func (m *MinisterBase) RunLoop(
 // ProcessPrompt is the shared prompt handler for all ministers.
 // It creates a session if needed and streams the LLM response.
 func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, prompt *Prompt) {
-	if m.model == nil {
+	if m.client == nil {
 		m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: fmt.Errorf("LLM not configured for %s", m.ministerID)})
 		return
 	}
 
 	if m.session == nil {
 		var err error
-		m.session, err = CreateSession(minister, m.model, m.config, m.notify, m.ministerID)
+		m.session, err = CreateSession(minister, m.client, m.config, m.notify, m.ministerID)
 		if err != nil {
 			m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: fmt.Errorf("failed to create session: %w", err)})
 			return
@@ -370,9 +370,9 @@ func (m *MinisterBase) RepoInfo() repo.RepoInfo {
 
 // CreateSessionOpts holds optional parameters for CreateSession.
 type CreateSessionOpts struct {
-	EdictKey    storage.EdictKey
-	ChannelID   string
-	Scratchpad  string // Pre-formatted markdown context from ritual
+	EdictKey   storage.EdictKey
+	ChannelID  string
+	Scratchpad string // Pre-formatted markdown context from ritual
 }
 
 // WithChannelID wraps a notify function to auto-set Session's ChannelID on first invocation.
@@ -391,19 +391,19 @@ func WithChannelID(notify internal.NotifyFunc, session *Session, channelID strin
 }
 
 // CreateSession creates a session for a minister with composed system prompt.
-func CreateSession(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, channelID string, keys ...storage.EdictKey) (*Session, error) {
+func CreateSession(minister Minister, client *bifrost.Bifrost, config *SessionConfig, notify internal.NotifyFunc, channelID string, keys ...storage.EdictKey) (*Session, error) {
 	key := storage.EdictKey{}
 	if len(keys) > 0 {
 		key = keys[0]
 	}
 	systemPrompt := buildSystemPrompt(minister, config, key)
-	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, channelID)
+	return NewSession(client, config, minister.Tools(), nil, notify, systemPrompt, channelID)
 }
 
 // CreateSessionWithOpts creates a session with extended options including given context.
-func CreateSessionWithOpts(minister Minister, model llms.Model, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
+func CreateSessionWithOpts(minister Minister, client *bifrost.Bifrost, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
 	systemPrompt := buildSystemPrompt(minister, config, opts.EdictKey, opts.Scratchpad)
-	return NewSession(model, config, minister.Tools(), nil, notify, systemPrompt, opts.ChannelID)
+	return NewSession(client, config, minister.Tools(), nil, notify, systemPrompt, opts.ChannelID)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
@@ -491,9 +491,9 @@ func readProjectContext(agentsFile string) string {
 }
 
 // SetMinisterConfig updates the MinisterBase configuration for session creation.
-// This allows ministers to be configured with a model client after initialization.
-func (m *MinisterBase) SetMinisterConfig(model llms.Model, config *SessionConfig, repoInfo repo.RepoInfo) {
-	m.model = model
+// This allows ministers to be configured with a Bifrost client after initialization.
+func (m *MinisterBase) SetMinisterConfig(client *bifrost.Bifrost, config *SessionConfig, repoInfo repo.RepoInfo) {
+	m.client = client
 	m.config = config
 	m.repoInfo = repoInfo
 }
@@ -503,9 +503,9 @@ func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 	m.notify = notify
 }
 
-// Model returns the minister's LLM model.
-func (m *MinisterBase) Model() llms.Model {
-	return m.model
+// Model returns the minister's Bifrost client.
+func (m *MinisterBase) Model() *bifrost.Bifrost {
+	return m.client
 }
 
 // GetConfig returns the minister's LLM configuration.

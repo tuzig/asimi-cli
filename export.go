@@ -9,8 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
+	"github.com/maximhq/bifrost/core/schemas"
 )
+
+// toolResult holds the content of a tool response for export formatting
+type toolResult struct {
+	Content string
+}
 
 // ExportType represents the type of export to generate
 type ExportType string
@@ -22,16 +27,14 @@ const (
 
 // ExportableSession is an interface for that can be exported.
 // Implemented by shogunate.Session.
-// TODO: do we ExportableSession or can we extend  shogunate.Session?
 type ExportableSession interface {
 	// GetID returns the session ID
 	GetID() string
 	// GetMessages returns the conversation messages
-	GetMessages() []llms.MessageContent
+	GetMessages() []schemas.ChatMessage
 	// GetContextFiles returns the context files map
 	GetContextFiles() map[string]string
 	// FormatMetadata returns formatted metadata for export
-	// Uses strings to avoid circular imports between main and shogunate packages
 	FormatMetadata(exportType string, exportedAt string) string
 }
 
@@ -78,13 +81,11 @@ func generateFullExportContent(session ExportableSession) string {
 	b.WriteString("\n---\n\n")
 
 	// System Prompt
-	if len(messages) > 0 && messages[0].Role == llms.ChatMessageTypeSystem {
+	if len(messages) > 0 && messages[0].Role == schemas.ChatMessageRoleSystem {
 		b.WriteString("## System Prompt\n\n")
-		for _, part := range messages[0].Parts {
-			if textPart, ok := part.(llms.TextContent); ok {
-				b.WriteString(textPart.Text)
-				b.WriteString("\n")
-			}
+		if messages[0].Content != nil && messages[0].Content.ContentStr != nil {
+			b.WriteString(*messages[0].Content.ContentStr)
+			b.WriteString("\n")
 		}
 		b.WriteString("\n---\n\n")
 	}
@@ -106,7 +107,7 @@ func generateFullExportContent(session ExportableSession) string {
 
 	// Skip system message (already shown above)
 	startIdx := 0
-	if len(messages) > 0 && messages[0].Role == llms.ChatMessageTypeSystem {
+	if len(messages) > 0 && messages[0].Role == schemas.ChatMessageRoleSystem {
 		startIdx = 1
 	}
 
@@ -128,7 +129,7 @@ func generateConversationExportContent(session ExportableSession) string {
 
 	// Skip system message
 	startIdx := 0
-	if len(messages) > 0 && messages[0].Role == llms.ChatMessageTypeSystem {
+	if len(messages) > 0 && messages[0].Role == schemas.ChatMessageRoleSystem {
 		startIdx = 1
 	}
 
@@ -138,15 +139,17 @@ func generateConversationExportContent(session ExportableSession) string {
 }
 
 // formatMessages formats a slice of messages, pairing tool calls with their results
-func formatMessages(b *strings.Builder, messages []llms.MessageContent, fullMode bool, includeMessageNumbers bool) {
+func formatMessages(b *strings.Builder, messages []schemas.ChatMessage, fullMode bool, includeMessageNumbers bool) {
 	// Build a map of tool call IDs to their results for quick lookup
-	toolResults := make(map[string]llms.ToolCallResponse)
+	toolResults := make(map[string]toolResult)
 	for _, msg := range messages {
-		if msg.Role == llms.ChatMessageTypeTool {
-			for _, part := range msg.Parts {
-				if toolResp, ok := part.(llms.ToolCallResponse); ok {
-					toolResults[toolResp.ToolCallID] = toolResp
+		if msg.Role == schemas.ChatMessageRoleTool {
+			if msg.ChatToolMessage != nil && msg.ChatToolMessage.ToolCallID != nil {
+				content := ""
+				if msg.Content != nil && msg.Content.ContentStr != nil {
+					content = *msg.Content.ContentStr
 				}
+				toolResults[*msg.ChatToolMessage.ToolCallID] = toolResult{Content: content}
 			}
 		}
 	}
@@ -154,69 +157,71 @@ func formatMessages(b *strings.Builder, messages []llms.MessageContent, fullMode
 	messageNum := 1
 	for _, msg := range messages {
 		switch msg.Role {
-		case llms.ChatMessageTypeHuman:
+		case schemas.ChatMessageRoleUser:
 			if includeMessageNumbers {
 				fmt.Fprintf(b, "### User (Message %d)\n\n", messageNum)
 			} else {
 				b.WriteString("### User\n\n")
 			}
-			for _, part := range msg.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
-					b.WriteString(textPart.Text)
-					b.WriteString("\n\n")
-				}
+			if msg.Content != nil && msg.Content.ContentStr != nil {
+				b.WriteString(*msg.Content.ContentStr)
+				b.WriteString("\n\n")
 			}
 			messageNum++
 
-		case llms.ChatMessageTypeAI:
+		case schemas.ChatMessageRoleAssistant:
 			if includeMessageNumbers {
 				fmt.Fprintf(b, "### Assistant (Message %d)\n\n", messageNum)
 			} else {
 				b.WriteString("### Assistant\n\n")
 			}
-			for _, part := range msg.Parts {
-				switch p := part.(type) {
-				case llms.TextContent:
-					b.WriteString(p.Text)
-					b.WriteString("\n\n")
-				case llms.ToolCall:
-					formatToolCallWithResult(b, p, toolResults, fullMode)
+			// Text content
+			if msg.Content != nil && msg.Content.ContentStr != nil {
+				b.WriteString(*msg.Content.ContentStr)
+				b.WriteString("\n\n")
+			}
+			// Tool calls
+			if msg.ChatAssistantMessage != nil {
+				for _, tc := range msg.ChatAssistantMessage.ToolCalls {
+					formatToolCallWithResult(b, tc, toolResults, fullMode)
 				}
 			}
 			messageNum++
 
-		case llms.ChatMessageTypeTool:
+		case schemas.ChatMessageRoleTool:
 			// Tool results are handled inline with tool calls, skip standalone tool messages
 		}
 	}
 }
 
 // formatToolCallWithResult formats a tool call and its result together
-func formatToolCallWithResult(b *strings.Builder, toolCall llms.ToolCall, toolResults map[string]llms.ToolCallResponse, fullMode bool) {
-	if toolCall.FunctionCall == nil {
+func formatToolCallWithResult(b *strings.Builder, toolCall schemas.ChatAssistantMessageToolCall, toolResults map[string]toolResult, fullMode bool) {
+	if toolCall.Function.Name == nil {
 		return
 	}
 
-	fmt.Fprintf(b, "**Tool Call:** %s\n\n", toolCall.FunctionCall.Name)
+	fmt.Fprintf(b, "**Tool Call:** %s\n\n", *toolCall.Function.Name)
 	b.WriteString("**Input:**\n```json\n")
 
 	// Try to pretty-print JSON
 	var jsonData interface{}
-	if err := json.Unmarshal([]byte(toolCall.FunctionCall.Arguments), &jsonData); err == nil {
+	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &jsonData); err == nil {
 		if prettyJSON, err := json.MarshalIndent(jsonData, "", "  "); err == nil {
 			b.WriteString(string(prettyJSON))
 		} else {
-			b.WriteString(toolCall.FunctionCall.Arguments)
+			b.WriteString(toolCall.Function.Arguments)
 		}
 	} else {
-		b.WriteString(toolCall.FunctionCall.Arguments)
+		b.WriteString(toolCall.Function.Arguments)
 	}
 
 	b.WriteString("\n```\n")
 
 	// Find and format the corresponding tool result
-	if toolResp, ok := toolResults[toolCall.ID]; ok {
-		formatToolOutput(b, toolResp, fullMode)
+	if toolCall.ID != nil {
+		if toolResp, ok := toolResults[*toolCall.ID]; ok {
+			formatToolOutput(b, toolResp, fullMode)
+		}
 	}
 
 	b.WriteString("\n")
@@ -225,14 +230,13 @@ func formatToolCallWithResult(b *strings.Builder, toolCall llms.ToolCall, toolRe
 // formatToolOutput formats the tool output based on mode
 // In full mode: shows complete output
 // In conversation mode: shows output if ≤128 chars, otherwise shows exit code and character count
-func formatToolOutput(b *strings.Builder, toolResp llms.ToolCallResponse, fullMode bool) {
+func formatToolOutput(b *strings.Builder, toolResp toolResult, fullMode bool) {
 	b.WriteString("**Output:**")
 
-	// For run_shell_command, parse the JSON output and format accordingly
-	if toolResp.Name == "run_shell_command" {
-		var output map[string]interface{}
-		if err := json.Unmarshal([]byte(toolResp.Content), &output); err == nil {
-			// Successfully parsed as JSON - format the shell output
+	// Try to parse as shell command JSON output
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(toolResp.Content), &output); err == nil {
+		if _, hasExitCode := output["exitCode"]; hasExitCode {
 			exitCode := "0"
 			if ec, ok := output["exitCode"].(string); ok {
 				exitCode = ec
@@ -250,7 +254,6 @@ func formatToolOutput(b *strings.Builder, toolResp llms.ToolCallResponse, fullMo
 
 			totalLength := len(stdout) + len(stderr)
 
-			// Show full output if in full mode OR if output is short (≤128 chars)
 			if fullMode || totalLength <= 128 {
 				b.WriteString("\n```\n")
 				fmt.Fprintf(b, "Exit Code: %s\n", exitCode)
@@ -267,28 +270,19 @@ func formatToolOutput(b *strings.Builder, toolResp llms.ToolCallResponse, fullMo
 
 				b.WriteString("\n```")
 			} else {
-				// Conversation mode with long output: show only exit code and character count
 				fmt.Fprintf(b, " Exit code %s, %d characters", exitCode, totalLength)
 			}
-		} else {
-			// Not JSON or parsing failed - show raw content
-			if fullMode || len(toolResp.Content) <= 128 {
-				b.WriteString("\n```\n")
-				b.WriteString(toolResp.Content)
-				b.WriteString("\n```")
-			} else {
-				fmt.Fprintf(b, " %d characters", len(toolResp.Content))
-			}
+			return
 		}
+	}
+
+	// For other tools or non-JSON content
+	if fullMode || len(toolResp.Content) <= 128 {
+		b.WriteString("\n```\n")
+		b.WriteString(toolResp.Content)
+		b.WriteString("\n```")
 	} else {
-		// For other tools
-		if fullMode || len(toolResp.Content) <= 128 {
-			b.WriteString("\n```\n")
-			b.WriteString(toolResp.Content)
-			b.WriteString("\n```")
-		} else {
-			fmt.Fprintf(b, " %d characters", len(toolResp.Content))
-		}
+		fmt.Fprintf(b, " %d characters", len(toolResp.Content))
 	}
 }
 

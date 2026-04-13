@@ -140,10 +140,10 @@ func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, stri
 		if channelID == "" {
 			channelID = "strategist"
 		}
-		session, err = CreateSessionWithOpts(s, s.model, s.config, notify, CreateSessionOpts{
-			EdictKey:    task.EdictKey,
-			ChannelID:   channelID,
-			Scratchpad:  task.Scratchpad,
+		session, err = CreateSessionWithOpts(s, s.client, s.config, notify, CreateSessionOpts{
+			EdictKey:   task.EdictKey,
+			ChannelID:  channelID,
+			Scratchpad: task.Scratchpad,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create strategist session: %w", err)
@@ -216,7 +216,7 @@ func (s *Strategist) processTask(ctx context.Context, task *Task) {
 	var taskErr error
 	var session *Session
 
-	if s.model != nil {
+	if s.client != nil {
 		session, output, taskErr = s.streamTask(ctx, task)
 	} else {
 		output = "strategist task acknowledged (no LLM configured)"

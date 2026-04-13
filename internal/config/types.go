@@ -48,7 +48,9 @@ type LLMConfig struct {
 	AuthToken                  string `koanf:"auth_token"`
 	RefreshToken               string `koanf:"refresh_token"`
 	ExperimentalModels         bool   `koanf:"experimental_models"`
-	MaxToolOutput              int    `koanf:"max_tool_output"` // Maximum tool output size in bytes (read_file, shell, etc.)
+	MaxToolOutput              int    `koanf:"max_tool_output"`              // Maximum tool output size in bytes (read_file, shell, etc.)
+	RequestTimeoutSeconds      int    `koanf:"request_timeout_seconds"`      // Timeout for non-streaming requests (default: 60)
+	StreamIdleTimeoutSeconds   int    `koanf:"stream_idle_timeout_seconds"`  // Idle timeout during streaming responses (default: 120)
 }
 
 // HistoryConfig holds persistent history configuration

@@ -505,7 +505,6 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 	asimiConf = strings.Replace(asimiConf, `project = ""`,
 		fmt.Sprintf(`project = "%s"`, slug), 1)
 
-
 	// Write embedded templates to project root
 	files := map[string]string{
 		"Justfile":                         justfile,

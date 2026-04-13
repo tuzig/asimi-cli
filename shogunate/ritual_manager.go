@@ -329,7 +329,7 @@ func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 	// Check 2: Model - Verify LLM connectivity with actual ping
 	if rg.chancellor != nil {
 		base := rg.chancellor.MinisterBase
-		if base == nil || base.model == nil {
+		if base == nil || base.client == nil {
 			result.ModelOK = false
 			result.Remediation["model"] = "Configure LLM model in settings"
 			fail("✗ LLM model not configured")
@@ -359,7 +359,7 @@ func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 
 // pingLLM creates a session and sends a ping to verify LLM connectivity
 func (rg *RitualGuard) pingLLM(base *MinisterBase) bool {
-	if base == nil || base.model == nil {
+	if base == nil || base.client == nil {
 		return false
 	}
 
@@ -368,7 +368,7 @@ func (rg *RitualGuard) pingLLM(base *MinisterBase) bool {
 		LLM: base.config.LLM,
 	}
 
-	sess, err := CreateSession(rg, base.model, config, nil, "health_check")
+	sess, err := CreateSession(rg, base.client, config, nil, "health_check")
 	if err != nil {
 		rg.logger.Debug("health check: failed to create session for ping", "error", err)
 		return false

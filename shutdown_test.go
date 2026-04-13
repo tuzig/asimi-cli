@@ -9,7 +9,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
-	"github.com/tmc/langchaingo/llms"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // TestSessionStoreCloseWithTimeout verifies that Close() waits for pending saves
@@ -47,11 +47,8 @@ func TestSessionStoreCloseWithTimeout(t *testing.T) {
 	}
 
 	// Add a user message so the session will be saved
-	session.SetMessages([]llms.MessageContent{
-		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart("test message")},
-		},
+	session.SetMessages([]schemas.ChatMessage{
+		textMessage(schemas.ChatMessageRoleUser, "test message"),
 	})
 
 	// Queue a save

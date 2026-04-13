@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tmc/langchaingo/llms"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // mockExportableSession implements ExportableSession for testing
@@ -15,7 +15,7 @@ type mockExportableSession struct {
 	Model        string
 	WorkingDir   string
 	ProjectSlug  string
-	Messages     []llms.MessageContent
+	Messages     []schemas.ChatMessage
 	ContextFiles map[string]string
 }
 
@@ -23,7 +23,7 @@ func (m *mockExportableSession) GetID() string {
 	return m.ID
 }
 
-func (m *mockExportableSession) GetMessages() []llms.MessageContent {
+func (m *mockExportableSession) GetMessages() []schemas.ChatMessage {
 	return m.Messages
 }
 
@@ -47,42 +47,38 @@ func TestExportShowsToolCalls(t *testing.T) {
 		Provider:   "test",
 		Model:      "test-model",
 		WorkingDir: "/test",
-		Messages: []llms.MessageContent{
+		Messages: []schemas.ChatMessage{
 			// System message
 			{
-				Role:  llms.ChatMessageTypeSystem,
-				Parts: []llms.ContentPart{llms.TextPart("System prompt")},
+				Role:    schemas.ChatMessageRoleSystem,
+				Content: &schemas.ChatMessageContent{ContentStr: strPtr("System prompt")},
 			},
 			// User message
 			{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextPart("Run a test command")},
+				Role:    schemas.ChatMessageRoleUser,
+				Content: &schemas.ChatMessageContent{ContentStr: strPtr("Run a test command")},
 			},
 			// Assistant message with tool call
 			{
-				Role: llms.ChatMessageTypeAI,
-				Parts: []llms.ContentPart{
-					llms.TextPart("I'll run that command for you."),
-					llms.ToolCall{
-						ID:   "call_123",
-						Type: "function",
-						FunctionCall: &llms.FunctionCall{
-							Name:      "run_shell_command",
-							Arguments: `{"command":"echo 'test output'","description":"Test command"}`,
+				Role:    schemas.ChatMessageRoleAssistant,
+				Content: &schemas.ChatMessageContent{ContentStr: strPtr("I'll run that command for you.")},
+				ChatAssistantMessage: &schemas.ChatAssistantMessage{
+					ToolCalls: []schemas.ChatAssistantMessageToolCall{
+						{
+							ID: strPtr("call_123"),
+							Function: schemas.ChatAssistantMessageToolCallFunction{
+								Name:      strPtr("run_shell_command"),
+								Arguments: `{"command":"echo 'test output'","description":"Test command"}`,
+							},
 						},
 					},
 				},
 			},
 			// Tool result
 			{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{
-					llms.ToolCallResponse{
-						ToolCallID: "call_123",
-						Name:       "run_shell_command",
-						Content:    `{"stdout":"test output\n","stderr":"","exitCode":"0"}`,
-					},
-				},
+				Role:            schemas.ChatMessageRoleTool,
+				Content:         &schemas.ChatMessageContent{ContentStr: strPtr(`{"stdout":"test output\n","stderr":"","exitCode":"0"}`)},
+				ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("call_123")},
 			},
 		},
 		ContextFiles: make(map[string]string),
@@ -140,7 +136,7 @@ func TestExportShowsToolCalls(t *testing.T) {
 			t.Error("Conversation export should contain exit code")
 		}
 
-		// In conversation mode with short output (≤128 chars), stdout is still shown
+		// In conversation mode with short output (<=128 chars), stdout is still shown
 		// This is expected behavior - only long output is truncated
 		if !strings.Contains(content, "test output") {
 			t.Error("Conversation export should contain short stdout content")
@@ -169,34 +165,30 @@ func TestExportShowsToolCalls(t *testing.T) {
 
 func TestFormatMessagesNumberingSkipsToolMessages(t *testing.T) {
 	var b strings.Builder
-	messages := []llms.MessageContent{
+	messages := []schemas.ChatMessage{
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart("Hello")},
+			Role:    schemas.ChatMessageRoleUser,
+			Content: &schemas.ChatMessageContent{ContentStr: strPtr("Hello")},
 		},
 		{
-			Role: llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{
-				llms.TextPart("Running a command"),
-				llms.ToolCall{
-					ID:   "call_123",
-					Type: "function",
-					FunctionCall: &llms.FunctionCall{
-						Name:      "run_shell_command",
-						Arguments: `{"command":"echo test"}`,
+			Role:    schemas.ChatMessageRoleAssistant,
+			Content: &schemas.ChatMessageContent{ContentStr: strPtr("Running a command")},
+			ChatAssistantMessage: &schemas.ChatAssistantMessage{
+				ToolCalls: []schemas.ChatAssistantMessageToolCall{
+					{
+						ID: strPtr("call_123"),
+						Function: schemas.ChatAssistantMessageToolCallFunction{
+							Name:      strPtr("run_shell_command"),
+							Arguments: `{"command":"echo test"}`,
+						},
 					},
 				},
 			},
 		},
 		{
-			Role: llms.ChatMessageTypeTool,
-			Parts: []llms.ContentPart{
-				llms.ToolCallResponse{
-					ToolCallID: "call_123",
-					Name:       "run_shell_command",
-					Content:    `{"stdout":"test","stderr":"","exitCode":"0"}`,
-				},
-			},
+			Role:            schemas.ChatMessageRoleTool,
+			Content:         &schemas.ChatMessageContent{ContentStr: strPtr(`{"stdout":"test","stderr":"","exitCode":"0"}`)},
+			ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("call_123")},
 		},
 	}
 
@@ -221,41 +213,37 @@ func TestExportToolResultWithStderr(t *testing.T) {
 		Provider:   "test",
 		Model:      "test-model",
 		WorkingDir: "/test",
-		Messages: []llms.MessageContent{
+		Messages: []schemas.ChatMessage{
 			// System message
 			{
-				Role:  llms.ChatMessageTypeSystem,
-				Parts: []llms.ContentPart{llms.TextPart("System prompt")},
+				Role:    schemas.ChatMessageRoleSystem,
+				Content: &schemas.ChatMessageContent{ContentStr: strPtr("System prompt")},
 			},
 			// User message
 			{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextPart("Run a command with error")},
+				Role:    schemas.ChatMessageRoleUser,
+				Content: &schemas.ChatMessageContent{ContentStr: strPtr("Run a command with error")},
 			},
 			// Assistant message with tool call
 			{
-				Role: llms.ChatMessageTypeAI,
-				Parts: []llms.ContentPart{
-					llms.ToolCall{
-						ID:   "call_456",
-						Type: "function",
-						FunctionCall: &llms.FunctionCall{
-							Name:      "run_shell_command",
-							Arguments: `{"command":"ls /nonexistent","description":"Test error"}`,
+				Role: schemas.ChatMessageRoleAssistant,
+				ChatAssistantMessage: &schemas.ChatAssistantMessage{
+					ToolCalls: []schemas.ChatAssistantMessageToolCall{
+						{
+							ID: strPtr("call_456"),
+							Function: schemas.ChatAssistantMessageToolCallFunction{
+								Name:      strPtr("run_shell_command"),
+								Arguments: `{"command":"ls /nonexistent","description":"Test error"}`,
+							},
 						},
 					},
 				},
 			},
 			// Tool result with error
 			{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{
-					llms.ToolCallResponse{
-						ToolCallID: "call_456",
-						Name:       "run_shell_command",
-						Content:    `{"stdout":"","stderr":"ls: cannot access '/nonexistent': No such file or directory\n","exitCode":"2"}`,
-					},
-				},
+				Role:            schemas.ChatMessageRoleTool,
+				Content:         &schemas.ChatMessageContent{ContentStr: strPtr(`{"stdout":"","stderr":"ls: cannot access '/nonexistent': No such file or directory\n","exitCode":"2"}`)},
+				ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("call_456")},
 			},
 		},
 		ContextFiles: make(map[string]string),
@@ -308,41 +296,37 @@ func TestExportNonShellToolCalls(t *testing.T) {
 		Provider:   "test",
 		Model:      "test-model",
 		WorkingDir: "/test",
-		Messages: []llms.MessageContent{
+		Messages: []schemas.ChatMessage{
 			// System message
 			{
-				Role:  llms.ChatMessageTypeSystem,
-				Parts: []llms.ContentPart{llms.TextPart("System prompt")},
+				Role:    schemas.ChatMessageRoleSystem,
+				Content: &schemas.ChatMessageContent{ContentStr: strPtr("System prompt")},
 			},
 			// User message
 			{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextPart("Read a file")},
+				Role:    schemas.ChatMessageRoleUser,
+				Content: &schemas.ChatMessageContent{ContentStr: strPtr("Read a file")},
 			},
 			// Assistant message with tool call
 			{
-				Role: llms.ChatMessageTypeAI,
-				Parts: []llms.ContentPart{
-					llms.ToolCall{
-						ID:   "call_789",
-						Type: "function",
-						FunctionCall: &llms.FunctionCall{
-							Name:      "read_file",
-							Arguments: `{"path":"test.txt"}`,
+				Role: schemas.ChatMessageRoleAssistant,
+				ChatAssistantMessage: &schemas.ChatAssistantMessage{
+					ToolCalls: []schemas.ChatAssistantMessageToolCall{
+						{
+							ID: strPtr("call_789"),
+							Function: schemas.ChatAssistantMessageToolCallFunction{
+								Name:      strPtr("read_file"),
+								Arguments: `{"path":"test.txt"}`,
+							},
 						},
 					},
 				},
 			},
 			// Tool result
 			{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{
-					llms.ToolCallResponse{
-						ToolCallID: "call_789",
-						Name:       "read_file",
-						Content:    "File content here",
-					},
-				},
+				Role:            schemas.ChatMessageRoleTool,
+				Content:         &schemas.ChatMessageContent{ContentStr: strPtr("File content here")},
+				ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("call_789")},
 			},
 		},
 		ContextFiles: make(map[string]string),
@@ -373,12 +357,11 @@ func TestExportNonShellToolCalls(t *testing.T) {
 func TestFormatToolOutput(t *testing.T) {
 	t.Run("Shell command with stdout in full mode", func(t *testing.T) {
 		var b strings.Builder
-		toolResp := llms.ToolCallResponse{
-			Name:    "run_shell_command",
+		tr := toolResult{
 			Content: `{"stdout":"output line 1\noutput line 2","stderr":"","exitCode":"0"}`,
 		}
 
-		formatToolOutput(&b, toolResp, true)
+		formatToolOutput(&b, tr, true)
 		result := b.String()
 
 		if !strings.Contains(result, "Exit Code: 0") {
@@ -393,12 +376,11 @@ func TestFormatToolOutput(t *testing.T) {
 		var b strings.Builder
 		// Create output longer than 128 characters
 		longOutput := strings.Repeat("x", 150)
-		toolResp := llms.ToolCallResponse{
-			Name:    "run_shell_command",
+		tr := toolResult{
 			Content: fmt.Sprintf(`{"stdout":"%s","stderr":"","exitCode":"0"}`, longOutput),
 		}
 
-		formatToolOutput(&b, toolResp, false)
+		formatToolOutput(&b, tr, false)
 		result := b.String()
 
 		if !strings.Contains(result, "Exit code 0") {
@@ -414,12 +396,11 @@ func TestFormatToolOutput(t *testing.T) {
 
 	t.Run("Shell command with short output in conversation mode", func(t *testing.T) {
 		var b strings.Builder
-		toolResp := llms.ToolCallResponse{
-			Name:    "run_shell_command",
+		tr := toolResult{
 			Content: `{"stdout":"short","stderr":"","exitCode":"0"}`,
 		}
 
-		formatToolOutput(&b, toolResp, false)
+		formatToolOutput(&b, tr, false)
 		result := b.String()
 
 		if !strings.Contains(result, "Exit Code: 0") {
@@ -432,12 +413,11 @@ func TestFormatToolOutput(t *testing.T) {
 
 	t.Run("Shell command with stderr", func(t *testing.T) {
 		var b strings.Builder
-		toolResp := llms.ToolCallResponse{
-			Name:    "run_shell_command",
+		tr := toolResult{
 			Content: `{"stdout":"","stderr":"error message","exitCode":"1"}`,
 		}
 
-		formatToolOutput(&b, toolResp, false)
+		formatToolOutput(&b, tr, false)
 		result := b.String()
 
 		if !strings.Contains(result, "Exit Code: 1") {
@@ -453,12 +433,11 @@ func TestFormatToolOutput(t *testing.T) {
 
 	t.Run("Non-JSON tool result", func(t *testing.T) {
 		var b strings.Builder
-		toolResp := llms.ToolCallResponse{
-			Name:    "read_file",
+		tr := toolResult{
 			Content: "Plain text file content",
 		}
 
-		formatToolOutput(&b, toolResp, false)
+		formatToolOutput(&b, tr, false)
 		result := b.String()
 
 		if !strings.Contains(result, "Plain text file content") {
@@ -470,17 +449,16 @@ func TestFormatToolOutput(t *testing.T) {
 func TestFormatToolCallWithResult(t *testing.T) {
 	t.Run("Valid JSON arguments", func(t *testing.T) {
 		var b strings.Builder
-		toolCall := llms.ToolCall{
-			ID:   "call_123",
-			Type: "function",
-			FunctionCall: &llms.FunctionCall{
-				Name:      "run_shell_command",
+		tc := schemas.ChatAssistantMessageToolCall{
+			ID: strPtr("call_123"),
+			Function: schemas.ChatAssistantMessageToolCallFunction{
+				Name:      strPtr("run_shell_command"),
 				Arguments: `{"command":"echo test","description":"Test"}`,
 			},
 		}
-		toolResults := make(map[string]llms.ToolCallResponse)
+		toolResults := make(map[string]toolResult)
 
-		formatToolCallWithResult(&b, toolCall, toolResults, true)
+		formatToolCallWithResult(&b, tc, toolResults, true)
 		result := b.String()
 
 		if !strings.Contains(result, "**Tool Call:** run_shell_command") {
@@ -497,17 +475,16 @@ func TestFormatToolCallWithResult(t *testing.T) {
 
 	t.Run("Invalid JSON arguments", func(t *testing.T) {
 		var b strings.Builder
-		toolCall := llms.ToolCall{
-			ID:   "call_456",
-			Type: "function",
-			FunctionCall: &llms.FunctionCall{
-				Name:      "test_tool",
+		tc := schemas.ChatAssistantMessageToolCall{
+			ID: strPtr("call_456"),
+			Function: schemas.ChatAssistantMessageToolCallFunction{
+				Name:      strPtr("test_tool"),
 				Arguments: `not valid json`,
 			},
 		}
-		toolResults := make(map[string]llms.ToolCallResponse)
+		toolResults := make(map[string]toolResult)
 
-		formatToolCallWithResult(&b, toolCall, toolResults, true)
+		formatToolCallWithResult(&b, tc, toolResults, true)
 		result := b.String()
 
 		if !strings.Contains(result, "not valid json") {
@@ -523,10 +500,10 @@ func TestExportMetadata(t *testing.T) {
 		Model:       "claude-3-5-sonnet",
 		WorkingDir:  "/home/user/project",
 		ProjectSlug: "user/project",
-		Messages: []llms.MessageContent{
+		Messages: []schemas.ChatMessage{
 			{
-				Role:  llms.ChatMessageTypeSystem,
-				Parts: []llms.ContentPart{llms.TextPart("System")},
+				Role:    schemas.ChatMessageRoleSystem,
+				Content: &schemas.ChatMessageContent{ContentStr: strPtr("System")},
 			},
 		},
 		ContextFiles: make(map[string]string),

@@ -275,16 +275,16 @@ func (m *TUIModel) SetSession(session *shogunate.Session) {
 	}
 }
 
-// switchModel recreates the LLM client with current config and reconfigures the Shogunate.
+// switchModel recreates the Bifrost client with current config and reconfigures the Shogunate.
 func (m *TUIModel) switchModel() tea.Cmd {
 	return func() tea.Msg {
 		slog.Info("switching LLM model", "provider", m.config.LLM.Provider, "model", m.config.LLM.Model)
-		model, err := getModelClient(m.config)
+		client, err := initBifrost(context.Background())
 		if err != nil {
 			return llmInitErrorMsg{err: err}
 		}
 		slog.Info("LLM model switched successfully")
-		return llmInitSuccessMsg{model: model}
+		return llmInitSuccessMsg{client: client}
 	}
 }
 
@@ -321,16 +321,16 @@ func (m *TUIModel) shutdown() {
 
 // Init implements bubbletea.Model
 func (m TUIModel) Init() tea.Cmd {
-	// Async LLM initialization - getModelClient handles credentials/keyring
+	// Async LLM initialization - initBifrost handles credentials/keyring
 	tick := tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 	return tea.Batch(func() tea.Msg {
 		slog.Info("connecting to LLM", "provider", m.config.LLM.Provider)
-		model, err := getModelClient(m.config)
+		client, err := initBifrost(context.Background())
 		if err != nil {
 			return llmInitErrorMsg{err: err}
 		}
 		slog.Info("LLM client connected")
-		return llmInitSuccessMsg{model: model}
+		return llmInitSuccessMsg{client: client}
 	}, tick)
 }
 
@@ -2364,7 +2364,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case llmInitSuccessMsg:
 		// LLM initialization completed - configure Shogunate with the model
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
-		if m.shogunate != nil && msg.model != nil {
+		if m.shogunate != nil && msg.client != nil {
 			cfg := &shogunate.SessionConfig{
 				LLM: config.LLMConfig{
 					MaxTurns:          m.config.LLM.MaxTurns,
@@ -2376,8 +2376,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			repoInfo := repo.RepoInfo{
 				ProjectRoot: m.config.Storage.DatabasePath,
 			}
-			m.shogunate.ConfigureModel(msg.model, cfg, repoInfo)
-			slog.Info("Shogunate configured with LLM model")
+			m.shogunate.ConfigureModel(msg.client, cfg, repoInfo)
+			slog.Info("Shogunate configured with Bifrost client")
 		}
 
 		// Fire shogunate_started event to trigger wakeup ritual and health checks

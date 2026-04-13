@@ -276,7 +276,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 		return
 	}
 
-	if f.model != nil {
+	if f.client != nil {
 		// Get pending lings for this edict
 		pendingLings, err := f.GetPendingLing(task.EdictKey)
 		f.logger.Info("Got lings", "count", len(pendingLings), "edict", task.EdictKey)
@@ -338,10 +338,10 @@ func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKe
 		if channelID == "" {
 			channelID = "forge"
 		}
-		session, err = CreateSessionWithOpts(f, f.model, f.config, notify, CreateSessionOpts{
-			EdictKey:    key,
-			ChannelID:   channelID,
-			Scratchpad:  scratchpad,
+		session, err = CreateSessionWithOpts(f, f.client, f.config, notify, CreateSessionOpts{
+			EdictKey:   key,
+			ChannelID:  channelID,
+			Scratchpad: scratchpad,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create forge session: %w", err)

@@ -9,7 +9,7 @@ import (
 )
 
 // Tool defines a tool that can be invoked by the scheduler.
-// Extends langchaingo's tools.Tool with Format and ParameterSchema.
+// Defines the interface for tools that can be invoked by the scheduler.
 type Tool interface {
 	Name() string
 	Description() string
@@ -57,8 +57,8 @@ type CoreToolScheduler struct {
 	isBusy      bool
 	resultChans map[string]chan ToolCallResult
 	// TODO: refator to a channel
-	notify func(any)
-	channelID  string
+	notify    func(any)
+	channelID string
 }
 
 // NewCoreToolScheduler creates a new CoreToolScheduler
@@ -216,25 +216,25 @@ func (s *CoreToolScheduler) ClearQueue() int {
 // Messages for bubbletea
 type ToolCallScheduledMsg struct {
 	ChannelID string
-	Call  *ToolCall
+	Call      *ToolCall
 }
 type ToolCallExecutingMsg struct {
 	ChannelID string
-	Call  *ToolCall
+	Call      *ToolCall
 }
 type ToolCallWaitingForApprovalMsg struct {
 	ChannelID string
-	Call  *ToolCall
+	Call      *ToolCall
 }
 type ToolCallSuccessMsg struct {
 	ChannelID string
-	Call  *ToolCall
+	Call      *ToolCall
 }
 type ToolCallErrorMsg struct {
 	ChannelID string
-	Call  *ToolCall
+	Call      *ToolCall
 }
 type ToolCallAbortedMsg struct {
 	ChannelID string
-	Call  *ToolCall
+	Call      *ToolCall
 }

@@ -54,7 +54,7 @@ func (r *HostRunner) Run(ctx context.Context, input Input) (Output, error) {
 	cmd.Stderr = &stderr
 
 	runErr := cmd.Run()
-	output.Output = stdout.String()+"\n"+stderr.String()
+	output.Output = stdout.String() + "\n" + stderr.String()
 
 	if runErr != nil {
 		if ctx.Err() != nil {
