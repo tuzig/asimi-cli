@@ -376,6 +376,16 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 	}
 
+	// Check for clear mode - remove infrastructure files first
+	if len(args) > 0 && args[0] == "clear" {
+		errors := clearAsimiFiles(model)
+		if len(errors) > 0 {
+			return func() tea.Msg {
+				return showContextMsg{content: fmt.Sprintf("Failed to clear files: %s", strings.Join(errors, ", "))}
+			}
+		}
+	}
+
 	// Check if project name is already set in config
 	if model.config.Shogunate.Project == "" {
 		// Project name is missing - prompt user for it
@@ -403,6 +413,23 @@ func createInitEdict(model *TUIModel) tea.Cmd {
 	}
 	model.raiseShogunateEvent(storage.EventRitualEnacted, payload)
 	return nil
+}
+
+// clearAsimiFiles removes infrastructure files to allow a fresh init
+func clearAsimiFiles(model *TUIModel) []string {
+	files := []string{
+		".agents",
+		"AGENTS.md",
+		"Justfile",
+	}
+
+	var errors []string
+	for _, file := range files {
+		if err := os.RemoveAll(file); err != nil && !os.IsNotExist(err) {
+			errors = append(errors, fmt.Sprintf("%s: %v", file, err))
+		}
+	}
+	return errors
 }
 
 // handleProjectNameInput handles the user's project name input

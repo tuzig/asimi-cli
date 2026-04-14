@@ -170,6 +170,34 @@ func TestHandleInitCommand(t *testing.T) {
 		require.Contains(t, sysMsg.content, "No model connection")
 	})
 
+	t.Run("Clear mode with no session removes files", func(t *testing.T) {
+		// Create the files that clearAsimiFiles should remove
+		err := os.MkdirAll(".agents", 0755)
+		require.NoError(t, err)
+		err = os.WriteFile(".agents/test", []byte("test"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile("AGENTS.md", []byte("# Agents"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile("Justfile", []byte("test:"), 0644)
+		require.NoError(t, err)
+
+		cmd := handleInitCommand(mockTUI, []string{"clear"})
+		msg := cmd()
+
+		// Should still get the "no session" error after clearing files
+		sysMsg, ok := msg.(showContextMsg)
+		require.True(t, ok, "Expected showContextMsg when no session, got %T", msg)
+		require.Contains(t, sysMsg.content, "No model connection")
+
+		// But files should still be removed
+		_, err = os.Stat(".agents")
+		require.True(t, os.IsNotExist(err), ".agents should be removed")
+		_, err = os.Stat("AGENTS.md")
+		require.True(t, os.IsNotExist(err), "AGENTS.md should be removed")
+		_, err = os.Stat("Justfile")
+		require.True(t, os.IsNotExist(err), "Justfile should be removed")
+	})
+
 	// TODO: Tests for actual init workflow require a full shogunate setup with a configured session.
 	// These tests are skipped until proper integration test infrastructure is added.
 	t.Run("Clean directory - skipped without session", func(t *testing.T) {
@@ -192,6 +220,56 @@ func TestHandleInitCommand(t *testing.T) {
 
 	t.Run("Clear mode - skipped without session", func(t *testing.T) {
 		t.Skip("Requires shogunate session setup - see integration tests")
+	})
+}
+
+func TestClearAsimiFiles(t *testing.T) {
+	// Setup a temporary directory for the test
+	tmpDir := t.TempDir()
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+	defer func() {
+		err := os.Chdir(originalWd)
+		if err != nil {
+			t.Logf("Failed to change back to original directory: %v", err)
+		}
+	}()
+
+	mockTUI := &TUIModel{}
+
+	t.Run("Clears all infrastructure files", func(t *testing.T) {
+		// Create the files that clearAsimiFiles should remove
+		err := os.MkdirAll(".agents", 0755)
+		require.NoError(t, err)
+		err = os.WriteFile(".agents/test", []byte("test"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile("AGENTS.md", []byte("# Agents"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile("Justfile", []byte("test:"), 0644)
+		require.NoError(t, err)
+
+		errors := clearAsimiFiles(mockTUI)
+		require.Empty(t, errors, "Expected no errors, got: %v", errors)
+
+		// Verify files are removed
+		_, err = os.Stat(".agents")
+		require.True(t, os.IsNotExist(err), ".agents should be removed")
+		_, err = os.Stat("AGENTS.md")
+		require.True(t, os.IsNotExist(err), "AGENTS.md should be removed")
+		_, err = os.Stat("Justfile")
+		require.True(t, os.IsNotExist(err), "Justfile should be removed")
+	})
+
+	t.Run("Handles missing files gracefully", func(t *testing.T) {
+		// Ensure no files exist
+		os.RemoveAll(".agents")
+		os.Remove("AGENTS.md")
+		os.Remove("Justfile")
+
+		errors := clearAsimiFiles(mockTUI)
+		require.Empty(t, errors, "Expected no errors for missing files, got: %v", errors)
 	})
 }
 
