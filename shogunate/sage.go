@@ -146,7 +146,7 @@ func (c *Sage) Tools() []Tool {
 		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.Username(), Project: c.Project()},
 		tools.ListEdictsTool{DB: c.db, Username: c.Username(), Project: c.Project()},
 		&SuggestEdictTool{sage: c},
-		&QueryCourtTool{db: c.db},
+		&QueryCourtTool{sage: c},
 		// Review and precedent tools
 		&RecordPrecedentTool{sage: c},
 		&ListQuenchedManifestsTool{sage: c},
@@ -480,7 +480,7 @@ func (t *SuggestEdictTool) ParameterSchema() map[string]any {
 
 // QueryCourtTool queries the court's state (edicts, manifests, verdicts, precedents)
 type QueryCourtTool struct {
-	db *gorm.DB
+	sage *Sage
 }
 
 func (t *QueryCourtTool) Name() string { return "query_court" }
@@ -493,10 +493,8 @@ of what's happening in the Shogunate.`
 
 func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID  uint   `json:"edict_id"`
-		Username string `json:"username"`
-		Project  string `json:"project"`
-		Scope    string `json:"scope"` // "active", "all", or specific edict_id
+		EdictID uint   `json:"edict_id"`
+		Scope   string `json:"scope"` // "active", "all", or specific edict_id
 	}
 	json.Unmarshal([]byte(input), &params)
 
@@ -504,16 +502,16 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 
 	// Get edicts
 	var edicts []storage.Edict
-	query := t.db.Order("created_at DESC").Limit(20)
+	query := t.sage.db.Order("created_at DESC").Limit(20)
 	if params.EdictID != 0 {
-		query = query.Where("id = ? AND username = ? AND project = ?", params.EdictID, params.Username, params.Project)
+		query = query.Where("id = ? AND username = ? AND project = ?", params.EdictID, t.sage.username, t.sage.project)
 	} else if params.Scope != "all" {
 		query = query.Where("status NOT IN ?", []string{"sealed", "cancelled"})
 	}
 	query.Find(&edicts)
 
 	edictSummaries := make([]map[string]interface{}, len(edicts))
-	sealService := storage.NewSealService(t.db)
+	sealService := storage.NewSealService(t.sage.db)
 	for i, e := range edicts {
 		status, err := sealService.GetEdictStatus(storage.EdictKey{ID: e.ID, Username: e.Username, Project: e.Project})
 		if err != nil {
@@ -531,7 +529,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 	sealSummaries := make([]map[string]interface{}, len(edicts))
 	for i, e := range edicts {
 		var seals []storage.Seal
-		t.db.Where("edict_id = ? AND username = ? AND project = ?", e.ID, e.Username, e.Project).Order("sealed_at ASC").Find(&seals)
+		t.sage.db.Where("edict_id = ? AND username = ? AND project = ?", e.ID, e.Username, e.Project).Order("sealed_at ASC").Find(&seals)
 		sealList := make([]map[string]interface{}, len(seals))
 		for j, seal := range seals {
 			sealList[j] = map[string]interface{}{
@@ -548,7 +546,7 @@ func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error)
 
 	// Get recent zhengming
 	var zhengming []storage.Zhengming
-	t.db.Where("status = ?", storage.ZhengmingPending).
+	t.sage.db.Where("status = ?", storage.ZhengmingPending).
 		Order("created_at DESC").Limit(10).Find(&zhengming)
 	if len(zhengming) > 0 {
 		zhSummaries := make([]map[string]interface{}, len(zhengming))
@@ -908,8 +906,6 @@ func (t *RecordPrecedentTool) Description() string {
 func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID   uint   `json:"edict_id"`
-		Username  string `json:"username"`
-		Project   string `json:"project"`
 		Approved  bool   `json:"approved"`
 		Reasoning string `json:"reasoning"`
 	}
@@ -920,7 +916,7 @@ func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, e
 		return "", fmt.Errorf("edict_id and reasoning are required")
 	}
 
-	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.sage.username, Project: t.sage.project}
 
 	// Get quenched manifests to review
 	manifests, err := t.sage.GetQuenchedManifests(key)
@@ -993,9 +989,7 @@ func (t *ListQuenchedManifestsTool) Description() string {
 
 func (t *ListQuenchedManifestsTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID  uint   `json:"edict_id"`
-		Username string `json:"username"`
-		Project  string `json:"project"`
+		EdictID uint `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -1004,7 +998,7 @@ func (t *ListQuenchedManifestsTool) Call(ctx context.Context, input string) (str
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.sage.username, Project: t.sage.project}
 	manifests, err := t.sage.GetQuenchedManifests(key)
 	if err != nil {
 		return "", err

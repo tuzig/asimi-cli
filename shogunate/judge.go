@@ -509,9 +509,7 @@ func (t *ListPendingManifestsTool) Description() string {
 
 func (t *ListPendingManifestsTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID  uint   `json:"edict_id"`
-		Username string `json:"username"`
-		Project  string `json:"project"`
+		EdictID uint `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -520,7 +518,7 @@ func (t *ListPendingManifestsTool) Call(ctx context.Context, input string) (stri
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.judge.username, Project: t.judge.project}
 	manifests, err := t.judge.GetPendingManifests(key)
 	if err != nil {
 		return "", err
@@ -542,8 +540,6 @@ func (t *ListPendingManifestsTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id": map[string]any{"type": "integer", "description": "The edict ID to list manifests for"},
-			"username": map[string]any{"type": "string", "description": "The username"},
-			"project":  map[string]any{"type": "string", "description": "The project name"},
 		},
 		"required": []string{"edict_id"},
 	}

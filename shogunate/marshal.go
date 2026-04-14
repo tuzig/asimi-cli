@@ -277,8 +277,6 @@ func (t *CreateIncidentTool) Call(ctx context.Context, input string) (string, er
 		Description string `json:"description"`
 		Severity    string `json:"severity"`
 		EdictID     uint   `json:"edict_id"`
-		Username    string `json:"username"`
-		Project     string `json:"project"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -288,7 +286,7 @@ func (t *CreateIncidentTool) Call(ctx context.Context, input string) (string, er
 	}
 
 	incidentID := GenerateID("incident", params.Description, params.Severity)
-	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.marshal.username, Project: t.marshal.project}
 
 	if err := t.marshal.LogIncident(incidentID, key, "", params.Description); err != nil {
 		return "", err
@@ -304,8 +302,6 @@ func (t *CreateIncidentTool) ParameterSchema() map[string]any {
 			"description": map[string]any{"type": "string", "description": "Description of the incident"},
 			"severity":    map[string]any{"type": "string", "description": "Severity level (critical, high, medium, low)"},
 			"edict_id":    map[string]any{"type": "integer", "description": "Optional edict ID linked to this incident"},
-			"username":    map[string]any{"type": "string", "description": "The username"},
-			"project":     map[string]any{"type": "string", "description": "The project name"},
 		},
 		"required": []string{"description", "severity"},
 	}

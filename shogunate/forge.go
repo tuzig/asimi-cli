@@ -517,8 +517,6 @@ func (t *CreateManifestTool) Description() string {
 func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID    uint   `json:"edict_id"`
-		Username   string `json:"username"`
-		Project    string `json:"project"`
 		LingID     string `json:"ling_id"`
 		FilePath   string `json:"file_path"`
 		FuncName   string `json:"func_name"`
@@ -531,7 +529,7 @@ func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("edict_id and file_path are required")
 	}
 
-	key := storage.EdictKey{ID: params.EdictID, Username: params.Username, Project: params.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.forge.username, Project: t.forge.project}
 
 	// Auto-populate ling_id if not provided (use most recent pending ling)
 	if params.LingID == "" {
@@ -562,8 +560,6 @@ func (t *CreateManifestTool) ParameterSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"edict_id":    map[string]any{"type": "integer", "description": "The edict ID this manifest belongs to"},
-			"username":    map[string]any{"type": "string", "description": "The username"},
-			"project":     map[string]any{"type": "string", "description": "The project name"},
 			"ling_id":     map[string]any{"type": "string", "description": "The ling ID this manifest implements"},
 			"file_path":   map[string]any{"type": "string", "description": "Path to the modified file"},
 			"func_name":   map[string]any{"type": "string", "description": "Name of the function being modified (optional)"},
