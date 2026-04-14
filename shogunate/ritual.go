@@ -644,6 +644,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 		notify:      notify,
 	}
 
+	// TODO move ritual recovery to its own file
 	// If recovering from aborted execution, request zhengming confirmation (if getMinister is available)
 	if previousExec != nil && recoveryData != nil && recoveryFirstIncompleteStep >= 0 {
 		if r.getMinister != nil {
@@ -657,7 +658,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 				if ok {
 					questions := storage.ZhengmingQuestions{{
 						Text:    fmt.Sprintf("Ritual '%s' was previously aborted at step %d/%d. Recover from step %d (preserving %d completed steps)?", ritualName, recoveryFirstIncompleteStep, len(def.Steps), recoveryFirstIncompleteStep, recoveryFirstIncompleteStep),
-						Options: []string{"Recover from step " + strconv.Itoa(recoveryFirstIncompleteStep), "Start fresh from step 0"},
+						Options: []string{"Recover from step " + strconv.Itoa(recoveryFirstIncompleteStep), "Start fresh"},
 					}}
 					requestID, err := gate.RequestZhengming(key, questions, storage.PriorityUrgent)
 					if err == nil {
@@ -671,7 +672,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 						if waitErr != nil {
 							r.logger.Warn("recovery zhengming wait failed", "error", waitErr)
 							return nil, fmt.Errorf("recovery zhengming failed: %w", waitErr)
-						} else if answer.Answer == "Start fresh from step 0" {
+						} else if answer.Answer == "Start fresh" {
 							r.logger.Info("user declined recovery, starting fresh",
 								"ritual", ritualName,
 								"previous_execution_id", previousExec.ID)
@@ -949,7 +950,6 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		"execution_id", exec.ID,
 		"edict_id", exec.EdictID,
 		"duration", duration)
-		"data", exec.Data)
 
 	return nil
 }

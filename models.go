@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/storage"
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )

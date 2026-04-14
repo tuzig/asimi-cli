@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
-	"github.com/afittestide/asimi/storage"
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/storage"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"

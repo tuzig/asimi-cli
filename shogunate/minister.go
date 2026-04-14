@@ -104,6 +104,8 @@ type Minister interface {
 	GetConfig() internalconfig.LLMConfig
 	// Run starts the minister's processing loop (blocks until context cancelled)
 	Run(ctx context.Context)
+	// Get the interactive sessions
+	GetSession() *Session
 }
 
 // --- External Dependencies ---
@@ -812,6 +814,9 @@ func (m *MinisterBase) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
 	return &edict, nil
+}
+func (m *MinisterBase) GetSession() *Session {
+	return m.session
 }
 
 // sessBuildEnvBlock constructs a markdown summary of the OS, shell, and key paths.

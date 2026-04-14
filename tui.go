@@ -234,19 +234,17 @@ func (m *TUIModel) initHistory() {
 	}
 }
 
-// getCurrentSession returns the current shogunate session, or nil if not available
+// getCurrentSession returns the current shogunate session based on active tab's target minister.
 func (m *TUIModel) getCurrentSession() *shogunate.Session {
 	if m.shogunate == nil {
 		return nil
 	}
 	tab := m.tabs.ActiveTab()
-	switch tab.Type {
-	case TabRuling:
-		return m.shogunate.GetRulingSession()
-	case TabHunting:
-		return m.shogunate.GetHuntingSession()
+	minister := m.shogunate.GetMinister(tab.Target)
+	if minister == nil {
+		return nil
 	}
-	return nil
+	return minister.GetSession()
 }
 
 // SetSession configures the Shogunate with an LLM model from a session.
@@ -279,7 +277,7 @@ func (m *TUIModel) SetSession(session *shogunate.Session) {
 func (m *TUIModel) switchModel() tea.Cmd {
 	return func() tea.Msg {
 		slog.Info("switching LLM model", "provider", m.config.LLM.Provider, "model", m.config.LLM.Model)
-		client, err := initBifrost(context.Background())
+		client, err := initBifrost(context.Background(), m.config.LLM.RequestTimeoutSeconds, m.config.LLM.StreamIdleTimeoutSeconds)
 		if err != nil {
 			return llmInitErrorMsg{err: err}
 		}
@@ -325,7 +323,7 @@ func (m TUIModel) Init() tea.Cmd {
 	tick := tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 	return tea.Batch(func() tea.Msg {
 		slog.Info("connecting to LLM", "provider", m.config.LLM.Provider)
-		client, err := initBifrost(context.Background())
+		client, err := initBifrost(context.Background(), m.config.LLM.RequestTimeoutSeconds, m.config.LLM.StreamIdleTimeoutSeconds)
 		if err != nil {
 			return llmInitErrorMsg{err: err}
 		}
@@ -991,7 +989,7 @@ func (m TUIModel) handleCompletionDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		*m.prompt(), cmd = m.prompt().Update(msg)
 		if m.completionMode == "file" {
-			files, err := getFileTree(".")
+			files, err := utils.GetFileTree(".")
 			if err == nil {
 				m.updateFileCompletions(files)
 			}
@@ -1381,7 +1379,7 @@ func (m TUIModel) handleAtKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Show completion dialog with files
 	m.showCompletionDialog = true
 	m.completionMode = "file"
-	files, err := getFileTree(".")
+	files, err := utils.GetFileTree(".")
 	if err != nil {
 		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("Error scanning files: %v", err))
 	} else {

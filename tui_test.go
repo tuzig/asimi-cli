@@ -24,6 +24,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -1582,7 +1583,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	t.Log("Step 2: Testing file completion")
 
 	// Get file list and verify main.go exists
-	files, err := getFileTree(".")
+	files, err := utils.GetFileTree(".")
 	require.NoError(t, err)
 	mainGoIndex := -1
 	for i, f := range files {

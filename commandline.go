@@ -3,8 +3,8 @@ package main
 import (
 	"time"
 
-	"github.com/afittestide/asimi/storage"
 	"github.com/afittestide/asimi/internal/utils"
+	"github.com/afittestide/asimi/storage"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
