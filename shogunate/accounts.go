@@ -3,6 +3,7 @@ package shogunate
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -16,11 +17,18 @@ type BifrostLogger struct {
 	logger *slog.Logger
 }
 
-func (l *BifrostLogger) Debug(msg string, args ...any)          { l.logger.Debug(msg, args...) }
-func (l *BifrostLogger) Info(msg string, args ...any)           { l.logger.Info(msg, args...) }
-func (l *BifrostLogger) Warn(msg string, args ...any)           { l.logger.Warn(msg, args...) }
-func (l *BifrostLogger) Error(msg string, args ...any)          { l.logger.Error(msg, args...) }
-func (l *BifrostLogger) Fatal(msg string, args ...any)          { l.logger.Error(msg, args...) }
+func (l *BifrostLogger) log(level slog.Level, msg string, args ...any) {
+	if len(args) > 0 {
+		l.logger.Log(context.Background(), level, fmt.Sprintf(msg, args...))
+	} else {
+		l.logger.Log(context.Background(), level, msg)
+	}
+}
+func (l *BifrostLogger) Debug(msg string, args ...any) { l.log(slog.LevelDebug, msg, args...) }
+func (l *BifrostLogger) Info(msg string, args ...any)  { l.log(slog.LevelInfo, msg, args...) }
+func (l *BifrostLogger) Warn(msg string, args ...any)  { l.log(slog.LevelWarn, msg, args...) }
+func (l *BifrostLogger) Error(msg string, args ...any) { l.log(slog.LevelError, msg, args...) }
+func (l *BifrostLogger) Fatal(msg string, args ...any) { l.log(slog.LevelError, msg, args...) }
 func (l *BifrostLogger) SetLevel(schemas.LogLevel)              {}
 func (l *BifrostLogger) SetOutputType(schemas.LoggerOutputType) {}
 func (l *BifrostLogger) LogHTTPRequest(schemas.LogLevel, string) schemas.LogEventBuilder {
