@@ -358,7 +358,7 @@ func (r *RitualRunner) arrangeGetPrecedents(key storage.EdictKey) (interface{}, 
 
 // getEarthStatus captures the three parts of the Earth realm:
 // the capital (git log), the middle kingdom (git diff --staged), and the borderlands (git diff).
-func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) {
+func (r *RitualRunner) getEarthStatus(ctx context.Context) (map[string]string, error) {
 	result := map[string]string{
 		"earth_status:capital":        "",
 		"earth_status:middle_kingdom": "",
@@ -367,10 +367,9 @@ func (r *RitualRunner) getEarthStatus(ctx context.Context) (interface{}, error) 
 
 	// Git operations always run on host (not in sandbox)
 	gitRun := func(cmd, desc string) string {
-		output, err := runners.HostRun(ctx, runners.Input{
+		output, err := r.runner.Run(ctx, runners.Input{
 			Command:        cmd,
 			Description:    desc,
-			BypassApproval: true,
 		})
 		if err == nil {
 			return output.Output

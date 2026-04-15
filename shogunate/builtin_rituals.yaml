@@ -131,15 +131,13 @@
         - the earth status
       act: |
         Review the code changes in this ritual.
-
-        {{ .manifests }}
-
-        {{ .verdicts }}
-
-        {{ .earth_status }}
-
         Verify it adheres to the Imperial Code (project standards).
         Veto if the code violates conventions or introduces risk.
+        ## Forge Manifests
+        {{ .manifests }}
+        ## Verdicts
+        {{ .verdicts }}
+
       then:
         - record the sage's seal
       depends_on: [judging]
@@ -180,19 +178,19 @@
         - the court status
       act: |
         Given the information below, provide a succinct report on 三界.
-
         ## Unsealed Edicts
         {{ .unsealed_edicts }}
-
         ## Heaven's Snapshot
         {{ .heaven_snapshot }}
-
         ## Earth Status
-        {{ .earth_status }}
-
+        ### Borderlands
+        {{ .earth_status:borderlands }}
+        ### Middle Kingdom
+        {{ .earth_status:middle_kingdom }}
+        ### The capital
+        {{ .earth_status:capital }}
         ## Court Status
         {{ .court_status }}
-
         Finish by calling request_zhengming with a single question: "What's our next step?" with
         a few options for a clear next step. e.g, "review borderlands".
         
