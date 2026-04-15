@@ -45,15 +45,20 @@
         - the manifests
         - the verdicts
       act: |
-        Review the code changes for this edict.
+        Review the code changes for the edict.
+        Check for style violations, security concerns, and architectural issues.
+        Record your insights using record_precedent.
+        Produce a comprehensive code review report summarizing findings from both judge and sage.
+        Highlight any blocking issues and suggest improvements.
+        
+        ## Edict
+        {{ .edict }} 
 
+        ## Manifests
         {{ .manifests }}
 
+        ## Verdicts
         {{ .verdicts }}
-
-        Verify adherence to Imperial Code and project conventions.
-        Record precedents for any significant decisions.
-        Veto if changes violate conventions or introduce risk.
       depends_on: [judging]
       on_failure: goto
       on_failure_target: forging
@@ -113,13 +118,12 @@
         Make sure test coverage was not diminished
       then:
         - the verdicts are passed
-        - "!git diff"
         - record the judge's seal
       depends_on: [forging]
       on_failure: goto
       on_failure_target: forging
 
-    - name: censorship
+    - name: censoring
       minister: sage
       given:
         - the manifests
@@ -221,17 +225,22 @@
       given:
         - the borderlands
         - manifests for the borderlands
+        - the verdicts
       act: |
-        Review the manifests and the code changes below.
-
-        {{ .borderlands }}
-
-        {{ .borderland_manifests }}
-
+        Review the code changes for the edict.
         Check for style violations, security concerns, and architectural issues.
         Record your insights using record_precedent.
         Produce a comprehensive code review report summarizing findings from both judge and sage.
         Highlight any blocking issues and suggest improvements.
+        
+        ## Edict
+        {{ .edict }} 
+
+        ## Manifests
+        {{ .manifests }}
+
+        ## Verdicts
+        {{ .verdicts }}
 
 - name: lint-fix
   description: "Fix linter errors in parallel using fork/join"

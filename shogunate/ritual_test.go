@@ -2150,7 +2150,7 @@ func TestCastleSiegeJudgementStepHasVerdictCheck(t *testing.T) {
 	}
 
 	// Verify then steps include verdict check BEFORE git diff and seal recording
-	if len(judgingStep.Then) < 3 {
+	if len(judgingStep.Then) != 2 {
 		t.Fatalf("castle-siege judgement: expected at least 3 then steps, got %d: %v",
 			len(judgingStep.Then), judgingStep.Then)
 	}
@@ -2161,14 +2161,8 @@ func TestCastleSiegeJudgementStepHasVerdictCheck(t *testing.T) {
 			judgingStep.Then[0])
 	}
 
-	// Git diff comes second
-	if judgingStep.Then[1] != "!git diff" {
-		t.Errorf("castle-siege judgement: second then step should be '!git diff', got %q",
-			judgingStep.Then[1])
-	}
-
 	// Seal recording must come third
-	if judgingStep.Then[2] != "record the judge's seal" {
+	if judgingStep.Then[1] != "record the judge's seal" {
 		t.Errorf("castle-siege judgement: third then step should be 'record the judge's seal', got %q",
 			judgingStep.Then[2])
 	}
