@@ -58,6 +58,7 @@ type TabManager struct {
 	width, height   int
 	markdownEnabled bool
 	getStatus       func() string
+	onTabSwitch     func() // Called after tab switch to update TUI state
 }
 
 // NewTabManager creates a TabManager with 5 tabs per the Shogunate structure:
@@ -213,6 +214,10 @@ func (tm *TabManager) SwitchTo(index int) {
 		return
 	}
 	tm.activeTab = index
+	// Notify TUI of tab switch so it can update context percent
+	if tm.onTabSwitch != nil {
+		tm.onTabSwitch()
+	}
 }
 
 // Add creates a new tab and switches to it

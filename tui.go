@@ -184,6 +184,12 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 
 	// Initialize tab system with default Ruling tab
 	model.tabs = NewTabManager(80, 18, markdownEnabled, func() string { return model.Mode })
+	// Set up tab switch callback to update context percent in status
+	model.tabs.onTabSwitch = func() {
+		if session := model.getCurrentSession(); session != nil {
+			model.status.ContextPercent = session.GetContextUsagePercent()
+		}
+	}
 
 	// Set initial status info - show disconnected state initially
 	model.status.SetProvider(cfg.LLM.Provider, cfg.LLM.Model, false)
@@ -1657,25 +1663,32 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shogunate.StreamChunkMsg:
 		// Handle text chunks from Shogunate — route to correct tab
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		m.status.AddStreamChars(len(msg.Text))
 		chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
+		chat.AddAIChunk(msg.Text)
+		session := m.getCurrentSession()
+		if session != nil && session.ChannelID() == msg.ChannelID {
+			m.status.AddStreamChars(len(msg.Text))
+			m.status.ContextPercent = session.GetContextUsagePercent()
+		}
 		if m.tabs.AnyStreaming() {
 			m.waitingStart = time.Now()
 			if !m.waitingForResponse {
 				waitCmd := m.startWaitingForResponse()
-				chat.AddAIChunk(msg.Text)
 				return m, waitCmd
 			}
 		}
-		chat.AddAIChunk(msg.Text)
 		return m, nil
 
 	case shogunate.StreamReasoningChunkMsg:
 		// Handle thinking/reasoning chunks from Shogunate — route to correct tab
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		m.status.AddStreamChars(len(msg.Text))
 		chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
 		chat.AddThinkingChunk(msg.Text)
+		session := m.getCurrentSession()
+		if session != nil && session.ChannelID() == msg.ChannelID {
+			m.status.AddStreamChars(len(msg.Text))
+			m.status.ContextPercent = session.GetContextUsagePercent()
+		}
 		return m, nil
 
 	case shogunate.MinisterInvokingMsg:

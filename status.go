@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/shogunate"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -18,8 +17,7 @@ type StatusComponent struct {
 	HasError    bool // Track if there's a model error
 	Width       int
 	Style       lipgloss.Style
-	Session     *shogunate.Session // Reference to session for token/time tracking
-	repoInfo    *repo.RepoInfo     // Git repository information
+	repoInfo    *repo.RepoInfo // Git repository information
 	mode        string
 	ViPendingOp string
 
@@ -32,6 +30,9 @@ type StatusComponent struct {
 	streamCharsTotal int
 	streamStartTime  time.Time
 	streamRate       float64
+
+	// Context usage percentage (updated by TUI on stream/tab switch)
+	ContextPercent float64
 }
 
 // NewStatusComponent creates a new status component
@@ -49,11 +50,6 @@ func (s *StatusComponent) SetProvider(provider, model string, connected bool) {
 	s.Provider = provider
 	s.Model = model
 	s.Connected = connected
-}
-
-// SetSession sets the session reference for tracking
-func (s *StatusComponent) SetSession(session *shogunate.Session) {
-	s.Session = session
 }
 
 // SetRepoInfo sets the repository information
@@ -371,14 +367,7 @@ func (s StatusComponent) renderShellRunnerIndicator() string {
 func (s StatusComponent) renderMiddleSection() string {
 	statusStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
 
-	// Get context usage percentage
-	var usagePercent float64
-	if s.Session != nil {
-		usagePercent = s.Session.GetContextUsagePercent()
-	}
-
-	// Format the output with icons
-	statusStr := fmt.Sprintf("🪣 %.0f%%", usagePercent)
+	statusStr := fmt.Sprintf("🪣 %.0f%%", s.ContextPercent)
 	if bar := s.rateBar(); bar != "" {
 		rate := int(s.streamRate)
 		avail := s.Width - 40 // rough estimate of space used by other sections
