@@ -387,28 +387,14 @@ func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Li
 			"description", ling.Description)
 
 		// Build work prompt for this specific ling
-		lingWork := fmt.Sprintf("Execute this ling without thinking too much: %s", ling.Description)
+		lingWork := fmt.Sprintf("This task is part of a larger change. DON'T build or test the project just do: %s", ling.Description)
 
-		// Create or reuse session for this ling
-		var session *Session
-		var output string
-		var lingErr error
+		_, output, err := f.streamTask(ctx, lingWork, task.EdictKey, task.Scratchpad, notify, nil, task.ChannelID)
 
-		if task.Session != nil {
-			session = task.Session
-			session.SetNotify(notify, session.ChannelID())
-			_, lingErr = session.AskWithStreaming(ctx, lingWork, nil)
-		} else {
-			session, output, lingErr = f.streamTask(ctx, lingWork, task.EdictKey, task.Scratchpad, notify, nil, task.ChannelID)
-		}
-
-		// Update task.Session for multi-ling continuity
-		task.Session = session
-
-		if lingErr != nil {
+		if err != nil {
 			// Mark ling as blocked/failed
-			f.SaveLingResult(&ling, output, lingErr)
-			return strings.Join(results, "\n"), fmt.Errorf("ling %s failed: %w", ling.LingID, lingErr)
+			f.SaveLingResult(&ling, output, err)
+			return strings.Join(results, "\n"), fmt.Errorf("ling %s failed: %w", ling.LingID, err)
 		}
 
 		// Mark ling as completed
