@@ -2008,7 +2008,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Update available - ask for confirmation
-		question := fmt.Sprintf("%sUpdate available: %s → %s. Do you want to update now?", systemPrefix, version, msg.latest)
+		question := fmt.Sprintf("%sUpdate available: %s → %s. Do you want to update now?", systemPrefix, utils.AsimiVersion, msg.latest)
 		return m, m.commandLine.EnterYesNoMode(question)
 
 	case updateAvailableMsg:
@@ -2396,7 +2396,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{
 			"latest_version":  latest.Version,
 			"has_update":      hasUpdate,
-			"current_version": version})
+			"current_version": utils.AsimiVersion})
 
 	case llmInitErrorMsg:
 		// LLM initialization failed - show persistent message in Chancellor's ruling tab
@@ -2964,7 +2964,7 @@ func (m TUIModel) renderHomeView(width, height int) string {
 		Align(lipgloss.Center).
 		Width(width)
 
-	versionDisplay := versionStyle.Render("Version: " + version)
+	versionDisplay := versionStyle.Render("Version: " + utils.AsimiVersion)
 
 	// Create a list of helpful commands
 	commands := []string{

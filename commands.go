@@ -844,7 +844,7 @@ func handleUpdateCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 
 		if !hasUpdate {
-			return updateCheckMsg{hasUpdate: false, latest: version}
+			return updateCheckMsg{hasUpdate: false, latest: utils.AsimiVersion}
 		}
 
 		// Update available - show confirmation
@@ -863,7 +863,7 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 		}
 
 		// Perform update
-		err := SelfUpdate(version)
+		err := SelfUpdate(utils.AsimiVersion)
 		if err != nil {
 			return updateCompleteMsg{success: false, err: err}
 		}

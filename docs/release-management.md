@@ -33,12 +33,12 @@ Then, rename the section to 0.2.1 and add the date:
 - Bug Y
 ```
 
-### 2. Update Version in main.go
+### 2. Update Version in internal/utils/asimi_version.go
 
-Edit line 34 in `main.go`:
+Edit line 17 in `internal/utils/asimi_version.go`:
 
 ```go
-var version = "0.2.1"
+var AsimiVersion = "0.2.1" // Update this before each release
 ```
 
 ### 3. Update README.md Roadmap
@@ -58,7 +58,7 @@ Replace completed roadmap items with new ones:
 ### 4. Commit the Release
 
 ```bash
-git add CHANGELOG.md main.go README.md
+git add CHANGELOG.md internal/utils/asimi_version.go README.md
 git commit -m "chore: releasing 0.2.1"
 ```
 
@@ -105,10 +105,10 @@ curl -fsSL https://raw.githubusercontent.com/afittestide/asimi-cli/main/scripts/
 
 ```bash
 # Full release flow
-vim CHANGELOG.md                           # Polish changelog
-sed -i 's/version = .*/version = "0.2.1"/' main.go  # Update version
-vim README.md                              # Update roadmap
-git add CHANGELOG.md main.go README.md && git commit -m "chore: releasing 0.2.1"
+vim CHANGELOG.md                                                   # Polish changelog
+sed -i 's/var AsimiVersion = .*/var AsimiVersion = "0.2.1"/' internal/utils/asimi_version.go  # Update version
+vim README.md                                                      # Update roadmap
+git add CHANGELOG.md internal/utils/asimi_version.go README.md && git commit -m "chore: releasing 0.2.1"
 git tag -a v0.2.1 -m "Release 0.2.1"
 git push origin main --tags
 ```

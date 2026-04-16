@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,9 +26,6 @@ import (
 	"go.uber.org/fx"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
-
-// Update the version as part of the version release process
-var version = "0.5.0"
 
 var program *tea.Program
 
@@ -92,7 +90,7 @@ func runInteractiveMode() error {
 		slog.Debug("[TIMING] Terminal check completed", "duration", time.Since(startTime))
 	}
 
-	fmt.Printf("Asimi %s loading...\n", version)
+	fmt.Printf("Asimi %s loading...\n", utils.AsimiVersion)
 
 	var tuiModel *TUIModel
 	var fxOptions []fx.Option
@@ -151,7 +149,7 @@ func runInteractiveMode() error {
 
 	// Check for updates in background (non-blocking)
 	go func() {
-		if AutoCheckForUpdates(version) {
+		if AutoCheckForUpdates(utils.AsimiVersion) {
 			tuiProgram.Send(updateAvailableMsg{})
 		}
 	}()
@@ -210,7 +208,7 @@ func main() {
 
 	// Handle --version flag
 	if cli.Version {
-		fmt.Printf("Asimi CLI v%s\n", version)
+		fmt.Printf("Asimi CLI v%s\n", utils.AsimiVersion)
 		os.Exit(0)
 	}
 
