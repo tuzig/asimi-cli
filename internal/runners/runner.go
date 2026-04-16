@@ -4,10 +4,31 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 )
+
+var (
+	globalRunner Runner
+	runnerMu     sync.RWMutex
+)
+
+// SetRunner sets the global runner (thread-safe)
+func SetRunner(r Runner) {
+	runnerMu.Lock()
+	globalRunner = r
+	runnerMu.Unlock()
+}
+
+// GetRunner returns the global runner (thread-safe)
+func GetRunner() Runner {
+	runnerMu.RLock()
+	r := globalRunner
+	runnerMu.RUnlock()
+	return r
+}
 
 // DefaultMaxOutputSize is the fallback when no config is provided.
 const DefaultMaxOutputSize = 51200 // 50KB

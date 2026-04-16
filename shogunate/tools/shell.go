@@ -12,20 +12,14 @@ import (
 // RunShellCommand is a tool for running shell commands in a persistent shell.
 // It uses the runners package for actual execution.
 type RunShellCommand struct {
-	runner          runners.Runner
-	hostRunner      runners.Runner
 	shouldRunOnHost func(cmd string) (runOnHost, needsApproval bool)
 }
 
 // NewRunShellCommand creates a new RunShellCommand tool
 func NewRunShellCommand(
-	runner runners.Runner,
-	hostRunner runners.Runner,
 	hostChecker func(string) (bool, bool),
 ) *RunShellCommand {
 	return &RunShellCommand{
-		runner:          runner,
-		hostRunner:      hostRunner,
 		shouldRunOnHost: hostChecker,
 	}
 }
@@ -60,28 +54,30 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		runOnHost, requiresApproval = t.shouldRunOnHost(params.Command)
 	}
 
-	if runOnHost && t.hostRunner != nil {
+	r := runners.GetRunner()
+	if runOnHost {
 		// Set the approval flag based on config patterns
 		runnerInput.BypassApproval = !requiresApproval
 
-		// Run directly on host
-		runnerOutput, err := t.hostRunner.Run(ctx, runnerInput)
+		// Create ephemeral host runner and run directly on host
+		hostRunner := runners.NewHostRunner()
+		runnerOutput, err := hostRunner.Run(ctx, runnerInput)
 		output.Output = runnerOutput.Output
 		output.ExitCode = runnerOutput.ExitCode
 		runErr = err
-	} else if t.runner != nil {
-		runnerOutput, err := t.runner.Run(ctx, runnerInput)
+	} else if r != nil {
+		runnerOutput, err := r.Run(ctx, runnerInput)
 		output.Output = runnerOutput.Output
 		output.ExitCode = runnerOutput.ExitCode
 		runErr = err
 
 		// If we got a harness error, try to restart and retry once
 		if runErr != nil {
-			if restartErr := t.runner.Restart(ctx); restartErr != nil {
+			if restartErr := r.Restart(ctx); restartErr != nil {
 				return "", fmt.Errorf("command failed and restart failed: %w (restart error: %v)", runErr, restartErr)
 			}
 
-			runnerOutput, err = t.runner.Run(ctx, runnerInput)
+			runnerOutput, err = r.Run(ctx, runnerInput)
 			output.Output = runnerOutput.Output
 			output.ExitCode = runnerOutput.ExitCode
 			runErr = err

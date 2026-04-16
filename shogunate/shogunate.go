@@ -459,6 +459,8 @@ func (s *Shogunate) SetRunner(r runners.Runner) {
 		return
 	}
 	s.runner = r
+	// Set globally so runners package can be used directly
+	runners.SetRunner(r)
 	// Propagate to all ministers that implement RunnerSetter
 	for _, m := range s.ministers {
 		if setter, ok := m.(interface{ SetRunner(runners.Runner) }); ok {

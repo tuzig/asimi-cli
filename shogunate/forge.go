@@ -59,7 +59,7 @@ func (f *Forge) Tools() []Tool {
 	}
 	// Add shell command tool if runner is available
 	if f.runner != nil {
-		toolList = append(toolList, tools.NewRunShellCommand(f.runner, f.runner, nil))
+		toolList = append(toolList, tools.NewRunShellCommand(nil))
 	}
 	return toolList
 }
@@ -372,6 +372,7 @@ func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Li
 		inBatch[l.LingID] = true
 	}
 
+	// TODO: run in parallel those lings we can
 	for _, ling := range sortedLings {
 		// Check if dependencies are satisfied
 		if !f.dependenciesSatisfied(ling, completedLingIDs, inBatch) {
