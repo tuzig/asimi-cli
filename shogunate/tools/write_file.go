@@ -29,15 +29,32 @@ func (t WriteFileTool) Description() string {
 }
 
 func (t WriteFileTool) Call(ctx context.Context, input string) (string, error) {
-	var params WriteFileInput
-	err := json.Unmarshal([]byte(input), &params)
+	// Use RawMessage to detect missing fields
+	var rawParams map[string]json.RawMessage
+	err := json.Unmarshal([]byte(input), &rawParams)
 	if err != nil {
 		return "", fmt.Errorf("invalid input: %w. The input should be a JSON object with 'path' and 'content' fields", err)
 	}
 
-	// Clean up path and content
+	// Check required fields are present
+	rawPath, hasPath := rawParams["path"]
+	rawContent, hasContent := rawParams["content"]
+
+	if !hasPath || !hasContent {
+		return "", fmt.Errorf("invalid input: missing required fields. The input should be a JSON object with 'path' and 'content' fields")
+	}
+
+	// Unmarshal the actual values
+	var params WriteFileInput
+	if err := json.Unmarshal(rawPath, &params.Path); err != nil {
+		return "", fmt.Errorf("invalid path: %w", err)
+	}
+	if err := json.Unmarshal(rawContent, &params.Content); err != nil {
+		return "", fmt.Errorf("invalid content: %w", err)
+	}
+
+	// Clean up path - remove surrounding quotes if any (handles LLM adding extra quotes)
 	params.Path = strings.Trim(params.Path, `"'`)
-	params.Content = strings.Trim(params.Content, `"'`)
 
 	// Validate that the path is within the project root
 	if err := ValidatePathWithinProject(params.Path); err != nil {
