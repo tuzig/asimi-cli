@@ -328,7 +328,6 @@ func TestAnsweringModeEditOption(t *testing.T) {
 	downMsg := tea.KeyMsg{Type: tea.KeyDown}
 	prompt, _ = prompt.Update(downMsg) // Selected = 1
 	prompt, _ = prompt.Update(downMsg) // Selected = 2
-	prompt, _ = prompt.Update(downMsg) // Selected = 3
 
 	// Press Enter to select Edit
 	enterMsg := tea.KeyMsg{Type: tea.KeyEnter}

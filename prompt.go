@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/afittestide/asimi/shogunate"
@@ -762,7 +763,7 @@ func (p PromptComponent) viewAnswering() string {
 	b.WriteByte('\n')
 
 	// Render options + "Chat" + "Edit"
-	allOptions := append(q.Options, "Chat", "Edit")
+	allOptions := append(q.Options, "Edit", "Chat")
 	for i, opt := range allOptions {
 		if i == q.Selected {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptOnBorder).Render(fmt.Sprintf("  ▶ %s", opt)))
@@ -793,13 +794,8 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 	case "k", "up":
 		q.Selected = (q.Selected - 1 + totalOptions) % totalOptions
 	case "enter":
+		slog.Info("User hit enter in answering", "selected", q.Selected, "len", len(q.Options))
 		if q.Selected == len(q.Options) {
-			// "Chat" selected — reject zhengming and return to chat
-			requestID := a.RequestID
-			return p, func() tea.Msg {
-				return AnsweredMsg{RequestID: requestID, Answers: []string{"[chat]"}}
-			}
-		} else if q.Selected == len(q.Options)+1 {
 			// "Edit" selected — open question in external editor
 			requestID := a.RequestID
 			questionText := q.Text
@@ -808,6 +804,12 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 			}
 			return p, func() tea.Msg {
 				return AnsweringEditMsg{RequestID: requestID, Question: questionText}
+			}
+		} else if q.Selected == len(q.Options)+1 {
+			// "Chat" selected — reject zhengming and return to chat
+			requestID := a.RequestID
+			return p, func() tea.Msg {
+				return AnsweredMsg{RequestID: requestID, Answers: []string{"[chat]"}}
 			}
 		}
 		return p.advanceAnswer(q.Options[q.Selected])

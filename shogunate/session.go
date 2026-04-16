@@ -81,6 +81,7 @@ type StreamMaxTokensReachedMsg struct {
 type SessionConfig struct {
 	LLM        internalconfig.LLMConfig
 	AgentsFile string
+	Sandbox    internalconfig.SandboxConfig
 }
 
 // Session represents a chat session for a minister
