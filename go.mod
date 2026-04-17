@@ -14,7 +14,7 @@ require (
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20250829135019-44e44e21330d
 	github.com/containers/podman/v5 v5.6.2
 	github.com/cucumber/cucumber-expressions/go/v19 v19.0.0
-	github.com/go-git/go-git/v5 v5.17.1
+	github.com/go-git/go-git/v5 v5.18.0
 	github.com/google/uuid v1.6.0
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.0
 	github.com/knadh/koanf/providers/env/v2 v2.0.0
