@@ -344,7 +344,7 @@ func (r *RitualRunner) arrangeGetPrecedents(key storage.EdictKey) (interface{}, 
 	if err != nil {
 		return nil, err
 	}
-	result := make([]map[string]interface{}, len(precedents))
+	result := make([]interface{}, len(precedents))
 	for i, p := range precedents {
 		result[i] = map[string]interface{}{
 			"precedent_id": p.PrecedentID,
@@ -360,9 +360,9 @@ func (r *RitualRunner) arrangeGetPrecedents(key storage.EdictKey) (interface{}, 
 // the capital (git log), the middle kingdom (git diff --staged), and the borderlands (git diff).
 func (r *RitualRunner) getEarthStatus(ctx context.Context) (map[string]string, error) {
 	result := map[string]string{
-		"earth_status:capital":        "",
-		"earth_status:middle_kingdom": "",
-		"earth_status:borderlands":    "",
+		"earth_capital":        "",
+		"earth_middle_kingdom": "",
+		"earth_borderlands":    "",
 	}
 
 	// Git operations always run on host (not in sandbox)
@@ -377,9 +377,9 @@ func (r *RitualRunner) getEarthStatus(ctx context.Context) (map[string]string, e
 		return ""
 	}
 
-	result["earth_status:capital"] = gitRun("git log --oneline -20", "get capital status (git log)")
-	result["earth_status:middle_kingdom"] = gitRun("git diff --staged", "get middle kingdom (git diff --staged)")
-	result["earth_status:borderlands"] = gitRun("git diff", "get earth status: borderlands (git diff)")
+	result["earth_capital"] = gitRun("git log --oneline -20", "get capital status (git log)")
+	result["earth_middle_kingdom"] = gitRun("git diff --staged", "get middle kingdom (git diff --staged)")
+	result["earth_borderlands"] = gitRun("git diff", "get earth status: borderlands (git diff)")
 
 	return result, nil
 }

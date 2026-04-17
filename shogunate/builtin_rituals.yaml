@@ -133,6 +133,13 @@
         Review the code changes in this ritual.
         Verify it adheres to the Imperial Code (project standards).
         Veto if the code violates conventions or introduces risk.
+        ## Earth Status
+        ### Borderlands
+        {{ .earth_borderlands }}
+        ### Middle Kingdom
+        {{ .earth_middle_kingdom }}
+        ### The capital
+        {{ .earth_capital }}
         ## Forge Manifests
         {{ .manifests }}
         ## Verdicts
@@ -184,11 +191,11 @@
         {{ .heaven_snapshot }}
         ## Earth Status
         ### Borderlands
-        {{ .earth_status:borderlands }}
+        {{ .earth_borderlands }}
         ### Middle Kingdom
-        {{ .earth_status:middle_kingdom }}
+        {{ .earth_middle_kingdom }}
         ### The capital
-        {{ .earth_status:capital }}
+        {{ .earth_capital }}
         ## Court Status
         {{ .court_status }}
         Finish by calling request_zhengming with a single question: "What's our next step?" with
