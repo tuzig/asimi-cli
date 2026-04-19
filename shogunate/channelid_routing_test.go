@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/mocks"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
@@ -20,16 +21,17 @@ import (
 // ChannelID="chancellor" instead of ChannelID="forge", causing streaming notifications to
 // route to the Chancellor tab instead of the Forge tab.
 func TestForgeChannelID_Routing(t *testing.T) {
-	t.Skip("requires mock bifrost client for streaming LLM responses")
-
 	db := setupMinisterTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create Forge with nil bifrost client (no LLM available)
+	// Create mock LLM bridge
+	mockLLM := mocks.NewLLMProvider()
+
+	// Create Forge with mock LLM client
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	forge := NewForge(base)
-	forge.SetMinisterConfig(nil, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+	forge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	// Create edict with a ling so Forge executes via executeLings (which also has the bug)
 	edict := &storage.Edict{SessionID: "test-session", Intent: "Test ChannelID routing", Username: "testuser", Project: "testproject"}
@@ -96,15 +98,16 @@ func TestForgeChannelID_Routing(t *testing.T) {
 // TestForgeChannelID_DirectStreamTask verifies ChannelID routing when Forge uses streamTask directly
 // (no pending lings, so it falls back to streamTask instead of executeLings).
 func TestForgeChannelID_DirectStreamTask(t *testing.T) {
-	t.Skip("requires mock bifrost client for streaming LLM responses")
-
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	// Create Forge with nil bifrost client
+	// Create mock LLM bridge
+	mockLLM := mocks.NewLLMProvider()
+
+	// Create Forge with mock LLM client
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	forge := NewForge(base)
-	forge.SetMinisterConfig(nil, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+	forge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	// Collect all streaming notifications
 	var mu sync.Mutex
@@ -150,16 +153,17 @@ func TestForgeChannelID_DirectStreamTask(t *testing.T) {
 // This test MUST FAIL before the fix (when Judge hardcodes ChannelID="chancellor")
 // and MUST PASS after the fix (when Judge uses ChannelID="judge").
 func TestJudgeChannelID_Routing(t *testing.T) {
-	t.Skip("requires mock bifrost client for streaming LLM responses")
-
 	db := setupMinisterTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create Judge with nil bifrost client
+	// Create mock LLM bridge
+	mockLLM := mocks.NewLLMProvider()
+
+	// Create Judge with mock LLM client
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	judge := NewJudge(base, nil)
-	judge.SetMinisterConfig(nil, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+	judge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	// Collect all streaming notifications
 	var mu sync.Mutex
@@ -205,16 +209,17 @@ func TestJudgeChannelID_Routing(t *testing.T) {
 // This test MUST FAIL before the fix (when Sage hardcodes ChannelID="chancellor" in streamTask)
 // and MUST PASS after the fix (when Sage uses ChannelID="sage").
 func TestSageChannelID_Routing(t *testing.T) {
-	t.Skip("requires mock bifrost client for streaming LLM responses")
-
 	db := setupMinisterTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create Sage with nil bifrost client
+	// Create mock LLM bridge
+	mockLLM := mocks.NewLLMProvider()
+
+	// Create Sage with mock LLM client
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	sage := NewSage(base, nil)
-	sage.SetMinisterConfig(nil, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	// Collect all streaming notifications
 	var mu sync.Mutex

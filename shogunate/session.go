@@ -17,7 +17,6 @@ import (
 	"github.com/afittestide/asimi/internal"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
-	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -96,8 +95,8 @@ type Session struct {
 	ProjectSlug string    `json:"project_slug,omitempty"`
 	TabType     string    `json:"tab_type,omitempty"`
 
-	model        *bifrost.Bifrost
-	config       *internalconfig.LLMConfig
+	model LLMProvider // LLM client (implements ChatCompletionRequest/ChatCompletionStreamRequest)
+	config *internalconfig.LLMConfig
 	tools        []Tool
 	messages     []schemas.ChatMessage
 	notify       internal.NotifyFunc
@@ -140,7 +139,7 @@ type Session struct {
 
 // NewSession creates a new minister session
 func NewSession(
-	model *bifrost.Bifrost,
+	model LLMProvider,
 	cfg *SessionConfig,
 	tools []Tool,
 	scheduler *runners.CoreToolScheduler,
@@ -206,8 +205,8 @@ func NewSession(
 	return session, nil
 }
 
-// GetModel returns the LLM model for this session
-func (s *Session) GetModel() *bifrost.Bifrost {
+// GetModel returns the LLM client for this session
+func (s *Session) GetModel() LLMProvider {
 	return s.model
 }
 

@@ -16,7 +16,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	bifrost "github.com/maximhq/bifrost/core"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -1033,7 +1033,7 @@ func (m *ritualTestMinister) SystemPrompt() string        { return "" }
 func (m *ritualTestMinister) Title() string               { return m.id }
 func (m *ritualTestMinister) Tools() []Tool               { return nil }
 func (m *ritualTestMinister) Tasks() chan<- *Task         { return m.tasksCh }
-func (m *ritualTestMinister) Model() *bifrost.Bifrost     { return nil }
+func (m *ritualTestMinister) Model() LLMProvider     { return nil }
 func (m *ritualTestMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (m *ritualTestMinister) Run(ctx context.Context) {
 	for {

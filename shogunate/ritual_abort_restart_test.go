@@ -37,8 +37,7 @@ func (m *blockingTestMinister) Run(ctx context.Context) { <-ctx.Done() }
 // 4. Verify completed steps are SKIPPED
 // 5. Verify remaining steps complete successfully
 func TestRitualAbortAndRestart_Integration(t *testing.T) {
-	t.Skip("requires mock bifrost client for LLM responses in ritual steps")
-
+	t.Skip("requires real LLM responses or task processing from ministers")
 	tmpDir := t.TempDir()
 	db, err := gorm.Open(sqlite.Open(tmpDir+"/test.db"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -137,8 +136,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 // TestRitualAbortMidStep_VerifySkipExplicit tests that when a ritual is aborted
 // mid-step, the recovery correctly identifies the incomplete step and skips completed ones.
 func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
-	t.Skip("requires mock bifrost client for LLM responses in ritual steps")
-
+	t.Skip("requires real LLM responses or task processing from ministers")
 	tmpDir := t.TempDir()
 	db, err := gorm.Open(sqlite.Open(tmpDir+"/test.db"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),

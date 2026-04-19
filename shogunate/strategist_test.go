@@ -12,7 +12,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	asimitools "github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	bifrost "github.com/maximhq/bifrost/core"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +32,7 @@ func (m *capturingMinister) SystemPrompt() string        { return "" }
 func (m *capturingMinister) Title() string               { return m.id }
 func (m *capturingMinister) Tools() []Tool               { return nil }
 func (m *capturingMinister) Tasks() chan<- *Task         { return m.tasksCh }
-func (m *capturingMinister) Model() *bifrost.Bifrost     { return nil }
+func (m *capturingMinister) Model() LLMProvider     { return nil }
 func (m *capturingMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (m *capturingMinister) Run(ctx context.Context) {
 	for {

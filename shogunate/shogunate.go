@@ -12,7 +12,6 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
@@ -287,15 +286,15 @@ func (s *Shogunate) GetMinister(id string) Minister {
 	return nil
 }
 
-// ConfigureModel sets the Bifrost client for all ministers.
-// This should be called once the Bifrost client is initialized.
-func (s *Shogunate) ConfigureModel(client *bifrost.Bifrost, config *SessionConfig, repoInfo repo.RepoInfo) {
+// ConfigureModel sets the LLM client for all ministers.
+// This should be called once the LLM client is initialized.
+func (s *Shogunate) ConfigureModel(client LLMProvider, config *SessionConfig, repoInfo repo.RepoInfo) {
 	if s == nil {
 		return
 	}
 	for _, minister := range s.Ministers() {
 		if base, ok := minister.(interface {
-			SetMinisterConfig(*bifrost.Bifrost, *SessionConfig, repo.RepoInfo)
+			SetMinisterConfig(LLMProvider, *SessionConfig, repo.RepoInfo)
 		}); ok {
 			base.SetMinisterConfig(client, config, repoInfo)
 		}

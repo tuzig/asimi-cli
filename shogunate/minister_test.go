@@ -18,7 +18,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	bifrost "github.com/maximhq/bifrost/core"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -769,7 +769,7 @@ func (f *fakeMinister) SystemPrompt() string        { return "You are a test min
 func (f *fakeMinister) Title() string               { return "Fake" }
 func (f *fakeMinister) Tools() []Tool               { return nil }
 func (f *fakeMinister) Tasks() chan<- *Task         { return f.tasks }
-func (f *fakeMinister) Model() *bifrost.Bifrost     { return nil }
+func (f *fakeMinister) Model() LLMProvider     { return nil }
 func (f *fakeMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (f *fakeMinister) Run(ctx context.Context)     {}
 

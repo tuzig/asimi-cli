@@ -23,7 +23,6 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	bifrost "github.com/maximhq/bifrost/core"
 	"gorm.io/gorm"
 )
 
@@ -98,8 +97,8 @@ type Minister interface {
 	SubmitPrompt(p *Prompt)
 	// RepoInfo returns the repository information
 	RepoInfo() repo.RepoInfo
-	// Model returns the minister's Bifrost client
-	Model() *bifrost.Bifrost
+	// Model returns the minister's LLM client
+	Model() LLMProvider
 	// GetConfig returns the minister's LLM configuration
 	GetConfig() internalconfig.LLMConfig
 	// Run starts the minister's processing loop (blocks until context cancelled)
@@ -205,7 +204,7 @@ type StreamDoneMsg struct{ ChannelID string }
 type MinisterBase struct {
 	db         *gorm.DB
 	ministerID string
-	client     *bifrost.Bifrost
+	client LLMProvider // LLM client for chat completions
 	config     *SessionConfig
 	repoInfo   repo.RepoInfo
 	runner     runners.Runner
@@ -393,7 +392,7 @@ func WithChannelID(notify internal.NotifyFunc, session *Session, channelID strin
 }
 
 // CreateSession creates a session for a minister with composed system prompt.
-func CreateSession(minister Minister, client *bifrost.Bifrost, config *SessionConfig, notify internal.NotifyFunc, channelID string, keys ...storage.EdictKey) (*Session, error) {
+func CreateSession(minister Minister, client LLMProvider, config *SessionConfig, notify internal.NotifyFunc, channelID string, keys ...storage.EdictKey) (*Session, error) {
 	key := storage.EdictKey{}
 	if len(keys) > 0 {
 		key = keys[0]
@@ -403,7 +402,7 @@ func CreateSession(minister Minister, client *bifrost.Bifrost, config *SessionCo
 }
 
 // CreateSessionWithOpts creates a session with extended options including given context.
-func CreateSessionWithOpts(minister Minister, client *bifrost.Bifrost, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
+func CreateSessionWithOpts(minister Minister, client LLMProvider, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
 	systemPrompt := buildSystemPrompt(minister, config, opts.EdictKey, opts.Scratchpad)
 	return NewSession(client, config, minister.Tools(), nil, notify, systemPrompt, opts.ChannelID)
 }
@@ -493,8 +492,8 @@ func readProjectContext(agentsFile string) string {
 }
 
 // SetMinisterConfig updates the MinisterBase configuration for session creation.
-// This allows ministers to be configured with a Bifrost client after initialization.
-func (m *MinisterBase) SetMinisterConfig(client *bifrost.Bifrost, config *SessionConfig, repoInfo repo.RepoInfo) {
+// This allows ministers to be configured with an LLM client after initialization.
+func (m *MinisterBase) SetMinisterConfig(client LLMProvider, config *SessionConfig, repoInfo repo.RepoInfo) {
 	m.client = client
 	m.config = config
 	m.repoInfo = repoInfo
@@ -505,8 +504,8 @@ func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 	m.notify = notify
 }
 
-// Model returns the minister's Bifrost client.
-func (m *MinisterBase) Model() *bifrost.Bifrost {
+// Model returns the minister's LLM client.
+func (m *MinisterBase) Model() LLMProvider {
 	return m.client
 }
 
