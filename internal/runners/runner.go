@@ -126,6 +126,7 @@ func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	} else {
 		slog.Info("using host shell runner (podman not available or image missing)", "image", imageName)
 	}
+	SetRunner(runner)
 	return runner
 }
 func HostRun(ctx context.Context, in Input) (Output, error) {
