@@ -132,7 +132,7 @@
       act: |
         Review the code changes in this ritual.
         Verify it adheres to the Imperial Code (project standards).
-        Veto if the code violates conventions or introduces risk.
+        Use the record_precedent tool to record whether the change was approved and if not, explain the why in the `reasoning` parameter.
         ## Earth Status
         ### Borderlands
         {{ .earth_borderlands }}
