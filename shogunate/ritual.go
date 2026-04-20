@@ -132,8 +132,7 @@ type Rituals []*RitualDef
 
 // RitualTrigger defines when a ritual can be invoked
 type RitualTrigger struct {
-	Event  string `yaml:"event,omitempty"`  // Event type that triggers this ritual
-	Manual bool   `yaml:"manual,omitempty"` // Can be manually invoked
+	Event string `yaml:"event,omitempty"` // Event type that triggers this ritual
 }
 
 // InputDef defines an input parameter for a ritual
@@ -153,7 +152,6 @@ type RitualStep struct {
 	Then            []string          `yaml:"then,omitempty"`              // Then steps: "!" prefix = bash, else matched via step registry
 	Out             string            `yaml:"out,omitempty"`               // Output template rendered after then steps
 	Task            string            `yaml:"task,omitempty"`              // Alias for Act (backward compat)
-	DependsOn       []string          `yaml:"depends_on,omitempty"`        // Steps that must complete first
 	OnFailure       string            `yaml:"on_failure,omitempty"`        // retry, zhengming, goto, abort
 	OnFailureTarget string            `yaml:"on_failure_target,omitempty"` // Target step for goto
 	MaxRetries      int               `yaml:"max_retries,omitempty"`       // Override default retries
@@ -273,15 +271,8 @@ func ValidateRitual(def *RitualDef) error {
 		stepNames[step.Name] = true
 	}
 
-	// Validate step references and dependencies
+	// Validate step references
 	for _, step := range def.Steps {
-		// Validate depends_on references
-		for _, dep := range step.DependsOn {
-			if !stepNames[dep] {
-				return fmt.Errorf("ritual %q: step %q depends on unknown step %q", def.Name, step.Name, dep)
-			}
-		}
-
 		// Validate on_failure_target
 		onFailure := step.OnFailure
 		if onFailure == "" {
@@ -313,53 +304,6 @@ func ValidateRitual(def *RitualDef) error {
 				if workStep.Act == "" && workStep.Task == "" {
 					return fmt.Errorf("ritual %q: fork step %q work[%d] requires act or task", def.Name, step.Name, i)
 				}
-			}
-		}
-	}
-
-	// Check for circular dependencies
-	if err := checkCircularDeps(def); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// checkCircularDeps detects circular dependencies in step depends_on
-func checkCircularDeps(def *RitualDef) error {
-	// Build dependency graph
-	deps := make(map[string][]string)
-	for _, step := range def.Steps {
-		deps[step.Name] = step.DependsOn
-	}
-
-	// DFS to detect cycles
-	visited := make(map[string]bool)
-	recStack := make(map[string]bool)
-
-	var hasCycle func(name string) bool
-	hasCycle = func(name string) bool {
-		visited[name] = true
-		recStack[name] = true
-
-		for _, dep := range deps[name] {
-			if !visited[dep] {
-				if hasCycle(dep) {
-					return true
-				}
-			} else if recStack[dep] {
-				return true
-			}
-		}
-
-		recStack[name] = false
-		return false
-	}
-
-	for _, step := range def.Steps {
-		if !visited[step.Name] {
-			if hasCycle(step.Name) {
-				return fmt.Errorf("ritual %q: circular dependency detected involving step %q", def.Name, step.Name)
 			}
 		}
 	}
@@ -1018,17 +962,6 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		"step":         step.Name,
 		"step_index":   exec.CurrentStep,
 	})
-
-	// Check dependencies are complete (dependency step index must be less than current)
-	for _, dep := range step.DependsOn {
-		depIdx := r.stepIndex(exec.def, dep)
-		if depIdx == -1 {
-			return "", fmt.Errorf("dependency %q not found", dep)
-		}
-		if depIdx >= exec.CurrentStep {
-			return "", fmt.Errorf("dependency %q not completed", dep)
-		}
-	}
 
 	// === GIVEN ===
 	if len(step.Given) > 0 {

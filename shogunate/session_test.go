@@ -865,6 +865,8 @@ func TestSession_GenerateLLMResponse_EmptyChoices(t *testing.T) {
 }
 
 func TestSession_AskWithStreaming_Cancellation(t *testing.T) {
+	t.Parallel()
+
 	mockLLM := mocks.NewLLMProvider()
 	// Add delay to allow cancellation
 	mockLLM.DelayBetweenChunks = 50 * time.Millisecond
@@ -877,24 +879,25 @@ func TestSession_AskWithStreaming_Cancellation(t *testing.T) {
 	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "You are a helpful assistant", "test-channel")
 	require.NoError(t, err)
 
+	var interrupted bool
 	sess.SetNotify(func(msg any) {
 		if _, ok := msg.(StreamInterruptedMsg); ok {
-			// Interrupted notification received
+			interrupted = true
 		}
 	}, "test-channel")
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Cancel after a short delay
+	// Cancel after a short delay (before any chunks arrive)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
 
-	resp, err := sess.AskWithStreaming(ctx, "Hello", nil)
-	// Should return without error but with partial content
-	_ = resp
-	_ = err
+	_, err = sess.AskWithStreaming(ctx, "Hello", nil)
+	// Should return context error on cancellation
+	require.Equal(t, context.Canceled, err)
+	assert.True(t, interrupted, "expected StreamInterruptedMsg to be sent on cancellation")
 }
 
 func TestSession_AskWithStreaming_MaxTokens(t *testing.T) {
@@ -920,6 +923,19 @@ func TestSession_AskWithStreaming_ErrorStopReason(t *testing.T) {
 	require.NoError(t, err)
 	// Default mock response is "This is a mock streaming response"
 	assert.Equal(t, "This is a mock streaming response", resp)
+}
+
+func TestSession_AskWithStreaming_NilModel(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "You are a helpful assistant", "test-channel")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	resp, err := sess.AskWithStreaming(ctx, "Hello", nil)
+	assert.Empty(t, resp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "LLM model not configured")
 }
 
 func TestSession_ProcessToolCalls_LoopDetected(t *testing.T) {

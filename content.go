@@ -175,6 +175,7 @@ func (tm *TabManager) CancelTabByID(tabID string) {
 				tab.Cancel()
 			}
 			tab.Ctx, tab.Cancel = context.WithCancel(context.Background())
+			slog.Debug("Created a new cancelable context", "tab", tabID)
 			tab.Streaming = false
 			return
 		}

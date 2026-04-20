@@ -1,7 +1,5 @@
 - name: swift-strike
   description: A tight loop for enacting small changes in 地
-  triggers:
-    - manual: true
   inputs:
     edict_id:
       type: string
@@ -36,7 +34,6 @@
       then:
         - the verdicts are passed
         - record the judge's seal
-      depends_on: [forging]
       on_failure: goto
       on_failure_target: forging
     - name: censoring
@@ -50,16 +47,15 @@
         Record your insights using record_precedent.
         Produce a comprehensive code review report summarizing findings from both judge and sage.
         Highlight any blocking issues and suggest improvements.
-        
+
         ## Edict
-        {{ .edict }} 
+        {{ .edict }}
 
         ## Manifests
         {{ .manifests }}
 
         ## Verdicts
         {{ .verdicts }}
-      depends_on: [judging]
       on_failure: goto
       on_failure_target: forging
   then:
@@ -67,8 +63,6 @@
 
 - name: castle-siege
   description: "A medium complexity 地 change with planning"
-  triggers:
-    - manual: true
   inputs:
     edict_id:
       type: string
@@ -103,7 +97,6 @@
         {{ .manifests }}
 
         IMPORTANT - This should be replaced by the lings and not reach the model
-      depends_on: [strategizing]
       on_failure: retry
 
     - name: judging
@@ -119,7 +112,6 @@
       then:
         - the verdicts are passed
         - record the judge's seal
-      depends_on: [forging]
       on_failure: goto
       on_failure_target: forging
 
@@ -147,7 +139,6 @@
 
       then:
         - record the sage's seal
-      depends_on: [judging]
       on_failure: goto
       on_failure_target: forging
   then:
@@ -205,8 +196,6 @@
   description: |
     Code review - judge and sage review the borderlands before
     staging
-  triggers:
-    - manual: true
   background:
     - the borderlands
   steps:
@@ -249,8 +238,6 @@
 
 - name: lint-fix
   description: "Fix linter errors in parallel using fork/join"
-  triggers:
-    - manual: true
   max_retries: 2
   background:
     - the earth status
@@ -290,7 +277,6 @@
         Stage all changes and commit them together using git magic to exclude this commit from blame.
         Use: git add -A && git commit -m "Fix linter errors" --author="Asimi Linter <asimi@local>"
         Or use git commit-tree for advanced blame exclusion.
-      depends_on: [fix-all-files]
   then:
     - the edict is unblocked
     - record the judge's seal
@@ -298,8 +284,6 @@
 
 - name: project-init
   description: "Initialize a project for Asimi - establishes infrastructure and validates through the seal chain"
-  triggers:
-    - manual: true
   inputs:
     clearMode:
       type: boolean
@@ -367,7 +351,6 @@
         If the command runs and returns Linux, the sandbox is ready — record the Judge's Seal.
         If the command fails or returns a non-Linux kernel, the infrastructure is broken.
         Use record_verdict with clear feedback on what must be fixed.
-      depends_on: [establish-infrastructure]
       on_failure: goto
       on_failure_target: establish-infrastructure
 
@@ -392,7 +375,6 @@
         Do NOT call suggest_edict, request_zhengming, approve_doc, or any other
         tool after record_precedent. Project-init is not the place to propose
         new edicts or conventions — the ritual only needs your seal to move on.
-      depends_on: [sandbox-ready]
       on_failure: goto
       on_failure_target: establish-infrastructure
       then:

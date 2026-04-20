@@ -67,7 +67,6 @@ name: implement
 description: Implementation workflow
 triggers:
   - event: edict_assigned
-  - manual: true
 inputs:
   edict_id:
     type: string
@@ -79,14 +78,11 @@ steps:
 `,
 			wantErr: false,
 			check: func(t *testing.T, r *RitualDef) {
-				if len(r.Triggers) != 2 {
-					t.Errorf("expected 2 triggers, got %d", len(r.Triggers))
+				if len(r.Triggers) != 1 {
+					t.Errorf("expected 1 trigger, got %d", len(r.Triggers))
 				}
 				if r.Triggers[0].Event != "edict_assigned" {
 					t.Errorf("expected event 'edict_assigned', got %q", r.Triggers[0].Event)
-				}
-				if !r.Triggers[1].Manual {
-					t.Error("expected manual trigger to be true")
 				}
 				if input, ok := r.Inputs["edict_id"]; !ok {
 					t.Error("expected input 'edict_id'")
@@ -96,7 +92,7 @@ steps:
 			},
 		},
 		{
-			name: "ritual with dependencies and failure handling",
+			name: "ritual with failure handling",
 			yaml: `
 name: complex-ritual
 steps:
@@ -106,7 +102,6 @@ steps:
   - name: step2
     minister: judge
     task: Run tests
-    depends_on: [step1]
     on_failure: goto
     on_failure_target: step1
     max_retries: 5
@@ -117,9 +112,6 @@ steps:
 					t.Errorf("expected 2 steps, got %d", len(r.Steps))
 				}
 				step2 := r.Steps[1]
-				if len(step2.DependsOn) != 1 || step2.DependsOn[0] != "step1" {
-					t.Errorf("expected depends_on [step1], got %v", step2.DependsOn)
-				}
 				if step2.OnFailure != "goto" {
 					t.Errorf("expected on_failure 'goto', got %q", step2.OnFailure)
 				}
@@ -235,17 +227,6 @@ func TestValidateRitual(t *testing.T) {
 			errMsg:  "duplicate step name",
 		},
 		{
-			name: "unknown dependency",
-			ritual: &RitualDef{
-				Name: "bad-dep",
-				Steps: []RitualStep{
-					{Name: "step1", Minister: "forge", Task: "do", DependsOn: []string{"unknown"}},
-				},
-			},
-			wantErr: true,
-			errMsg:  "unknown step",
-		},
-		{
 			name: "unknown on_failure_target",
 			ritual: &RitualDef{
 				Name: "bad-target",
@@ -275,30 +256,6 @@ func TestValidateRitual(t *testing.T) {
 				},
 			},
 			wantErr: false,
-		},
-		{
-			name: "circular dependency - self reference",
-			ritual: &RitualDef{
-				Name: "circular",
-				Steps: []RitualStep{
-					{Name: "step1", Minister: "forge", Task: "do", DependsOn: []string{"step1"}},
-				},
-			},
-			wantErr: true,
-			errMsg:  "circular dependency",
-		},
-		{
-			name: "circular dependency - chain",
-			ritual: &RitualDef{
-				Name: "circular-chain",
-				Steps: []RitualStep{
-					{Name: "step1", Minister: "forge", Task: "a", DependsOn: []string{"step3"}},
-					{Name: "step2", Minister: "forge", Task: "b", DependsOn: []string{"step1"}},
-					{Name: "step3", Minister: "forge", Task: "c", DependsOn: []string{"step2"}},
-				},
-			},
-			wantErr: true,
-			errMsg:  "circular dependency",
 		},
 	}
 
@@ -470,6 +427,116 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 }
 
 // containsString checks if s contains substr
+func TestLoadAllRituals(t *testing.T) {
+	// Test that LoadAllRituals loads embedded rituals and merges them correctly
+	rituals, err := LoadAllRituals("")
+	if err != nil {
+		t.Fatalf("LoadAllRituals() error = %v", err)
+	}
+
+	if len(rituals) == 0 {
+		t.Fatal("expected at least 1 ritual from embedded")
+	}
+
+	// Verify dawn-audience is present (from embedded)
+	var found bool
+	for _, r := range rituals {
+		if r.Name == "dawn-audience" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected dawn-audience ritual from embedded")
+	}
+}
+
+func TestLoadAllRituals_WithProjectConfig(t *testing.T) {
+	// Create a temp project directory with a custom ritual
+	tmpDir := t.TempDir()
+	agentsDir := tmpDir + "/.agents"
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatalf("failed to create .agents dir: %v", err)
+	}
+
+	// Write a custom ritual that overrides dawn-audience
+	customYAML := []byte(`
+- name: dawn-audience
+  description: Custom dawn audience ritual
+  triggers:
+    - event: edict_created
+  inputs:
+    edict_id:
+      type: integer
+      required: true
+  steps:
+    - name: custom-step
+      minister: forge
+      task: Custom task
+`)
+
+	if err := os.WriteFile(agentsDir+"/rituals.yaml", customYAML, 0644); err != nil {
+		t.Fatalf("failed to write rituals.yaml: %v", err)
+	}
+
+	// Load with project dir
+	rituals, err := LoadAllRituals(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadAllRituals() error = %v", err)
+	}
+
+	// Project config should override embedded (same name)
+	var dawnAudience *RitualDef
+	for _, r := range rituals {
+		if r.Name == "dawn-audience" {
+			dawnAudience = r
+			break
+		}
+	}
+	if dawnAudience == nil {
+		t.Fatal("dawn-audience not found")
+	}
+	if dawnAudience.Description != "Custom dawn audience ritual" {
+		t.Errorf("expected custom description, got %q", dawnAudience.Description)
+	}
+}
+
+func TestLoadAllRituals_MissingProjectDir(t *testing.T) {
+	// Should not error when project directory doesn't exist
+	rituals, err := LoadAllRituals("/nonexistent/path/that/does/not/exist")
+	if err != nil {
+		t.Fatalf("LoadAllRituals() with nonexistent dir error = %v", err)
+	}
+
+	// Should still load embedded rituals
+	if len(rituals) == 0 {
+		t.Error("expected at least embedded rituals")
+	}
+}
+
+func TestRitualGuardLoadRituals(t *testing.T) {
+	// Test that RitualGuard.LoadRituals correctly loads and registers rituals
+	db := setupRitualTestDB(t)
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	rg := NewRitualGuard(RitualGuardOpts{Base: base})
+
+	err := rg.LoadRituals()
+	if err != nil {
+		t.Fatalf("LoadRituals() error = %v", err)
+	}
+
+	registry := rg.RitualRegistry()
+	if registry == nil {
+		t.Fatal("expected ritual registry")
+	}
+
+	// Verify dawn-audience is registered
+	dawnAudience := registry.Get("dawn-audience")
+	if dawnAudience == nil {
+		t.Error("expected dawn-audience to be registered")
+	}
+}
+
 func containsString(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
@@ -484,7 +551,7 @@ func TestRitualStreamMessages(t *testing.T) {
 	ritual := &RitualDef{
 		Name:        "test-stream",
 		Description: "A test ritual for streaming messages",
-		Triggers:    []RitualTrigger{{Manual: true}},
+		Triggers:    []RitualTrigger{},
 		Inputs: map[string]InputDef{
 			"edict_id": {Type: "integer", Required: true},
 		},
@@ -594,8 +661,8 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 		Description: "Multi-step ritual",
 		Steps: []RitualStep{
 			{Name: "step1", Minister: "forge", Task: "do one"},
-			{Name: "step2", Minister: "judge", Task: "do two", DependsOn: []string{"step1"}},
-			{Name: "step3", Minister: "sage", Task: "do three", DependsOn: []string{"step2"}},
+			{Name: "step2", Minister: "judge", Task: "do two"},
+			{Name: "step3", Minister: "sage", Task: "do three"},
 		},
 	}
 
