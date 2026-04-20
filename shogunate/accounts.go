@@ -53,13 +53,24 @@ func NewAccount(requestTimeout, streamIdleTimeout int) schemas.Account {
 
 // GetConfiguredProviders returns providers that have credentials configured
 func (a *Account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{
+	providers := []schemas.ModelProvider{
 		schemas.OpenAI,
 		schemas.Anthropic,
 		schemas.Azure,
 		schemas.Gemini,
 		schemas.OpenRouter,
-	}, nil
+	}
+	// Add Bedrock if AWS credentials are available via environment
+	if hasAWSEnvCredentials() {
+		providers = append(providers, schemas.Bedrock)
+	}
+	return providers, nil
+}
+
+// hasAWSEnvCredentials checks if standard AWS environment variables are set.
+// This enables Bedrock provider support without explicit key storage.
+func hasAWSEnvCredentials() bool {
+	return os.Getenv("AWS_ACCESS_KEY_ID") != "" && os.Getenv("AWS_SECRET_ACCESS_KEY") != ""
 }
 
 // GetKeysForProvider returns API keys or OAuth tokens for a given provider
@@ -79,6 +90,8 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 		"openai":     "OPENAI_API_KEY",
 		"anthropic":  "ANTHROPIC_API_KEY",
 		"gemini":     "GEMINI_API_KEY",
+		// Note: "bedrock" is NOT included here because it requires special handling
+		// (both AWS_ACCESS_KEY_ID AND AWS_SECRET_ACCESS_KEY must be set)
 	}
 	if envName, ok := envVarNames[providerStr]; ok {
 		if apiKey := os.Getenv(envName); apiKey != "" {
@@ -87,6 +100,48 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 				{ID: providerStr + "_apikey", Name: providerStr + " API Key", Value: schemas.EnvVar{Val: apiKey}, Models: []string{"*"}, Weight: 1.0, Enabled: &enabled},
 			}, nil
 		}
+	}
+
+	// Handle Bedrock with AWS credentials
+	if providerStr == "bedrock" && hasAWSEnvCredentials() {
+		enabled := true
+		region := os.Getenv("AWS_REGION")
+		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+		sessionToken := os.Getenv("AWS_SESSION_TOKEN")
+
+		key := schemas.Key{
+			ID:     "bedrock_aws",
+			Name:   "AWS Credentials",
+			Models: []string{"*"},
+			Weight: 1.0,
+			Enabled: &enabled,
+		}
+
+		if region != "" {
+			regionVal := schemas.EnvVar{Val: region}
+			key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
+				Region: &regionVal,
+			}
+		}
+		if accessKey != "" {
+			key.Value = schemas.EnvVar{Val: accessKey}
+		}
+		if secretKey != "" {
+			if key.BedrockKeyConfig == nil {
+				key.BedrockKeyConfig = &schemas.BedrockKeyConfig{}
+			}
+			key.BedrockKeyConfig.SecretKey = schemas.EnvVar{Val: secretKey}
+		}
+		if sessionToken != "" {
+			tokenVal := schemas.EnvVar{Val: sessionToken}
+			if key.BedrockKeyConfig == nil {
+				key.BedrockKeyConfig = &schemas.BedrockKeyConfig{}
+			}
+			key.BedrockKeyConfig.SessionToken = &tokenVal
+		}
+
+		return []schemas.Key{key}, nil
 	}
 
 	apiKey, err := keyring.GetAPIKey(providerStr)

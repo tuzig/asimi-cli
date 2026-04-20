@@ -14,7 +14,8 @@
       "Bash(wc:*)",
       "Bash(podman image:*)",
       "Bash(podman run:*)",
-      "Bash(podman history:*)"
+      "Bash(podman history:*)",
+      "Bash(ls:*)"
     ]
   }
 }

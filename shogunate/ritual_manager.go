@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -403,37 +404,30 @@ func (rg *RitualGuard) getSandboxImageName() string {
 
 // --- Ritual management ---
 
-// LoadRituals loads embedded rituals and project rituals from .agents/rituals/
+// LoadRituals loads rituals from all sources using LoadAllRituals.
+// It loads embedded rituals, user config (~/.config/asimi/rituals.yaml),
+// and project config (.agents/rituals.yaml).
 func (rg *RitualGuard) LoadRituals() error {
-	embedded, err := LoadEmbeddedRituals()
+	// Get project directory from current working directory
+	projectDir, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to load embedded rituals: %w", err)
+		rg.logger.Warn("failed to get current directory", "error", err)
+		projectDir = ""
 	}
 
-	for _, ritual := range embedded {
+	rituals, err := LoadAllRituals(projectDir)
+	if err != nil {
+		return fmt.Errorf("failed to load rituals: %w", err)
+	}
+
+	for _, ritual := range rituals {
 		if err := rg.ritualRegistry.Register(ritual); err != nil {
-			rg.logger.Warn("failed to register embedded ritual",
+			rg.logger.Warn("failed to register ritual",
 				"ritual", ritual.Name,
 				"error", err)
 			continue
 		}
-		rg.logger.Debug("loaded embedded ritual", "name", ritual.Name)
-	}
-
-	projectRituals, err := LoadRitualsFromDir(".agents/rituals")
-	if err != nil {
-		rg.logger.Warn("failed to load project rituals", "error", err)
-		return nil
-	}
-
-	for _, ritual := range projectRituals {
-		if err := rg.ritualRegistry.Register(ritual); err != nil {
-			rg.logger.Warn("failed to register project ritual",
-				"ritual", ritual.Name,
-				"error", err)
-			continue
-		}
-		rg.logger.Debug("loaded project ritual", "name", ritual.Name)
+		rg.logger.Debug("loaded ritual", "name", ritual.Name)
 	}
 
 	return nil

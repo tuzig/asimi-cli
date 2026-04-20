@@ -857,6 +857,10 @@ func buildPromptWithContext(userPrompt string, contextFiles map[string]string) s
 
 // generateLLMResponse calls the LLM and returns the response
 func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ctx context.Context, chunk []byte) error, reasoningFunc func(ctx context.Context, reasoningChunk, chunk []byte) error) (*responseChoice, error) {
+	if s.model == nil {
+		return nil, fmt.Errorf("LLM model not configured")
+	}
+
 	autoStr := "auto"
 	maxTokens := 64000
 	params := &schemas.ChatParameters{}
@@ -880,7 +884,7 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 		bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 		ch, bifrostErr := s.model.ChatCompletionStreamRequest(bifrostCtx, req)
 		if bifrostErr != nil {
-			return nil, fmt.Errorf("%s", bifrostErr.Error.Message)
+			return nil, bifrostErr.Error.Error
 		}
 
 		var content strings.Builder
@@ -892,7 +896,15 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 
 		for chunk := range ch {
 			if chunk.BifrostError != nil {
-				return nil, fmt.Errorf("%s", chunk.BifrostError.Error.Message)
+				var errMsg string
+				if chunk.BifrostError.Error != nil && chunk.BifrostError.Error.Error != nil {
+					errMsg = chunk.BifrostError.Error.Error.Error()
+				} else if chunk.BifrostError.Error != nil {
+					errMsg = chunk.BifrostError.Error.Message
+				} else {
+					errMsg = "unknown streaming error"
+				}
+				return nil, fmt.Errorf("streaming error: %s", errMsg)
 			}
 			if chunk.BifrostChatResponse == nil || len(chunk.BifrostChatResponse.Choices) == 0 {
 				// Check for usage on chunks without choices (some providers send usage separately)
@@ -983,7 +995,7 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 	resp, bifrostErr := s.model.ChatCompletionRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, fmt.Errorf("%s", bifrostErr.Error.Message)
+		return nil, bifrostErr.Error.Error
 	}
 	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("empty response choices")
@@ -1363,6 +1375,17 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			return nil
 		}
 
+		// Re-check for cancellation before making expensive LLM call
+		select {
+		case <-ctx.Done():
+			accumulatedText := s.getStreamBuffer()
+			if s.notify != nil {
+				s.notify(StreamInterruptedMsg{ChannelID: s.channelID, PartialContent: accumulatedText})
+			}
+			return accumulatedText, ctx.Err()
+		default:
+		}
+
 		choice, err := s.generateLLMResponse(ctx, streamingFunc, reasoningFunc)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -1376,6 +1399,11 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 				s.notify(StreamErrorMsg{ChannelID: s.channelID, Err: err})
 			}
 			return "", err
+		}
+
+		if choice == nil {
+			slog.Error("generateLLMResponse returned nil choice with no error")
+			return "", fmt.Errorf("unexpected nil response from LLM")
 		}
 
 		responseContent := s.getStreamBuffer()
