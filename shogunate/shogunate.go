@@ -522,36 +522,6 @@ func (s *Shogunate) SubmitPrompt(targetID string, p *Prompt) error {
 	return nil
 }
 
-// GetCurrentSession returns the session for the specified edict ID.
-// When edictID is empty, returns the Chancellor's ruling session.
-func (s *Shogunate) GetRulingSession() *Session {
-	if s == nil {
-		return nil
-	}
-	chancellor := s.GetMinister("chancellor")
-	if chancellor == nil {
-		return nil
-	}
-	ch, ok := chancellor.(*Chancellor)
-	if !ok {
-		s.logger.Warn("Failed to get the chancellor in Shogunate.GetCurrentSession")
-		return nil
-	}
-	return ch.session
-}
-
-// GetHuntingSession returns the Sage's hunting session
-func (s *Shogunate) GetHuntingSession() *Session {
-	if s == nil {
-		return nil
-	}
-	sage, ok := s.GetMinister("sage").(*Sage)
-	if !ok {
-		return nil
-	}
-	return sage.GetSession()
-}
-
 // RestoreMinisterSession creates a fully-wired session and injects loaded history.
 // Routes to chancellor or sage based on tabType.
 func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {

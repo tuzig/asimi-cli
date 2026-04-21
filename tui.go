@@ -293,24 +293,31 @@ func (m *TUIModel) switchModel() tea.Cmd {
 }
 
 func (m *TUIModel) saveSession() {
-	if m.sessionStore == nil {
+	if m.sessionStore == nil || !m.config.Session.Enabled || !m.config.Session.AutoSave {
+		return
+	}
+	if m.shogunate == nil {
 		return
 	}
 
-	if !m.config.Session.Enabled || !m.config.Session.AutoSave {
+	tab := m.tabs.ActiveTab()
+	// Court tab has no session to save
+	if tab == nil || tab.Type == TabCourt {
 		return
 	}
 
-	// Save both ruling and hunting sessions if they exist
-	if m.shogunate != nil {
-		if ruling := m.shogunate.GetRulingSession(); ruling != nil {
-			m.sessionStore.SaveSession(ruling)
-		}
-		if hunting := m.shogunate.GetHuntingSession(); hunting != nil {
-			m.sessionStore.SaveSession(hunting)
-		}
+	minister := m.shogunate.GetMinister(tab.Target)
+	if minister == nil {
+		return
 	}
-	slog.Debug("session auto-save queued")
+
+	session := minister.GetSession()
+	if session == nil {
+		return
+	}
+
+	m.sessionStore.SaveSession(session)
+	slog.Debug("session auto-saved", "tab", tab.Target)
 }
 
 // shutdown performs graceful shutdown of the TUI, ensuring all pending saves complete
@@ -1620,7 +1627,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Session already stopped — just reset UI state, don't re-cancel ctx.
 		m.tabs.ChatByTab(msg.ChannelID).AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
-		m.clearStreamingTab(msg.ChannelID)
+		m.tabs.ClearStreamingByTab(msg.ChannelID)
+		if !m.tabs.AnyStreaming() {
+			m.stopWaitingForResponse()
+		}
 		m.streamCompleteCallback = nil // Clear callback on interrupt
 		m.repoInfo.RefreshDiff()
 
@@ -2789,8 +2799,8 @@ func (m TUIModel) View() string {
 		return "Initializing..."
 	}
 
-	// Shogunate tab is prompt-free — give all space to content
-	isShogunateTab := m.tabs.ActiveTab().Type == TabShogunate
+	// Court tab is prompt-free — give all space to content
+	isCourtTab := m.tabs.ActiveTab().Type == TabCourt
 
 	// Update prompt dimensions based on content before rendering
 	// This ensures the prompt grows to 10 lines when multiline (#31)
@@ -2799,7 +2809,7 @@ func (m TUIModel) View() string {
 	promptHeight := 0
 	promptWithBorder := 0
 	// TODO: add a tab field `HasPrompt` and use it instead of isShogunateTab
-	if !isShogunateTab {
+	if !isCourtTab {
 		m.prompt().SetScreenHeight(m.height)
 		m.prompt().SetWidth(m.width - 2)
 		promptHeight = m.prompt().CalculateDesiredHeight()
@@ -2823,7 +2833,7 @@ func (m TUIModel) View() string {
 	}
 	mainContent := m.renderMainContent(modalHeight)
 	promptView := ""
-	if !isShogunateTab {
+	if !isCourtTab {
 		promptView = m.prompt().View()
 	}
 	commandLineView := m.commandLine.View()
@@ -2865,8 +2875,8 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 		return m.tabs.Content().View()
 	}
 
-	// Shogunate dashboard has its own renderer
-	if m.tabs.ActiveTab().Type == TabShogunate {
+	// Court dashboard has its own renderer
+	if m.tabs.ActiveTab().Type == TabCourt {
 		return m.renderShogunateView(justContentHeight)
 	}
 

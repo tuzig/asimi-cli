@@ -1363,10 +1363,6 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 			return "", fmt.Errorf("failed to create session for %s: %w", step.Minister, err)
 		}
 		exec.stepStates[exec.CurrentStep].Session = actSession
-	} else {
-		// Retry path — clean up any trailing unmatched tool calls from the
-		// interrupted turn, then update the notify callback.
-		actSession.SanitizeMessages()
 	}
 	actSession.SetNotify(notify, "chancellor")
 

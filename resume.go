@@ -190,14 +190,9 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 			timeStr := formatRelativeTime(session.LastUpdated)
 			sessionTitle := sessionTitlePreview(session)
 
-			tabLabel := "Ruling"
-			if session.TabType == "hunting" {
-				tabLabel = "Hunting"
-			}
-
 			var line strings.Builder
 			line.WriteString(prefix)
-			line.WriteString(fmt.Sprintf("[%s] [%s] %4d %s", timeStr, tabLabel, session.MessageCount, sessionTitle))
+			line.WriteString(fmt.Sprintf("[%s] %4d %s", timeStr, session.MessageCount, sessionTitle))
 
 			lineStyle := lipgloss.NewStyle()
 			if isSelected {
@@ -294,14 +289,11 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 		return
 	}
 
-	// Determine target tab from session's TabType (default to ruling)
-	targetTabType := TabRuling
-	if session.TabType == "hunting" {
-		targetTabType = TabHunting
+	// Determine target tab from session's TabType
+	// Court tab never resumes - skip if session is from Court
+	if session.TabType == "court" {
+		return
 	}
-
-	// Switch to the correct tab
-	m.tabs.SwitchToTabType(targetTabType)
 
 	// Clear current edict ID (resumed sessions are edict-free)
 	m.currentEdictKey = storage.EdictKey{}

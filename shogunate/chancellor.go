@@ -572,7 +572,7 @@ func (c *Chancellor) RestoreSession(msgs []schemas.ChatMessage) error {
 		return err
 	}
 	sess.SetMessages(msgs)
-	sess.TabType = "interactive"
+	sess.TabType = "chancellor"
 	c.MinisterBase.SetSession(sess)
 	return nil
 }
@@ -769,7 +769,7 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, key storage.EdictKey
 			c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
-		c.session.TabType = "interactive"
+		c.session.TabType = "chancellor"
 		c.logger.Info("chancellor created interactive session")
 	}
 
@@ -806,7 +806,7 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 			if err != nil {
 				taskErr = fmt.Errorf("failed to create session: %w", err)
 			} else {
-				c.session.TabType = "interactive"
+				c.session.TabType = "chancellor"
 			}
 		}
 

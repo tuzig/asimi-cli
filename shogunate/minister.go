@@ -316,7 +316,7 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 			m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
-		m.session.TabType = "interactive"
+		m.session.TabType = m.ministerID
 		m.logger.Info("created interactive session", "minister_id", m.ministerID)
 	}
 

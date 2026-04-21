@@ -17,11 +17,7 @@ import (
 type TabType string
 
 const (
-	TabRuling    TabType = "ruling"    // Default tab for edict conversation
-	TabHunting   TabType = "hunting"   // Sage codebase exploration
-	TabObserve   TabType = "observe"   // Minister observation
-	TabRitual    TabType = "ritual"    // Ritual monitoring
-	TabShogunate TabType = "shogunate" // Shogunate dashboard
+	TabCourt TabType = "court" // Court dashboard - special case, not a minister
 )
 
 // Tab represents a TUI tab with its own content buffer and stream target
@@ -67,15 +63,15 @@ type TabManager struct {
 func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager {
 	return TabManager{
 		tabs: []Tab{
-			NewTab("幕府 Court", TabShogunate, "shogunate",
+			NewTab("幕府 Court", TabCourt, "court",
 				newContentComponent(w, h, mdEnabled, getStatus)),
-			NewTab("宰相 Chancellor", TabRuling, "chancellor",
+			NewTab("宰相 Chancellor", "chancellor", "chancellor",
 				newContentComponent(w, h, mdEnabled, getStatus)),
-			NewTab("聖人 Sage", TabHunting, "sage",
+			NewTab("聖人 Sage", "sage", "sage",
 				newContentComponent(w, h, mdEnabled, getStatus)),
-			NewTab("工部 Forge", TabObserve, "forge",
+			NewTab("工部 Forge", "forge", "forge",
 				newContentComponent(w, h, mdEnabled, getStatus)),
-			NewTab("刑部 Judge", TabRitual, "judge",
+			NewTab("刑部 Judge", "judge", "judge",
 				newContentComponent(w, h, mdEnabled, getStatus)),
 		},
 		activeTab:       1,
@@ -184,13 +180,13 @@ func (tm *TabManager) CancelTabByID(tabID string) {
 }
 
 // CancelAllTabs cancels streaming on all tabs.
-// The ruling tab gets a fresh context for future rituals.
+// The Chancellor tab gets a fresh context for future rituals.
 func (tm *TabManager) CancelAllTabs() {
 	for i := range tm.tabs {
 		if tm.tabs[i].Cancel != nil {
 			tm.tabs[i].Cancel()
 		}
-		if tm.tabs[i].Type == TabRuling {
+		if tm.tabs[i].Target == "chancellor" {
 			tm.tabs[i].Ctx, tm.tabs[i].Cancel = context.WithCancel(context.Background())
 		} else {
 			tm.tabs[i].Cancel = nil
@@ -199,10 +195,10 @@ func (tm *TabManager) CancelAllTabs() {
 	}
 }
 
-// RulingCtx returns the ruling tab's current context.
+// RulingCtx returns the Chancellor tab's current context.
 func (tm *TabManager) RulingCtx() context.Context {
 	for i := range tm.tabs {
-		if tm.tabs[i].Type == TabRuling {
+		if tm.tabs[i].Target == "chancellor" {
 			return tm.tabs[i].Ctx
 		}
 	}

@@ -44,7 +44,7 @@ func TestSessionStore_RoundTrip(t *testing.T) {
 		Provider:    "openai",
 		Model:       "gpt-4",
 		WorkingDir:  tmpDir,
-		TabType:     "ruling",
+		TabType:     "chancellor",
 	}
 
 	// Add diverse message types
@@ -197,7 +197,7 @@ func TestSessionStore_ListSessions(t *testing.T) {
 	require.NoError(t, err)
 
 	// List sessions
-	sessions, err := store.ListSessions(10)
+	sessions, err := store.ListSessions(10, "")
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(sessions), 1, "should have at least one session")
 

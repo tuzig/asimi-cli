@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
     working_dir TEXT NOT NULL,
-    tab_type TEXT NOT NULL DEFAULT '',
+    tab_type TEXT NOT NULL,
     FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
 );
 

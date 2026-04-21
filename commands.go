@@ -185,36 +185,12 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	// Reset the appropriate minister session based on active tab
 	if model.shogunate != nil {
 		tab := model.tabs.ActiveTab()
-		// Get current session ID before resetting
-		var sessionID string
-		if session := model.getCurrentSession(); session != nil {
-			sessionID = session.ID
-		}
-		// Clear session from store - deletes messages and session atomically
-		if sessionID != "" && model.sessionStore != nil {
-			_ = model.sessionStore.ClearSession(sessionID)
-		}
-		switch tab.Type {
-		case TabRuling:
-			model.currentEdictKey = storage.EdictKey{}
-			model.shogunate.ResetRuling()
-		case TabHunting:
-			model.shogunate.ResetHunting()
-		case TabObserve:
-			// Forge tab - reset forge session
-			if m := model.shogunate.GetMinister("forge"); m != nil {
-				if rs, ok := m.(interface{ ResetSession() }); ok {
-					rs.ResetSession()
-				}
+		if m := model.shogunate.GetMinister(string(tab.Type)); m != nil {
+			if rs, ok := m.(interface{ ResetSession() }); ok {
+				rs.ResetSession()
 			}
-		case TabRitual:
-			// Judge tab - reset judge session
-			if m := model.shogunate.GetMinister("judge"); m != nil {
-				if rs, ok := m.(interface{ ResetSession() }); ok {
-					rs.ResetSession()
-				}
-			}
-			// TabShogunate has no interactive session to reset
+		} else {
+			slog.Debug("Failed to get session", "miniter", tab.Type)
 		}
 	}
 
@@ -310,7 +286,9 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 			listLimit = model.config.Session.ListLimit
 		}
 
-		sessions, err := model.sessionStore.ListSessions(listLimit)
+		currentTabType := string(model.tabs.ActiveTab().Type)
+
+		sessions, err := model.sessionStore.ListSessions(listLimit, currentTabType)
 		if err != nil {
 			return sessionResumeErrorMsg{err: fmt.Errorf("failed to list sessions: %w", err)}
 		}
@@ -874,20 +852,20 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 
 func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 	if len(args) == 0 {
-		// Default: open a Hunting tab
-		model.tabs.Add("Hunting", TabHunting, "sage")
-		model.commandLine.AddToast("Opened Hunting tab", "success", time.Second*2)
+		// Default: open a Sage tab
+		model.tabs.Add("Sage", "sage", "sage")
+		model.commandLine.AddToast("Opened Sage tab", "success", time.Second*2)
 		return nil
 	}
 
 	target := args[0]
 	switch target {
-	case "hunting":
-		model.tabs.Add("Hunting", TabHunting, "sage")
-		model.commandLine.AddToast("Opened Hunting tab", "success", time.Second*2)
-	case "shogunate":
-		model.tabs.Add("Shogunate", TabShogunate, "shogunate")
-		model.commandLine.AddToast("Opened Shogunate dashboard", "success", time.Second*2)
+	case "sage":
+		model.tabs.Add("Sage", "sage", "sage")
+		model.commandLine.AddToast("Opened Sage tab", "success", time.Second*2)
+	case "court":
+		model.tabs.Add("Court", TabCourt, "court")
+		model.commandLine.AddToast("Opened Court dashboard", "success", time.Second*2)
 		return nil
 	case "ritual":
 		if len(args) < 2 {
@@ -895,13 +873,13 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 			return nil
 		}
 		runID := args[1]
-		model.tabs.Add("Ritual:"+runID, TabRitual, runID)
+		model.tabs.Add("Ritual:"+runID, "ritual", runID)
 		model.commandLine.AddToast(fmt.Sprintf("Opened Ritual tab: %s", runID), "success", time.Second*2)
 	default:
 		// Treat as minister name
 		if model.shogunate != nil && model.shogunate.GetMinister(target) != nil {
 			label := strings.ToUpper(target[:1]) + target[1:]
-			model.tabs.Add(label, TabObserve, target)
+			model.tabs.Add(label, TabType(target), target)
 			model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 		} else {
 			model.commandLine.AddToast(fmt.Sprintf("Unknown minister: %s", target), "error", time.Second*3)

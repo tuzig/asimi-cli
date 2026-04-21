@@ -170,7 +170,7 @@ func (c *Sage) RestoreSession(msgs []schemas.ChatMessage) error {
 		return err
 	}
 	sess.SetMessages(msgs)
-	sess.TabType = "hunting"
+	sess.TabType = "sage"
 	c.MinisterBase.SetSession(sess)
 	return nil
 }
@@ -212,7 +212,7 @@ func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 			c.notify(StreamErrorMsg{ChannelID: "sage", Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
-		sess.TabType = "hunting"
+		sess.TabType = "sage"
 		c.MinisterBase.SetSession(sess)
 	}
 

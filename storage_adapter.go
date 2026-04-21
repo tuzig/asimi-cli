@@ -348,9 +348,9 @@ func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 	return session, nil
 }
 
-// ListSessions lists sessions for the current branch
-func (s *SessionStore) ListSessions(limit int) ([]shogunate.Session, error) {
-	storageSessions, err := s.store.ListSessions(s.Host, s.Org, s.Project, s.Branch, limit)
+// ListSessions lists sessions for the current branch, optionally filtered by tab type
+func (s *SessionStore) ListSessions(limit int, tabType string) ([]shogunate.Session, error) {
+	storageSessions, err := s.store.ListSessions(s.Host, s.Org, s.Project, s.Branch, tabType, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -394,12 +394,8 @@ func (s *SessionStore) DeleteSession(sessionID string) error {
 	return s.store.DeleteSession(sessionID)
 }
 
-// ClearSession deletes a session and its messages atomically.
-// This explicitly deletes messages first, then the session, ensuring
-// cleanup happens in a single transaction.
-func (s *SessionStore) ClearSession(sessionID string) error {
-	return s.store.ClearSession(sessionID)
-}
+// DEPRECATED: ClearSession removed - use DeleteSession or reset in memory
+// ClearSession was removed to preserve user history for :resume functionality
 
 // Close closes the session store gracefully, waiting for pending saves to complete
 func (s *SessionStore) Close() {
