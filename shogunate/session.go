@@ -830,8 +830,6 @@ func (s *Session) getStreamBuffer() string {
 
 // prepareUserMessage builds the prompt with context and adds it to the message history
 func (s *Session) prepareUserMessage(prompt string, contextFiles map[string]string) {
-	s.SanitizeMessages()
-
 	fullPrompt := buildPromptWithContext(prompt, contextFiles)
 	s.messages = append(s.messages, schemas.ChatMessage{
 		Role:    schemas.ChatMessageRoleUser,
@@ -876,8 +874,6 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 		Input:    s.messages,
 		Params:   params,
 	}
-
-	s.SanitizeMessages()
 
 	if streamingFunc != nil {
 		// Streaming path
@@ -1082,96 +1078,6 @@ func (s *Session) checkToolCallLoop(name, argsJSON string) bool {
 	}
 
 	return false
-}
-
-// --- Message Sanitization ---
-
-// SanitizeMessages removes trailing assistant messages with unmatched tool calls
-// and trailing tool responses without matching AI messages.
-func (s *Session) SanitizeMessages() {
-	if s.config != nil && s.config.DisableContextSanitization {
-		return
-	}
-
-	if len(s.messages) == 0 {
-		return
-	}
-
-	for len(s.messages) > 0 {
-		lastIdx := len(s.messages) - 1
-		lastMsg := s.messages[lastIdx]
-
-		if lastMsg.Role == schemas.ChatMessageRoleAssistant {
-			hasToolCalls := lastMsg.ChatAssistantMessage != nil && len(lastMsg.ChatAssistantMessage.ToolCalls) > 0
-
-			if hasToolCalls {
-				slog.Debug("removing unmatched tool call from context")
-				s.messages = s.messages[:lastIdx]
-				continue
-			}
-		}
-
-		if lastMsg.Role == schemas.ChatMessageRoleTool {
-			if lastIdx == 0 {
-				slog.Debug("removing tool result without prior messages")
-				s.messages = s.messages[:lastIdx]
-				continue
-			}
-
-			var aiMsg *schemas.ChatMessage
-			for i := lastIdx - 1; i >= 0; i-- {
-				if s.messages[i].Role == schemas.ChatMessageRoleAssistant {
-					aiMsg = &s.messages[i]
-					break
-				}
-				if s.messages[i].Role != schemas.ChatMessageRoleTool {
-					break
-				}
-			}
-
-			if aiMsg == nil {
-				slog.Debug("removing tool result without prior AI message")
-				s.messages = s.messages[:lastIdx]
-				continue
-			}
-
-			toolCallIDs := make(map[string]struct{})
-			if aiMsg.ChatAssistantMessage != nil {
-				for _, tc := range aiMsg.ChatAssistantMessage.ToolCalls {
-					if tc.ID != nil && *tc.ID != "" {
-						toolCallIDs[*tc.ID] = struct{}{}
-					}
-				}
-			}
-
-			slog.Debug("SanitizeMessages checking tool response", "ai_msg_tool_call_ids", toolCallIDs)
-
-			valid := len(toolCallIDs) > 0
-			if lastMsg.ChatToolMessage != nil {
-				toolCallID := ""
-				if lastMsg.ChatToolMessage.ToolCallID != nil {
-					toolCallID = *lastMsg.ChatToolMessage.ToolCallID
-				}
-				slog.Debug("checking tool response ID", "response_tool_call_id", toolCallID)
-				if _, exists := toolCallIDs[toolCallID]; !exists || toolCallID == "" {
-					valid = false
-					if toolCallID == "" {
-						slog.Debug("tool result invalid: empty ToolCallID")
-					} else {
-						slog.Debug("tool result invalid: ID not found in AI message", "response_id", toolCallID, "ai_msg_ids", toolCallIDs)
-					}
-				}
-			}
-
-			if !valid {
-				slog.Debug("removing dangling tool result from context")
-				s.messages = s.messages[:lastIdx]
-				continue
-			}
-		}
-
-		return
-	}
 }
 
 // --- Tool Execution ---
