@@ -1,15 +1,18 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// TestClearSession tests that ClearSession properly deletes both messages and session
-func TestClearSession(t *testing.T) {
-	// Create a temporary database
+// DEPRECATED: TestClearSession tests removed - ClearSession function was removed
+// to preserve user history for :resume functionality.
+
+// TestListSessions_TabTypeFilter tests filtering sessions by tabType
+func TestListSessions_TabTypeFilter(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "session_test_*.db")
 	require.NoError(t, err)
 	tmpFile.Close()
@@ -21,43 +24,57 @@ func TestClearSession(t *testing.T) {
 
 	store := NewSessionStore(db, &SessionConfig{Enabled: true})
 
-	// Create a session with minimal data
-	session := &SessionData{
-		ID:          "test-session-123",
-		FirstPrompt: "test prompt",
-		Model:       "test-model",
-		Provider:    "test-provider",
-		WorkingDir:  "/tmp",
-		TabType:     "ruling",
-		Messages:    nil, // empty for this test
+	// Create sessions with different tab types
+	sessionSpecs := []struct {
+		id      string
+		tabType string
+	}{
+		{"ruling-1", "ruling"},
+		{"ruling-2", "ruling"},
+		{"hunting-1", "hunting"},
+		{"sandbox-1", "sandbox"},
 	}
 
-	// Save the session
-	err = store.SaveSession(session, "github.com", "testuser", "testrepo", "main")
-	require.NoError(t, err)
+	for _, spec := range sessionSpecs {
+		session := &SessionData{
+			ID:          spec.id,
+			FirstPrompt: "test prompt",
+			Model:       "test-model",
+			Provider:    "test-provider",
+			WorkingDir:  "/tmp",
+			TabType:     spec.tabType,
+		}
+		err := store.SaveSession(session, "github.com", "testuser", "testrepo", "main")
+		require.NoError(t, err)
+	}
 
-	// Verify session exists
-	loaded, host, org, project, branch, err := store.LoadSession(session.ID)
+	// Filter by "ruling" tabType — returns only ruling sessions
+	rulingSessions, err := store.ListSessions("github.com", "testuser", "testrepo", "main", "ruling", 0)
 	require.NoError(t, err)
-	require.Equal(t, "test-session-123", loaded.ID)
-	require.Equal(t, "github.com", host)
-	require.Equal(t, "testuser", org)
-	require.Equal(t, "testrepo", project)
-	require.Equal(t, "main", branch)
+	require.Len(t, rulingSessions, 2)
+	for _, s := range rulingSessions {
+		require.Equal(t, "ruling", s.TabType)
+	}
 
-	// Clear the session
-	err = store.ClearSession(session.ID)
+	// Filter by "hunting" tabType — returns only hunting session
+	huntingSessions, err := store.ListSessions("github.com", "testuser", "testrepo", "main", "hunting", 0)
 	require.NoError(t, err)
+	require.Len(t, huntingSessions, 1)
+	require.Equal(t, "hunting", huntingSessions[0].TabType)
 
-	// Verify session no longer exists
-	_, _, _, _, _, err = store.LoadSession(session.ID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "session not found")
+	// Filter by non-existent tabType — returns empty
+	emptySessions, err := store.ListSessions("github.com", "testuser", "testrepo", "main", "nonexistent", 0)
+	require.NoError(t, err)
+	require.Len(t, emptySessions, 0)
+
+	// Empty tabType — returns all sessions
+	allSessions, err := store.ListSessions("github.com", "testuser", "testrepo", "main", "", 0)
+	require.NoError(t, err)
+	require.Len(t, allSessions, 4)
 }
 
-// TestClearSession_OnlyDeletesTargetSession tests that ClearSession only deletes the specified session
-func TestClearSession_OnlyDeletesTargetSession(t *testing.T) {
-	// Create a temporary database
+// TestListSessions_TabTypeFilterWithLimit tests that limit works correctly with tabType filter
+func TestListSessions_TabTypeFilterWithLimit(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "session_test_*.db")
 	require.NoError(t, err)
 	tmpFile.Close()
@@ -69,46 +86,31 @@ func TestClearSession_OnlyDeletesTargetSession(t *testing.T) {
 
 	store := NewSessionStore(db, &SessionConfig{Enabled: true})
 
-	// Create two sessions
-	session1 := &SessionData{
-		ID:          "session-1",
-		FirstPrompt: "prompt 1",
-		Model:       "test-model",
-		Provider:    "test-provider",
-		WorkingDir:  "/tmp",
-		TabType:     "ruling",
-	}
-	session2 := &SessionData{
-		ID:          "session-2",
-		FirstPrompt: "prompt 2",
-		Model:       "test-model",
-		Provider:    "test-provider",
-		WorkingDir:  "/tmp",
-		TabType:     "hunting",
+	// Create multiple sessions with the same tab type
+	for i := 0; i < 5; i++ {
+		session := &SessionData{
+			ID:          fmt.Sprintf("session-ruling-%d", i),
+			FirstPrompt: "test prompt",
+			Model:       "test-model",
+			Provider:    "test-provider",
+			WorkingDir:  "/tmp",
+			TabType:     "ruling",
+		}
+		err := store.SaveSession(session, "github.com", "user", "repo", "main")
+		require.NoError(t, err)
 	}
 
-	err = store.SaveSession(session1, "github.com", "user", "repo", "main")
+	// Filter with limit
+	sessions, err := store.ListSessions("github.com", "user", "repo", "main", "ruling", 3)
 	require.NoError(t, err)
-	err = store.SaveSession(session2, "github.com", "user", "repo", "main")
-	require.NoError(t, err)
-
-	// Clear only session 1
-	err = store.ClearSession("session-1")
-	require.NoError(t, err)
-
-	// Session 1 should be gone
-	_, _, _, _, _, err = store.LoadSession("session-1")
-	require.Error(t, err)
-
-	// Session 2 should still exist
-	loaded, _, _, _, _, err := store.LoadSession("session-2")
-	require.NoError(t, err)
-	require.Equal(t, "session-2", loaded.ID)
+	require.Len(t, sessions, 3)
+	for _, s := range sessions {
+		require.Equal(t, "ruling", s.TabType)
+	}
 }
 
-// TestClearSession_Idempotent tests that calling ClearSession twice is safe
-func TestClearSession_Idempotent(t *testing.T) {
-	// Create a temporary database
+// TestListSessions_TabTypeFilterAcrossBranches tests tabType filter works correctly across branches
+func TestListSessions_TabTypeFilterAcrossBranches(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "session_test_*.db")
 	require.NoError(t, err)
 	tmpFile.Close()
@@ -120,24 +122,45 @@ func TestClearSession_Idempotent(t *testing.T) {
 
 	store := NewSessionStore(db, &SessionConfig{Enabled: true})
 
-	// Create a session
-	session := &SessionData{
-		ID:          "idempotent-session",
-		FirstPrompt: "test",
-		Model:       "test-model",
-		Provider:    "test-provider",
-		WorkingDir:  "/tmp",
-		TabType:     "ruling",
+	// Create sessions on different branches with different tab types
+	sessionSpecs := []struct {
+		id      string
+		tabType string
+		branch  string
+	}{
+		{"ruling-main", "ruling", "main"},
+		{"hunting-main", "hunting", "main"},
+		{"ruling-feature", "ruling", "feature"},
+		{"sandbox-feature", "sandbox", "feature"},
 	}
 
-	err = store.SaveSession(session, "github.com", "user", "repo", "main")
-	require.NoError(t, err)
+	for _, spec := range sessionSpecs {
+		session := &SessionData{
+			ID:          spec.id,
+			FirstPrompt: "test prompt",
+			Model:       "test-model",
+			Provider:    "test-provider",
+			WorkingDir:  "/tmp",
+			TabType:     spec.tabType,
+		}
+		err := store.SaveSession(session, "github.com", "user", "repo", spec.branch)
+		require.NoError(t, err)
+	}
 
-	// Clear once - should succeed
-	err = store.ClearSession(session.ID)
+	// ruling sessions on main branch only
+	rulingMain, err := store.ListSessions("github.com", "user", "repo", "main", "ruling", 0)
 	require.NoError(t, err)
+	require.Len(t, rulingMain, 1)
+	require.Equal(t, "ruling", rulingMain[0].TabType)
 
-	// Clear again - should also succeed (idempotent)
-	err = store.ClearSession(session.ID)
-	require.NoError(t, err) // No error even though session doesn't exist
+	// ruling sessions on feature branch only
+	rulingFeature, err := store.ListSessions("github.com", "user", "repo", "feature", "ruling", 0)
+	require.NoError(t, err)
+	require.Len(t, rulingFeature, 1)
+	require.Equal(t, "ruling", rulingFeature[0].TabType)
+
+	// all sessions on feature branch
+	allFeature, err := store.ListSessions("github.com", "user", "repo", "feature", "", 0)
+	require.NoError(t, err)
+	require.Len(t, allFeature, 2)
 }

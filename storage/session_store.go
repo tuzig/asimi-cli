@@ -193,7 +193,7 @@ func (s *SessionStore) LoadSession(sessionID string) (*SessionData, string, stri
 }
 
 // ListSessions lists sessions for a given host/org/project/branch
-func (s *SessionStore) ListSessions(host, org, project, branch string, limit int) ([]SessionData, error) {
+func (s *SessionStore) ListSessions(host, org, project, branch, tabType string, limit int) ([]SessionData, error) {
 	query := `
 		SELECT s.id, s.created_at, s.last_updated, s.first_prompt,
 		       s.provider, s.model, s.working_dir, s.tab_type,
@@ -202,7 +202,15 @@ func (s *SessionStore) ListSessions(host, org, project, branch string, limit int
 		JOIN branches b ON s.branch_id = b.id
 		JOIN repositories r ON b.repository_id = r.id
 		LEFT JOIN messages m ON s.id = m.session_id
-		WHERE r.host = ? AND r.org = ? AND r.project = ? AND b.name = ?
+		WHERE r.host = ? AND r.org = ? AND r.project = ? AND b.name = ?`
+	args := []interface{}{host, org, project, branch}
+
+	if tabType != "" {
+		query += " AND s.tab_type = ?"
+		args = append(args, tabType)
+	}
+
+	query += `
 		GROUP BY s.id, s.created_at, s.last_updated, s.first_prompt,
 		         s.provider, s.model, s.working_dir, s.tab_type
 		ORDER BY s.last_updated DESC`
@@ -211,7 +219,7 @@ func (s *SessionStore) ListSessions(host, org, project, branch string, limit int
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
-	rows, err := s.db.conn.Query(query, host, org, project, branch)
+	rows, err := s.db.conn.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
@@ -319,28 +327,6 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 	}
 
 	return sessions, nil
-}
-
-// ClearSession deletes a session and its messages from storage.
-// This explicitly deletes messages first, then the session, ensuring
-// cleanup happens atomically in a transaction.
-func (s *SessionStore) ClearSession(sessionID string) error {
-	tx, err := s.db.conn.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	_, err = tx.Exec("DELETE FROM messages WHERE session_id = ?", sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to delete messages: %w", err)
-	}
-	_, err = tx.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to delete session: %w", err)
-	}
-
-	return tx.Commit()
 }
 
 // DeleteSession deletes a session (messages are cascade deleted by DB)
