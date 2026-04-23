@@ -233,6 +233,10 @@ func (c *ShogunateClient) TakeSnapshot() shogunate.Snapshot {
 	return r.Snapshot
 }
 
+func (c *ShogunateClient) CancelTab(channelID string) {
+	_ = c.callVoid(context.Background(), MethodCancelTab, CancelTabParams{ChannelID: channelID})
+}
+
 // Subscribe returns a channel that delivers every server→client
 // notification decoded into its Go type. The first call installs
 // handlers on the underlying Conn; subsequent calls return the same

@@ -256,6 +256,15 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 	c.Handle(MethodTakeSnapshot, func(ctx context.Context, _ []byte) ([]byte, error) {
 		return wire.Encode(TakeSnapshotResult{Snapshot: impl.TakeSnapshot()})
 	})
+
+	c.Handle(MethodCancelTab, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p CancelTabParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		impl.CancelTab(p.ChannelID)
+		return nil, nil
+	})
 }
 
 // ServeShogunateNotifications drives the server-side notification pump:

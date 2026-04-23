@@ -88,6 +88,11 @@ type Shogunate struct {
 	cancel context.CancelFunc
 
 	rulingCtx func() context.Context
+
+	// Per-channel cancel registry; CancelTab(channelID) invokes the
+	// corresponding cancel func. Populated by CancellableStreamCtx.
+	tabCancelsMu sync.Mutex
+	tabCancels   map[string]context.CancelFunc
 }
 
 // NewShogunate creates a new Shogunate coordinator.
@@ -549,11 +554,57 @@ func (s *Shogunate) GetEventRegistry() *EventRegistry {
 
 // SetRulingCtx sets the function that returns the ruling tab's context.
 // Rituals use this context, so cancelling the ruling tab cancels rituals.
+//
+// Deprecated: pass a channel ID through CancellableStreamCtx instead so
+// cancellation survives the TUI→daemon process split. Kept for
+// in-process callers during the transition.
 func (s *Shogunate) SetRulingCtx(fn func() context.Context) {
 	if s == nil {
 		return
 	}
 	s.rulingCtx = fn
+}
+
+// CancellableStreamCtx returns a context derived from the Shogunate's
+// root ctx and registers its cancel func under channelID. Any previous
+// cancel for the same channelID is invoked first, so callers don't
+// leak. Use CancelTab(channelID) to trigger cancellation externally.
+func (s *Shogunate) CancellableStreamCtx(channelID string) context.Context {
+	if s == nil {
+		return context.Background()
+	}
+	s.tabCancelsMu.Lock()
+	defer s.tabCancelsMu.Unlock()
+	if s.tabCancels == nil {
+		s.tabCancels = make(map[string]context.CancelFunc)
+	}
+	if prev, ok := s.tabCancels[channelID]; ok {
+		prev()
+	}
+	parent := s.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	s.tabCancels[channelID] = cancel
+	return ctx
+}
+
+// CancelTab invokes (and forgets) the cancel func registered under
+// channelID. Idempotent; calling with an unknown channelID is a no-op.
+func (s *Shogunate) CancelTab(channelID string) {
+	if s == nil {
+		return
+	}
+	s.tabCancelsMu.Lock()
+	cancel, ok := s.tabCancels[channelID]
+	if ok {
+		delete(s.tabCancels, channelID)
+	}
+	s.tabCancelsMu.Unlock()
+	if ok {
+		cancel()
+	}
 }
 
 // SubmitPrompt routes a prompt to the specified minister by ID.

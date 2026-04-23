@@ -28,4 +28,5 @@ const (
 	MethodRollbackSession      = "RollbackSession"
 	MethodCompactSession       = "CompactSession"
 	MethodTakeSnapshot         = "TakeSnapshot"
+	MethodCancelTab            = "CancelTab"
 )

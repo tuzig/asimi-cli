@@ -230,6 +230,12 @@ func (f *fakeShogunate) TakeSnapshot() shogunate.Snapshot {
 	}
 }
 
+func (f *fakeShogunate) CancelTab(channelID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancels = append(f.cancels, "tab:"+channelID)
+}
+
 func intString(n int) string {
 	switch n {
 	case 0:
@@ -472,4 +478,20 @@ func TestShogunateRPCLoopback(t *testing.T) {
 	if len(snap.Rituals) != 1 || snap.Rituals[0].RitualName != "swift-strike" || snap.Rituals[0].CurrentStep != 1 {
 		t.Errorf("snapshot rituals = %+v", snap.Rituals)
 	}
+
+	// CancelTab.
+	client.CancelTab("ruling")
+	impl.mu.Lock()
+	// Previous cancels[0] was "req-1" from CancelZhengming; CancelTab appends "tab:ruling".
+	sawCancelTab := false
+	for _, c := range impl.cancels {
+		if c == "tab:ruling" {
+			sawCancelTab = true
+			break
+		}
+	}
+	if !sawCancelTab {
+		t.Errorf("CancelTab not recorded: %v", impl.cancels)
+	}
+	impl.mu.Unlock()
 }

@@ -147,3 +147,7 @@ type RestoreMinisterSessionParams struct {
 type TakeSnapshotResult struct {
 	Snapshot shogunate.Snapshot `msgpack:"snapshot"`
 }
+
+type CancelTabParams struct {
+	ChannelID string `msgpack:"channel_id"`
+}
