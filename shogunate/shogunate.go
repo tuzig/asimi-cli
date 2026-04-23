@@ -130,11 +130,12 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		Runner:          runner,
 		GetMinister:     s.GetMinister,
 		OnRunnerUpgrade: s.SetRunner,
+		// Each ritual startup gets a fresh cancellable ctx registered
+		// under the chancellor channel. A subsequent ritual on the
+		// same channel replaces it; an explicit CancelTab("chancellor")
+		// from the TUI stops the current one.
 		StreamingCtx: func() context.Context {
-			if s.rulingCtx != nil {
-				return s.rulingCtx()
-			}
-			return s.ctx
+			return s.CancellableStreamCtx("chancellor")
 		},
 	})
 

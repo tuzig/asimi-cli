@@ -3119,8 +3119,14 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 }
 
 // stopStreamingTab cancels streaming on a single tab by target ID.
+// Local tab context is cancelled for TUI-side state; CancelTab is
+// forwarded so the daemon's ritual/stream context (registered under
+// the same channelID via CancellableStreamCtx) also tears down.
 func (m *TUIModel) stopStreamingTab(tabTarget string) {
 	m.tabs.CancelTabByID(tabTarget)
+	if m.shogunate != nil {
+		m.shogunate.CancelTab(tabTarget)
+	}
 	if !m.tabs.AnyStreaming() {
 		m.stopWaitingForResponse()
 	}
