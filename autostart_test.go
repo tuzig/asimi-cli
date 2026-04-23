@@ -124,4 +124,3 @@ func TestReadySignalOnFD(t *testing.T) {
 		t.Fatal("readiness byte never arrived")
 	}
 }
-

@@ -88,4 +88,3 @@ func installDaemonSocket(ctx context.Context, model *TUIModel, socketPath string
 		rpc.RegisterApprovalHandler(client, teaSender{p})
 	}, nil
 }
-
