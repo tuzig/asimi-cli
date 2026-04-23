@@ -129,13 +129,19 @@ func runInteractiveMode() error {
 	// Opt-in: route TUI → shogunate through the in-process RPC loopback
 	// so the whole session exercises the msgpack codec and notification
 	// pipeline. Off by default; set ASIMI_LOOPBACK=1 to enable.
+	var onProgramReady func(*tea.Program)
 	if os.Getenv("ASIMI_LOOPBACK") != "" {
-		if err := installRPCLoopback(ctx, tuiModel); err != nil {
+		hook, err := installRPCLoopback(ctx, tuiModel)
+		if err != nil {
 			return fmt.Errorf("loopback: %w", err)
 		}
+		onProgramReady = hook
 	}
 
 	tuiProgram := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	if onProgramReady != nil {
+		onProgramReady(tuiProgram)
+	}
 	tuiModel.shogunate.SetRulingCtx(tuiModel.tabs.RulingCtx)
 
 	subCtx, cancelSub := context.WithCancel(ctx)
