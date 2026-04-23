@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 
 	"github.com/afittestide/asimi/internal/rpc"
@@ -55,3 +56,36 @@ func installRPCLoopback(ctx context.Context, model *TUIModel) (func(*tea.Program
 type teaSender struct{ *tea.Program }
 
 func (s teaSender) Send(msg any) { s.Program.Send(msg) }
+
+// installDaemonSocket dials a running asimi daemon at socketPath and
+// swaps the TUI's shogunate for a LoopbackShogunate wrapping the RPC
+// client. Wire-safe methods and all notifications flow over the real
+// socket; GetMinister, ConfigureModel, SetRulingCtx still delegate to
+// the TUI's local shogunate (a known limitation — any feature that
+// relies on those methods will see local-only state instead of the
+// daemon's).
+//
+// Opt-in via ASIMI_DAEMON_SOCKET=/path/to/asimi.sock.
+func installDaemonSocket(ctx context.Context, model *TUIModel, socketPath string) (func(*tea.Program), error) {
+	if model == nil || model.shogunate == nil {
+		return nil, fmt.Errorf("installDaemonSocket: tui model or shogunate is nil")
+	}
+	c, err := rpc.Dial(socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("installDaemonSocket: dial %s: %w", socketPath, err)
+	}
+	client := rpc.New(c, rpc.Options{})
+	go func() {
+		if err := client.Serve(); err != nil {
+			slog.Warn("daemon rpc client terminated", "err", err)
+		}
+	}()
+
+	local := model.shogunate
+	model.shogunate = rpc.NewLoopbackShogunate(client, local)
+
+	return func(p *tea.Program) {
+		rpc.RegisterApprovalHandler(client, teaSender{p})
+	}, nil
+}
+

@@ -126,11 +126,17 @@ func runInteractiveMode() error {
 	if err := app.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start fx app: %w", err)
 	}
-	// Opt-in: route TUI → shogunate through the in-process RPC loopback
-	// so the whole session exercises the msgpack codec and notification
-	// pipeline. Off by default; set ASIMI_LOOPBACK=1 to enable.
+	// Opt-in wire modes. Precedence: ASIMI_DAEMON_SOCKET (connect to a
+	// running daemon over unix socket) > ASIMI_LOOPBACK (in-process
+	// net.Pipe loopback) > default (fully in-process).
 	var onProgramReady func(*tea.Program)
-	if os.Getenv("ASIMI_LOOPBACK") != "" {
+	if sock := os.Getenv("ASIMI_DAEMON_SOCKET"); sock != "" {
+		hook, err := installDaemonSocket(ctx, tuiModel, sock)
+		if err != nil {
+			return fmt.Errorf("daemon socket: %w", err)
+		}
+		onProgramReady = hook
+	} else if os.Getenv("ASIMI_LOOPBACK") != "" {
 		hook, err := installRPCLoopback(ctx, tuiModel)
 		if err != nil {
 			return fmt.Errorf("loopback: %w", err)
