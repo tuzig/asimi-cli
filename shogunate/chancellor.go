@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/vmihailenco/msgpack/v5"
 	"gorm.io/gorm"
 )
 
@@ -89,20 +91,62 @@ type InvokeMinisterTool struct {
 
 // MinisterInvokingMsg notifies the user that a minister is being invoked
 type MinisterInvokingMsg struct {
-	ChannelID  string
-	MinisterID string
-	EdictKey   storage.EdictKey
-	Task       string
+	ChannelID  string           `msgpack:"channel_id"`
+	MinisterID string           `msgpack:"minister_id"`
+	EdictKey   storage.EdictKey `msgpack:"edict_key"`
+	Task       string           `msgpack:"task,omitempty"`
 }
 
-// MinisterCompletedMsg notifies the user that a minister completed its task
+// MinisterCompletedMsg notifies the user that a minister completed its task.
+// Error rides the wire as a string; decoded values reconstruct via errors.New.
 type MinisterCompletedMsg struct {
-	ChannelID  string
-	MinisterID string
-	EdictKey   storage.EdictKey
-	Output     string
-	Sealed     bool
-	Error      error
+	ChannelID  string           `msgpack:"-"`
+	MinisterID string           `msgpack:"-"`
+	EdictKey   storage.EdictKey `msgpack:"-"`
+	Output     string           `msgpack:"-"`
+	Sealed     bool             `msgpack:"-"`
+	Error      error            `msgpack:"-"`
+}
+
+type ministerCompletedMsgWire struct {
+	ChannelID  string           `msgpack:"channel_id"`
+	MinisterID string           `msgpack:"minister_id"`
+	EdictKey   storage.EdictKey `msgpack:"edict_key"`
+	Output     string           `msgpack:"output,omitempty"`
+	Sealed     bool             `msgpack:"sealed,omitempty"`
+	Error      string           `msgpack:"err,omitempty"`
+}
+
+// MarshalMsgpack encodes MinisterCompletedMsg with Error as a plain string.
+func (m MinisterCompletedMsg) MarshalMsgpack() ([]byte, error) {
+	w := ministerCompletedMsgWire{
+		ChannelID:  m.ChannelID,
+		MinisterID: m.MinisterID,
+		EdictKey:   m.EdictKey,
+		Output:     m.Output,
+		Sealed:     m.Sealed,
+	}
+	if m.Error != nil {
+		w.Error = m.Error.Error()
+	}
+	return msgpack.Marshal(w)
+}
+
+// UnmarshalMsgpack decodes MinisterCompletedMsg, reviving Error via errors.New.
+func (m *MinisterCompletedMsg) UnmarshalMsgpack(b []byte) error {
+	var w ministerCompletedMsgWire
+	if err := msgpack.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	m.ChannelID = w.ChannelID
+	m.MinisterID = w.MinisterID
+	m.EdictKey = w.EdictKey
+	m.Output = w.Output
+	m.Sealed = w.Sealed
+	if w.Error != "" {
+		m.Error = errors.New(w.Error)
+	}
+	return nil
 }
 
 func (t InvokeMinisterTool) Name() string {

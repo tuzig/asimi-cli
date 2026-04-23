@@ -58,15 +58,15 @@ func EnsureProjectConfig() error {
 
 // RitualStepMsg notifies the UI of ritual step progress
 type RitualStepMsg struct {
-	ChannelID   string
-	RitualName  string
-	ExecutionID string
-	EdictID     uint
-	StepName    string
-	StepIndex   int
-	TotalSteps  int
-	Status      string
-	Message     string
+	ChannelID   string `msgpack:"channel_id"`
+	RitualName  string `msgpack:"ritual_name"`
+	ExecutionID string `msgpack:"execution_id"`
+	EdictID     uint   `msgpack:"edict_id,omitempty"`
+	StepName    string `msgpack:"step_name,omitempty"`
+	StepIndex   int    `msgpack:"step_index"`
+	TotalSteps  int    `msgpack:"total_steps"`
+	Status      string `msgpack:"status,omitempty"`
+	Message     string `msgpack:"message,omitempty"`
 }
 
 // RitualState represents the current state of a ritual execution

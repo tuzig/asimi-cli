@@ -48,6 +48,10 @@ type Conn struct {
 	// writes serialises all frame writes to rw.
 	writes chan *wire.Frame
 
+	// notifyQueue carries inbound notifications to a single dispatch
+	// goroutine so handlers run serially in arrival order.
+	notifyQueue chan *wire.Frame
+
 	// pending holds in-flight outbound requests awaiting a response.
 	pending sync.Map // uint64 → chan *wire.Frame
 
@@ -87,6 +91,7 @@ func New(rw io.ReadWriteCloser, opts Options) *Conn {
 		rw:             rw,
 		logger:         opts.Logger,
 		writes:         make(chan *wire.Frame, opts.WriteBuffer),
+		notifyQueue:    make(chan *wire.Frame, opts.WriteBuffer),
 		handlers:       make(map[string]Handler),
 		notifyHandlers: make(map[string]NotifyHandler),
 		closed:         make(chan struct{}),
@@ -101,10 +106,13 @@ func (c *Conn) Handle(m string, h Handler) { c.handlers[m] = h }
 // HandleNotify registers a notification handler for method m.
 func (c *Conn) HandleNotify(m string, h NotifyHandler) { c.notifyHandlers[m] = h }
 
-// Serve runs the reader and writer goroutines until the Conn closes.
-// Blocks the caller; typically invoked in its own goroutine.
+// Serve runs the reader, writer, and notification-dispatch goroutines
+// until the Conn closes. Blocks the caller; typically invoked in its
+// own goroutine.
 func (c *Conn) Serve() error {
 	writeDone := make(chan struct{})
+	notifyDone := make(chan struct{})
+
 	go func() {
 		defer close(writeDone)
 		for {
@@ -124,10 +132,32 @@ func (c *Conn) Serve() error {
 		}
 	}()
 
+	go func() {
+		defer close(notifyDone)
+		for {
+			select {
+			case <-c.closed:
+				return
+			case f, ok := <-c.notifyQueue:
+				if !ok {
+					return
+				}
+				h, ok := c.notifyHandlers[f.M]
+				if !ok {
+					c.logger.Debug("rpc: no handler for notification", "method", f.M)
+					continue
+				}
+				// Handlers run in this goroutine so order is preserved.
+				h(c.ctx, f.P)
+			}
+		}
+	}()
+
 	readErr := c.readLoop()
 	c.setCloseErr(readErr)
 	c.Close()
 	<-writeDone
+	<-notifyDone
 
 	// Fail all pending callers.
 	c.pending.Range(func(key, value any) bool {
@@ -183,12 +213,14 @@ func (c *Conn) dispatch(f *wire.Frame) {
 			c.sendResponse(f.ID, result, werr)
 		}()
 	case wire.FrameNotify:
-		h, ok := c.notifyHandlers[f.M]
-		if !ok {
-			c.logger.Debug("rpc: no handler for notification", "method", f.M)
-			return
+		// Enqueue for serial dispatch. Drops (with a log) only if the
+		// queue is full — i.e. handlers can't keep up with the stream.
+		select {
+		case c.notifyQueue <- f:
+		case <-c.closed:
+		default:
+			c.logger.Warn("rpc: notification queue full, dropping", "method", f.M)
 		}
-		go h(c.ctx, f.P)
 	default:
 		c.logger.Warn("rpc: unknown frame type", "t", f.T)
 	}

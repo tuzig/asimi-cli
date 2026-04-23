@@ -183,21 +183,23 @@ type Tool interface {
 
 // ZhengmingPendingMsg notifies the UI of a pending clarification request
 type ZhengmingPendingMsg struct {
-	RequestID  string
-	EdictKey   storage.EdictKey
-	MinisterID string
-	Questions  storage.ZhengmingQuestions
-	Priority   storage.ZhengmingPriority
+	RequestID  string                     `msgpack:"request_id"`
+	EdictKey   storage.EdictKey           `msgpack:"edict_key"`
+	MinisterID string                     `msgpack:"minister_id"`
+	Questions  storage.ZhengmingQuestions `msgpack:"questions"`
+	Priority   storage.ZhengmingPriority  `msgpack:"priority,omitempty"`
 }
 
 // ZhengmingAnsweredMsg notifies the UI that a clarification was answered
 type ZhengmingAnsweredMsg struct {
-	RequestID string
-	Answer    string
+	RequestID string `msgpack:"request_id"`
+	Answer    string `msgpack:"answer,omitempty"`
 }
 
 // StreamDoneMsg signals that streaming has completed
-type StreamDoneMsg struct{ ChannelID string }
+type StreamDoneMsg struct {
+	ChannelID string `msgpack:"channel_id"`
+}
 
 // MinisterBase provides shared functionality for all ministers.
 // Ministers embed this struct to gain database access and session creation capabilities.
