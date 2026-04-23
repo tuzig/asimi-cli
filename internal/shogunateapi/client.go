@@ -65,9 +65,18 @@ type Client interface {
 	AllowRunnerFallback(allow bool)
 	RunShellCommand(ctx context.Context, input runners.Input) (runners.Output, error)
 
-	// In-process only; LLM client setup. Scheduled for a model-layer
-	// refactor that builds the client daemon-side.
+	// In-process only; LLM client setup. Kept for in-process callers;
+	// the wire-safe path is ConfigureLLM below.
+	//
+	// Deprecated: use ConfigureLLM. ConfigureModel only works in the
+	// same process because it takes a bifrost.LLMProvider pointer.
 	ConfigureModel(client shogunate.LLMProvider, config *shogunate.SessionConfig, repoInfo repo.RepoInfo)
+
+	// ConfigureLLM builds the Bifrost client on the server side from
+	// a plain config struct and wires it into every minister. Wire-
+	// safe — the TUI provides just provider/model/timeouts, the daemon
+	// reads credentials from the shared keyring.
+	ConfigureLLM(ctx context.Context, req shogunate.ConfigureLLMRequest) error
 
 	// Snapshots for the shogunate debug view.
 	TakeSnapshot() shogunate.Snapshot

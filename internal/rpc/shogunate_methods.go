@@ -29,4 +29,5 @@ const (
 	MethodCompactSession       = "CompactSession"
 	MethodTakeSnapshot         = "TakeSnapshot"
 	MethodCancelTab            = "CancelTab"
+	MethodConfigureLLM         = "ConfigureLLM"
 )

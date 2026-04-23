@@ -151,3 +151,7 @@ type TakeSnapshotResult struct {
 type CancelTabParams struct {
 	ChannelID string `msgpack:"channel_id"`
 }
+
+type ConfigureLLMParams struct {
+	Req shogunate.ConfigureLLMRequest `msgpack:"req"`
+}

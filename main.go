@@ -16,12 +16,9 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/shogunate"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 	isatty "github.com/mattn/go-isatty"
-	bifrost "github.com/maximhq/bifrost/core"
-	"github.com/maximhq/bifrost/core/schemas"
 	"go.uber.org/fx"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
@@ -199,10 +196,10 @@ func runInteractiveMode() error {
 
 type errMsg struct{ err error }
 
-// llmInitSuccessMsg is sent when LLM initialization completes successfully
-type llmInitSuccessMsg struct {
-	client *bifrost.Bifrost
-}
+// llmInitSuccessMsg is sent when LLM initialization completes
+// successfully. The bifrost client lives daemon-side now; callers use
+// it only as a "we're ready, paint the provider" signal.
+type llmInitSuccessMsg struct{}
 
 // llmInitErrorMsg is sent when LLM initialization fails
 type llmInitErrorMsg struct {
@@ -341,14 +338,6 @@ func main() {
 	}
 
 	slog.Debug("[TIMING] Total execution time", "duration", time.Since(startTime))
-}
-
-// initBifrost creates and returns a Bifrost client using the shogunate account
-func initBifrost(ctx context.Context, requestTimeout, streamIdleTimeout int) (*bifrost.Bifrost, error) {
-	return bifrost.Init(ctx, schemas.BifrostConfig{
-		Account: shogunate.NewAccount(requestTimeout, streamIdleTimeout),
-		Logger:  shogunate.NewBifrostLogger(slog.Default()),
-	})
 }
 
 // authTransport is used by models.go for list_models

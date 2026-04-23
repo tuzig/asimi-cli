@@ -237,6 +237,10 @@ func (c *ShogunateClient) CancelTab(channelID string) {
 	_ = c.callVoid(context.Background(), MethodCancelTab, CancelTabParams{ChannelID: channelID})
 }
 
+func (c *ShogunateClient) ConfigureLLM(ctx context.Context, req shogunate.ConfigureLLMRequest) error {
+	return c.callVoid(ctx, MethodConfigureLLM, ConfigureLLMParams{Req: req})
+}
+
 // Subscribe returns a channel that delivers every server→client
 // notification decoded into its Go type. The first call installs
 // handlers on the underlying Conn; subsequent calls return the same

@@ -332,16 +332,34 @@ func (m *TUIModel) SetSession(session *shogunate.Session) {
 	}
 }
 
-// switchModel recreates the Bifrost client with current config and reconfigures the Shogunate.
+// switchModel asks the Shogunate to rebuild its Bifrost client with the
+// current config. In daemon mode this happens over the wire; in
+// single-process mode it happens inline.
 func (m *TUIModel) switchModel() tea.Cmd {
 	return func() tea.Msg {
+		if m.shogunate == nil {
+			return llmInitErrorMsg{err: fmt.Errorf("shogunate not initialised")}
+		}
 		slog.Info("switching LLM model", "provider", m.config.LLM.Provider, "model", m.config.LLM.Model)
-		client, err := initBifrost(context.Background(), m.config.LLM.RequestTimeoutSeconds, m.config.LLM.StreamIdleTimeoutSeconds)
-		if err != nil {
+		if err := m.shogunate.ConfigureLLM(context.Background(), m.llmRequest()); err != nil {
 			return llmInitErrorMsg{err: err}
 		}
 		slog.Info("LLM model switched successfully")
-		return llmInitSuccessMsg{client: client}
+		return llmInitSuccessMsg{}
+	}
+}
+
+// llmRequest builds the wire-safe config used by ConfigureLLM calls.
+func (m *TUIModel) llmRequest() shogunate.ConfigureLLMRequest {
+	return shogunate.ConfigureLLMRequest{
+		Provider:                 m.config.LLM.Provider,
+		Model:                    m.config.LLM.Model,
+		MaxTurns:                 m.config.LLM.MaxTurns,
+		MaxThinkingTokens:        m.config.LLM.MaxThinkingTokens,
+		RequestTimeoutSeconds:    m.config.LLM.RequestTimeoutSeconds,
+		StreamIdleTimeoutSeconds: m.config.LLM.StreamIdleTimeoutSeconds,
+		ProjectRoot:              m.config.Storage.DatabasePath,
+		AgentsFile:               m.config.Session.AgentsFile,
 	}
 }
 
@@ -383,18 +401,20 @@ func (m *TUIModel) shutdown() {
 	}
 }
 
-// Init implements bubbletea.Model
+// Init implements bubbletea.Model. It asks the shogunate to build its
+// Bifrost client (daemon-side in daemon mode, inline otherwise).
 func (m TUIModel) Init() tea.Cmd {
-	// Async LLM initialization - initBifrost handles credentials/keyring
 	tick := tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 	return tea.Batch(func() tea.Msg {
+		if m.shogunate == nil {
+			return llmInitErrorMsg{err: fmt.Errorf("shogunate not initialised")}
+		}
 		slog.Info("connecting to LLM", "provider", m.config.LLM.Provider)
-		client, err := initBifrost(context.Background(), m.config.LLM.RequestTimeoutSeconds, m.config.LLM.StreamIdleTimeoutSeconds)
-		if err != nil {
+		if err := m.shogunate.ConfigureLLM(context.Background(), m.llmRequest()); err != nil {
 			return llmInitErrorMsg{err: err}
 		}
 		slog.Info("LLM client connected")
-		return llmInitSuccessMsg{client: client}
+		return llmInitSuccessMsg{}
 	}, tick)
 }
 
@@ -2384,23 +2404,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.tabs.Content().ShowChat()
 
 	case llmInitSuccessMsg:
-		// LLM initialization completed - configure Shogunate with the model
+		// LLM is configured daemon-side by now; just reflect readiness
+		// in the status bar.
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
-		if m.shogunate != nil && msg.client != nil {
-			cfg := &shogunate.SessionConfig{
-				LLM: config.LLMConfig{
-					MaxTurns:          m.config.LLM.MaxTurns,
-					MaxThinkingTokens: m.config.LLM.MaxThinkingTokens,
-					Provider:          m.config.LLM.Provider,
-					Model:             m.config.LLM.Model,
-				},
-			}
-			repoInfo := repo.RepoInfo{
-				ProjectRoot: m.config.Storage.DatabasePath,
-			}
-			m.shogunate.ConfigureModel(msg.client, cfg, repoInfo)
-			slog.Info("Shogunate configured with Bifrost client")
-		}
 
 		// Fire shogunate_started event to trigger wakeup ritual and health checks
 		latest, hasUpdate, _ := utils.CheckForUpdates()

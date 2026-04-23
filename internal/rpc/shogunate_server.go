@@ -265,6 +265,17 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 		impl.CancelTab(p.ChannelID)
 		return nil, nil
 	})
+
+	c.Handle(MethodConfigureLLM, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p ConfigureLLMParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		if err := impl.ConfigureLLM(ctx, p.Req); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
 }
 
 // ServeShogunateNotifications drives the server-side notification pump:

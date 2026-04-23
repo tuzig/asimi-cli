@@ -619,12 +619,11 @@ func (m *TUIModel) performOAuthLogin(provider string) tea.Cmd {
 		}
 
 		// Initialize LLM with new credentials
-		client, err := initBifrost(context.Background(), m.config.LLM.RequestTimeoutSeconds, m.config.LLM.StreamIdleTimeoutSeconds)
-		if err != nil {
+		if err := m.shogunate.ConfigureLLM(context.Background(), m.llmRequest()); err != nil {
 			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 
-		return llmInitSuccessMsg{client: client}
+		return llmInitSuccessMsg{}
 	}
 }
 
@@ -659,12 +658,11 @@ func (m *TUIModel) completeAnthropicOAuth(authCode, verifier string) tea.Cmd {
 		}
 
 		// Initialize LLM with new credentials
-		client, err := initBifrost(context.Background(), m.config.LLM.RequestTimeoutSeconds, m.config.LLM.StreamIdleTimeoutSeconds)
-		if err != nil {
+		if err := m.shogunate.ConfigureLLM(context.Background(), m.llmRequest()); err != nil {
 			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 
-		return llmInitSuccessMsg{client: client}
+		return llmInitSuccessMsg{}
 	}
 }
 func runOAuthLoopback(provider string) (accessToken, refreshToken string, expiry time.Time, err error) {
