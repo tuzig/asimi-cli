@@ -126,6 +126,15 @@ func runInteractiveMode() error {
 	if err := app.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start fx app: %w", err)
 	}
+	// Opt-in: route TUI → shogunate through the in-process RPC loopback
+	// so the whole session exercises the msgpack codec and notification
+	// pipeline. Off by default; set ASIMI_LOOPBACK=1 to enable.
+	if os.Getenv("ASIMI_LOOPBACK") != "" {
+		if err := installRPCLoopback(ctx, tuiModel); err != nil {
+			return fmt.Errorf("loopback: %w", err)
+		}
+	}
+
 	tuiProgram := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	tuiModel.shogunate.SetRulingCtx(tuiModel.tabs.RulingCtx)
 
