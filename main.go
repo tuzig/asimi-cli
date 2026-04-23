@@ -217,6 +217,18 @@ type compactErrorMsg struct {
 type updateAvailableMsg struct{}
 
 func main() {
+	// Subcommand dispatch. A proper kong refactor can come later;
+	// today a leading `daemon` arg is enough to branch cleanly.
+	if len(os.Args) > 1 && os.Args[1] == "daemon" {
+		os.Args = append(os.Args[:1], os.Args[2:]...)
+		kong.Parse(&cli)
+		if err := runDaemonMode(); err != nil {
+			fmt.Fprintln(os.Stderr, "daemon:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	startTime := time.Now()
 	kong.Parse(&cli)
 
