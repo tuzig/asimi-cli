@@ -334,7 +334,8 @@ func (r *PodmanRunner) createContainer(ctx context.Context) error {
 			s.Env[name] = val
 		}
 	}
-
+	// This provides access to all the host's ports
+	s.NetNS = specgen.Namespace{NSMode: specgen.Host}
 	s.Command = []string{"bash", "-i"}
 	stdinOpen := true
 	s.Stdin = &stdinOpen
@@ -431,6 +432,16 @@ func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
 	select {
 	case <-cmd.ready:
 		slog.Debug("command output ready", "id", id)
+	case <-ctx.Done():
+		slog.Debug("context cancelled waiting for command output", "id", id, "cmd", input.Command)
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+
+		return Output{
+			Output:   "Command cancelled",
+			ExitCode: "130",
+		}, ctx.Err()
 	case <-time.After(timeout):
 		slog.Warn("timeout waiting for command output", "id", id, "cmd", input.Command, "timeout", timeout)
 		r.outputsMu.Lock()

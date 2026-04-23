@@ -1431,6 +1431,28 @@ func TestStreamCompleteMsg_StopsWaiting(t *testing.T) {
 	require.False(t, updatedModel.waitingForResponse)
 }
 
+// TestStreamInterruptedMsg_StopsWaiting tests that Ctrl+C interruption stops waiting.
+// Edict 350 fixed a bug where the TUI remained stuck in "waiting for response" state
+// after Ctrl+C because StreamInterruptedMsg did not call stopWaitingForResponse.
+// This mirrors the StreamCompleteMsg and StreamErrorMsg patterns.
+func TestStreamInterruptedMsg_StopsWaiting(t *testing.T) {
+	model := newTestModel(t)
+
+	// Start waiting
+	model.startWaitingForResponse()
+	require.True(t, model.waitingForResponse)
+
+	// Simulate Ctrl+C interruption
+	newModel, _ := model.handleCustomMessages(shogunate.StreamInterruptedMsg{
+		ChannelID:      model.tabs.ActiveTab().Target,
+		PartialContent: "partial response text",
+	})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	require.False(t, updatedModel.waitingForResponse, "StreamInterruptedMsg should stop waiting for response")
+}
+
 // TestStreamErrorMsg_StopsWaiting tests that stream error stops waiting
 func TestStreamErrorMsg_StopsWaiting(t *testing.T) {
 	model := newTestModel(t)
