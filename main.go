@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/alecthomas/kong"
@@ -128,21 +127,21 @@ func runInteractiveMode() error {
 		return fmt.Errorf("failed to start fx app: %w", err)
 	}
 	tuiProgram := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	// TODO: simplify by refactoring internal.NotifyFunc to func(msg tea.Msg)
-	tuiModel.shogunate.SetNotify(func(msg any) { tuiProgram.Send(msg) })
 	tuiModel.shogunate.SetRulingCtx(tuiModel.tabs.RulingCtx)
 
-	// Connect the shell runner's message channel to the TUI for approval requests
-	// TODO: refactor the request approval to zhengming
-	if runner := tuiModel.shogunate.GetRunner(); runner != nil {
-		runnerMsgChan := make(chan runners.Msg, 10)
-		runner.SetMessageChannel(runnerMsgChan)
-		go func() {
-			for msg := range runnerMsgChan {
+	subCtx, cancelSub := context.WithCancel(ctx)
+	defer cancelSub()
+	events := tuiModel.shogunate.Subscribe(subCtx)
+	go func() {
+		for {
+			select {
+			case <-subCtx.Done():
+				return
+			case msg := <-events:
 				tuiProgram.Send(msg)
 			}
-		}()
-	}
+		}
+	}()
 	defer app.Stop(ctx)
 
 	slog.Debug("[TIMING] fx app initialized", "duration", time.Since(startTime))

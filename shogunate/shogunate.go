@@ -476,6 +476,52 @@ func (s *Shogunate) SetRunnerMessageChannel(msgChan chan<- runners.Msg) {
 	s.runner.SetMessageChannel(msgChan)
 }
 
+// Subscribe returns a channel carrying every TUI-bound notification produced
+// by the shogunate: streaming chunks, events, and runner messages. It installs
+// the underlying SetNotify callback and the runner message channel on the
+// caller's behalf, so callers no longer touch either directly. The returned
+// channel stays open for the Shogunate's lifetime; the caller drains it until
+// ctx is cancelled.
+func (s *Shogunate) Subscribe(ctx context.Context) <-chan any {
+	if s == nil {
+		closed := make(chan any)
+		close(closed)
+		return closed
+	}
+	out := make(chan any, 256)
+
+	s.SetNotify(func(msg any) {
+		select {
+		case out <- msg:
+		case <-ctx.Done():
+		}
+	})
+
+	if s.runner != nil {
+		runnerMsgChan := make(chan runners.Msg, 10)
+		s.runner.SetMessageChannel(runnerMsgChan)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case msg, ok := <-runnerMsgChan:
+					if !ok {
+						return
+					}
+					select {
+					case out <- msg:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	return out
+}
+
 // GetRitualRegistry returns the ritual registry
 func (s *Shogunate) GetRitualRegistry() *RitualRegistry {
 	if s == nil || s.ritualGuard == nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/shogunateapi"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/shogunate/tools"
@@ -56,7 +57,7 @@ type TUIModel struct {
 	sessionStore *SessionStore
 	db           *storage.DB
 	scheduler    *runners.CoreToolScheduler
-	shogunate    *shogunate.Shogunate
+	shogunate    shogunateapi.Client
 
 	// Shogunate integration
 	currentEdictKey storage.EdictKey // Tracks current edict for multi-turn conversations
@@ -131,7 +132,7 @@ type pendingSealOverride struct {
 
 // NewTUIModel creates a new TUI model
 // NewTUIModelWithStores creates a new TUI model with provided stores (for fx injection)
-func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *runners.CoreToolScheduler, shog *shogunate.Shogunate) *TUIModel {
+func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *runners.CoreToolScheduler, shog shogunateapi.Client) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
