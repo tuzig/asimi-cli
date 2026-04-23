@@ -14,7 +14,6 @@ import (
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -563,18 +562,6 @@ func (c *Chancellor) SubscribeToEvents(rg *RitualGuard) {
 // ResetSession clears the Chancellor's session (delegates to MinisterBase)
 func (c *Chancellor) ResetSession() {
 	c.MinisterBase.ResetSession()
-}
-
-// RestoreSession creates a fully-wired interactive session and injects loaded history
-func (c *Chancellor) RestoreSession(msgs []schemas.ChatMessage) error {
-	sess, err := CreateSession(c, c.client, c.config, c.notify, "chancellor")
-	if err != nil {
-		return err
-	}
-	sess.SetMessages(msgs)
-	sess.TabType = "chancellor"
-	c.MinisterBase.SetSession(sess)
-	return nil
 }
 
 // --- Edict Management ---

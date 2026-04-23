@@ -523,25 +523,15 @@ func (s *Shogunate) SubmitPrompt(targetID string, p *Prompt) error {
 }
 
 // RestoreMinisterSession creates a fully-wired session and injects loaded history.
-// Routes to chancellor or sage based on tabType.
 func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
 	if s == nil {
 		return fmt.Errorf("shogunate not initialized")
 	}
-	switch tabType {
-	case "ruling":
-		if ch, ok := s.GetMinister("chancellor").(*Chancellor); ok {
-			return ch.RestoreSession(msgs)
-		}
-		return fmt.Errorf("chancellor not found")
-	case "hunting":
-		if sage, ok := s.GetMinister("sage").(*Sage); ok {
-			return sage.RestoreSession(msgs)
-		}
-		return fmt.Errorf("sage not found")
-	default:
-		return fmt.Errorf("unknown tab type: %s", tabType)
+	minister := s.GetMinister(tabType)
+	if minister == nil {
+		return fmt.Errorf("minister not found for tab type: %s", tabType)
 	}
+	return minister.RestoreSession(minister, msgs)
 }
 
 // ResetRulling resets the rulling session

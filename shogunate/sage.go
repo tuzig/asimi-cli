@@ -10,7 +10,6 @@ import (
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -161,23 +160,6 @@ func (c *Sage) Tools() []Tool {
 // ResetSession clears the Sage's session (delegates to MinisterBase)
 func (c *Sage) ResetSession() {
 	c.MinisterBase.ResetSession()
-}
-
-// RestoreSession creates a fully-wired hunting session and injects loaded history
-func (c *Sage) RestoreSession(msgs []schemas.ChatMessage) error {
-	sess, err := CreateSession(c, c.client, c.config, c.notify, "sage")
-	if err != nil {
-		return err
-	}
-	sess.SetMessages(msgs)
-	sess.TabType = "sage"
-	c.MinisterBase.SetSession(sess)
-	return nil
-}
-
-// GetSession returns the Sage's session (from MinisterBase)
-func (c *Sage) GetSession() *Session {
-	return c.MinisterBase.Session()
 }
 
 // GetEdict retrieves an edict (satisfies EdictManager for GetEdictStatusTool)
