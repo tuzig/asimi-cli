@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/wire"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // ShogunateClient exposes the RPC surface as a typed API. It partially
@@ -131,4 +134,86 @@ func (c *ShogunateClient) RollbackSession(tabTarget string, snapshot int) error 
 
 func (c *ShogunateClient) AddSessionMessage(tabTarget, role, content string) error {
 	return c.callVoid(context.Background(), MethodAddSessionMessage, AddSessionMessageParams{TabTarget: tabTarget, Role: role, Content: content})
+}
+
+func (c *ShogunateClient) AddSessionContextFile(tabTarget, path, content string) error {
+	return c.callVoid(context.Background(), MethodAddSessionCtxFile, AddSessionContextFileParams{TabTarget: tabTarget, Path: path, Content: content})
+}
+
+func (c *ShogunateClient) CompactSession(ctx context.Context, tabTarget, prompt string) (string, error) {
+	raw, err := c.conn.Call(ctx, MethodCompactSession, CompactSessionParams{TabTarget: tabTarget, Prompt: prompt})
+	if err != nil {
+		return "", err
+	}
+	var r CompactSessionResult
+	if err := wire.Decode(raw, &r); err != nil {
+		return "", fmt.Errorf("rpc: decode CompactSession result: %w", err)
+	}
+	return r.Summary, nil
+}
+
+func (c *ShogunateClient) SessionState(tabTarget string) shogunate.SessionState {
+	raw, err := c.conn.Call(context.Background(), MethodSessionState, SessionStateParams{TabTarget: tabTarget})
+	if err != nil {
+		return shogunate.SessionState{}
+	}
+	var r SessionStateResult
+	_ = wire.Decode(raw, &r)
+	return r.State
+}
+
+func (c *ShogunateClient) GetEdictSeals(key storage.EdictKey) ([]storage.Seal, error) {
+	raw, err := c.conn.Call(context.Background(), MethodGetEdictSeals, GetEdictSealsParams{Key: key})
+	if err != nil {
+		return nil, err
+	}
+	var r GetEdictSealsResult
+	if err := wire.Decode(raw, &r); err != nil {
+		return nil, err
+	}
+	return r.Seals, nil
+}
+
+func (c *ShogunateClient) PublishEvent(key storage.EdictKey, et storage.ShogunateEvent, payload storage.JSON) uint {
+	raw, err := c.conn.Call(context.Background(), MethodPublishEvent, PublishEventParams{Key: key, EventType: et, Payload: payload})
+	if err != nil {
+		return key.ID
+	}
+	var r PublishEventResult
+	_ = wire.Decode(raw, &r)
+	return r.EventID
+}
+
+func (c *ShogunateClient) RunShellCommand(ctx context.Context, input runners.Input) (runners.Output, error) {
+	raw, err := c.conn.Call(ctx, MethodRunShellCommand, RunShellCommandParams{Input: input})
+	if err != nil {
+		return runners.Output{}, err
+	}
+	var r RunShellCommandResult
+	if err := wire.Decode(raw, &r); err != nil {
+		return runners.Output{}, err
+	}
+	return r.Output, nil
+}
+
+func (c *ShogunateClient) SubmitPrompt(targetID string, p *shogunate.Prompt) error {
+	if p == nil {
+		return fmt.Errorf("rpc: nil Prompt")
+	}
+	params := SubmitPromptParams{
+		TargetID:     targetID,
+		Message:      p.Message,
+		EdictKey:     p.EdictKey,
+		ChannelID:    p.ChannelID,
+		ContextFiles: p.ContextFiles,
+	}
+	ctx := p.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.callVoid(ctx, MethodSubmitPrompt, params)
+}
+
+func (c *ShogunateClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
+	return c.callVoid(context.Background(), MethodRestoreMinisterSess, RestoreMinisterSessionParams{TabType: tabType, Messages: msgs})
 }

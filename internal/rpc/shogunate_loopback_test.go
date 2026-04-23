@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // fakeShogunate embeds shogunateapi.Client so any method the test
@@ -18,24 +21,38 @@ import (
 type fakeShogunate struct {
 	shogunateapi.Client
 
-	mu        sync.Mutex
-	hasIDs    map[string]bool
-	resetLog  []string
-	edicts    map[uint]*storage.Edict
-	sealNotes map[uint]string
-	fallback  bool
-	cancels   []string
-	clears    []string
-	messages  []string // "target/role/content"
-	rollbacks []string // "target/snapshot"
-	zhengAns  []string // "reqID/answer"
+	mu         sync.Mutex
+	hasIDs     map[string]bool
+	resetLog   []string
+	edicts     map[uint]*storage.Edict
+	seals      map[uint][]storage.Seal
+	sealNotes  map[uint]string
+	fallback   bool
+	cancels    []string
+	clears     []string
+	messages   []string // "target/role/content"
+	ctxFiles   []string // "target/path/content"
+	rollbacks  []string // "target/snapshot"
+	zhengAns   []string // "reqID/answer"
+	sessions   map[string]shogunate.SessionState
+	compacted  []string // "target/prompt"
+	shellCmds  []runners.Input
+	events     []struct {
+		Key       storage.EdictKey
+		EventType storage.ShogunateEvent
+		Payload   storage.JSON
+	}
+	prompts   []string // "target/message"
+	restored  []string // "tabType/N"
 }
 
 func newFakeShogunate() *fakeShogunate {
 	return &fakeShogunate{
 		hasIDs:    map[string]bool{},
 		edicts:    map[uint]*storage.Edict{},
+		seals:     map[uint][]storage.Seal{},
 		sealNotes: map[uint]string{},
+		sessions:  map[string]shogunate.SessionState{},
 	}
 }
 
@@ -144,6 +161,79 @@ func (f *fakeShogunate) RollbackSession(target string, snap int) error {
 	defer f.mu.Unlock()
 	f.rollbacks = append(f.rollbacks, target)
 	return nil
+}
+
+func (f *fakeShogunate) AddSessionContextFile(target, path, content string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ctxFiles = append(f.ctxFiles, target+"/"+path+"/"+content)
+	return nil
+}
+
+func (f *fakeShogunate) CompactSession(ctx context.Context, target, prompt string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.compacted = append(f.compacted, target+"/"+prompt)
+	return "summary for " + target, nil
+}
+
+func (f *fakeShogunate) SessionState(target string) shogunate.SessionState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sessions[target]
+}
+
+func (f *fakeShogunate) GetEdictSeals(key storage.EdictKey) ([]storage.Seal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.seals[key.ID], nil
+}
+
+func (f *fakeShogunate) PublishEvent(key storage.EdictKey, et storage.ShogunateEvent, payload storage.JSON) uint {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, struct {
+		Key       storage.EdictKey
+		EventType storage.ShogunateEvent
+		Payload   storage.JSON
+	}{key, et, payload})
+	return uint(len(f.events))
+}
+
+func (f *fakeShogunate) RunShellCommand(ctx context.Context, in runners.Input) (runners.Output, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.shellCmds = append(f.shellCmds, in)
+	return runners.Output{Output: "ran: " + in.Command, ExitCode: "0"}, nil
+}
+
+func (f *fakeShogunate) SubmitPrompt(target string, p *shogunate.Prompt) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.prompts = append(f.prompts, target+"/"+p.Message)
+	return nil
+}
+
+func (f *fakeShogunate) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restored = append(f.restored, tabType+"/"+intString(len(msgs)))
+	return nil
+}
+
+func intString(n int) string {
+	switch n {
+	case 0:
+		return "0"
+	case 1:
+		return "1"
+	case 2:
+		return "2"
+	case 3:
+		return "3"
+	default:
+		return "many"
+	}
 }
 
 // TestShogunateRPCLoopback exercises the wire-safe subset of the
@@ -272,6 +362,99 @@ func TestShogunateRPCLoopback(t *testing.T) {
 	}
 	if len(impl.messages) != 1 || impl.messages[0] != "ruling/human/hi" {
 		t.Errorf("messages = %v", impl.messages)
+	}
+	impl.mu.Unlock()
+
+	// AddSessionContextFile, CompactSession, SessionState, GetEdictSeals,
+	// PublishEvent, RunShellCommand, SubmitPrompt, RestoreMinisterSession.
+
+	if err := client.AddSessionContextFile("ruling", "a.go", "package x"); err != nil {
+		t.Fatalf("AddSessionContextFile: %v", err)
+	}
+	impl.mu.Lock()
+	if len(impl.ctxFiles) != 1 || impl.ctxFiles[0] != "ruling/a.go/package x" {
+		t.Errorf("ctxFiles = %v", impl.ctxFiles)
+	}
+	impl.mu.Unlock()
+
+	summary, err := client.CompactSession(ctx, "ruling", "summarise")
+	if err != nil {
+		t.Fatalf("CompactSession: %v", err)
+	}
+	if summary != "summary for ruling" {
+		t.Errorf("summary = %q", summary)
+	}
+
+	impl.mu.Lock()
+	impl.sessions["ruling"] = shogunate.SessionState{
+		Exists:              true,
+		ChannelID:           "ruling",
+		MessageCount:        3,
+		MessageSnapshot:     2,
+		ContextUsagePercent: 0.42,
+		ContextInfo:         shogunate.ContextInfo{Model: "claude", TotalTokens: 200000, UsedTokens: 42000},
+		ContextFiles:        map[string]string{"a.go": "package x"},
+	}
+	impl.mu.Unlock()
+	state := client.SessionState("ruling")
+	if !state.Exists || state.ChannelID != "ruling" || state.MessageCount != 3 ||
+		state.ContextInfo.Model != "claude" || state.ContextInfo.UsedTokens != 42000 ||
+		state.ContextFiles["a.go"] != "package x" {
+		t.Errorf("SessionState round-trip: %+v", state)
+	}
+
+	// PublishEvent + GetEdictSeals.
+	payload := storage.JSON{"note": "shipping"}
+	id := client.PublishEvent(storage.EdictKey{ID: 9, Username: "alice", Project: "asimi"}, storage.EventEdictCreated, payload)
+	if id == 0 {
+		t.Error("PublishEvent: zero ID")
+	}
+	impl.mu.Lock()
+	if len(impl.events) != 1 || impl.events[0].EventType != storage.EventEdictCreated || impl.events[0].Payload["note"] != "shipping" {
+		t.Errorf("events = %+v", impl.events)
+	}
+	impl.seals[9] = []storage.Seal{{SealID: "s1", EdictID: 9, MinisterID: "judge"}}
+	impl.mu.Unlock()
+	seals, err := client.GetEdictSeals(storage.EdictKey{ID: 9})
+	if err != nil {
+		t.Fatalf("GetEdictSeals: %v", err)
+	}
+	if len(seals) != 1 || seals[0].MinisterID != "judge" {
+		t.Errorf("seals = %+v", seals)
+	}
+
+	// RunShellCommand.
+	out, err := client.RunShellCommand(ctx, runners.Input{Command: "echo hi", Description: "test"})
+	if err != nil {
+		t.Fatalf("RunShellCommand: %v", err)
+	}
+	if out.Output != "ran: echo hi" || out.ExitCode != "0" {
+		t.Errorf("RunShellCommand out = %+v", out)
+	}
+
+	// SubmitPrompt (ctx should be rebuilt server-side).
+	if err := client.SubmitPrompt("chancellor", &shogunate.Prompt{
+		Message:      "hello shogun",
+		EdictKey:     storage.EdictKey{ID: 42},
+		ChannelID:    "ruling",
+		ContextFiles: map[string]string{"x.md": "hi"},
+	}); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+	impl.mu.Lock()
+	if len(impl.prompts) != 1 || impl.prompts[0] != "chancellor/hello shogun" {
+		t.Errorf("prompts = %v", impl.prompts)
+	}
+	impl.mu.Unlock()
+
+	// RestoreMinisterSession.
+	msgs := []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser}, {Role: schemas.ChatMessageRoleAssistant}}
+	if err := client.RestoreMinisterSession("ruling", msgs); err != nil {
+		t.Fatalf("RestoreMinisterSession: %v", err)
+	}
+	impl.mu.Lock()
+	if len(impl.restored) != 1 || impl.restored[0] != "ruling/2" {
+		t.Errorf("restored = %v", impl.restored)
 	}
 	impl.mu.Unlock()
 }

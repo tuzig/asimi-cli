@@ -5,6 +5,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/shogunateapi"
 	"github.com/afittestide/asimi/internal/wire"
+	"github.com/afittestide/asimi/shogunate"
 )
 
 // RegisterShogunateHandlers binds every supported Shogunate RPC method
@@ -154,6 +155,99 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
 		}
 		if err := impl.AddSessionMessage(p.TabTarget, p.Role, p.Content); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+
+	c.Handle(MethodAddSessionCtxFile, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p AddSessionContextFileParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		if err := impl.AddSessionContextFile(p.TabTarget, p.Path, p.Content); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+
+	c.Handle(MethodCompactSession, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p CompactSessionParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		summary, err := impl.CompactSession(ctx, p.TabTarget, p.Prompt)
+		if err != nil {
+			return nil, err
+		}
+		return wire.Encode(CompactSessionResult{Summary: summary})
+	})
+
+	c.Handle(MethodSessionState, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p SessionStateParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		return wire.Encode(SessionStateResult{State: impl.SessionState(p.TabTarget)})
+	})
+
+	c.Handle(MethodGetEdictSeals, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p GetEdictSealsParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		seals, err := impl.GetEdictSeals(p.Key)
+		if err != nil {
+			return nil, err
+		}
+		return wire.Encode(GetEdictSealsResult{Seals: seals})
+	})
+
+	c.Handle(MethodPublishEvent, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p PublishEventParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		id := impl.PublishEvent(p.Key, p.EventType, p.Payload)
+		return wire.Encode(PublishEventResult{EventID: id})
+	})
+
+	c.Handle(MethodRunShellCommand, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p RunShellCommandParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		out, err := impl.RunShellCommand(ctx, p.Input)
+		if err != nil {
+			return nil, err
+		}
+		return wire.Encode(RunShellCommandResult{Output: out})
+	})
+
+	c.Handle(MethodSubmitPrompt, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p SubmitPromptParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		prompt := &shogunate.Prompt{
+			Ctx:          ctx,
+			Message:      p.Message,
+			EdictKey:     p.EdictKey,
+			ChannelID:    p.ChannelID,
+			ContextFiles: p.ContextFiles,
+		}
+		if err := impl.SubmitPrompt(p.TargetID, prompt); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+
+	c.Handle(MethodRestoreMinisterSess, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p RestoreMinisterSessionParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		if err := impl.RestoreMinisterSession(p.TabType, p.Messages); err != nil {
 			return nil, err
 		}
 		return nil, nil
