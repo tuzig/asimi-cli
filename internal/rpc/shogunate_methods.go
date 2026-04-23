@@ -27,4 +27,5 @@ const (
 	MethodClearSessionHistory  = "ClearSessionHistory"
 	MethodRollbackSession      = "RollbackSession"
 	MethodCompactSession       = "CompactSession"
+	MethodTakeSnapshot         = "TakeSnapshot"
 )

@@ -9,42 +9,42 @@ import (
 
 // RitualEntry represents a ritual execution (active or historical) for dashboard display.
 type RitualEntry struct {
-	RitualName  string
-	EdictID     uint
-	State       RitualState
-	CurrentStep int
-	TotalSteps  int
-	StepName    string
-	Age         time.Duration
-	StartedAt   time.Time
+	RitualName  string        `msgpack:"ritual_name"`
+	EdictID     uint          `msgpack:"edict_id,omitempty"`
+	State       RitualState   `msgpack:"state"`
+	CurrentStep int           `msgpack:"current_step"`
+	TotalSteps  int           `msgpack:"total_steps"`
+	StepName    string        `msgpack:"step_name,omitempty"`
+	Age         time.Duration `msgpack:"age"`
+	StartedAt   time.Time     `msgpack:"started_at"`
 }
 
 // EventEntry represents a single event from the tian_events ledger.
 type EventEntry struct {
-	Time      time.Time
-	EventType string
-	Detail    string
-	EdictID   uint
+	Time      time.Time `msgpack:"time"`
+	EventType string    `msgpack:"event_type"`
+	Detail    string    `msgpack:"detail,omitempty"`
+	EdictID   uint      `msgpack:"edict_id,omitempty"`
 }
 
 // ZhengmingEntry represents a pending clarification request for dashboard display.
 type ZhengmingEntry struct {
-	RequestID  string
-	EdictID    uint
-	MinisterID string
-	Questions  []string // Summary or truncated Text for each question
-	Priority   string
-	Status     string
-	CreatedAt  time.Time
-	TimeoutAt  time.Time
+	RequestID  string    `msgpack:"request_id"`
+	EdictID    uint      `msgpack:"edict_id,omitempty"`
+	MinisterID string    `msgpack:"minister_id"`
+	Questions  []string  `msgpack:"questions,omitempty"`
+	Priority   string    `msgpack:"priority,omitempty"`
+	Status     string    `msgpack:"status,omitempty"`
+	CreatedAt  time.Time `msgpack:"created_at"`
+	TimeoutAt  time.Time `msgpack:"timeout_at"`
 }
 
 // Snapshot captures the current state of the shogunate for dashboard display.
 type Snapshot struct {
-	Rituals   []RitualEntry
-	Events    []EventEntry
-	Zhengming []ZhengmingEntry
-	TakenAt   time.Time
+	Rituals   []RitualEntry    `msgpack:"rituals,omitempty"`
+	Events    []EventEntry     `msgpack:"events,omitempty"`
+	Zhengming []ZhengmingEntry `msgpack:"zhengming,omitempty"`
+	TakenAt   time.Time        `msgpack:"taken_at"`
 }
 
 // TakeSnapshot returns a point-in-time snapshot of live rituals and recent events.

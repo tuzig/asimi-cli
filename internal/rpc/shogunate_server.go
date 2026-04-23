@@ -252,4 +252,16 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 		}
 		return nil, nil
 	})
+
+	c.Handle(MethodTakeSnapshot, func(ctx context.Context, _ []byte) ([]byte, error) {
+		return wire.Encode(TakeSnapshotResult{Snapshot: impl.TakeSnapshot()})
+	})
+}
+
+// ServeShogunateNotifications drives the server-side notification pump:
+// subscribes to impl and forwards every message on conn as a wire
+// notification. Blocks until ctx is done.
+func ServeShogunateNotifications(ctx context.Context, conn *Conn, impl shogunateapi.Client) {
+	events := impl.Subscribe(ctx)
+	PumpNotifications(ctx, conn, events)
 }

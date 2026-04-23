@@ -143,3 +143,7 @@ type RestoreMinisterSessionParams struct {
 	TabType  string                `msgpack:"tab_type"`
 	Messages []schemas.ChatMessage `msgpack:"messages"`
 }
+
+type TakeSnapshotResult struct {
+	Snapshot shogunate.Snapshot `msgpack:"snapshot"`
+}

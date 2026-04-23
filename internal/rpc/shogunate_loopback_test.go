@@ -221,6 +221,15 @@ func (f *fakeShogunate) RestoreMinisterSession(tabType string, msgs []schemas.Ch
 	return nil
 }
 
+func (f *fakeShogunate) TakeSnapshot() shogunate.Snapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return shogunate.Snapshot{
+		TakenAt: time.Unix(1700000000, 0),
+		Rituals: []shogunate.RitualEntry{{RitualName: "swift-strike", EdictID: 9, State: "running", CurrentStep: 1, TotalSteps: 3}},
+	}
+}
+
 func intString(n int) string {
 	switch n {
 	case 0:
@@ -457,4 +466,10 @@ func TestShogunateRPCLoopback(t *testing.T) {
 		t.Errorf("restored = %v", impl.restored)
 	}
 	impl.mu.Unlock()
+
+	// TakeSnapshot.
+	snap := client.TakeSnapshot()
+	if len(snap.Rituals) != 1 || snap.Rituals[0].RitualName != "swift-strike" || snap.Rituals[0].CurrentStep != 1 {
+		t.Errorf("snapshot rituals = %+v", snap.Rituals)
+	}
 }

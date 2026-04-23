@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/wire"
@@ -11,13 +12,17 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
-// ShogunateClient exposes the RPC surface as a typed API. It partially
-// satisfies shogunateapi.Client — methods with wire-safe signatures are
-// implemented here; the rest (GetMinister, ConfigureModel, Subscribe,
-// SetRulingCtx, TakeSnapshot) need either in-process passthrough or a
-// dedicated notification path and land in a follow-up.
+// ShogunateClient exposes the Shogunate RPC surface as a typed API.
+// It implements every wire-safe method on shogunateapi.Client. The
+// non-wire-safe methods (GetMinister, ConfigureModel, SetRulingCtx)
+// live on LoopbackShogunate, which composes a ShogunateClient with a
+// local reference for those operations — used while the split is
+// incremental.
 type ShogunateClient struct {
 	conn *Conn
+
+	subMu  sync.Mutex
+	events chan any
 }
 
 // NewShogunateClient wraps a live Conn as a typed client.
@@ -216,4 +221,28 @@ func (c *ShogunateClient) SubmitPrompt(targetID string, p *shogunate.Prompt) err
 
 func (c *ShogunateClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
 	return c.callVoid(context.Background(), MethodRestoreMinisterSess, RestoreMinisterSessionParams{TabType: tabType, Messages: msgs})
+}
+
+func (c *ShogunateClient) TakeSnapshot() shogunate.Snapshot {
+	raw, err := c.conn.Call(context.Background(), MethodTakeSnapshot, nil)
+	if err != nil {
+		return shogunate.Snapshot{}
+	}
+	var r TakeSnapshotResult
+	_ = wire.Decode(raw, &r)
+	return r.Snapshot
+}
+
+// Subscribe returns a channel that delivers every server→client
+// notification decoded into its Go type. The first call installs
+// handlers on the underlying Conn; subsequent calls return the same
+// chan. The channel stays open for the Conn's lifetime.
+func (c *ShogunateClient) Subscribe(ctx context.Context) <-chan any {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	if c.events == nil {
+		c.events = make(chan any, 256)
+		SubscribeAll(c.conn, c.events)
+	}
+	return c.events
 }
