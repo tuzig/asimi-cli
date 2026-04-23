@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -198,7 +199,12 @@ func ProvideShellRunner(params ShellRunnerParams) runners.Runner {
 	params.Lifecycle.Append(fx.Hook{
 		OnStop: func(ctx context.Context) error {
 			params.Logger.Info("shutting down shell runner")
-			return runner.Close(ctx)
+			err := runner.Close(ctx)
+			r := runners.GetRunner()
+			if r != nil && runner != r {
+				err = errors.Join(err, r.Close(ctx))
+			}
+			return err
 		},
 	})
 
