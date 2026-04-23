@@ -888,3 +888,67 @@ func (s *Shogunate) CompactSession(ctx context.Context, tabTarget, prompt string
 	}
 	return sess.CompactHistory(ctx, prompt)
 }
+
+// SessionExport is a wire-safe copy of everything an exporter needs:
+// the session ID, its full message history, and the metadata fields
+// FormatMetadata renders. It satisfies the ExportableSession interface
+// used by export.go without the TUI ever touching the live *Session.
+type SessionExport struct {
+	ID           string                `msgpack:"id"`
+	Messages     []schemas.ChatMessage `msgpack:"messages"`
+	ContextFiles map[string]string     `msgpack:"context_files,omitempty"`
+	Provider     string                `msgpack:"provider,omitempty"`
+	Model        string                `msgpack:"model,omitempty"`
+	WorkingDir   string                `msgpack:"working_dir,omitempty"`
+	ProjectSlug  string                `msgpack:"project_slug,omitempty"`
+	CreatedAt    time.Time             `msgpack:"created_at"`
+	LastUpdated  time.Time             `msgpack:"last_updated"`
+}
+
+// GetID satisfies ExportableSession.
+func (e *SessionExport) GetID() string { return e.ID }
+
+// GetMessages satisfies ExportableSession.
+func (e *SessionExport) GetMessages() []schemas.ChatMessage { return e.Messages }
+
+// GetContextFiles satisfies ExportableSession.
+func (e *SessionExport) GetContextFiles() map[string]string { return e.ContextFiles }
+
+// FormatMetadata satisfies ExportableSession; mirrors Session.FormatMetadata
+// so exports look identical whether sourced live or over the wire.
+func (e *SessionExport) FormatMetadata(exportType, exportedAt string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("**Export Type:** %s\n", exportType))
+	b.WriteString(fmt.Sprintf("**Session ID:** %s | **Working Directory:** %s\n", e.ID, e.WorkingDir))
+	b.WriteString(fmt.Sprintf("**Provider:** %s | **Model:** %s\n", e.Provider, e.Model))
+	b.WriteString(fmt.Sprintf("**Created:** %s | **Last Updated:** %s | **Exported:** %s\n",
+		e.CreatedAt.Format("2006-01-02 15:04:05"),
+		e.LastUpdated.Format("2006-01-02 15:04:05"),
+		exportedAt))
+	if e.ProjectSlug != "" {
+		b.WriteString(fmt.Sprintf("**Project:** %s\n", e.ProjectSlug))
+	}
+	return b.String()
+}
+
+// GetSessionExport returns a wire-safe snapshot of the tab's session
+// suitable for feeding to exportSession. Nil if no session exists.
+func (s *Shogunate) GetSessionExport(tabTarget string) (*SessionExport, error) {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return nil, fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	msgs := make([]schemas.ChatMessage, len(sess.Messages()))
+	copy(msgs, sess.Messages())
+	return &SessionExport{
+		ID:           sess.ID,
+		Messages:     msgs,
+		ContextFiles: sess.GetContextFiles(),
+		Provider:     sess.Provider,
+		Model:        sess.Model,
+		WorkingDir:   sess.WorkingDir,
+		ProjectSlug:  sess.ProjectSlug,
+		CreatedAt:    sess.CreatedAt,
+		LastUpdated:  sess.LastUpdated,
+	}, nil
+}

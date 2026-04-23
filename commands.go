@@ -300,9 +300,11 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	var session ExportableSession
 
-	if s := model.getCurrentSession(); s != nil {
-		session = s
-		slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictKey.ID)
+	if model.shogunate != nil {
+		if exp, err := model.shogunate.GetSessionExport(model.currentTabTarget()); err == nil && exp != nil {
+			session = exp
+			slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictKey.ID)
+		}
 	}
 
 	if session == nil {

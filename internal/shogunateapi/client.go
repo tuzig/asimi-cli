@@ -56,6 +56,7 @@ type Client interface {
 	ClearSessionHistory(tabTarget string) error
 	RollbackSession(tabTarget string, snapshot int) error
 	CompactSession(ctx context.Context, tabTarget, prompt string) (string, error)
+	GetSessionExport(tabTarget string) (*shogunate.SessionExport, error)
 
 	// Zhengming.
 	HandleZhengmingResponse(ctx context.Context, requestID, answer string) error

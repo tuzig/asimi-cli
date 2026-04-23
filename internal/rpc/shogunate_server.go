@@ -276,6 +276,18 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 		}
 		return nil, nil
 	})
+
+	c.Handle(MethodGetSessionExport, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p GetSessionExportParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		exp, err := impl.GetSessionExport(p.TabTarget)
+		if err != nil {
+			return nil, err
+		}
+		return wire.Encode(GetSessionExportResult{Export: exp})
+	})
 }
 
 // ServeShogunateNotifications drives the server-side notification pump:

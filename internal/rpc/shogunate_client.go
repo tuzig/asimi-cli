@@ -241,6 +241,18 @@ func (c *ShogunateClient) ConfigureLLM(ctx context.Context, req shogunate.Config
 	return c.callVoid(ctx, MethodConfigureLLM, ConfigureLLMParams{Req: req})
 }
 
+func (c *ShogunateClient) GetSessionExport(tabTarget string) (*shogunate.SessionExport, error) {
+	raw, err := c.conn.Call(context.Background(), MethodGetSessionExport, GetSessionExportParams{TabTarget: tabTarget})
+	if err != nil {
+		return nil, err
+	}
+	var r GetSessionExportResult
+	if err := wire.Decode(raw, &r); err != nil {
+		return nil, fmt.Errorf("rpc: decode GetSessionExport result: %w", err)
+	}
+	return r.Export, nil
+}
+
 // Subscribe returns a channel that delivers every server→client
 // notification decoded into its Go type. The first call installs
 // handlers on the underlying Conn; subsequent calls return the same

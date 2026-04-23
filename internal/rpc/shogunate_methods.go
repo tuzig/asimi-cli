@@ -30,4 +30,5 @@ const (
 	MethodTakeSnapshot         = "TakeSnapshot"
 	MethodCancelTab            = "CancelTab"
 	MethodConfigureLLM         = "ConfigureLLM"
+	MethodGetSessionExport     = "GetSessionExport"
 )

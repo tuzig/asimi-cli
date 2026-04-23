@@ -155,3 +155,10 @@ type CancelTabParams struct {
 type ConfigureLLMParams struct {
 	Req shogunate.ConfigureLLMRequest `msgpack:"req"`
 }
+
+type GetSessionExportParams struct {
+	TabTarget string `msgpack:"tab_target"`
+}
+type GetSessionExportResult struct {
+	Export *shogunate.SessionExport `msgpack:"export"`
+}
