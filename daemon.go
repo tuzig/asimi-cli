@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -78,6 +79,19 @@ func runDaemonMode() error {
 
 	slog.Info("daemon listening", "socket", path)
 	fmt.Fprintf(os.Stderr, "asimi daemon ready at %s\n", path)
+
+	// Readiness signal to a parent process (TUI autostart). The parent
+	// hands us a pipe fd and blocks on it until we signal that the
+	// listener is bound.
+	if fdStr := os.Getenv("ASIMI_READY_FD"); fdStr != "" {
+		if fd, err := strconv.Atoi(fdStr); err == nil && fd > 2 {
+			f := os.NewFile(uintptr(fd), "ready")
+			if f != nil {
+				_, _ = f.Write([]byte{1})
+				_ = f.Close()
+			}
+		}
+	}
 
 	pidPath := path + ".pid"
 	if err := writePidFile(pidPath); err != nil {
