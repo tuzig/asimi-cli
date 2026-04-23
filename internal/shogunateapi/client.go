@@ -49,6 +49,14 @@ type Client interface {
 	SubmitPrompt(targetID string, p *shogunate.Prompt) error
 	RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error
 
+	// Session state (wire-safe bulk read + targeted mutators).
+	SessionState(tabTarget string) shogunate.SessionState
+	AddSessionContextFile(tabTarget, path, content string) error
+	AddSessionMessage(tabTarget, role, content string) error
+	ClearSessionHistory(tabTarget string) error
+	RollbackSession(tabTarget string, snapshot int) error
+	CompactSession(ctx context.Context, tabTarget, prompt string) (string, error)
+
 	// Zhengming.
 	HandleZhengmingResponse(ctx context.Context, requestID, answer string) error
 	CancelZhengming(requestID string)

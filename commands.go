@@ -212,24 +212,23 @@ func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
-		if session := model.getCurrentSession(); session != nil {
-			shogunateInfo := session.GetContextInfo()
-			info := ContextInfo{
-				Model:              shogunateInfo.Model,
-				TotalTokens:        shogunateInfo.TotalTokens,
-				UsedTokens:         shogunateInfo.UsedTokens,
-				SystemPromptTokens: shogunateInfo.SystemPromptTokens,
-				SystemToolsTokens:  shogunateInfo.SystemToolsTokens,
-				MemoryFilesTokens:  shogunateInfo.MemoryFilesTokens,
-				MessagesTokens:     shogunateInfo.MessagesTokens,
-				FreeTokens:         shogunateInfo.FreeTokens,
-				AutocompactBuffer:  shogunateInfo.AutocompactBuffer,
-			}
-			return showContextMsg{content: renderContextInfo(info)}
+		state, ok := model.currentSessionState()
+		if !ok {
+			return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
 		}
-
-		// No session available
-		return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
+		ci := state.ContextInfo
+		info := ContextInfo{
+			Model:              ci.Model,
+			TotalTokens:        ci.TotalTokens,
+			UsedTokens:         ci.UsedTokens,
+			SystemPromptTokens: ci.SystemPromptTokens,
+			SystemToolsTokens:  ci.SystemToolsTokens,
+			MemoryFilesTokens:  ci.MemoryFilesTokens,
+			MessagesTokens:     ci.MessagesTokens,
+			FreeTokens:         ci.FreeTokens,
+			AutocompactBuffer:  ci.AutocompactBuffer,
+		}
+		return showContextMsg{content: renderContextInfo(info)}
 	}
 }
 
@@ -764,10 +763,10 @@ func checkMissingInfraFiles(agentsFile string) []string {
 }
 
 func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
-	var messageCount int
-
-	if session := model.getCurrentSession(); session != nil {
-		messageCount = len(session.GetMessages())
+	state, ok := model.currentSessionState()
+	messageCount := 0
+	if ok {
+		messageCount = state.MessageCount
 	}
 
 	if messageCount == 0 {

@@ -745,3 +745,94 @@ func (s *Shogunate) CancelZhengming(requestID string) {
 		}
 	}
 }
+
+// SessionState is a wire-safe snapshot of a minister's conversation state,
+// aggregated in one call for cheap TUI-side access. Exists=false means no
+// session exists for that tab.
+type SessionState struct {
+	Exists              bool
+	ChannelID           string
+	MessageCount        int
+	MessageSnapshot     int
+	ContextInfo         ContextInfo
+	ContextUsagePercent float64
+	ContextFiles        map[string]string
+}
+
+func (s *Shogunate) sessionForTab(tabTarget string) *Session {
+	if s == nil {
+		return nil
+	}
+	m := s.GetMinister(tabTarget)
+	if m == nil {
+		return nil
+	}
+	return m.GetSession()
+}
+
+// SessionState returns a snapshot of the session attached to the given tab.
+func (s *Shogunate) SessionState(tabTarget string) SessionState {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return SessionState{}
+	}
+	return SessionState{
+		Exists:              true,
+		ChannelID:           sess.ChannelID(),
+		MessageCount:        len(sess.GetMessages()),
+		MessageSnapshot:     sess.GetMessageSnapshot(),
+		ContextInfo:         sess.GetContextInfo(),
+		ContextUsagePercent: sess.GetContextUsagePercent(),
+		ContextFiles:        sess.GetContextFiles(),
+	}
+}
+
+// AddSessionContextFile attaches a file's contents to the given tab's session.
+func (s *Shogunate) AddSessionContextFile(tabTarget, path, content string) error {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	sess.AddContextFile(path, content)
+	return nil
+}
+
+// AddSessionMessage appends a message to the tab's conversation.
+func (s *Shogunate) AddSessionMessage(tabTarget, role, content string) error {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	sess.AddMessage(schemas.ChatMessageRole(role), content)
+	return nil
+}
+
+// ClearSessionHistory resets the tab's conversation to an empty state.
+func (s *Shogunate) ClearSessionHistory(tabTarget string) error {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	sess.ClearHistory()
+	return nil
+}
+
+// RollbackSession rewinds the conversation to the given message snapshot.
+func (s *Shogunate) RollbackSession(tabTarget string, snapshot int) error {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	sess.RollbackTo(snapshot)
+	return nil
+}
+
+// CompactSession runs a summarisation pass and returns the summary, replacing
+// older messages in the conversation with it.
+func (s *Shogunate) CompactSession(ctx context.Context, tabTarget, prompt string) (string, error) {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return "", fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	return sess.CompactHistory(ctx, prompt)
+}

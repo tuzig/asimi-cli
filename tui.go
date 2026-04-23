@@ -187,8 +187,8 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 	model.tabs = NewTabManager(80, 18, markdownEnabled, func() string { return model.Mode })
 	// Set up tab switch callback to update context percent in status
 	model.tabs.onTabSwitch = func() {
-		if session := model.getCurrentSession(); session != nil {
-			model.status.ContextPercent = session.GetContextUsagePercent()
+		if state, ok := model.currentSessionState(); ok {
+			model.status.ContextPercent = state.ContextUsagePercent
 		}
 	}
 
@@ -252,6 +252,58 @@ func (m *TUIModel) getCurrentSession() *shogunate.Session {
 		return nil
 	}
 	return minister.GetSession()
+}
+
+// currentTabTarget returns the target identifier of the active tab, or "".
+func (m *TUIModel) currentTabTarget() string {
+	if m.tabs.ActiveTab() == nil {
+		return ""
+	}
+	return m.tabs.ActiveTab().Target
+}
+
+// currentSessionState returns a snapshot of the active tab's session.
+// The bool reports whether a session actually exists for that tab.
+func (m *TUIModel) currentSessionState() (shogunate.SessionState, bool) {
+	if m.shogunate == nil {
+		return shogunate.SessionState{}, false
+	}
+	target := m.currentTabTarget()
+	if target == "" {
+		return shogunate.SessionState{}, false
+	}
+	state := m.shogunate.SessionState(target)
+	return state, state.Exists
+}
+
+// autoCompactIfNeeded triggers a synchronous compaction pass when free
+// context tokens drop below 10% and the conversation has more than two
+// messages. Chat status messages are written directly to the active chat.
+func (m *TUIModel) autoCompactIfNeeded(state shogunate.SessionState) {
+	info := state.ContextInfo
+	threshold := float64(info.TotalTokens) * 0.10
+	if float64(info.FreeTokens) >= threshold || state.MessageCount <= 2 {
+		return
+	}
+	slog.Info("auto-compacting conversation", "free_tokens", info.FreeTokens, "threshold", threshold)
+	m.tabs.Content().Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
+
+	ctx := context.Background()
+	if _, err := m.shogunate.CompactSession(ctx, m.currentTabTarget(), compactPrompt); err != nil {
+		slog.Warn("auto-compaction failed", "error", err)
+		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
+		return
+	}
+	newState, ok := m.currentSessionState()
+	if !ok {
+		return
+	}
+	newInfo := newState.ContextInfo
+	m.tabs.Content().Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
+		formatTokenCount(newInfo.UsedTokens),
+		formatTokenCount(newInfo.TotalTokens),
+		percentage(newInfo.UsedTokens, newInfo.TotalTokens)))
+	slog.Info("auto-compaction completed", "old_used", info.UsedTokens, "new_used", newInfo.UsedTokens, "saved", info.UsedTokens-newInfo.UsedTokens)
 }
 
 // SetSession configures the Shogunate with an LLM model from a session.
@@ -1025,9 +1077,10 @@ func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
 			content, err := os.ReadFile(filePath)
 			if err != nil {
 				m.commandLine.AddToast(fmt.Sprintf("Error reading file: %v", err), "error", time.Second*3)
-			} else if session := m.getCurrentSession(); session != nil {
-				session.AddContextFile(filePath, string(content))
-				m.tabs.Content().Chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
+			} else if m.shogunate != nil {
+				if err := m.shogunate.AddSessionContextFile(m.currentTabTarget(), filePath, string(content)); err == nil {
+					m.tabs.Content().Chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
+				}
 			}
 			currentValue := m.prompt().Value()
 			lastAt := strings.LastIndex(currentValue, "@")
@@ -1127,8 +1180,8 @@ func (m *TUIModel) saveHistoryPresentState() {
 		return
 	}
 	m.historyPendingPrompt = m.prompt().Value()
-	if session := m.getCurrentSession(); session != nil {
-		m.historyPresentSessionSnapshot = session.GetMessageSnapshot()
+	if state, ok := m.currentSessionState(); ok {
+		m.historyPresentSessionSnapshot = state.MessageSnapshot
 	} else {
 		m.historyPresentSessionSnapshot = 0
 	}
@@ -1265,8 +1318,8 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			// User is submitting a historical prompt - rollback to that state
 			entry := m.sessionPromptHistory[m.historyCursor]
 			m.stopStreamingTab(m.tabs.ActiveTab().Target)
-			if session := m.getCurrentSession(); session != nil {
-				session.RollbackTo(entry.SessionSnapshot)
+			if m.shogunate != nil {
+				_ = m.shogunate.RollbackSession(m.currentTabTarget(), entry.SessionSnapshot)
 			}
 			m.tabs.Content().Chat.TruncateTo(entry.ChatSnapshot)
 			m.tabs.Content().Chat.ClearToolCallMessageIndex()
@@ -1278,10 +1331,10 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		// Add user input to raw history
 		m.tabs.Content().Chat.AddToRawHistory("USER", content)
 		chatSnapshot := len(m.tabs.Content().Chat.Messages)
+		state, hasSession := m.currentSessionState()
 		var sessionSnapshot int
-		session := m.getCurrentSession()
-		if session != nil {
-			sessionSnapshot = session.GetMessageSnapshot()
+		if hasSession {
+			sessionSnapshot = state.MessageSnapshot
 		}
 		if m.historyCursor < len(m.sessionPromptHistory) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
@@ -1289,32 +1342,8 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		m.tabs.Content().Chat.AddUserMessage(content)
 		if m.shogunate != nil {
 			// Check if we need to auto-compact before sending the prompt (#54)
-			if session != nil {
-				info := session.GetContextInfo()
-				// Auto-compact if free tokens are less than 10% of total
-				autoCompactThreshold := float64(info.TotalTokens) * 0.10
-				if float64(info.FreeTokens) < autoCompactThreshold && len(session.GetMessages()) > 2 {
-					slog.Info("auto-compacting conversation", "free_tokens", info.FreeTokens, "threshold", autoCompactThreshold)
-					m.tabs.Content().Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
-
-					// Perform compaction synchronously before sending the prompt
-					ctx := context.Background()
-					// not using summary as this is an automatic workflow and
-					// there's no reason to notfiy the user
-					_, err := session.CompactHistory(ctx, compactPrompt)
-					if err != nil {
-						slog.Warn("auto-compaction failed", "error", err)
-						m.tabs.Content().Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
-					} else {
-						// Get updated context info
-						newInfo := session.GetContextInfo()
-						m.tabs.Content().Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
-							formatTokenCount(newInfo.UsedTokens),
-							formatTokenCount(newInfo.TotalTokens),
-							percentage(newInfo.UsedTokens, newInfo.TotalTokens)))
-						slog.Info("auto-compaction completed", "old_used", info.UsedTokens, "new_used", newInfo.UsedTokens, "saved", info.UsedTokens-newInfo.UsedTokens)
-					}
-				}
+			if hasSession {
+				m.autoCompactIfNeeded(state)
 			}
 
 			m.sessionActive = true
@@ -1327,8 +1356,8 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
-			if session != nil {
-				contextFiles = session.GetContextFiles()
+			if hasSession {
+				contextFiles = state.ContextFiles
 			}
 			shogunateCmd := m.submitToShogunate(ctx, content, contextFiles)
 			cmds = append(cmds, shogunateCmd)
@@ -1475,8 +1504,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
 			entry := m.sessionPromptHistory[m.historyCursor]
 			m.stopStreamingTab(m.tabs.ActiveTab().Target)
-			if session := m.getCurrentSession(); session != nil {
-				session.RollbackTo(entry.SessionSnapshot)
+			if m.shogunate != nil {
+				_ = m.shogunate.RollbackSession(m.currentTabTarget(), entry.SessionSnapshot)
 			}
 			m.tabs.Content().Chat.TruncateTo(entry.ChatSnapshot)
 			m.tabs.Content().Chat.ClearToolCallMessageIndex()
@@ -1485,36 +1514,18 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.tabs.Content().Chat.AddToRawHistory("USER", content)
 		chatSnapshot := len(m.tabs.Content().Chat.Messages)
+		state, hasSession := m.currentSessionState()
 		var sessionSnapshot int
-		session := m.getCurrentSession()
-		if session != nil {
-			sessionSnapshot = session.GetMessageSnapshot()
+		if hasSession {
+			sessionSnapshot = state.MessageSnapshot
 		}
 		if m.historyCursor < len(m.sessionPromptHistory) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
 		m.tabs.Content().Chat.AddUserMessage(content)
 		if m.shogunate != nil {
-			if session != nil {
-				info := session.GetContextInfo()
-				autoCompactThreshold := float64(info.TotalTokens) * 0.10
-				if float64(info.FreeTokens) < autoCompactThreshold && len(session.GetMessages()) > 2 {
-					slog.Info("auto-compacting conversation", "free_tokens", info.FreeTokens, "threshold", autoCompactThreshold)
-					m.tabs.Content().Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
-					ctx := context.Background()
-					_, err := session.CompactHistory(ctx, compactPrompt)
-					if err != nil {
-						slog.Warn("auto-compaction failed", "error", err)
-						m.tabs.Content().Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
-					} else {
-						newInfo := session.GetContextInfo()
-						m.tabs.Content().Chat.AddMessage(fmt.Sprintf("✅ Conversation compacted! Context usage: %s/%s tokens (%.1f%%)",
-							formatTokenCount(newInfo.UsedTokens),
-							formatTokenCount(newInfo.TotalTokens),
-							percentage(newInfo.UsedTokens, newInfo.TotalTokens)))
-						slog.Info("auto-compaction completed", "old_used", info.UsedTokens, "new_used", newInfo.UsedTokens, "saved", info.UsedTokens-newInfo.UsedTokens)
-					}
-				}
+			if hasSession {
+				m.autoCompactIfNeeded(state)
 			}
 
 			m.sessionActive = true
@@ -1525,8 +1536,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Get context files from session (populated via @ references)
 			var contextFiles map[string]string
-			if session != nil {
-				contextFiles = session.GetContextFiles()
+			if hasSession {
+				contextFiles = state.ContextFiles
 			}
 			shogunateCmd := m.submitToShogunate(ctx, content, contextFiles)
 			cmds = append(cmds, shogunateCmd)
@@ -1673,10 +1684,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
 		chat.AddAIChunk(msg.Text)
-		session := m.getCurrentSession()
-		if session != nil && session.ChannelID() == msg.ChannelID {
+		if state, ok := m.currentSessionState(); ok && state.ChannelID == msg.ChannelID {
 			m.status.AddStreamChars(len(msg.Text))
-			m.status.ContextPercent = session.GetContextUsagePercent()
+			m.status.ContextPercent = state.ContextUsagePercent
 		}
 		if m.tabs.AnyStreaming() {
 			m.waitingStart = time.Now()
@@ -1692,10 +1702,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
 		chat.AddThinkingChunk(msg.Text)
-		session := m.getCurrentSession()
-		if session != nil && session.ChannelID() == msg.ChannelID {
+		if state, ok := m.currentSessionState(); ok && state.ChannelID == msg.ChannelID {
 			m.status.AddStreamChars(len(msg.Text))
-			m.status.ContextPercent = session.GetContextUsagePercent()
+			m.status.ContextPercent = state.ContextUsagePercent
 		}
 		return m, nil
 
@@ -1968,8 +1977,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if modified != original {
 			// Content was modified - send it back to the Sage as a chat message
-			if session := m.getCurrentSession(); session != nil {
-				session.AddMessage("human", msg.Question)
+			if m.shogunate != nil {
+				_ = m.shogunate.AddSessionMessage(m.currentTabTarget(), "human", msg.Question)
 			}
 			// Cancel the pending zhengming so the Sage can re-suggest with modified content
 			if m.shogunate != nil {
@@ -2422,8 +2431,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stopStreamingTab(m.tabs.ActiveTab().Target)
 
 			// Reset session conversation history
-			if session := m.getCurrentSession(); session != nil {
-				session.ClearHistory()
+			if m.shogunate != nil {
+				_ = m.shogunate.ClearSessionHistory(m.currentTabTarget())
 			}
 		}
 
@@ -2514,14 +2523,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle conversation compaction
 		slog.Debug("got compactConversationMsg")
 
-		var compactFunc func(ctx context.Context, prompt string) (string, error)
-
-		if session := m.getCurrentSession(); session != nil {
-			compactFunc = session.CompactHistory
-			slog.Debug("using session for compaction")
-		}
-
-		if compactFunc == nil {
+		target := m.currentTabTarget()
+		if _, ok := m.currentSessionState(); !ok {
 			m.commandLine.AddToast("No LLM session available for compaction", "error", 4000)
 			return m, nil
 		}
@@ -2534,7 +2537,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Perform the compaction in a goroutine
 		go func() {
 			ctx := context.Background()
-			summary, err := compactFunc(ctx, compactPrompt)
+			summary, err := m.shogunate.CompactSession(ctx, target, compactPrompt)
 			if err != nil {
 				if program != nil {
 					program.Send(compactErrorMsg{err: err})
@@ -2552,8 +2555,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		var info ContextInfo
 
-		if session := m.getCurrentSession(); session != nil {
-			si := session.GetContextInfo()
+		if state, ok := m.currentSessionState(); ok {
+			si := state.ContextInfo
 			info = ContextInfo{
 				Model:              si.Model,
 				TotalTokens:        si.TotalTokens,
