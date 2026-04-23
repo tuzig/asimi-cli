@@ -1,0 +1,16 @@
+- name: hello-world
+  steps:
+    - name: testing
+      out: Hello world
+
+- name: print-edict
+  description: print the edict details
+  inputs:
+    edict_id:
+      type: string
+      required: true
+  background:
+    - the edict details
+  steps:
+    - name: print
+      out: b4 {{ .edict }} after
