@@ -1425,9 +1425,6 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		ctx := context.Background()
 
-		// Get the current shell runner (podman sandbox or host)
-		runner := m.shogunate.GetRunner()
-
 		// User-initiated commands never need approval
 		params := runners.Input{
 			Command:        shellCmd,
@@ -1435,7 +1432,7 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 			BypassApproval: true, // User explicitly requested this command
 		}
 
-		output, err := runner.Run(ctx, params)
+		output, err := m.shogunate.RunShellCommand(ctx, params)
 
 		if err != nil {
 			return shellCommandResultMsg{
@@ -1839,8 +1836,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				message = fmt.Sprintf("Minister %s sealed edict %d", minister, msg.EdictKey.ID)
 			}
 			// Re-query seals to show fresh seal chain with Ruler's seal
-			sealService := m.shogunate.GetSealService()
-			updatedSeals, err := sealService.GetSeals(msg.EdictKey)
+			updatedSeals, err := m.shogunate.GetEdictSeals(msg.EdictKey)
 			if err != nil {
 				message += fmt.Sprintf("\n  (failed to refresh seal chain: %v)", err)
 			} else {
@@ -1977,12 +1973,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Cancel the pending zhengming so the Sage can re-suggest with modified content
 			if m.shogunate != nil {
-				for _, minister := range m.shogunate.Ministers() {
-					if base, ok := minister.(interface{ CancelZhengming(string) }); ok {
-						base.CancelZhengming(msg.RequestID)
-						break
-					}
-				}
+				m.shogunate.CancelZhengming(msg.RequestID)
 			}
 		}
 		return m, nil
@@ -2450,12 +2441,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Set the shell runner based on RunOnHost flag
 		if msg.RunOnHost {
 			slog.Debug("using host shell runner for this conversation")
-			m.shogunate.GetRunner().AllowFallback(true)
+			m.shogunate.AllowRunnerFallback(true)
 
 			// Wrap the caller's func with code to restore the previous runner
 			originalCallback := msg.onStreamComplete
 			msg.onStreamComplete = func(model *TUIModel) tea.Cmd {
-				model.shogunate.GetRunner().AllowFallback(false)
+				model.shogunate.AllowRunnerFallback(false)
 
 				// Call the original callback if it exists
 				if originalCallback != nil {
@@ -3154,16 +3145,8 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 		return
 	}
 	// Handle DB updates and emit zhengming_answered event
-	type zhengmingHandler interface {
-		HandleZhengmingResponse(ctx context.Context, requestID, answer string) error
-	}
-	for _, minister := range m.shogunate.Ministers() {
-		if h, ok := minister.(zhengmingHandler); ok {
-			if err := h.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
-				slog.Error("failed to handle zhengming response", "error", err)
-			}
-			break // Only need to call once
-		}
+	if err := m.shogunate.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
+		slog.Error("failed to handle zhengming response", "error", err)
 	}
 }
 

@@ -15,43 +15,62 @@ import (
 )
 
 // Client is everything the TUI needs from the Shogunate.
+//
+// Every method below is designed so its parameters and return values can
+// travel over a MessagePack wire unchanged. GetMinister and ConfigureModel
+// are the remaining exceptions: they hand back or consume non-marshallable
+// types (Minister interface, bifrost.LLMProvider) and are kept in-process
+// only pending a session/model refactor of their own.
 type Client interface {
-	// Ministers and scope.
-	GetMinister(id string) shogunate.Minister
-	Ministers() []shogunate.Minister
+	// Scope.
 	EdictKey(edictID uint) storage.EdictKey
 	CourtEdictKey() storage.EdictKey
+
+	// Minister presence and reset. Fully wire-safe.
+	HasMinister(id string) bool
+	ResetMinisterSession(id string)
+
+	// In-process only; needed by getCurrentSession(). Scheduled for a
+	// future session-narrowing phase.
+	GetMinister(id string) shogunate.Minister
 
 	// Edicts and events.
 	CreateEdict(issueRef, intent string) (*storage.Edict, error)
 	CreateEdictSilent(issueRef, intent string) (*storage.Edict, error)
+	GetEdict(edictID uint) (*storage.Edict, error)
 	PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint
-	GetSealService() *storage.SealService
 
-	// Prompts.
+	// Seals.
+	GrantRulerSeal(edictID uint, notes string) error
+	GetEdictSeals(key storage.EdictKey) ([]storage.Seal, error)
+	ListActiveEdicts() ([]storage.ActiveEdict, error)
+
+	// Prompts and sessions.
 	SubmitPrompt(targetID string, p *shogunate.Prompt) error
 	RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error
 
-	// Model configuration.
-	ConfigureModel(client shogunate.LLMProvider, config *shogunate.SessionConfig, repoInfo repo.RepoInfo)
+	// Zhengming.
+	HandleZhengmingResponse(ctx context.Context, requestID, answer string) error
+	CancelZhengming(requestID string)
 
-	// Runner access. Post-split, the TUI only uses this to toggle AllowFallback;
-	// keep it here so P1 is behaviour-preserving.
-	GetRunner() runners.Runner
+	// Shell runner.
+	AllowRunnerFallback(allow bool)
+	RunShellCommand(ctx context.Context, input runners.Input) (runners.Output, error)
+
+	// In-process only; LLM client setup. Scheduled for a model-layer
+	// refactor that builds the client daemon-side.
+	ConfigureModel(client shogunate.LLMProvider, config *shogunate.SessionConfig, repoInfo repo.RepoInfo)
 
 	// Snapshots for the shogunate debug view.
 	TakeSnapshot() shogunate.Snapshot
 
 	// SetRulingCtx hands the Shogunate a function that returns the currently-
-	// focused tab's context. Rituals use this context, so cancelling the tab
-	// cancels rituals. In later phases this is replaced by an explicit Cancel
-	// RPC; kept here for P1 behaviour parity.
+	// focused tab's context. Cancelling the tab cancels rituals. In the split
+	// world this becomes an explicit Cancel RPC.
 	SetRulingCtx(fn func() context.Context)
 
 	// Subscribe returns a channel that carries every TUI-bound notification:
-	// streaming chunks, shogunate events, and runner messages (container
-	// launched, approval requests). The channel stays open for the client's
-	// lifetime; callers drain it until ctx is done.
+	// streaming chunks, shogunate events, and runner messages.
 	Subscribe(ctx context.Context) <-chan any
 }
 

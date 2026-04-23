@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
@@ -616,4 +617,131 @@ func (s *Shogunate) GetSealService() *storage.SealService {
 		return nil
 	}
 	return storage.NewSealService(s.db)
+}
+
+// HasMinister reports whether a minister with the given id is registered.
+func (s *Shogunate) HasMinister(id string) bool {
+	return s != nil && s.GetMinister(id) != nil
+}
+
+// ResetMinisterSession resets the session of the minister with the given id.
+// No-op if the minister doesn't exist or doesn't expose ResetSession.
+func (s *Shogunate) ResetMinisterSession(id string) {
+	if s == nil {
+		return
+	}
+	m := s.GetMinister(id)
+	if m == nil {
+		return
+	}
+	if rs, ok := m.(interface{ ResetSession() }); ok {
+		rs.ResetSession()
+	}
+}
+
+// GetEdict looks up an edict in the current shogunate scope.
+func (s *Shogunate) GetEdict(edictID uint) (*storage.Edict, error) {
+	if s == nil {
+		return nil, fmt.Errorf("shogunate not initialized")
+	}
+	ch, ok := s.GetMinister("chancellor").(*Chancellor)
+	if !ok {
+		return nil, fmt.Errorf("chancellor not found")
+	}
+	return ch.GetEdict(s.EdictKey(edictID))
+}
+
+// GrantRulerSeal stamps the Ruler's seal on an edict and publishes EventSealGranted.
+func (s *Shogunate) GrantRulerSeal(edictID uint, notes string) error {
+	if s == nil {
+		return fmt.Errorf("shogunate not initialized")
+	}
+	sealer := s.GetSealService()
+	if sealer == nil {
+		return fmt.Errorf("seal service not available")
+	}
+	key := s.EdictKey(edictID)
+	timestamp := time.Now().Format(time.RFC3339)
+	if err := sealer.GrantSeal(key, "ruler", storage.JSON{
+		"notes":     notes,
+		"timestamp": timestamp,
+	}); err != nil {
+		return err
+	}
+	s.PublishEvent(key, storage.EventSealGranted, storage.JSON{
+		"minister_id": "ruler",
+		"notes":       notes,
+		"timestamp":   timestamp,
+	})
+	return nil
+}
+
+// GetEdictSeals returns the seal chain for an edict.
+func (s *Shogunate) GetEdictSeals(key storage.EdictKey) ([]storage.Seal, error) {
+	if s == nil {
+		return nil, fmt.Errorf("shogunate not initialized")
+	}
+	sealer := s.GetSealService()
+	if sealer == nil {
+		return nil, fmt.Errorf("seal service not available")
+	}
+	return sealer.GetSeals(key)
+}
+
+// ListActiveEdicts returns edicts in the current scope that aren't cancelled or sealed.
+func (s *Shogunate) ListActiveEdicts() ([]storage.ActiveEdict, error) {
+	if s == nil {
+		return nil, fmt.Errorf("shogunate not initialized")
+	}
+	sealer := s.GetSealService()
+	if sealer == nil {
+		return nil, fmt.Errorf("seal service not available")
+	}
+	return sealer.ListActiveEdicts(s.config.Username, s.config.Project)
+}
+
+// AllowRunnerFallback toggles the host-fallback behaviour on the active runner.
+func (s *Shogunate) AllowRunnerFallback(allow bool) {
+	if s == nil || s.runner == nil {
+		return
+	}
+	s.runner.AllowFallback(allow)
+}
+
+// RunShellCommand executes a shell command on the active runner.
+func (s *Shogunate) RunShellCommand(ctx context.Context, input runners.Input) (runners.Output, error) {
+	if s == nil || s.runner == nil {
+		return runners.Output{}, fmt.Errorf("runner not initialized")
+	}
+	return s.runner.Run(ctx, input)
+}
+
+// HandleZhengmingResponse dispatches a user's zhengming answer to the first
+// minister that knows how to handle one.
+func (s *Shogunate) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
+	if s == nil {
+		return fmt.Errorf("shogunate not initialized")
+	}
+	type zhengmingHandler interface {
+		HandleZhengmingResponse(ctx context.Context, requestID, answer string) error
+	}
+	for _, m := range s.Ministers() {
+		if h, ok := m.(zhengmingHandler); ok {
+			return h.HandleZhengmingResponse(ctx, requestID, answer)
+		}
+	}
+	return fmt.Errorf("no minister accepted zhengming response")
+}
+
+// CancelZhengming cancels a pending zhengming request on whichever minister owns it.
+func (s *Shogunate) CancelZhengming(requestID string) {
+	if s == nil {
+		return
+	}
+	for _, m := range s.Ministers() {
+		if base, ok := m.(interface{ CancelZhengming(string) }); ok {
+			base.CancelZhengming(requestID)
+			return
+		}
+	}
 }
