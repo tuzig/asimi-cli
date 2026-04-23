@@ -60,15 +60,15 @@ func (r *EventRegistry) Dispatch(event Event) {
 
 // DrainedEvent describes a single event recovered from the DB at startup.
 type DrainedEvent struct {
-	EventType storage.ShogunateEvent
-	EdictKey  storage.EdictKey
-	Payload   map[string]interface{}
+	EventType storage.ShogunateEvent `msgpack:"event_type"`
+	EdictKey  storage.EdictKey       `msgpack:"edict_key"`
+	Payload   map[string]interface{} `msgpack:"payload,omitempty"`
 }
 
 // EventsDrainedMsg notifies the TUI that crash-recovery drained events from the DB.
 type EventsDrainedMsg struct {
-	ChannelID string
-	Events    []DrainedEvent
+	ChannelID string         `msgpack:"channel_id,omitempty"`
+	Events    []DrainedEvent `msgpack:"events"`
 }
 
 // Shogunate coordinates ministers and manages lifecycle.

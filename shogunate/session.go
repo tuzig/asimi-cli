@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -18,6 +19,7 @@ import (
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 func strPtr(s string) *string { return &s }
@@ -36,44 +38,77 @@ type responseChoice struct {
 }
 
 // --- Stream notification message types ---
+//
+// These carry across the RPC wire as MessagePack notifications. Field
+// tags match the canonical JSON-ish on-wire names; keep them stable.
 
 // StreamChunkMsg contains a streaming text chunk from the LLM
 type StreamChunkMsg struct {
-	ChannelID string
-	Text      string
+	ChannelID string `msgpack:"channel_id"`
+	Text      string `msgpack:"text"`
 }
 
 // StreamReasoningChunkMsg contains a reasoning/thinking chunk from the LLM
 type StreamReasoningChunkMsg struct {
-	ChannelID string
-	Text      string
+	ChannelID string `msgpack:"channel_id"`
+	Text      string `msgpack:"text"`
 }
 
 // StreamStartMsg signals that streaming has begun
 type StreamStartMsg struct {
-	ChannelID string
-	EdictID   uint
+	ChannelID string `msgpack:"channel_id"`
+	EdictID   uint   `msgpack:"edict_id,omitempty"`
 }
 
 // StreamCompleteMsg signals that streaming has completed successfully
-type StreamCompleteMsg struct{ ChannelID string }
+type StreamCompleteMsg struct {
+	ChannelID string `msgpack:"channel_id"`
+}
 
 // StreamInterruptedMsg signals that streaming was interrupted
 type StreamInterruptedMsg struct {
-	ChannelID      string
-	PartialContent string
+	ChannelID      string `msgpack:"channel_id"`
+	PartialContent string `msgpack:"partial_content,omitempty"`
 }
 
-// StreamErrorMsg signals an error during streaming
+// StreamErrorMsg signals an error during streaming. Err crosses the wire
+// as a string; decoded values reconstruct a simple errors.New error.
 type StreamErrorMsg struct {
-	ChannelID string
-	Err       error
+	ChannelID string `msgpack:"-"`
+	Err       error  `msgpack:"-"`
+}
+
+type streamErrorMsgWire struct {
+	ChannelID string `msgpack:"channel_id"`
+	Err       string `msgpack:"err,omitempty"`
+}
+
+// MarshalMsgpack encodes StreamErrorMsg with Err as a plain string.
+func (s StreamErrorMsg) MarshalMsgpack() ([]byte, error) {
+	w := streamErrorMsgWire{ChannelID: s.ChannelID}
+	if s.Err != nil {
+		w.Err = s.Err.Error()
+	}
+	return msgpack.Marshal(w)
+}
+
+// UnmarshalMsgpack decodes StreamErrorMsg, reconstructing Err via errors.New.
+func (s *StreamErrorMsg) UnmarshalMsgpack(b []byte) error {
+	var w streamErrorMsgWire
+	if err := msgpack.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	s.ChannelID = w.ChannelID
+	if w.Err != "" {
+		s.Err = errors.New(w.Err)
+	}
+	return nil
 }
 
 // StreamMaxTokensReachedMsg signals that the response was truncated due to token limit
 type StreamMaxTokensReachedMsg struct {
-	ChannelID string
-	Content   string
+	ChannelID string `msgpack:"channel_id"`
+	Content   string `msgpack:"content,omitempty"`
 }
 
 // SessionConfig holds configuration for minister sessions
