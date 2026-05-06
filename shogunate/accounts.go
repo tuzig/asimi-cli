@@ -44,11 +44,12 @@ func NewBifrostLogger(logger *slog.Logger) *BifrostLogger {
 type Account struct {
 	requestTimeout    int
 	streamIdleTimeout int
+	baseURL           string
 }
 
 // NewAccount creates a new Account implementation backed by the OS keyring.
-func NewAccount(requestTimeout, streamIdleTimeout int) schemas.Account {
-	return &Account{requestTimeout: requestTimeout, streamIdleTimeout: streamIdleTimeout}
+func NewAccount(requestTimeout, streamIdleTimeout int, baseURL string) schemas.Account {
+	return &Account{requestTimeout: requestTimeout, streamIdleTimeout: streamIdleTimeout, baseURL: baseURL}
 }
 
 // GetConfiguredProviders returns providers that have credentials configured
@@ -155,6 +156,24 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 	return []schemas.Key{}, nil
 }
 
+// getBaseURLFromEnv returns the base URL from provider-specific environment variable
+func getBaseURLFromEnv(provider string) string {
+	envVarNames := map[string]string{
+		"openai":     "OPENAI_BASE_URL",
+		"anthropic":  "ANTHROPIC_BASE_URL",
+		"azure":      "AZURE_OPENAI_BASE_URL",
+		"gemini":     "GEMINI_BASE_URL",
+		"openrouter": "OPENROUTER_BASE_URL",
+		"bedrock":    "AWS_BEDROCK_BASE_URL",
+	}
+	if envName, ok := envVarNames[provider]; ok {
+		if url := os.Getenv(envName); url != "" {
+			return url
+		}
+	}
+	return ""
+}
+
 // GetConfigForProvider returns network configuration for a provider
 func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
 	networkConfig := schemas.DefaultNetworkConfig
@@ -163,6 +182,11 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	}
 	if a.streamIdleTimeout > 0 {
 		networkConfig.StreamIdleTimeoutInSeconds = a.streamIdleTimeout
+	}
+	if a.baseURL != "" {
+		networkConfig.BaseURL = a.baseURL
+	} else if baseURL := getBaseURLFromEnv(string(provider)); baseURL != "" {
+		networkConfig.BaseURL = baseURL
 	}
 	return &schemas.ProviderConfig{
 		NetworkConfig: networkConfig,

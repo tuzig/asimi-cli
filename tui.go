@@ -354,6 +354,7 @@ func (m *TUIModel) llmRequest() shogunate.ConfigureLLMRequest {
 	return shogunate.ConfigureLLMRequest{
 		Provider:                 m.config.LLM.Provider,
 		Model:                    m.config.LLM.Model,
+		BaseURL:                  m.config.LLM.BaseURL,
 		MaxTurns:                 m.config.LLM.MaxTurns,
 		MaxThinkingTokens:        m.config.LLM.MaxThinkingTokens,
 		RequestTimeoutSeconds:    m.config.LLM.RequestTimeoutSeconds,

@@ -17,6 +17,7 @@ import (
 type ConfigureLLMRequest struct {
 	Provider                 string `msgpack:"provider"`
 	Model                    string `msgpack:"model"`
+	BaseURL                  string `msgpack:"base_url,omitempty"`
 	MaxTurns                 int    `msgpack:"max_turns,omitempty"`
 	MaxThinkingTokens        int    `msgpack:"max_thinking_tokens,omitempty"`
 	RequestTimeoutSeconds    int    `msgpack:"request_timeout_seconds,omitempty"`
@@ -29,9 +30,9 @@ type ConfigureLLMRequest struct {
 // (keyring-backed credentials) and slog logger. Formerly lived in
 // main.go; moved here so the daemon can initialise its own client
 // without the TUI having to ship one across the wire.
-func InitBifrost(ctx context.Context, requestTimeout, streamIdleTimeout int) (*bifrost.Bifrost, error) {
+func InitBifrost(ctx context.Context, requestTimeout, streamIdleTimeout int, baseURL string) (*bifrost.Bifrost, error) {
 	return bifrost.Init(ctx, schemas.BifrostConfig{
-		Account: NewAccount(requestTimeout, streamIdleTimeout),
+		Account: NewAccount(requestTimeout, streamIdleTimeout, baseURL),
 		Logger:  NewBifrostLogger(slog.Default()),
 	})
 }
@@ -44,7 +45,7 @@ func (s *Shogunate) ConfigureLLM(ctx context.Context, req ConfigureLLMRequest) e
 	if s == nil {
 		return fmt.Errorf("shogunate: not initialised")
 	}
-	client, err := InitBifrost(ctx, req.RequestTimeoutSeconds, req.StreamIdleTimeoutSeconds)
+	client, err := InitBifrost(ctx, req.RequestTimeoutSeconds, req.StreamIdleTimeoutSeconds, req.BaseURL)
 	if err != nil {
 		return fmt.Errorf("shogunate: init bifrost: %w", err)
 	}
@@ -52,6 +53,7 @@ func (s *Shogunate) ConfigureLLM(ctx context.Context, req ConfigureLLMRequest) e
 		LLM: internalconfig.LLMConfig{
 			Provider:                 req.Provider,
 			Model:                    req.Model,
+			BaseURL:                  req.BaseURL,
 			MaxTurns:                 req.MaxTurns,
 			MaxThinkingTokens:        req.MaxThinkingTokens,
 			RequestTimeoutSeconds:    req.RequestTimeoutSeconds,
