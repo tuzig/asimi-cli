@@ -835,8 +835,8 @@ func DeepCopyChatTool(original ChatTool) ChatTool {
 
 		if original.Function.Parameters != nil {
 			copyParams := &ToolFunctionParameters{
-				Type:     original.Function.Parameters.Type,
-				keyOrder: original.Function.Parameters.keyOrder,
+				Type:                original.Function.Parameters.Type,
+				keyOrder:            original.Function.Parameters.keyOrder,
 				explicitEmptyObject: original.Function.Parameters.explicitEmptyObject,
 			}
 
@@ -877,6 +877,30 @@ func DeepCopyChatTool(original ChatTool) ChatTool {
 			copyStrict := *original.Function.Strict
 			copyTool.Function.Strict = &copyStrict
 		}
+	}
+
+	// Deep copy Annotations if present
+	if original.Annotations != nil {
+		copyAnnotations := &MCPToolAnnotations{
+			Title: original.Annotations.Title,
+		}
+		if original.Annotations.ReadOnlyHint != nil {
+			v := *original.Annotations.ReadOnlyHint
+			copyAnnotations.ReadOnlyHint = &v
+		}
+		if original.Annotations.DestructiveHint != nil {
+			v := *original.Annotations.DestructiveHint
+			copyAnnotations.DestructiveHint = &v
+		}
+		if original.Annotations.IdempotentHint != nil {
+			v := *original.Annotations.IdempotentHint
+			copyAnnotations.IdempotentHint = &v
+		}
+		if original.Annotations.OpenWorldHint != nil {
+			v := *original.Annotations.OpenWorldHint
+			copyAnnotations.OpenWorldHint = &v
+		}
+		copyTool.Annotations = copyAnnotations
 	}
 
 	// Deep copy Custom if present
@@ -1255,6 +1279,10 @@ func IsGeminiModel(model string) bool {
 
 func IsVeoModel(model string) bool {
 	return strings.Contains(model, "veo")
+}
+
+func IsGemmaModel(model string) bool {
+	return strings.Contains(model, "gemma")
 }
 
 // IsImagenModel checks if the model is an Imagen model.

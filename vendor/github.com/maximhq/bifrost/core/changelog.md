@@ -1,19 +1,10 @@
-- feat: add Fireworks AI as a first-class provider (thanks [@ivanetchart](https://github.com/ivanetchart)!)
-- feat: add realtime provider interfaces, schemas, and engine hooks
-- feat: add session log storage and realtime request normalization
-- feat: add per-user OAuth consent flow with identity selection and MCP authentication
-- feat: add IsSet method to EnvVar and improve provider auth validation
-- feat: add support for tracking userId, teamId, customerId, and businessUnitId
-- feat: add prompts plugin with direct key header resolver
-- feat: add embeddings, image gen, edit and variation to bedrock
-- feat: allow path whitelisting from security config
-- fix: auto-redact env-backed values in EnvVar JSON serialization
-- fix: bedrock tool choice conversion to auto
-- fix: MCP tool logs not being captured correctly
-- fix: preserve explicit empty tool parameter schemas for openai passthrough
-- fix: correct SigV4 service name for bedrock agent runtime rerank
-- fix: include raw model ID in list-models output alongside aliases
-- fix: vertex endpoint correction
-- fix: bedrock streaming retry for retryable AWS exceptions and stale connections
-- fix: thinking budget validation for gemini models
-- fix: add empty arguments guard in bedrock utils
+- feat: add `IsAPIKeyAuthContextKey` and `IsLocalAdminContextKey` context keys for middleware to short-circuit on API-key auth and bypass RBAC when auth is fully disabled
+- feat: add `NormalizeSchemaForAnthropicRaw` (gjson/sjson) so JSON schema normalization avoids a `map[string]interface{}` round-trip
+- feat: add `extractJSONSchemaObject` helper in Bedrock utils to unify composite and decomposed JSON schema fields for OpenAI-compat structured output
+- fix: skip model catalog routing if loadbalancer or governance routing has already set the provider in anthropic integration
+- fix: set extra params passthrough for SGL provider so SGLang vLLM-style extra-body parameters are no longer dropped (thanks [@hensapir](https://github.com/hensapir)!)
+- fix: suppress non-tool content events in Bedrock structured-output streaming so prose/preamble no longer corrupts the assembled JSON
+- fix: enrich `NewUnsupportedOperationError` with provider and request type in `ExtraFields`
+- fix: allow zero-millisecond streaming latency values (was previously rejected as invalid)
+- fix: add `String()` method on `BifrostError` so logged errors no longer dump raw bytes as decimal
+- chore: re-enable Vertex `ContextEditing` and `ContextManagementField`; disable Azure `TaskBudgets` in the feature-support matrix; add `claude-4.6-sonnet` mapping for the Bedrock test account

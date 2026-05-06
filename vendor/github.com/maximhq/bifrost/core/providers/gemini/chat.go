@@ -14,6 +14,8 @@ func ToGeminiChatCompletionRequest(bifrostReq *schemas.BifrostChatRequest) (*Gem
 		return nil, nil
 	}
 
+	bifrostReq.Model = NormalizeModelName(bifrostReq.Model)
+
 	// Create the base Gemini generation request
 	geminiReq := &GeminiGenerationRequest{
 		Model: bifrostReq.Model,
@@ -504,7 +506,13 @@ func isErrorFinishReason(reason FinishReason) bool {
 		reason == FinishReasonProhibitedContent ||
 		reason == FinishReasonSPII ||
 		reason == FinishReasonImageSafety ||
-		reason == FinishReasonUnexpectedToolCall
+		reason == FinishReasonUnexpectedToolCall ||
+		reason == FinishReasonMissingThoughtSignature ||
+		reason == FinishReasonMalformedResponse ||
+		reason == FinishReasonImageProhibitedContent ||
+		reason == FinishReasonImageRecitation ||
+		reason == FinishReasonTooManyToolCalls ||
+		reason == FinishReasonNoImage
 }
 
 // createErrorResponse creates a complete BifrostChatResponse for error cases
