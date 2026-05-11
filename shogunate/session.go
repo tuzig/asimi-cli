@@ -491,6 +491,14 @@ var extendedModelContextSizes = map[string]int{
 	"gemini-1.5-pro-latest":   2_000_000,
 	"gemini-pro":              1_000_000,
 	"gemini-2.0-flash":        1_000_000,
+	// MiniMax models (e.g. via AWS Bedrock bedrock-mantle endpoint)
+	"minimax.minimax-m2.5": 196_000,
+}
+
+// modelMaxOutputTokens caps MaxCompletionTokens for models with provider-side
+// output limits below the default. Key matches the model ID exactly.
+var modelMaxOutputTokens = map[string]int{
+	"minimax.minimax-m2.5": 8192,
 }
 
 // openRouterContextSizes maps the model portion (after provider/) of OpenRouter
@@ -896,6 +904,9 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 
 	autoStr := "auto"
 	maxTokens := 64000
+	if cap, ok := modelMaxOutputTokens[s.Model]; ok && cap < maxTokens {
+		maxTokens = cap
+	}
 	params := &schemas.ChatParameters{}
 	if len(s.toolDefs) > 0 {
 		params.Tools = s.toolDefs
