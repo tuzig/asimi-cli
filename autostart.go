@@ -138,5 +138,6 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 
 	return func(p *tea.Program) {
 		rpc.RegisterApprovalHandler(client, teaSender{p})
+		rpc.RegisterEditorHandler(client, teaSender{p})
 	}, nil
 }

@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/afittestide/asimi/internal/utils"
+	"github.com/pmezard/go-difflib/difflib"
 )
 
 // ApproveDocInput is the input for the ApproveDocTool
@@ -18,15 +17,31 @@ type ApproveDocInput struct {
 	Description string `json:"description,omitempty"`
 }
 
-// EditorRequest is sent via Notify to ask the TUI to open a file in $EDITOR.
-// The caller blocks on ResultChan until the editor exits.
+// EditorRequest is sent via Notify to ask the host (TUI or RPC client) to open
+// content in $EDITOR. The receiver owns the temp-file lifecycle: it writes the
+// content, runs the editor, and returns the modified bytes on ResultChan.
+//
+// This shape is intentionally serialization-friendly (no *exec.Cmd) so a daemon
+// can bridge it to a remote TUI over RPC.
 type EditorRequest struct {
-	Cmd        *exec.Cmd
-	ResultChan chan error
+	Content    string
+	Filename   string // hint for extension/syntax highlighting (optional)
+	ResultChan chan EditorResult
 }
 
-// ApproveDocTool opens documents in $EDITOR for review, auto-approves if unchanged, returns diff if modified.
-// Notify must be set to send an EditorRequest to the TUI so tea.ExecProcess can run the editor.
+// EditorResult carries the post-edit content back to the tool, or an error if
+// the editor failed to launch.
+type EditorResult struct {
+	Content  string // modified bytes; empty if Saved == false
+	Saved    bool   // false when the user quit without writing (vi :q!)
+	Err      error
+}
+
+// ApproveDocTool opens documents in $EDITOR for review. Returns status='approved'
+// when content is unchanged, status='modified' with a diff when edited, or
+// status='rejected' when the user quit without saving.
+//
+// Notify must be set to send an EditorRequest to the host that owns the terminal.
 type ApproveDocTool struct {
 	Notify func(any)
 }
@@ -53,101 +68,43 @@ func (t ApproveDocTool) Call(ctx context.Context, input string) (string, error) 
 		return "", fmt.Errorf("approve_doc requires TUI notify to open editor")
 	}
 
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
-	}
+	resultChan := make(chan EditorResult, 1)
+	t.Notify(EditorRequest{
+		Content:    params.Content,
+		Filename:   params.Filename,
+		ResultChan: resultChan,
+	})
 
-	// Derive extension from filename param, default to .md for editor syntax highlighting
-	ext := ".md"
-	if params.Filename != "" {
-		if i := strings.LastIndex(params.Filename, "."); i >= 0 {
-			ext = params.Filename[i:]
-		}
-	}
-
-	// Create temp file with original content
-	tmpFile, err := os.CreateTemp("", "approve_doc_*"+ext)
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-
-	if err := os.WriteFile(tmpPath, []byte(params.Content), 0644); err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("failed to write temp file: %w", err)
-	}
-
-	// Capture mtime before editor to detect :q! (quit without saving)
-	statBefore, err := os.Stat(tmpPath)
-	if err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("failed to stat temp file: %w", err)
-	}
-	mtimeBefore := statBefore.ModTime()
-
-	// Ask the TUI to run the editor via tea.ExecProcess and block until done
-	cmd := exec.Command(editor, tmpPath)
-	resultChan := make(chan error, 1)
-	t.Notify(EditorRequest{Cmd: cmd, ResultChan: resultChan})
-
-	// Wait for editor to finish (TUI sends result after tea.ExecProcess callback)
+	var res EditorResult
 	select {
 	case <-ctx.Done():
-		os.Remove(tmpPath)
 		return "", ctx.Err()
-	case editorErr := <-resultChan:
-		if editorErr != nil {
-			os.Remove(tmpPath)
-			return "", fmt.Errorf("editor failed: %w", editorErr)
-		}
+	case res = <-resultChan:
+	}
+	if res.Err != nil {
+		return "", fmt.Errorf("editor failed: %w", res.Err)
 	}
 
-	// Check mtime to detect :q! (quit without saving)
-	statAfter, err := os.Stat(tmpPath)
-	if err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("failed to stat temp file after edit: %w", err)
-	}
-
-	if statAfter.ModTime().Equal(mtimeBefore) {
-		// mtime unchanged → user quit without saving (:q!)
-		os.Remove(tmpPath)
+	if !res.Saved {
 		return `{"status":"rejected"}`, nil
 	}
 
-	// Read modified content
-	modifiedContent, err := os.ReadFile(tmpPath)
-	if err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("failed to read modified file: %w", err)
-	}
-
-	// mtime changed but content same → user saved without edits (:wq)
-	// Trim trailing whitespace for comparison since editors often add trailing newlines
-	if strings.TrimRight(string(modifiedContent), " \t\n\r") == strings.TrimRight(params.Content, " \t\n\r") {
-		os.Remove(tmpPath)
+	if strings.TrimRight(res.Content, " \t\n\r") == strings.TrimRight(params.Content, " \t\n\r") {
 		return `{"status":"approved"}`, nil
 	}
 
-	// Compute diff (must happen before removing tmpPath)
-	// TODO: use a go library for this
-	diffCmd := exec.Command("diff", "-u", "-", tmpPath)
-	diffCmd.Stdin = strings.NewReader(params.Content)
-	diffOutput, err := diffCmd.Output()
-	os.Remove(tmpPath)
-	if err != nil {
-		// diff returns exit code 1 when files differ, but we still get output
-		if len(diffOutput) == 0 {
-			return "", fmt.Errorf("diff failed: %w", err)
-		}
-	}
+	diffOutput, _ := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A:        difflib.SplitLines(params.Content),
+		B:        difflib.SplitLines(res.Content),
+		FromFile: "original",
+		ToFile:   "modified",
+		Context:  3,
+	})
 
 	result := map[string]any{
 		"status":  "modified",
-		"diff":    string(diffOutput),
-		"content": string(modifiedContent),
+		"diff":    diffOutput,
+		"content": res.Content,
 	}
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil

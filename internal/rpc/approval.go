@@ -114,6 +114,9 @@ func PumpShogunateEvents(ctx context.Context, conn *Conn, events <-chan any) {
 			if interceptApproval(ctx, conn, msg) {
 				continue
 			}
+			if interceptEditor(ctx, conn, msg) {
+				continue
+			}
 			method, ok := methodForType(msg)
 			if !ok {
 				slog.Debug("rpc: no wire method for notification", "type", reflect.TypeOf(msg))

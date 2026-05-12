@@ -120,7 +120,10 @@ type shellCommandResultMsg struct {
 
 // editorResultMsg is sent after tea.ExecProcess finishes running the editor.
 type editorResultMsg struct {
-	ResultChan chan error
+	ResultChan chan tools.EditorResult
+	TmpPath    string
+	OrigBytes  []byte
+	OrigMtime  time.Time
 	Err        error
 }
 
@@ -189,6 +192,9 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 	model.tabs.onTabSwitch = func() {
 		if state, ok := model.currentSessionState(); ok {
 			model.status.ContextPercent = state.ContextUsagePercent
+		} else {
+			// No active session for this tab - context usage is 0%
+			model.status.ContextPercent = 0
 		}
 	}
 
@@ -2009,14 +2015,72 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tools.EditorRequest:
-		// A tool wants to open $EDITOR — suspend the TUI via tea.ExecProcess
-		return m, tea.ExecProcess(msg.Cmd, func(err error) tea.Msg {
-			return editorResultMsg{ResultChan: msg.ResultChan, Err: err}
+		// A tool wants to open content in $EDITOR — TUI owns the temp-file
+		// lifecycle so the host running the editor doesn't need to share a
+		// filesystem with whoever generated the content (daemon case).
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = "vi"
+		}
+		ext := ".md"
+		if msg.Filename != "" {
+			if i := strings.LastIndex(msg.Filename, "."); i >= 0 {
+				ext = msg.Filename[i:]
+			}
+		}
+		f, err := os.CreateTemp("", "approve_doc_*"+ext)
+		if err != nil {
+			msg.ResultChan <- tools.EditorResult{Err: fmt.Errorf("create temp file: %w", err)}
+			return m, nil
+		}
+		tmpPath := f.Name()
+		f.Close()
+		orig := []byte(msg.Content)
+		if err := os.WriteFile(tmpPath, orig, 0644); err != nil {
+			os.Remove(tmpPath)
+			msg.ResultChan <- tools.EditorResult{Err: fmt.Errorf("write temp file: %w", err)}
+			return m, nil
+		}
+		stat, err := os.Stat(tmpPath)
+		if err != nil {
+			os.Remove(tmpPath)
+			msg.ResultChan <- tools.EditorResult{Err: fmt.Errorf("stat temp file: %w", err)}
+			return m, nil
+		}
+		cmd := exec.Command(editor, tmpPath)
+		resultChan := msg.ResultChan
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return editorResultMsg{
+				ResultChan: resultChan,
+				TmpPath:    tmpPath,
+				OrigBytes:  orig,
+				OrigMtime:  stat.ModTime(),
+				Err:        err,
+			}
 		})
 
 	case editorResultMsg:
-		// Editor finished — unblock the waiting tool goroutine
-		msg.ResultChan <- msg.Err
+		defer os.Remove(msg.TmpPath)
+		if msg.Err != nil {
+			msg.ResultChan <- tools.EditorResult{Err: msg.Err}
+			return m, nil
+		}
+		stat, err := os.Stat(msg.TmpPath)
+		if err != nil {
+			msg.ResultChan <- tools.EditorResult{Err: fmt.Errorf("stat after edit: %w", err)}
+			return m, nil
+		}
+		// mtime unchanged → user quit without saving (vi :q!).
+		if stat.ModTime().Equal(msg.OrigMtime) {
+			msg.ResultChan <- tools.EditorResult{Saved: false}
+			return m, nil
+		}
+		content, err := os.ReadFile(msg.TmpPath)
+		if err != nil {
+			msg.ResultChan <- tools.EditorResult{Err: fmt.Errorf("read after edit: %w", err)}
+			return m, nil
+		}
+		msg.ResultChan <- tools.EditorResult{Content: string(content), Saved: true}
 		return m, nil
 
 	case showHelpMsg:

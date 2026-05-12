@@ -48,6 +48,7 @@ func installRPCLoopback(ctx context.Context, model *TUIModel) (func(*tea.Program
 	// to send tea.Msgs into.
 	return func(p *tea.Program) {
 		rpc.RegisterApprovalHandler(client, teaSender{p})
+		rpc.RegisterEditorHandler(client, teaSender{p})
 	}, nil
 }
 
@@ -86,5 +87,6 @@ func installDaemonSocket(ctx context.Context, model *TUIModel, socketPath string
 
 	return func(p *tea.Program) {
 		rpc.RegisterApprovalHandler(client, teaSender{p})
+		rpc.RegisterEditorHandler(client, teaSender{p})
 	}, nil
 }

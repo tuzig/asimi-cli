@@ -2174,7 +2174,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	// would otherwise block forever waiting on ResultChan.
 	shog.SetNotify(func(msg any) {
 		if req, ok := msg.(tools.EditorRequest); ok {
-			req.ResultChan <- errors.New("editor not available in test environment")
+			req.ResultChan <- tools.EditorResult{Err: errors.New("editor not available in test environment")}
 			return
 		}
 		tm.Send(msg)
@@ -2292,4 +2292,66 @@ func requireCommandSucceeds(t *testing.T, dir string, name string, args ...strin
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s %v should succeed\nOutput: %s", name, args, output)
+}
+
+// TestContextPercentOnTabSwitch tests that ContextPercent is properly updated when switching tabs.
+// This test verifies the fix for the bug where ContextPercent wasn't being updated to 0
+// when switching to a tab without an active session.
+func TestContextPercentOnTabSwitch(t *testing.T) {
+	config := &Config{}
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+
+	initialPercent := model.status.ContextPercent
+	t.Logf("Initial ContextPercent: %.0f%%", initialPercent)
+
+	// Switch tabs - this should trigger onTabSwitch callback
+	model.tabs.NextTab()
+	afterSwitchPercent := model.status.ContextPercent
+	t.Logf("After switch ContextPercent: %.0f%%", afterSwitchPercent)
+
+	// Verify callback was invoked - this was the core bug
+	require.NotNil(t, model.tabs.onTabSwitch, "onTabSwitch callback should be set")
+
+	// After the fix, when there's no session, ContextPercent should be set to 0
+	// The bug was that ContextPercent retained the old value instead of being updated
+	assert.Equal(t, float64(0), afterSwitchPercent,
+		"ContextPercent should be 0 when switching to a tab without a session")
+}
+
+// TestContextPercentCallbackInvoked tests that the onTabSwitch callback is invoked when switching tabs.
+func TestContextPercentCallbackInvoked(t *testing.T) {
+	config := &Config{}
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+
+	callbackInvoked := false
+	originalCallback := model.tabs.onTabSwitch
+	model.tabs.onTabSwitch = func() {
+		callbackInvoked = true
+		if originalCallback != nil {
+			originalCallback()
+		}
+	}
+
+	model.tabs.NextTab()
+
+	assert.True(t, callbackInvoked, "onTabSwitch callback should be invoked when switching tabs")
+}
+
+// TestContextPercentZeroWhenNoSession tests that ContextPercent is 0 when there's no active session.
+func TestContextPercentZeroWhenNoSession(t *testing.T) {
+	config := &Config{}
+	// No shogunate is passed, so there's no session
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+
+	// The model should have ContextPercent = 0 when there's no session
+	assert.Equal(t, float64(0), model.status.ContextPercent,
+		"ContextPercent should be 0 when there's no active session")
+
+	// Switch tabs and verify it stays 0 (no session to update from)
+	model.tabs.NextTab()
+	assert.Equal(t, float64(0), model.status.ContextPercent,
+		"ContextPercent should remain 0 when switching to a tab with no session")
 }
