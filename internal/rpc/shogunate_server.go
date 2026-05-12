@@ -229,8 +229,12 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 		if err := wire.Decode(params, &p); err != nil {
 			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
 		}
+		// The RPC handler's ctx is the connection ctx — alive for the
+		// whole conn and unrelated to per-channel cancellation. Mint a
+		// channel-keyed ctx so a later CancelTab(p.ChannelID) over the
+		// wire actually reaches the minister's prompt loop.
 		prompt := &shogunate.Prompt{
-			Ctx:          ctx,
+			Ctx:          impl.CancellableStreamCtx(p.ChannelID),
 			Message:      p.Message,
 			EdictKey:     p.EdictKey,
 			ChannelID:    p.ChannelID,

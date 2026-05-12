@@ -236,6 +236,10 @@ func (f *fakeShogunate) CancelTab(channelID string) {
 	f.cancels = append(f.cancels, "tab:"+channelID)
 }
 
+func (f *fakeShogunate) CancellableStreamCtx(_ string) context.Context {
+	return context.Background()
+}
+
 func intString(n int) string {
 	switch n {
 	case 0:

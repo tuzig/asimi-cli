@@ -95,6 +95,14 @@ type Client interface {
 	// per-channel cancel registry populated by CancellableStreamCtx.
 	CancelTab(channelID string)
 
+	// CancellableStreamCtx mints a context registered under channelID
+	// in the server-side cancel registry. Server-side only — used by
+	// the RPC SubmitPrompt handler to give each prompt a ctx that a
+	// later CancelTab(channelID) can actually cancel. The TUI-side
+	// LoopbackShogunate has no use for this and delegates to its local
+	// shogunate purely to satisfy the interface.
+	CancellableStreamCtx(channelID string) context.Context
+
 	// Subscribe returns a channel that carries every TUI-bound notification:
 	// streaming chunks, shogunate events, and runner messages.
 	Subscribe(ctx context.Context) <-chan any

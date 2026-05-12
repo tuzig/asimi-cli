@@ -61,4 +61,14 @@ func (l *LoopbackShogunate) SetRulingCtx(fn func() context.Context) {
 	l.Local.SetRulingCtx(fn)
 }
 
+// CancellableStreamCtx is server-side machinery; the TUI never calls
+// it through the LoopbackShogunate. Delegate to Local so the interface
+// is satisfied without minting orphan contexts on the client side.
+func (l *LoopbackShogunate) CancellableStreamCtx(channelID string) context.Context {
+	if l.Local == nil {
+		return context.Background()
+	}
+	return l.Local.CancellableStreamCtx(channelID)
+}
+
 var _ shogunateapi.Client = (*LoopbackShogunate)(nil)
