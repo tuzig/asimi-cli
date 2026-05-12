@@ -22,6 +22,7 @@ type ConfigureLLMRequest struct {
 	MaxThinkingTokens        int    `msgpack:"max_thinking_tokens,omitempty"`
 	RequestTimeoutSeconds    int    `msgpack:"request_timeout_seconds,omitempty"`
 	StreamIdleTimeoutSeconds int    `msgpack:"stream_idle_timeout_seconds,omitempty"`
+	MaxRetries               int    `msgpack:"max_retries,omitempty"`
 	ProjectRoot              string `msgpack:"project_root,omitempty"`
 	AgentsFile               string `msgpack:"agents_file,omitempty"`
 }
@@ -30,9 +31,9 @@ type ConfigureLLMRequest struct {
 // (keyring-backed credentials) and slog logger. Formerly lived in
 // main.go; moved here so the daemon can initialise its own client
 // without the TUI having to ship one across the wire.
-func InitBifrost(ctx context.Context, requestTimeout, streamIdleTimeout int, baseURL string) (*bifrost.Bifrost, error) {
+func InitBifrost(ctx context.Context, requestTimeout, streamIdleTimeout, maxRetries int, baseURL string) (*bifrost.Bifrost, error) {
 	return bifrost.Init(ctx, schemas.BifrostConfig{
-		Account: NewAccount(requestTimeout, streamIdleTimeout, baseURL),
+		Account: NewAccount(requestTimeout, streamIdleTimeout, maxRetries, baseURL),
 		Logger:  NewBifrostLogger(slog.Default()),
 	})
 }
@@ -45,7 +46,7 @@ func (s *Shogunate) ConfigureLLM(ctx context.Context, req ConfigureLLMRequest) e
 	if s == nil {
 		return fmt.Errorf("shogunate: not initialised")
 	}
-	client, err := InitBifrost(ctx, req.RequestTimeoutSeconds, req.StreamIdleTimeoutSeconds, req.BaseURL)
+	client, err := InitBifrost(ctx, req.RequestTimeoutSeconds, req.StreamIdleTimeoutSeconds, req.MaxRetries, req.BaseURL)
 	if err != nil {
 		return fmt.Errorf("shogunate: init bifrost: %w", err)
 	}
@@ -58,6 +59,7 @@ func (s *Shogunate) ConfigureLLM(ctx context.Context, req ConfigureLLMRequest) e
 			MaxThinkingTokens:        req.MaxThinkingTokens,
 			RequestTimeoutSeconds:    req.RequestTimeoutSeconds,
 			StreamIdleTimeoutSeconds: req.StreamIdleTimeoutSeconds,
+			MaxRetries:               req.MaxRetries,
 		},
 		AgentsFile: req.AgentsFile,
 	}

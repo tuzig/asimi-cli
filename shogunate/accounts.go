@@ -44,12 +44,13 @@ func NewBifrostLogger(logger *slog.Logger) *BifrostLogger {
 type Account struct {
 	requestTimeout    int
 	streamIdleTimeout int
+	maxRetries        int
 	baseURL           string
 }
 
 // NewAccount creates a new Account implementation backed by the OS keyring.
-func NewAccount(requestTimeout, streamIdleTimeout int, baseURL string) schemas.Account {
-	return &Account{requestTimeout: requestTimeout, streamIdleTimeout: streamIdleTimeout, baseURL: baseURL}
+func NewAccount(requestTimeout, streamIdleTimeout, maxRetries int, baseURL string) schemas.Account {
+	return &Account{requestTimeout: requestTimeout, streamIdleTimeout: streamIdleTimeout, maxRetries: maxRetries, baseURL: baseURL}
 }
 
 // GetConfiguredProviders returns providers that have credentials configured
@@ -182,6 +183,9 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	}
 	if a.streamIdleTimeout > 0 {
 		networkConfig.StreamIdleTimeoutInSeconds = a.streamIdleTimeout
+	}
+	if a.maxRetries > 0 {
+		networkConfig.MaxRetries = a.maxRetries
 	}
 	if a.baseURL != "" {
 		networkConfig.BaseURL = a.baseURL

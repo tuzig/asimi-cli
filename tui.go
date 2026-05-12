@@ -365,6 +365,7 @@ func (m *TUIModel) llmRequest() shogunate.ConfigureLLMRequest {
 		MaxThinkingTokens:        m.config.LLM.MaxThinkingTokens,
 		RequestTimeoutSeconds:    m.config.LLM.RequestTimeoutSeconds,
 		StreamIdleTimeoutSeconds: m.config.LLM.StreamIdleTimeoutSeconds,
+		MaxRetries:               m.config.LLM.MaxRetries,
 		ProjectRoot:              m.config.Storage.DatabasePath,
 		AgentsFile:               m.config.Session.AgentsFile,
 	}
