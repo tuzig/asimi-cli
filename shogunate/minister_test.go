@@ -16,6 +16,7 @@ import (
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 
@@ -1146,4 +1147,46 @@ func TestMinisterBase_SessionMethods(t *testing.T) {
 	// Reset session
 	base.ResetSession()
 	assert.Nil(t, base.Session())
+}
+
+// TestRestoreMinisterSession_AllTabs proves the resume routing works for
+// every minister that owns a UI tab. Each tab saves with TabType =
+// minister id; this test feeds those ids into RestoreMinisterSession and
+// verifies the right minister ends up with a populated session whose
+// TabType matches.
+func TestRestoreMinisterSession_AllTabs(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	shog := NewShogunate(db, cfg, nil, nil)
+	require.NotNil(t, shog)
+
+	// Ministers need a SessionConfig to build tool sets — without it,
+	// Chancellor.Tools panics on a nil config dereference. No LLM client
+	// is required; the test only exercises session restore wiring.
+	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+
+	for _, id := range []string{"chancellor", "sage", "forge", "judge"} {
+		t.Run(id, func(t *testing.T) {
+			err := shog.RestoreMinisterSession(id, nil)
+			require.NoError(t, err, "%s tab should be resumable", id)
+
+			m := shog.GetMinister(id)
+			require.NotNil(t, m)
+			sess := m.GetSession()
+			require.NotNil(t, sess, "%s should have a restored session", id)
+			assert.Equal(t, id, sess.TabType)
+		})
+	}
+}
+
+// TestRestoreMinisterSession_UnknownTabType verifies the dispatcher
+// surfaces a clear error instead of silently restoring the wrong tab.
+func TestRestoreMinisterSession_UnknownTabType(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	shog := NewShogunate(db, cfg, nil, nil)
+
+	err := shog.RestoreMinisterSession("not-a-minister", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "minister not found")
 }

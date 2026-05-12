@@ -84,6 +84,10 @@ type Shogunate struct {
 	notify        internal.NotifyFunc
 	drainedEvents []DrainedEvent // events recovered from DB at startup
 
+	// persister, if set, is attached to interactive sessions when they
+	// are created so messages flow into durable storage in near-real time.
+	persister SessionPersister
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -215,6 +219,22 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ministers["sage"] = sage
 
 	return s
+}
+
+// SetSessionPersister wires a persister into the shogunate. Sessions
+// created afterwards (and any currently held by interactive ministers)
+// receive it; sessions without a TabType are silently skipped at save
+// time. Idempotent — safe to call again with a different persister.
+func (s *Shogunate) SetSessionPersister(p SessionPersister) {
+	if s == nil {
+		return
+	}
+	s.persister = p
+	for _, minister := range s.Ministers() {
+		if setter, ok := minister.(interface{ SetSessionPersister(SessionPersister) }); ok {
+			setter.SetSessionPersister(p)
+		}
+	}
 }
 
 // SetNotify sets the notification callback for all ministers.
@@ -621,26 +641,25 @@ func (s *Shogunate) SubmitPrompt(targetID string, p *Prompt) error {
 	return nil
 }
 
-// RestoreMinisterSession creates a fully-wired session and injects loaded history.
-// Routes to chancellor or sage based on tabType.
+// RestoreMinisterSession rebuilds the session of the minister identified
+// by tabType (matches the saved Session.TabType, which is the minister id)
+// and seeds it with msgs. Works for any minister that implements
+// RestoreSession — currently chancellor, sage, forge, judge.
 func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
 	if s == nil {
 		return fmt.Errorf("shogunate not initialized")
 	}
-	switch tabType {
-	case "ruling":
-		if ch, ok := s.GetMinister("chancellor").(*Chancellor); ok {
-			return ch.RestoreSession(msgs)
-		}
-		return fmt.Errorf("chancellor not found")
-	case "hunting":
-		if sage, ok := s.GetMinister("sage").(*Sage); ok {
-			return sage.RestoreSession(msgs)
-		}
-		return fmt.Errorf("sage not found")
-	default:
-		return fmt.Errorf("unknown tab type: %s", tabType)
+	minister := s.GetMinister(tabType)
+	if minister == nil {
+		return fmt.Errorf("minister not found: %s", tabType)
 	}
+	r, ok := minister.(interface {
+		RestoreSession([]schemas.ChatMessage) error
+	})
+	if !ok {
+		return fmt.Errorf("minister %q does not support session restore", tabType)
+	}
+	return r.RestoreSession(msgs)
 }
 
 // ResetRulling resets the rulling session

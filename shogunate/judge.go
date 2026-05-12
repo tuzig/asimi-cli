@@ -8,6 +8,7 @@ import (
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // JudgePrompt defines the Judge's identity and capabilities
@@ -42,6 +43,11 @@ func NewJudge(base *MinisterBase, ci CIRunner) *Judge {
 // ID returns the minister identifier
 func (j *Judge) ID() string {
 	return "judge"
+}
+
+// RestoreSession rebuilds the Judge's interactive session populated with msgs.
+func (j *Judge) RestoreSession(msgs []schemas.ChatMessage) error {
+	return j.MinisterBase.restoreSession(j, msgs)
 }
 
 // SystemPrompt returns the Judge's system prompt template.

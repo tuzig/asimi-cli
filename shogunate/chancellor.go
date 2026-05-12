@@ -611,14 +611,7 @@ func (c *Chancellor) ResetSession() {
 
 // RestoreSession creates a fully-wired interactive session and injects loaded history
 func (c *Chancellor) RestoreSession(msgs []schemas.ChatMessage) error {
-	sess, err := CreateSession(c, c.client, c.config, c.notify, "chancellor")
-	if err != nil {
-		return err
-	}
-	sess.SetMessages(msgs)
-	sess.TabType = "chancellor"
-	c.MinisterBase.SetSession(sess)
-	return nil
+	return c.MinisterBase.restoreSession(c, msgs)
 }
 
 // --- Edict Management ---
@@ -814,6 +807,7 @@ func (c *Chancellor) brewWithStreaming(ctx context.Context, key storage.EdictKey
 			return
 		}
 		c.session.TabType = "chancellor"
+		c.session.SetPersister(c.Persister())
 		c.logger.Info("chancellor created interactive session")
 	}
 
@@ -851,6 +845,7 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 				taskErr = fmt.Errorf("failed to create session: %w", err)
 			} else {
 				c.session.TabType = "chancellor"
+				c.session.SetPersister(c.Persister())
 			}
 		}
 

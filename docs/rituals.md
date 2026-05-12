@@ -161,6 +161,7 @@ Each minister has a specific role:
 | `out` | string | Output format template |
 | `on_failure` | string | Action on failure: `retry`, `goto`, `zhengming` |
 | `on_failure_target` | string | Target step name for `goto` |
+| `effort` | string | Reasoning effort for this step: `low`, `medium` (default), or `high`. Forwarded as `reasoning_effort` to providers that support it (e.g. Fireworks Kimi K2). |
 
 ---
 
@@ -243,6 +244,36 @@ steps:
     then:
       - the verdicts are passed
 ```
+
+### Referencing a Prior Step's Output
+
+A step's Act result is automatically published under its name and is reachable from any later step's templates as `{{ .stepName }}`. Use this to chain a heavy summarization step into a chancellor-facing step without re-templating the raw inputs:
+
+```yaml
+steps:
+  - name: summarize
+    minister: strategist
+    given:
+      - the earth status
+    act: |
+      Condense the data below into a short briefing.
+      {{ .earth_borderlands }}
+      {{ .earth_middle_kingdom }}
+      {{ .earth_capital }}
+
+  - name: next
+    minister: chancellor
+    act: |
+      Court briefing:
+      {{ .summarize }}
+      Decide the next move.
+```
+
+### Minister Session Semantics
+
+Ritual Acts dispatched to `forge`, `judge`, `marshal`, `sage`, or `strategist` run in a throwaway session created per step — their conversation history is discarded once the step completes, so large `given:` payloads (diffs, DB dumps) do not leak into any user-facing chat.
+
+`chancellor` is intentionally different: Acts targeting the chancellor run inside its persistent interactive session, so their prompts and outputs become part of the user's chat history. This lets rituals weave context into the ongoing conversation, but it also means anything you put in a chancellor Act will burn user-facing context window. Keep chancellor Acts short — pre-digest heavy data in a `strategist` (or `sage`) step and pass the summary in via `{{ .priorStep }}`, as in the example above.
 
 ---
 
@@ -391,9 +422,9 @@ A medium-complexity workflow that adds a strategist planning phase before forgin
 
 ### dawn-audience
 
-The startup ritual, triggered automatically by the `shogunate_started` event. It pings the model, checks sandbox health, checks for Asimi updates, and then the chancellor summarizes the state of the three realms and requests zhengming for the next step. Contains system steps (no minister) for sandbox and version checks.
+The startup ritual, triggered automatically by the `shogunate_started` event. It pings the model, checks sandbox health, checks for Asimi updates, then the strategist condenses the state of the three realms into a short briefing, and finally the chancellor presents that briefing and requests zhengming for the next step. The summarize step runs in a throwaway session so the raw diffs/edicts don't pollute the chancellor's interactive history; only the condensed briefing reaches the user-facing session. Contains system steps (no minister) for sandbox and version checks.
 
-**Steps:** ping-model → check-sandbox → check-asimi-version → summarize-and-next
+**Steps:** ping-model → check-sandbox → check-asimi-version → summarize → next
 
 ### review-borderland
 

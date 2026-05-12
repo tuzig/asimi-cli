@@ -421,8 +421,8 @@ func TestLoadEmbeddedRituals(t *testing.T) {
 	if dawnAudience == nil {
 		t.Fatal("dawn-audience ritual not found")
 	}
-	if len(dawnAudience.Steps) != 4 {
-		t.Errorf("dawn-audience: expected 4 steps, got %d", len(dawnAudience.Steps))
+	if len(dawnAudience.Steps) != 5 {
+		t.Errorf("dawn-audience: expected 5 steps, got %d", len(dawnAudience.Steps))
 	}
 }
 
@@ -2132,6 +2132,97 @@ func TestRitualEphemeralSessionIsDiscarded(t *testing.T) {
 	_ = sessionCount
 	_ = mu
 	t.Log("Both steps completed with isolated ephemeral sessions")
+}
+
+// TestRitualStepActResultIsAvailableInNextStepTemplate verifies that a step's
+// Act output is reachable from the next step's Act template via {{ .stepName }}.
+// This is the mechanism the dawn-audience ritual relies on to pass the
+// strategist's summary into the chancellor's Act without re-templating raw data.
+func TestRitualStepActResultIsAvailableInNextStepTemplate(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Capture task.Work per call so we can inspect what the second step sees.
+	var (
+		mu        sync.Mutex
+		seenWork  []string
+		callCount int
+	)
+
+	captureMinister := &captureRitualMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 4),
+		respond: func(t *Task) Result {
+			mu.Lock()
+			seenWork = append(seenWork, t.Work)
+			callCount++
+			n := callCount
+			mu.Unlock()
+			return Result{Output: fmt.Sprintf("RESULT_FROM_STEP_%d", n)}
+		},
+	}
+
+	ritual := &RitualDef{
+		Name: "step-cross-ref",
+		Steps: []RitualStep{
+			{Name: "first", Minister: "forge", Act: "do work A"},
+			{Name: "second", Minister: "forge", Act: "previous: {{ .first }}"},
+		},
+	}
+	registry := NewRitualRegistry()
+	require.NoError(t, registry.Register(ritual))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go captureMinister.Run(ctx)
+
+	shog := &Shogunate{
+		ministers: map[string]Minister{"forge": captureMinister},
+		logger:    slog.Default(),
+	}
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	shog.ritualGuard = NewRitualGuard(RitualGuardOpts{
+		Base:        base,
+		GetMinister: shog.GetMinister,
+	})
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+
+	exec, err := runner.Start(ctx, "step-cross-ref", testEK(1), nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(ctx, exec))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, seenWork, 2, "expected forge to be invoked twice")
+	assert.Contains(t, seenWork[1], "RESULT_FROM_STEP_1",
+		"second step's act template should contain the first step's Act result")
+}
+
+// captureRitualMinister is a Minister test double that lets each test supply
+// per-task response logic, useful for asserting on task.Work content.
+type captureRitualMinister struct {
+	MinisterBase
+	id      string
+	tasksCh chan *Task
+	respond func(*Task) Result
+}
+
+func (m *captureRitualMinister) ID() string                  { return m.id }
+func (m *captureRitualMinister) SystemPrompt() string        { return "" }
+func (m *captureRitualMinister) Title() string               { return m.id }
+func (m *captureRitualMinister) Tools() []Tool               { return nil }
+func (m *captureRitualMinister) Tasks() chan<- *Task         { return m.tasksCh }
+func (m *captureRitualMinister) Model() LLMProvider          { return nil }
+func (m *captureRitualMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
+func (m *captureRitualMinister) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-m.tasksCh:
+			t.Done <- m.respond(t)
+		}
+	}
 }
 
 // TestCheckVerdictsPassed_AllApproved verifies the handler passes when all manifests are approved

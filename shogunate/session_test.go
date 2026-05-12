@@ -1263,3 +1263,106 @@ func TestSession_Rollback_Idempotent(t *testing.T) {
 func TestSession_ToolOutputAddedToMessageHistory(t *testing.T) {
 	t.Skip("requires mock bifrost client for LLM responses")
 }
+
+// hangingLLMProvider returns a stream channel that is never written to
+// and never closed, simulating an LLM HTTP stream that does not honor
+// context cancellation (the bug observed in asimi.2.log: sage's RunLoop
+// wedged because the chunk loop sat in `for chunk := range ch` forever).
+type hangingLLMProvider struct{}
+
+func (hangingLLMProvider) ChatCompletionRequest(ctx *schemas.BifrostContext, req *schemas.BifrostChatRequest) (*schemas.BifrostChatResponse, *schemas.BifrostError) {
+	return nil, nil
+}
+
+func (hangingLLMProvider) ChatCompletionStreamRequest(ctx *schemas.BifrostContext, req *schemas.BifrostChatRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+	return make(chan *schemas.BifrostStreamChunk), nil
+}
+
+// TestSession_AskWithStreaming_HonorsContextCancellation verifies that a
+// hung provider stream does not wedge the caller. Cancelling ctx must
+// return promptly with ctx.Err() instead of blocking on the chunk channel.
+func TestSession_AskWithStreaming_HonorsContextCancellation(t *testing.T) {
+	sess, err := NewSession(hangingLLMProvider{}, &SessionConfig{}, nil, nil, func(any) {}, "system", "test-channel")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		_, askErr := sess.AskWithStreaming(ctx, "hello", nil)
+		done <- askErr
+	}()
+
+	// Give the call a moment to enter the streaming loop.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled, "AskWithStreaming should return ctx.Err() on cancel")
+	case <-time.After(2 * time.Second):
+		t.Fatal("AskWithStreaming did not return after ctx cancel — streaming loop is wedged")
+	}
+}
+
+// recordingPersister counts SaveSession calls and stashes the latest
+// session snapshot length. Used to verify Session.persist() fires.
+type recordingPersister struct {
+	calls       int
+	lastLen     int
+	lastTabType string
+}
+
+func (p *recordingPersister) SaveSession(s *Session) {
+	p.calls++
+	p.lastLen = len(s.GetMessages())
+	p.lastTabType = s.TabType
+}
+
+func TestSession_AddMessage_TriggersPersisterWhenTabTypeSet(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, nil, nil, nil, func(any) {}, "system prompt", "")
+	require.NoError(t, err)
+	sess.TabType = "chancellor"
+
+	rec := &recordingPersister{}
+	sess.SetPersister(rec)
+
+	sess.AddMessage(schemas.ChatMessageRoleUser, "hello")
+	sess.AddMessage(schemas.ChatMessageRoleAssistant, "hi")
+
+	assert.Equal(t, 2, rec.calls, "persister should fire once per AddMessage")
+	assert.Equal(t, "chancellor", rec.lastTabType)
+	assert.GreaterOrEqual(t, rec.lastLen, 2)
+}
+
+func TestSession_AddMessage_NoPersisterMeansNoSave(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, nil, nil, nil, func(any) {}, "system prompt", "")
+	require.NoError(t, err)
+	sess.TabType = "chancellor"
+	// Deliberately no SetPersister — matches ephemeral ritual-task sessions.
+
+	sess.AddMessage(schemas.ChatMessageRoleUser, "hello")
+	// Nothing to assert beyond "doesn't panic" — the test exists to lock in
+	// that persist() is a no-op when no persister is attached.
+}
+
+func TestSession_SetMessages_DoesNotPersist(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, nil, nil, nil, func(any) {}, "system prompt", "")
+	require.NoError(t, err)
+	sess.TabType = "chancellor"
+
+	rec := &recordingPersister{}
+	sess.SetPersister(rec)
+
+	sess.SetMessages([]schemas.ChatMessage{
+		{Role: schemas.ChatMessageRoleUser, Content: textContent("restored")},
+	})
+
+	assert.Equal(t, 0, rec.calls, "restore (SetMessages) must not write back to storage")
+}

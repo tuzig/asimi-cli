@@ -22,9 +22,37 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
+// SessionPersister durably stores a Session. The shogunate calls it as
+// messages are added so :resume sees the conversation in near-real time.
+// Implementations must be non-blocking: SaveSession is invoked from the
+// streaming goroutine and must not stall it (the in-tree implementation
+// queues onto a worker channel).
+type SessionPersister interface {
+	SaveSession(*Session)
+}
+
 func strPtr(s string) *string { return &s }
 func textContent(s string) *schemas.ChatMessageContent {
 	return &schemas.ChatMessageContent{ContentStr: &s}
+}
+
+// bifrostErrorToGoError extracts a non-nil error from a *schemas.BifrostError.
+// Bifrost's ErrorField.Error is `error` tagged json:"-", so when the failure
+// comes back from an HTTP response only ErrorField.Message is populated.
+// Returning bifrostErr.Error.Error directly would silently drop the failure.
+func bifrostErrorToGoError(be *schemas.BifrostError) error {
+	if be == nil {
+		return nil
+	}
+	if be.Error != nil {
+		if be.Error.Error != nil {
+			return be.Error.Error
+		}
+		if be.Error.Message != "" {
+			return fmt.Errorf("%s", be.Error.Message)
+		}
+	}
+	return fmt.Errorf("bifrost error: %s", be.String())
 }
 
 // responseChoice holds the result of an LLM generation
@@ -130,6 +158,12 @@ type Session struct {
 	ProjectSlug string    `json:"project_slug,omitempty"`
 	TabType     string    `json:"tab_type,omitempty"`
 
+	// ReasoningEffort, when non-empty, sets the reasoning.effort parameter on
+	// outgoing chat requests ("low" | "medium" | "high"). Set by ritual steps
+	// via their `effort:` key. Cleared automatically is not done here — callers
+	// own the lifecycle (per-step, per-turn, etc.).
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
 	model LLMProvider // LLM client (implements ChatCompletionRequest/ChatCompletionStreamRequest)
 	config *internalconfig.LLMConfig
 	tools        []Tool
@@ -170,6 +204,13 @@ type Session struct {
 
 	// Session timing
 	startTime time.Time
+
+	// persister, if set, receives the session after every message append.
+	// Sessions without a TabType never persist; see persist().
+	// Implementations are expected to snapshot synchronously — the
+	// streaming goroutine is the sole writer of messages, so reading
+	// inside SaveSession before returning avoids races with later appends.
+	persister SessionPersister
 }
 
 // NewSession creates a new minister session
@@ -250,9 +291,35 @@ func (s *Session) Messages() []schemas.ChatMessage {
 	return s.messages
 }
 
-// SetMessages replaces the session messages (used when loading from storage)
+// SetMessages replaces the session messages (used when loading from storage).
+// Does not trigger persist — restored sessions shouldn't immediately write
+// themselves back to the DB.
 func (s *Session) SetMessages(msgs []schemas.ChatMessage) {
 	s.messages = msgs
+}
+
+// SetPersister attaches a persister; subsequent message appends will
+// trigger a save. Call after SetMessages on restore so the load itself
+// doesn't generate a write.
+func (s *Session) SetPersister(p SessionPersister) {
+	s.persister = p
+}
+
+// persist asks the persister to save the session. Called from the
+// streaming goroutine after every message-list mutation. Sessions with
+// no persister attached (ephemeral ritual tasks, sage diff reviews,
+// forge/judge inner task sessions) silently skip; the call sites in
+// chancellor.go, sage.go, and MinisterBase.ProcessPrompt are the only
+// places that attach one.
+func (s *Session) persist() {
+	if s.persister == nil {
+		return
+	}
+	s.LastUpdated = time.Now()
+	if s.FirstPrompt == "" {
+		s.FirstPrompt = s.ExtractFirstPrompt()
+	}
+	s.persister.SaveSession(s)
 }
 
 // SetNotify updates the session's notify function and the scheduler's notify
@@ -283,6 +350,7 @@ func (s *Session) AddMessage(role schemas.ChatMessageRole, content string) {
 		Content: textContent(content),
 	})
 	s.LastUpdated = time.Now()
+	s.persist()
 }
 
 // RegisterShogunateTools adds shogunate-specific tools to the session's tool catalog.
@@ -878,6 +946,7 @@ func (s *Session) prepareUserMessage(prompt string, contextFiles map[string]stri
 		Role:    schemas.ChatMessageRoleUser,
 		Content: textContent(fullPrompt),
 	})
+	s.persist()
 }
 
 // buildPromptWithContext builds a prompt that includes all file content
@@ -913,6 +982,10 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 		params.MaxCompletionTokens = &maxTokens
 		params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &autoStr}
 	}
+	if s.ReasoningEffort != "" {
+		effort := s.ReasoningEffort
+		params.Reasoning = &schemas.ChatReasoning{Effort: &effort}
+	}
 
 	req := &schemas.BifrostChatRequest{
 		Provider: schemas.ModelProvider(s.Provider),
@@ -926,7 +999,7 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 		bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 		ch, bifrostErr := s.model.ChatCompletionStreamRequest(bifrostCtx, req)
 		if bifrostErr != nil {
-			return nil, bifrostErr.Error.Error
+			return nil, bifrostErrorToGoError(bifrostErr)
 		}
 
 		var content strings.Builder
@@ -936,7 +1009,20 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 		var promptTokens, completionTokens int
 		toolCallMap := make(map[int]*schemas.ChatAssistantMessageToolCall)
 
-		for chunk := range ch {
+	streamLoop:
+		for {
+			var chunk *schemas.BifrostStreamChunk
+			var ok bool
+			select {
+			case <-ctx.Done():
+				// Free the minister loop even if Bifrost never closes ch
+				// (e.g., provider HTTP hang that doesn't honor context).
+				return nil, ctx.Err()
+			case chunk, ok = <-ch:
+				if !ok {
+					break streamLoop
+				}
+			}
 			if chunk.BifrostError != nil {
 				var errMsg string
 				if chunk.BifrostError.Error != nil && chunk.BifrostError.Error.Error != nil {
@@ -1037,7 +1123,7 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 	resp, bifrostErr := s.model.ChatCompletionRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, bifrostErr.Error.Error
+		return nil, bifrostErrorToGoError(bifrostErr)
 	}
 	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("empty response choices")
@@ -1089,6 +1175,7 @@ func (s *Session) appendMessage(choice *responseChoice) {
 
 	if msg.Content != nil || msg.ChatAssistantMessage != nil {
 		s.messages = append(s.messages, msg)
+		s.persist()
 	}
 
 	// Update token counts from provider-reported usage
@@ -1400,6 +1487,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		toolMessages, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls)
 		if len(toolMessages) > 0 {
 			s.messages = append(s.messages, toolMessages...)
+			s.persist()
 		}
 
 		if shouldReturn {

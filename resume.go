@@ -385,11 +385,14 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	}
 	m.sessionActive = true
 
-	// Re-hydrate the minister session so follow-up prompts continue the conversation
+	// Re-hydrate the minister session so follow-up prompts continue the
+	// conversation. TabType holds the minister id (chancellor/sage/forge/judge);
+	// legacy rows with no TabType predate per-minister persistence and are
+	// treated as chancellor sessions.
 	if m.shogunate != nil {
 		tabType := session.TabType
 		if tabType == "" {
-			tabType = "ruling"
+			tabType = "chancellor"
 		}
 		if err := m.shogunate.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
 			slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
