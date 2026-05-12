@@ -183,8 +183,8 @@ func (c *Sage) ResetSession() {
 }
 
 // RestoreSession creates a fully-wired hunting session and injects loaded history
-func (c *Sage) RestoreSession(msgs []schemas.ChatMessage) error {
-	return c.MinisterBase.restoreSession(c, msgs)
+func (c *Sage) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
+	return c.MinisterBase.restoreSession(minister, msgs)
 }
 
 // GetSession returns the Sage's session (from MinisterBase)

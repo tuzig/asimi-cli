@@ -104,8 +104,10 @@ type Minister interface {
 	GetConfig() internalconfig.LLMConfig
 	// Run starts the minister's processing loop (blocks until context cancelled)
 	Run(ctx context.Context)
-	// Get the interactive sessions
+	// GetSession returns the interactive session
 	GetSession() *Session
+	// RestoreSession creates a session and injects loaded history
+	RestoreSession(minister Minister, msgs []schemas.ChatMessage) error
 }
 
 // --- External Dependencies ---
@@ -573,6 +575,18 @@ func (m *MinisterBase) SetSession(s *Session) {
 // ResetSession clears the minister's embedded session.
 func (m *MinisterBase) ResetSession() {
 	m.session = nil
+}
+
+// RestoreSession creates a fully-wired interactive session and injects loaded history.
+func (m *MinisterBase) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
+	sess, err := CreateSession(minister, m.client, m.config, m.notify, m.ministerID)
+	if err != nil {
+		return err
+	}
+	sess.SetMessages(msgs)
+	sess.TabType = m.ministerID
+	m.SetSession(sess)
+	return nil
 }
 
 // SetOnZhengmingRaised sets a callback invoked when RequestZhengming is called.

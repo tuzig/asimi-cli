@@ -610,8 +610,8 @@ func (c *Chancellor) ResetSession() {
 }
 
 // RestoreSession creates a fully-wired interactive session and injects loaded history
-func (c *Chancellor) RestoreSession(msgs []schemas.ChatMessage) error {
-	return c.MinisterBase.restoreSession(c, msgs)
+func (c *Chancellor) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
+	return c.MinisterBase.restoreSession(minister, msgs)
 }
 
 // --- Edict Management ---

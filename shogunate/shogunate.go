@@ -653,13 +653,7 @@ func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []schemas.ChatMe
 	if minister == nil {
 		return fmt.Errorf("minister not found: %s", tabType)
 	}
-	r, ok := minister.(interface {
-		RestoreSession([]schemas.ChatMessage) error
-	})
-	if !ok {
-		return fmt.Errorf("minister %q does not support session restore", tabType)
-	}
-	return r.RestoreSession(msgs)
+	return minister.RestoreSession(minister, msgs)
 }
 
 // ResetRulling resets the rulling session

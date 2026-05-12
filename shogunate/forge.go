@@ -34,8 +34,8 @@ func (f *Forge) ID() string {
 }
 
 // RestoreSession rebuilds the Forge's interactive session populated with msgs.
-func (f *Forge) RestoreSession(msgs []schemas.ChatMessage) error {
-	return f.MinisterBase.restoreSession(f, msgs)
+func (f *Forge) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
+	return f.MinisterBase.restoreSession(minister, msgs)
 }
 
 // SystemPrompt returns the Forge's system prompt template.

@@ -46,8 +46,8 @@ func (j *Judge) ID() string {
 }
 
 // RestoreSession rebuilds the Judge's interactive session populated with msgs.
-func (j *Judge) RestoreSession(msgs []schemas.ChatMessage) error {
-	return j.MinisterBase.restoreSession(j, msgs)
+func (j *Judge) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
+	return j.MinisterBase.restoreSession(minister, msgs)
 }
 
 // SystemPrompt returns the Judge's system prompt template.
