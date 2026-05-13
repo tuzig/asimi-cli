@@ -60,6 +60,11 @@ func TestNotificationPipeline(t *testing.T) {
 		shogunate.RitualStepMsg{ChannelID: "ruling", RitualName: "swift-strike", StepIndex: 1, TotalSteps: 3, Status: "ok"},
 		runners.ContainerLaunchedMsg{Message: "up", ContainerID: "abc123"},
 		shogunate.StreamDoneMsg{ChannelID: "ruling"},
+		runners.ToolCallScheduledMsg{ChannelID: "ruling", CallID: "tc1", ToolName: "read_file", Input: "test.go", Status: "scheduled", Formatted: "read_file: test.go"},
+		runners.ToolCallExecutingMsg{ChannelID: "ruling", CallID: "tc1", ToolName: "read_file", Input: "test.go", Status: "executing", Formatted: "read_file: test.go"},
+		runners.ToolCallSuccessMsg{ChannelID: "ruling", CallID: "tc1", ToolName: "read_file", Input: "test.go", Status: "success", Result: "ok", Formatted: "read_file: ok"},
+		runners.ToolCallErrorMsg{ChannelID: "ruling", CallID: "tc2", ToolName: "bad_tool", Input: "x", Status: "error", Error: "boom", Formatted: "bad_tool: boom"},
+		runners.ToolCallAbortedMsg{ChannelID: "ruling", CallID: "tc3", ToolName: "slow_tool", Input: "y", Status: "aborted", Reason: "restart", Formatted: "slow_tool: restart"},
 	}
 
 	for _, m := range want {
@@ -178,6 +183,21 @@ func comparableEqual(a, b any) bool {
 		return ok && at == bt
 	case runners.ContainerLaunchedMsg:
 		bt, ok := b.(runners.ContainerLaunchedMsg)
+		return ok && at == bt
+	case runners.ToolCallScheduledMsg:
+		bt, ok := b.(runners.ToolCallScheduledMsg)
+		return ok && at == bt
+	case runners.ToolCallExecutingMsg:
+		bt, ok := b.(runners.ToolCallExecutingMsg)
+		return ok && at == bt
+	case runners.ToolCallSuccessMsg:
+		bt, ok := b.(runners.ToolCallSuccessMsg)
+		return ok && at == bt
+	case runners.ToolCallErrorMsg:
+		bt, ok := b.(runners.ToolCallErrorMsg)
+		return ok && at == bt
+	case runners.ToolCallAbortedMsg:
+		bt, ok := b.(runners.ToolCallAbortedMsg)
 		return ok && at == bt
 	}
 	return false

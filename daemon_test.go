@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/rpc"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/shogunateapi"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
@@ -21,6 +22,17 @@ type daemonFake struct {
 	shogunateapi.Client
 	mu      sync.Mutex
 	created int
+	// Events channel shared across Subscribe calls
+	eventsCh chan any
+}
+
+func (d *daemonFake) SendEvent(msg any) {
+	d.mu.Lock()
+	ch := d.eventsCh
+	d.mu.Unlock()
+	if ch != nil {
+		ch <- msg
+	}
 }
 
 func (d *daemonFake) HasMinister(id string) bool { return id == "chancellor" }
@@ -31,10 +43,12 @@ func (d *daemonFake) CreateEdict(issueRef, intent string) (*storage.Edict, error
 	return &storage.Edict{ID: uint(d.created), IssueRef: issueRef, Intent: intent}, nil
 }
 func (d *daemonFake) Subscribe(context.Context) <-chan any {
-	ch := make(chan any)
-	// Daemon won't emit anything in this test — return an open chan;
-	// caller will stop reading when ctx cancels.
-	return ch
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.eventsCh == nil {
+		d.eventsCh = make(chan any, 64)
+	}
+	return d.eventsCh
 }
 
 // TestDaemonServesClientsEndToEnd wires serveClients over a real unix
@@ -71,6 +85,7 @@ func TestDaemonServesClientsEndToEnd(t *testing.T) {
 
 	client := rpc.NewShogunateClient(clientConn)
 
+	// Verify HasMinister + CreateEdict
 	if !client.HasMinister("chancellor") {
 		t.Error("HasMinister failed through daemon socket")
 	}
@@ -80,6 +95,31 @@ func TestDaemonServesClientsEndToEnd(t *testing.T) {
 	}
 	if e.Intent != "via socket" {
 		t.Errorf("edict = %+v", e)
+	}
+
+	// Verify tool call notifications cross the wire.
+	want := runners.ToolCallScheduledMsg{
+		ChannelID: "ch1",
+		CallID:    "tc-1",
+		ToolName:  "read_file",
+		Input:     "main.go",
+		Status:    "scheduled",
+		Formatted: "read_file: main.go",
+	}
+	impl.SendEvent(want)
+
+	sub := client.Subscribe(ctx)
+	select {
+	case got := <-sub:
+		sched, ok := got.(runners.ToolCallScheduledMsg)
+		if !ok {
+			t.Fatalf("want ToolCallScheduledMsg, got %T", got)
+		}
+		if sched.CallID != want.CallID || sched.ToolName != want.ToolName || sched.Input != want.Input {
+			t.Errorf("tool call notification mismatch: got %+v, want %+v", sched, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tool call notification never arrived")
 	}
 
 	// Stop the daemon; Accept should return, serveClients should exit.

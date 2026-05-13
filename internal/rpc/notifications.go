@@ -14,22 +14,28 @@ import (
 // Notification method names (server → client). Keep in sync with the
 // typeToMethod registry below.
 const (
-	NotifyStreamStart         = "stream.start"
-	NotifyStreamChunk         = "stream.chunk"
-	NotifyStreamReasoning     = "stream.reasoning"
-	NotifyStreamComplete      = "stream.complete"
-	NotifyStreamDone          = "stream.done"
-	NotifyStreamInterrupted   = "stream.interrupted"
-	NotifyStreamMaxTokens     = "stream.max_tokens"
-	NotifyStreamError         = "stream.error"
-	NotifyEventsDrained       = "events.drained"
-	NotifyMinisterInvoking    = "minister.invoking"
-	NotifyMinisterCompleted   = "minister.completed"
-	NotifyEvent               = "event"
-	NotifyZhengmingPending    = "zhengming.pending"
-	NotifyZhengmingAnswered   = "zhengming.answered"
-	NotifyRitualStep          = "ritual.step"
-	NotifyContainerLaunched   = "runner.container_launched"
+	NotifyStreamStart                = "stream.start"
+	NotifyStreamChunk                = "stream.chunk"
+	NotifyStreamReasoning            = "stream.reasoning"
+	NotifyStreamComplete             = "stream.complete"
+	NotifyStreamDone                 = "stream.done"
+	NotifyStreamInterrupted          = "stream.interrupted"
+	NotifyStreamMaxTokens            = "stream.max_tokens"
+	NotifyStreamError                = "stream.error"
+	NotifyEventsDrained              = "events.drained"
+	NotifyMinisterInvoking           = "minister.invoking"
+	NotifyMinisterCompleted          = "minister.completed"
+	NotifyEvent                      = "event"
+	NotifyZhengmingPending           = "zhengming.pending"
+	NotifyZhengmingAnswered          = "zhengming.answered"
+	NotifyRitualStep                 = "ritual.step"
+	NotifyContainerLaunched          = "runner.container_launched"
+	NotifyToolCallScheduled          = "toolcall.scheduled"
+	NotifyToolCallExecuting          = "toolcall.executing"
+	NotifyToolCallWaitingForApproval = "toolcall.waiting_for_approval"
+	NotifyToolCallSuccess            = "toolcall.success"
+	NotifyToolCallError              = "toolcall.error"
+	NotifyToolCallAborted            = "toolcall.aborted"
 )
 
 // typeToMethod maps a Go notification type to its wire method name.
@@ -38,22 +44,28 @@ const (
 var (
 	typeToMethodMu sync.RWMutex
 	typeToMethod   = map[reflect.Type]string{
-		reflect.TypeOf(shogunate.StreamStartMsg{}):            NotifyStreamStart,
-		reflect.TypeOf(shogunate.StreamChunkMsg{}):            NotifyStreamChunk,
-		reflect.TypeOf(shogunate.StreamReasoningChunkMsg{}):   NotifyStreamReasoning,
-		reflect.TypeOf(shogunate.StreamCompleteMsg{}):         NotifyStreamComplete,
-		reflect.TypeOf(shogunate.StreamDoneMsg{}):             NotifyStreamDone,
-		reflect.TypeOf(shogunate.StreamInterruptedMsg{}):      NotifyStreamInterrupted,
-		reflect.TypeOf(shogunate.StreamMaxTokensReachedMsg{}): NotifyStreamMaxTokens,
-		reflect.TypeOf(shogunate.StreamErrorMsg{}):            NotifyStreamError,
-		reflect.TypeOf(shogunate.EventsDrainedMsg{}):          NotifyEventsDrained,
-		reflect.TypeOf(shogunate.MinisterInvokingMsg{}):       NotifyMinisterInvoking,
-		reflect.TypeOf(shogunate.MinisterCompletedMsg{}):      NotifyMinisterCompleted,
-		reflect.TypeOf(shogunate.EventNotificationMsg{}):      NotifyEvent,
-		reflect.TypeOf(shogunate.ZhengmingPendingMsg{}):       NotifyZhengmingPending,
-		reflect.TypeOf(shogunate.ZhengmingAnsweredMsg{}):      NotifyZhengmingAnswered,
-		reflect.TypeOf(shogunate.RitualStepMsg{}):             NotifyRitualStep,
-		reflect.TypeOf(runners.ContainerLaunchedMsg{}):        NotifyContainerLaunched,
+		reflect.TypeOf(shogunate.StreamStartMsg{}):              NotifyStreamStart,
+		reflect.TypeOf(shogunate.StreamChunkMsg{}):              NotifyStreamChunk,
+		reflect.TypeOf(shogunate.StreamReasoningChunkMsg{}):     NotifyStreamReasoning,
+		reflect.TypeOf(shogunate.StreamCompleteMsg{}):           NotifyStreamComplete,
+		reflect.TypeOf(shogunate.StreamDoneMsg{}):               NotifyStreamDone,
+		reflect.TypeOf(shogunate.StreamInterruptedMsg{}):        NotifyStreamInterrupted,
+		reflect.TypeOf(shogunate.StreamMaxTokensReachedMsg{}):   NotifyStreamMaxTokens,
+		reflect.TypeOf(shogunate.StreamErrorMsg{}):              NotifyStreamError,
+		reflect.TypeOf(shogunate.EventsDrainedMsg{}):            NotifyEventsDrained,
+		reflect.TypeOf(shogunate.MinisterInvokingMsg{}):         NotifyMinisterInvoking,
+		reflect.TypeOf(shogunate.MinisterCompletedMsg{}):        NotifyMinisterCompleted,
+		reflect.TypeOf(shogunate.EventNotificationMsg{}):        NotifyEvent,
+		reflect.TypeOf(shogunate.ZhengmingPendingMsg{}):         NotifyZhengmingPending,
+		reflect.TypeOf(shogunate.ZhengmingAnsweredMsg{}):        NotifyZhengmingAnswered,
+		reflect.TypeOf(shogunate.RitualStepMsg{}):               NotifyRitualStep,
+		reflect.TypeOf(runners.ContainerLaunchedMsg{}):          NotifyContainerLaunched,
+		reflect.TypeOf(runners.ToolCallScheduledMsg{}):          NotifyToolCallScheduled,
+		reflect.TypeOf(runners.ToolCallExecutingMsg{}):          NotifyToolCallExecuting,
+		reflect.TypeOf(runners.ToolCallWaitingForApprovalMsg{}): NotifyToolCallWaitingForApproval,
+		reflect.TypeOf(runners.ToolCallSuccessMsg{}):            NotifyToolCallSuccess,
+		reflect.TypeOf(runners.ToolCallErrorMsg{}):              NotifyToolCallError,
+		reflect.TypeOf(runners.ToolCallAbortedMsg{}):            NotifyToolCallAborted,
 	}
 )
 
@@ -104,22 +116,28 @@ type NotificationDecoder func([]byte) (any, error)
 var (
 	methodToDecoderMu sync.RWMutex
 	methodToDecoder   = map[string]NotificationDecoder{
-		NotifyStreamStart:       decode[shogunate.StreamStartMsg],
-		NotifyStreamChunk:       decode[shogunate.StreamChunkMsg],
-		NotifyStreamReasoning:   decode[shogunate.StreamReasoningChunkMsg],
-		NotifyStreamComplete:    decode[shogunate.StreamCompleteMsg],
-		NotifyStreamDone:        decode[shogunate.StreamDoneMsg],
-		NotifyStreamInterrupted: decode[shogunate.StreamInterruptedMsg],
-		NotifyStreamMaxTokens:   decode[shogunate.StreamMaxTokensReachedMsg],
-		NotifyStreamError:       decode[shogunate.StreamErrorMsg],
-		NotifyEventsDrained:     decode[shogunate.EventsDrainedMsg],
-		NotifyMinisterInvoking:  decode[shogunate.MinisterInvokingMsg],
-		NotifyMinisterCompleted: decode[shogunate.MinisterCompletedMsg],
-		NotifyEvent:             decode[shogunate.EventNotificationMsg],
-		NotifyZhengmingPending:  decode[shogunate.ZhengmingPendingMsg],
-		NotifyZhengmingAnswered: decode[shogunate.ZhengmingAnsweredMsg],
-		NotifyRitualStep:        decode[shogunate.RitualStepMsg],
-		NotifyContainerLaunched: decode[runners.ContainerLaunchedMsg],
+		NotifyStreamStart:                decode[shogunate.StreamStartMsg],
+		NotifyStreamChunk:                decode[shogunate.StreamChunkMsg],
+		NotifyStreamReasoning:            decode[shogunate.StreamReasoningChunkMsg],
+		NotifyStreamComplete:             decode[shogunate.StreamCompleteMsg],
+		NotifyStreamDone:                 decode[shogunate.StreamDoneMsg],
+		NotifyStreamInterrupted:          decode[shogunate.StreamInterruptedMsg],
+		NotifyStreamMaxTokens:            decode[shogunate.StreamMaxTokensReachedMsg],
+		NotifyStreamError:                decode[shogunate.StreamErrorMsg],
+		NotifyEventsDrained:              decode[shogunate.EventsDrainedMsg],
+		NotifyMinisterInvoking:           decode[shogunate.MinisterInvokingMsg],
+		NotifyMinisterCompleted:          decode[shogunate.MinisterCompletedMsg],
+		NotifyEvent:                      decode[shogunate.EventNotificationMsg],
+		NotifyZhengmingPending:           decode[shogunate.ZhengmingPendingMsg],
+		NotifyZhengmingAnswered:          decode[shogunate.ZhengmingAnsweredMsg],
+		NotifyRitualStep:                 decode[shogunate.RitualStepMsg],
+		NotifyContainerLaunched:          decode[runners.ContainerLaunchedMsg],
+		NotifyToolCallScheduled:          decode[runners.ToolCallScheduledMsg],
+		NotifyToolCallExecuting:          decode[runners.ToolCallExecutingMsg],
+		NotifyToolCallWaitingForApproval: decode[runners.ToolCallWaitingForApprovalMsg],
+		NotifyToolCallSuccess:            decode[runners.ToolCallSuccessMsg],
+		NotifyToolCallError:              decode[runners.ToolCallErrorMsg],
+		NotifyToolCallAborted:            decode[runners.ToolCallAbortedMsg],
 	}
 )
 

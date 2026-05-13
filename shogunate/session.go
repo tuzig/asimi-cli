@@ -1492,7 +1492,11 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 
 		if shouldReturn {
 			if s.notify != nil {
-				s.notify(StreamCompleteMsg{ChannelID: s.channelID})
+				if ctx.Err() != nil {
+					s.notify(StreamInterruptedMsg{ChannelID: s.channelID, PartialContent: s.getStreamBuffer()})
+				} else {
+					s.notify(StreamCompleteMsg{ChannelID: s.channelID})
+				}
 			}
 			return finalText, nil
 		}

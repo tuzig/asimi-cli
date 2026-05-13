@@ -1032,9 +1032,10 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Single press — cancel streaming on active tab only
+	// Single press — cancel streaming on active tab only.
+	// The daemon emits the ABORTED chat line on StreamInterruptedMsg once
+	// the session actually stops; the toast below confirms the keystroke.
 	m.ctrlCLastPress = now
-	m.tabs.Content().Chat.AddUserMessage("CTRL-C")
 	activeTab := m.tabs.ActiveTab()
 	if activeTab.Streaming {
 		slog.Info("ctrl_c_during_streaming", "cancelling_active_tab", activeTab.Target)
@@ -1591,28 +1592,28 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runners.ToolCallScheduledMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		chat.AddToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		chat.AddToRawHistory("TOOL_SCHEDULED", fmt.Sprintf("%s with input: %s", msg.ToolName, msg.Input))
 		chat.HandleToolCallScheduled(msg)
 
 	case runners.ToolCallExecutingMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		chat.AddToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.Call.Tool.Name(), msg.Call.Input))
+		chat.AddToRawHistory("TOOL_EXECUTING", fmt.Sprintf("%s with input: %s", msg.ToolName, msg.Input))
 		chat.HandleToolCallExecuting(msg)
 
 	case runners.ToolCallSuccessMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		chat.AddToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Result))
+		chat.AddToRawHistory("TOOL_SUCCESS", fmt.Sprintf("%s\nInput: %s\nOutput: %s", msg.ToolName, msg.Input, msg.Result))
 		chat.HandleToolCallSuccess(msg)
 		m.repoInfo.RefreshDiff()
 
 	case runners.ToolCallErrorMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		chat.AddToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.Call.Tool.Name(), msg.Call.Input, msg.Call.Error))
+		chat.AddToRawHistory("TOOL_ERROR", fmt.Sprintf("%s\nInput: %s\nError: %v", msg.ToolName, msg.Input, msg.Error))
 		chat.HandleToolCallError(msg)
 
 	case runners.ToolCallAbortedMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		chat.AddToRawHistory("TOOL_ABORTED", fmt.Sprintf("%s\nInput: %s\nReason: sandbox restarted", msg.Call.Tool.Name(), msg.Call.Input))
+		chat.AddToRawHistory("TOOL_ABORTED", fmt.Sprintf("%s\nInput: %s\nReason: %s", msg.ToolName, msg.Input, msg.Reason))
 		chat.HandleToolCallAborted(msg)
 
 	case errMsg:
@@ -1662,7 +1663,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shogunate.StreamInterruptedMsg:
 		// Session already stopped — just reset UI state, don't re-cancel ctx.
-		m.tabs.ChatByTab(msg.ChannelID).AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
+		chat := m.tabs.ChatByTab(msg.ChannelID)
+		chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
+		chat.AddMessage(systemPrefix + "ABORTED")
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
 		m.tabs.ClearStreamingByTab(msg.ChannelID)
 		if !m.tabs.AnyStreaming() {
@@ -1708,6 +1711,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Shogunate streaming message handlers
 	case shogunate.StreamChunkMsg:
+		// Drop chunks for tabs the user already cancelled; daemon may still
+		// emit a few in-flight chunks before its ctx-cancel takes effect.
+		if tab := m.tabs.TabByTarget(msg.ChannelID); tab != nil && !tab.Streaming {
+			return m, nil
+		}
 		// Handle text chunks from Shogunate — route to correct tab
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
@@ -1726,6 +1734,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shogunate.StreamReasoningChunkMsg:
+		if tab := m.tabs.TabByTarget(msg.ChannelID); tab != nil && !tab.Streaming {
+			return m, nil
+		}
 		// Handle thinking/reasoning chunks from Shogunate — route to correct tab
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)

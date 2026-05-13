@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -857,16 +856,15 @@ func (c *ChatComponent) ClearToolCallMessageIndex() {
 
 // HandleToolCallScheduled handles a scheduled tool call message
 func (c *ChatComponent) HandleToolCallScheduled(msg runners.ToolCallScheduledMsg) {
-	message := formatToolCall(msg.Call.Tool, "📋", msg.Call.Input, "", nil)
-	c.AddMessage(message)
-	c.SetToolCallMessageIndex(msg.Call.ID, len(c.Messages)-1)
+	c.AddMessage("📋 " + msg.Formatted)
+	c.SetToolCallMessageIndex(msg.CallID, len(c.Messages)-1)
 }
 
 // HandleToolCallExecuting handles an executing tool call message
 func (c *ChatComponent) HandleToolCallExecuting(msg runners.ToolCallExecutingMsg) {
-	formatted := formatToolCall(msg.Call.Tool, "⚙️", msg.Call.Input, "", nil)
+	formatted := "⚙️ " + msg.Formatted
 	// Update the existing message if we have its index
-	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+	if idx, exists := c.GetToolCallMessageIndex(msg.CallID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 	} else {
@@ -877,13 +875,13 @@ func (c *ChatComponent) HandleToolCallExecuting(msg runners.ToolCallExecutingMsg
 
 // HandleToolCallSuccess handles a successful tool call message
 func (c *ChatComponent) HandleToolCallSuccess(msg runners.ToolCallSuccessMsg) {
-	formatted := formatToolCall(msg.Call.Tool, checkPrefix, msg.Call.Input, msg.Call.Result, nil)
+	formatted := checkPrefix + " " + msg.Formatted
 	// Update the existing message if we have its index
-	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+	if idx, exists := c.GetToolCallMessageIndex(msg.CallID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 		// Clean up the index mapping
-		c.DeleteToolCallMessageIndex(msg.Call.ID)
+		c.DeleteToolCallMessageIndex(msg.CallID)
 	} else {
 		// Fallback: add a new message if we don't have the index
 		c.AddMessage(formatted)
@@ -893,17 +891,16 @@ func (c *ChatComponent) HandleToolCallSuccess(msg runners.ToolCallSuccessMsg) {
 // HandleToolCallError handles a failed tool call message
 func (c *ChatComponent) HandleToolCallError(msg runners.ToolCallErrorMsg) {
 	icon := "⁉️"
-	var deniedErr runners.CommandDeniedError
-	if errors.As(msg.Call.Error, &deniedErr) {
+	if strings.Contains(msg.Error, "command denied by user") {
 		icon = "⛔︎"
 	}
-	formatted := formatToolCall(msg.Call.Tool, icon, msg.Call.Input, "", msg.Call.Error)
+	formatted := icon + " " + msg.Formatted
 	// Update the existing message if we have its index
-	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+	if idx, exists := c.GetToolCallMessageIndex(msg.CallID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 		// Clean up the index mapping
-		c.DeleteToolCallMessageIndex(msg.Call.ID)
+		c.DeleteToolCallMessageIndex(msg.CallID)
 	} else {
 		// Fallback: add a new message if we don't have the index
 		c.AddMessage(formatted)
@@ -912,15 +909,13 @@ func (c *ChatComponent) HandleToolCallError(msg runners.ToolCallErrorMsg) {
 
 // HandleToolCallAborted handles an aborted tool call message (e.g., due to sandbox restart)
 func (c *ChatComponent) HandleToolCallAborted(msg runners.ToolCallAbortedMsg) {
-	// Use a distinctive icon to clearly mark aborted tool calls
-	icon := "🚫"
-	formatted := formatToolCall(msg.Call.Tool, icon, msg.Call.Input, "", msg.Call.Error)
+	formatted := "🚫 " + msg.Formatted
 	// Update the existing message if we have its index
-	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+	if idx, exists := c.GetToolCallMessageIndex(msg.CallID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 		// Clean up the index mapping
-		c.DeleteToolCallMessageIndex(msg.Call.ID)
+		c.DeleteToolCallMessageIndex(msg.CallID)
 	} else {
 		// Fallback: add a new message if we don't have the index
 		c.AddMessage(formatted)

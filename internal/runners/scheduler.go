@@ -101,7 +101,14 @@ func (s *CoreToolScheduler) Schedule(ctx context.Context, tool Tool, input strin
 	s.resultChans[id] = resultChan
 
 	if s.notify != nil {
-		s.notify(ToolCallScheduledMsg{ChannelID: s.channelID, Call: call})
+		s.notify(ToolCallScheduledMsg{
+			ChannelID: s.channelID,
+			CallID:    id,
+			ToolName:  call.Tool.Name(),
+			Input:     call.Input,
+			Status:    string(StatusScheduled),
+			Formatted: call.Tool.Format(call.Input, "", nil),
+		})
 	}
 	s.processQueue()
 
@@ -120,7 +127,14 @@ func (s *CoreToolScheduler) processQueue() {
 
 	call.Status = StatusExecuting
 	if s.notify != nil {
-		s.notify(ToolCallExecutingMsg{ChannelID: s.channelID, Call: call})
+		s.notify(ToolCallExecutingMsg{
+			ChannelID: s.channelID,
+			CallID:    call.ID,
+			ToolName:  call.Tool.Name(),
+			Input:     call.Input,
+			Status:    string(StatusExecuting),
+			Formatted: call.Tool.Format(call.Input, "", nil),
+		})
 	}
 
 	go func() {
@@ -139,7 +153,15 @@ func (s *CoreToolScheduler) processQueue() {
 			call.Status = StatusError
 			call.Error = err
 			if s.notify != nil {
-				s.notify(ToolCallErrorMsg{ChannelID: s.channelID, Call: call})
+				s.notify(ToolCallErrorMsg{
+					ChannelID: s.channelID,
+					CallID:    call.ID,
+					ToolName:  call.Tool.Name(),
+					Input:     call.Input,
+					Status:    string(StatusError),
+					Error:     err.Error(),
+					Formatted: call.Tool.Format(call.Input, "", err),
+				})
 			}
 			if resultChan != nil {
 				resultChan <- ToolCallResult{Error: err}
@@ -148,7 +170,15 @@ func (s *CoreToolScheduler) processQueue() {
 			call.Status = StatusSuccess
 			call.Result = output
 			if s.notify != nil {
-				s.notify(ToolCallSuccessMsg{ChannelID: s.channelID, Call: call})
+				s.notify(ToolCallSuccessMsg{
+					ChannelID: s.channelID,
+					CallID:    call.ID,
+					ToolName:  call.Tool.Name(),
+					Input:     call.Input,
+					Status:    string(StatusSuccess),
+					Result:    output,
+					Formatted: call.Tool.Format(call.Input, output, nil),
+				})
 			}
 			if resultChan != nil {
 				resultChan <- ToolCallResult{Output: output}
@@ -195,7 +225,15 @@ func (s *CoreToolScheduler) ClearQueue() int {
 
 		// Notify the UI about the aborted call
 		if s.notify != nil {
-			s.notify(ToolCallAbortedMsg{ChannelID: s.channelID, Call: call})
+			s.notify(ToolCallAbortedMsg{
+				ChannelID: s.channelID,
+				CallID:    call.ID,
+				ToolName:  call.Tool.Name(),
+				Input:     call.Input,
+				Status:    string(StatusAborted),
+				Reason:    abortErr.Error(),
+				Formatted: call.Tool.Format(call.Input, "", abortErr),
+			})
 		}
 
 		// Send error to the result channel
@@ -215,26 +253,54 @@ func (s *CoreToolScheduler) ClearQueue() int {
 
 // Messages for bubbletea
 type ToolCallScheduledMsg struct {
-	ChannelID string
-	Call      *ToolCall
+	ChannelID string `msgpack:"channel_id"`
+	CallID    string `msgpack:"call_id"`
+	ToolName  string `msgpack:"tool_name"`
+	Input     string `msgpack:"input"`
+	Status    string `msgpack:"status"`
+	Formatted string `msgpack:"formatted,omitempty"`
 }
 type ToolCallExecutingMsg struct {
-	ChannelID string
-	Call      *ToolCall
+	ChannelID string `msgpack:"channel_id"`
+	CallID    string `msgpack:"call_id"`
+	ToolName  string `msgpack:"tool_name"`
+	Input     string `msgpack:"input"`
+	Status    string `msgpack:"status"`
+	Formatted string `msgpack:"formatted,omitempty"`
 }
 type ToolCallWaitingForApprovalMsg struct {
-	ChannelID string
-	Call      *ToolCall
+	ChannelID string `msgpack:"channel_id"`
+	CallID    string `msgpack:"call_id"`
+	ToolName  string `msgpack:"tool_name"`
+	Input     string `msgpack:"input"`
+	Status    string `msgpack:"status"`
+	Command   string `msgpack:"command"`
+	Formatted string `msgpack:"formatted,omitempty"`
 }
 type ToolCallSuccessMsg struct {
-	ChannelID string
-	Call      *ToolCall
+	ChannelID string `msgpack:"channel_id"`
+	CallID    string `msgpack:"call_id"`
+	ToolName  string `msgpack:"tool_name"`
+	Input     string `msgpack:"input"`
+	Status    string `msgpack:"status"`
+	Result    string `msgpack:"result"`
+	Formatted string `msgpack:"formatted,omitempty"`
 }
 type ToolCallErrorMsg struct {
-	ChannelID string
-	Call      *ToolCall
+	ChannelID string `msgpack:"channel_id"`
+	CallID    string `msgpack:"call_id"`
+	ToolName  string `msgpack:"tool_name"`
+	Input     string `msgpack:"input"`
+	Status    string `msgpack:"status"`
+	Error     string `msgpack:"error"`
+	Formatted string `msgpack:"formatted,omitempty"`
 }
 type ToolCallAbortedMsg struct {
-	ChannelID string
-	Call      *ToolCall
+	ChannelID string `msgpack:"channel_id"`
+	CallID    string `msgpack:"call_id"`
+	ToolName  string `msgpack:"tool_name"`
+	Input     string `msgpack:"input"`
+	Status    string `msgpack:"status"`
+	Reason    string `msgpack:"reason"`
+	Formatted string `msgpack:"formatted,omitempty"`
 }
