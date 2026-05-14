@@ -347,19 +347,20 @@ func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.shogunate == nil {
-		return func() tea.Msg {
-			return showContextMsg{content: "No model connection available. Please ensure a session is active."}
-		}
-	}
-
-	// Check for clear mode - remove infrastructure files first
+	// Clear mode runs even without an active session so users can recover from
+	// a broken init without first having a working LLM connection.
 	if len(args) > 0 && args[0] == "clear" {
 		errors := clearAsimiFiles(model)
 		if len(errors) > 0 {
 			return func() tea.Msg {
 				return showContextMsg{content: fmt.Sprintf("Failed to clear files: %s", strings.Join(errors, ", "))}
 			}
+		}
+	}
+
+	if model.shogunate == nil {
+		return func() tea.Msg {
+			return showContextMsg{content: "No model connection available. Please ensure a session is active."}
 		}
 	}
 
