@@ -58,15 +58,15 @@ func EnsureProjectConfig() error {
 
 // RitualStepMsg notifies the UI of ritual step progress
 type RitualStepMsg struct {
-	ChannelID   string
-	RitualName  string
-	ExecutionID string
-	EdictID     uint
-	StepName    string
-	StepIndex   int
-	TotalSteps  int
-	Status      string
-	Message     string
+	ChannelID   string `msgpack:"channel_id"`
+	RitualName  string `msgpack:"ritual_name"`
+	ExecutionID string `msgpack:"execution_id"`
+	EdictID     uint   `msgpack:"edict_id,omitempty"`
+	StepName    string `msgpack:"step_name,omitempty"`
+	StepIndex   int    `msgpack:"step_index"`
+	TotalSteps  int    `msgpack:"total_steps"`
+	Status      string `msgpack:"status,omitempty"`
+	Message     string `msgpack:"message,omitempty"`
 }
 
 // RitualState represents the current state of a ritual execution
@@ -158,6 +158,7 @@ type RitualStep struct {
 	Scope           string            `yaml:"scope,omitempty"`             // Execution scope (e.g., "edict", "global")
 	Model           string            `yaml:"model,omitempty"`             // LLM model override for this step
 	Temperature     float64           `yaml:"temperature,omitempty"`       // LLM temperature override
+	Effort          string            `yaml:"effort,omitempty"`            // Reasoning effort: "low", "medium" (default), "high" (provider/model must support reasoning)
 	Env             map[string]string `yaml:"env,omitempty"`               // Environment variables for this step
 	Fork            *ForkDef          `yaml:"fork,omitempty"`              // Fork/join parallel execution
 	Work            []RitualStep      `yaml:"work,omitempty"`              // Steps to execute for each fork item
@@ -1365,6 +1366,11 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		exec.stepStates[exec.CurrentStep].Session = actSession
 	}
 	actSession.SetNotify(notify, "chancellor")
+	effort := step.Effort
+	if effort == "" {
+		effort = "medium"
+	}
+	actSession.ReasoningEffort = effort
 
 	// Build work prompt with ritual context and previous step results
 	prompt := r.buildWorkPrompt(exec, act)

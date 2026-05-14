@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/afittestide/asimi/internal"
-	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
+	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -144,12 +145,25 @@ func (c *Sage) Tools() []Tool {
 	toolList := []Tool{
 		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.Username(), Project: c.Project()},
 		tools.ListEdictsTool{DB: c.db, Username: c.Username(), Project: c.Project()},
-		&SuggestEdictTool{sage: c},
-		&QueryCourtTool{sage: c},
-		// Review and precedent tools
-		&RecordPrecedentTool{sage: c},
-		&ListQuenchedManifestsTool{sage: c},
-		&QueryPrecedentsTool{sage: c},
+		tools.SuggestEdictTool{
+			Requester: c,
+			// Resolve notify at call-time, not at Tools()-construction. In daemon
+			// mode the live notify is installed by shog.Subscribe() and can be
+			// swapped on client reconnect; a snapshot here would silently bypass
+			// the $EDITOR review.
+			NotifyFn: func() func(any) { return c.notify },
+			Username: c.Username(),
+			Project:  c.Project(),
+		},
+		tools.QueryCourtTool{DB: c.db, Username: c.Username(), Project: c.Project()},
+		tools.RecordPrecedentTool{
+			Store:      c,
+			Username:   c.Username(),
+			Project:    c.Project(),
+			AddFailure: AddFailure,
+		},
+		tools.ListQuenchedManifestsTool{Store: c, Username: c.Username(), Project: c.Project()},
+		tools.QueryPrecedentsTool{Store: c},
 	}
 	for _, t := range tools.GetROTools(c.config.LLM) {
 		toolList = append(toolList, t)
@@ -157,9 +171,26 @@ func (c *Sage) Tools() []Tool {
 	return toolList
 }
 
+// GrantSeal exposes MinisterBase's seal-granting method so tool packages can
+// invoke it through the tools.PrecedentStore interface without importing
+// shogunate-internal helpers.
+func (c *Sage) GrantSeal(key storage.EdictKey, metadata storage.JSON) error {
+	return c.grantSeal(key, metadata)
+}
+
 // ResetSession clears the Sage's session (delegates to MinisterBase)
 func (c *Sage) ResetSession() {
 	c.MinisterBase.ResetSession()
+}
+
+// RestoreSession creates a fully-wired hunting session and injects loaded history
+func (c *Sage) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
+	return c.MinisterBase.restoreSession(minister, msgs)
+}
+
+// GetSession returns the Sage's session (from MinisterBase)
+func (c *Sage) GetSession() *Session {
+	return c.MinisterBase.Session()
 }
 
 // GetEdict retrieves an edict (satisfies EdictManager for GetEdictStatusTool)
@@ -195,6 +226,7 @@ func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 			return
 		}
 		sess.TabType = "sage"
+		sess.SetPersister(c.Persister())
 		c.MinisterBase.SetSession(sess)
 	}
 
@@ -311,284 +343,6 @@ func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey
 	return session, output, nil
 }
 
-// --- Sage-specific tools ---
-
-// SuggestEdictTool suggests a new edict via zhengming (Sage never creates edicts)
-type SuggestEdictTool struct {
-	sage *Sage
-}
-
-func (t *SuggestEdictTool) Name() string { return "suggest_edict" }
-
-func (t *SuggestEdictTool) Description() string {
-	return `Suggest a new edict to the Ruler via Zhengming. Use this when you identify
-an improvement opportunity, naming inconsistency, or refactoring need.
-You cannot create edicts directly — only the Ruler can do that.
-This creates a Zhengming request that the Ruler can approve or dismiss.
-Returns immediately with status='suggested' - the edict will be created if approved via event.
-
-For large suggestions (>500 chars), the Ruler reviews the text in $EDITOR.
-If the tool returns status='ruler_modified', the Ruler has edited your suggestion.
-Review the original, modified content, and diff. Then either:
-- Call suggest_edict again with the modified content if you find it harmonized with your intent
-- Respond in conversation explaining your concerns and suggesting changes if not harmonized`
-}
-
-func (t *SuggestEdictTool) Call(ctx context.Context, input string) (string, error) {
-	var params struct {
-		Suggestion string `json:"suggestion"`
-		Summary    string `json:"summary"`
-		Priority   string `json:"priority"`
-		Evidence   string `json:"evidence"`
-	}
-	if err := json.Unmarshal([]byte(input), &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
-	}
-	if params.Suggestion == "" {
-		return "", fmt.Errorf("suggestion is required")
-	}
-	if params.Summary == "" {
-		return "", fmt.Errorf("summary is required")
-	}
-
-	priority := storage.PriorityNormal
-	if params.Priority == "urgent" {
-		priority = storage.PriorityUrgent
-	}
-
-	// Build structured question with options
-	questionText := params.Suggestion
-	if params.Evidence != "" {
-		questionText = fmt.Sprintf("%s\n\nEvidence: %s", params.Suggestion, params.Evidence)
-	}
-
-	// For large suggestions (>500 chars), use approve_doc for external review
-	if len(questionText) > 500 {
-		approveTool := tools.ApproveDocTool{Notify: t.sage.notify}
-		approveInput := map[string]any{
-			"content":     questionText,
-			"description": "Review edict suggestion before submission",
-		}
-		approveInputJSON, _ := json.Marshal(approveInput)
-		approveResult, err := approveTool.Call(ctx, string(approveInputJSON))
-		if err != nil {
-			return "", fmt.Errorf("approve_doc failed: %w", err)
-		}
-
-		// Check if user approved or modified
-		var approveRes struct {
-			Status  string `json:"status"`
-			Diff    string `json:"diff,omitempty"`
-			Content string `json:"content,omitempty"`
-		}
-		if err := json.Unmarshal([]byte(approveResult), &approveRes); err != nil {
-			return "", fmt.Errorf("failed to parse approve_doc result: %w", err)
-		}
-
-		if approveRes.Status == "modified" {
-			// Return to LLM for review — don't create zhengming yet
-			originalJSON, _ := json.Marshal(questionText)
-			modifiedJSON, _ := json.Marshal(approveRes.Content)
-			diffJSON, _ := json.Marshal(approveRes.Diff)
-			return fmt.Sprintf(`{"status":"ruler_modified","original":%s,"modified":%s,"diff":%s}`,
-				originalJSON, modifiedJSON, diffJSON), nil
-		}
-		// If approved or rejected (no content change), fall through to zhengming
-	}
-
-	questions := storage.ZhengmingQuestions{{
-		Text:    questionText,
-		Summary: params.Summary,
-		Options: []string{"Approve edict", "Reject"},
-	}}
-
-	key := storage.EdictKey{
-		ID:       1, // use the court as default
-		Username: t.sage.Username(),
-		Project:  t.sage.Project(),
-	}
-	requestID, err := t.sage.RequestZhengming(key, questions, priority)
-	if err != nil {
-		return "", fmt.Errorf("failed to suggest edict: %w", err)
-	}
-
-	return fmt.Sprintf(`{"status":"suggested","request_id":"%s"}`, requestID), nil
-}
-
-func (t *SuggestEdictTool) Format(input, result string, err error) string {
-	msg := utils.NewMsgBlockBuilder("SuggestEdict")
-	msg.WriteLn()
-	if err != nil {
-		msg.Writef("Error: %v", err)
-	} else {
-		var params struct {
-			Suggestion string `json:"suggestion"`
-		}
-		json.Unmarshal([]byte(input), &params)
-		preview := params.Suggestion
-		if len(preview) > 60 {
-			preview = preview[:57] + "..."
-		}
-		msg.Writef("Suggested: %s", preview)
-	}
-	return msg.String() + "\n"
-}
-
-func (t *SuggestEdictTool) ParameterSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"suggestion": map[string]any{
-				"type":        "string",
-				"description": "What edict should the Ruler consider? Be specific about the change.",
-			},
-			"summary": map[string]any{
-				"type":        "string",
-				"description": "A short one-line summary to help the ruler recall the edict",
-			},
-			"priority": map[string]any{
-				"type":        "string",
-				"enum":        []string{"normal", "urgent"},
-				"description": "Priority level (default: normal)",
-			},
-			"evidence": map[string]any{
-				"type":        "string",
-				"description": "Supporting evidence: file:line references, patterns found, etc.",
-			},
-		},
-		"required": []string{"suggestion", "summary"},
-	}
-}
-
-// QueryCourtTool queries the court's state (edicts, manifests, verdicts, precedents)
-type QueryCourtTool struct {
-	sage *Sage
-}
-
-func (t *QueryCourtTool) Name() string { return "query_court" }
-
-func (t *QueryCourtTool) Description() string {
-	return `Query the current state of the court. Returns active edicts, their seal status,
-recent manifests, verdicts, and precedents. Use this for a broad overview
-of what's happening in the Shogunate.`
-}
-
-func (t *QueryCourtTool) Call(ctx context.Context, input string) (string, error) {
-	var params struct {
-		EdictID uint   `json:"edict_id"`
-		Scope   string `json:"scope"` // "active", "all", or specific edict_id
-	}
-	json.Unmarshal([]byte(input), &params)
-
-	result := make(map[string]interface{})
-
-	// Get edicts
-	var edicts []storage.Edict
-	query := t.sage.db.Order("created_at DESC").Limit(20)
-	if params.EdictID != 0 {
-		query = query.Where("id = ? AND username = ? AND project = ?", params.EdictID, t.sage.username, t.sage.project)
-	} else if params.Scope != "all" {
-		query = query.Where("status NOT IN ?", []string{"sealed", "cancelled"})
-	}
-	query.Find(&edicts)
-
-	edictSummaries := make([]map[string]interface{}, len(edicts))
-	sealService := storage.NewSealService(t.sage.db)
-	for i, e := range edicts {
-		status, err := sealService.GetEdictStatus(storage.EdictKey{ID: e.ID, Username: e.Username, Project: e.Project})
-		if err != nil {
-			status = storage.EdictActive
-		}
-		edictSummaries[i] = map[string]interface{}{
-			"edict_id": e.ID,
-			"status":   string(status),
-			"intent":   truncateForCourt(e.Intent, 120),
-		}
-	}
-	result["edicts"] = edictSummaries
-
-	// Get seals for each edict
-	sealSummaries := make([]map[string]interface{}, len(edicts))
-	for i, e := range edicts {
-		var seals []storage.Seal
-		t.sage.db.Where("edict_id = ? AND username = ? AND project = ?", e.ID, e.Username, e.Project).Order("sealed_at ASC").Find(&seals)
-		sealList := make([]map[string]interface{}, len(seals))
-		for j, seal := range seals {
-			sealList[j] = map[string]interface{}{
-				"minister_id": seal.MinisterID,
-				"sealed_at":   seal.SealedAt,
-			}
-		}
-		sealSummaries[i] = map[string]interface{}{
-			"edict_id": e.ID,
-			"seals":    sealList,
-		}
-	}
-	result["seals"] = sealSummaries
-
-	// Get recent zhengming
-	var zhengming []storage.Zhengming
-	t.sage.db.Where("status = ?", storage.ZhengmingPending).
-		Order("created_at DESC").Limit(10).Find(&zhengming)
-	if len(zhengming) > 0 {
-		zhSummaries := make([]map[string]interface{}, len(zhengming))
-		for i, z := range zhengming {
-			zhSummaries[i] = map[string]interface{}{
-				"request_id":  z.RequestID,
-				"edict_id":    z.EdictID,
-				"minister_id": z.MinisterID,
-				"questions":   z.Questions,
-				"priority":    string(z.Priority),
-			}
-		}
-		result["pending_zhengming"] = zhSummaries
-	}
-
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
-	return string(resultJSON), nil
-}
-
-func (t *QueryCourtTool) Format(input, result string, err error) string {
-	msg := utils.NewMsgBlockBuilder("QueryCourt")
-	msg.WriteLn()
-	if err != nil {
-		msg.Writef("Error: %v", err)
-	} else {
-		// Count edicts in result
-		var res map[string]interface{}
-		json.Unmarshal([]byte(result), &res)
-		if edicts, ok := res["edicts"].([]interface{}); ok {
-			msg.Writef("Found %d edicts", len(edicts))
-		}
-	}
-	return msg.String() + "\n"
-}
-
-func (t *QueryCourtTool) ParameterSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"edict_id": map[string]any{
-				"type":        "integer",
-				"description": "Optional: focus on a specific edict",
-			},
-			"scope": map[string]any{
-				"type":        "string",
-				"enum":        []string{"active", "all"},
-				"description": "Scope of query: 'active' (default) or 'all'",
-			},
-		},
-	}
-}
-
-func truncateForCourt(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
-
 // --- Database Methods (migrated from Censor) ---
 
 // GetQuenchedManifests retrieves all quenched manifests ready for ethics review
@@ -615,9 +369,11 @@ func (c *Sage) NoRejections(key storage.EdictKey) (bool, error) {
 	return count == 0, nil
 }
 
-// LogPrecedent records an ethics decision for a manifest
+// LogPrecedent records an ethics decision for a manifest.
+// Precedents are an append-only audit log, so the ID includes a nanosecond
+// timestamp to keep repeated decisions on the same (manifest, principle) unique.
 func (c *Sage) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
-	precedentID := GenerateID("precedent", manifestID, principle)
+	precedentID := GenerateID("precedent", manifestID, principle, fmt.Sprintf("%d", time.Now().UnixNano()))
 
 	precedent := storage.CensorPrecedent{
 		PrecedentID:   precedentID,
@@ -872,204 +628,3 @@ func (c *Sage) parseReviewResponse(response string) *ReviewResult {
 	return result
 }
 
-// --- Review Tools (migrated from Censor) ---
-
-// RecordPrecedentTool records an ethics review outcome
-type RecordPrecedentTool struct {
-	sage *Sage
-}
-
-func (t *RecordPrecedentTool) Name() string { return "record_precedent" }
-
-func (t *RecordPrecedentTool) Description() string {
-	return "Records an ethics review outcome with reasoning. Input: JSON with 'edict_id', 'approved' (boolean), and 'reasoning'."
-}
-
-func (t *RecordPrecedentTool) Call(ctx context.Context, input string) (string, error) {
-	var params struct {
-		EdictID   uint   `json:"edict_id"`
-		Approved  bool   `json:"approved"`
-		Reasoning string `json:"reasoning"`
-	}
-	if err := json.Unmarshal([]byte(input), &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
-	}
-	if params.EdictID == 0 || params.Reasoning == "" {
-		return "", fmt.Errorf("edict_id and reasoning are required")
-	}
-
-	key := storage.EdictKey{ID: params.EdictID, Username: t.sage.username, Project: t.sage.project}
-
-	// Get quenched manifests to review
-	manifests, err := t.sage.GetQuenchedManifests(key)
-	if err != nil {
-		return "", err
-	}
-
-	ruling := storage.PrecedentApproved
-	if !params.Approved {
-		ruling = storage.PrecedentRejected
-	}
-
-	// Log precedent for each manifest
-	for _, m := range manifests {
-		_, err := t.sage.LogPrecedent(m.ManifestID, "ethics_review", ruling, params.Reasoning)
-		if err != nil {
-			return "", fmt.Errorf("failed to log precedent: %w", err)
-		}
-
-		// Reject manifest if not approved
-		if !params.Approved {
-			if err := t.sage.RejectManifest(m.ManifestID); err != nil {
-				return "", fmt.Errorf("failed to reject manifest: %w", err)
-			}
-		}
-	}
-
-	status := "approved"
-	if !params.Approved {
-		status = "rejected"
-		AddFailure(ctx, fmt.Sprintf("rejected edict %d: %s", key.ID, params.Reasoning))
-	} else {
-		// Grant Sage's seal when approved
-		if err := t.sage.grantSeal(key, storage.JSON{"reason": params.Reasoning}); err != nil {
-			t.sage.logger.Warn("failed to grant sage seal", "edict_id", key.ID, "error", err)
-		}
-	}
-	return fmt.Sprintf("Recorded precedent (%s) for edict %d: %s", status, key.ID, params.Reasoning), nil
-}
-
-func (t *RecordPrecedentTool) ParameterSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"edict_id":  map[string]any{"type": "integer", "description": "The edict ID"},
-			"approved":  map[string]any{"type": "boolean", "description": "Whether the code is approved"},
-			"reasoning": map[string]any{"type": "string", "description": "The reasoning for the decision"},
-		},
-		"required": []string{"edict_id", "approved", "reasoning"},
-	}
-}
-
-func (t *RecordPrecedentTool) Format(input, result string, err error) string {
-	if err != nil {
-		return fmt.Sprintf("Record Precedent: Error: %v\n", err)
-	}
-	return fmt.Sprintf("Record Precedent: %s\n", result)
-}
-
-// ListQuenchedManifestsTool lists manifests ready for ethics review
-type ListQuenchedManifestsTool struct {
-	sage *Sage
-}
-
-func (t *ListQuenchedManifestsTool) Name() string { return "list_quenched_manifests" }
-
-func (t *ListQuenchedManifestsTool) Description() string {
-	return "Lists manifests that passed testing and are ready for ethics review. Input: JSON with 'edict_id'."
-}
-
-func (t *ListQuenchedManifestsTool) Call(ctx context.Context, input string) (string, error) {
-	var params struct {
-		EdictID uint `json:"edict_id"`
-	}
-	if err := json.Unmarshal([]byte(input), &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
-	}
-	if params.EdictID == 0 {
-		return "", fmt.Errorf("edict_id is required")
-	}
-
-	key := storage.EdictKey{ID: params.EdictID, Username: t.sage.username, Project: t.sage.project}
-	manifests, err := t.sage.GetQuenchedManifests(key)
-	if err != nil {
-		return "", err
-	}
-
-	if len(manifests) == 0 {
-		return "No quenched manifests found", nil
-	}
-
-	result, err := json.MarshalIndent(manifests, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("failed to format manifests: %w", err)
-	}
-	return string(result), nil
-}
-
-func (t *ListQuenchedManifestsTool) ParameterSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"edict_id": map[string]any{"type": "integer", "description": "The edict ID to list manifests for"},
-		},
-		"required": []string{"edict_id"},
-	}
-}
-
-func (t *ListQuenchedManifestsTool) Format(input, result string, err error) string {
-	if err != nil {
-		return fmt.Sprintf("List Quenched Manifests: Error: %v\n", err)
-	}
-	return fmt.Sprintf("List Quenched Manifests: %s\n", result)
-}
-
-// QueryPrecedentsTool searches precedents by principle
-type QueryPrecedentsTool struct {
-	sage *Sage
-}
-
-func (t *QueryPrecedentsTool) Name() string { return "query_precedents" }
-
-func (t *QueryPrecedentsTool) Description() string {
-	return "Searches precedents by principle for case law lookup. Input: JSON with 'principle' and optional 'limit'."
-}
-
-func (t *QueryPrecedentsTool) Call(ctx context.Context, input string) (string, error) {
-	var params struct {
-		Principle string `json:"principle"`
-		Limit     int    `json:"limit"`
-	}
-	if err := json.Unmarshal([]byte(input), &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
-	}
-	if params.Principle == "" {
-		return "", fmt.Errorf("principle is required")
-	}
-	if params.Limit == 0 {
-		params.Limit = 10
-	}
-
-	precedents, err := t.sage.QueryPrecedentsByPrinciple(params.Principle, params.Limit)
-	if err != nil {
-		return "", err
-	}
-
-	if len(precedents) == 0 {
-		return "No precedents found for this principle", nil
-	}
-
-	result, err := json.MarshalIndent(precedents, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("failed to format precedents: %w", err)
-	}
-	return string(result), nil
-}
-
-func (t *QueryPrecedentsTool) ParameterSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"principle": map[string]any{"type": "string", "description": "The principle to search for"},
-			"limit":     map[string]any{"type": "integer", "description": "Maximum number of results (default 10)"},
-		},
-		"required": []string{"principle"},
-	}
-}
-
-func (t *QueryPrecedentsTool) Format(input, result string, err error) string {
-	if err != nil {
-		return fmt.Sprintf("Query Precedents: Error: %v\n", err)
-	}
-	return fmt.Sprintf("Query Precedents: %s\n", result)
-}

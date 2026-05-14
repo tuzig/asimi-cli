@@ -465,10 +465,13 @@ func fetchOpenAIModels(config *Config) ([]OpenAIModel, error) {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Filter to only include chat-capable models
+	// Filter to only include chat-capable models. When OPENAI_BASE_URL points
+	// at a non-OpenAI gateway (e.g. AWS Bedrock's bedrock-mantle endpoint),
+	// keep all listed models — the codex filter is OpenAI-specific.
+	customBaseURL := os.Getenv("OPENAI_BASE_URL") != ""
 	var chatModels []OpenAIModel
 	for _, m := range modelsResponse.Data {
-		if strings.Contains(m.ID, "codex") {
+		if customBaseURL || strings.Contains(m.ID, "codex") {
 			chatModels = append(chatModels, m)
 		}
 	}

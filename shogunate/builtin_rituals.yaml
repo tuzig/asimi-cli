@@ -45,7 +45,7 @@
         Review the code changes for the edict.
         Check for style violations, security concerns, and architectural issues.
         Record your insights using record_precedent.
-        Produce a comprehensive code review report summarizing findings from both judge and sage.
+        Produce a comprehensive code review report 
         Highlight any blocking issues and suggest improvements.
 
         ## Edict
@@ -151,7 +151,8 @@
     - event: shogunate_started
   steps:
     - name: ping-model
-      minister: chancellor
+      effort: low
+      minister: judge
       act: |
         this is a smoke test. please reply with `pong`
     - name: check-sandbox
@@ -166,31 +167,41 @@
         {{- else }}
         Running latest Asimi version {{ .asimi_version.current_version }}
         {{- end }}
-    - name: summarize-and-next
+    - name: summarize
       on_failure: retry
-      minister: chancellor
+      minister: strategist
       given:
         - the unsealed edicts
         - a heaven's snapshot
         - the earth status
         - the court status
       act: |
-        Given the information below, provide a succinct report on 三界.
+        Provide a succinct briefing on 三界 in 8 lines or fewer, based on
+        the data below. Group by domain (heaven / earth / court). Highlight
+        what most needs the Ruler's attention. No code blocks, no raw diffs.
+
         ## Unsealed Edicts
         {{ .unsealed_edicts }}
         ## Heaven's Snapshot
         {{ .heaven_snapshot }}
-        ## Earth Status
-        ### Borderlands
+        ## Earth — Borderlands
         {{ .earth_borderlands }}
-        ### Middle Kingdom
+        ## Earth — Middle Kingdom
         {{ .earth_middle_kingdom }}
-        ### The capital
+        ## Earth — Capital
         {{ .earth_capital }}
         ## Court Status
         {{ .court_status }}
-        Finish by calling request_zhengming with a single question: "What's our next step?" with
-        a few options for a clear next step. e.g, "review borderlands".
+    - name: next
+      on_failure: retry
+      minister: chancellor
+      effort: low
+      act: |
+        Court briefing:
+        {{ .summarize }}
+
+        Call request_zhengming with question "What's our next step?" and
+        a few clear options (e.g., "review borderlands").
         
 - name: review-borderland
   description: |
@@ -204,6 +215,7 @@
       given:
         - the borderlands
         - manifests for the borderlands
+        - "!just test || true  # test_out"
       act: |
         If the tests pass, ensure
         the changes in the borderlands and middle kingdom are covered by tests.

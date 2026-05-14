@@ -16,9 +16,9 @@ import (
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
-	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1149,59 +1149,44 @@ func TestMinisterBase_SessionMethods(t *testing.T) {
 	assert.Nil(t, base.Session())
 }
 
-// TestRestoreMinisterSession_AllTabTypes verifies that RestoreMinisterSession
-// works for all tab types, including those that weren't supported before the refactor.
-func TestRestoreMinisterSession_AllTabTypes(t *testing.T) {
+// TestRestoreMinisterSession_AllTabs proves the resume routing works for
+// every minister that owns a UI tab. Each tab saves with TabType =
+// minister id; this test feeds those ids into RestoreMinisterSession and
+// verifies the right minister ends up with a populated session whose
+// TabType matches.
+func TestRestoreMinisterSession_AllTabs(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultShogunateConfig()
+	shog := NewShogunate(db, cfg, nil, nil)
+	require.NotNil(t, shog)
 
-	shogunate := NewShogunate(db, cfg, nil, nil)
-	require.NotNil(t, shogunate)
+	// Ministers need a SessionConfig to build tool sets — without it,
+	// Chancellor.Tools panics on a nil config dereference. No LLM client
+	// is required; the test only exercises session restore wiring.
+	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
-	// Verify all expected ministers exist
-	chancellor := shogunate.GetMinister("chancellor")
-	require.NotNil(t, chancellor, "chancellor should exist")
+	for _, id := range []string{"chancellor", "sage", "forge", "judge"} {
+		t.Run(id, func(t *testing.T) {
+			err := shog.RestoreMinisterSession(id, nil)
+			require.NoError(t, err, "%s tab should be resumable", id)
 
-	sage := shogunate.GetMinister("sage")
-	require.NotNil(t, sage, "sage should exist")
-
-	judge := shogunate.GetMinister("judge")
-	require.NotNil(t, judge, "judge should exist")
-
-	forge := shogunate.GetMinister("forge")
-	require.NotNil(t, forge, "forge should exist")
-
-	// Test that chancellor and sage (the ones that were previously the only options) have no session yet
-	assert.Nil(t, chancellor.GetSession(), "chancellor should have no session initially")
-	assert.Nil(t, sage.GetSession(), "sage should have no session initially")
+			m := shog.GetMinister(id)
+			require.NotNil(t, m)
+			sess := m.GetSession()
+			require.NotNil(t, sess, "%s should have a restored session", id)
+			assert.Equal(t, id, sess.TabType)
+		})
+	}
 }
 
-// TestRestoreMinisterSession_UnknownTabType verifies proper error handling for unknown tabs.
+// TestRestoreMinisterSession_UnknownTabType verifies the dispatcher
+// surfaces a clear error instead of silently restoring the wrong tab.
 func TestRestoreMinisterSession_UnknownTabType(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultShogunateConfig()
+	shog := NewShogunate(db, cfg, nil, nil)
 
-	shogunate := NewShogunate(db, cfg, nil, nil)
-	require.NotNil(t, shogunate)
-
-	msgs := []schemas.ChatMessage{
-		{Role: schemas.ChatMessageRoleUser, Content: textContent("test")},
-	}
-
-	err := shogunate.RestoreMinisterSession("unknown-tab", msgs)
-	assert.Error(t, err, "unknown tab type should return error")
+	err := shog.RestoreMinisterSession("not-a-minister", nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "minister not found")
-}
-
-// TestRestoreMinisterSession_NilShogunate verifies nil shogunate handling.
-func TestRestoreMinisterSession_NilShogunate(t *testing.T) {
-	var s *Shogunate
-
-	msgs := []schemas.ChatMessage{
-		{Role: schemas.ChatMessageRoleUser, Content: textContent("test")},
-	}
-
-	err := s.RestoreMinisterSession("chancellor", msgs)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not initialized")
 }

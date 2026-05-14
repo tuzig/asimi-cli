@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -17,6 +16,15 @@ import (
 
 // MessageType indicates the type/source of a chat message
 type MessageType int
+
+// FlushDirty forces a synchronous UpdateContent when content is dirty.
+// Used by the TUI's chatRenderTickMsg handler and anywhere that needs an
+// immediate render (resize, addMessage, finalize, etc.).
+func (c *ChatComponent) FlushDirty() {
+	if c.contentDirty {
+		c.UpdateContent()
+	}
+}
 
 const (
 	MessageTypeSystem    MessageType = iota // System messages (tool calls, status, etc.)
@@ -65,6 +73,10 @@ type ChatComponent struct {
 	// Indentation for nested workflow output
 	Indent     int
 	blockLines [][]int
+
+	// Debounced rendering: content mutations set contentDirty=true. The
+	// TUI's chatRenderTickMsg handler flushes dirty chats via UpdateContent.
+	contentDirty bool
 }
 
 const (
@@ -265,7 +277,8 @@ func (c *ChatComponent) AddMessage(message string) {
 	}
 }
 
-// AddAIChunk adds or appends to an AI response message (used during streaming)
+// AddAIChunk adds or appends to an AI response message (used during streaming).
+// Sets contentDirty=true; the TUI's debounce tick flushes via UpdateContent.
 func (c *ChatComponent) AddAIChunk(chunk string) {
 	// Check if last message is an AI message we can append to
 	if len(c.Messages) > 0 && c.Messages[len(c.Messages)-1].Type == MessageTypeAI {
@@ -278,11 +291,11 @@ func (c *ChatComponent) AddAIChunk(chunk string) {
 			Type:    MessageTypeAI,
 		})
 	}
-	c.UpdateContent()
 	if !c.ScrollLocked {
 		c.AutoScroll = true
 		c.UserScrolled = false
 	}
+	c.contentDirty = true
 }
 
 // AddUserMessage adds a user message to the chat component
@@ -299,7 +312,8 @@ func (c *ChatComponent) AddUserMessage(text string) {
 	}
 }
 
-// AddThinkingChunk adds or appends to a thinking/reasoning message (used during streaming)
+// AddThinkingChunk adds or appends to a thinking/reasoning message (used during streaming).
+// Sets contentDirty=true; the TUI's debounce tick flushes via UpdateContent.
 func (c *ChatComponent) AddThinkingChunk(chunk string) {
 	if strings.TrimSpace(chunk) == "" {
 		return // Skip empty thinking chunks
@@ -315,11 +329,11 @@ func (c *ChatComponent) AddThinkingChunk(chunk string) {
 			Type:    MessageTypeThinking,
 		})
 	}
-	c.UpdateContent()
 	if !c.ScrollLocked {
 		c.AutoScroll = true
 		c.UserScrolled = false
 	}
+	c.contentDirty = true
 }
 
 // SetScrollLock toggles scroll locking (prevents auto-scroll when true)
@@ -533,8 +547,10 @@ func (c *ChatComponent) FinalizeLastAIMessage() bool {
 	return isFailure
 }
 
-// UpdateContent updates the viewport content based on the messages
+// UpdateContent updates the viewport content based on the messages.
+// Clears contentDirty — this is the work the flag tracks.
 func (c *ChatComponent) UpdateContent() {
+	c.contentDirty = false
 	var messageViews []string
 	for msgIdx, msg := range c.Messages {
 		var rendered string
@@ -857,16 +873,15 @@ func (c *ChatComponent) ClearToolCallMessageIndex() {
 
 // HandleToolCallScheduled handles a scheduled tool call message
 func (c *ChatComponent) HandleToolCallScheduled(msg runners.ToolCallScheduledMsg) {
-	message := formatToolCall(msg.Call.Tool, "📋", msg.Call.Input, "", nil)
-	c.AddMessage(message)
-	c.SetToolCallMessageIndex(msg.Call.ID, len(c.Messages)-1)
+	c.AddMessage("📋 " + msg.Formatted)
+	c.SetToolCallMessageIndex(msg.CallID, len(c.Messages)-1)
 }
 
 // HandleToolCallExecuting handles an executing tool call message
 func (c *ChatComponent) HandleToolCallExecuting(msg runners.ToolCallExecutingMsg) {
-	formatted := formatToolCall(msg.Call.Tool, "⚙️", msg.Call.Input, "", nil)
+	formatted := "⚙️ " + msg.Formatted
 	// Update the existing message if we have its index
-	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+	if idx, exists := c.GetToolCallMessageIndex(msg.CallID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 	} else {
@@ -877,13 +892,13 @@ func (c *ChatComponent) HandleToolCallExecuting(msg runners.ToolCallExecutingMsg
 
 // HandleToolCallSuccess handles a successful tool call message
 func (c *ChatComponent) HandleToolCallSuccess(msg runners.ToolCallSuccessMsg) {
-	formatted := formatToolCall(msg.Call.Tool, checkPrefix, msg.Call.Input, msg.Call.Result, nil)
+	formatted := checkPrefix + " " + msg.Formatted
 	// Update the existing message if we have its index
-	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+	if idx, exists := c.GetToolCallMessageIndex(msg.CallID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 		// Clean up the index mapping
-		c.DeleteToolCallMessageIndex(msg.Call.ID)
+		c.DeleteToolCallMessageIndex(msg.CallID)
 	} else {
 		// Fallback: add a new message if we don't have the index
 		c.AddMessage(formatted)
@@ -893,17 +908,16 @@ func (c *ChatComponent) HandleToolCallSuccess(msg runners.ToolCallSuccessMsg) {
 // HandleToolCallError handles a failed tool call message
 func (c *ChatComponent) HandleToolCallError(msg runners.ToolCallErrorMsg) {
 	icon := "⁉️"
-	var deniedErr runners.CommandDeniedError
-	if errors.As(msg.Call.Error, &deniedErr) {
+	if strings.Contains(msg.Error, "command denied by user") {
 		icon = "⛔︎"
 	}
-	formatted := formatToolCall(msg.Call.Tool, icon, msg.Call.Input, "", msg.Call.Error)
+	formatted := icon + " " + msg.Formatted
 	// Update the existing message if we have its index
-	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+	if idx, exists := c.GetToolCallMessageIndex(msg.CallID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 		// Clean up the index mapping
-		c.DeleteToolCallMessageIndex(msg.Call.ID)
+		c.DeleteToolCallMessageIndex(msg.CallID)
 	} else {
 		// Fallback: add a new message if we don't have the index
 		c.AddMessage(formatted)
@@ -912,15 +926,13 @@ func (c *ChatComponent) HandleToolCallError(msg runners.ToolCallErrorMsg) {
 
 // HandleToolCallAborted handles an aborted tool call message (e.g., due to sandbox restart)
 func (c *ChatComponent) HandleToolCallAborted(msg runners.ToolCallAbortedMsg) {
-	// Use a distinctive icon to clearly mark aborted tool calls
-	icon := "🚫"
-	formatted := formatToolCall(msg.Call.Tool, icon, msg.Call.Input, "", msg.Call.Error)
+	formatted := "🚫 " + msg.Formatted
 	// Update the existing message if we have its index
-	if idx, exists := c.GetToolCallMessageIndex(msg.Call.ID); exists && idx < len(c.Messages) {
+	if idx, exists := c.GetToolCallMessageIndex(msg.CallID); exists && idx < len(c.Messages) {
 		c.Messages[idx].Content = formatted
 		c.UpdateContent()
 		// Clean up the index mapping
-		c.DeleteToolCallMessageIndex(msg.Call.ID)
+		c.DeleteToolCallMessageIndex(msg.CallID)
 	} else {
 		// Fallback: add a new message if we don't have the index
 		c.AddMessage(formatted)

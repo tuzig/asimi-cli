@@ -24,6 +24,7 @@ var reservedKeys = []any{
 	BifrostContextKeySkipKeySelection,
 	BifrostContextKeyURLPath,
 	BifrostContextKeyDeferTraceCompletion,
+	BifrostContextKeyAttemptTrail,
 }
 
 // pluginLogStore holds plugin log entries accumulated during request processing.
@@ -358,9 +359,10 @@ func (bc *BifrostContext) GetParentCtxWithUserValues() context.Context {
 //   - ctx: The Bifrost context
 //   - engineName: Name of the routing engine (e.g., "governance", "routing-rule")
 //   - message: Human-readable log message describing the decision/action
-func (bc *BifrostContext) AppendRoutingEngineLog(engineName string, message string) {
+func (bc *BifrostContext) AppendRoutingEngineLog(engineName string, level LogLevel, message string) {
 	entry := RoutingEngineLogEntry{
 		Engine:    engineName,
+		Level:     level,
 		Message:   message,
 		Timestamp: time.Now().UnixMilli(),
 	}

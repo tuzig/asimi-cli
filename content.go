@@ -141,6 +141,18 @@ func (tm *TabManager) Ruling() *ChatComponent {
 	return tm.tabs[1].Content.Chat
 }
 
+// FlushDirtyChats calls UpdateContent on every dirty tab chat. Used by the
+// debounce tick to flush all streaming tabs, not just the active one —
+// chunks can land on a non-active tab.
+func (tm *TabManager) FlushDirtyChats() {
+	for i := range tm.tabs {
+		chat := tm.tabs[i].Content.Chat
+		if chat != nil && chat.contentDirty {
+			chat.UpdateContent()
+		}
+	}
+}
+
 // SetStreamingTabByTab marks the tab with matching Target as streaming
 func (tm *TabManager) SetStreamingTabByTab(tabID string) {
 	for i := range tm.tabs {

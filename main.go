@@ -15,19 +15,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/shogunate"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 	isatty "github.com/mattn/go-isatty"
-	bifrost "github.com/maximhq/bifrost/core"
-	"github.com/maximhq/bifrost/core/schemas"
 	"go.uber.org/fx"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
 var program *tea.Program
+
+// logBaseName names the log file (without extension). Default suits the TUI;
+// runDaemonMode overrides it so daemon and TUI write to separate files and
+// don't interleave when both run with --debug in the same cwd.
+var logBaseName = "asimi"
 
 var cli struct {
 	Version       bool   `help:"Print version information"`
@@ -48,7 +49,7 @@ func initLogger() {
 	if cli.Debug {
 		// In debug mode, log to current directory
 		logDir = "."
-		logPath = filepath.Join(logDir, "asimi.log")
+		logPath = filepath.Join(logDir, logBaseName+".log")
 		logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			panic(fmt.Errorf("failed to open log file %s: %w", logPath, err))
@@ -64,7 +65,7 @@ func initLogger() {
 		if err := os.MkdirAll(logDir, 0755); err != nil {
 			panic(fmt.Errorf("failed to create log directory %s: %w", logDir, err))
 		}
-		logPath = filepath.Join(logDir, "asimi.log")
+		logPath = filepath.Join(logDir, logBaseName+".log")
 		logFile := &lumberjack.Logger{
 			Filename:   logPath,
 			MaxSize:    10, // megabytes
@@ -127,22 +128,57 @@ func runInteractiveMode() error {
 	if err := app.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start fx app: %w", err)
 	}
+	// Opt-in wire modes. Precedence:
+	//   ASIMI_DAEMON_SOCKET=/path — connect to a specific running daemon
+	//   ASIMI_DAEMON=1            — autostart default daemon if needed
+	//   ASIMI_LOOPBACK=1          — in-process net.Pipe loopback
+	//   default                   — fully in-process, no RPC
+	var onProgramReady func(*tea.Program)
+	if sock := os.Getenv("ASIMI_DAEMON_SOCKET"); sock != "" {
+		hook, err := installDaemonSocket(ctx, tuiModel, sock)
+		if err != nil {
+			return fmt.Errorf("daemon socket: %w", err)
+		}
+		onProgramReady = hook
+	} else if os.Getenv("ASIMI_DAEMON") != "" {
+		hook, err := installDaemonAutostart(ctx, tuiModel)
+		if err != nil {
+			return fmt.Errorf("daemon autostart: %w", err)
+		}
+		onProgramReady = hook
+	} else if os.Getenv("ASIMI_LOOPBACK") != "" {
+		hook, err := installRPCLoopback(ctx, tuiModel)
+		if err != nil {
+			return fmt.Errorf("loopback: %w", err)
+		}
+		onProgramReady = hook
+	}
+
 	tuiProgram := tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	// TODO: simplify by refactoring internal.NotifyFunc to func(msg tea.Msg)
-	tuiModel.shogunate.SetNotify(func(msg any) { tuiProgram.Send(msg) })
+	if onProgramReady != nil {
+		onProgramReady(tuiProgram)
+	}
 	tuiModel.shogunate.SetRulingCtx(tuiModel.tabs.RulingCtx)
 
-	// Connect the shell runner's message channel to the TUI for approval requests
-	// TODO: refactor the request approval to zhengming
-	if runner := tuiModel.shogunate.GetRunner(); runner != nil {
-		runnerMsgChan := make(chan runners.Msg, 10)
-		runner.SetMessageChannel(runnerMsgChan)
-		go func() {
-			for msg := range runnerMsgChan {
-				tuiProgram.Send(msg)
+	subCtx, cancelSub := context.WithCancel(ctx)
+	defer cancelSub()
+	events := tuiModel.shogunate.Subscribe(subCtx)
+	dispatcher := newNotificationDispatcher(tuiProgram)
+	go func() {
+		for {
+			select {
+			case <-subCtx.Done():
+				dispatcher.close()
+				return
+			case msg, ok := <-events:
+				if !ok {
+					dispatcher.close()
+					return
+				}
+				dispatcher.notify(msg)
 			}
-		}()
-	}
+		}
+	}()
 	defer app.Stop(ctx)
 
 	slog.Debug("[TIMING] fx app initialized", "duration", time.Since(startTime))
@@ -179,10 +215,10 @@ func runInteractiveMode() error {
 
 type errMsg struct{ err error }
 
-// llmInitSuccessMsg is sent when LLM initialization completes successfully
-type llmInitSuccessMsg struct {
-	client *bifrost.Bifrost
-}
+// llmInitSuccessMsg is sent when LLM initialization completes
+// successfully. The bifrost client lives daemon-side now; callers use
+// it only as a "we're ready, paint the provider" signal.
+type llmInitSuccessMsg struct{}
 
 // llmInitErrorMsg is sent when LLM initialization fails
 type llmInitErrorMsg struct {
@@ -203,6 +239,18 @@ type compactErrorMsg struct {
 type updateAvailableMsg struct{}
 
 func main() {
+	// Subcommand dispatch. A proper kong refactor can come later;
+	// today a leading `daemon` arg is enough to branch cleanly.
+	if len(os.Args) > 1 && os.Args[1] == "daemon" {
+		os.Args = append(os.Args[:1], os.Args[2:]...)
+		kong.Parse(&cli)
+		if err := runDaemonMode(); err != nil {
+			fmt.Fprintln(os.Stderr, "daemon:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	startTime := time.Now()
 	kong.Parse(&cli)
 
@@ -309,14 +357,6 @@ func main() {
 	}
 
 	slog.Debug("[TIMING] Total execution time", "duration", time.Since(startTime))
-}
-
-// initBifrost creates and returns a Bifrost client using the shogunate account
-func initBifrost(ctx context.Context, requestTimeout, streamIdleTimeout int) (*bifrost.Bifrost, error) {
-	return bifrost.Init(ctx, schemas.BifrostConfig{
-		Account: shogunate.NewAccount(requestTimeout, streamIdleTimeout),
-		Logger:  shogunate.NewBifrostLogger(slog.Default()),
-	})
 }
 
 // authTransport is used by models.go for list_models

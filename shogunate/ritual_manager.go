@@ -29,11 +29,11 @@ CRITICAL RULES:
 
 // EventNotificationMsg notifies the UI of significant Shogunate events
 type EventNotificationMsg struct {
-	ChannelID string
-	EventType storage.ShogunateEvent
-	EdictKey  storage.EdictKey
-	Message   string
-	Payload   map[string]interface{}
+	ChannelID string                 `msgpack:"channel_id,omitempty"`
+	EventType storage.ShogunateEvent `msgpack:"event_type"`
+	EdictKey  storage.EdictKey       `msgpack:"edict_key"`
+	Message   string                 `msgpack:"message,omitempty"`
+	Payload   map[string]interface{} `msgpack:"payload,omitempty"`
 }
 
 // RitualGuard processes events and owns ritual/event infrastructure

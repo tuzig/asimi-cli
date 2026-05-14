@@ -44,6 +44,7 @@ func DefaultConfig() Config {
 			MaxToolOutput:            51200, // Default: 50KB
 			RequestTimeoutSeconds:    300,
 			StreamIdleTimeoutSeconds: 600,
+			MaxRetries:               3,
 		},
 		History: HistoryConfig{
 			Enabled:      true,

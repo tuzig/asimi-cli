@@ -293,37 +293,55 @@ func ConfigureProxy(client *fasthttp.Client, proxyConfig *schemas.ProxyConfig, l
 	case schemas.NoProxy:
 		return client
 	case schemas.HTTPProxy:
-		if proxyConfig.URL == "" {
+		if proxyConfig.URL != nil && proxyConfig.URL.IsFromEnv() && proxyConfig.URL.GetValue() == "" {
+			errMsg := fmt.Sprintf("invalid proxy configuration: %s references %q but it resolved to an empty value", "proxy.url", proxyConfig.URL.EnvVar)
+			getLogger().Error(errMsg)
+			client.Dial = dialErrorFunc(errMsg)
+			return client
+		}
+		proxyURLValue := proxyConfig.URL.GetValue()
+		if proxyURLValue == "" {
 			getLogger().Warn("Warning: HTTP proxy URL is required for setting up proxy")
 			return client
 		}
-		proxyURL := proxyConfig.URL
-		if proxyConfig.Username != "" && proxyConfig.Password != "" {
-			parsedURL, err := url.Parse(proxyConfig.URL)
+		proxyURL := proxyURLValue
+		proxyUsername := proxyConfig.Username.GetValue()
+		proxyPassword := proxyConfig.Password.GetValue()
+		if proxyUsername != "" && proxyPassword != "" {
+			parsedURL, err := url.Parse(proxyURLValue)
 			if err != nil {
 				getLogger().Warn("Invalid proxy configuration: invalid HTTP proxy URL")
 				return client
 			}
 			// Set user and password in the parsed URL
-			parsedURL.User = url.UserPassword(proxyConfig.Username, proxyConfig.Password)
+			parsedURL.User = url.UserPassword(proxyUsername, proxyPassword)
 			proxyURL = parsedURL.String()
 		}
 		dialFunc = fasthttpproxy.FasthttpHTTPDialer(proxyURL)
 	case schemas.Socks5Proxy:
-		if proxyConfig.URL == "" {
+		if proxyConfig.URL != nil && proxyConfig.URL.IsFromEnv() && proxyConfig.URL.GetValue() == "" {
+			errMsg := fmt.Sprintf("invalid proxy configuration: %s references %q but it resolved to an empty value", "proxy.url", proxyConfig.URL.EnvVar)
+			getLogger().Error(errMsg)
+			client.Dial = dialErrorFunc(errMsg)
+			return client
+		}
+		proxyURLValue := proxyConfig.URL.GetValue()
+		if proxyURLValue == "" {
 			getLogger().Warn("Warning: SOCKS5 proxy URL is required for setting up proxy")
 			return client
 		}
-		proxyURL := proxyConfig.URL
+		proxyURL := proxyURLValue
 		// Add authentication if provided
-		if proxyConfig.Username != "" && proxyConfig.Password != "" {
-			parsedURL, err := url.Parse(proxyConfig.URL)
+		proxyUsername := proxyConfig.Username.GetValue()
+		proxyPassword := proxyConfig.Password.GetValue()
+		if proxyUsername != "" && proxyPassword != "" {
+			parsedURL, err := url.Parse(proxyURLValue)
 			if err != nil {
 				getLogger().Warn("Invalid proxy configuration: invalid SOCKS5 proxy URL")
 				return client
 			}
 			// Set user and password in the parsed URL
-			parsedURL.User = url.UserPassword(proxyConfig.Username, proxyConfig.Password)
+			parsedURL.User = url.UserPassword(proxyUsername, proxyPassword)
 			proxyURL = parsedURL.String()
 		}
 		dialFunc = fasthttpproxy.FasthttpSocksDialer(proxyURL)
@@ -340,8 +358,15 @@ func ConfigureProxy(client *fasthttp.Client, proxyConfig *schemas.ProxyConfig, l
 	}
 
 	// Configure custom CA certificate if provided
-	if proxyConfig.CACertPEM != "" {
-		tlsConfig, err := createTLSConfigWithCA(proxyConfig.CACertPEM)
+	if proxyConfig.CACertPEM != nil && proxyConfig.CACertPEM.IsFromEnv() && proxyConfig.CACertPEM.GetValue() == "" {
+		errMsg := fmt.Sprintf("invalid proxy configuration: %s references %q but it resolved to an empty value", "proxy.ca_cert_pem", proxyConfig.CACertPEM.EnvVar)
+		getLogger().Error(errMsg)
+		client.Dial = dialErrorFunc(errMsg)
+		return client
+	}
+	proxyCACertPEM := proxyConfig.CACertPEM.GetValue()
+	if proxyCACertPEM != "" {
+		tlsConfig, err := createTLSConfigWithCA(proxyCACertPEM)
 		if err != nil {
 			getLogger().Warn("Failed to configure custom CA certificate: %v", err)
 		} else {
@@ -376,7 +401,15 @@ func createTLSConfigWithCA(caCertPEM string) (*tls.Config, error) {
 // ConfigureTLS applies TLS settings from NetworkConfig to the fasthttp client.
 // It merges with any existing TLSConfig (e.g., from ConfigureProxy).
 func ConfigureTLS(client *fasthttp.Client, networkConfig schemas.NetworkConfig, logger schemas.Logger) *fasthttp.Client {
-	if !networkConfig.InsecureSkipVerify && networkConfig.CACertPEM == "" {
+	if networkConfig.CACertPEM != nil && networkConfig.CACertPEM.IsFromEnv() && networkConfig.CACertPEM.GetValue() == "" {
+		errMsg := fmt.Sprintf("invalid provider configuration: %s references %q but it resolved to an empty value", "network_config.ca_cert_pem", networkConfig.CACertPEM.EnvVar)
+		logger.Error(errMsg)
+		client.Dial = dialErrorFunc(errMsg)
+		return client
+	}
+
+	caCertPEM := networkConfig.CACertPEM.GetValue()
+	if !networkConfig.InsecureSkipVerify && caCertPEM == "" {
 		return client
 	}
 
@@ -392,15 +425,15 @@ func ConfigureTLS(client *fasthttp.Client, networkConfig schemas.NetworkConfig, 
 		tlsConfig.InsecureSkipVerify = true
 	}
 
-	if networkConfig.CACertPEM != "" {
-		caTLSConfig, err := createTLSConfigWithCA(networkConfig.CACertPEM)
+	if caCertPEM != "" {
+		caTLSConfig, err := createTLSConfigWithCA(caCertPEM)
 		if err != nil {
 			logger.Warn("Failed to configure custom CA certificate for provider: %v", err)
 		} else {
 			if tlsConfig.RootCAs != nil {
 				tlsConfig.RootCAs = tlsConfig.RootCAs.Clone()
 				// Merge: append network CA to existing pool (e.g. from proxy)
-				if !tlsConfig.RootCAs.AppendCertsFromPEM([]byte(networkConfig.CACertPEM)) {
+				if !tlsConfig.RootCAs.AppendCertsFromPEM([]byte(caCertPEM)) {
 					logger.Warn("Failed to append CA certificate to existing TLS config")
 				}
 			} else {
@@ -411,6 +444,12 @@ func ConfigureTLS(client *fasthttp.Client, networkConfig schemas.NetworkConfig, 
 
 	client.TLSConfig = tlsConfig
 	return client
+}
+
+func dialErrorFunc(message string) fasthttp.DialFunc {
+	return func(_ string) (net.Conn, error) {
+		return nil, fmt.Errorf("%s", message)
+	}
 }
 
 // hopByHopHeaders are HTTP/1.1 headers that must not be forwarded by proxies.
@@ -832,7 +871,6 @@ func CloneFastHTTPClientConfig(base *fasthttp.Client) *fasthttp.Client {
 		DialTimeout:                   base.DialTimeout,
 		Dial:                          base.Dial,
 		TLSConfig:                     base.TLSConfig,
-		RetryIf:                       base.RetryIf, // nolint:staticcheck
 		RetryIfErr:                    base.RetryIfErr,
 		ConfigureClient:               base.ConfigureClient,
 		Name:                          base.Name,
@@ -852,6 +890,43 @@ func CloneFastHTTPClientConfig(base *fasthttp.Client) *fasthttp.Client {
 		DisableHeaderNamesNormalizing: base.DisableHeaderNamesNormalizing,
 		DisablePathNormalizing:        base.DisablePathNormalizing,
 		StreamResponseBody:            base.StreamResponseBody,
+	}
+}
+
+// BuildStreamingClient returns a fasthttp.Client suitable for long-lived SSE
+// or EventStream responses. It clones base's dialer/proxy/TLS/pool settings,
+// then clears Read/Write timeouts and MaxConnDuration so fasthttp does not
+// pre-empt a healthy stream. StreamResponseBody is forced on.
+//
+// Per-chunk idle detection is enforced at the application layer via
+// NewIdleTimeoutReader (see GetStreamIdleTimeout / StreamIdleTimeoutInSeconds).
+// The initial TCP/TLS dial still honors the base client's ReadTimeout because
+// the Dial closure installed by ConfigureDialer reads client.ReadTimeout from
+// the base client pointer captured at ConfigureDialer call time — cloning copies
+// that closure verbatim, so zeroing the clone's ReadTimeout does not affect dial.
+func BuildStreamingClient(base *fasthttp.Client) *fasthttp.Client {
+	c := CloneFastHTTPClientConfig(base)
+	c.ReadTimeout = 0
+	c.WriteTimeout = 0
+	c.MaxConnDuration = 0
+	c.StreamResponseBody = true
+	return c
+}
+
+// BuildStreamingHTTPClient returns an *http.Client for long-lived streaming
+// responses over net/http (e.g. Bedrock EventStream). It reuses the base's
+// Transport (safe for concurrent use by multiple clients) and sets Timeout=0
+// so Client.Timeout does not cap the entire request lifecycle including body
+// reads. The transport's ResponseHeaderTimeout still bounds the initial
+// response-headers wait; per-chunk idle is enforced by NewIdleTimeoutReader.
+func BuildStreamingHTTPClient(base *http.Client) *http.Client {
+	if base == nil {
+		return &http.Client{}
+	}
+	return &http.Client{
+		Transport:     base.Transport,
+		CheckRedirect: base.CheckRedirect,
+		Jar:           base.Jar,
 	}
 }
 
@@ -1367,6 +1442,10 @@ func NewUnsupportedOperationError(requestType schemas.RequestType, providerName 
 			Message: fmt.Sprintf("%s is not supported by %s provider", requestType, providerName),
 			Code:    schemas.Ptr("unsupported_operation"),
 		},
+		ExtraFields: schemas.BifrostErrorExtraFields{
+			Provider:    providerName,
+			RequestType: requestType,
+		},
 	}
 }
 
@@ -1643,34 +1722,30 @@ func NewProviderAPIError(message string, err error, statusCode int, errorType *s
 	}
 }
 
-// ShouldSendBackRawRequest checks if the raw request should be captured.
-// Context overrides are intentionally restricted to asymmetric behavior: a context value can only
-// promote false→true and will not override a true config to false, avoiding accidental suppression.
-// Both full send-back mode and logging-only mode (store_raw_request_response) set
-// BifrostContextKeySendBackRawRequest=true in the request context so a single flag is checked here.
-// In logging-only mode the payload is stripped before the response reaches the client.
+// ShouldSendBackRawRequest checks if raw request bytes should be captured.
+// bifrost.go always writes BifrostContextKeyCaptureRawRequest before provider dispatch,
+// combining provider config, per-request overrides, and store_raw_request_response.
+// The default parameter is a fallback for callers outside the normal bifrost dispatch path.
 func ShouldSendBackRawRequest(ctx context.Context, defaultSendBackRawRequest bool) bool {
-	if sendBackRawRequest, ok := ctx.Value(schemas.BifrostContextKeySendBackRawRequest).(bool); ok && sendBackRawRequest {
-		return sendBackRawRequest
+	if capture, ok := ctx.Value(schemas.BifrostContextKeyCaptureRawRequest).(bool); ok {
+		return capture
 	}
 	return defaultSendBackRawRequest
 }
 
-// ShouldSendBackRawResponse checks if the raw response should be captured.
-// Context overrides are intentionally restricted to asymmetric behavior: a context value can only
-// promote false→true and will not override a true config to false, avoiding accidental suppression.
-// Both full send-back mode and logging-only mode (store_raw_request_response) set
-// BifrostContextKeySendBackRawResponse=true in the request context so a single flag is checked here.
-// In logging-only mode the payload is stripped before the response reaches the client.
+// ShouldSendBackRawResponse checks if raw response bytes should be captured.
+// bifrost.go always writes BifrostContextKeyCaptureRawResponse before provider dispatch,
+// combining provider config, per-request overrides, and store_raw_request_response.
+// The default parameter is a fallback for callers outside the normal bifrost dispatch path.
 func ShouldSendBackRawResponse(ctx context.Context, defaultSendBackRawResponse bool) bool {
-	if sendBackRawResponse, ok := ctx.Value(schemas.BifrostContextKeySendBackRawResponse).(bool); ok && sendBackRawResponse {
-		return sendBackRawResponse
+	if capture, ok := ctx.Value(schemas.BifrostContextKeyCaptureRawResponse).(bool); ok {
+		return capture
 	}
 	return defaultSendBackRawResponse
 }
 
 // SendCreatedEventResponsesChunk sends a ResponsesStreamResponseTypeCreated event.
-func SendCreatedEventResponsesChunk(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, startTime time.Time, responseChan chan *schemas.BifrostStreamChunk) {
+func SendCreatedEventResponsesChunk(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, startTime time.Time, responseChan chan *schemas.BifrostStreamChunk, postHookSpanFinalizer func(context.Context)) {
 	firstChunk := &schemas.BifrostResponsesStreamResponse{
 		Type:           schemas.ResponsesStreamResponseTypeCreated,
 		SequenceNumber: 0,
@@ -1680,15 +1755,15 @@ func SendCreatedEventResponsesChunk(ctx *schemas.BifrostContext, postHookRunner 
 			Latency:    time.Since(startTime).Milliseconds(),
 		},
 	}
-	//TODO add bifrost response pooling here
+	// TODO add bifrost response pooling here
 	bifrostResponse := &schemas.BifrostResponse{
 		ResponsesStreamResponse: firstChunk,
 	}
-	ProcessAndSendResponse(ctx, postHookRunner, bifrostResponse, responseChan)
+	ProcessAndSendResponse(ctx, postHookRunner, bifrostResponse, responseChan, postHookSpanFinalizer)
 }
 
 // SendInProgressEventResponsesChunk sends a ResponsesStreamResponseTypeInProgress event
-func SendInProgressEventResponsesChunk(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, startTime time.Time, responseChan chan *schemas.BifrostStreamChunk) {
+func SendInProgressEventResponsesChunk(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, startTime time.Time, responseChan chan *schemas.BifrostStreamChunk, postHookSpanFinalizer func(context.Context)) {
 	chunk := &schemas.BifrostResponsesStreamResponse{
 		Type:           schemas.ResponsesStreamResponseTypeInProgress,
 		SequenceNumber: 1,
@@ -1698,21 +1773,22 @@ func SendInProgressEventResponsesChunk(ctx *schemas.BifrostContext, postHookRunn
 			Latency:    time.Since(startTime).Milliseconds(),
 		},
 	}
-	//TODO add bifrost response pooling here
+	// TODO add bifrost response pooling here
 	bifrostResponse := &schemas.BifrostResponse{
 		ResponsesStreamResponse: chunk,
 	}
-	ProcessAndSendResponse(ctx, postHookRunner, bifrostResponse, responseChan)
+	ProcessAndSendResponse(ctx, postHookRunner, bifrostResponse, responseChan, postHookSpanFinalizer)
 }
 
 // BuildClientStreamChunk constructs a BifrostStreamChunk from post-hook results.
-// It never mutates the shared processedResponse or processedError objects — when in
-// logging-only mode (BifrostContextKeyRawRequestResponseForLogging) it shallow-copies
-// each inner response struct and the BifrostError, nils only the raw fields on those
-// copies, and returns them as the outgoing chunk. This is safe for concurrent PostLLMHook
-// goroutines that still hold references to the originals.
+// It never mutates the shared processedResponse or processedError objects — when raw fields
+// need to be stripped (captured for storage but not for send-back), it shallow-copies each
+// inner response struct and nils only the appropriate per-side field on those copies.
+// This is safe for concurrent PostLLMHook goroutines that still hold references to the originals.
 func BuildClientStreamChunk(ctx context.Context, processedResponse *schemas.BifrostResponse, processedError *schemas.BifrostError) *schemas.BifrostStreamChunk {
-	dropRaw, _ := ctx.Value(schemas.BifrostContextKeyRawRequestResponseForLogging).(bool)
+	dropReq, _ := ctx.Value(schemas.BifrostContextKeyDropRawRequestFromClient).(bool)
+	dropResp, _ := ctx.Value(schemas.BifrostContextKeyDropRawResponseFromClient).(bool)
+	drop := dropReq || dropResp
 	streamResponse := &schemas.BifrostStreamChunk{}
 	if processedResponse != nil {
 		streamResponse.BifrostTextCompletionResponse = processedResponse.TextCompletionResponse
@@ -1721,53 +1797,92 @@ func BuildClientStreamChunk(ctx context.Context, processedResponse *schemas.Bifr
 		streamResponse.BifrostSpeechStreamResponse = processedResponse.SpeechStreamResponse
 		streamResponse.BifrostTranscriptionStreamResponse = processedResponse.TranscriptionStreamResponse
 		streamResponse.BifrostImageGenerationStreamResponse = processedResponse.ImageGenerationStreamResponse
+		streamResponse.BifrostPassthroughResponse = processedResponse.PassthroughResponse
 		// Strip raw fields from client-facing copies without mutating the shared objects
 		// that PostLLMHook goroutines may still be reading.
-		if dropRaw {
+		if drop {
 			if streamResponse.BifrostTextCompletionResponse != nil {
 				cp := *streamResponse.BifrostTextCompletionResponse
-				cp.ExtraFields.RawRequest = nil
-				cp.ExtraFields.RawResponse = nil
+				if dropReq {
+					cp.ExtraFields.RawRequest = nil
+				}
+				if dropResp {
+					cp.ExtraFields.RawResponse = nil
+				}
 				streamResponse.BifrostTextCompletionResponse = &cp
 			}
 			if streamResponse.BifrostChatResponse != nil {
 				cp := *streamResponse.BifrostChatResponse
-				cp.ExtraFields.RawRequest = nil
-				cp.ExtraFields.RawResponse = nil
+				if dropReq {
+					cp.ExtraFields.RawRequest = nil
+				}
+				if dropResp {
+					cp.ExtraFields.RawResponse = nil
+				}
 				streamResponse.BifrostChatResponse = &cp
 			}
 			if streamResponse.BifrostResponsesStreamResponse != nil {
 				cp := *streamResponse.BifrostResponsesStreamResponse
-				cp.ExtraFields.RawRequest = nil
-				cp.ExtraFields.RawResponse = nil
+				if dropReq {
+					cp.ExtraFields.RawRequest = nil
+				}
+				if dropResp {
+					cp.ExtraFields.RawResponse = nil
+				}
 				streamResponse.BifrostResponsesStreamResponse = &cp
 			}
 			if streamResponse.BifrostSpeechStreamResponse != nil {
 				cp := *streamResponse.BifrostSpeechStreamResponse
-				cp.ExtraFields.RawRequest = nil
-				cp.ExtraFields.RawResponse = nil
+				if dropReq {
+					cp.ExtraFields.RawRequest = nil
+				}
+				if dropResp {
+					cp.ExtraFields.RawResponse = nil
+				}
 				streamResponse.BifrostSpeechStreamResponse = &cp
 			}
 			if streamResponse.BifrostTranscriptionStreamResponse != nil {
 				cp := *streamResponse.BifrostTranscriptionStreamResponse
-				cp.ExtraFields.RawRequest = nil
-				cp.ExtraFields.RawResponse = nil
+				if dropReq {
+					cp.ExtraFields.RawRequest = nil
+				}
+				if dropResp {
+					cp.ExtraFields.RawResponse = nil
+				}
 				streamResponse.BifrostTranscriptionStreamResponse = &cp
 			}
 			if streamResponse.BifrostImageGenerationStreamResponse != nil {
 				cp := *streamResponse.BifrostImageGenerationStreamResponse
-				cp.ExtraFields.RawRequest = nil
-				cp.ExtraFields.RawResponse = nil
+				if dropReq {
+					cp.ExtraFields.RawRequest = nil
+				}
+				if dropResp {
+					cp.ExtraFields.RawResponse = nil
+				}
 				streamResponse.BifrostImageGenerationStreamResponse = &cp
+			}
+			if streamResponse.BifrostPassthroughResponse != nil {
+				cp := *streamResponse.BifrostPassthroughResponse
+				if dropReq {
+					cp.ExtraFields.RawRequest = nil
+				}
+				if dropResp {
+					cp.ExtraFields.RawResponse = nil
+				}
+				streamResponse.BifrostPassthroughResponse = &cp
 			}
 		}
 	}
 	if processedError != nil {
-		if dropRaw {
+		if drop {
 			// Strip raw fields from a client-facing copy without mutating the shared error object.
 			errCopy := *processedError
-			errCopy.ExtraFields.RawRequest = nil
-			errCopy.ExtraFields.RawResponse = nil
+			if dropReq {
+				errCopy.ExtraFields.RawRequest = nil
+			}
+			if dropResp {
+				errCopy.ExtraFields.RawResponse = nil
+			}
 			streamResponse.BifrostError = &errCopy
 		} else {
 			streamResponse.BifrostError = processedError
@@ -1786,6 +1901,7 @@ func ProcessAndSendResponse(
 	postHookRunner schemas.PostHookRunner,
 	response *schemas.BifrostResponse,
 	responseChan chan *schemas.BifrostStreamChunk,
+	postHookSpanFinalizer func(context.Context),
 ) {
 	// Accumulate chunk for tracing (common for all providers)
 	if tracer, ok := ctx.Value(schemas.BifrostContextKeyTracer).(schemas.Tracer); ok && tracer != nil {
@@ -1801,7 +1917,7 @@ func ProcessAndSendResponse(
 		// Even if skipping, complete the deferred span if this is the final chunk
 		if isFinalChunk := ctx.Value(schemas.BifrostContextKeyStreamEndIndicator); isFinalChunk != nil {
 			if final, ok := isFinalChunk.(bool); ok && final {
-				completeDeferredSpan(ctx, processedResponse, processedError)
+				completeDeferredSpan(ctx, processedResponse, processedError, postHookSpanFinalizer)
 			}
 		}
 		return
@@ -1818,7 +1934,7 @@ func ProcessAndSendResponse(
 	// Check if this is the final chunk and complete deferred span with post-processed data
 	if isFinalChunk := ctx.Value(schemas.BifrostContextKeyStreamEndIndicator); isFinalChunk != nil {
 		if final, ok := isFinalChunk.(bool); ok && final {
-			completeDeferredSpan(ctx, processedResponse, processedError)
+			completeDeferredSpan(ctx, processedResponse, processedError, postHookSpanFinalizer)
 		}
 	}
 }
@@ -1834,6 +1950,7 @@ func ProcessAndSendBifrostError(
 	bifrostErr *schemas.BifrostError,
 	responseChan chan *schemas.BifrostStreamChunk,
 	logger schemas.Logger,
+	postHookSpanFinalizer func(context.Context),
 ) {
 	// Run post hooks first so span reflects post-processed data
 	processedResponse, processedError := postHookRunner(ctx, nil, bifrostErr)
@@ -1842,7 +1959,7 @@ func ProcessAndSendBifrostError(
 		// Even if skipping, complete the deferred span if this is the final chunk
 		if isFinalChunk := ctx.Value(schemas.BifrostContextKeyStreamEndIndicator); isFinalChunk != nil {
 			if final, ok := isFinalChunk.(bool); ok && final {
-				completeDeferredSpan(ctx, processedResponse, processedError)
+				completeDeferredSpan(ctx, processedResponse, processedError, postHookSpanFinalizer)
 			}
 		}
 		return
@@ -1858,9 +1975,36 @@ func ProcessAndSendBifrostError(
 	// Check if this is the final chunk and complete deferred span with post-processed data
 	if isFinalChunk := ctx.Value(schemas.BifrostContextKeyStreamEndIndicator); isFinalChunk != nil {
 		if final, ok := isFinalChunk.(bool); ok && final {
-			completeDeferredSpan(ctx, processedResponse, processedError)
+			completeDeferredSpan(ctx, processedResponse, processedError, postHookSpanFinalizer)
 		}
 	}
+}
+
+// EnsureStreamFinalizerCalled invokes the post-hook span finalizer registered
+// on ctx, if any. Designed to be deferred as the last line of defence in a
+// provider's streaming goroutine (next to SetupStreamCancellation's cleanup):
+//
+//	defer providerUtils.EnsureStreamFinalizerCalled(ctx)
+//
+// On a normal stream end the finalizer is already invoked when the final chunk
+// is processed (via completeDeferredSpan). The registration wraps the closure
+// in sync.Once, so this safety-net call is a noop in that case. It only does
+// real work when the streaming goroutine exits without reaching the final-chunk
+// path — e.g. a panic mid-stream — which would otherwise leak the plugin
+// pipeline back-reference held by the finalizer closure.
+//
+// Panics inside the finalizer are recovered and logged so they never mask an
+// in-flight panic that triggered the defer.
+func EnsureStreamFinalizerCalled(ctx context.Context, finalizer func(context.Context)) {
+	defer func() {
+		if r := recover(); r != nil {
+			getLogger().Debug("recovered panic in deferred stream finalizer: %v", r)
+		}
+	}()
+	if finalizer == nil {
+		return
+	}
+	finalizer(ctx)
 }
 
 // SetupStreamCancellation spawns a goroutine that closes the body stream when
@@ -1986,6 +2130,7 @@ func HandleStreamCancellation(
 	postHookRunner schemas.PostHookRunner,
 	responseChan chan *schemas.BifrostStreamChunk,
 	logger schemas.Logger,
+	postHookSpanFinalizer func(context.Context),
 ) {
 	// Check if already handled (StreamEndIndicator already set)
 	if indicator := ctx.GetAndSetValue(schemas.BifrostContextKeyStreamEndIndicator, true); indicator != nil {
@@ -2003,7 +2148,7 @@ func HandleStreamCancellation(
 	}
 
 	// Send through PostHook chain - this updates the log to "error" status
-	ProcessAndSendBifrostError(ctx, postHookRunner, cancelErr, responseChan, logger)
+	ProcessAndSendBifrostError(ctx, postHookRunner, cancelErr, responseChan, logger, postHookSpanFinalizer)
 }
 
 // HandleStreamTimeout should be called when a streaming goroutine exits
@@ -2019,6 +2164,7 @@ func HandleStreamTimeout(
 	postHookRunner schemas.PostHookRunner,
 	responseChan chan *schemas.BifrostStreamChunk,
 	logger schemas.Logger,
+	postHookSpanFinalizer func(context.Context),
 ) {
 	// Check if already handled (StreamEndIndicator already set)
 	if indicator := ctx.GetAndSetValue(schemas.BifrostContextKeyStreamEndIndicator, true); indicator != nil {
@@ -2036,7 +2182,7 @@ func HandleStreamTimeout(
 	}
 
 	// Send through PostHook chain - this updates the log to "error" status
-	ProcessAndSendBifrostError(ctx, postHookRunner, timeoutErr, responseChan, logger)
+	ProcessAndSendBifrostError(ctx, postHookRunner, timeoutErr, responseChan, logger, postHookSpanFinalizer)
 }
 
 // ProcessAndSendError handles post-hook processing and sends the error to the channel.
@@ -2049,16 +2195,16 @@ func ProcessAndSendError(
 	err error,
 	responseChan chan *schemas.BifrostStreamChunk,
 	logger schemas.Logger,
+	postHookSpanFinalizer func(context.Context),
 ) {
 	// Send scanner error through channel
-	bifrostError :=
-		&schemas.BifrostError{
-			IsBifrostError: true,
-			Error: &schemas.ErrorField{
-				Message: fmt.Sprintf("Error reading stream: %v", err),
-				Error:   err,
-			},
-		}
+	bifrostError := &schemas.BifrostError{
+		IsBifrostError: true,
+		Error: &schemas.ErrorField{
+			Message: fmt.Sprintf("Error reading stream: %v", err),
+			Error:   err,
+		},
+	}
 	processedResponse, processedError := postHookRunner(ctx, nil, bifrostError)
 
 	if HandleStreamControlSkip(processedError) {
@@ -2220,7 +2366,7 @@ func GetBifrostResponseForStreamResponse(
 	transcriptionStreamResponse *schemas.BifrostTranscriptionStreamResponse,
 	imageGenerationStreamResponse *schemas.BifrostImageGenerationStreamResponse,
 ) *schemas.BifrostResponse {
-	//TODO add bifrost response pooling here
+	// TODO add bifrost response pooling here
 	bifrostResponse := &schemas.BifrostResponse{}
 
 	switch {
@@ -2402,6 +2548,21 @@ func HandleMultipleListModelsRequests(
 		wg.Add(1)
 		go func(k schemas.Key) {
 			defer wg.Done()
+			// Should never panic, but if it does, we need to handle it gracefully
+			defer func() {
+				if r := recover(); r != nil {
+					getLogger().Error("panic in listModelsByKey for key %s (%s): %v", k.Name, k.ID, r)
+					results <- schemas.ListModelsByKeyResult{
+						Err: &schemas.BifrostError{
+							IsBifrostError: true,
+							Error: &schemas.ErrorField{
+								Message: "internal error while listing models for key",
+							},
+						},
+						KeyID: k.ID,
+					}
+				}
+			}()
 			resp, bifrostErr := listModelsByKey(ctx, k, request)
 			results <- schemas.ListModelsByKeyResult{Response: resp, Err: bifrostErr, KeyID: k.ID}
 		}(key)
@@ -2487,9 +2648,8 @@ func GetReasoningEffortFromBudgetTokens(
 	}
 }
 
-// GetBudgetTokensFromReasoningEffort converts OpenAI reasoning effort
-// into a reasoning token budget.
-// effort ∈ {"none", "minimal", "low", "medium", "high"}
+// GetBudgetTokensFromReasoningEffort converts reasoning effort into a reasoning token budget.
+// effort ∈ {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 func GetBudgetTokensFromReasoningEffort(
 	effort string,
 	minBudgetTokens int,
@@ -2519,6 +2679,10 @@ func GetBudgetTokensFromReasoningEffort(
 		ratio = 0.425
 	case "high":
 		ratio = 0.80
+	case "xhigh":
+		ratio = 0.92
+	case "max":
+		ratio = 1.0
 	default:
 		// Unknown effort → safe default
 		ratio = 0.425
@@ -2533,7 +2697,7 @@ func GetBudgetTokensFromReasoningEffort(
 // This is called when the final chunk is processed (when StreamEndIndicator is true).
 // It retrieves the deferred span handle from TraceStore using the trace ID from context,
 // populates response attributes from accumulated chunks, and ends the span.
-func completeDeferredSpan(ctx *schemas.BifrostContext, result *schemas.BifrostResponse, err *schemas.BifrostError) {
+func completeDeferredSpan(ctx *schemas.BifrostContext, result *schemas.BifrostResponse, err *schemas.BifrostError, postHookSpanFinalizer func(context.Context)) {
 	if ctx == nil {
 		return
 	}
@@ -2592,14 +2756,14 @@ func completeDeferredSpan(ctx *schemas.BifrostContext, result *schemas.BifrostRe
 	// Finalize aggregated post-hook spans before ending the LLM span
 	// This creates one span per plugin with average execution time
 	// We need to set the llm.call span ID in context so post-hook spans become its children
-	if finalizer, ok := ctx.Value(schemas.BifrostContextKeyPostHookSpanFinalizer).(func(context.Context)); ok && finalizer != nil {
+	if postHookSpanFinalizer != nil {
 		// Get the deferred span ID (the llm.call span) to set as parent for post-hook spans
 		spanID := tracer.GetDeferredSpanID(traceID)
 		if spanID != "" {
 			finalizerCtx := context.WithValue(ctx, schemas.BifrostContextKeySpanID, spanID)
-			finalizer(finalizerCtx)
+			postHookSpanFinalizer(finalizerCtx)
 		} else {
-			finalizer(ctx)
+			postHookSpanFinalizer(ctx)
 		}
 	}
 
@@ -2638,7 +2802,8 @@ func CheckAndSetDefaultProvider(ctx *schemas.BifrostContext, defaultProvider sch
 			if slices.Contains(availableProviders, defaultProvider) {
 				return defaultProvider
 			}
-			return ""
+			// Return the first available provider
+			return availableProviders[0]
 		}
 		return defaultProvider
 	}

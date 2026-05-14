@@ -133,48 +133,48 @@ func validateRequest(req *schemas.BifrostRequest) *schemas.BifrostError {
 }
 
 // validateKey validates the given key.
-func validateKey(providerKey schemas.ModelProvider, key *schemas.Key) bool {
-	// Valid the key for the provider
+func validateKey(providerKey schemas.ModelProvider, key *schemas.Key) error {
+	// Validate the key for the provider
 	switch providerKey {
 	case schemas.Azure:
 		if key.AzureKeyConfig == nil {
-			return false
+			return fmt.Errorf("azure_key_config is required")
 		}
 		if key.AzureKeyConfig.Endpoint.GetValue() == "" {
-			return false
+			return fmt.Errorf("azure_key_config.endpoint is required")
 		}
 	case schemas.Bedrock:
-		// Key is valid if either:
-		// 1. BedrockKeyConfig is provided
-		// 2. Value is provided and is not empty
+		// BedrockKeyConfig is optional — an empty config is valid for IRSA / ambient credential auth.
 		if key.BedrockKeyConfig == nil {
-			if key.Value.GetValue() == "" {
-				return false
-			}
 			key.BedrockKeyConfig = &schemas.BedrockKeyConfig{}
 		}
 	case schemas.Vertex:
 		if key.VertexKeyConfig == nil {
-			return false
-		}
-	case schemas.Replicate:
-		if key.ReplicateKeyConfig == nil {
-			return false
+			return fmt.Errorf("vertex_key_config is required")
 		}
 	case schemas.VLLM:
-		if key.VLLMKeyConfig == nil || key.VLLMKeyConfig.URL.GetValue() == "" {
-			return false
+		if key.VLLMKeyConfig == nil {
+			return fmt.Errorf("vllm_key_config is required")
+		}
+		if key.VLLMKeyConfig.URL.GetValue() == "" {
+			return fmt.Errorf("vllm_key_config.url is required")
 		}
 	case schemas.Ollama:
-		if key.OllamaKeyConfig == nil || key.OllamaKeyConfig.URL.GetValue() == "" {
-			return false
+		if key.OllamaKeyConfig == nil {
+			return fmt.Errorf("ollama_key_config is required")
+		}
+		if key.OllamaKeyConfig.URL.GetValue() == "" {
+			return fmt.Errorf("ollama_key_config.url is required")
 		}
 	case schemas.SGL:
-		if key.SGLKeyConfig == nil || key.SGLKeyConfig.URL.GetValue() == "" {
-			return false
+		if key.SGLKeyConfig == nil {
+			return fmt.Errorf("sgl_key_config is required")
+		}
+		if key.SGLKeyConfig.URL.GetValue() == "" {
+			return fmt.Errorf("sgl_key_config.url is required")
 		}
 	}
-	return true
+	return nil
 }
 
 // IsRateLimitErrorMessage checks if an error message indicates a rate limit issue
@@ -272,6 +272,9 @@ func clearCtxForFallback(ctx *schemas.BifrostContext) {
 	ctx.ClearValue(schemas.BifrostContextKeyAPIKeyID)
 	ctx.ClearValue(schemas.BifrostContextKeyAPIKeyName)
 	ctx.ClearValue(schemas.BifrostContextKeyGovernanceIncludeOnlyKeys)
+	ctx.ClearValue(schemas.BifrostContextKeyChangeRequestType)
+	ctx.ClearValue(schemas.BifrostContextKeyAttemptTrail)
+	ctx.ClearValue(schemas.BifrostContextKeyStreamEndIndicator)
 }
 
 var supportedBaseProvidersSet = func() map[schemas.ModelProvider]struct{} {
@@ -403,7 +406,9 @@ func GetErrorMessage(err *schemas.BifrostError) string {
 	if err == nil {
 		return ""
 	}
-	if err.StatusCode != nil {
+	if err.Error != nil && err.Error.Message != "" {
+		return err.Error.Message
+	} else if err.StatusCode != nil {
 		switch *err.StatusCode {
 		case 401:
 			return "unauthorized"
@@ -429,8 +434,6 @@ func GetErrorMessage(err *schemas.BifrostError) string {
 			}
 			return fmt.Sprintf("HTTP %d error", *err.StatusCode)
 		}
-	} else if err.Error != nil && err.Error.Message != "" {
-		return err.Error.Message
 	} else if err.Type != nil {
 		return *err.Type
 	} else {
@@ -594,4 +597,31 @@ func isPromptOptionalImageEditType(t *string) bool {
 		[]string{"background_removal", "remove_background", "remove_bg", "erase_object", "upscale_fast"},
 		normalized,
 	)
+}
+
+// wrapConvertedStreamPostHookRunner wraps a PostHookRunner so that streaming
+// responses produced by a type-converted request are converted back to the
+// caller's original type before the post-hook runs.
+func wrapConvertedStreamPostHookRunner(postHookRunner schemas.PostHookRunner, targetType schemas.RequestType) schemas.PostHookRunner {
+	return func(ctx *schemas.BifrostContext, result *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError) {
+		if result != nil {
+			switch targetType {
+			case schemas.ChatCompletionRequest:
+				// text→chat: convert chat stream chunk back to text completion
+				if result.ChatResponse != nil {
+					if converted := result.ChatResponse.ToBifrostTextCompletionResponse(); converted != nil {
+						result = &schemas.BifrostResponse{TextCompletionResponse: converted}
+					}
+				}
+			case schemas.ResponsesRequest:
+				// chat→responses: convert responses stream chunk back to chat
+				if result.ResponsesStreamResponse != nil {
+					if converted := result.ResponsesStreamResponse.ToBifrostChatResponse(); converted != nil {
+						result = &schemas.BifrostResponse{ChatResponse: converted}
+					}
+				}
+			}
+		}
+		return postHookRunner(ctx, result, bifrostErr)
+	}
 }

@@ -35,9 +35,10 @@ const DefaultAzureScope = "https://cognitiveservices.azure.com/.default"
 
 // AzureProvider implements the Provider interface for Azure's API.
 type AzureProvider struct {
-	logger        schemas.Logger        // Logger for provider operations
-	client        *fasthttp.Client      // HTTP client for API requests
-	networkConfig schemas.NetworkConfig // Network configuration including extra headers
+	logger          schemas.Logger        // Logger for provider operations
+	client          *fasthttp.Client      // HTTP client for unary API requests (ReadTimeout bounds overall response)
+	streamingClient *fasthttp.Client      // HTTP client for streaming API requests (no ReadTimeout; idle governed by NewIdleTimeoutReader)
+	networkConfig   schemas.NetworkConfig // Network configuration including extra headers
 
 	credentials         sync.Map // map of tenant ID:client ID to azcore.TokenCredential
 	sendBackRawRequest  bool     // Whether to include raw request in BifrostResponse
@@ -184,9 +185,11 @@ func NewAzureProvider(config *schemas.ProviderConfig, logger schemas.Logger) (*A
 	client = providerUtils.ConfigureProxy(client, config.ProxyConfig, logger)
 	client = providerUtils.ConfigureDialer(client)
 	client = providerUtils.ConfigureTLS(client, config.NetworkConfig, logger)
+	streamingClient := providerUtils.BuildStreamingClient(client)
 	return &AzureProvider{
 		logger:              logger,
 		client:              client,
+		streamingClient:     streamingClient,
 		networkConfig:       config.NetworkConfig,
 		sendBackRawRequest:  config.SendBackRawRequest,
 		sendBackRawResponse: config.SendBackRawResponse,
@@ -253,7 +256,7 @@ func (provider *AzureProvider) completeRequest(
 		url = fmt.Sprintf("%s/%s", endpoint, path)
 
 		// Merge ExtraHeaders + context anthropic-beta, filter for Azure, then set as HTTP header
-		if betaHeaders := anthropic.FilterBetaHeadersForProvider(anthropic.MergeBetaHeaders(provider.networkConfig.ExtraHeaders, ctx), schemas.Azure, provider.networkConfig.BetaHeaderOverrides); len(betaHeaders) > 0 {
+		if betaHeaders := anthropic.FilterBetaHeadersForProvider(anthropic.MergeBetaHeaders(ctx, provider.networkConfig.ExtraHeaders), schemas.Azure, provider.networkConfig.BetaHeaderOverrides); len(betaHeaders) > 0 {
 			req.Header.Set(anthropic.AnthropicBetaHeader, strings.Join(betaHeaders, ","))
 		} else {
 			req.Header.Del(anthropic.AnthropicBetaHeader)
@@ -309,15 +312,6 @@ func (provider *AzureProvider) completeRequest(
 // listModelsByKey performs a list models request for a single key.
 // Returns the response and latency, or an error if the request fails.
 func (provider *AzureProvider) listModelsByKey(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
-	// Validate Azure key configuration
-	if key.AzureKeyConfig == nil {
-		return nil, providerUtils.NewConfigurationError("azure key config not set")
-	}
-
-	if key.AzureKeyConfig.Endpoint.GetValue() == "" {
-		return nil, providerUtils.NewConfigurationError("endpoint not set")
-	}
-
 	// Get API version
 	apiVersion := key.AzureKeyConfig.APIVersion
 	if apiVersion == nil {
@@ -476,7 +470,7 @@ func (provider *AzureProvider) TextCompletion(ctx *schemas.BifrostContext, key s
 // TextCompletionStream performs a streaming text completion request to Azure's API.
 // It formats the request, sends it to Azure, and processes the response.
 // Returns a channel of BifrostStreamChunk objects or an error if the request fails.
-func (provider *AzureProvider) TextCompletionStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, key schemas.Key, request *schemas.BifrostTextCompletionRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+func (provider *AzureProvider) TextCompletionStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, postHookSpanFinalizer func(context.Context), key schemas.Key, request *schemas.BifrostTextCompletionRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 	apiVersion := key.AzureKeyConfig.APIVersion
 	if apiVersion == nil {
 		apiVersion = schemas.NewEnvVar(AzureAPIVersionDefault)
@@ -492,7 +486,7 @@ func (provider *AzureProvider) TextCompletionStream(ctx *schemas.BifrostContext,
 
 	return openai.HandleOpenAITextCompletionStreaming(
 		ctx,
-		provider.client,
+		provider.streamingClient,
 		url,
 		request,
 		authHeader,
@@ -505,6 +499,7 @@ func (provider *AzureProvider) TextCompletionStream(ctx *schemas.BifrostContext,
 		nil,
 		nil,
 		provider.logger,
+		postHookSpanFinalizer,
 	)
 }
 
@@ -605,7 +600,7 @@ func (provider *AzureProvider) ChatCompletion(ctx *schemas.BifrostContext, key s
 // It supports real-time streaming of responses using Server-Sent Events (SSE).
 // Uses Azure-specific URL construction with deployments and supports both api-key and Bearer token authentication.
 // Returns a channel containing BifrostResponse objects representing the stream or an error if the request fails.
-func (provider *AzureProvider) ChatCompletionStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, key schemas.Key, request *schemas.BifrostChatRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+func (provider *AzureProvider) ChatCompletionStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, postHookSpanFinalizer func(context.Context), key schemas.Key, request *schemas.BifrostChatRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 	var url string
 	if schemas.IsAnthropicModel(request.Model) {
 		authHeader, err := provider.getAzureAuthHeaders(ctx, key, true)
@@ -637,7 +632,7 @@ func (provider *AzureProvider) ChatCompletionStream(ctx *schemas.BifrostContext,
 		// Use shared streaming logic from Anthropic
 		return anthropic.HandleAnthropicChatCompletionStreaming(
 			ctx,
-			provider.client,
+			provider.streamingClient,
 			url,
 			jsonData,
 			authHeader,
@@ -649,6 +644,7 @@ func (provider *AzureProvider) ChatCompletionStream(ctx *schemas.BifrostContext,
 			postHookRunner,
 			nil,
 			provider.logger,
+			postHookSpanFinalizer,
 		)
 	} else {
 		authHeader, err := provider.getAzureAuthHeaders(ctx, key, false)
@@ -664,7 +660,7 @@ func (provider *AzureProvider) ChatCompletionStream(ctx *schemas.BifrostContext,
 		// Use shared streaming logic from OpenAI
 		return openai.HandleOpenAIChatCompletionStreaming(
 			ctx,
-			provider.client,
+			provider.streamingClient,
 			url,
 			request,
 			authHeader,
@@ -679,6 +675,7 @@ func (provider *AzureProvider) ChatCompletionStream(ctx *schemas.BifrostContext,
 			nil,
 			nil,
 			provider.logger,
+			postHookSpanFinalizer,
 		)
 	}
 }
@@ -690,7 +687,7 @@ func (provider *AzureProvider) Responses(ctx *schemas.BifrostContext, key schema
 	var jsonData []byte
 	var bifrostErr *schemas.BifrostError
 	if schemas.IsAnthropicModel(request.Model) {
-		jsonData, bifrostErr = getRequestBodyForAnthropicResponses(ctx, request, request.Model, false)
+		jsonData, bifrostErr = getRequestBodyForAnthropicResponses(ctx, request, request.Model, false, provider.sendBackRawRequest, provider.sendBackRawResponse)
 	} else {
 		jsonData, bifrostErr = providerUtils.CheckContextAndGetRequestBody(
 			ctx,
@@ -772,7 +769,7 @@ func (provider *AzureProvider) Responses(ctx *schemas.BifrostContext, key schema
 }
 
 // ResponsesStream performs a streaming responses request to Azure's API.
-func (provider *AzureProvider) ResponsesStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, key schemas.Key, request *schemas.BifrostResponsesRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+func (provider *AzureProvider) ResponsesStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, postHookSpanFinalizer func(context.Context), key schemas.Key, request *schemas.BifrostResponsesRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 	var url string
 	if schemas.IsAnthropicModel(request.Model) {
 		authHeader, err := provider.getAzureAuthHeaders(ctx, key, true)
@@ -782,7 +779,7 @@ func (provider *AzureProvider) ResponsesStream(ctx *schemas.BifrostContext, post
 		authHeader["anthropic-version"] = AzureAnthropicAPIVersionDefault
 		url = fmt.Sprintf("%s/anthropic/v1/messages", key.AzureKeyConfig.Endpoint.GetValue())
 
-		jsonData, bifrostErr := getRequestBodyForAnthropicResponses(ctx, request, request.Model, true)
+		jsonData, bifrostErr := getRequestBodyForAnthropicResponses(ctx, request, request.Model, true, provider.sendBackRawRequest, provider.sendBackRawResponse)
 		if bifrostErr != nil {
 			return nil, bifrostErr
 		}
@@ -790,7 +787,7 @@ func (provider *AzureProvider) ResponsesStream(ctx *schemas.BifrostContext, post
 		// Use shared streaming logic from Anthropic
 		return anthropic.HandleAnthropicResponsesStream(
 			ctx,
-			provider.client,
+			provider.streamingClient,
 			url,
 			jsonData,
 			authHeader,
@@ -802,6 +799,7 @@ func (provider *AzureProvider) ResponsesStream(ctx *schemas.BifrostContext, post
 			postHookRunner,
 			nil,
 			provider.logger,
+			postHookSpanFinalizer,
 		)
 	} else {
 		authHeader, err := provider.getAzureAuthHeaders(ctx, key, false)
@@ -813,7 +811,7 @@ func (provider *AzureProvider) ResponsesStream(ctx *schemas.BifrostContext, post
 		// Use shared streaming logic from OpenAI
 		return openai.HandleOpenAIResponsesStreaming(
 			ctx,
-			provider.client,
+			provider.streamingClient,
 			url,
 			request,
 			authHeader,
@@ -827,6 +825,7 @@ func (provider *AzureProvider) ResponsesStream(ctx *schemas.BifrostContext, post
 			nil,
 			nil,
 			provider.logger,
+			postHookSpanFinalizer,
 		)
 	}
 }
@@ -935,9 +934,14 @@ func (provider *AzureProvider) Rerank(ctx *schemas.BifrostContext, key schemas.K
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.RerankRequest, provider.GetProviderKey())
 }
 
+// OCR is not supported by the Azure provider.
+func (provider *AzureProvider) OCR(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostOCRRequest) (*schemas.BifrostOCRResponse, *schemas.BifrostError) {
+	return nil, providerUtils.NewUnsupportedOperationError(schemas.OCRRequest, provider.GetProviderKey())
+}
+
 // SpeechStream handles streaming for speech synthesis with Azure.
 // Azure sends raw binary audio bytes in SSE format, unlike OpenAI which sends JSON.
-func (provider *AzureProvider) SpeechStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, key schemas.Key, request *schemas.BifrostSpeechRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+func (provider *AzureProvider) SpeechStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, postHookSpanFinalizer func(context.Context), key schemas.Key, request *schemas.BifrostSpeechRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 	// Get Azure authentication headers
 	authHeader, err := provider.getAzureAuthHeaders(ctx, key, false)
 	if err != nil {
@@ -1035,11 +1039,12 @@ func (provider *AzureProvider) SpeechStream(ctx *schemas.BifrostContext, postHoo
 
 	// Start streaming in a goroutine
 	go func() {
+		defer providerUtils.EnsureStreamFinalizerCalled(ctx, postHookSpanFinalizer)
 		defer func() {
 			if ctx.Err() == context.Canceled {
-				providerUtils.HandleStreamCancellation(ctx, postHookRunner, responseChan, provider.logger)
+				providerUtils.HandleStreamCancellation(ctx, postHookRunner, responseChan, provider.logger, postHookSpanFinalizer)
 			} else if ctx.Err() == context.DeadlineExceeded {
-				providerUtils.HandleStreamTimeout(ctx, postHookRunner, responseChan, provider.logger)
+				providerUtils.HandleStreamTimeout(ctx, postHookRunner, responseChan, provider.logger, postHookSpanFinalizer)
 			}
 			close(responseChan)
 		}()
@@ -1141,7 +1146,7 @@ func (provider *AzureProvider) SpeechStream(ctx *schemas.BifrostContext, postHoo
 							if errParseErr := sonic.Unmarshal(audioData, &bifrostErr); errParseErr == nil {
 								if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
 									ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
-									providerUtils.ProcessAndSendBifrostError(ctx, postHookRunner, &bifrostErr, responseChan, provider.logger)
+									providerUtils.ProcessAndSendBifrostError(ctx, postHookRunner, &bifrostErr, responseChan, provider.logger, postHookSpanFinalizer)
 									return
 								}
 							}
@@ -1170,7 +1175,7 @@ func (provider *AzureProvider) SpeechStream(ctx *schemas.BifrostContext, postHoo
 						response.ExtraFields.RawResponse = audioData
 					}
 
-					providerUtils.ProcessAndSendResponse(ctx, postHookRunner, providerUtils.GetBifrostResponseForStreamResponse(nil, nil, nil, &response, nil, nil), responseChan)
+					providerUtils.ProcessAndSendResponse(ctx, postHookRunner, providerUtils.GetBifrostResponseForStreamResponse(nil, nil, nil, &response, nil, nil), responseChan, postHookSpanFinalizer)
 				}
 
 				// Check if we received [DONE] marker - break outer loop to send final response
@@ -1191,7 +1196,7 @@ func (provider *AzureProvider) SpeechStream(ctx *schemas.BifrostContext, postHoo
 					// a fake "done" response with truncated audio.
 					ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
 					provider.logger.Warn("Error reading stream: %v", readErr)
-					providerUtils.ProcessAndSendError(ctx, postHookRunner, readErr, responseChan, provider.logger)
+					providerUtils.ProcessAndSendError(ctx, postHookRunner, readErr, responseChan, provider.logger, postHookSpanFinalizer)
 					return
 				}
 				break
@@ -1215,7 +1220,7 @@ func (provider *AzureProvider) SpeechStream(ctx *schemas.BifrostContext, postHoo
 
 			finalResponse.BackfillParams(request)
 			ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
-			providerUtils.ProcessAndSendResponse(ctx, postHookRunner, providerUtils.GetBifrostResponseForStreamResponse(nil, nil, nil, &finalResponse, nil, nil), responseChan)
+			providerUtils.ProcessAndSendResponse(ctx, postHookRunner, providerUtils.GetBifrostResponseForStreamResponse(nil, nil, nil, &finalResponse, nil, nil), responseChan, postHookSpanFinalizer)
 		} else if chunkIndex >= 0 && !doneReceived {
 			provider.logger.Warn("Stream ended without receiving [DONE] marker after %d chunks", chunkIndex+1)
 		}
@@ -1256,7 +1261,7 @@ func (provider *AzureProvider) Transcription(ctx *schemas.BifrostContext, key sc
 }
 
 // TranscriptionStream is not supported by the Azure provider.
-func (provider *AzureProvider) TranscriptionStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, key schemas.Key, request *schemas.BifrostTranscriptionRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+func (provider *AzureProvider) TranscriptionStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, postHookSpanFinalizer func(context.Context), key schemas.Key, request *schemas.BifrostTranscriptionRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.TranscriptionStreamRequest, provider.GetProviderKey())
 }
 
@@ -1300,6 +1305,7 @@ func (provider *AzureProvider) ImageGeneration(ctx *schemas.BifrostContext, key 
 func (provider *AzureProvider) ImageGenerationStream(
 	ctx *schemas.BifrostContext,
 	postHookRunner schemas.PostHookRunner,
+	postHookSpanFinalizer func(context.Context),
 	key schemas.Key,
 	request *schemas.BifrostImageGenerationRequest,
 ) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
@@ -1323,7 +1329,7 @@ func (provider *AzureProvider) ImageGenerationStream(
 	// Azure is OpenAI-compatible
 	return openai.HandleOpenAIImageGenerationStreaming(
 		ctx,
-		provider.client,
+		provider.streamingClient,
 		url,
 		request,
 		authHeader,
@@ -1336,6 +1342,7 @@ func (provider *AzureProvider) ImageGenerationStream(
 		nil,
 		nil,
 		provider.logger,
+		postHookSpanFinalizer,
 	)
 
 }
@@ -1373,7 +1380,7 @@ func (provider *AzureProvider) ImageEdit(ctx *schemas.BifrostContext, key schema
 }
 
 // ImageEditStream performs a streaming image edit request to Azure's API.
-func (provider *AzureProvider) ImageEditStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, key schemas.Key, request *schemas.BifrostImageEditRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+func (provider *AzureProvider) ImageEditStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, postHookSpanFinalizer func(context.Context), key schemas.Key, request *schemas.BifrostImageEditRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 	apiVersion := key.AzureKeyConfig.APIVersion
 	if apiVersion == nil || apiVersion.GetValue() == "" {
 		apiVersion = schemas.NewEnvVar(AzureAPIVersionImageEditDefault)
@@ -1394,7 +1401,7 @@ func (provider *AzureProvider) ImageEditStream(ctx *schemas.BifrostContext, post
 	// Azure is OpenAI-compatible
 	return openai.HandleOpenAIImageEditStreamRequest(
 		ctx,
-		provider.client,
+		provider.streamingClient,
 		url,
 		request,
 		authHeader,
@@ -1407,6 +1414,7 @@ func (provider *AzureProvider) ImageEditStream(ctx *schemas.BifrostContext, post
 		nil,
 		nil,
 		provider.logger,
+		postHookSpanFinalizer,
 	)
 
 }
@@ -2697,11 +2705,238 @@ func (provider *AzureProvider) ContainerFileDelete(_ *schemas.BifrostContext, _ 
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.ContainerFileDeleteRequest, provider.GetProviderKey())
 }
 
-// Passthrough is not supported by the Azure provider.
-func (provider *AzureProvider) Passthrough(_ *schemas.BifrostContext, _ schemas.Key, _ *schemas.BifrostPassthroughRequest) (*schemas.BifrostPassthroughResponse, *schemas.BifrostError) {
-	return nil, providerUtils.NewUnsupportedOperationError(schemas.PassthroughRequest, provider.GetProviderKey())
+// Passthrough forwards a raw request to Azure's API without any transformation.
+func (provider *AzureProvider) Passthrough(
+	ctx *schemas.BifrostContext,
+	key schemas.Key,
+	req *schemas.BifrostPassthroughRequest,
+) (*schemas.BifrostPassthroughResponse, *schemas.BifrostError) {
+	url := provider.buildPassthroughURL(key, req.Path, req.RawQuery)
+
+	fasthttpReq := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
+	defer fasthttp.ReleaseRequest(fasthttpReq)
+
+	fasthttpReq.Header.SetMethod(req.Method)
+	fasthttpReq.SetRequestURI(url)
+
+	providerUtils.SetExtraHeaders(ctx, fasthttpReq, provider.networkConfig.ExtraHeaders, nil)
+
+	for k, v := range req.SafeHeaders {
+		fasthttpReq.Header.Set(k, v)
+	}
+
+	authHeaders, bifrostErr := provider.getAzureAuthHeaders(ctx, key, schemas.IsAnthropicModel(req.Model))
+	if bifrostErr != nil {
+		return nil, bifrostErr
+	}
+	for k, v := range authHeaders {
+		fasthttpReq.Header.Set(k, v)
+	}
+
+	fasthttpReq.SetBody(req.Body)
+
+	latency, bifrostErr, wait := providerUtils.MakeRequestWithContext(ctx, provider.client, fasthttpReq, resp)
+	defer wait()
+	if bifrostErr != nil {
+		return nil, bifrostErr
+	}
+
+	headers := providerUtils.ExtractProviderResponseHeaders(resp)
+	ctx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, headers)
+
+	body, err := providerUtils.CheckAndDecodeBody(resp)
+	if err != nil {
+		return nil, providerUtils.NewBifrostOperationError("failed to decode response body", err)
+	}
+
+	bifrostResponse := &schemas.BifrostPassthroughResponse{
+		StatusCode: resp.StatusCode(),
+		Headers:    headers,
+		Body:       body,
+		ExtraFields: schemas.BifrostResponseExtraFields{
+			Latency:                 latency.Milliseconds(),
+			ProviderResponseHeaders: headers,
+		},
+	}
+
+	return bifrostResponse, nil
 }
 
-func (provider *AzureProvider) PassthroughStream(_ *schemas.BifrostContext, _ schemas.PostHookRunner, _ schemas.Key, _ *schemas.BifrostPassthroughRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
-	return nil, providerUtils.NewUnsupportedOperationError(schemas.PassthroughStreamRequest, provider.GetProviderKey())
+// PassthroughStream forwards a raw streaming request to Azure's API without any transformation.
+// Chunks are piped back as raw bytes, preserving the upstream SSE or binary stream format.
+func (provider *AzureProvider) PassthroughStream(
+	ctx *schemas.BifrostContext,
+	postHookRunner schemas.PostHookRunner,
+	postHookSpanFinalizer func(context.Context),
+	key schemas.Key,
+	req *schemas.BifrostPassthroughRequest,
+) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+	url := provider.buildPassthroughURL(key, req.Path, req.RawQuery)
+
+	fasthttpReq := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	resp.StreamBody = true
+	defer fasthttp.ReleaseRequest(fasthttpReq)
+
+	fasthttpReq.Header.SetMethod(req.Method)
+	fasthttpReq.SetRequestURI(url)
+
+	providerUtils.SetExtraHeaders(ctx, fasthttpReq, provider.networkConfig.ExtraHeaders, nil)
+
+	for k, v := range req.SafeHeaders {
+		fasthttpReq.Header.Set(k, v)
+	}
+
+	fasthttpReq.Header.Set("Connection", "close")
+
+	authHeaders, bifrostErr := provider.getAzureAuthHeaders(ctx, key, schemas.IsAnthropicModel(req.Model))
+	if bifrostErr != nil {
+		return nil, bifrostErr
+	}
+	for k, v := range authHeaders {
+		fasthttpReq.Header.Set(k, v)
+	}
+
+	fasthttpReq.SetBody(req.Body)
+
+	activeClient := providerUtils.PrepareResponseStreaming(ctx, provider.streamingClient, resp)
+	providerUtils.SetStreamIdleTimeoutIfEmpty(ctx, provider.networkConfig.StreamIdleTimeoutInSeconds)
+
+	startTime := time.Now()
+
+	if err := activeClient.Do(fasthttpReq, resp); err != nil {
+		providerUtils.ReleaseStreamingResponse(resp)
+		if errors.Is(err, context.Canceled) {
+			return nil, &schemas.BifrostError{
+				IsBifrostError: false,
+				Error: &schemas.ErrorField{
+					Type:    schemas.Ptr(schemas.RequestCancelled),
+					Message: schemas.ErrRequestCancelled,
+					Error:   err,
+				},
+			}
+		}
+		if errors.Is(err, fasthttp.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, providerUtils.NewBifrostTimeoutError(schemas.ErrProviderRequestTimedOut, err)
+		}
+		return nil, providerUtils.NewBifrostOperationError(schemas.ErrProviderDoRequest, err)
+	}
+
+	headers := providerUtils.ExtractProviderResponseHeaders(resp)
+	ctx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, headers)
+
+	rawBodyStream := resp.BodyStream()
+	if rawBodyStream == nil {
+		providerUtils.ReleaseStreamingResponse(resp)
+		return nil, providerUtils.NewBifrostOperationError("provider returned an empty stream body", fmt.Errorf("provider returned an empty stream body"))
+	}
+
+	bodyStream, stopIdleTimeout := providerUtils.NewIdleTimeoutReader(rawBodyStream, rawBodyStream, providerUtils.GetStreamIdleTimeout(ctx))
+	stopCancellation := providerUtils.SetupStreamCancellation(ctx, rawBodyStream, provider.logger)
+
+	extraFields := schemas.BifrostResponseExtraFields{
+		ProviderResponseHeaders: headers,
+	}
+	statusCode := resp.StatusCode()
+
+	ch := make(chan *schemas.BifrostStreamChunk, schemas.DefaultStreamBufferSize)
+	go func() {
+		defer providerUtils.EnsureStreamFinalizerCalled(ctx, postHookSpanFinalizer)
+		defer func() {
+			if ctx.Err() == context.Canceled {
+				providerUtils.HandleStreamCancellation(ctx, postHookRunner, ch, provider.logger, postHookSpanFinalizer)
+			} else if ctx.Err() == context.DeadlineExceeded {
+				providerUtils.HandleStreamTimeout(ctx, postHookRunner, ch, provider.logger, postHookSpanFinalizer)
+			}
+			close(ch)
+		}()
+		defer providerUtils.ReleaseStreamingResponse(resp)
+		defer stopIdleTimeout()
+		defer stopCancellation()
+
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := bodyStream.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				providerUtils.ProcessAndSendResponse(ctx, postHookRunner, &schemas.BifrostResponse{
+					PassthroughResponse: &schemas.BifrostPassthroughResponse{
+						StatusCode:  statusCode,
+						Headers:     headers,
+						Body:        chunk,
+						ExtraFields: extraFields,
+					},
+				}, ch, postHookSpanFinalizer)
+			}
+			if readErr == io.EOF {
+				ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
+				extraFields.Latency = time.Since(startTime).Milliseconds()
+				providerUtils.ProcessAndSendResponse(ctx, postHookRunner, &schemas.BifrostResponse{
+					PassthroughResponse: &schemas.BifrostPassthroughResponse{
+						StatusCode:  statusCode,
+						Headers:     headers,
+						ExtraFields: extraFields,
+					},
+				}, ch, postHookSpanFinalizer)
+				return
+			}
+			if readErr != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
+				extraFields.Latency = time.Since(startTime).Milliseconds()
+				providerUtils.ProcessAndSendError(ctx, postHookRunner, readErr, ch, provider.logger, postHookSpanFinalizer)
+				return
+			}
+		}
+	}()
+	return ch, nil
+}
+
+// buildPassthroughURL constructs the full Azure URL for a passthrough request.
+func (provider *AzureProvider) buildPassthroughURL(key schemas.Key, path, rawQuery string) string {
+	endpoint := key.AzureKeyConfig.Endpoint.GetValue()
+
+	// Normalise the responses path emitted by the Azure SDK.
+	path = strings.Replace(path, "/openai/responses", "/openai/v1/responses", 1)
+
+	path = strings.Replace(path, "/openai/videos", "/openai/v1/videos", 1)
+
+	var apiVersion string
+	switch {
+	case strings.Contains(path, "openai/v1/responses"):
+		apiVersion = AzureAPIVersionPreview
+	case strings.HasPrefix(path, "/anthropic/"),
+		strings.HasPrefix(path, "/openai/v1/videos"):
+		apiVersion = ""
+	default:
+		if key.AzureKeyConfig.APIVersion != nil {
+			apiVersion = key.AzureKeyConfig.APIVersion.GetValue()
+		}
+		if apiVersion == "" {
+			if values, err := url.ParseQuery(rawQuery); err == nil {
+				apiVersion = values.Get("api-version")
+			}
+		}
+	}
+
+	// Strip api-version from the client query to avoid duplicates.
+	queryValues, _ := url.ParseQuery(rawQuery)
+	queryValues.Del("api-version")
+	cleanQuery := queryValues.Encode()
+
+	fullURL := endpoint + path
+	switch {
+	case cleanQuery != "" && apiVersion != "":
+		fullURL += "?" + cleanQuery + "&api-version=" + apiVersion
+	case cleanQuery != "":
+		fullURL += "?" + cleanQuery
+	case apiVersion != "":
+		fullURL += "?api-version=" + apiVersion
+	}
+	return fullURL
 }

@@ -147,8 +147,8 @@ func TestCoreToolScheduler_ClearQueue(t *testing.T) {
 	// Verify notifications were sent for each aborted call
 	assert.Equal(t, 3, len(abortedCalls), "should have received 3 aborted notifications")
 	for _, aborted := range abortedCalls {
-		assert.Equal(t, "fast-tool", aborted.Call.Tool.Name())
-		assert.Equal(t, StatusAborted, aborted.Call.Status)
+		assert.Equal(t, "fast-tool", aborted.ToolName)
+		assert.Equal(t, string(StatusAborted), aborted.Status)
 	}
 
 	// The slow tool should still complete normally

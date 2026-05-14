@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
@@ -59,15 +60,15 @@ func (r *EventRegistry) Dispatch(event Event) {
 
 // DrainedEvent describes a single event recovered from the DB at startup.
 type DrainedEvent struct {
-	EventType storage.ShogunateEvent
-	EdictKey  storage.EdictKey
-	Payload   map[string]interface{}
+	EventType storage.ShogunateEvent `msgpack:"event_type"`
+	EdictKey  storage.EdictKey       `msgpack:"edict_key"`
+	Payload   map[string]interface{} `msgpack:"payload,omitempty"`
 }
 
 // EventsDrainedMsg notifies the TUI that crash-recovery drained events from the DB.
 type EventsDrainedMsg struct {
-	ChannelID string
-	Events    []DrainedEvent
+	ChannelID string         `msgpack:"channel_id,omitempty"`
+	Events    []DrainedEvent `msgpack:"events"`
 }
 
 // Shogunate coordinates ministers and manages lifecycle.
@@ -83,10 +84,19 @@ type Shogunate struct {
 	notify        internal.NotifyFunc
 	drainedEvents []DrainedEvent // events recovered from DB at startup
 
+	// persister, if set, is attached to interactive sessions when they
+	// are created so messages flow into durable storage in near-real time.
+	persister SessionPersister
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	rulingCtx func() context.Context
+
+	// Per-channel cancel registry; CancelTab(channelID) invokes the
+	// corresponding cancel func. Populated by CancellableStreamCtx.
+	tabCancelsMu sync.Mutex
+	tabCancels   map[string]context.CancelFunc
 }
 
 // NewShogunate creates a new Shogunate coordinator.
@@ -124,11 +134,12 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		Runner:          runner,
 		GetMinister:     s.GetMinister,
 		OnRunnerUpgrade: s.SetRunner,
+		// Each ritual startup gets a fresh cancellable ctx registered
+		// under the chancellor channel. A subsequent ritual on the
+		// same channel replaces it; an explicit CancelTab("chancellor")
+		// from the TUI stops the current one.
 		StreamingCtx: func() context.Context {
-			if s.rulingCtx != nil {
-				return s.rulingCtx()
-			}
-			return s.ctx
+			return s.CancellableStreamCtx("chancellor")
 		},
 	})
 
@@ -208,6 +219,22 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ministers["sage"] = sage
 
 	return s
+}
+
+// SetSessionPersister wires a persister into the shogunate. Sessions
+// created afterwards (and any currently held by interactive ministers)
+// receive it; sessions without a TabType are silently skipped at save
+// time. Idempotent — safe to call again with a different persister.
+func (s *Shogunate) SetSessionPersister(p SessionPersister) {
+	if s == nil {
+		return
+	}
+	s.persister = p
+	for _, minister := range s.Ministers() {
+		if setter, ok := minister.(interface{ SetSessionPersister(SessionPersister) }); ok {
+			setter.SetSessionPersister(p)
+		}
+	}
 }
 
 // SetNotify sets the notification callback for all ministers.
@@ -476,6 +503,52 @@ func (s *Shogunate) SetRunnerMessageChannel(msgChan chan<- runners.Msg) {
 	s.runner.SetMessageChannel(msgChan)
 }
 
+// Subscribe returns a channel carrying every TUI-bound notification produced
+// by the shogunate: streaming chunks, events, and runner messages. It installs
+// the underlying SetNotify callback and the runner message channel on the
+// caller's behalf, so callers no longer touch either directly. The returned
+// channel stays open for the Shogunate's lifetime; the caller drains it until
+// ctx is cancelled.
+func (s *Shogunate) Subscribe(ctx context.Context) <-chan any {
+	if s == nil {
+		closed := make(chan any)
+		close(closed)
+		return closed
+	}
+	out := make(chan any, 256)
+
+	s.SetNotify(func(msg any) {
+		select {
+		case out <- msg:
+		case <-ctx.Done():
+		}
+	})
+
+	if s.runner != nil {
+		runnerMsgChan := make(chan runners.Msg, 10)
+		s.runner.SetMessageChannel(runnerMsgChan)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case msg, ok := <-runnerMsgChan:
+					if !ok {
+						return
+					}
+					select {
+					case out <- msg:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	return out
+}
+
 // GetRitualRegistry returns the ritual registry
 func (s *Shogunate) GetRitualRegistry() *RitualRegistry {
 	if s == nil || s.ritualGuard == nil {
@@ -502,11 +575,57 @@ func (s *Shogunate) GetEventRegistry() *EventRegistry {
 
 // SetRulingCtx sets the function that returns the ruling tab's context.
 // Rituals use this context, so cancelling the ruling tab cancels rituals.
+//
+// Deprecated: pass a channel ID through CancellableStreamCtx instead so
+// cancellation survives the TUI→daemon process split. Kept for
+// in-process callers during the transition.
 func (s *Shogunate) SetRulingCtx(fn func() context.Context) {
 	if s == nil {
 		return
 	}
 	s.rulingCtx = fn
+}
+
+// CancellableStreamCtx returns a context derived from the Shogunate's
+// root ctx and registers its cancel func under channelID. Any previous
+// cancel for the same channelID is invoked first, so callers don't
+// leak. Use CancelTab(channelID) to trigger cancellation externally.
+func (s *Shogunate) CancellableStreamCtx(channelID string) context.Context {
+	if s == nil {
+		return context.Background()
+	}
+	s.tabCancelsMu.Lock()
+	defer s.tabCancelsMu.Unlock()
+	if s.tabCancels == nil {
+		s.tabCancels = make(map[string]context.CancelFunc)
+	}
+	if prev, ok := s.tabCancels[channelID]; ok {
+		prev()
+	}
+	parent := s.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	s.tabCancels[channelID] = cancel
+	return ctx
+}
+
+// CancelTab invokes (and forgets) the cancel func registered under
+// channelID. Idempotent; calling with an unknown channelID is a no-op.
+func (s *Shogunate) CancelTab(channelID string) {
+	if s == nil {
+		return
+	}
+	s.tabCancelsMu.Lock()
+	cancel, ok := s.tabCancels[channelID]
+	if ok {
+		delete(s.tabCancels, channelID)
+	}
+	s.tabCancelsMu.Unlock()
+	if ok {
+		cancel()
+	}
 }
 
 // SubmitPrompt routes a prompt to the specified minister by ID.
@@ -522,14 +641,17 @@ func (s *Shogunate) SubmitPrompt(targetID string, p *Prompt) error {
 	return nil
 }
 
-// RestoreMinisterSession creates a fully-wired session and injects loaded history.
+// RestoreMinisterSession rebuilds the session of the minister identified
+// by tabType (matches the saved Session.TabType, which is the minister id)
+// and seeds it with msgs. Works for any minister that implements
+// RestoreSession — currently chancellor, sage, forge, judge.
 func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
 	if s == nil {
 		return fmt.Errorf("shogunate not initialized")
 	}
 	minister := s.GetMinister(tabType)
 	if minister == nil {
-		return fmt.Errorf("minister not found for tab type: %s", tabType)
+		return fmt.Errorf("minister not found: %s", tabType)
 	}
 	return minister.RestoreSession(minister, msgs)
 }
@@ -560,4 +682,286 @@ func (s *Shogunate) GetSealService() *storage.SealService {
 		return nil
 	}
 	return storage.NewSealService(s.db)
+}
+
+// HasMinister reports whether a minister with the given id is registered.
+func (s *Shogunate) HasMinister(id string) bool {
+	return s != nil && s.GetMinister(id) != nil
+}
+
+// ResetMinisterSession resets the session of the minister with the given id.
+// No-op if the minister doesn't exist or doesn't expose ResetSession.
+func (s *Shogunate) ResetMinisterSession(id string) {
+	if s == nil {
+		return
+	}
+	m := s.GetMinister(id)
+	if m == nil {
+		return
+	}
+	if rs, ok := m.(interface{ ResetSession() }); ok {
+		rs.ResetSession()
+	}
+}
+
+// GetEdict looks up an edict in the current shogunate scope.
+func (s *Shogunate) GetEdict(edictID uint) (*storage.Edict, error) {
+	if s == nil {
+		return nil, fmt.Errorf("shogunate not initialized")
+	}
+	ch, ok := s.GetMinister("chancellor").(*Chancellor)
+	if !ok {
+		return nil, fmt.Errorf("chancellor not found")
+	}
+	return ch.GetEdict(s.EdictKey(edictID))
+}
+
+// GrantRulerSeal stamps the Ruler's seal on an edict and publishes EventSealGranted.
+func (s *Shogunate) GrantRulerSeal(edictID uint, notes string) error {
+	if s == nil {
+		return fmt.Errorf("shogunate not initialized")
+	}
+	sealer := s.GetSealService()
+	if sealer == nil {
+		return fmt.Errorf("seal service not available")
+	}
+	key := s.EdictKey(edictID)
+	timestamp := time.Now().Format(time.RFC3339)
+	if err := sealer.GrantSeal(key, "ruler", storage.JSON{
+		"notes":     notes,
+		"timestamp": timestamp,
+	}); err != nil {
+		return err
+	}
+	s.PublishEvent(key, storage.EventSealGranted, storage.JSON{
+		"minister_id": "ruler",
+		"notes":       notes,
+		"timestamp":   timestamp,
+	})
+	return nil
+}
+
+// GetEdictSeals returns the seal chain for an edict.
+func (s *Shogunate) GetEdictSeals(key storage.EdictKey) ([]storage.Seal, error) {
+	if s == nil {
+		return nil, fmt.Errorf("shogunate not initialized")
+	}
+	sealer := s.GetSealService()
+	if sealer == nil {
+		return nil, fmt.Errorf("seal service not available")
+	}
+	return sealer.GetSeals(key)
+}
+
+// ListActiveEdicts returns edicts in the current scope that aren't cancelled or sealed.
+func (s *Shogunate) ListActiveEdicts() ([]storage.ActiveEdict, error) {
+	if s == nil {
+		return nil, fmt.Errorf("shogunate not initialized")
+	}
+	sealer := s.GetSealService()
+	if sealer == nil {
+		return nil, fmt.Errorf("seal service not available")
+	}
+	return sealer.ListActiveEdicts(s.config.Username, s.config.Project)
+}
+
+// AllowRunnerFallback toggles the host-fallback behaviour on the active runner.
+func (s *Shogunate) AllowRunnerFallback(allow bool) {
+	if s == nil || s.runner == nil {
+		return
+	}
+	s.runner.AllowFallback(allow)
+}
+
+// RunShellCommand executes a shell command on the active runner.
+func (s *Shogunate) RunShellCommand(ctx context.Context, input runners.Input) (runners.Output, error) {
+	if s == nil || s.runner == nil {
+		return runners.Output{}, fmt.Errorf("runner not initialized")
+	}
+	return s.runner.Run(ctx, input)
+}
+
+// HandleZhengmingResponse dispatches a user's zhengming answer to the first
+// minister that knows how to handle one.
+func (s *Shogunate) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
+	if s == nil {
+		return fmt.Errorf("shogunate not initialized")
+	}
+	type zhengmingHandler interface {
+		HandleZhengmingResponse(ctx context.Context, requestID, answer string) error
+	}
+	for _, m := range s.Ministers() {
+		if h, ok := m.(zhengmingHandler); ok {
+			return h.HandleZhengmingResponse(ctx, requestID, answer)
+		}
+	}
+	return fmt.Errorf("no minister accepted zhengming response")
+}
+
+// CancelZhengming cancels a pending zhengming request on whichever minister owns it.
+func (s *Shogunate) CancelZhengming(requestID string) {
+	if s == nil {
+		return
+	}
+	for _, m := range s.Ministers() {
+		if base, ok := m.(interface{ CancelZhengming(string) }); ok {
+			base.CancelZhengming(requestID)
+			return
+		}
+	}
+}
+
+// SessionState is a wire-safe snapshot of a minister's conversation state,
+// aggregated in one call for cheap TUI-side access. Exists=false means no
+// session exists for that tab.
+type SessionState struct {
+	Exists              bool
+	ChannelID           string
+	MessageCount        int
+	MessageSnapshot     int
+	ContextInfo         ContextInfo
+	ContextUsagePercent float64
+	ContextFiles        map[string]string
+}
+
+func (s *Shogunate) sessionForTab(tabTarget string) *Session {
+	if s == nil {
+		return nil
+	}
+	m := s.GetMinister(tabTarget)
+	if m == nil {
+		return nil
+	}
+	return m.GetSession()
+}
+
+// SessionState returns a snapshot of the session attached to the given tab.
+func (s *Shogunate) SessionState(tabTarget string) SessionState {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return SessionState{}
+	}
+	return SessionState{
+		Exists:              true,
+		ChannelID:           sess.ChannelID(),
+		MessageCount:        len(sess.GetMessages()),
+		MessageSnapshot:     sess.GetMessageSnapshot(),
+		ContextInfo:         sess.GetContextInfo(),
+		ContextUsagePercent: sess.GetContextUsagePercent(),
+		ContextFiles:        sess.GetContextFiles(),
+	}
+}
+
+// AddSessionContextFile attaches a file's contents to the given tab's session.
+func (s *Shogunate) AddSessionContextFile(tabTarget, path, content string) error {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	sess.AddContextFile(path, content)
+	return nil
+}
+
+// AddSessionMessage appends a message to the tab's conversation.
+func (s *Shogunate) AddSessionMessage(tabTarget, role, content string) error {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	sess.AddMessage(schemas.ChatMessageRole(role), content)
+	return nil
+}
+
+// ClearSessionHistory resets the tab's conversation to an empty state.
+func (s *Shogunate) ClearSessionHistory(tabTarget string) error {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	sess.ClearHistory()
+	return nil
+}
+
+// RollbackSession rewinds the conversation to the given message snapshot.
+func (s *Shogunate) RollbackSession(tabTarget string, snapshot int) error {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	sess.RollbackTo(snapshot)
+	return nil
+}
+
+// CompactSession runs a summarisation pass and returns the summary, replacing
+// older messages in the conversation with it.
+func (s *Shogunate) CompactSession(ctx context.Context, tabTarget, prompt string) (string, error) {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return "", fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	return sess.CompactHistory(ctx, prompt)
+}
+
+// SessionExport is a wire-safe copy of everything an exporter needs:
+// the session ID, its full message history, and the metadata fields
+// FormatMetadata renders. It satisfies the ExportableSession interface
+// used by export.go without the TUI ever touching the live *Session.
+type SessionExport struct {
+	ID           string                `msgpack:"id"`
+	Messages     []schemas.ChatMessage `msgpack:"messages"`
+	ContextFiles map[string]string     `msgpack:"context_files,omitempty"`
+	Provider     string                `msgpack:"provider,omitempty"`
+	Model        string                `msgpack:"model,omitempty"`
+	WorkingDir   string                `msgpack:"working_dir,omitempty"`
+	ProjectSlug  string                `msgpack:"project_slug,omitempty"`
+	CreatedAt    time.Time             `msgpack:"created_at"`
+	LastUpdated  time.Time             `msgpack:"last_updated"`
+}
+
+// GetID satisfies ExportableSession.
+func (e *SessionExport) GetID() string { return e.ID }
+
+// GetMessages satisfies ExportableSession.
+func (e *SessionExport) GetMessages() []schemas.ChatMessage { return e.Messages }
+
+// GetContextFiles satisfies ExportableSession.
+func (e *SessionExport) GetContextFiles() map[string]string { return e.ContextFiles }
+
+// FormatMetadata satisfies ExportableSession; mirrors Session.FormatMetadata
+// so exports look identical whether sourced live or over the wire.
+func (e *SessionExport) FormatMetadata(exportType, exportedAt string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("**Export Type:** %s\n", exportType))
+	b.WriteString(fmt.Sprintf("**Session ID:** %s | **Working Directory:** %s\n", e.ID, e.WorkingDir))
+	b.WriteString(fmt.Sprintf("**Provider:** %s | **Model:** %s\n", e.Provider, e.Model))
+	b.WriteString(fmt.Sprintf("**Created:** %s | **Last Updated:** %s | **Exported:** %s\n",
+		e.CreatedAt.Format("2006-01-02 15:04:05"),
+		e.LastUpdated.Format("2006-01-02 15:04:05"),
+		exportedAt))
+	if e.ProjectSlug != "" {
+		b.WriteString(fmt.Sprintf("**Project:** %s\n", e.ProjectSlug))
+	}
+	return b.String()
+}
+
+// GetSessionExport returns a wire-safe snapshot of the tab's session
+// suitable for feeding to exportSession. Nil if no session exists.
+func (s *Shogunate) GetSessionExport(tabTarget string) (*SessionExport, error) {
+	sess := s.sessionForTab(tabTarget)
+	if sess == nil {
+		return nil, fmt.Errorf("no session for tab %q", tabTarget)
+	}
+	msgs := make([]schemas.ChatMessage, len(sess.Messages()))
+	copy(msgs, sess.Messages())
+	return &SessionExport{
+		ID:           sess.ID,
+		Messages:     msgs,
+		ContextFiles: sess.GetContextFiles(),
+		Provider:     sess.Provider,
+		Model:        sess.Model,
+		WorkingDir:   sess.WorkingDir,
+		ProjectSlug:  sess.ProjectSlug,
+		CreatedAt:    sess.CreatedAt,
+		LastUpdated:  sess.LastUpdated,
+	}, nil
 }

@@ -69,19 +69,22 @@ type Msg interface{}
 
 // ContainerLaunchedMsg is sent when a container is launched
 type ContainerLaunchedMsg struct {
-	Message     string
-	ContainerID string
+	Message     string `msgpack:"message,omitempty"`
+	ContainerID string `msgpack:"container_id,omitempty"`
 }
 
-// ApprovalRequestMsg is sent when a command needs user approval
+// ApprovalRequestMsg is sent when a command needs user approval.
+// ResponseChan is an in-process field only; over the RPC wire this
+// message becomes a daemon→TUI request that expects a reply.
 type ApprovalRequestMsg struct {
-	Command      string
-	ResponseChan chan bool
+	Command      string    `msgpack:"command"`
+	ResponseChan chan bool `msgpack:"-"`
 }
 
-// ClearSchedulerMsg is sent when the runner needs to clear the scheduler queue
+// ClearSchedulerMsg is sent when the runner needs to clear the scheduler queue.
+// Always in-process only.
 type ClearSchedulerMsg struct {
-	ResultChan chan int
+	ResultChan chan int `msgpack:"-"`
 }
 
 // CommandDeniedError is returned when a user denies a host command approval request

@@ -186,21 +186,23 @@ type Tool interface {
 
 // ZhengmingPendingMsg notifies the UI of a pending clarification request
 type ZhengmingPendingMsg struct {
-	RequestID  string
-	EdictKey   storage.EdictKey
-	MinisterID string
-	Questions  storage.ZhengmingQuestions
-	Priority   storage.ZhengmingPriority
+	RequestID  string                     `msgpack:"request_id"`
+	EdictKey   storage.EdictKey           `msgpack:"edict_key"`
+	MinisterID string                     `msgpack:"minister_id"`
+	Questions  storage.ZhengmingQuestions `msgpack:"questions"`
+	Priority   storage.ZhengmingPriority  `msgpack:"priority,omitempty"`
 }
 
 // ZhengmingAnsweredMsg notifies the UI that a clarification was answered
 type ZhengmingAnsweredMsg struct {
-	RequestID string
-	Answer    string
+	RequestID string `msgpack:"request_id"`
+	Answer    string `msgpack:"answer,omitempty"`
 }
 
 // StreamDoneMsg signals that streaming has completed
-type StreamDoneMsg struct{ ChannelID string }
+type StreamDoneMsg struct {
+	ChannelID string `msgpack:"channel_id"`
+}
 
 // MinisterBase provides shared functionality for all ministers.
 // Ministers embed this struct to gain database access and session creation capabilities.
@@ -226,6 +228,12 @@ type MinisterBase struct {
 	username string
 	project  string
 	session  *Session // Embedded session for interactive use cases
+
+	// persister is attached to interactive sessions when they are created
+	// in ProcessPrompt (and in the minister-specific RestoreSession /
+	// brewWithStreaming paths). Ephemeral ritual-task sessions never get
+	// it set and skip storage.
+	persister SessionPersister
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
@@ -320,6 +328,7 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 			return
 		}
 		m.session.TabType = m.ministerID
+		m.session.SetPersister(m.persister)
 		m.logger.Info("created interactive session", "minister_id", m.ministerID)
 	}
 
@@ -505,6 +514,39 @@ func (m *MinisterBase) SetMinisterConfig(client LLMProvider, config *SessionConf
 // SetNotify sets the notification callback.
 func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 	m.notify = notify
+}
+
+// SetSessionPersister stores the persister and propagates it to the
+// currently-held session if there is one. Future sessions pick it up
+// at the call sites that wire interactive sessions (chancellor.go,
+// sage.go) via base.Persister().
+func (m *MinisterBase) SetSessionPersister(p SessionPersister) {
+	m.persister = p
+	if m.session != nil {
+		m.session.SetPersister(p)
+	}
+}
+
+// Persister returns the configured persister (nil if none was set).
+func (m *MinisterBase) Persister() SessionPersister {
+	return m.persister
+}
+
+// restoreSession rebuilds the minister's interactive session and seeds
+// it with msgs. The concrete Minister is passed in so CreateSession can
+// dispatch Tools/SystemPrompt polymorphically. TabType is keyed off the
+// minister's id (matches what ListSessions filters on); persister is
+// attached so subsequent appends continue to flow into storage.
+func (m *MinisterBase) restoreSession(minister Minister, msgs []schemas.ChatMessage) error {
+	sess, err := CreateSession(minister, m.client, m.config, m.notify, m.ministerID)
+	if err != nil {
+		return err
+	}
+	sess.SetMessages(msgs)
+	sess.TabType = m.ministerID
+	sess.SetPersister(m.persister)
+	m.session = sess
+	return nil
 }
 
 // Model returns the minister's LLM client.
@@ -782,7 +824,7 @@ func (m *MinisterBase) grantSeal(key storage.EdictKey, metadata storage.JSON) er
 		return nil
 	}
 
-	sealID := GenerateID("seal", fmt.Sprintf("%d", key.ID), m.ministerID)
+	sealID := GenerateID("seal", fmt.Sprintf("%d", key.ID), key.Username, key.Project, m.ministerID)
 	seal := storage.Seal{
 		SealID:     sealID,
 		EdictID:    key.ID,

@@ -2174,7 +2174,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	// would otherwise block forever waiting on ResultChan.
 	shog.SetNotify(func(msg any) {
 		if req, ok := msg.(tools.EditorRequest); ok {
-			req.ResultChan <- errors.New("editor not available in test environment")
+			req.ResultChan <- tools.EditorResult{Err: errors.New("editor not available in test environment")}
 			return
 		}
 		tm.Send(msg)
@@ -2292,4 +2292,361 @@ func requireCommandSucceeds(t *testing.T, dir string, name string, args ...strin
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s %v should succeed\nOutput: %s", name, args, output)
+}
+
+// TestContextPercentOnTabSwitch tests that ContextPercent is properly updated when switching tabs.
+// This test verifies the fix for the bug where ContextPercent wasn't being updated to 0
+// when switching to a tab without an active session.
+func TestContextPercentOnTabSwitch(t *testing.T) {
+	config := &Config{}
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+
+	initialPercent := model.status.ContextPercent
+	t.Logf("Initial ContextPercent: %.0f%%", initialPercent)
+
+	// Switch tabs - this should trigger onTabSwitch callback
+	model.tabs.NextTab()
+	afterSwitchPercent := model.status.ContextPercent
+	t.Logf("After switch ContextPercent: %.0f%%", afterSwitchPercent)
+
+	// Verify callback was invoked - this was the core bug
+	require.NotNil(t, model.tabs.onTabSwitch, "onTabSwitch callback should be set")
+
+	// After the fix, when there's no session, ContextPercent should be set to 0
+	// The bug was that ContextPercent retained the old value instead of being updated
+	assert.Equal(t, float64(0), afterSwitchPercent,
+		"ContextPercent should be 0 when switching to a tab without a session")
+}
+
+// TestContextPercentCallbackInvoked tests that the onTabSwitch callback is invoked when switching tabs.
+func TestContextPercentCallbackInvoked(t *testing.T) {
+	config := &Config{}
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+
+	callbackInvoked := false
+	originalCallback := model.tabs.onTabSwitch
+	model.tabs.onTabSwitch = func() {
+		callbackInvoked = true
+		if originalCallback != nil {
+			originalCallback()
+		}
+	}
+
+	model.tabs.NextTab()
+
+	assert.True(t, callbackInvoked, "onTabSwitch callback should be invoked when switching tabs")
+}
+
+// TestContextPercentZeroWhenNoSession tests that ContextPercent is 0 when there's no active session.
+func TestContextPercentZeroWhenNoSession(t *testing.T) {
+	config := &Config{}
+	// No shogunate is passed, so there's no session
+	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
+	model.sessionActive = true
+
+	// The model should have ContextPercent = 0 when there's no session
+	assert.Equal(t, float64(0), model.status.ContextPercent,
+		"ContextPercent should be 0 when there's no active session")
+
+	// Switch tabs and verify it stays 0 (no session to update from)
+	model.tabs.NextTab()
+	assert.Equal(t, float64(0), model.status.ContextPercent,
+		"ContextPercent should remain 0 when switching to a tab with no session")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Streaming/render debounce tests
+//
+// These tests exercise the contentDirty + chatRenderTickMsg coalescing path
+// that prevents UpdateContent() from running on every StreamChunkMsg. The
+// final test wires the dispatcher and the model together end-to-end.
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestBackpressure_DebouncePreventsImmediateUpdate verifies that when
+// TUIModel receives multiple StreamChunkMsg messages in rapid succession,
+// UpdateContent() is NOT called after each one. Instead, the contentDirty
+// flag is set and a debounce tick is scheduled.
+func TestBackpressure_DebouncePreventsImmediateUpdate(t *testing.T) {
+	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+
+	// Mark the "forge" tab as streaming (required for chunk acceptance)
+	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+
+	// Capture baseline — viewport content before any chunks
+	chat := pmodel.tabs.ChatByTab("forge")
+	baseline := chat.Viewport.View()
+
+	// Switch to value type for chaining Updates
+	model := *pmodel
+
+	// Send multiple chunks rapidly
+	const chunkCount = 10
+	for i := 0; i < chunkCount; i++ {
+		newModel, _ := model.Update(shogunate.StreamChunkMsg{
+			ChannelID: "forge",
+			Text:      "chunk-" + time.Duration(i).String() + " ",
+		})
+		model = newModel.(TUIModel)
+	}
+
+	// After rapid chunks, contentDirty should be true (not flushed yet)
+	chat = model.tabs.ChatByTab("forge")
+	assert.True(t, chat.contentDirty,
+		"contentDirty should be true after rapid chunks — debounce prevents immediate UpdateContent()")
+
+	// Viewport should still show the baseline (stale, not updated)
+	assert.Equal(t, baseline, chat.Viewport.View(),
+		"viewport should be stale after rapid chunks — UpdateContent() not yet called")
+
+	// All chunks should be accumulated in messages
+	assert.Len(t, chat.Messages, 1, "chunks should accumulate in a single AI message")
+	expected := ""
+	for i := 0; i < chunkCount; i++ {
+		expected += "chunk-" + time.Duration(i).String() + " "
+	}
+	assert.Equal(t, expected, chat.Messages[0].Content,
+		"all chunks should be accumulated in the AI message")
+}
+
+// TestBackpressure_DebounceFlushesCorrectContent verifies that after the
+// debounce window expires, UpdateContent() is called and the viewport
+// reflects the final accumulated content.
+func TestBackpressure_DebounceFlushesCorrectContent(t *testing.T) {
+	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+
+	// Mark the "forge" tab as streaming
+	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+
+	// Switch to value type for chaining Updates
+	model := *pmodel
+
+	chunks := []string{"Hello", " ", "world", "!", " This", " is", " a", " test."}
+	for _, chunk := range chunks {
+		newModel, cmd := model.Update(shogunate.StreamChunkMsg{
+			ChannelID: "forge",
+			Text:      chunk,
+		})
+		model = newModel.(TUIModel)
+
+		// Execute any debounce tick commands to simulate Bubble Tea's event loop.
+		// In real TUI, tea.Tick fires after 50ms. Here we drain the Cmd to get
+		// the chatRenderTickMsg and feed it back.
+		if cmd != nil {
+			msg := cmd()
+			if msg != nil {
+				newModel2, _ := model.Update(msg)
+				model = newModel2.(TUIModel)
+			}
+		}
+	}
+
+	// Now simulate the debounce tick: send chatRenderTickMsg
+	newModel, _ := model.Update(chatRenderTickMsg{})
+	model = newModel.(TUIModel)
+
+	// After the debounce tick, contentDirty should be false
+	chat := model.tabs.ChatByTab("forge")
+	assert.False(t, chat.contentDirty,
+		"contentDirty should be false after debounce tick fires")
+
+	// Viewport should now contain the full accumulated content
+	view := chat.Viewport.View()
+	assert.Contains(t, view, "Hello",
+		"viewport should contain first chunk after debounce flush")
+	assert.Contains(t, view, "test",
+		"viewport should contain last chunk after debounce flush")
+}
+
+// TestBackpressure_EndToEnd verifies the full pipeline:
+//   - A mock shogunate rapidly fires stream messages through the dispatcher
+//   - The dispatcher drops medium/low priority messages under congestion
+//   - High-priority control messages are always delivered
+//   - The TUIModel accumulates delivered chunks
+//   - After the debounce window, the final content is correct
+func TestBackpressure_EndToEnd(t *testing.T) {
+	// Set up a dispatcher that records messages sent to the TUI
+	sender := &countingSender{}
+	d := newDispatcherWithSender(sender)
+	defer d.close()
+
+	// Set up a TUIModel
+	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+
+	// Phase 1: Rapid fire — send a stream of messages through the dispatcher
+	const textChunks = 100
+	const reasoningChunks = 50
+
+	for i := 0; i < textChunks; i++ {
+		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "text "})
+	}
+	for i := 0; i < reasoningChunks; i++ {
+		d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "forge", Text: "think "})
+	}
+	// High-priority complete is sent last — must always arrive
+	d.notify(shogunate.StreamCompleteMsg{ChannelID: "forge"})
+
+	// Wait for the dispatcher to process all messages
+	time.Sleep(500 * time.Millisecond)
+
+	// Phase 2: Feed delivered messages into the TUIModel
+	// (In real TUI, this happens via tea.Program.Send → Update loop)
+	//
+	// The dispatcher routes high-priority synchronously and medium/low
+	// through async goroutines, so a late chunk goroutine can land in
+	// sender.msgs *after* StreamCompleteMsg. Replay chunks before the
+	// complete to model the real producer order.
+	model := *pmodel
+	msgs := sender.messages()
+	var chunks, completes []any
+	for _, msg := range msgs {
+		switch msg.(type) {
+		case shogunate.StreamChunkMsg, shogunate.StreamReasoningChunkMsg:
+			chunks = append(chunks, msg)
+		case shogunate.StreamCompleteMsg:
+			completes = append(completes, msg)
+		}
+	}
+	for _, msg := range append(chunks, completes...) {
+		newModel, _ := model.Update(msg)
+		model = newModel.(TUIModel)
+	}
+
+	// Phase 3: Verify drop counts
+	med, low := d.DroppedCounts()
+	_ = med // Some medium drops are expected due to semaphore-based trySend
+	_ = low // Some low drops are expected
+
+	// High-priority StreamCompleteMsg must have been delivered
+	foundComplete := false
+	for _, msg := range msgs {
+		if _, ok := msg.(shogunate.StreamCompleteMsg); ok {
+			foundComplete = true
+			break
+		}
+	}
+	assert.True(t, foundComplete,
+		"StreamCompleteMsg (high priority) must always be delivered")
+
+	// Phase 4: Verify any delivered chunks land in the chat as AI content.
+	// We can't assert a specific delivery count — under fast notify() flood
+	// the 1-slot semaphore may drop nearly all medium/low chunks before their
+	// trySend goroutines get scheduled. The deterministic guarantee is only
+	// the high-priority StreamCompleteMsg above.
+	chat := model.tabs.ChatByTab("forge")
+	deliveredChunks := 0
+	for _, msg := range msgs {
+		if _, ok := msg.(shogunate.StreamChunkMsg); ok {
+			deliveredChunks++
+		}
+	}
+	if deliveredChunks > 0 {
+		aiContent := ""
+		// StreamCompleteMsg has already finalized the message, so the type is
+		// now MessageTypeAISuccess (or AIFailure). Include all AI-flavored types.
+		for _, m := range chat.Messages {
+			switch m.Type {
+			case MessageTypeAI, MessageTypeAISuccess, MessageTypeAIFailure:
+				aiContent += m.Content
+			}
+		}
+		assert.Contains(t, aiContent, "text",
+			"if any StreamChunkMsg was delivered, its text must land in chat")
+	}
+
+	// Phase 5: Simulate debounce flush
+	newModel, _ := model.Update(chatRenderTickMsg{})
+	model = newModel.(TUIModel)
+	chat = model.tabs.ChatByTab("forge")
+
+	assert.False(t, chat.contentDirty,
+		"contentDirty should be false after debounce flush")
+}
+
+// TestBackpressure_DebounceCoalescesUpdates verifies that the debounce
+// mechanism ensures UpdateContent() is called at most once per debounce
+// window (50ms), regardless of how many chunks arrive during that window.
+func TestBackpressure_DebounceCoalescesUpdates(t *testing.T) {
+	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+
+	// Switch to value type for chaining Updates
+	model := *pmodel
+
+	// Send 50 chunks without any debounce tick
+	for i := 0; i < 50; i++ {
+		newModel, _ := model.Update(shogunate.StreamChunkMsg{
+			ChannelID: "forge",
+			Text:      "x",
+		})
+		model = newModel.(TUIModel)
+	}
+
+	chat := model.tabs.ChatByTab("forge")
+
+	// contentDirty should be true (not yet flushed)
+	assert.True(t, chat.contentDirty,
+		"contentDirty must be true — debounce has prevented flush")
+
+	// renderTickPending should be true (tick scheduled)
+	assert.True(t, model.renderTickPending,
+		"renderTickPending should be true — debounce tick is scheduled")
+
+	// Now flush via chatRenderTickMsg
+	newModel, _ := model.Update(chatRenderTickMsg{})
+	model = newModel.(TUIModel)
+	chat = model.tabs.ChatByTab("forge")
+
+	// After flush, contentDirty should be false
+	assert.False(t, chat.contentDirty,
+		"contentDirty should be false after debounce flush")
+
+	// The AI message should contain all 50 "x" characters
+	require.Len(t, chat.Messages, 1, "should have one AI message")
+	assert.Equal(t, strings.Repeat("x", 50), chat.Messages[0].Content,
+		"all 50 chunks should be accumulated in the single AI message")
+
+	// Verify viewport now shows the content
+	view := chat.Viewport.View()
+	assert.Contains(t, view, "x",
+		"viewport should show accumulated content after flush")
+}
+
+// TestBackpressure_StreamCompleteResetsState verifies that after a complete
+// stream cycle (start → chunks → complete), the TUIModel's streaming state
+// is properly cleaned up and the chat content is finalized.
+func TestBackpressure_StreamCompleteResetsState(t *testing.T) {
+	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+
+	// Start streaming
+	newModel, _ := pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	model := newModel.(TUIModel)
+
+	forgeTab := model.tabs.TabByTarget("forge")
+	require.NotNil(t, forgeTab)
+	assert.True(t, forgeTab.Streaming, "forge tab should be streaming after StreamStartMsg")
+
+	// Send chunks
+	newModel, _ = model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "Hello "})
+	model = newModel.(TUIModel)
+	newModel, _ = model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "World"})
+	model = newModel.(TUIModel)
+
+	chat := model.tabs.ChatByTab("forge")
+	assert.True(t, chat.contentDirty, "content should be dirty after chunks")
+
+	// Complete the stream — this is high-priority, must not be dropped
+	newModel, _ = model.Update(shogunate.StreamCompleteMsg{ChannelID: "forge"})
+	model = newModel.(TUIModel)
+
+	// Streaming should be cleared
+	forgeTab = model.tabs.TabByTarget("forge")
+	assert.False(t, forgeTab.Streaming,
+		"forge tab should NOT be streaming after StreamCompleteMsg")
+
+	// The chat message should be finalized (type changes from AI to AISuccess/AIFailure)
+	chat = model.tabs.ChatByTab("forge")
+	assert.NotEmpty(t, chat.Messages, "should have at least one message")
 }

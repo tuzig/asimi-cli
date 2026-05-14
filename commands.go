@@ -185,10 +185,8 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	// Reset the appropriate minister session based on active tab
 	if model.shogunate != nil {
 		tab := model.tabs.ActiveTab()
-		if m := model.shogunate.GetMinister(string(tab.Type)); m != nil {
-			if rs, ok := m.(interface{ ResetSession() }); ok {
-				rs.ResetSession()
-			}
+		if model.shogunate.HasMinister(string(tab.Type)) {
+			model.shogunate.ResetMinisterSession(string(tab.Type))
 		} else {
 			slog.Debug("Failed to get session", "miniter", tab.Type)
 		}
@@ -214,24 +212,23 @@ func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
-		if session := model.getCurrentSession(); session != nil {
-			shogunateInfo := session.GetContextInfo()
-			info := ContextInfo{
-				Model:              shogunateInfo.Model,
-				TotalTokens:        shogunateInfo.TotalTokens,
-				UsedTokens:         shogunateInfo.UsedTokens,
-				SystemPromptTokens: shogunateInfo.SystemPromptTokens,
-				SystemToolsTokens:  shogunateInfo.SystemToolsTokens,
-				MemoryFilesTokens:  shogunateInfo.MemoryFilesTokens,
-				MessagesTokens:     shogunateInfo.MessagesTokens,
-				FreeTokens:         shogunateInfo.FreeTokens,
-				AutocompactBuffer:  shogunateInfo.AutocompactBuffer,
-			}
-			return showContextMsg{content: renderContextInfo(info)}
+		state, ok := model.currentSessionState()
+		if !ok {
+			return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
 		}
-
-		// No session available
-		return showSystemMsg("No active session. Use :models to configure a model and start chatting.")
+		ci := state.ContextInfo
+		info := ContextInfo{
+			Model:              ci.Model,
+			TotalTokens:        ci.TotalTokens,
+			UsedTokens:         ci.UsedTokens,
+			SystemPromptTokens: ci.SystemPromptTokens,
+			SystemToolsTokens:  ci.SystemToolsTokens,
+			MemoryFilesTokens:  ci.MemoryFilesTokens,
+			MessagesTokens:     ci.MessagesTokens,
+			FreeTokens:         ci.FreeTokens,
+			AutocompactBuffer:  ci.AutocompactBuffer,
+		}
+		return showContextMsg{content: renderContextInfo(info)}
 	}
 }
 
@@ -303,9 +300,11 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	var session ExportableSession
 
-	if s := model.getCurrentSession(); s != nil {
-		session = s
-		slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictKey.ID)
+	if model.shogunate != nil {
+		if exp, err := model.shogunate.GetSessionExport(model.currentTabTarget()); err == nil && exp != nil {
+			session = exp
+			slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictKey.ID)
+		}
 	}
 
 	if session == nil {
@@ -766,10 +765,10 @@ func checkMissingInfraFiles(agentsFile string) []string {
 }
 
 func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
-	var messageCount int
-
-	if session := model.getCurrentSession(); session != nil {
-		messageCount = len(session.GetMessages())
+	state, ok := model.currentSessionState()
+	messageCount := 0
+	if ok {
+		messageCount = state.MessageCount
 	}
 
 	if messageCount == 0 {
@@ -877,7 +876,7 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 		model.commandLine.AddToast(fmt.Sprintf("Opened Ritual tab: %s", runID), "success", time.Second*2)
 	default:
 		// Treat as minister name
-		if model.shogunate != nil && model.shogunate.GetMinister(target) != nil {
+		if model.shogunate != nil && model.shogunate.HasMinister(target) {
 			label := strings.ToUpper(target[:1]) + target[1:]
 			model.tabs.Add(label, TabType(target), target)
 			model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
@@ -900,28 +899,16 @@ func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
 
 // handleSealCommand grants the Ruler's seal to an edict
 func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
-	// Get seal service from shogunate
 	if model.shogunate == nil {
 		return func() tea.Msg {
 			return showSystemMsg("Shogunate not active - cannot grant seal")
 		}
 	}
 
-	sealService := model.shogunate.GetSealService()
-	if sealService == nil {
-		return func() tea.Msg {
-			return showSystemMsg("Seal service not available")
-		}
-	}
-
 	// If no args, show selection of pending edicts
 	if len(args) == 0 {
-		key := model.shogunate.EdictKey(0)
 		return func() tea.Msg {
-			edicts, err := sealService.ListActiveEdicts(
-				key.Username,
-				key.Project,
-			)
+			edicts, err := model.shogunate.ListActiveEdicts()
 			if err != nil {
 				return showSystemMsg(fmt.Sprintf("Failed to list pending edicts: %v", err))
 			}
@@ -948,18 +935,14 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 	key := model.shogunate.EdictKey(edictID)
 
 	// Validate edict exists BEFORE seal lookup
-	if chancellorMinister := model.shogunate.GetMinister("chancellor"); chancellorMinister != nil {
-		if chancellor, ok := chancellorMinister.(*shogunate.Chancellor); ok {
-			if _, err := chancellor.GetEdict(key); err != nil {
-				return func() tea.Msg {
-					return showSystemMsg(fmt.Sprintf("Edict not found %v", key))
-				}
-			}
+	if _, err := model.shogunate.GetEdict(edictID); err != nil {
+		return func() tea.Msg {
+			return showSystemMsg(fmt.Sprintf("Edict not found %v", key))
 		}
 	}
 
 	// Get current seals for the edict
-	seals, err := sealService.GetSeals(key)
+	seals, err := model.shogunate.GetEdictSeals(key)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Failed to get seals for %d: %v", edictID, err))
@@ -1016,33 +999,12 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 	return grantRulerSealCmd(model, edictID, notes)
 }
 
-// grantRulerSealCmd creates a command that grants the Ruler's seal to an edict
+// grantRulerSealCmd creates a command that grants the Ruler's seal to an edict.
 func grantRulerSealCmd(model *TUIModel, edictID uint, notes string) tea.Cmd {
 	return func() tea.Msg {
-		sealService := model.shogunate.GetSealService()
-		if sealService == nil {
-			return showSystemMsg("Seal service not available")
-		}
-
-		// Grant Ruler's seal
-		metadata := storage.JSON{
-			"notes":     notes,
-			"timestamp": time.Now().Format(time.RFC3339),
-		}
-
-		edictKey := model.shogunate.EdictKey(edictID)
-		if err := sealService.GrantSeal(edictKey, "ruler", metadata); err != nil {
+		if err := model.shogunate.GrantRulerSeal(edictID, notes); err != nil {
 			return showSystemMsg(fmt.Sprintf("Failed to grant Ruler's seal: %v", err))
 		}
-
-		// Emit event
-		payload := storage.JSON{
-			"minister_id": "ruler",
-			"notes":       notes,
-			"timestamp":   metadata["timestamp"],
-		}
-		model.shogunate.PublishEvent(edictKey, storage.EventSealGranted, payload)
-
 		return nil
 	}
 }

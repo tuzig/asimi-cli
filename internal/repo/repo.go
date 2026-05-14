@@ -134,7 +134,7 @@ func (r *RepoInfo) IsClean() bool {
 
 // RefreshDiff recalculates diff statistics using gogit
 func (r *RepoInfo) RefreshDiff() {
-	if r.repo == nil {
+	if r == nil || r.repo == nil {
 		return
 	}
 

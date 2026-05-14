@@ -11,6 +11,7 @@ import (
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // Forge receives Tasks from the Chancellor via the tasks channel.
@@ -30,6 +31,11 @@ func NewForge(base *MinisterBase) *Forge {
 // ID returns the minister identifier.
 func (f *Forge) ID() string {
 	return "forge"
+}
+
+// RestoreSession rebuilds the Forge's interactive session populated with msgs.
+func (f *Forge) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
+	return f.MinisterBase.restoreSession(minister, msgs)
 }
 
 // SystemPrompt returns the Forge's system prompt template.

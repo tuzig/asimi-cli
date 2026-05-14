@@ -295,7 +295,7 @@ func TestAccountImplementsSchemaAccount(t *testing.T) {
 
 // TestGetConfigForProvider tests the config provider
 func TestGetConfigForProvider(t *testing.T) {
-	account := NewAccount(30, 60)
+	account := NewAccount(30, 60, 0, "")
 	cfg, err := account.GetConfigForProvider(schemas.OpenAI)
 	if err != nil {
 		t.Fatalf("GetConfigForProvider() error = %v", err)
