@@ -22,12 +22,11 @@ import (
 func newTestDispatcher(sendFunc func(msg any)) *notificationDispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &notificationDispatcher{
-		sendFunc:      sendFunc,
-		in:            make(chan any, 512),
-		cancel:        cancel,
-		done:          make(chan struct{}),
-		mediumSendSem: make(chan struct{}, 1),
-		lowSendSem:    make(chan struct{}, 1),
+		sendFunc:       sendFunc,
+		in:             make(chan any, 512),
+		cancel:         cancel,
+		done:           make(chan struct{}),
+		streamChunkSem: make(chan struct{}, 1),
 	}
 	go d.run(ctx)
 	return d
@@ -39,12 +38,11 @@ func newTestDispatcher(sendFunc func(msg any)) *notificationDispatcher {
 func newDispatcherWithSender(sender messageSender) *notificationDispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &notificationDispatcher{
-		sender:        sender,
-		in:            make(chan any, 512),
-		cancel:        cancel,
-		done:          make(chan struct{}),
-		mediumSendSem: make(chan struct{}, 1),
-		lowSendSem:    make(chan struct{}, 1),
+		sender:         sender,
+		in:             make(chan any, 512),
+		cancel:         cancel,
+		done:           make(chan struct{}),
+		streamChunkSem: make(chan struct{}, 1),
 	}
 	go d.run(ctx)
 	return d
@@ -245,61 +243,57 @@ func TestUnknownTypeHighPriority(t *testing.T) {
 	}
 }
 
-// ── Test 5: Drop counters increment correctly for medium/low drops ──────────
-
-// TestDropCountersIncrement verifies that the mediumDropped and lowDropped
-// counters accurately reflect the number of dropped messages for each lane.
 func TestDropCountersIncrement(t *testing.T) {
-	var counter atomic.Int64
-	unblock := make(chan struct{})
+	const flood = 40
 
-	sendFunc := blockingSendFunc(unblock, &counter)
+	// Medium lane in isolation.
+	{
+		var counter atomic.Int64
+		unblock := make(chan struct{})
+		d := newTestDispatcher(blockingSendFunc(unblock, &counter))
+		defer d.close()
 
-	d := newTestDispatcher(sendFunc)
-	defer d.close()
-
-	// Saturate the medium lane.
-	d.notify(shogunate.StreamChunkMsg{})
-	time.Sleep(50 * time.Millisecond)
-
-	const mediumFlood = 40
-	for i := 0; i < mediumFlood; i++ {
 		d.notify(shogunate.StreamChunkMsg{})
+		time.Sleep(50 * time.Millisecond)
+		for i := 0; i < flood; i++ {
+			d.notify(shogunate.StreamChunkMsg{})
+		}
+		time.Sleep(200 * time.Millisecond)
+		close(unblock)
+		time.Sleep(50 * time.Millisecond)
+
+		med, low := d.DroppedCounts()
+		if med != flood {
+			t.Errorf("medium-only flood: expected medium drops = %d, got %d", flood, med)
+		}
+		if low != 0 {
+			t.Errorf("medium-only flood: expected low drops = 0, got %d", low)
+		}
 	}
-	time.Sleep(200 * time.Millisecond)
 
-	// Saturate the low lane. Separate semaphore, so it can acquire
-	// independently — but sendFunc is still blocked, so the low goroutine
-	// will also block trying to send, occupying the low semaphore.
-	d.notify(shogunate.StreamReasoningChunkMsg{})
-	time.Sleep(50 * time.Millisecond)
+	// Low lane in isolation.
+	{
+		var counter atomic.Int64
+		unblock := make(chan struct{})
+		d := newTestDispatcher(blockingSendFunc(unblock, &counter))
+		defer d.close()
 
-	const lowFlood = 25
-	for i := 0; i < lowFlood; i++ {
 		d.notify(shogunate.StreamReasoningChunkMsg{})
-	}
-	time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
+		for i := 0; i < flood; i++ {
+			d.notify(shogunate.StreamReasoningChunkMsg{})
+		}
+		time.Sleep(200 * time.Millisecond)
+		close(unblock)
+		time.Sleep(50 * time.Millisecond)
 
-	// Unblock everything.
-	close(unblock)
-	time.Sleep(200 * time.Millisecond)
-
-	med, low := d.DroppedCounts()
-
-	if med == 0 {
-		t.Error("expected medium drops > 0")
-	}
-	if low == 0 {
-		t.Error("expected low drops > 0")
-	}
-
-	// Each lane should have dropped exactly its flood count:
-	// the first message occupies the semaphore, so all flood messages are dropped.
-	if med != mediumFlood {
-		t.Errorf("expected medium drops = %d, got %d", mediumFlood, med)
-	}
-	if low != lowFlood {
-		t.Errorf("expected low drops = %d, got %d", lowFlood, low)
+		med, low := d.DroppedCounts()
+		if low != flood {
+			t.Errorf("low-only flood: expected low drops = %d, got %d", flood, low)
+		}
+		if med != 0 {
+			t.Errorf("low-only flood: expected medium drops = 0, got %d", med)
+		}
 	}
 }
 
@@ -469,6 +463,79 @@ func TestAllHighPriorityTypes(t *testing.T) {
 	if delivered < count {
 		t.Errorf("expected %d high-priority messages delivered, got %d", count, delivered)
 	}
+}
+
+// ── Cross-type ordering: output and reasoning share a lane ──────────────────
+
+// TestChunkOrderingOutputAndReasoning is a regression guard for the
+// "reasoning and output get mixed up" bug. Output and reasoning chunks share
+// a single 1-slot semaphore, so the dispatch loop's submission order must be
+// preserved by the sender. The test interleaves the two types and asserts
+// that what arrives at the sender is a prefix-ordered subset of what was
+// submitted.
+func TestChunkOrderingOutputAndReasoning(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		received []shogunate.StreamChunkMsg // misuse: we tag each msg's Text with seq
+	)
+	// recordSendFunc captures only the chunks we care about and their order.
+	sendFunc := func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch v := msg.(type) {
+		case shogunate.StreamChunkMsg:
+			received = append(received, v)
+		case shogunate.StreamReasoningChunkMsg:
+			received = append(received, shogunate.StreamChunkMsg{ChannelID: "r", Text: v.Text})
+		}
+	}
+
+	d := newTestDispatcher(sendFunc)
+	defer d.close()
+
+	// Submit an interleaved sequence. The seq number embedded in Text must
+	// arrive in monotonically increasing order at the sender (allowing for
+	// drops — a drop just skips a number, never inverts the order).
+	const total = 200
+	want := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		text := fmt.Sprintf("%04d", i)
+		want = append(want, text)
+		if i%2 == 0 {
+			d.notify(shogunate.StreamChunkMsg{ChannelID: "o", Text: text})
+		} else {
+			d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "r", Text: text})
+		}
+	}
+
+	// Wait for the dispatcher to drain. Since trySend may drop, we can't wait
+	// on a count; just give the loop time to process everything.
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	got := append([]shogunate.StreamChunkMsg(nil), received...)
+	mu.Unlock()
+
+	if len(got) == 0 {
+		t.Fatal("no chunks delivered")
+	}
+
+	// Each received Text must be lexicographically greater than the previous —
+	// i.e. the dispatcher preserved submission order across the two types.
+	for i := 1; i < len(got); i++ {
+		if got[i].Text <= got[i-1].Text {
+			t.Fatalf("ordering violation at %d: prev=%q curr=%q (full sequence: %v)",
+				i, got[i-1].Text, got[i].Text, textsOnly(got))
+		}
+	}
+}
+
+func textsOnly(msgs []shogunate.StreamChunkMsg) []string {
+	out := make([]string, len(msgs))
+	for i, m := range msgs {
+		out[i] = m.Text
+	}
+	return out
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────

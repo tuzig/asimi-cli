@@ -47,13 +47,7 @@ type notificationDispatcher struct {
 	cancel context.CancelFunc
 	done   chan struct{} // closed when the dispatch goroutine exits
 
-	// mediumSendSem is a 1-slot semaphore that limits in-flight medium sends
-	// to at most one. If a previous medium send hasn't been consumed yet,
-	// the next medium message is dropped.
-	mediumSendSem chan struct{}
-
-	// lowSendSem is the same idea for low-priority messages.
-	lowSendSem chan struct{}
+	streamChunkSem chan struct{}
 
 	mediumDropped atomic.Int64
 	lowDropped    atomic.Int64
@@ -64,12 +58,11 @@ type notificationDispatcher struct {
 func newNotificationDispatcher(program *tea.Program) *notificationDispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &notificationDispatcher{
-		sender:        programSender{program: program},
-		in:            make(chan any, 512),
-		cancel:        cancel,
-		done:          make(chan struct{}),
-		mediumSendSem: make(chan struct{}, 1),
-		lowSendSem:    make(chan struct{}, 1),
+		sender:         programSender{program: program},
+		in:             make(chan any, 512),
+		cancel:         cancel,
+		done:           make(chan struct{}),
+		streamChunkSem: make(chan struct{}, 1),
 	}
 	go d.run(ctx)
 	return d
@@ -145,13 +138,11 @@ func (d *notificationDispatcher) dispatch(msg any) {
 		updateAvailableMsg:
 		d.send(msg)
 
-	// ── Medium priority: non-blocking, drop if busy ───────────────────
 	case shogunate.StreamChunkMsg:
-		d.trySend(msg, d.mediumSendSem, &d.mediumDropped)
+		d.trySend(msg, d.streamChunkSem, &d.mediumDropped)
 
-	// ── Low priority: non-blocking, drop if busy ─────────────────────
 	case shogunate.StreamReasoningChunkMsg:
-		d.trySend(msg, d.lowSendSem, &d.lowDropped)
+		d.trySend(msg, d.streamChunkSem, &d.lowDropped)
 
 	default:
 		// Unknown type — send blocking to avoid silent loss of new message types.
