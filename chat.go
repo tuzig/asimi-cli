@@ -17,6 +17,15 @@ import (
 // MessageType indicates the type/source of a chat message
 type MessageType int
 
+// FlushDirty forces a synchronous UpdateContent when content is dirty.
+// Used by the TUI's chatRenderTickMsg handler and anywhere that needs an
+// immediate render (resize, addMessage, finalize, etc.).
+func (c *ChatComponent) FlushDirty() {
+	if c.contentDirty {
+		c.UpdateContent()
+	}
+}
+
 const (
 	MessageTypeSystem    MessageType = iota // System messages (tool calls, status, etc.)
 	MessageTypeUser                         // User input
@@ -64,6 +73,10 @@ type ChatComponent struct {
 	// Indentation for nested workflow output
 	Indent     int
 	blockLines [][]int
+
+	// Debounced rendering: content mutations set contentDirty=true. The
+	// TUI's chatRenderTickMsg handler flushes dirty chats via UpdateContent.
+	contentDirty bool
 }
 
 const (
@@ -264,7 +277,8 @@ func (c *ChatComponent) AddMessage(message string) {
 	}
 }
 
-// AddAIChunk adds or appends to an AI response message (used during streaming)
+// AddAIChunk adds or appends to an AI response message (used during streaming).
+// Sets contentDirty=true; the TUI's debounce tick flushes via UpdateContent.
 func (c *ChatComponent) AddAIChunk(chunk string) {
 	// Check if last message is an AI message we can append to
 	if len(c.Messages) > 0 && c.Messages[len(c.Messages)-1].Type == MessageTypeAI {
@@ -277,11 +291,11 @@ func (c *ChatComponent) AddAIChunk(chunk string) {
 			Type:    MessageTypeAI,
 		})
 	}
-	c.UpdateContent()
 	if !c.ScrollLocked {
 		c.AutoScroll = true
 		c.UserScrolled = false
 	}
+	c.contentDirty = true
 }
 
 // AddUserMessage adds a user message to the chat component
@@ -298,7 +312,8 @@ func (c *ChatComponent) AddUserMessage(text string) {
 	}
 }
 
-// AddThinkingChunk adds or appends to a thinking/reasoning message (used during streaming)
+// AddThinkingChunk adds or appends to a thinking/reasoning message (used during streaming).
+// Sets contentDirty=true; the TUI's debounce tick flushes via UpdateContent.
 func (c *ChatComponent) AddThinkingChunk(chunk string) {
 	if strings.TrimSpace(chunk) == "" {
 		return // Skip empty thinking chunks
@@ -314,11 +329,11 @@ func (c *ChatComponent) AddThinkingChunk(chunk string) {
 			Type:    MessageTypeThinking,
 		})
 	}
-	c.UpdateContent()
 	if !c.ScrollLocked {
 		c.AutoScroll = true
 		c.UserScrolled = false
 	}
+	c.contentDirty = true
 }
 
 // SetScrollLock toggles scroll locking (prevents auto-scroll when true)
@@ -532,8 +547,10 @@ func (c *ChatComponent) FinalizeLastAIMessage() bool {
 	return isFailure
 }
 
-// UpdateContent updates the viewport content based on the messages
+// UpdateContent updates the viewport content based on the messages.
+// Clears contentDirty — this is the work the flag tracks.
 func (c *ChatComponent) UpdateContent() {
+	c.contentDirty = false
 	var messageViews []string
 	for msgIdx, msg := range c.Messages {
 		var rendered string

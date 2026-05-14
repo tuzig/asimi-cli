@@ -824,7 +824,7 @@ func (m *MinisterBase) grantSeal(key storage.EdictKey, metadata storage.JSON) er
 		return nil
 	}
 
-	sealID := GenerateID("seal", fmt.Sprintf("%d", key.ID), m.ministerID)
+	sealID := GenerateID("seal", fmt.Sprintf("%d", key.ID), key.Username, key.Project, m.ministerID)
 	seal := storage.Seal{
 		SealID:     sealID,
 		EdictID:    key.ID,

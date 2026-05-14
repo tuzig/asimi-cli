@@ -45,7 +45,7 @@
         Review the code changes for the edict.
         Check for style violations, security concerns, and architectural issues.
         Record your insights using record_precedent.
-        Produce a comprehensive code review report summarizing findings from both judge and sage.
+        Produce a comprehensive code review report 
         Highlight any blocking issues and suggest improvements.
 
         ## Edict
@@ -215,6 +215,7 @@
       given:
         - the borderlands
         - manifests for the borderlands
+        - "!just test || true  # test_out"
       act: |
         If the tests pass, ensure
         the changes in the borderlands and middle kingdom are covered by tests.

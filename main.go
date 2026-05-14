@@ -25,6 +25,11 @@ import (
 
 var program *tea.Program
 
+// logBaseName names the log file (without extension). Default suits the TUI;
+// runDaemonMode overrides it so daemon and TUI write to separate files and
+// don't interleave when both run with --debug in the same cwd.
+var logBaseName = "asimi"
+
 var cli struct {
 	Version       bool   `help:"Print version information"`
 	Prompt        string `short:"p" help:"Prompt to send to the agent"`
@@ -44,7 +49,7 @@ func initLogger() {
 	if cli.Debug {
 		// In debug mode, log to current directory
 		logDir = "."
-		logPath = filepath.Join(logDir, "asimi.log")
+		logPath = filepath.Join(logDir, logBaseName+".log")
 		logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			panic(fmt.Errorf("failed to open log file %s: %w", logPath, err))
@@ -60,7 +65,7 @@ func initLogger() {
 		if err := os.MkdirAll(logDir, 0755); err != nil {
 			panic(fmt.Errorf("failed to create log directory %s: %w", logDir, err))
 		}
-		logPath = filepath.Join(logDir, "asimi.log")
+		logPath = filepath.Join(logDir, logBaseName+".log")
 		logFile := &lumberjack.Logger{
 			Filename:   logPath,
 			MaxSize:    10, // megabytes
@@ -158,13 +163,19 @@ func runInteractiveMode() error {
 	subCtx, cancelSub := context.WithCancel(ctx)
 	defer cancelSub()
 	events := tuiModel.shogunate.Subscribe(subCtx)
+	dispatcher := newNotificationDispatcher(tuiProgram)
 	go func() {
 		for {
 			select {
 			case <-subCtx.Done():
+				dispatcher.close()
 				return
-			case msg := <-events:
-				tuiProgram.Send(msg)
+			case msg, ok := <-events:
+				if !ok {
+					dispatcher.close()
+					return
+				}
+				dispatcher.notify(msg)
 			}
 		}
 	}()

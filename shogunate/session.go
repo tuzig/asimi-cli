@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
@@ -1400,6 +1401,53 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			return nil
 		}
 
+		// Throttle reasoning-chunk emission: accumulate tokens and flush
+		// at most every 100ms, reducing notification volume from per-token
+		// (~hundreds/sec) to a bounded rate (~10/sec).
+		var (
+			reasoningBuf strings.Builder
+			reasoningMu  sync.Mutex
+			reasoningDone = make(chan struct{})
+			reasoningWg   sync.WaitGroup
+		)
+
+		reasoningWg.Add(1)
+		go func() {
+			defer reasoningWg.Done()
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					reasoningMu.Lock()
+					if reasoningBuf.Len() > 0 {
+						text := reasoningBuf.String()
+						reasoningBuf.Reset()
+						reasoningMu.Unlock()
+						if s.notify != nil {
+							s.notify(StreamReasoningChunkMsg{ChannelID: s.channelID, Text: text})
+						}
+					} else {
+						reasoningMu.Unlock()
+					}
+				case <-reasoningDone:
+					// Final flush
+					reasoningMu.Lock()
+					if reasoningBuf.Len() > 0 {
+						text := reasoningBuf.String()
+						reasoningBuf.Reset()
+						reasoningMu.Unlock()
+						if s.notify != nil {
+							s.notify(StreamReasoningChunkMsg{ChannelID: s.channelID, Text: text})
+						}
+					} else {
+						reasoningMu.Unlock()
+					}
+					return
+				}
+			}
+		}()
+
 		// Create streaming function for reasoning/thinking content
 		reasoningFunc := func(ctx context.Context, reasoningChunk, chunk []byte) error {
 			select {
@@ -1408,8 +1456,10 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			default:
 			}
 
-			if len(reasoningChunk) > 0 && s.notify != nil {
-				s.notify(StreamReasoningChunkMsg{ChannelID: s.channelID, Text: string(reasoningChunk)})
+			if len(reasoningChunk) > 0 {
+				reasoningMu.Lock()
+				reasoningBuf.WriteString(string(reasoningChunk))
+				reasoningMu.Unlock()
 			}
 			return nil
 		}
@@ -1417,6 +1467,8 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		// Re-check for cancellation before making expensive LLM call
 		select {
 		case <-ctx.Done():
+			close(reasoningDone)
+			reasoningWg.Wait()
 			accumulatedText := s.getStreamBuffer()
 			if s.notify != nil {
 				s.notify(StreamInterruptedMsg{ChannelID: s.channelID, PartialContent: accumulatedText})
@@ -1426,6 +1478,9 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		}
 
 		choice, err := s.generateLLMResponse(ctx, streamingFunc, reasoningFunc)
+		// Signal reasoning ticker to do a final flush and stop
+		close(reasoningDone)
+		reasoningWg.Wait()
 		if err != nil {
 			if ctx.Err() != nil {
 				accumulatedText := s.getStreamBuffer()

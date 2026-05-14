@@ -78,7 +78,11 @@ func spawnDaemonAndWait(ctx context.Context, socketPath string) error {
 	}
 	defer readR.Close()
 
-	cmd := exec.CommandContext(ctx, selfPath, "daemon")
+	args := []string{"daemon"}
+	if cli.Debug {
+		args = append(args, "--debug")
+	}
+	cmd := exec.CommandContext(ctx, selfPath, args...)
 	cmd.Env = append(os.Environ(), "ASIMI_READY_FD=3")
 	cmd.ExtraFiles = []*os.File{readW}
 	cmd.Stdout = os.Stdout

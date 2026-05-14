@@ -1,0 +1,737 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate"
+)
+
+// ── Test dispatcher factory ──────────────────────────────────────────────────
+
+// newTestDispatcher creates a dispatcher whose sends go through sendFunc
+// instead of a real *tea.Program. The caller must call shutdown().
+func newTestDispatcher(sendFunc func(msg any)) *notificationDispatcher {
+	ctx, cancel := context.WithCancel(context.Background())
+	d := &notificationDispatcher{
+		sendFunc:      sendFunc,
+		in:            make(chan any, 512),
+		cancel:        cancel,
+		done:          make(chan struct{}),
+		mediumSendSem: make(chan struct{}, 1),
+		lowSendSem:    make(chan struct{}, 1),
+	}
+	go d.run(ctx)
+	return d
+}
+
+// newDispatcherWithSender creates a dispatcher that routes to the given sender
+// instead of a real *tea.Program. The caller must call shutdown().
+// Kept for backward compatibility with existing integration tests.
+func newDispatcherWithSender(sender messageSender) *notificationDispatcher {
+	ctx, cancel := context.WithCancel(context.Background())
+	d := &notificationDispatcher{
+		sender:        sender,
+		in:            make(chan any, 512),
+		cancel:        cancel,
+		done:          make(chan struct{}),
+		mediumSendSem: make(chan struct{}, 1),
+		lowSendSem:    make(chan struct{}, 1),
+	}
+	go d.run(ctx)
+	return d
+}
+
+// ── Mock sendFunc helpers ───────────────────────────────────────────────────
+
+// recordSendFunc returns a sendFunc that appends every message to msgs.
+// It is safe for concurrent use.
+func recordSendFunc(msgs *[]any) func(any) {
+	var mu sync.Mutex
+	return func(msg any) {
+		mu.Lock()
+		*msgs = append(*msgs, msg)
+		mu.Unlock()
+	}
+}
+
+// blockingSendFunc returns a sendFunc that blocks until unblock is closed,
+// then records the message. The returned counter tracks how many messages
+// have completed their send (after unblock).
+func blockingSendFunc(unblock <-chan struct{}, counter *atomic.Int64) func(any) {
+	return func(msg any) {
+		<-unblock // block until caller signals
+		counter.Add(1)
+	}
+}
+
+// blockingRecordSendFunc blocks like blockingSendFunc but also records.
+func blockingRecordSendFunc(unblock <-chan struct{}, msgs *[]any, mu *sync.Mutex, counter *atomic.Int64) func(any) {
+	return func(msg any) {
+		<-unblock
+		mu.Lock()
+		*msgs = append(*msgs, msg)
+		mu.Unlock()
+		counter.Add(1)
+	}
+}
+
+// ── Test 1: High-priority message is never dropped ──────────────────────────
+
+// TestHighPriorityNeverDropped verifies that high-priority messages are always
+// delivered via blocking send, even when the sendFunc is temporarily blocked.
+// All high-priority messages must eventually arrive—none are dropped.
+func TestHighPriorityNeverDropped(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		msgs    []any
+		counter atomic.Int64
+	)
+	unblock := make(chan struct{})
+
+	sendFunc := blockingRecordSendFunc(unblock, &msgs, &mu, &counter)
+
+	d := newTestDispatcher(sendFunc)
+	defer d.close()
+
+	const count = 20
+	// Enqueue high-priority messages while the sendFunc is blocked.
+	// Because dispatch calls sendFunc directly for high-priority types,
+	// the first message blocks the dispatch loop; subsequent messages
+	// accumulate in the `in` buffer.
+	for i := 0; i < count; i++ {
+		d.notify(shogunate.StreamStartMsg{})
+	}
+
+	// Give the dispatcher time to pick up the first message and block.
+	time.Sleep(50 * time.Millisecond)
+
+	// Unblock — all messages should now drain through.
+	close(unblock)
+	waitForCount(t, &counter, count, 3*time.Second)
+
+	mu.Lock()
+	delivered := len(msgs)
+	mu.Unlock()
+	if delivered != count {
+		t.Errorf("expected exactly %d high-priority messages, got %d", count, delivered)
+	}
+
+	med, low := d.DroppedCounts()
+	if med != 0 || low != 0 {
+		t.Errorf("expected zero drops for high-priority, got medium=%d low=%d", med, low)
+	}
+}
+
+// ── Test 2: Medium-priority StreamChunkMsg is dropped when congested ───────
+
+// TestMediumPriorityDroppedWhenCongested verifies that medium-priority
+// StreamChunkMsg uses a non-blocking try-send. When the sendFunc is busy
+// (semaphore occupied), additional medium messages are dropped.
+func TestMediumPriorityDroppedWhenCongested(t *testing.T) {
+	var counter atomic.Int64
+	unblock := make(chan struct{})
+
+	sendFunc := blockingSendFunc(unblock, &counter)
+
+	d := newTestDispatcher(sendFunc)
+	defer d.close()
+
+	// First message acquires the semaphore and blocks in the sendFunc.
+	d.notify(shogunate.StreamChunkMsg{})
+	time.Sleep(100 * time.Millisecond) // let dispatch loop process it
+
+	// Semaphore is now occupied. These medium messages should be dropped.
+	const extra = 30
+	for i := 0; i < extra; i++ {
+		d.notify(shogunate.StreamChunkMsg{})
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Unblock and allow the first message to finish.
+	close(unblock)
+	time.Sleep(100 * time.Millisecond)
+
+	med, low := d.DroppedCounts()
+	if med == 0 {
+		t.Error("expected medium-priority drops, got 0")
+	}
+	if low != 0 {
+		t.Errorf("expected zero low drops, got %d", low)
+	}
+}
+
+// ── Test 3: Low-priority StreamReasoningChunkMsg is dropped when congested ──
+
+// TestLowPriorityDroppedWhenCongested verifies that low-priority
+// StreamReasoningChunkMsg uses non-blocking try-send and is dropped when
+// the sendFunc is busy.
+func TestLowPriorityDroppedWhenCongested(t *testing.T) {
+	var counter atomic.Int64
+	unblock := make(chan struct{})
+
+	sendFunc := blockingSendFunc(unblock, &counter)
+
+	d := newTestDispatcher(sendFunc)
+	defer d.close()
+
+	// First low-priority message acquires the semaphore and blocks.
+	d.notify(shogunate.StreamReasoningChunkMsg{})
+	time.Sleep(100 * time.Millisecond)
+
+	const extra = 30
+	for i := 0; i < extra; i++ {
+		d.notify(shogunate.StreamReasoningChunkMsg{})
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	close(unblock)
+	time.Sleep(100 * time.Millisecond)
+
+	med, low := d.DroppedCounts()
+	if low == 0 {
+		t.Error("expected low-priority drops, got 0")
+	}
+	if med != 0 {
+		t.Errorf("expected zero medium drops, got %d", med)
+	}
+}
+
+// ── Test 4: Unknown message types are treated as high-priority by default ──
+
+// TestUnknownTypeHighPriority verifies that messages not matching any known
+// type case fall through to the default branch, which does a blocking send.
+func TestUnknownTypeHighPriority(t *testing.T) {
+	type novelMsg struct{ id int }
+	type anotherMsg struct{}
+
+	var (
+		mu   sync.Mutex
+		msgs []any
+	)
+	sendFunc := recordSendFunc(&msgs)
+
+	d := newTestDispatcher(sendFunc)
+	defer d.close()
+
+	const count = 15
+	for i := 0; i < count; i++ {
+		d.notify(novelMsg{id: i})
+	}
+	d.notify(anotherMsg{})
+
+	// Blocking send completes immediately with uncongested sendFunc,
+	// so all messages should arrive promptly.
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	delivered := len(msgs)
+	mu.Unlock()
+	if delivered != count+1 {
+		t.Errorf("expected %d unknown-type messages delivered, got %d", count+1, delivered)
+	}
+
+	med, low := d.DroppedCounts()
+	if med != 0 || low != 0 {
+		t.Errorf("expected zero drops for unknown types, got medium=%d low=%d", med, low)
+	}
+}
+
+// ── Test 5: Drop counters increment correctly for medium/low drops ──────────
+
+// TestDropCountersIncrement verifies that the mediumDropped and lowDropped
+// counters accurately reflect the number of dropped messages for each lane.
+func TestDropCountersIncrement(t *testing.T) {
+	var counter atomic.Int64
+	unblock := make(chan struct{})
+
+	sendFunc := blockingSendFunc(unblock, &counter)
+
+	d := newTestDispatcher(sendFunc)
+	defer d.close()
+
+	// Saturate the medium lane.
+	d.notify(shogunate.StreamChunkMsg{})
+	time.Sleep(50 * time.Millisecond)
+
+	const mediumFlood = 40
+	for i := 0; i < mediumFlood; i++ {
+		d.notify(shogunate.StreamChunkMsg{})
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Saturate the low lane. Separate semaphore, so it can acquire
+	// independently — but sendFunc is still blocked, so the low goroutine
+	// will also block trying to send, occupying the low semaphore.
+	d.notify(shogunate.StreamReasoningChunkMsg{})
+	time.Sleep(50 * time.Millisecond)
+
+	const lowFlood = 25
+	for i := 0; i < lowFlood; i++ {
+		d.notify(shogunate.StreamReasoningChunkMsg{})
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Unblock everything.
+	close(unblock)
+	time.Sleep(200 * time.Millisecond)
+
+	med, low := d.DroppedCounts()
+
+	if med == 0 {
+		t.Error("expected medium drops > 0")
+	}
+	if low == 0 {
+		t.Error("expected low drops > 0")
+	}
+
+	// Each lane should have dropped exactly its flood count:
+	// the first message occupies the semaphore, so all flood messages are dropped.
+	if med != mediumFlood {
+		t.Errorf("expected medium drops = %d, got %d", mediumFlood, med)
+	}
+	if low != lowFlood {
+		t.Errorf("expected low drops = %d, got %d", lowFlood, low)
+	}
+}
+
+// ── Test 6: Context cancellation shuts down the dispatcher cleanly ──────────
+
+// TestContextCancellationShutdown verifies that cancelling the dispatcher's
+// context causes the dispatch goroutine to exit cleanly, and that subsequent
+// shutdown() returns promptly without deadlock.
+func TestContextCancellationShutdown(t *testing.T) {
+	var counter atomic.Int64
+	sendFunc := func(msg any) {
+		counter.Add(1)
+	}
+
+	d := newTestDispatcher(sendFunc)
+
+	// Enqueue some messages before cancellation.
+	for i := 0; i < 10; i++ {
+		d.notify(shogunate.StreamStartMsg{})
+	}
+
+	// Cancel the context directly (simulates external cancellation).
+	d.cancel()
+
+	// shutdown() should still complete — it waits on <-d.done.
+	done := make(chan struct{})
+	go func() {
+		d.close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Clean shutdown — test passes.
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown timed out after context cancellation — possible deadlock")
+	}
+}
+
+// ── Test 7: Dispatcher drains from `in` channel and sends to mock program ───
+
+// TestDispatcherDrainsInChannel verifies that the dispatcher actually reads
+// messages from its `in` channel and delivers them via sendFunc. We use
+// high-priority messages exclusively so the semaphore-based trySend path
+// doesn't introduce non-deterministic drops.
+func TestDispatcherDrainsInChannel(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		msgs    []any
+		counter atomic.Int64
+	)
+
+	// sendFunc records and counts
+	sendFunc := func(msg any) {
+		counter.Add(1)
+		mu.Lock()
+		msgs = append(msgs, msg)
+		mu.Unlock()
+	}
+
+	d := newTestDispatcher(sendFunc)
+	defer d.close()
+
+	const count = 20
+	for i := 0; i < count; i++ {
+		d.notify(shogunate.StreamCompleteMsg{})
+	}
+
+	waitForCount(t, &counter, count, 3*time.Second)
+
+	mu.Lock()
+	delivered := len(msgs)
+	mu.Unlock()
+	if delivered != count {
+		t.Errorf("expected %d messages drained and sent, got %d", count, delivered)
+	}
+
+	// Verify `in` channel is empty — everything was drained.
+	select {
+	case m := <-d.in:
+		t.Errorf("in channel should be empty, but got: %v", m)
+	default:
+		// Channel is empty as expected.
+	}
+}
+
+// ── TypeName coverage ──────────────────────────────────────────────────────
+
+// TestTypeName covers the typeName helper.
+func TestTypeName(t *testing.T) {
+	tests := []struct {
+		input any
+		want  string
+	}{
+		{shogunate.StreamStartMsg{}, "shogunate.StreamStartMsg"},
+		{errMsg{}, "asimi.errMsg"},
+		{nil, "<nil>"},
+	}
+	for _, tt := range tests {
+		got := typeName(tt.input)
+		if got != tt.want {
+			t.Errorf("typeName(%v) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── All high-priority types coverage ────────────────────────────────────────
+
+// TestAllHighPriorityTypes verifies that every declared high-priority type
+// is routed through the blocking send path and delivered.
+func TestAllHighPriorityTypes(t *testing.T) {
+	highPriorityMsgs := []any{
+		shogunate.StreamStartMsg{},
+		shogunate.StreamCompleteMsg{},
+		shogunate.StreamInterruptedMsg{},
+		shogunate.StreamErrorMsg{},
+		shogunate.StreamMaxTokensReachedMsg{},
+		shogunate.StreamDoneMsg{},
+		shogunate.MinisterInvokingMsg{},
+		shogunate.MinisterCompletedMsg{},
+		shogunate.EventNotificationMsg{},
+		shogunate.ZhengmingPendingMsg{},
+		shogunate.ZhengmingAnsweredMsg{},
+		shogunate.RitualStepMsg{},
+		runners.ToolCallScheduledMsg{},
+		runners.ToolCallExecutingMsg{},
+		runners.ToolCallSuccessMsg{},
+		runners.ToolCallErrorMsg{},
+		runners.ToolCallAbortedMsg{},
+		runners.ToolCallWaitingForApprovalMsg{},
+		runners.ContainerLaunchedMsg{},
+		shogunate.EventsDrainedMsg{},
+		errMsg{},
+		llmInitSuccessMsg{},
+		llmInitErrorMsg{},
+		compactCompleteMsg{},
+		compactErrorMsg{},
+		updateAvailableMsg{},
+	}
+
+	count := len(highPriorityMsgs)
+
+	var (
+		mu      sync.Mutex
+		msgs    []any
+		counter atomic.Int64
+	)
+	sendFunc := func(msg any) {
+		counter.Add(1)
+		mu.Lock()
+		msgs = append(msgs, msg)
+		mu.Unlock()
+	}
+
+	d := newTestDispatcher(sendFunc)
+	defer d.close()
+
+	for _, msg := range highPriorityMsgs {
+		d.notify(msg)
+	}
+
+	waitForCount(t, &counter, int64(count), 2*time.Second)
+
+	mu.Lock()
+	delivered := len(msgs)
+	mu.Unlock()
+	if delivered < count {
+		t.Errorf("expected %d high-priority messages delivered, got %d", count, delivered)
+	}
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+// waitForCount polls the atomic counter until it reaches want or times out.
+func waitForCount(t *testing.T, counter *atomic.Int64, want int64, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if counter.Load() >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for count %d, got %d", want, counter.Load())
+}
+
+// Compile-time reference checks for typeName.
+var _ = fmt.Sprintf
+var _ = reflect.TypeOf
+
+// ────────────────────────────────────────────────────────────────────────────
+// messageSender-layer integration tests
+//
+// The tests above exercise the dispatcher through its sendFunc seam. The tests
+// below go one layer up and drive it through the messageSender interface used
+// in production. They verify the same priority/drop guarantees end-to-end.
+// ────────────────────────────────────────────────────────────────────────────
+
+// countingSender implements messageSender and counts how many times Send is
+// called. If block is non-nil, every Send blocks until block is closed.
+type countingSender struct {
+	mu        sync.Mutex
+	msgs      []any
+	block     chan struct{} // if non-nil, Send blocks until closed
+	sendCount atomic.Int64
+}
+
+func (s *countingSender) Send(msg any) {
+	s.sendCount.Add(1)
+	if s.block != nil {
+		<-s.block
+	}
+	s.mu.Lock()
+	s.msgs = append(s.msgs, msg)
+	s.mu.Unlock()
+}
+
+func (s *countingSender) messages() []any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([]any, len(s.msgs))
+	copy(cp, s.msgs)
+	return cp
+}
+
+// TestBackpressure_DispatcherDoesNotBlockProducer verifies that calling
+// dispatcher.notify() never blocks, even when the TUI sender is congested.
+// The producer (Subscribe loop) must not stall — this is the core backpressure
+// relief guarantee.
+func TestBackpressure_DispatcherDoesNotBlockProducer(t *testing.T) {
+	block := make(chan struct{})
+	sender := &countingSender{block: block}
+	d := newDispatcherWithSender(sender)
+	defer d.close()
+
+	// Block the sender so all dispatched messages will be stuck.
+	// Enqueue a flood of messages from the producer side.
+	const flood = 200
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < flood; i++ {
+			d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "chunk"})
+		}
+	}()
+
+	// The producer goroutine should complete quickly — it never blocks
+	select {
+	case <-done:
+		// Producer completed without blocking — backpressure relief works
+	case <-time.After(2 * time.Second):
+		t.Fatal("producer blocked — backpressure relief not working")
+	}
+
+	// Unblock the sender and let everything drain
+	close(block)
+	waitForCount(t, &sender.sendCount, 1, 3*time.Second)
+}
+
+// TestBackpressure_ReasoningChunksDroppedWhenCongested verifies that
+// StreamReasoningChunkMsg messages are dropped when the TUI sender is
+// congested (low priority lane).
+func TestBackpressure_ReasoningChunksDroppedWhenCongested(t *testing.T) {
+	block := make(chan struct{})
+	sender := &countingSender{block: block}
+	d := newDispatcherWithSender(sender)
+	defer d.close()
+
+	// First low-priority message acquires semaphore and blocks
+	d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "sage", Text: "thinking"})
+	time.Sleep(50 * time.Millisecond)
+
+	// Flood with more low-priority messages — semaphore is occupied, these should drop
+	const extra = 50
+	for i := 0; i < extra; i++ {
+		d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "sage", Text: "more thinking"})
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	close(block)
+	time.Sleep(100 * time.Millisecond)
+
+	med, low := d.DroppedCounts()
+	assert.Greater(t, low, int64(0), "low-priority messages should be dropped when congested")
+	assert.Equal(t, int64(0), med, "medium-priority drops should be zero")
+
+	// At least the first message should have been delivered
+	msgs := sender.messages()
+	lowDelivered := 0
+	for _, m := range msgs {
+		if _, ok := m.(shogunate.StreamReasoningChunkMsg); ok {
+			lowDelivered++
+		}
+	}
+	assert.GreaterOrEqual(t, lowDelivered, 1, "at least one reasoning chunk should be delivered")
+}
+
+// TestBackpressure_StreamChunksDroppedWhenCongested verifies that
+// StreamChunkMsg messages use non-blocking try-send and are dropped when
+// the TUI sender is congested (medium priority lane).
+func TestBackpressure_StreamChunksDroppedWhenCongested(t *testing.T) {
+	block := make(chan struct{})
+	sender := &countingSender{block: block}
+	d := newDispatcherWithSender(sender)
+	defer d.close()
+
+	// First medium-priority message acquires semaphore and blocks
+	d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "first chunk"})
+	time.Sleep(50 * time.Millisecond)
+
+	// Flood with more medium-priority messages — should be dropped
+	const extra = 50
+	for i := 0; i < extra; i++ {
+		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "extra chunk"})
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	close(block)
+	time.Sleep(100 * time.Millisecond)
+
+	med, low := d.DroppedCounts()
+	assert.Greater(t, med, int64(0), "medium-priority messages should be dropped when congested")
+	assert.Equal(t, int64(0), low, "low-priority drops should be zero")
+
+	// The first message should have been delivered
+	msgs := sender.messages()
+	medDelivered := 0
+	for _, m := range msgs {
+		if _, ok := m.(shogunate.StreamChunkMsg); ok {
+			medDelivered++
+		}
+	}
+	assert.GreaterOrEqual(t, medDelivered, 1, "at least one stream chunk should be delivered")
+}
+
+// TestBackpressure_ControlMessagesNeverDropped verifies that high-priority
+// control messages (StreamCompleteMsg, StreamStartMsg, etc.) are always
+// delivered via blocking send, even when the TUI sender is congested.
+func TestBackpressure_ControlMessagesNeverDropped(t *testing.T) {
+	block := make(chan struct{})
+	sender := &countingSender{block: block}
+	d := newDispatcherWithSender(sender)
+	defer d.close()
+
+	// Send a mix of priorities while sender is blocked
+	const highCount = 10
+	const medCount = 20
+	const lowCount = 20
+
+	for i := 0; i < highCount; i++ {
+		d.notify(shogunate.StreamCompleteMsg{ChannelID: "forge"})
+	}
+	for i := 0; i < medCount; i++ {
+		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "chunk"})
+	}
+	for i := 0; i < lowCount; i++ {
+		d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "forge", Text: "thinking"})
+	}
+
+	// Wait for the dispatch loop to pick up messages
+	time.Sleep(200 * time.Millisecond)
+
+	// Unblock the sender — all high-priority must come through
+	close(block)
+	waitForCount(t, &sender.sendCount, highCount, 5*time.Second)
+
+	msgs := sender.messages()
+	highDelivered := 0
+	for _, m := range msgs {
+		switch m.(type) {
+		case shogunate.StreamCompleteMsg:
+			highDelivered++
+		}
+	}
+
+	assert.Equal(t, highCount, highDelivered,
+		"all high-priority StreamCompleteMsg must be delivered, never dropped")
+
+	med, low := d.DroppedCounts()
+	_ = med // medium drops are expected
+	_ = low // low drops are expected
+}
+
+// TestBackpressure_CongestedSenderPriorityGuarantee verifies that under
+// heavy congestion (sender always busy), only high-priority messages are
+// guaranteed delivery. Medium and low priority messages are subject to
+// backpressure relief (dropping).
+func TestBackpressure_CongestedSenderPriorityGuarantee(t *testing.T) {
+	// Use a sender that blocks for a long time on each Send
+	block := make(chan struct{})
+	sender := &countingSender{block: block}
+	d := newDispatcherWithSender(sender)
+	defer d.close()
+
+	// Flood with all three priority levels
+	const highCount = 5
+	for i := 0; i < highCount; i++ {
+		d.notify(shogunate.StreamCompleteMsg{ChannelID: "forge"})
+	}
+	for i := 0; i < 100; i++ {
+		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "data"})
+	}
+	for i := 0; i < 100; i++ {
+		d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "forge", Text: "think"})
+	}
+
+	// Give dispatcher time to process and block on first high-priority send
+	time.Sleep(200 * time.Millisecond)
+
+	// Unblock and let everything drain
+	close(block)
+	waitForCount(t, &sender.sendCount, highCount, 5*time.Second)
+
+	msgs := sender.messages()
+
+	// Count delivered by type
+	highDelivered := 0
+	for _, m := range msgs {
+		switch m.(type) {
+		case shogunate.StreamCompleteMsg:
+			highDelivered++
+		}
+	}
+
+	// High-priority: ALL must be delivered
+	assert.Equal(t, highCount, highDelivered,
+		"all high-priority StreamCompleteMsg must be delivered even under congestion")
+
+	// Medium and low: some may be delivered, but most should be dropped
+	med, low := d.DroppedCounts()
+	assert.Greater(t, med, int64(0),
+		"medium-priority should have drops under heavy congestion")
+	assert.Greater(t, low, int64(0),
+		"low-priority should have drops under heavy congestion")
+}

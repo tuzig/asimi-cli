@@ -27,6 +27,7 @@ import (
 // Shutdown: SIGINT or SIGTERM drains in-flight work with a 10s grace
 // and tears the socket down.
 func runDaemonMode() error {
+	logBaseName = "asimi-daemon"
 	initLogger()
 
 	var shog *shogunate.Shogunate

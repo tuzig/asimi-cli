@@ -15,7 +15,8 @@
       "Bash(podman image:*)",
       "Bash(podman run:*)",
       "Bash(podman history:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(awk '/12:19:32.322/,/12:20:04.774/' /Users/daonb/src/asimi-cli/worktrees/daemon/asimi-daemon.log)"
     ]
   }
 }

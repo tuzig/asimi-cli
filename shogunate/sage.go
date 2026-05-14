@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
@@ -368,9 +369,11 @@ func (c *Sage) NoRejections(key storage.EdictKey) (bool, error) {
 	return count == 0, nil
 }
 
-// LogPrecedent records an ethics decision for a manifest
+// LogPrecedent records an ethics decision for a manifest.
+// Precedents are an append-only audit log, so the ID includes a nanosecond
+// timestamp to keep repeated decisions on the same (manifest, principle) unique.
 func (c *Sage) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
-	precedentID := GenerateID("precedent", manifestID, principle)
+	precedentID := GenerateID("precedent", manifestID, principle, fmt.Sprintf("%d", time.Now().UnixNano()))
 
 	precedent := storage.CensorPrecedent{
 		PrecedentID:   precedentID,

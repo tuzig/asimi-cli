@@ -86,6 +86,9 @@ type TUIModel struct {
 	// Seal override confirmation state
 	pendingSealOverride *pendingSealOverride
 	repoInfo            *repo.RepoInfo
+
+	// Debounced render tick: prevents stacking multiple 50ms tick commands
+	renderTickPending bool
 }
 
 // prompt returns the PromptComponent for the active tab, creating one if needed.
@@ -110,6 +113,10 @@ type promptHistoryEntry struct {
 }
 
 type tickMsg struct{}
+
+// chatRenderTickMsg is produced by a debounce tick to flush dirty chat content.
+// Only one tick is pending at a time (guarded by TUIModel.renderTickPending).
+type chatRenderTickMsg struct{}
 
 type shellCommandResultMsg struct {
 	command  string
@@ -1724,14 +1731,19 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status.AddStreamChars(len(msg.Text))
 			m.status.ContextPercent = state.ContextUsagePercent
 		}
+		var cmds []tea.Cmd
+		// Schedule the debounce tick if dirty and none pending
+		if chat.contentDirty && !m.renderTickPending {
+			m.renderTickPending = true
+			cmds = append(cmds, tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg { return chatRenderTickMsg{} }))
+		}
 		if m.tabs.AnyStreaming() {
 			m.waitingStart = time.Now()
 			if !m.waitingForResponse {
-				waitCmd := m.startWaitingForResponse()
-				return m, waitCmd
+				cmds = append(cmds, m.startWaitingForResponse())
 			}
 		}
-		return m, nil
+		return m, tea.Batch(cmds...)
 
 	case shogunate.StreamReasoningChunkMsg:
 		if tab := m.tabs.TabByTarget(msg.ChannelID); tab != nil && !tab.Streaming {
@@ -1745,7 +1757,19 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status.AddStreamChars(len(msg.Text))
 			m.status.ContextPercent = state.ContextUsagePercent
 		}
-		return m, nil
+		var cmds []tea.Cmd
+		// Schedule the debounce tick if dirty and none pending
+		if chat.contentDirty && !m.renderTickPending {
+			m.renderTickPending = true
+			cmds = append(cmds, tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg { return chatRenderTickMsg{} }))
+		}
+		return m, tea.Batch(cmds...)
+
+	case chatRenderTickMsg:
+		// Debounce tick fired — flush every dirty chat. Chunks can land on a
+		// non-active tab, so flushing only Content().Chat misses them.
+		m.renderTickPending = false
+		m.tabs.FlushDirtyChats()
 
 	case shogunate.MinisterInvokingMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)

@@ -385,6 +385,9 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	}
 	m.sessionActive = true
 
+	// Flush any debounced content from the rebuild loop above
+	m.tabs.Content().Chat.FlushDirty()
+
 	// Re-hydrate the minister session so follow-up prompts continue the
 	// conversation. TabType holds the minister id (chancellor/sage/forge/judge);
 	// legacy rows with no TabType predate per-minister persistence and are
