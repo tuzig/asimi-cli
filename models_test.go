@@ -180,7 +180,7 @@ func TestCheckProviderAuth(t *testing.T) {
 	}
 
 	// Test with environment variable
-	os.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	info = checkProviderAuth("anthropic")
 	if !info.HasAPIKey {
 		t.Error("Expected HasAPIKey to be true when ANTHROPIC_API_KEY is set")
