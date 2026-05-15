@@ -40,3 +40,4 @@ git() {
 }
 alias ll="ls -l"
 export TERM="dumb"
+export GIT_TERMINAL_PROMPT=0

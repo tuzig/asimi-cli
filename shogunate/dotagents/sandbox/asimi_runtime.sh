@@ -5,7 +5,7 @@ __asimi_run() {
   local id="$1"
   local cmd="$2"
   printf "__ASIMI_STDOUT_START:%s\n" "$id"
-  (eval "$cmd")
+  (eval "$cmd" </dev/null)
   local exit_code=$?
   printf "__ASIMI_STDOUT_END:%s:%s\n" "$id" "$exit_code"
   return $exit_code
