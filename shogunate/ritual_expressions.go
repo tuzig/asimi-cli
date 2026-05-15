@@ -271,23 +271,33 @@ func (r *RitualRunner) getEdict(key storage.EdictKey) (interface{}, error) {
 }
 
 func (r *RitualRunner) getCourtStatus(key storage.EdictKey) (interface{}, error) {
-	// Use a single SQL query to fetch and filter edicts by derived status
+	// Refuse to run without a project — the shared SQLite database stores
+	// edicts from every project under the same user, so an empty project
+	// would return everyone's edicts.
+	if key.Project == "" {
+		return nil, fmt.Errorf("get_court_status: project is required")
+	}
+	// Use a single SQL query to fetch and filter edicts by derived status.
+	// Scope every table — edicts and the seals/zhengming subqueries — to
+	// (username, project), since edict IDs are not globally unique across
+	// projects sharing the same SQLite database.
 	var result []map[string]interface{}
 	query := `
 SELECT
     e.id, e.session_id, e.issue_ref, e.intent, e.created_at, e.updated_at,
     CASE
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.minister_id = 'ruler') THEN 'sealed'
-        WHEN EXISTS (SELECT 1 FROM zhengming_requests z WHERE z.edict_id = e.id AND z.status = 'pending') THEN 'blocked'
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.minister_id = 'confucius') THEN 'active'
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.minister_id = 'judge') THEN 'active'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler') THEN 'sealed'
+        WHEN EXISTS (SELECT 1 FROM zhengming_requests z WHERE z.edict_id = e.id AND z.username = e.username AND z.project = e.project AND z.status = 'pending') THEN 'blocked'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'confucius') THEN 'active'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'judge') THEN 'active'
         ELSE 'active'
     END as status
 FROM edicts e
-WHERE NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.minister_id = 'ruler')
+WHERE e.username = ? AND e.project = ?
+  AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler')
 ORDER BY e.updated_at DESC
 `
-	if err := r.db.Raw(query).Scan(&result).Error; err != nil {
+	if err := r.db.Raw(query, key.Username, key.Project).Scan(&result).Error; err != nil {
 		return nil, err
 	}
 	return result, nil
