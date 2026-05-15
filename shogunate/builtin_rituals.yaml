@@ -1,3 +1,4 @@
+# This file contains the builtin rituals (aka workflows) used by the Shogunate
 - name: swift-strike
   description: A tight loop for enacting small changes in 地
   inputs:
@@ -11,7 +12,7 @@
     - name: forging
       minister: forge
       act: |
-        Implement the changes for the edict below.
+        Implement the changes for the edict:
 
         {{ .edict }}
 
@@ -20,8 +21,8 @@
     - name: judging
       minister: judge
       given:
-        - the manifests
         - "!just test"
+        - the manifests
       act: |
         If any tests were changed, you need to verify that were not weakened
         and that non trivial changes are justified by the edict.
@@ -252,6 +253,8 @@
   description: "Fix linter errors in parallel using fork/join"
   max_retries: 2
   background:
+    # TODO:
+    # - a clean slate
     - the earth status
   steps:
     - name: lint
@@ -259,9 +262,6 @@
       act: |
         Run the linter (just lint) and parse the output to extract a list of files with errors.
         Return a JSON array of objects with format: [{"file": "path/to/file.go", "errors": ["error1", "error2"]}]
-      then:
-        - the edict is blocked
-
     - name: fix-all-files
       fork:
         over: lint
@@ -275,23 +275,23 @@
             Make minimal, targeted changes to resolve each error.
         - name: verify-file
           minister: judge
+          given:
+            - "!just lint {{ .item.file }}"
+            # TODO
+            # - run all tests covering {{ .item.file }}
           act: |
-            Run tests for file {{ .item.file }} to ensure the fixes don't break anything.
-            If tests fail, retry the fix.
+            Run all the tests covering file {{ .item.file }} 
           on_failure: retry
           on_failure_target: fix-file
 
     - name: commit-all
-      minister: forge
+      minister: chancellor
       given:
         - the earth status
       act: |
-        Stage all changes and commit them together using git magic to exclude this commit from blame.
-        Use: git add -A && git commit -m "Fix linter errors" --author="Asimi Linter <asimi@local>"
-        Or use git commit-tree for advanced blame exclusion.
+        Stage all changes and commit them together
+        use git commit-tree for advanced blame exclusion.
   then:
-    - the edict is unblocked
-    - record the judge's seal
     - the edict awaits the ruler's seal
 
 - name: project-init
