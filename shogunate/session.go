@@ -829,7 +829,7 @@ func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (str
 		},
 	}
 
-	choice, err := s.generateLLMResponse(ctx, nil, nil)
+	choice, err := s.generateLLMResponse(ctx, false)
 	if err != nil {
 		s.messages = originalMessages
 		s.updateTokenCounts()
@@ -965,8 +965,10 @@ func buildPromptWithContext(userPrompt string, contextFiles map[string]string) s
 
 // --- LLM Response Generation ---
 
-// generateLLMResponse calls the LLM and returns the response
-func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ctx context.Context, chunk []byte) error, reasoningFunc func(ctx context.Context, reasoningChunk, chunk []byte) error) (*responseChoice, error) {
+// generateLLMResponse calls the LLM and returns the response. When stream is
+// true it takes the streaming path, emitting content and reasoning chunks via
+// s.notify as deltas arrive.
+func (s *Session) generateLLMResponse(ctx context.Context, stream bool) (*responseChoice, error) {
 	if s.model == nil {
 		return nil, fmt.Errorf("LLM model not configured")
 	}
@@ -994,7 +996,7 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 		Params:   params,
 	}
 
-	if streamingFunc != nil {
+	if stream {
 		// Streaming path
 		bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 		ch, bifrostErr := s.model.ChatCompletionStreamRequest(bifrostCtx, req)
@@ -1056,20 +1058,22 @@ func (s *Session) generateLLMResponse(ctx context.Context, streamingFunc func(ct
 			}
 			delta := choice.ChatStreamResponseChoice.Delta
 
+			// Emit content and reasoning chunks inline as deltas arrive. The
+			// dispatcher's 1-slot semaphore (shared by both streams) preserves
+			// their relative order on the way to the TUI.
 			if delta.Content != nil && *delta.Content != "" {
-				if streamingFunc != nil {
-					if err := streamingFunc(ctx, []byte(*delta.Content)); err != nil {
-						return nil, err
-					}
-				}
 				content.WriteString(*delta.Content)
+				s.accumulatedContent.WriteString(*delta.Content)
+				if s.notify != nil {
+					s.notify(StreamChunkMsg{ChannelID: s.channelID, Text: *delta.Content})
+				}
 			}
 
 			if delta.Reasoning != nil && *delta.Reasoning != "" {
-				if reasoningFunc != nil {
-					reasoningFunc(ctx, []byte(*delta.Reasoning), nil)
-				}
 				reasoning.WriteString(*delta.Reasoning)
+				if s.notify != nil {
+					s.notify(StreamReasoningChunkMsg{ChannelID: s.channelID, Text: *delta.Reasoning})
+				}
 			}
 
 			// Accumulate tool calls from deltas
@@ -1384,38 +1388,6 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		default:
 		}
 
-		// Create streaming function for content
-		streamingFunc := func(ctx context.Context, chunk []byte) error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			chunkStr := string(chunk)
-			s.accumulatedContent.WriteString(chunkStr)
-			if s.notify != nil {
-				s.notify(StreamChunkMsg{ChannelID: s.channelID, Text: chunkStr})
-			}
-			return nil
-		}
-
-		// Emit reasoning chunks inline from the LLM callback. The dispatcher's
-		// 1-slot semaphore (shared with output chunks) preserves order across
-		// the two streams; a per-token ticker would race the content callback.
-		reasoningFunc := func(ctx context.Context, reasoningChunk, chunk []byte) error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			if len(reasoningChunk) > 0 && s.notify != nil {
-				s.notify(StreamReasoningChunkMsg{ChannelID: s.channelID, Text: string(reasoningChunk)})
-			}
-			return nil
-		}
-
 		// Re-check for cancellation before making expensive LLM call
 		select {
 		case <-ctx.Done():
@@ -1427,7 +1399,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		default:
 		}
 
-		choice, err := s.generateLLMResponse(ctx, streamingFunc, reasoningFunc)
+		choice, err := s.generateLLMResponse(ctx, true)
 		if err != nil {
 			if ctx.Err() != nil {
 				accumulatedText := s.getStreamBuffer()
