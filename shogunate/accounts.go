@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/keyring"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -192,6 +193,20 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	} else if baseURL := getBaseURLFromEnv(string(provider)); baseURL != "" {
 		networkConfig.BaseURL = baseURL
 	}
+
+	// Identify asimi to every provider. Bifrost's SetExtraHeaders only sets
+	// a header when it's absent, so these can't clobber Authorization etc.
+	headers := map[string]string{
+		"User-Agent": "asimi-cli/" + utils.AsimiVersion,
+	}
+	// OpenRouter app attribution: HTTP-Referer + X-Title surface asimi on
+	// openrouter.ai/rankings and in users' dashboards.
+	if provider == schemas.OpenRouter {
+		headers["HTTP-Referer"] = "https://github.com/afittestide/asimi-cli"
+		headers["X-Title"] = "Asimi"
+	}
+	networkConfig.ExtraHeaders = headers
+
 	return &schemas.ProviderConfig{
 		NetworkConfig: networkConfig,
 		Logger:        NewBifrostLogger(slog.Default()),
