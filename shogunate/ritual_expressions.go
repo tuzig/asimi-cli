@@ -65,8 +65,6 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the borderlands", "get_borderlands", "borderlands"},
 		{"manifests for the borderlands", "create_borderland_manifests", "borderland_manifests"},
 		{"the edict is sealed", "seal_edict", "sealed"},
-		{"the edict is blocked", "block_edict", "blocked"},
-		{"the edict is unblocked", "unblock_edict", "unblocked"},
 		{"the ruler approves", "request_zhengming", "approved"},
 		{"a clear working directory", "check_clean_working_directory", "working_directory_clean"},
 		{"the infrastructure templates", "get_infrastructure_templates", "infrastructure_templates"},
@@ -819,14 +817,6 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		// Sealing is now done via the seal chain - grant ruler seal
 		sealService := storage.NewSealService(r.db)
 		return sealService.GrantSeal(thenKey, "ruler", storage.JSON{"ritual": exec.RitualName})
-	case "block_edict":
-		// Blocking is now done via zhengming - create a pending zhengming request
-		// This is handled by the request_zhengming case below
-		return nil
-	case "unblock_edict":
-		// Unblocking happens automatically when zhengming is answered
-		// No action needed here
-		return nil
 	case "request_zhengming":
 		// Use the chancellor for zhengming requests, as it's the minister that interacts with the ruler
 		// and has a corresponding tab for displaying zhengming questions
