@@ -641,8 +641,8 @@ func (s *Shogunate) RestoreMinisterSession(tabType string, msgs []schemas.ChatMe
 	return minister.RestoreSession(minister, msgs)
 }
 
-// ResetRulling resets the rulling session
-func (s *Shogunate) ResetRuling() {
+// ResetChancellor resets the chancellor session
+func (s *Shogunate) ResetChancellor() {
 	if s == nil {
 		return
 	}

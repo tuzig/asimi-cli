@@ -246,7 +246,7 @@ func (c *Sage) processTask(ctx context.Context, task *Task) {
 	// Inject failure accumulator into context so tools can flag soft failures
 	ctx, failureBuf := CtxWithFailure(ctx)
 
-	// Use task-level notify override for routing (e.g., ritual → Ruling tab)
+	// Use task-level notify override for routing (e.g., ritual → Chancellor tab)
 	notify := c.notify
 	if task.Notify != nil {
 		notify = task.Notify

@@ -81,15 +81,15 @@ func TestLLMInitSuccess_FiresShogunateStartedEvent(t *testing.T) {
 	t.Skip("Skipped due to health check bug - expects payload data not provided. Implementation verified manually.")
 }
 
-// TestLLMInitError_AddsMessageToRulingTab tests that LLM initialization errors
-// are properly displayed in the Ruling (Court) tab with helpful guidance.
+// TestLLMInitError_AddsMessageToChancellorTab tests that LLM initialization errors
+// are properly displayed in the Chancellor tab with helpful guidance.
 // See: tui.go:llmInitErrorMsg handler (line 2307)
-func TestLLMInitError_AddsMessageToRulingTab(t *testing.T) {
+func TestLLMInitError_AddsMessageToChancellorTab(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	testErr := errors.New("connection refused")
 
 	// Get initial message count
-	initialCount := len(model.tabs.Ruling().Messages)
+	initialCount := len(model.tabs.Chancellor().Messages)
 
 	// Send LLM init error
 	newModel, cmd := model.Update(llmInitErrorMsg{err: testErr})
@@ -98,11 +98,11 @@ func TestLLMInitError_AddsMessageToRulingTab(t *testing.T) {
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
-	// Verify message was added to Ruling tab
-	require.Len(t, updatedModel.tabs.Ruling().Messages, initialCount+1)
+	// Verify message was added to Chancellor tab
+	require.Len(t, updatedModel.tabs.Chancellor().Messages, initialCount+1)
 
 	// Verify the error message contains helpful guidance
-	lastMsg := updatedModel.tabs.Ruling().Messages[initialCount]
+	lastMsg := updatedModel.tabs.Chancellor().Messages[initialCount]
 	require.Contains(t, lastMsg.Content, "LLM initialization failed")
 	require.Contains(t, lastMsg.Content, "connection refused")
 	require.Contains(t, lastMsg.Content, ":help models")
@@ -1267,7 +1267,7 @@ func TestCancelActiveStreaming(t *testing.T) {
 
 	require.True(t, cancelCalled, "Cancel function should be called")
 	require.False(t, model.tabs.AnyStreaming())
-	// Ruling tab always has a fresh cancel func after cancellation
+	// Chancellor tab always has a fresh cancel func after cancellation
 	require.NotNil(t, model.tabs.ActiveTab().Cancel)
 }
 
@@ -1284,7 +1284,7 @@ func TestCancelActiveStreaming_NotActive(t *testing.T) {
 	model.stopStreaming()
 
 	require.False(t, model.tabs.AnyStreaming())
-	// Ruling tab gets a fresh cancel func even when not previously streaming
+	// Chancellor tab gets a fresh cancel func even when not previously streaming
 	require.NotNil(t, model.tabs.ActiveTab().Cancel)
 }
 

@@ -193,7 +193,7 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 		persistentCommandHistory: commandHistory,
 	}
 
-	// Initialize tab system with default Ruling tab
+	// Initialize tab system with default Chancellor tab
 	model.tabs = NewTabManager(80, 18, markdownEnabled, func() string { return model.Mode })
 	// Set up tab switch callback to update context percent in status
 	model.tabs.onTabSwitch = func() {
@@ -387,8 +387,7 @@ func (m *TUIModel) saveSession() {
 	}
 
 	tab := m.tabs.ActiveTab()
-	// Court tab has no session to save
-	if tab == nil || tab.Type == TabCourt {
+	if tab == nil {
 		return
 	}
 
@@ -2517,8 +2516,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"current_version": utils.AsimiVersion})
 
 	case llmInitErrorMsg:
-		// LLM initialization failed - show persistent message in Chancellor's ruling tab
-		m.tabs.Ruling().AddMessage(fmt.Sprintf("%s%s LLM initialization failed: %v\n\nUse `:help models` to learn more.",
+		// LLM initialization failed - show persistent message in Chancellor tab
+		m.tabs.Chancellor().AddMessage(fmt.Sprintf("%s%s LLM initialization failed: %v\n\nUse `:help models` to learn more.",
 			systemPrefix, completeFailurePrefix, msg.err))
 		slog.Warn("LLM initialization failed", "error", msg.err)
 		m.commandLine.AddToast("Running without a model, use `:help models` to configure", "warning", 5000)
@@ -2901,23 +2900,15 @@ func (m TUIModel) View() string {
 		return "Initializing..."
 	}
 
-	// Court tab is prompt-free — give all space to content
-	isCourtTab := m.tabs.ActiveTab().Type == TabCourt
-
 	// Update prompt dimensions based on content before rendering
 	// This ensures the prompt grows to 10 lines when multiline (#31)
 	// SetWidth ensures the active tab's prompt matches the terminal width
 	// (prompts are per-tab, but only the active one is sized on WindowSizeMsg)
-	promptHeight := 0
-	promptWithBorder := 0
-	// TODO: add a tab field `HasPrompt` and use it instead of isShogunateTab
-	if !isCourtTab {
-		m.prompt().SetScreenHeight(m.height)
-		m.prompt().SetWidth(m.width - 2)
-		promptHeight = m.prompt().CalculateDesiredHeight()
-		m.prompt().SetHeight(promptHeight)
-		promptWithBorder = promptHeight + 2
-	}
+	m.prompt().SetScreenHeight(m.height)
+	m.prompt().SetWidth(m.width - 2)
+	promptHeight := m.prompt().CalculateDesiredHeight()
+	m.prompt().SetHeight(promptHeight)
+	promptWithBorder := promptHeight + 2
 
 	// Recalculate content height based on new prompt height
 	commandLineHeight := 1
@@ -2934,10 +2925,7 @@ func (m TUIModel) View() string {
 		modalHeight = lipgloss.Height(m.modal.Render())
 	}
 	mainContent := m.renderMainContent(modalHeight)
-	promptView := ""
-	if !isCourtTab {
-		promptView = m.prompt().View()
-	}
+	promptView := m.prompt().View()
 	commandLineView := m.commandLine.View()
 	view := m.composeBaseView(mainContent, promptView, commandLineView)
 	if m.showCompletionDialog {
@@ -2966,7 +2954,6 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	statusHeight := 1
 	promptWithBorder := m.prompt().Height + 2
 	tabBarHeight := m.tabs.TabBarHeight()
-	justContentHeight := m.height - commandLineHeight - statusHeight - tabBarHeight - 2
 	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1 - modalHeight
 	if contentHeight < 0 {
 		contentHeight = 0
@@ -2975,11 +2962,6 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	// First check if we're viewing help/models/resume - these take precedence
 	if m.tabs.Content().GetActiveView() != ViewChat {
 		return m.tabs.Content().View()
-	}
-
-	// Court dashboard has its own renderer
-	if m.tabs.ActiveTab().Type == TabCourt {
-		return m.renderShogunateView(justContentHeight)
 	}
 
 	// Then check for special modes

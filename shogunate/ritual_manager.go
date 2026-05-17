@@ -146,7 +146,7 @@ func (rg *RitualGuard) PublishEvent(key storage.EdictKey, eventType storage.Shog
 	return key.ID
 }
 
-// startRitual starts and runs a ritual using the Ruling tab's streaming context.
+// startRitual starts and runs a ritual using the Chancellor tab's streaming context.
 // It runs in a goroutine so ritual execution (including blocking waits for
 // zhengming during recovery) cannot stall the event loop. Rituals remain
 // serialized via ritualMu so only one runs at a time.
@@ -167,7 +167,7 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 }
 
 // DispatchEvent dispatches an event to all subscribers and triggers event-driven rituals.
-// All rituals run sequentially on the Ruling tab's streaming context.
+// All rituals run sequentially on the Chancellor tab's streaming context.
 func (rg *RitualGuard) DispatchEvent(event Event) {
 	if rg.eventRegistry == nil {
 		return

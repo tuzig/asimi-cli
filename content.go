@@ -16,10 +16,6 @@ import (
 // TabType represents the type of tab connection
 type TabType string
 
-const (
-	TabCourt TabType = "court" // Court dashboard - special case, not a minister
-)
-
 // Tab represents a TUI tab with its own content buffer and stream target
 type Tab struct {
 	Label     string
@@ -57,14 +53,12 @@ type TabManager struct {
 	onTabSwitch     func() // Called after tab switch to update TUI state
 }
 
-// NewTabManager creates a TabManager with 5 tabs per the Shogunate structure:
-// 宰相 Chancellor (ruling/edicts), 孔子 Sage (exploration), 幕府 Shogunate (dashboard),
+// NewTabManager creates a TabManager with 4 tabs per the Shogunate structure:
+// 宰相 Chancellor (ruling/edicts), 聖人 Sage (exploration),
 // 工部 Forge (builds), 刑部 Judge (tests)
 func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager {
 	return TabManager{
 		tabs: []Tab{
-			NewTab("幕府 Court", TabCourt, "court",
-				newContentComponent(w, h, mdEnabled, getStatus)),
 			NewTab("宰相 Chancellor", "chancellor", "chancellor",
 				newContentComponent(w, h, mdEnabled, getStatus)),
 			NewTab("聖人 Sage", "sage", "sage",
@@ -74,7 +68,7 @@ func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager
 			NewTab("刑部 Judge", "judge", "judge",
 				newContentComponent(w, h, mdEnabled, getStatus)),
 		},
-		activeTab:       1,
+		activeTab:       0,
 		width:           w,
 		height:          h,
 		markdownEnabled: mdEnabled,
@@ -136,9 +130,9 @@ func (tm *TabManager) ChatByTab(tabID string) *ChatComponent {
 	return tm.tabs[tm.activeTab].Content.Chat
 }
 
-// Ruling returns the Ruling tab's ChatComponent (always index 0)
-func (tm *TabManager) Ruling() *ChatComponent {
-	return tm.tabs[1].Content.Chat
+// Chancellor returns the Chancellor tab's ChatComponent (always index 0)
+func (tm *TabManager) Chancellor() *ChatComponent {
+	return tm.tabs[0].Content.Chat
 }
 
 // FlushDirtyChats calls UpdateContent on every dirty tab chat. Used by the

@@ -863,10 +863,6 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 	case "sage":
 		model.tabs.Add("Sage", "sage", "sage")
 		model.commandLine.AddToast("Opened Sage tab", "success", time.Second*2)
-	case "court":
-		model.tabs.Add("Court", TabCourt, "court")
-		model.commandLine.AddToast("Opened Court dashboard", "success", time.Second*2)
-		return nil
 	case "ritual":
 		if len(args) < 2 {
 			model.commandLine.AddToast("Usage: :tabnew ritual <run_id>", "error", time.Second*3)

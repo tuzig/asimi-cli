@@ -289,12 +289,6 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 		return
 	}
 
-	// Determine target tab from session's TabType
-	// Court tab never resumes - skip if session is from Court
-	if session.TabType == "court" {
-		return
-	}
-
 	// Clear current edict ID (resumed sessions are edict-free)
 	m.currentEdictKey = storage.EdictKey{}
 

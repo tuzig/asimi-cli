@@ -253,7 +253,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 		"edict_id", task.EdictKey.ID,
 		"work", task.Work)
 
-	// Use task-level notify override for routing (e.g., ritual → Ruling tab)
+	// Use task-level notify override for routing (e.g., ritual → Chancellor tab)
 	notify := f.notify
 	if task.Notify != nil {
 		notify = task.Notify
