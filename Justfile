@@ -42,6 +42,11 @@ fmt:
     go fmt ./...
     goimports -w .
 
+# Freeze the log files to asimi.<suffix>.log and asimi-daemon.<suffix>.log
+freeze-log suffix:
+    cp asimi.log asimi.{{suffix}}.log
+    cp asimi-daemon.log asimi-daemon.{{suffix}}.log
+
 # Clean build artifacts
 clean:
     rm -f asimi
