@@ -48,6 +48,11 @@ func startFakeDaemon(t *testing.T, socketPath string) (stop func()) {
 				conn.Handle("Ping", func(ctx context.Context, params []byte) ([]byte, error) {
 					return nil, nil
 				})
+				// connectOrStartDaemon probes liveness with this
+				// method; a fake daemon must answer it or be evicted.
+				conn.Handle(rpc.MethodCourtEdictKey, func(ctx context.Context, params []byte) ([]byte, error) {
+					return nil, nil
+				})
 				_ = conn.Serve()
 			}(c)
 		}
