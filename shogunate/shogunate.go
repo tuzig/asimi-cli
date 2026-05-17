@@ -91,8 +91,6 @@ type Shogunate struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	rulingCtx func() context.Context
-
 	// Per-channel cancel registry; CancelTab(channelID) invokes the
 	// corresponding cancel func. Populated by CancellableStreamCtx.
 	tabCancelsMu sync.Mutex
@@ -571,19 +569,6 @@ func (s *Shogunate) GetEventRegistry() *EventRegistry {
 		return nil
 	}
 	return s.ritualGuard.EventRegistry()
-}
-
-// SetRulingCtx sets the function that returns the ruling tab's context.
-// Rituals use this context, so cancelling the ruling tab cancels rituals.
-//
-// Deprecated: pass a channel ID through CancellableStreamCtx instead so
-// cancellation survives the TUI→daemon process split. Kept for
-// in-process callers during the transition.
-func (s *Shogunate) SetRulingCtx(fn func() context.Context) {
-	if s == nil {
-		return
-	}
-	s.rulingCtx = fn
 }
 
 // CancellableStreamCtx returns a context derived from the Shogunate's

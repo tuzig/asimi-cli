@@ -14,7 +14,7 @@ import (
 
 // ShogunateClient exposes the Shogunate RPC surface as a typed API.
 // It implements every wire-safe method on shogunateapi.Client. The
-// non-wire-safe methods (GetMinister, ConfigureModel, SetRulingCtx)
+// non-wire-safe methods (GetMinister, ConfigureModel)
 // live on LoopbackShogunate, which composes a ShogunateClient with a
 // local reference for those operations — used while the split is
 // incremental.

@@ -207,16 +207,6 @@ func (tm *TabManager) CancelAllTabs() {
 	}
 }
 
-// RulingCtx returns the Chancellor tab's current context.
-func (tm *TabManager) RulingCtx() context.Context {
-	for i := range tm.tabs {
-		if tm.tabs[i].Target == "chancellor" {
-			return tm.tabs[i].Ctx
-		}
-	}
-	return context.Background()
-}
-
 // SwitchTo saves current tab state and switches to the target index
 func (tm *TabManager) SwitchTo(index int) {
 	if index < 0 || index >= len(tm.tabs) || index == tm.activeTab {

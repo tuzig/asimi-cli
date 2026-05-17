@@ -82,14 +82,6 @@ type Client interface {
 	// Snapshots for the shogunate debug view.
 	TakeSnapshot() shogunate.Snapshot
 
-	// SetRulingCtx hands the Shogunate a function that returns the currently-
-	// focused tab's context. Cancelling the tab cancels rituals. In the split
-	// world this becomes an explicit Cancel RPC.
-	//
-	// Deprecated: use CancelTab from the client; SetRulingCtx only works
-	// in-process.
-	SetRulingCtx(fn func() context.Context)
-
 	// CancelTab cancels any in-flight work registered under the given
 	// channel (tab). Wire-safe; the server-side Shogunate maintains a
 	// per-channel cancel registry populated by CancellableStreamCtx.

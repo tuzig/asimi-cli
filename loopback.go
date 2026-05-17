@@ -14,7 +14,7 @@ import (
 // talks to the real shogunate through an in-process net.Pipe carrying
 // the MessagePack RPC. Wire-safe calls and every notification travel
 // through the codec; the three still-in-process methods (GetMinister,
-// ConfigureModel, SetRulingCtx) delegate to the real shogunate inline.
+// ConfigureModel) delegate to the real shogunate inline.
 //
 // Approval requests become a daemon→TUI Call — the returned hook is
 // called once the *tea.Program exists so the approval handler can
@@ -61,7 +61,7 @@ func (s teaSender) Send(msg any) { s.Program.Send(msg) }
 // installDaemonSocket dials a running asimi daemon at socketPath and
 // swaps the TUI's shogunate for a LoopbackShogunate wrapping the RPC
 // client. Wire-safe methods and all notifications flow over the real
-// socket; GetMinister, ConfigureModel, SetRulingCtx still delegate to
+// socket; GetMinister, ConfigureModel still delegate to
 // the TUI's local shogunate (a known limitation — any feature that
 // relies on those methods will see local-only state instead of the
 // daemon's).

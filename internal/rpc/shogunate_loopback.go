@@ -11,7 +11,7 @@ import (
 // LoopbackShogunate composes a *ShogunateClient with a direct reference
 // to a local shogunateapi.Client implementation. Wire-safe methods are
 // served through the Conn; non-wire-safe methods (GetMinister,
-// ConfigureModel, SetRulingCtx) go to Local.
+// ConfigureModel) go to Local.
 //
 // This shape is a stepping stone — it lets the TUI talk through a real
 // msgpack codec for almost everything while keeping the last few
@@ -49,16 +49,6 @@ func (l *LoopbackShogunate) ConfigureModel(client shogunate.LLMProvider, config 
 		return
 	}
 	l.Local.ConfigureModel(client, config, repoInfo)
-}
-
-// SetRulingCtx delegates to the local shogunate. The passed closure
-// lives in the TUI process; it cannot travel. Replaced by a Cancel RPC
-// in a future phase.
-func (l *LoopbackShogunate) SetRulingCtx(fn func() context.Context) {
-	if l.Local == nil {
-		return
-	}
-	l.Local.SetRulingCtx(fn)
 }
 
 // CancellableStreamCtx is server-side machinery; the TUI never calls

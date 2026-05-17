@@ -158,7 +158,6 @@ func runInteractiveMode() error {
 	if onProgramReady != nil {
 		onProgramReady(tuiProgram)
 	}
-	tuiModel.shogunate.SetRulingCtx(tuiModel.tabs.RulingCtx)
 
 	subCtx, cancelSub := context.WithCancel(ctx)
 	defer cancelSub()

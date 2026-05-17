@@ -291,10 +291,9 @@ only:
 | ---------------- | ----------------------------------------------------------------------------------------- |
 | `GetMinister`    | Returns a `Minister` interface whose methods include I/O. Used only by `saveSession()`.   |
 | `ConfigureModel` | Takes a live `bifrost.LLMProvider` pointer. Replaced on the wire path by `ConfigureLLM`.  |
-| `SetRulingCtx`   | Takes a `func() context.Context` closure. Replaced on the wire path by `CancelTab`.       |
 
 `LoopbackShogunate` wraps a `*ShogunateClient` and delegates these
-three to a **local** `shogunateapi.Client` reference. Anything that
+two to a **local** `shogunateapi.Client` reference. Anything that
 relies on them only reflects local state — in daemon mode, that means
 local-empty. Migrating each of these away collapses
 `LoopbackShogunate` into the plain `*ShogunateClient` and is the final
