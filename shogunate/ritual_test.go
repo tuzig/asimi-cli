@@ -1007,8 +1007,8 @@ func TestLoadBuiltinRituals(t *testing.T) {
 			if len(r.Steps[1].Given) == 0 {
 				t.Error("swift-strike judge step: expected given entries")
 			}
-			if r.Steps[1].Given[1] != "!just test" {
-				t.Errorf("swift-strike judge given: expected '!just test', got %q", r.Steps[1].Given[1])
+			if r.Steps[1].Given[0] != "!just test" {
+				t.Errorf("swift-strike judge given: expected '!just test', got %q", r.Steps[1].Given[0])
 			}
 		}
 	}
@@ -2073,10 +2073,6 @@ func TestRitualEphemeralSessionIsDiscarded(t *testing.T) {
 		t.Fatalf("Failed to register ritual: %v", err)
 	}
 
-	// Track sessions created for each Act
-	var sessionCount int
-	var mu sync.Mutex
-
 	// Create forge minister
 	forge := &ritualTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
@@ -2129,8 +2125,6 @@ func TestRitualEphemeralSessionIsDiscarded(t *testing.T) {
 
 	// Session count tracking would require hooking into CreateSession, but the
 	// key behavior is verified by the isolation test above.
-	_ = sessionCount
-	_ = mu
 	t.Log("Both steps completed with isolated ephemeral sessions")
 }
 
