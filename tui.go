@@ -1744,26 +1744,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	case shogunate.StreamReasoningChunkMsg:
-		if tab := m.tabs.TabByTarget(msg.ChannelID); tab != nil && !tab.Streaming {
-			return m, nil
-		}
-		// Handle thinking/reasoning chunks from Shogunate — route to correct tab
-		chat := m.tabs.ChatByTab(msg.ChannelID)
-		chat.AddToRawHistory("SHOGUNATE_THOUGHT", msg.Text)
-		chat.AddThinkingChunk(msg.Text)
-		if state, ok := m.currentSessionState(); ok && state.ChannelID == msg.ChannelID {
-			m.status.AddStreamChars(len(msg.Text))
-			m.status.ContextPercent = state.ContextUsagePercent
-		}
-		var cmds []tea.Cmd
-		// Schedule the debounce tick if dirty and none pending
-		if chat.contentDirty && !m.renderTickPending {
-			m.renderTickPending = true
-			cmds = append(cmds, tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg { return chatRenderTickMsg{} }))
-		}
-		return m, tea.Batch(cmds...)
-
 	case chatRenderTickMsg:
 		// Debounce tick fired — flush every dirty chat. Chunks can land on a
 		// non-active tab, so flushing only Content().Chat misses them.

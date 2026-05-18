@@ -50,7 +50,6 @@ func TestForgeChannelID_Routing(t *testing.T) {
 	// Collect all streaming notifications
 	var mu sync.Mutex
 	var streamMsgs []StreamChunkMsg
-	var reasoningMsgs []StreamReasoningChunkMsg
 
 	forge.SetNotify(func(msg any) {
 		mu.Lock()
@@ -58,8 +57,6 @@ func TestForgeChannelID_Routing(t *testing.T) {
 		switch m := msg.(type) {
 		case StreamChunkMsg:
 			streamMsgs = append(streamMsgs, m)
-		case StreamReasoningChunkMsg:
-			reasoningMsgs = append(reasoningMsgs, m)
 		}
 	})
 
@@ -88,10 +85,6 @@ func TestForgeChannelID_Routing(t *testing.T) {
 
 	for i, msg := range streamMsgs {
 		assert.Equal(t, "forge", msg.ChannelID, "StreamChunkMsg[%d] should have ChannelID='forge', got ChannelID='%s' (routing bug)", i, msg.ChannelID)
-	}
-
-	for i, msg := range reasoningMsgs {
-		assert.Equal(t, "forge", msg.ChannelID, "StreamReasoningChunkMsg[%d] should have ChannelID='forge', got ChannelID='%s' (routing bug)", i, msg.ChannelID)
 	}
 }
 

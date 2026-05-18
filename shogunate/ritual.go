@@ -1344,9 +1344,6 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		case StreamChunkMsg:
 			m.ChannelID = "chancellor"
 			exec.notify(m)
-		case StreamReasoningChunkMsg:
-			m.ChannelID = "chancellor"
-			exec.notify(m)
 		default:
 			exec.notify(msg)
 		}

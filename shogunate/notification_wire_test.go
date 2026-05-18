@@ -22,18 +22,6 @@ func TestStreamChunkMsgRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStreamReasoningChunkMsgRoundTrip(t *testing.T) {
-	in := StreamReasoningChunkMsg{ChannelID: "sage", Text: "hmm"}
-	b, _ := msgpack.Marshal(in)
-	var out StreamReasoningChunkMsg
-	if err := msgpack.Unmarshal(b, &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if out != in {
-		t.Fatalf("round trip: got %+v want %+v", out, in)
-	}
-}
-
 func TestStreamStartMsgRoundTrip(t *testing.T) {
 	in := StreamStartMsg{ChannelID: "ruling", EdictID: 42}
 	b, _ := msgpack.Marshal(in)
