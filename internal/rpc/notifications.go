@@ -16,7 +16,6 @@ import (
 const (
 	NotifyStreamStart                = "stream.start"
 	NotifyStreamChunk                = "stream.chunk"
-	NotifyStreamReasoning            = "stream.reasoning"
 	NotifyStreamComplete             = "stream.complete"
 	NotifyStreamDone                 = "stream.done"
 	NotifyStreamInterrupted          = "stream.interrupted"
@@ -46,7 +45,6 @@ var (
 	typeToMethod   = map[reflect.Type]string{
 		reflect.TypeOf(shogunate.StreamStartMsg{}):              NotifyStreamStart,
 		reflect.TypeOf(shogunate.StreamChunkMsg{}):              NotifyStreamChunk,
-		reflect.TypeOf(shogunate.StreamReasoningChunkMsg{}):     NotifyStreamReasoning,
 		reflect.TypeOf(shogunate.StreamCompleteMsg{}):           NotifyStreamComplete,
 		reflect.TypeOf(shogunate.StreamDoneMsg{}):               NotifyStreamDone,
 		reflect.TypeOf(shogunate.StreamInterruptedMsg{}):        NotifyStreamInterrupted,
@@ -118,7 +116,6 @@ var (
 	methodToDecoder   = map[string]NotificationDecoder{
 		NotifyStreamStart:                decode[shogunate.StreamStartMsg],
 		NotifyStreamChunk:                decode[shogunate.StreamChunkMsg],
-		NotifyStreamReasoning:            decode[shogunate.StreamReasoningChunkMsg],
 		NotifyStreamComplete:             decode[shogunate.StreamCompleteMsg],
 		NotifyStreamDone:                 decode[shogunate.StreamDoneMsg],
 		NotifyStreamInterrupted:          decode[shogunate.StreamInterruptedMsg],

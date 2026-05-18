@@ -129,11 +129,11 @@ func TestHighPriorityNeverDropped(t *testing.T) {
 	}
 }
 
-// ── Test 2: Medium-priority StreamChunkMsg is dropped when congested ───────
+// ── Test 2: StreamChunkMsg is dropped when congested ────────────────────────
 
-// TestMediumPriorityDroppedWhenCongested verifies that medium-priority
-// StreamChunkMsg uses a non-blocking try-send. When the sendFunc is busy
-// (semaphore occupied), additional medium messages are dropped.
+// TestMediumPriorityDroppedWhenCongested verifies that StreamChunkMsg
+// uses a non-blocking try-send. When the sendFunc is busy (semaphore
+// occupied), additional chunk messages are dropped.
 func TestMediumPriorityDroppedWhenCongested(t *testing.T) {
 	var counter atomic.Int64
 	unblock := make(chan struct{})
@@ -147,7 +147,7 @@ func TestMediumPriorityDroppedWhenCongested(t *testing.T) {
 	d.notify(shogunate.StreamChunkMsg{})
 	time.Sleep(100 * time.Millisecond) // let dispatch loop process it
 
-	// Semaphore is now occupied. These medium messages should be dropped.
+	// Semaphore is now occupied. These chunk messages should be dropped.
 	const extra = 30
 	for i := 0; i < extra; i++ {
 		d.notify(shogunate.StreamChunkMsg{})
@@ -167,43 +167,7 @@ func TestMediumPriorityDroppedWhenCongested(t *testing.T) {
 	}
 }
 
-// ── Test 3: Low-priority StreamReasoningChunkMsg is dropped when congested ──
-
-// TestLowPriorityDroppedWhenCongested verifies that low-priority
-// StreamReasoningChunkMsg uses non-blocking try-send and is dropped when
-// the sendFunc is busy.
-func TestLowPriorityDroppedWhenCongested(t *testing.T) {
-	var counter atomic.Int64
-	unblock := make(chan struct{})
-
-	sendFunc := blockingSendFunc(unblock, &counter)
-
-	d := newTestDispatcher(sendFunc)
-	defer d.close()
-
-	// First low-priority message acquires the semaphore and blocks.
-	d.notify(shogunate.StreamReasoningChunkMsg{})
-	time.Sleep(100 * time.Millisecond)
-
-	const extra = 30
-	for i := 0; i < extra; i++ {
-		d.notify(shogunate.StreamReasoningChunkMsg{})
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	close(unblock)
-	time.Sleep(100 * time.Millisecond)
-
-	med, low := d.DroppedCounts()
-	if low == 0 {
-		t.Error("expected low-priority drops, got 0")
-	}
-	if med != 0 {
-		t.Errorf("expected zero medium drops, got %d", med)
-	}
-}
-
-// ── Test 4: Unknown message types are treated as high-priority by default ──
+// ── Test 3: Unknown message types are treated as high-priority by default ──
 
 // TestUnknownTypeHighPriority verifies that messages not matching any known
 // type case fall through to the default branch, which does a blocking send.
@@ -246,7 +210,7 @@ func TestUnknownTypeHighPriority(t *testing.T) {
 func TestDropCountersIncrement(t *testing.T) {
 	const flood = 40
 
-	// Medium lane in isolation.
+	// Single chunk lane (StreamChunkMsg only — reasoning was merged into same type).
 	{
 		var counter atomic.Int64
 		unblock := make(chan struct{})
@@ -264,40 +228,15 @@ func TestDropCountersIncrement(t *testing.T) {
 
 		med, low := d.DroppedCounts()
 		if med != flood {
-			t.Errorf("medium-only flood: expected medium drops = %d, got %d", flood, med)
+			t.Errorf("chunk flood: expected medium drops = %d, got %d", flood, med)
 		}
 		if low != 0 {
-			t.Errorf("medium-only flood: expected low drops = 0, got %d", low)
-		}
-	}
-
-	// Low lane in isolation.
-	{
-		var counter atomic.Int64
-		unblock := make(chan struct{})
-		d := newTestDispatcher(blockingSendFunc(unblock, &counter))
-		defer d.close()
-
-		d.notify(shogunate.StreamReasoningChunkMsg{})
-		time.Sleep(50 * time.Millisecond)
-		for i := 0; i < flood; i++ {
-			d.notify(shogunate.StreamReasoningChunkMsg{})
-		}
-		time.Sleep(200 * time.Millisecond)
-		close(unblock)
-		time.Sleep(50 * time.Millisecond)
-
-		med, low := d.DroppedCounts()
-		if low != flood {
-			t.Errorf("low-only flood: expected low drops = %d, got %d", flood, low)
-		}
-		if med != 0 {
-			t.Errorf("low-only flood: expected medium drops = 0, got %d", med)
+			t.Errorf("chunk flood: expected low drops = 0, got %d", low)
 		}
 	}
 }
 
-// ── Test 6: Context cancellation shuts down the dispatcher cleanly ──────────
+// ── Test 5: Context cancellation shuts down the dispatcher cleanly ──────────
 
 // TestContextCancellationShutdown verifies that cancelling the dispatcher's
 // context causes the dispatch goroutine to exit cleanly, and that subsequent
@@ -333,7 +272,7 @@ func TestContextCancellationShutdown(t *testing.T) {
 	}
 }
 
-// ── Test 7: Dispatcher drains from `in` channel and sends to mock program ───
+// ── Test 6: Dispatcher drains from `in` channel and sends to mock program ───
 
 // TestDispatcherDrainsInChannel verifies that the dispatcher actually reads
 // messages from its `in` channel and delivers them via sendFunc. We use
@@ -465,55 +404,50 @@ func TestAllHighPriorityTypes(t *testing.T) {
 	}
 }
 
-// ── Cross-type ordering: output and reasoning share a lane ──────────────────
+// ── Chunk ordering: all chunks share a single lane ──────────────────────────
 
-// TestChunkOrderingOutputAndReasoning is a regression guard for the
-// "reasoning and output get mixed up" bug. Output and reasoning chunks share
-// a single 1-slot semaphore, so the dispatch loop's submission order must be
-// preserved by the sender. The test interleaves the two types and asserts
-// that what arrives at the sender is a prefix-ordered subset of what was
-// submitted.
+// TestChunkOrderingOutputAndReasoning verifies that StreamChunkMsg chunks
+// (both content and reasoning, now the same type) share a single 1-slot
+// semaphore. The dispatch loop's submission order must be preserved by the
+// sender. Interleaved chunk messages must arrive in prefix-ordered subset
+// of what was submitted.
 func TestChunkOrderingOutputAndReasoning(t *testing.T) {
 	var (
 		mu       sync.Mutex
-		received []shogunate.StreamChunkMsg // misuse: we tag each msg's Text with seq
+		received []shogunate.StreamChunkMsg
 	)
-	// recordSendFunc captures only the chunks we care about and their order.
 	sendFunc := func(msg any) {
 		mu.Lock()
 		defer mu.Unlock()
-		switch v := msg.(type) {
-		case shogunate.StreamChunkMsg:
+		if v, ok := msg.(shogunate.StreamChunkMsg); ok {
 			received = append(received, v)
-		case shogunate.StreamReasoningChunkMsg:
-			received = append(received, shogunate.StreamChunkMsg{ChannelID: "r", Text: v.Text})
 		}
 	}
 
 	d := newTestDispatcher(sendFunc)
 	defer d.close()
 
-	// Submit an interleaved sequence. The seq number embedded in Text must
+	// Submit an interleaved sequence of content and reasoning chunks,
+	// both as StreamChunkMsg. The seq number embedded in Text must
 	// arrive in monotonically increasing order at the sender (allowing for
 	// drops — a drop just skips a number, never inverts the order).
 	const total = 200
-	want := make([]string, 0, total)
 	for i := 0; i < total; i++ {
 		text := fmt.Sprintf("%04d", i)
-		want = append(want, text)
-		if i%2 == 0 {
-			d.notify(shogunate.StreamChunkMsg{ChannelID: "o", Text: text})
-		} else {
-			d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "r", Text: text})
+		// Alternate ChannelID to simulate interleaved content/reasoning,
+		// but both are the same message type.
+		chID := "o" // output
+		if i%2 != 0 {
+			chID = "r" // reasoning
 		}
+		d.notify(shogunate.StreamChunkMsg{ChannelID: chID, Text: text})
 	}
 
-	// Wait for the dispatcher to drain. Since trySend may drop, we can't wait
-	// on a count; just give the loop time to process everything.
+	// Wait for the dispatcher to drain.
 	time.Sleep(300 * time.Millisecond)
 
 	mu.Lock()
-	got := append([]shogunate.StreamChunkMsg(nil), received...)
+	got := append([]shogunate.StreamChunkMsg{}, received...)
 	mu.Unlock()
 
 	if len(got) == 0 {
@@ -521,7 +455,7 @@ func TestChunkOrderingOutputAndReasoning(t *testing.T) {
 	}
 
 	// Each received Text must be lexicographically greater than the previous —
-	// i.e. the dispatcher preserved submission order across the two types.
+	// i.e. the dispatcher preserved submission order.
 	for i := 1; i < len(got); i++ {
 		if got[i].Text <= got[i-1].Text {
 			t.Fatalf("ordering violation at %d: prev=%q curr=%q (full sequence: %v)",
@@ -627,22 +561,23 @@ func TestBackpressure_DispatcherDoesNotBlockProducer(t *testing.T) {
 }
 
 // TestBackpressure_ReasoningChunksDroppedWhenCongested verifies that
-// StreamReasoningChunkMsg messages are dropped when the TUI sender is
-// congested (low priority lane).
+// StreamChunkMsg messages (including reasoning) are dropped when the TUI
+// sender is congested. Since reasoning and content share the same type and
+// semaphore lane, both use the medium drop counter.
 func TestBackpressure_ReasoningChunksDroppedWhenCongested(t *testing.T) {
 	block := make(chan struct{})
 	sender := &countingSender{block: block}
 	d := newDispatcherWithSender(sender)
 	defer d.close()
 
-	// First low-priority message acquires semaphore and blocks
-	d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "sage", Text: "thinking"})
+	// First chunk acquires semaphore and blocks
+	d.notify(shogunate.StreamChunkMsg{ChannelID: "sage", Text: "thinking"})
 	time.Sleep(50 * time.Millisecond)
 
-	// Flood with more low-priority messages — semaphore is occupied, these should drop
+	// Flood with more chunks — semaphore is occupied, these should drop
 	const extra = 50
 	for i := 0; i < extra; i++ {
-		d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "sage", Text: "more thinking"})
+		d.notify(shogunate.StreamChunkMsg{ChannelID: "sage", Text: "more thinking"})
 	}
 	time.Sleep(200 * time.Millisecond)
 
@@ -650,34 +585,34 @@ func TestBackpressure_ReasoningChunksDroppedWhenCongested(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	med, low := d.DroppedCounts()
-	assert.Greater(t, low, int64(0), "low-priority messages should be dropped when congested")
-	assert.Equal(t, int64(0), med, "medium-priority drops should be zero")
+	assert.Greater(t, med, int64(0), "chunk messages should be dropped when congested")
+	assert.Equal(t, int64(0), low, "low drops always zero")
 
 	// At least the first message should have been delivered
 	msgs := sender.messages()
-	lowDelivered := 0
+	chunkDelivered := 0
 	for _, m := range msgs {
-		if _, ok := m.(shogunate.StreamReasoningChunkMsg); ok {
-			lowDelivered++
+		if _, ok := m.(shogunate.StreamChunkMsg); ok {
+			chunkDelivered++
 		}
 	}
-	assert.GreaterOrEqual(t, lowDelivered, 1, "at least one reasoning chunk should be delivered")
+	assert.GreaterOrEqual(t, chunkDelivered, 1, "at least one chunk should be delivered")
 }
 
 // TestBackpressure_StreamChunksDroppedWhenCongested verifies that
 // StreamChunkMsg messages use non-blocking try-send and are dropped when
-// the TUI sender is congested (medium priority lane).
+// the TUI sender is congested.
 func TestBackpressure_StreamChunksDroppedWhenCongested(t *testing.T) {
 	block := make(chan struct{})
 	sender := &countingSender{block: block}
 	d := newDispatcherWithSender(sender)
 	defer d.close()
 
-	// First medium-priority message acquires semaphore and blocks
+	// First message acquires semaphore and blocks
 	d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "first chunk"})
 	time.Sleep(50 * time.Millisecond)
 
-	// Flood with more medium-priority messages — should be dropped
+	// Flood with more messages — should be dropped
 	const extra = 50
 	for i := 0; i < extra; i++ {
 		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "extra chunk"})
@@ -688,8 +623,8 @@ func TestBackpressure_StreamChunksDroppedWhenCongested(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	med, low := d.DroppedCounts()
-	assert.Greater(t, med, int64(0), "medium-priority messages should be dropped when congested")
-	assert.Equal(t, int64(0), low, "low-priority drops should be zero")
+	assert.Greater(t, med, int64(0), "chunk messages should be dropped when congested")
+	assert.Equal(t, int64(0), low, "low drops always zero")
 
 	// The first message should have been delivered
 	msgs := sender.messages()
@@ -699,7 +634,7 @@ func TestBackpressure_StreamChunksDroppedWhenCongested(t *testing.T) {
 			medDelivered++
 		}
 	}
-	assert.GreaterOrEqual(t, medDelivered, 1, "at least one stream chunk should be delivered")
+	assert.GreaterOrEqual(t, medDelivered, 1, "at least one chunk should be delivered")
 }
 
 // TestBackpressure_ControlMessagesNeverDropped verifies that high-priority
@@ -713,17 +648,13 @@ func TestBackpressure_ControlMessagesNeverDropped(t *testing.T) {
 
 	// Send a mix of priorities while sender is blocked
 	const highCount = 10
-	const medCount = 20
-	const lowCount = 20
+	const chunkCount = 40
 
 	for i := 0; i < highCount; i++ {
 		d.notify(shogunate.StreamCompleteMsg{ChannelID: "forge"})
 	}
-	for i := 0; i < medCount; i++ {
+	for i := 0; i < chunkCount; i++ {
 		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "chunk"})
-	}
-	for i := 0; i < lowCount; i++ {
-		d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "forge", Text: "thinking"})
 	}
 
 	// Wait for the dispatch loop to pick up messages
@@ -746,14 +677,14 @@ func TestBackpressure_ControlMessagesNeverDropped(t *testing.T) {
 		"all high-priority StreamCompleteMsg must be delivered, never dropped")
 
 	med, low := d.DroppedCounts()
-	_ = med // medium drops are expected
-	_ = low // low drops are expected
+	_ = med // chunk drops are expected
+	assert.Equal(t, int64(0), low, "low drops always zero")
 }
 
 // TestBackpressure_CongestedSenderPriorityGuarantee verifies that under
 // heavy congestion (sender always busy), only high-priority messages are
-// guaranteed delivery. Medium and low priority messages are subject to
-// backpressure relief (dropping).
+// guaranteed delivery. Chunk messages are subject to backpressure relief
+// (dropping).
 func TestBackpressure_CongestedSenderPriorityGuarantee(t *testing.T) {
 	// Use a sender that blocks for a long time on each Send
 	block := make(chan struct{})
@@ -761,16 +692,13 @@ func TestBackpressure_CongestedSenderPriorityGuarantee(t *testing.T) {
 	d := newDispatcherWithSender(sender)
 	defer d.close()
 
-	// Flood with all three priority levels
+	// Flood with high-priority and chunk messages (reasoning merged into chunks)
 	const highCount = 5
 	for i := 0; i < highCount; i++ {
 		d.notify(shogunate.StreamCompleteMsg{ChannelID: "forge"})
 	}
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 200; i++ {
 		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "data"})
-	}
-	for i := 0; i < 100; i++ {
-		d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "forge", Text: "think"})
 	}
 
 	// Give dispatcher time to process and block on first high-priority send
@@ -795,10 +723,9 @@ func TestBackpressure_CongestedSenderPriorityGuarantee(t *testing.T) {
 	assert.Equal(t, highCount, highDelivered,
 		"all high-priority StreamCompleteMsg must be delivered even under congestion")
 
-	// Medium and low: some may be delivered, but most should be dropped
+	// Chunks: some may be delivered, but most should be dropped
 	med, low := d.DroppedCounts()
 	assert.Greater(t, med, int64(0),
-		"medium-priority should have drops under heavy congestion")
-	assert.Greater(t, low, int64(0),
-		"low-priority should have drops under heavy congestion")
+		"chunk messages should have drops under heavy congestion")
+	assert.Equal(t, int64(0), low, "low drops always zero")
 }

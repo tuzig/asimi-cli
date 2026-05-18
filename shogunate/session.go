@@ -76,11 +76,6 @@ type StreamChunkMsg struct {
 	Text      string `msgpack:"text"`
 }
 
-// StreamReasoningChunkMsg contains a reasoning/thinking chunk from the LLM
-type StreamReasoningChunkMsg struct {
-	ChannelID string `msgpack:"channel_id"`
-	Text      string `msgpack:"text"`
-}
 
 // StreamStartMsg signals that streaming has begun
 type StreamStartMsg struct {
@@ -1058,22 +1053,20 @@ func (s *Session) generateLLMResponse(ctx context.Context, stream bool) (*respon
 			}
 			delta := choice.ChatStreamResponseChoice.Delta
 
-			// Emit content and reasoning chunks inline as deltas arrive. The
-			// dispatcher's 1-slot semaphore (shared by both streams) preserves
-			// their relative order on the way to the TUI.
+			// Emit reasoning and content concatenated into a single
+			// StreamChunkMsg per delta for consistent ordering in the TUI.
+			var chunkText string
+			if delta.Reasoning != nil && *delta.Reasoning != "" {
+				reasoning.WriteString(*delta.Reasoning)
+				chunkText = *delta.Reasoning
+			}
 			if delta.Content != nil && *delta.Content != "" {
 				content.WriteString(*delta.Content)
 				s.accumulatedContent.WriteString(*delta.Content)
-				if s.notify != nil {
-					s.notify(StreamChunkMsg{ChannelID: s.channelID, Text: *delta.Content})
-				}
+				chunkText += *delta.Content
 			}
-
-			if delta.Reasoning != nil && *delta.Reasoning != "" {
-				reasoning.WriteString(*delta.Reasoning)
-				if s.notify != nil {
-					s.notify(StreamReasoningChunkMsg{ChannelID: s.channelID, Text: *delta.Reasoning})
-				}
+			if chunkText != "" && s.notify != nil {
+				s.notify(StreamChunkMsg{ChannelID: s.channelID, Text: chunkText})
 			}
 
 			// Accumulate tool calls from deltas

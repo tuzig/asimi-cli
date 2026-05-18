@@ -2487,7 +2487,7 @@ func TestBackpressure_EndToEnd(t *testing.T) {
 		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "text "})
 	}
 	for i := 0; i < reasoningChunks; i++ {
-		d.notify(shogunate.StreamReasoningChunkMsg{ChannelID: "forge", Text: "think "})
+		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "think "})
 	}
 	// High-priority complete is sent last — must always arrive
 	d.notify(shogunate.StreamCompleteMsg{ChannelID: "forge"})
@@ -2507,7 +2507,7 @@ func TestBackpressure_EndToEnd(t *testing.T) {
 	var chunks, completes []any
 	for _, msg := range msgs {
 		switch msg.(type) {
-		case shogunate.StreamChunkMsg, shogunate.StreamReasoningChunkMsg:
+		case shogunate.StreamChunkMsg:
 			chunks = append(chunks, msg)
 		case shogunate.StreamCompleteMsg:
 			completes = append(completes, msg)

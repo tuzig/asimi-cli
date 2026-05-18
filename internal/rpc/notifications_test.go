@@ -46,7 +46,7 @@ func TestNotificationPipeline(t *testing.T) {
 		shogunate.StreamStartMsg{ChannelID: "ruling", EdictID: 9},
 		shogunate.StreamChunkMsg{ChannelID: "ruling", Text: "hello "},
 		shogunate.StreamChunkMsg{ChannelID: "ruling", Text: "world"},
-		shogunate.StreamReasoningChunkMsg{ChannelID: "sage", Text: "thinking"},
+		shogunate.StreamChunkMsg{ChannelID: "sage", Text: "thinking"},
 		shogunate.StreamCompleteMsg{ChannelID: "ruling"},
 		shogunate.StreamErrorMsg{ChannelID: "forge", Err: errors.New("boom")},
 		shogunate.EventsDrainedMsg{Events: []shogunate.DrainedEvent{
@@ -150,9 +150,6 @@ func comparableEqual(a, b any) bool {
 		return ok && at == bt
 	case shogunate.StreamChunkMsg:
 		bt, ok := b.(shogunate.StreamChunkMsg)
-		return ok && at == bt
-	case shogunate.StreamReasoningChunkMsg:
-		bt, ok := b.(shogunate.StreamReasoningChunkMsg)
 		return ok && at == bt
 	case shogunate.StreamCompleteMsg:
 		bt, ok := b.(shogunate.StreamCompleteMsg)

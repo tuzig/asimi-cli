@@ -30,11 +30,11 @@ func (s programSender) Send(msg any) {
 }
 
 // notificationDispatcher is an async prioritized dispatcher that replaces the
-// synchronous events → Send goroutine in main.go. It has three priority lanes:
+// synchronous events → Send goroutine in main.go. It has two priority lanes:
 //
 //   - High: control/lifecycle messages — always delivered with a blocking send.
-//   - Medium: StreamChunkMsg — non-blocking try-send; dropped if the TUI is busy.
-//   - Low: StreamReasoningChunkMsg — non-blocking try-send; dropped if busy.
+//   - Chunk: StreamChunkMsg — non-blocking
+//     try-send; dropped if the TUI is busy.
 //
 // A single internal goroutine reads from the buffered `in` channel and routes
 // each message based on a type-switch. Dropped counters are tracked for
@@ -50,7 +50,6 @@ type notificationDispatcher struct {
 	streamChunkSem chan struct{}
 
 	mediumDropped atomic.Int64
-	lowDropped    atomic.Int64
 }
 
 // newNotificationDispatcher creates a dispatcher and starts its internal
@@ -80,10 +79,10 @@ func (d *notificationDispatcher) notify(msg any) {
 	}
 }
 
-// DroppedCounts returns the cumulative count of dropped messages for the
-// medium and low priority lanes.
+// DroppedCounts returns the cumulative count of dropped chunk messages.
+// The `low` return value is always 0 — it is kept for API compatibility.
 func (d *notificationDispatcher) DroppedCounts() (medium int64, low int64) {
-	return d.mediumDropped.Load(), d.lowDropped.Load()
+	return d.mediumDropped.Load(), 0
 }
 
 // close signals the dispatch goroutine to stop and waits for it to finish.
@@ -140,9 +139,6 @@ func (d *notificationDispatcher) dispatch(msg any) {
 
 	case shogunate.StreamChunkMsg:
 		d.trySend(msg, d.streamChunkSem, &d.mediumDropped)
-
-	case shogunate.StreamReasoningChunkMsg:
-		d.trySend(msg, d.streamChunkSem, &d.lowDropped)
 
 	default:
 		// Unknown type — send blocking to avoid silent loss of new message types.
