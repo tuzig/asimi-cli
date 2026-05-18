@@ -1828,6 +1828,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 						text = text + " - " + msg.Message
 					}
 				}
+				// Re-set streaming flag for each step, since a prior step's
+				// StreamCompleteMsg clears it and would cause chunks to drop.
+				m.tabs.SetStreamingTabByTab(msg.ChannelID)
 			}
 			chat.AddMessage(text)
 			if msg.StepName == "" {
