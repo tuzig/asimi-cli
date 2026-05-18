@@ -1885,7 +1885,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case storage.EventEdictCreated:
 			icon = "📜"
 			intent, _ := msg.Payload["intent"].(string)
-			id, _ := msg.Payload["id"].(uint)
+			id := msg.EdictKey.ID
 			if intent == "" {
 				intent = "New edict"
 			}
