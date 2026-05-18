@@ -12,40 +12,40 @@ import (
 
 func TestHasAWSEnvCredentials(t *testing.T) {
 	tests := []struct {
-		name          string
-		accessKeyID   string
-		secretAccess  string
-		expectTrue    bool
+		name         string
+		accessKeyID  string
+		secretAccess string
+		expectTrue   bool
 	}{
 		{
-			name:        "both credentials set",
-			accessKeyID: "AKIAIOSFODNN7EXAMPLE",
+			name:         "both credentials set",
+			accessKeyID:  "AKIAIOSFODNN7EXAMPLE",
 			secretAccess: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-			expectTrue:  true,
+			expectTrue:   true,
 		},
 		{
-			name:        "only access key set",
-			accessKeyID: "AKIAIOSFODNN7EXAMPLE",
+			name:         "only access key set",
+			accessKeyID:  "AKIAIOSFODNN7EXAMPLE",
 			secretAccess: "",
-			expectTrue:  false,
+			expectTrue:   false,
 		},
 		{
-			name:        "only secret key set",
-			accessKeyID: "",
+			name:         "only secret key set",
+			accessKeyID:  "",
 			secretAccess: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-			expectTrue:  false,
+			expectTrue:   false,
 		},
 		{
-			name:        "neither set",
-			accessKeyID: "",
+			name:         "neither set",
+			accessKeyID:  "",
 			secretAccess: "",
-			expectTrue:  false,
+			expectTrue:   false,
 		},
 		{
-			name:        "both empty strings",
-			accessKeyID: "",
+			name:         "both empty strings",
+			accessKeyID:  "",
 			secretAccess: "",
-			expectTrue:  false,
+			expectTrue:   false,
 		},
 	}
 
@@ -156,11 +156,15 @@ func TestGetKeysForProvider_Bedrock_WithAllEnvVars(t *testing.T) {
 	if key.Name != "AWS Credentials" {
 		t.Errorf("expected key Name 'AWS Credentials', got %q", key.Name)
 	}
-	if key.Value.Val != "AKIAIOSFODNN7EXAMPLE" {
-		t.Errorf("expected access key in Value.Val, got %q", key.Value.Val)
+	// Value must stay empty so Bifrost uses SigV4 signing, not Bearer auth.
+	if key.Value.Val != "" {
+		t.Errorf("expected empty Value.Val for SigV4 auth, got %q", key.Value.Val)
 	}
 	if key.BedrockKeyConfig == nil {
 		t.Fatal("expected BedrockKeyConfig to be set")
+	}
+	if key.BedrockKeyConfig.AccessKey.Val != "AKIAIOSFODNN7EXAMPLE" {
+		t.Errorf("expected access key in BedrockKeyConfig.AccessKey, got %q", key.BedrockKeyConfig.AccessKey.Val)
 	}
 	if key.BedrockKeyConfig.Region == nil || key.BedrockKeyConfig.Region.Val != "us-east-1" {
 		t.Errorf("expected region 'us-east-1', got %v", key.BedrockKeyConfig.Region)

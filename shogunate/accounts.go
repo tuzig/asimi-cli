@@ -25,11 +25,11 @@ func (l *BifrostLogger) log(level slog.Level, msg string, args ...any) {
 		l.logger.Log(context.Background(), level, msg)
 	}
 }
-func (l *BifrostLogger) Debug(msg string, args ...any) { l.log(slog.LevelDebug, msg, args...) }
-func (l *BifrostLogger) Info(msg string, args ...any)  { l.log(slog.LevelInfo, msg, args...) }
-func (l *BifrostLogger) Warn(msg string, args ...any)  { l.log(slog.LevelWarn, msg, args...) }
-func (l *BifrostLogger) Error(msg string, args ...any) { l.log(slog.LevelError, msg, args...) }
-func (l *BifrostLogger) Fatal(msg string, args ...any) { l.log(slog.LevelError, msg, args...) }
+func (l *BifrostLogger) Debug(msg string, args ...any)          { l.log(slog.LevelDebug, msg, args...) }
+func (l *BifrostLogger) Info(msg string, args ...any)           { l.log(slog.LevelInfo, msg, args...) }
+func (l *BifrostLogger) Warn(msg string, args ...any)           { l.log(slog.LevelWarn, msg, args...) }
+func (l *BifrostLogger) Error(msg string, args ...any)          { l.log(slog.LevelError, msg, args...) }
+func (l *BifrostLogger) Fatal(msg string, args ...any)          { l.log(slog.LevelError, msg, args...) }
 func (l *BifrostLogger) SetLevel(schemas.LogLevel)              {}
 func (l *BifrostLogger) SetOutputType(schemas.LoggerOutputType) {}
 func (l *BifrostLogger) LogHTTPRequest(schemas.LogLevel, string) schemas.LogEventBuilder {
@@ -113,34 +113,26 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 		sessionToken := os.Getenv("AWS_SESSION_TOKEN")
 
+		// SigV4 auth: AWS credentials go in BedrockKeyConfig and Key.Value
+		// MUST stay empty. Bifrost treats a non-empty Key.Value as a Bedrock
+		// API key and sends it as a Bearer token, skipping SigV4 signing.
 		key := schemas.Key{
-			ID:     "bedrock_aws",
-			Name:   "AWS Credentials",
-			Models: []string{"*"},
-			Weight: 1.0,
+			ID:      "bedrock_aws",
+			Name:    "AWS Credentials",
+			Models:  []string{"*"},
+			Weight:  1.0,
 			Enabled: &enabled,
+			BedrockKeyConfig: &schemas.BedrockKeyConfig{
+				AccessKey: schemas.EnvVar{Val: accessKey},
+				SecretKey: schemas.EnvVar{Val: secretKey},
+			},
 		}
-
 		if region != "" {
 			regionVal := schemas.EnvVar{Val: region}
-			key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
-				Region: &regionVal,
-			}
-		}
-		if accessKey != "" {
-			key.Value = schemas.EnvVar{Val: accessKey}
-		}
-		if secretKey != "" {
-			if key.BedrockKeyConfig == nil {
-				key.BedrockKeyConfig = &schemas.BedrockKeyConfig{}
-			}
-			key.BedrockKeyConfig.SecretKey = schemas.EnvVar{Val: secretKey}
+			key.BedrockKeyConfig.Region = &regionVal
 		}
 		if sessionToken != "" {
 			tokenVal := schemas.EnvVar{Val: sessionToken}
-			if key.BedrockKeyConfig == nil {
-				key.BedrockKeyConfig = &schemas.BedrockKeyConfig{}
-			}
 			key.BedrockKeyConfig.SessionToken = &tokenVal
 		}
 
