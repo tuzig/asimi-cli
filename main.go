@@ -162,19 +162,13 @@ func runInteractiveMode() error {
 	subCtx, cancelSub := context.WithCancel(ctx)
 	defer cancelSub()
 	events := tuiModel.shogunate.Subscribe(subCtx)
-	dispatcher := newNotificationDispatcher(tuiProgram)
 	go func() {
 		for {
 			select {
 			case <-subCtx.Done():
-				dispatcher.close()
 				return
-			case msg, ok := <-events:
-				if !ok {
-					dispatcher.close()
-					return
-				}
-				dispatcher.notify(msg)
+			case msg := <-events:
+				tuiProgram.Send(msg)
 			}
 		}
 	}()

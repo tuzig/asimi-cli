@@ -2364,8 +2364,7 @@ func TestContextPercentZeroWhenNoSession(t *testing.T) {
 // Streaming/render debounce tests
 //
 // These tests exercise the contentDirty + chatRenderTickMsg coalescing path
-// that prevents UpdateContent() from running on every StreamChunkMsg. The
-// final test wires the dispatcher and the model together end-to-end.
+// that prevents UpdateContent() from running on every StreamChunkMsg.
 // ────────────────────────────────────────────────────────────────────────────
 
 // TestBackpressure_DebouncePreventsImmediateUpdate verifies that when
@@ -2464,106 +2463,57 @@ func TestBackpressure_DebounceFlushesCorrectContent(t *testing.T) {
 }
 
 // TestBackpressure_EndToEnd verifies the full pipeline:
-//   - A mock shogunate rapidly fires stream messages through the dispatcher
-//   - The dispatcher drops medium/low priority messages under congestion
-//   - High-priority control messages are always delivered
-//   - The TUIModel accumulates delivered chunks
+//   - A mock shogunate rapidly fires stream messages directly to the TUI
+//   - The TUIModel accumulates all chunks (no drops — synchronous delivery)
 //   - After the debounce window, the final content is correct
 func TestBackpressure_EndToEnd(t *testing.T) {
-	// Set up a dispatcher that records messages sent to the TUI
-	sender := &countingSender{}
-	d := newDispatcherWithSender(sender)
-	defer d.close()
-
-	// Set up a TUIModel
+	// Set up a TUIModel and start streaming
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
 
-	// Phase 1: Rapid fire — send a stream of messages through the dispatcher
+	model := *pmodel
+
+	// Phase 1: Rapid fire — send a stream of messages directly to the model
 	const textChunks = 100
 	const reasoningChunks = 50
 
+	var cmds []tea.Cmd
 	for i := 0; i < textChunks; i++ {
-		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "text "})
+		newModel, cmd := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "text "})
+		model = newModel.(TUIModel)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 	for i := 0; i < reasoningChunks; i++ {
-		d.notify(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "think "})
-	}
-	// High-priority complete is sent last — must always arrive
-	d.notify(shogunate.StreamCompleteMsg{ChannelID: "forge"})
-
-	// Wait for the dispatcher to process all messages
-	time.Sleep(500 * time.Millisecond)
-
-	// Phase 2: Feed delivered messages into the TUIModel
-	// (In real TUI, this happens via tea.Program.Send → Update loop)
-	//
-	// The dispatcher routes high-priority synchronously and medium/low
-	// through async goroutines, so a late chunk goroutine can land in
-	// sender.msgs *after* StreamCompleteMsg. Replay chunks before the
-	// complete to model the real producer order.
-	model := *pmodel
-	msgs := sender.messages()
-	var chunks, completes []any
-	for _, msg := range msgs {
-		switch msg.(type) {
-		case shogunate.StreamChunkMsg:
-			chunks = append(chunks, msg)
-		case shogunate.StreamCompleteMsg:
-			completes = append(completes, msg)
-		}
-	}
-	for _, msg := range append(chunks, completes...) {
-		newModel, _ := model.Update(msg)
+		newModel, cmd := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "think "})
 		model = newModel.(TUIModel)
-	}
-
-	// Phase 3: Verify drop counts
-	med, low := d.DroppedCounts()
-	_ = med // Some medium drops are expected due to semaphore-based trySend
-	_ = low // Some low drops are expected
-
-	// High-priority StreamCompleteMsg must have been delivered
-	foundComplete := false
-	for _, msg := range msgs {
-		if _, ok := msg.(shogunate.StreamCompleteMsg); ok {
-			foundComplete = true
-			break
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
-	assert.True(t, foundComplete,
-		"StreamCompleteMsg (high priority) must always be delivered")
-
-	// Phase 4: Verify any delivered chunks land in the chat as AI content.
-	// We can't assert a specific delivery count — under fast notify() flood
-	// the 1-slot semaphore may drop nearly all medium/low chunks before their
-	// trySend goroutines get scheduled. The deterministic guarantee is only
-	// the high-priority StreamCompleteMsg above.
-	chat := model.tabs.ChatByTab("forge")
-	deliveredChunks := 0
-	for _, msg := range msgs {
-		if _, ok := msg.(shogunate.StreamChunkMsg); ok {
-			deliveredChunks++
-		}
-	}
-	if deliveredChunks > 0 {
-		aiContent := ""
-		// StreamCompleteMsg has already finalized the message, so the type is
-		// now MessageTypeAISuccess (or AIFailure). Include all AI-flavored types.
-		for _, m := range chat.Messages {
-			switch m.Type {
-			case MessageTypeAI, MessageTypeAISuccess, MessageTypeAIFailure:
-				aiContent += m.Content
-			}
-		}
-		assert.Contains(t, aiContent, "text",
-			"if any StreamChunkMsg was delivered, its text must land in chat")
-	}
-
-	// Phase 5: Simulate debounce flush
-	newModel, _ := model.Update(chatRenderTickMsg{})
+	// High-priority complete
+	newModel, _ := model.Update(shogunate.StreamCompleteMsg{ChannelID: "forge"})
 	model = newModel.(TUIModel)
-	chat = model.tabs.ChatByTab("forge")
+
+	// Phase 2: Simulate debounce flush
+	newModel, _ = model.Update(chatRenderTickMsg{})
+	model = newModel.(TUIModel)
+
+	chat := model.tabs.ChatByTab("forge")
+
+	// All chunks should be accumulated (no drops in synchronous path)
+	aiContent := ""
+	for _, m := range chat.Messages {
+		switch m.Type {
+		case MessageTypeAI, MessageTypeAISuccess, MessageTypeAIFailure:
+			aiContent += m.Content
+		}
+	}
+	assert.Contains(t, aiContent, "text",
+		"all StreamChunkMsg text must land in chat")
+	assert.Contains(t, aiContent, "think",
+		"all StreamChunkMsg thinking text must land in chat")
 
 	assert.False(t, chat.contentDirty,
 		"contentDirty should be false after debounce flush")
