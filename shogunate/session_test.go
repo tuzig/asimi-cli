@@ -100,10 +100,16 @@ func TestSession_AskWithStreaming_NoTools(t *testing.T) {
 	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "You are a helpful assistant", "test-channel")
 	require.NoError(t, err)
 
-	var streamChunks []string
+	var streamTexts []string
+	var streamReasonings []string
 	sess.SetNotify(func(msg any) {
 		if m, ok := msg.(StreamChunkMsg); ok {
-			streamChunks = append(streamChunks, m.Text)
+			if m.Text != "" {
+				streamTexts = append(streamTexts, m.Text)
+			}
+			if m.Reasoning != "" {
+				streamReasonings = append(streamReasonings, m.Reasoning)
+			}
 		}
 	}, "test-channel")
 
@@ -112,7 +118,7 @@ func TestSession_AskWithStreaming_NoTools(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, resp)
-	assert.NotEmpty(t, streamChunks, "should have received streaming chunks")
+	assert.NotEmpty(t, streamTexts, "should have received streaming text chunks")
 }
 
 func TestSession_AskWithStreaming_WithResponse(t *testing.T) {
@@ -141,10 +147,12 @@ func TestSession_AskWithStreaming_StreamsChunks(t *testing.T) {
 	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "You are a helpful assistant", "test-channel")
 	require.NoError(t, err)
 
-	var streamChunks []string
+	var streamTexts []string
 	sess.SetNotify(func(msg any) {
 		if m, ok := msg.(StreamChunkMsg); ok {
-			streamChunks = append(streamChunks, m.Text)
+			if m.Text != "" {
+				streamTexts = append(streamTexts, m.Text)
+			}
 		}
 	}, "test-channel")
 
@@ -153,7 +161,43 @@ func TestSession_AskWithStreaming_StreamsChunks(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "Part1 Part2 Part3", resp)
-	assert.Len(t, streamChunks, 3, "should have received exactly 3 streaming chunks")
+	assert.Len(t, streamTexts, 3, "should have received exactly 3 streaming text chunks")
+}
+
+// TestSession_AskWithStreaming_StreamsReasoningChunks verifies that deltas
+// carrying both reasoning and content emit a single StreamChunkMsg with
+// Reasoning and Text populated independently (not concatenated).
+func TestSession_AskWithStreaming_StreamsReasoningChunks(t *testing.T) {
+	mockLLM := mocks.NewLLMProviderWithChunks([]mocks.StreamingChunk{
+		{Reasoning: "I think... "},
+		{Content: "Here is the answer."},
+		{Reasoning: " More reasoning.", Content: " More content.", FinishReason: "stop"},
+	})
+
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "You are a helpful assistant", "test-channel")
+	require.NoError(t, err)
+
+	var streamTexts, streamReasonings []string
+	sess.SetNotify(func(msg any) {
+		if m, ok := msg.(StreamChunkMsg); ok {
+			if m.Text != "" {
+				streamTexts = append(streamTexts, m.Text)
+			}
+			if m.Reasoning != "" {
+				streamReasonings = append(streamReasonings, m.Reasoning)
+			}
+		}
+	}, "test-channel")
+
+	ctx := context.Background()
+	resp, err := sess.AskWithStreaming(ctx, "Give me a response", nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, "Here is the answer. More content.", resp)
+	assert.Len(t, streamTexts, 2, "should have received exactly 2 text chunks")
+	assert.Len(t, streamReasonings, 2, "should have received exactly 2 reasoning chunks")
+	assert.Equal(t, []string{"I think... ", " More reasoning."}, streamReasonings)
+	assert.Equal(t, []string{"Here is the answer.", " More content."}, streamTexts)
 }
 
 func TestSession_AskWithStreaming_WithToolExecution(t *testing.T) {

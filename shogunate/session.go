@@ -74,8 +74,8 @@ type responseChoice struct {
 type StreamChunkMsg struct {
 	ChannelID string `msgpack:"channel_id"`
 	Text      string `msgpack:"text"`
+	Reasoning string `msgpack:"reasoning,omitempty"` // reasoning content for this delta, if any
 }
-
 
 // StreamStartMsg signals that streaming has begun
 type StreamStartMsg struct {
@@ -159,8 +159,8 @@ type Session struct {
 	// own the lifecycle (per-step, per-turn, etc.).
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
-	model LLMProvider // LLM client (implements ChatCompletionRequest/ChatCompletionStreamRequest)
-	config *internalconfig.LLMConfig
+	model        LLMProvider // LLM client (implements ChatCompletionRequest/ChatCompletionStreamRequest)
+	config       *internalconfig.LLMConfig
 	tools        []Tool
 	messages     []schemas.ChatMessage
 	notify       internal.NotifyFunc
@@ -567,21 +567,22 @@ var modelMaxOutputTokens = map[string]int{
 // openRouterContextSizes maps the model portion (after provider/) of OpenRouter
 // model names to context window sizes. Looked up when the provider is "openrouter".
 var openRouterContextSizes = map[string]int{
-	"anthropic/claude-sonnet-4":     200_000,
-	"anthropic/claude-opus-4":       200_000,
-	"anthropic/claude-haiku-4":      200_000,
-	"openai/gpt-4o":                 128_000,
-	"openai/gpt-4.1":                1_000_000,
-	"openai/gpt-4.1-mini":           1_000_000,
-	"google/gemini-2.5-flash":       1_000_000,
-	"google/gemini-2.5-pro":         1_000_000,
-	"deepseek/deepseek-v3.2":        128_000,
-	"deepseek/deepseek-r1":          128_000,
-	"minimax/minimax-m2.5":          1_000_000,
-	"minimax/minimax-m2.7":          1_000_000,
-	"mistralai/mistral-large-2512":  128_000,
-	"mistralai/devstral-2512:free":  128_000,
-	"moonshotai/kimi-k2-thinking":   128_000,
+	"anthropic/claude-sonnet-4":    200_000,
+	"anthropic/claude-opus-4":      200_000,
+	"anthropic/claude-haiku-4":     200_000,
+	"openai/gpt-4o":                128_000,
+	"openai/gpt-4.1":               1_000_000,
+	"openai/gpt-4.1-mini":          1_000_000,
+	"google/gemini-2.5-flash":      1_000_000,
+	"google/gemini-2.5-pro":        1_000_000,
+	"deepseek/deepseek-v3.2":       128_000,
+	"deepseek/deepseek-r1":         128_000,
+	"minimax/minimax-m2.5":         1_000_000,
+	"minimax/minimax-m2.7":         1_000_000,
+	"mistralai/mistral-large-2512": 128_000,
+	"mistralai/devstral-2512:free": 128_000,
+	"moonshotai/kimi-k2-thinking":  128_000,
+	"moonshotai/kimi-k2.6":  262_000,
 	"qwen/qwen3.5-397b-a17b":       128_000,
 }
 
@@ -1053,20 +1054,24 @@ func (s *Session) generateLLMResponse(ctx context.Context, stream bool) (*respon
 			}
 			delta := choice.ChatStreamResponseChoice.Delta
 
-			// Emit reasoning and content concatenated into a single
+			// Emit reasoning and content as separate fields in a single
 			// StreamChunkMsg per delta for consistent ordering in the TUI.
-			var chunkText string
+			var chunkReasoning, chunkContent string
 			if delta.Reasoning != nil && *delta.Reasoning != "" {
 				reasoning.WriteString(*delta.Reasoning)
-				chunkText = *delta.Reasoning
+				chunkReasoning = *delta.Reasoning
 			}
 			if delta.Content != nil && *delta.Content != "" {
 				content.WriteString(*delta.Content)
 				s.accumulatedContent.WriteString(*delta.Content)
-				chunkText += *delta.Content
+				chunkContent = *delta.Content
 			}
-			if chunkText != "" && s.notify != nil {
-				s.notify(StreamChunkMsg{ChannelID: s.channelID, Text: chunkText})
+			if (chunkReasoning != "" || chunkContent != "") && s.notify != nil {
+				s.notify(StreamChunkMsg{
+					ChannelID: s.channelID,
+					Reasoning: chunkReasoning,
+					Text:      chunkContent,
+				})
 			}
 
 			// Accumulate tool calls from deltas

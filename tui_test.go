@@ -2486,7 +2486,7 @@ func TestBackpressure_EndToEnd(t *testing.T) {
 		}
 	}
 	for i := 0; i < reasoningChunks; i++ {
-		newModel, cmd := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "think "})
+		newModel, cmd := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Reasoning: "think "})
 		model = newModel.(TUIModel)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -2504,15 +2504,18 @@ func TestBackpressure_EndToEnd(t *testing.T) {
 
 	// All chunks should be accumulated (no drops in synchronous path)
 	aiContent := ""
+	thinkingContent := ""
 	for _, m := range chat.Messages {
 		switch m.Type {
 		case MessageTypeAI, MessageTypeAISuccess, MessageTypeAIFailure:
 			aiContent += m.Content
+		case MessageTypeThinking:
+			thinkingContent += m.Content
 		}
 	}
 	assert.Contains(t, aiContent, "text",
 		"all StreamChunkMsg text must land in chat")
-	assert.Contains(t, aiContent, "think",
+	assert.Contains(t, thinkingContent, "think",
 		"all StreamChunkMsg thinking text must land in chat")
 
 	assert.False(t, chat.contentDirty,
@@ -2603,4 +2606,82 @@ func TestBackpressure_StreamCompleteResetsState(t *testing.T) {
 	// The chat message should be finalized (type changes from AI to AISuccess/AIFailure)
 	chat = model.tabs.ChatByTab("forge")
 	assert.NotEmpty(t, chat.Messages, "should have at least one message")
+}
+
+// TestBackpressure_ReasoningChunksUseThinkingPath verifies that StreamChunkMsg
+// with a Reasoning field routes through AddThinkingChunk, producing
+// MessageTypeThinking messages rather than plain AI text.
+func TestBackpressure_ReasoningChunksUseThinkingPath(t *testing.T) {
+	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	model := *pmodel
+
+	// Send reasoning chunks
+	newModel, _ := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Reasoning: "I think "})
+	model = newModel.(TUIModel)
+	newModel, _ = model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Reasoning: "therefore..."})
+	model = newModel.(TUIModel)
+
+	// Send a content chunk
+	newModel, _ = model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "Answer"})
+	model = newModel.(TUIModel)
+
+	// Flush
+	newModel, _ = model.Update(chatRenderTickMsg{})
+	model = newModel.(TUIModel)
+
+	chat := model.tabs.ChatByTab("forge")
+	require.Len(t, chat.Messages, 2, "should have one thinking + one AI message")
+	assert.Equal(t, MessageTypeThinking, chat.Messages[0].Type,
+		"reasoning chunks must produce MessageTypeThinking")
+	assert.Equal(t, "I think therefore...", chat.Messages[0].Content)
+	assert.Equal(t, MessageTypeAI, chat.Messages[1].Type,
+		"text chunk must produce MessageTypeAI")
+	assert.Equal(t, "Answer", chat.Messages[1].Content)
+}
+
+// TestBackpressure_MixedReasoningAndTextInOneDelta verifies that a single
+// StreamChunkMsg carrying both Reasoning and Text produces both message
+// types atomically (one delta → one notify → both fields).
+func TestBackpressure_MixedReasoningAndTextInOneDelta(t *testing.T) {
+	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	model := *pmodel
+
+	newModel, _ := model.Update(shogunate.StreamChunkMsg{
+		ChannelID: "forge",
+		Reasoning: "Let me reason...",
+		Text:      "Here is the answer.",
+	})
+	model = newModel.(TUIModel)
+
+	// Flush
+	newModel, _ = model.Update(chatRenderTickMsg{})
+	model = newModel.(TUIModel)
+
+	chat := model.tabs.ChatByTab("forge")
+	require.Len(t, chat.Messages, 2)
+	assert.Equal(t, MessageTypeThinking, chat.Messages[0].Type)
+	assert.Equal(t, "Let me reason...", chat.Messages[0].Content)
+	assert.Equal(t, MessageTypeAI, chat.Messages[1].Type)
+	assert.Equal(t, "Here is the answer.", chat.Messages[1].Content)
+}
+
+// TestBackpressure_EmptyReasoningSkipped verifies that empty Reasoning
+// strings do not create spurious thinking messages.
+func TestBackpressure_EmptyReasoningSkipped(t *testing.T) {
+	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	model := *pmodel
+
+	newModel, _ := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "only text"})
+	model = newModel.(TUIModel)
+
+	newModel, _ = model.Update(chatRenderTickMsg{})
+	model = newModel.(TUIModel)
+
+	chat := model.tabs.ChatByTab("forge")
+	require.Len(t, chat.Messages, 1)
+	assert.Equal(t, MessageTypeAI, chat.Messages[0].Type)
+	assert.Equal(t, "only text", chat.Messages[0].Content)
 }

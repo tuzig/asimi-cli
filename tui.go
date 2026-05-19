@@ -1724,10 +1724,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Handle text chunks from Shogunate — route to correct tab
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
-		chat.AddAIChunk(msg.Text)
+		if msg.Reasoning != "" {
+			chat.AddToRawHistory("SHOGUNATE_REASONING", msg.Reasoning)
+			chat.AddThinkingChunk(msg.Reasoning)
+		}
+		if msg.Text != "" {
+			chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
+			chat.AddAIChunk(msg.Text)
+		}
 		if state, ok := m.currentSessionState(); ok && state.ChannelID == msg.ChannelID {
-			m.status.AddStreamChars(len(msg.Text))
+			m.status.AddStreamChars(len(msg.Text) + len(msg.Reasoning))
 			m.status.ContextPercent = state.ContextUsagePercent
 		}
 		var cmds []tea.Cmd
