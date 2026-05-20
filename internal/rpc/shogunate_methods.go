@@ -31,4 +31,5 @@ const (
 	MethodCancelTab            = "CancelTab"
 	MethodConfigureLLM         = "ConfigureLLM"
 	MethodGetSessionExport     = "GetSessionExport"
+	MethodSetContext           = "SetContext"
 )

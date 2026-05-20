@@ -10,19 +10,23 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/rpc"
-	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/wire"
 	"github.com/afittestide/asimi/shogunate"
 	"go.uber.org/fx"
 )
 
-// runDaemonMode starts a foreground daemon process: wires the same
-// providers the interactive TUI would use (minus the TUI itself),
-// listens on the socket returned by rpc.SocketPath, and serves one
-// client at a time.
+// runDaemonMode starts a foreground daemon process: wires shared
+// infrastructure (logger, config, DB), listens on the socket returned
+// by rpc.SocketPath, and serves clients. Each connection gets its own
+// Shogunate and Runner created from the shared resources.
 //
 // Shutdown: SIGINT or SIGTERM drains in-flight work with a 10s grace
 // and tears the socket down.
@@ -30,22 +34,16 @@ func runDaemonMode() error {
 	logBaseName = "asimi-daemon"
 	initLogger()
 
-	var shog *shogunate.Shogunate
+	var shared *DaemonShared
 	fxOptions := []fx.Option{
 		fx.Provide(
 			ProvideLogger,
 			ProvideConfig,
 			ProvideStorage,
 			ProvideGormDB,
-			ProvideRepoInfo,
-			ProvideScheduler,
-			ProvideShellRunner,
-			ProvidePromptHistory,
-			ProvideCommandHistory,
-			ProvideSessionHistory,
-			ProvideShogunate,
+			ProvideDaemonShared,
 		),
-		fx.Populate(&shog),
+		fx.Populate(&shared),
 	}
 	if !cli.Debug {
 		fxOptions = append(fxOptions, fx.NopLogger)
@@ -64,8 +62,8 @@ func runDaemonMode() error {
 		_ = app.Stop(stopCtx)
 	}()
 
-	if shog == nil {
-		return fmt.Errorf("daemon: shogunate not initialised")
+	if shared == nil {
+		return fmt.Errorf("daemon: shared resources not initialised")
 	}
 
 	path, err := rpc.SocketPath()
@@ -110,13 +108,15 @@ func runDaemonMode() error {
 		_ = listener.Close()
 	}()
 
-	return serveClients(ctx, listener, shog)
+	return serveClients(ctx, listener, shared)
 }
 
 // serveClients accepts connections on listener and services each one
-// until ctx cancels or Accept fails. Clients are serial for v1 — one
-// TUI at a time per scope. Concurrent clients are future work.
-func serveClients(ctx context.Context, listener net.Listener, shog shogunateapi.Client) error {
+// until ctx cancels or Accept fails. Each connection gets its own
+// Shogunate created from the shared resources. connID is assigned
+// atomically so every connection has a unique identifier.
+func serveClients(ctx context.Context, listener net.Listener, shared *DaemonShared) error {
+	var connID atomic.Uint64
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
@@ -131,43 +131,146 @@ func serveClients(ctx context.Context, listener net.Listener, shog shogunateapi.
 			}
 			return fmt.Errorf("daemon: accept: %w", err)
 		}
+		id := connID.Add(1)
 		wg.Add(1)
-		go func(nc net.Conn) {
+		go func(nc net.Conn, cid uint64) {
 			defer wg.Done()
-			serveOne(ctx, nc, shog)
-		}(c)
+			serveOne(ctx, nc, shared, cid)
+		}(c, id)
 	}
 }
 
-// serveOne runs the RPC server loop for a single client connection:
-// registers handlers, pumps server→client notifications, blocks until
-// the client disconnects or ctx cancels.
-func serveOne(ctx context.Context, c net.Conn, shog shogunateapi.Client) {
-	connCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+// serveOne runs the RPC server loop for a single client connection.
+// It performs a handshake (SetContext), then creates per-connection
+// Runner and Shogunate, registers handlers, pumps server→client
+// notifications, and blocks until the client disconnects or ctx
+// cancels. connID uniquely identifies this connection within the
+// daemon process.
+func serveOne(ctx context.Context, c net.Conn, shared *DaemonShared, connID uint64) {
+	defer c.Close()
 
 	conn := rpc.New(c, rpc.Options{})
-	rpc.RegisterShogunateHandlers(conn, shog)
 
-	go rpc.PumpShogunateEvents(connCtx, conn, shog.Subscribe(connCtx))
-
-	// Close the underlying net.Conn when ctx cancels so Serve() wakes
-	// from its read loop.
-	done := make(chan struct{})
-	go func() {
+	handshakeCh := make(chan rpc.SetContextParams, 1)
+	handshakeRespCh := make(chan error, 1)
+	conn.Handle(rpc.MethodSetContext, func(_ context.Context, params []byte) ([]byte, error) {
+		var p rpc.SetContextParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
 		select {
-		case <-connCtx.Done():
-			_ = c.Close()
-		case <-done:
+		case handshakeCh <- p:
+		default:
+		}
+		if err := <-handshakeRespCh; err != nil {
+			return nil, err
+		}
+		return wire.Encode(rpc.SetContextResult{})
+	})
+
+	// (3) Start Serve() in a goroutine EXACTLY ONCE.
+	go func() {
+		if err := conn.Serve(); err != nil {
+			shared.Logger.Debug("daemon: conn.Serve exited", "conn_id", connID, "err", err)
 		}
 	}()
 
-	slog.Info("daemon: client connected")
-	if err := conn.Serve(); err != nil {
-		slog.Warn("daemon: conn.Serve error", "err", err)
+	// (4) Wait for handshake with a 30s timeout.
+	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer handshakeCancel()
+
+	var hp rpc.SetContextParams
+	select {
+	case hp = <-handshakeCh:
+		// Handshake received.
+	case <-handshakeCtx.Done():
+		shared.Logger.Warn("daemon: handshake timeout", "conn_id", connID)
+		conn.Close()
+		return
 	}
-	close(done)
-	slog.Info("daemon: client disconnected")
+
+	// (5) Validate project_root exists via os.Stat.
+	if hp.ProjectRoot == "" {
+		shared.Logger.Warn("daemon: empty project_root", "conn_id", connID)
+		handshakeRespCh <- wire.NewError(0, "empty project_root")
+		conn.Close()
+		return
+	}
+	if _, err := os.Stat(hp.ProjectRoot); err != nil {
+		shared.Logger.Warn("daemon: invalid project_root", "conn_id", connID, "path", hp.ProjectRoot, "err", err)
+		handshakeRespCh <- wire.NewError(0, "invalid project_root")
+		conn.Close()
+		return
+	}
+
+	// (6) Create per-connection resources from handshake params.
+	repoInfo := repo.RepoInfo{
+		ProjectRoot:  hp.ProjectRoot,
+		WorktreePath: hp.WorktreePath,
+		Branch:       hp.Branch,
+		Slug:         hp.Project,
+	}
+
+	runner := runners.NewPodmanRunner(&shared.Config.Sandbox, repoInfo, connID, nil)
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		_ = runner.Close(closeCtx)
+	}()
+
+	cfg := config.DefaultShogunateConfig()
+	// TODO: Remove Username as it should come from the unix socket so
+	// users can't fake it
+	if hp.Username != "" {
+		cfg.Username = hp.Username
+	}
+	if hp.Project != "" {
+		cfg.Project = hp.Project
+	} else if repoInfo.Slug != "" {
+		cfg.Project = repoInfo.Slug
+	}
+
+	shog := shogunate.NewShogunate(shared.DB, cfg, runner, shared.Logger)
+	if err := shog.Start(ctx); err != nil {
+		shared.Logger.Error("daemon: shogunate start failed", "conn_id", connID, "err", err)
+		handshakeRespCh <- wire.NewError(0, "shogunate start failed")
+		conn.Close()
+		return
+	}
+
+	rpc.RegisterShogunateHandlers(conn, shog)
+
+	select {
+	case handshakeRespCh <- nil:
+	default:
+	}
+
+	connCtx, connCancel := context.WithCancel(ctx)
+	defer connCancel()
+
+	go rpc.PumpShogunateEvents(connCtx, conn, shog.Subscribe(connCtx))
+
+	shared.Logger.Info("daemon: client connected",
+		"conn_id", connID, "project", hp.Project, "project_root", hp.ProjectRoot)
+
+	// (7) Block until the connection is done.
+	<-conn.Done()
+
+	shared.Logger.Info("daemon: client disconnected", "conn_id", connID)
+}
+
+// sendErrorAndClose sends a "daemon.error" notification carrying errMsg
+// over conn, then waits 100 ms before closing the underlying connection.
+// The 100 ms pause is a heuristic: Notify only enqueues the frame for
+// async writing, so without a small delay the subsequent conn.Close can
+// race the kernel's TCP send buffer and the client never sees the
+// notification. 100 ms is long enough for the write loop to flush the
+// frame in practice, but short enough that a caller waiting on the
+// connection still sees a timely disconnect.
+func sendErrorAndClose(conn *rpc.Conn, errMsg string) {
+	_ = conn.Notify("daemon.error", map[string]string{"error": errMsg})
+	time.Sleep(100 * time.Millisecond)
+	conn.Close()
 }
 
 func writePidFile(path string) error {

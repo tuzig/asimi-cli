@@ -162,3 +162,13 @@ type GetSessionExportParams struct {
 type GetSessionExportResult struct {
 	Export *shogunate.SessionExport `msgpack:"export"`
 }
+
+type SetContextParams struct {
+	Project      string `msgpack:"project"`
+	Username      string `msgpack:"username"`
+	ProjectRoot   string `msgpack:"project_root"`
+	WorktreePath  string `msgpack:"worktree_path"`
+	Branch        string `msgpack:"branch"`
+}
+
+type SetContextResult struct{}

@@ -50,17 +50,18 @@ type commandOutput struct {
 }
 
 // NewPodmanRunner creates a new PodmanRunner
-func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, fallback Runner) *PodmanRunner {
-	pid := os.Getpid()
-
+func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, connID uint64, fallback Runner) *PodmanRunner {
 	imageName := cfg.ImageName
 	if imageName == "" {
 		imageName = fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
 	}
 
+	containerName := fmt.Sprintf("asimi-shell-%s-%d", strings.ReplaceAll(repoInfo.Slug, "/", "-"), connID)
+	slog.Debug("NewPodmanRunner", "containerName", containerName, "imageName", imageName, "slug", repoInfo.Slug)
+
 	return &PodmanRunner{
 		imageName:     imageName,
-		containerName: fmt.Sprintf("asimi-shell-%d", pid),
+		containerName: containerName,
 		allowFallback: cfg.AllowHostFallback,
 		noCleanup:     cfg.NoCleanup,
 		config:        cfg,

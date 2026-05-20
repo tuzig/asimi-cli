@@ -2016,7 +2016,7 @@ func TestInitCommandE2E(t *testing.T) {
 
 	// 2. Set up infrastructure
 	db := setupTestGormDB(t)
-	runner := runners.NewHostRunner()
+	runner := runners.NewHostRunner(0)
 
 	// 3. Create and start Shogunate with a host runner for bash then-steps
 	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
@@ -2133,7 +2133,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 
 	// 2. Set up infrastructure with a real LLM
 	db := setupTestGormDB(t)
-	runner := runners.NewHostRunner()
+	runner := runners.NewHostRunner(0)
 
 	// Set up auto-approval channel for host commands (e.g., bundle exec rake test)
 	runnerMsgChan := make(chan runners.Msg, 10)

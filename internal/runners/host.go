@@ -15,7 +15,7 @@ type HostRunner struct {
 }
 
 // NewHostRunner creates a new HostRunner
-func NewHostRunner() *HostRunner {
+func NewHostRunner(connID uint64) *HostRunner {
 	return &HostRunner{}
 }
 

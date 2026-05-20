@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/afittestide/asimi/internal/runners"
@@ -122,7 +123,12 @@ func (c *ShogunateClient) CancelZhengming(requestID string) {
 }
 
 func (c *ShogunateClient) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
-	return c.callVoid(ctx, MethodHandleZhengming, HandleZhengmingParams{RequestID: requestID, Answer: answer})
+	slog.Debug("ShogunateClient.HandleZhengmingResponse: sending RPC", "request_id", requestID, "answer", answer)
+	err := c.callVoid(ctx, MethodHandleZhengming, HandleZhengmingParams{RequestID: requestID, Answer: answer})
+	if err != nil {
+		slog.Warn("ShogunateClient.HandleZhengmingResponse: RPC failed", "error", err)
+	}
+	return err
 }
 
 func (c *ShogunateClient) AllowRunnerFallback(allow bool) {
@@ -235,6 +241,10 @@ func (c *ShogunateClient) TakeSnapshot() shogunate.Snapshot {
 
 func (c *ShogunateClient) CancelTab(channelID string) {
 	_ = c.callVoid(context.Background(), MethodCancelTab, CancelTabParams{ChannelID: channelID})
+}
+
+func (c *ShogunateClient) SetContext(ctx context.Context, params SetContextParams) error {
+	return c.callVoid(ctx, MethodSetContext, params)
 }
 
 func (c *ShogunateClient) ConfigureLLM(ctx context.Context, req shogunate.ConfigureLLMRequest) error {

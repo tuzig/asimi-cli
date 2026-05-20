@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/afittestide/asimi/internal/config"
@@ -114,7 +115,7 @@ func (e SandboxMissingError) Error() string {
 
 func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	var runner Runner
-	runner = NewHostRunner()
+	runner = NewHostRunner(0)
 
 	// Resolve image name using same default as NewPodmanRunner
 	imageName := config.ImageName
@@ -125,7 +126,7 @@ func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	// Auto-detect and assign shell runner
 	if IsPodmanAvailable(imageName) {
 		slog.Info("using podman shell runner", "image", imageName)
-		runner = NewPodmanRunner(config, repoInfo, runner)
+		runner = NewPodmanRunner(config, repoInfo, uint64(os.Getpid()), runner)
 	} else {
 		slog.Info("using host shell runner (podman not available or image missing)", "image", imageName)
 	}
@@ -133,7 +134,7 @@ func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	return runner
 }
 func HostRun(ctx context.Context, in Input) (Output, error) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 	out, err := runner.Run(ctx, in)
 	slog.Debug("Run a host command", "cmd", in.Command, "err", err, "out", out)
 	return out, err

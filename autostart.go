@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/rpc"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -182,16 +184,34 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 		return nil, fmt.Errorf("installDaemonAutostart: tui model or shogunate is nil")
 	}
 
-	client, _, err := connectOrStartDaemon(ctx)
+	conn, _, err := connectOrStartDaemon(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	// Send the SetContext handshake required before any other RPC call.
+	// The daemon disconnects clients that fail to handshake within 30s.
+	repoInfo := repo.GetRepoInfo()
+	username := "guest"
+	if u, err := user.Current(); err == nil {
+		username = u.Username
+	}
+	if err := rpc.NewShogunateClient(conn).SetContext(ctx, rpc.SetContextParams{
+		Project:      repoInfo.Slug,
+		Username:      username,
+		ProjectRoot:  repoInfo.ProjectRoot,
+		WorktreePath: repoInfo.WorktreePath,
+		Branch:       repoInfo.Branch,
+	}); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("installDaemonAutostart: handshake failed: %w", err)
+	}
+
 	local := model.shogunate
-	model.shogunate = rpc.NewLoopbackShogunate(client, local)
+	model.shogunate = rpc.NewLoopbackShogunate(conn, local)
 
 	return func(p *tea.Program) {
-		rpc.RegisterApprovalHandler(client, teaSender{p})
-		rpc.RegisterEditorHandler(client, teaSender{p})
+		rpc.RegisterApprovalHandler(conn, teaSender{p})
+		rpc.RegisterEditorHandler(conn, teaSender{p})
 	}, nil
 }

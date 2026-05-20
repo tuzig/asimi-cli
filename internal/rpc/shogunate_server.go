@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/afittestide/asimi/internal/shogunateapi"
 	"github.com/afittestide/asimi/internal/wire"
@@ -112,6 +113,7 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 		if err := wire.Decode(params, &p); err != nil {
 			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
 		}
+		slog.Debug("RPC server: received HandleZhengmingResponse", "request_id", p.RequestID, "answer", p.Answer)
 		if err := impl.HandleZhengmingResponse(ctx, p.RequestID, p.Answer); err != nil {
 			return nil, err
 		}

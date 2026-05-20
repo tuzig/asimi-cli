@@ -60,7 +60,7 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		runnerInput.BypassApproval = !requiresApproval
 
 		// Create ephemeral host runner and run directly on host
-		hostRunner := runners.NewHostRunner()
+		hostRunner := runners.NewHostRunner(0)
 		runnerOutput, err := hostRunner.Run(ctx, runnerInput)
 		output.Output = runnerOutput.Output
 		output.ExitCode = runnerOutput.ExitCode

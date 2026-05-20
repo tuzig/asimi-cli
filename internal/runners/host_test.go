@@ -10,13 +10,13 @@ import (
 )
 
 func TestHostRunner(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 	require.NotNil(t, runner)
 	assert.Equal(t, "host", runner.RunnerType())
 }
 
 func TestHostRunnerRunWithBypassApproval(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 
 	output, err := runner.Run(context.Background(), Input{
 		Command:        "echo hello",
@@ -29,7 +29,7 @@ func TestHostRunnerRunWithBypassApproval(t *testing.T) {
 }
 
 func TestHostRunnerRunExitCode(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 
 	output, err := runner.Run(context.Background(), Input{
 		Command:        "exit 42",
@@ -41,7 +41,7 @@ func TestHostRunnerRunExitCode(t *testing.T) {
 }
 
 func TestHostRunnerRunWithStderr(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 
 	output, err := runner.Run(context.Background(), Input{
 		Command:        "echo 'stdout' && echo 'stderr' >&2",
@@ -55,7 +55,7 @@ func TestHostRunnerRunWithStderr(t *testing.T) {
 }
 
 func TestHostRunnerApprovalRequest(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 	msgChan := make(chan Msg, 10)
 	runner.SetMessageChannel(msgChan)
 
@@ -83,7 +83,7 @@ func TestHostRunnerApprovalRequest(t *testing.T) {
 }
 
 func TestHostRunnerApprovalDenied(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 	msgChan := make(chan Msg, 10)
 	runner.SetMessageChannel(msgChan)
 
@@ -111,7 +111,7 @@ func TestHostRunnerApprovalDenied(t *testing.T) {
 }
 
 func TestHostRunnerNoMsgChannel(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 
 	// Without a message channel and requiring approval, it should fail
 	output, err := runner.Run(context.Background(), Input{
@@ -125,7 +125,7 @@ func TestHostRunnerNoMsgChannel(t *testing.T) {
 }
 
 func TestHostRunnerRestart(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 
 	// Restart should be a no-op for host runner
 	err := runner.Restart(context.Background())
@@ -133,7 +133,7 @@ func TestHostRunnerRestart(t *testing.T) {
 }
 
 func TestHostRunnerClose(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 
 	// Close should be a no-op for host runner
 	err := runner.Close(context.Background())
@@ -141,7 +141,7 @@ func TestHostRunnerClose(t *testing.T) {
 }
 
 func TestHostRunnerContextCancellation(t *testing.T) {
-	runner := NewHostRunner()
+	runner := NewHostRunner(0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

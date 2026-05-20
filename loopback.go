@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os/user"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/rpc"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -81,17 +83,7 @@ func installDaemonSocket(ctx context.Context, model *TUIModel, socketPath string
 	}
 
 	factory := func() (*rpc.Conn, error) {
-		c, err := rpc.Dial(socketPath)
-		if err != nil {
-			return nil, err
-		}
-		conn := rpc.New(c, rpc.Options{})
-		go func() {
-			if err := conn.Serve(); err != nil {
-				slog.Debug("daemon rpc client terminated", "err", err)
-			}
-		}()
-		return conn, nil
+		return newDaemonConn(ctx, socketPath)
 	}
 
 	rc := rpc.NewReconnectingClient(factory, model.shogunate)
@@ -107,4 +99,40 @@ func installDaemonSocket(ctx context.Context, model *TUIModel, socketPath string
 			rpc.RegisterEditorHandler(conn, teaSender{p})
 		})
 	}, nil
+}
+
+// newDaemonConn dials the daemon socket, creates an rpc.Conn, starts
+// conn.Serve in a goroutine, and sends the SetContext handshake
+// required before any other RPC call. The daemon disconnects clients
+// that fail to handshake within 30s.
+func newDaemonConn(ctx context.Context, socketPath string) (*rpc.Conn, error) {
+	c, err := rpc.Dial(socketPath)
+	if err != nil {
+		return nil, err
+	}
+	conn := rpc.New(c, rpc.Options{})
+	go func() {
+		if err := conn.Serve(); err != nil {
+			slog.Debug("daemon rpc client terminated", "err", err)
+		}
+	}()
+
+	repoInfo := repo.GetRepoInfo()
+	username := "guest"
+	if u, err := user.Current(); err == nil {
+		username = u.Username
+	}
+
+	if err := rpc.NewShogunateClient(conn).SetContext(ctx, rpc.SetContextParams{
+		Project:     repoInfo.Slug,
+		Username:    username,
+		ProjectRoot: repoInfo.ProjectRoot,
+		WorktreePath: repoInfo.WorktreePath,
+		Branch:      repoInfo.Branch,
+	}); err != nil {
+		c.Close()
+		return nil, fmt.Errorf("handshake failed: %w", err)
+	}
+
+	return conn, nil
 }

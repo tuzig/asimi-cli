@@ -368,6 +368,22 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 	return db, nil
 }
 
+// DaemonShared holds shared resources for the daemon process.
+type DaemonShared struct {
+	DB     *gorm.DB
+	Config *Config
+	Logger *slog.Logger
+}
+
+// ProvideDaemonShared creates a DaemonShared with the given dependencies.
+func ProvideDaemonShared(db *gorm.DB, cfg *Config, logger *slog.Logger) *DaemonShared {
+	return &DaemonShared{
+		DB:     db,
+		Config: cfg,
+		Logger: logger,
+	}
+}
+
 // ShogunateParams holds parameters for Shogunate initialization
 type ShogunateParams struct {
 	fx.In

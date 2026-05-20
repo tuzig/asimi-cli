@@ -16,16 +16,17 @@ func TestNewPodmanRunner(t *testing.T) {
 		Slug:        "test/project",
 	}
 
-	hostRunner := NewHostRunner()
+	hostRunner := NewHostRunner(1)
 
 	config := &Config{
 		AllowHostFallback: true,
 		NoCleanup:         false,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, hostRunner)
+	runner := NewPodmanRunner(config, repoInfo, 1, hostRunner)
 	require.NotNil(t, runner)
 	assert.Equal(t, "localhost/asimi-sandbox-test/project:latest", runner.imageName)
+	assert.Equal(t, "asimi-shell-test/project-1", runner.containerName)
 	assert.True(t, runner.allowFallback)
 	assert.Equal(t, "podman", runner.RunnerType())
 }
@@ -41,9 +42,10 @@ func TestNewPodmanRunnerCustomImage(t *testing.T) {
 		AllowHostFallback: false,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, nil)
+	runner := NewPodmanRunner(config, repoInfo, 2, nil)
 	require.NotNil(t, runner)
 	assert.Equal(t, "custom-image:v1", runner.imageName)
+	assert.Equal(t, "asimi-shell-test/project-2", runner.containerName)
 	assert.False(t, runner.allowFallback)
 }
 
@@ -57,13 +59,13 @@ func TestPodmanRunnerWithFallback(t *testing.T) {
 		Slug:        "test/nonexistent-image",
 	}
 
-	hostRunner := NewHostRunner()
+	hostRunner := NewHostRunner(3)
 
 	config := &Config{
 		AllowHostFallback: true,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, hostRunner)
+	runner := NewPodmanRunner(config, repoInfo, 3, hostRunner)
 	require.NotNil(t, runner)
 
 	// This should fall back to host runner since the image doesn't exist
@@ -102,7 +104,7 @@ func TestPodmanRunnerIntegration(t *testing.T) {
 		AllowHostFallback: false,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, nil)
+	runner := NewPodmanRunner(config, repoInfo, 4, nil)
 	require.NotNil(t, runner)
 	defer runner.Close(context.Background())
 
@@ -149,7 +151,7 @@ func TestPodmanRunnerContainerLaunchMessage(t *testing.T) {
 		AllowHostFallback: false,
 	}
 
-	runner := NewPodmanRunner(config, repoInfo, nil)
+	runner := NewPodmanRunner(config, repoInfo, 5, nil)
 	msgChan := make(chan Msg, 10)
 	runner.SetMessageChannel(msgChan)
 	require.NotNil(t, runner)
