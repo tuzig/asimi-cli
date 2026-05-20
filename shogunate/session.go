@@ -72,9 +72,10 @@ type responseChoice struct {
 
 // StreamChunkMsg contains a streaming text chunk from the LLM
 type StreamChunkMsg struct {
-	ChannelID string `msgpack:"channel_id"`
-	Text      string `msgpack:"text"`
-	Reasoning string `msgpack:"reasoning,omitempty"` // reasoning content for this delta, if any
+	ChannelID          string  `msgpack:"channel_id"`
+	Text               string  `msgpack:"text"`
+	Reasoning          string  `msgpack:"reasoning,omitempty"`
+	PercentContextUsed float64 `msgpack:"percent_context_used,omitempty"`
 }
 
 // StreamStartMsg signals that streaming has begun
@@ -761,7 +762,6 @@ func (s *Session) countTokens(text string) int {
 // GetContextUsagePercent returns the percentage of context used (0-100)
 func (s *Session) GetContextUsagePercent() float64 {
 	info := s.GetContextInfo()
-	slog.Info("geting context info", "channel", s.ChannelID, "info", info)
 	if info.TotalTokens <= 0 {
 		return 0
 	}
@@ -1068,9 +1068,10 @@ func (s *Session) generateLLMResponse(ctx context.Context, stream bool) (*respon
 			}
 			if (chunkReasoning != "" || chunkContent != "") && s.notify != nil {
 				s.notify(StreamChunkMsg{
-					ChannelID: s.channelID,
-					Reasoning: chunkReasoning,
-					Text:      chunkContent,
+					ChannelID:          s.channelID,
+					Reasoning:          chunkReasoning,
+					Text:               chunkContent,
+					PercentContextUsed: s.GetContextUsagePercent(),
 				})
 			}
 

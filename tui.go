@@ -1732,10 +1732,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
 			chat.AddAIChunk(msg.Text)
 		}
-		if state, ok := m.currentSessionState(); ok && state.ChannelID == msg.ChannelID {
-			m.status.AddStreamChars(len(msg.Text) + len(msg.Reasoning))
-			m.status.ContextPercent = state.ContextUsagePercent
-		}
+		m.status.AddStreamChars(len(msg.Text) + len(msg.Reasoning))
+		m.status.ContextPercent = msg.PercentContextUsed
 		var cmds []tea.Cmd
 		// Schedule the debounce tick if dirty and none pending
 		if chat.contentDirty && !m.renderTickPending {
