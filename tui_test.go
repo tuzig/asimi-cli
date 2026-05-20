@@ -1470,6 +1470,86 @@ func TestStreamErrorMsg_StopsWaiting(t *testing.T) {
 	require.False(t, updatedModel.waitingForResponse)
 }
 
+// TestRitualStepMsg_CompletedWithMessage tests that a completed ritual step
+// with a Message displays the checkmark and message as a new line.
+func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
+	model := newTestModel(t)
+
+	// Simulate a "started" message first
+	startedMsg := shogunate.RitualStepMsg{
+		ChannelID:  "chancellor",
+		RitualName: "dawn-audience",
+		StepName:   "strategist",
+		StepIndex:  0,
+		TotalSteps: 3,
+		Status:     "started",
+	}
+	newModel, _ := model.handleCustomMessages(startedMsg)
+	startedModel := newModel.(TUIModel)
+
+	// Now send the "completed" message with minister output
+	completedMsg := shogunate.RitualStepMsg{
+		ChannelID:  "chancellor",
+		RitualName: "dawn-audience",
+		StepName:   "strategist",
+		StepIndex:  0,
+		TotalSteps: 3,
+		Status:     "completed",
+		Message:    "三界 summary: heaven ✓ earth ✓ ren ✓",
+	}
+	newModel, _ = startedModel.handleCustomMessages(completedMsg)
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// The completed step with a Message should add a new message with checkmark and message
+	lastMsg := updatedModel.tabs.Content().Chat.Messages[len(updatedModel.tabs.Content().Chat.Messages)-1]
+	assert.Contains(t, lastMsg.Content, "✓")
+	assert.Contains(t, lastMsg.Content, "三界 summary")
+}
+
+// TestRitualStepMsg_CompletedWithoutMessage tests that a completed ritual step
+// without a Message appends the checkmark to the last message (the "started" line).
+func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
+	model := newTestModel(t)
+
+	// Simulate a "started" message
+	startedMsg := shogunate.RitualStepMsg{
+		ChannelID:  "chancellor",
+		RitualName: "dawn-audience",
+		StepName:   "check-sandbox",
+		StepIndex:  1,
+		TotalSteps: 3,
+		Status:     "started",
+	}
+	newModel, _ := model.handleCustomMessages(startedMsg)
+	startedModel := newModel.(TUIModel)
+
+	// Count messages before
+	msgCountBefore := len(startedModel.tabs.Content().Chat.Messages)
+
+	// Send "completed" without a Message (e.g., check-sandbox which uses cmd_running/cmd_done)
+	completedMsg := shogunate.RitualStepMsg{
+		ChannelID:  "chancellor",
+		RitualName: "dawn-audience",
+		StepName:   "check-sandbox",
+		StepIndex:  1,
+		TotalSteps: 3,
+		Status:     "completed",
+		Message:    "",
+	}
+	newModel, _ = startedModel.handleCustomMessages(completedMsg)
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// No new message should be added; the checkmark is appended to the "started" line
+	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
+	assert.Equal(t, msgCountBefore, msgCountAfter)
+
+	// The last message should now contain the checkmark
+	lastMsg := updatedModel.tabs.Content().Chat.Messages[len(updatedModel.tabs.Content().Chat.Messages)-1]
+	assert.Contains(t, lastMsg.Content, "✓")
+}
+
 // TestSessionResume_ResetsHistoryState tests that resuming a session resets history state
 // This prevents the bug where entering a prompt after resume would clear the chat
 func TestSessionResume_ResetsHistoryState(t *testing.T) {

@@ -180,3 +180,33 @@ func TestParseGitNumstat(t *testing.T) {
 		})
 	}
 }
+func TestSanitizeSegment(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"owner/repo slug", "owner/repo", "owner-repo"},
+		{"multiple slashes", "a/b/c", "a-b-c"},
+		{"empty string", "", ""},
+		{"single char", "x", "x"},
+		{"uppercase", "MyRepo", "myrepo"},
+		{"leading slash", "/leading", "leading"},
+		{"trailing slash", "trailing/", "trailing"},
+		{"special chars", "hello@world!", "hello-world"},
+		{"consecutive specials", "a///b", "a-b"},
+		{"dots", "v1.2.3", "v1-2-3"},
+		{"underscores", "my_repo", "my-repo"},
+		{"spaces", "hello world", "hello-world"},
+		{"numbers", "repo123", "repo123"},
+		{"mixed", "Owner/Repo.v2", "owner-repo-v2"},
+		{"only specials", "///", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := SanitizeSegment(tt.input)
+			require.Equal(t, tt.expected, result, "SanitizeSegment(%q)", tt.input)
+		})
+	}
+}

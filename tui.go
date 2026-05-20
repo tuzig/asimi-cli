@@ -1820,10 +1820,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.StepName == "" {
 				chat.Indent++
 			}
-		/* TODO: move completed to the beigning of the last message
 		case "completed":
-			chat.AppendToLastMessage(" - " + checkPrefix)
-		*/
+			if msg.Message != "" {
+				chat.AddMessage(fmt.Sprintf("  %s %s", checkPrefix, msg.Message))
+			} else {
+				chat.AppendToLastMessage(" " + checkPrefix)
+			}
 		case "failed":
 			chat.AppendToLastMessage(" - X")
 		case "aborted":
