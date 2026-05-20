@@ -15,11 +15,11 @@ const MaxFrameSize = 16 * 1024 * 1024
 var ErrFrameTooLarge = errors.New(fmt.Sprintf("wire: frame exceeds %d bytes", MaxFrameSize))
 
 
-// ReadFrame reads one msgpack-RPC envelope from r and decodes it.
+// ReadFrame reads one msgpack-RPC envelope from dec and decodes it.
 // Returns io.EOF on a clean peer close.
-func ReadFrame(r io.Reader) (*Frame, error) {
-	dec := msgpack.NewDecoder(r)
-	// DecodeRaw reads the next complete msgpack value from the stream.
+// IMPORTANT: The decoder must be reused across calls to preserve its internal
+// buffer; creating a new decoder each call will cause stream desync.
+func ReadFrame(dec *msgpack.Decoder) (*Frame, error) {
 	raw, err := dec.DecodeRaw()
 	if err != nil {
 		if errors.Is(err, io.EOF) {

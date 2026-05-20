@@ -35,8 +35,16 @@ func installRPCLoopback(ctx context.Context, model *TUIModel) (func(*tea.Program
 
 	rpc.RegisterShogunateHandlers(server, real)
 
-	go func() { _ = server.Serve() }()
-	go func() { _ = client.Serve() }()
+	go func() {
+		if err := server.Serve(); err != nil {
+			slog.Debug("loopback: server.Serve error", "err", err)
+		}
+	}()
+	go func() {
+		if err := client.Serve(); err != nil {
+			slog.Debug("loopback: client.Serve error", "err", err)
+		}
+	}()
 
 	// Pump server-side Subscribe events: intercept approval requests,
 	// forward everything else as wire notifications.
@@ -59,8 +67,8 @@ type teaSender struct{ *tea.Program }
 func (s teaSender) Send(msg any) { s.Program.Send(msg) }
 
 // installDaemonSocket dials a running asimi daemon at socketPath and
-// swaps the TUI's shogunate for a LoopbackShogunate wrapping the RPC
-// client. Wire-safe methods and all notifications flow over the real
+// swaps the TUI's shogunate for a ReconnectingClient wrapping the RPC
+// connection. Wire-safe methods and all notifications flow over the real
 // socket; GetMinister, ConfigureModel still delegate to
 // the TUI's local shogunate (a known limitation — any feature that
 // relies on those methods will see local-only state instead of the
@@ -71,22 +79,32 @@ func installDaemonSocket(ctx context.Context, model *TUIModel, socketPath string
 	if model == nil || model.shogunate == nil {
 		return nil, fmt.Errorf("installDaemonSocket: tui model or shogunate is nil")
 	}
-	c, err := rpc.Dial(socketPath)
-	if err != nil {
-		return nil, fmt.Errorf("installDaemonSocket: dial %s: %w", socketPath, err)
-	}
-	client := rpc.New(c, rpc.Options{})
-	go func() {
-		if err := client.Serve(); err != nil {
-			slog.Warn("daemon rpc client terminated", "err", err)
-		}
-	}()
 
-	local := model.shogunate
-	model.shogunate = rpc.NewLoopbackShogunate(client, local)
+	factory := func() (*rpc.Conn, error) {
+		c, err := rpc.Dial(socketPath)
+		if err != nil {
+			return nil, err
+		}
+		conn := rpc.New(c, rpc.Options{})
+		go func() {
+			if err := conn.Serve(); err != nil {
+				slog.Debug("daemon rpc client terminated", "err", err)
+			}
+		}()
+		return conn, nil
+	}
+
+	rc := rpc.NewReconnectingClient(factory, model.shogunate)
+	if err := rc.Start(); err != nil {
+		return nil, fmt.Errorf("installDaemonSocket: start: %w", err)
+	}
+
+	model.shogunate = rc
 
 	return func(p *tea.Program) {
-		rpc.RegisterApprovalHandler(client, teaSender{p})
-		rpc.RegisterEditorHandler(client, teaSender{p})
+		rc.RegisterHandler(func(conn *rpc.Conn) {
+			rpc.RegisterApprovalHandler(conn, teaSender{p})
+			rpc.RegisterEditorHandler(conn, teaSender{p})
+		})
 	}, nil
 }

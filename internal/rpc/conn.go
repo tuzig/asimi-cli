@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 
 	"github.com/afittestide/asimi/internal/wire"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Handler services an inbound request. It receives the raw params and
@@ -43,6 +44,7 @@ var ErrClosed = errors.New("rpc: conn closed")
 // Conn is a bidirectional RPC connection.
 type Conn struct {
 	rw     io.ReadWriteCloser
+	dec    *msgpack.Decoder // reused across ReadFrame calls to preserve buffer
 	logger *slog.Logger
 
 	// writes serialises all frame writes to rw.
@@ -89,6 +91,7 @@ func New(rw io.ReadWriteCloser, opts Options) *Conn {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Conn{
 		rw:             rw,
+		dec:            msgpack.NewDecoder(rw),
 		logger:         opts.Logger,
 		writes:         make(chan *wire.Frame, opts.WriteBuffer),
 		notifyQueue:    make(chan *wire.Frame, opts.WriteBuffer),
@@ -154,6 +157,9 @@ func (c *Conn) Serve() error {
 	}()
 
 	readErr := c.readLoop()
+	if readErr != nil {
+		c.logger.Debug("readLoop exited with error", "err", readErr)
+	}
 	c.setCloseErr(readErr)
 	c.Close()
 	<-writeDone
@@ -170,7 +176,7 @@ func (c *Conn) Serve() error {
 
 func (c *Conn) readLoop() error {
 	for {
-		f, err := wire.ReadFrame(c.rw)
+		f, err := wire.ReadFrame(c.dec)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
@@ -309,8 +315,8 @@ func (c *Conn) setCloseErr(err error) {
 	if err == nil {
 		return
 	}
-	e := c.closeErr.Load() 
-	c.logger.Debug("Setting closeErr", "last error", e)
+	e := c.closeErr.Load()
+	c.logger.Debug("Setting closeErr", "new error", err, "last error", e)
 	if e != nil {
 		return
 	}

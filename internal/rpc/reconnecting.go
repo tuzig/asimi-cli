@@ -1,0 +1,595 @@
+package rpc
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/storage"
+	"github.com/maximhq/bifrost/core/schemas"
+)
+
+type connFactory func() (*Conn, error)
+
+type handlerRegFunc func(*Conn)
+
+type ReconnectingClient struct {
+	factory  connFactory
+	local    shogunateapi.Client
+	handlers []handlerRegFunc
+
+	mu       sync.RWMutex
+	conn     *Conn
+	client   *ShogunateClient
+	reconCtx context.Context
+	cancel   context.CancelFunc
+
+	// reconnectMu serialises reconnect() calls so only one goroutine
+	// performs the reconnection; others wait for it to complete.
+	reconnectMu sync.Mutex
+
+	eventsMu sync.Mutex
+	events   chan any
+}
+
+func NewReconnectingClient(factory connFactory, local shogunateapi.Client) *ReconnectingClient {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &ReconnectingClient{
+		factory:  factory,
+		local:    local,
+		reconCtx: ctx,
+		cancel:   cancel,
+	}
+}
+
+func (rc *ReconnectingClient) RegisterHandler(f handlerRegFunc) {
+	rc.mu.Lock()
+	rc.handlers = append(rc.handlers, f)
+	conn := rc.conn
+	rc.mu.Unlock()
+	if conn != nil {
+		f(conn)
+	}
+}
+
+func (rc *ReconnectingClient) Start() error {
+	conn, err := rc.factory()
+	if err != nil {
+		return err
+	}
+	rc.mu.Lock()
+	rc.conn = conn
+	rc.client = NewShogunateClient(conn)
+	rc.mu.Unlock()
+
+	go rc.watchConnection()
+	return nil
+}
+
+func (rc *ReconnectingClient) Close() {
+	rc.cancel()
+	rc.mu.RLock()
+	if rc.conn != nil {
+		rc.conn.Close()
+	}
+	rc.mu.RUnlock()
+}
+
+func (rc *ReconnectingClient) Conn() *Conn {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.conn
+}
+
+func (rc *ReconnectingClient) watchConnection() {
+	for {
+		rc.mu.RLock()
+		conn := rc.conn
+		rc.mu.RUnlock()
+
+		if conn == nil {
+			return
+		}
+
+		select {
+		case <-rc.reconCtx.Done():
+			return
+		case <-conn.Done():
+			slog.Debug("reconnecting: connection lost, attempting reconnect")
+			if err := rc.reconnect(); err != nil {
+				slog.Error("reconnecting: failed to reconnect", "err", err)
+				return
+			}
+			slog.Info("reconnecting: reconnected successfully")
+		}
+	}
+}
+
+func (rc *ReconnectingClient) reconnect() error {
+	rc.reconnectMu.Lock()
+	defer rc.reconnectMu.Unlock()
+
+	// Check if another goroutine already reconnected while we waited
+	// for the mutex. If the current conn is alive, there's nothing to do.
+	rc.mu.RLock()
+	currentConn := rc.conn
+	rc.mu.RUnlock()
+
+	// If the connection is not done (still alive), someone else
+	// already reconnected — nothing to do.
+	if currentConn != nil {
+		select {
+		case <-currentConn.Done():
+			// Connection is dead, proceed with reconnect.
+		default:
+			return nil
+		}
+	}
+
+	// Close the dead connection if it hasn't been closed already.
+	if currentConn != nil {
+		currentConn.Close()
+	}
+
+	backoff := 100 * time.Millisecond
+	maxBackoff := 5 * time.Second
+
+	for {
+		select {
+		case <-rc.reconCtx.Done():
+			return rc.reconCtx.Err()
+		default:
+		}
+
+		conn, err := rc.factory()
+		if err != nil {
+			slog.Debug("reconnecting: factory failed, backing off", "err", err, "backoff", backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		rc.mu.Lock()
+		rc.conn = conn
+		rc.client = NewShogunateClient(conn)
+		handlers := rc.handlers
+		rc.mu.Unlock()
+
+		for _, h := range handlers {
+			h(conn)
+		}
+
+		rc.eventsMu.Lock()
+		if rc.events != nil {
+			SubscribeAll(conn, rc.events)
+		}
+		rc.eventsMu.Unlock()
+
+		return nil
+	}
+}
+
+// reconnectIfDead proactively reconnects when the current connection
+// is dead. Used by read-only methods that cannot detect connection
+// errors from their return values — they get a zero-value instead,
+// so we check the connection up front.
+func (rc *ReconnectingClient) reconnectIfDead() {
+	rc.mu.RLock()
+	conn := rc.conn
+	rc.mu.RUnlock()
+	if conn == nil {
+		return
+	}
+	select {
+	case <-conn.Done():
+		rc.reconnect()
+	default:
+	}
+}
+
+func (rc *ReconnectingClient) getClient() *ShogunateClient {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.client
+}
+
+// shouldRetry reports whether an error warrants a reconnect-and-retry.
+// Only ErrClosed is retried — the call never left the client so it is
+// safe for both read-only and mutating methods. ErrPeerDisconnected is
+// retried only for read-only methods; mutating methods must not retry
+// because the request may have already been applied on the server.
+func (rc *ReconnectingClient) shouldRetry(err error) bool {
+	return errors.Is(err, ErrClosed)
+}
+
+// shouldRetryReadOnly reports whether an error warrants a
+// reconnect-and-retry for read-only (idempotent) methods. Both ErrClosed
+// and ErrPeerDisconnected are safe because repeating a read has no
+// side effects.
+func (rc *ReconnectingClient) shouldRetryReadOnly(err error) bool {
+	return errors.Is(err, ErrClosed) || errors.Is(err, ErrPeerDisconnected)
+}
+
+// reconnectIfError triggers a reconnection when err indicates the
+// connection is broken. Returns true when a retry is warranted, false
+// otherwise.
+func (rc *ReconnectingClient) reconnectIfError(err error, shouldRetry func(error) bool) bool {
+	if !shouldRetry(err) {
+		return false
+	}
+	rc.reconnect()
+	return true
+}
+
+func (rc *ReconnectingClient) GetMinister(id string) shogunate.Minister {
+	if rc.local != nil {
+		return rc.local.GetMinister(id)
+	}
+	return nil
+}
+
+func (rc *ReconnectingClient) ConfigureModel(client shogunate.LLMProvider, config *shogunate.SessionConfig, repoInfo repo.RepoInfo) {
+	if rc.local != nil {
+		rc.local.ConfigureModel(client, config, repoInfo)
+	}
+}
+
+func (rc *ReconnectingClient) CancellableStreamCtx(channelID string) context.Context {
+	if rc.local != nil {
+		return rc.local.CancellableStreamCtx(channelID)
+	}
+	return context.Background()
+}
+
+func (rc *ReconnectingClient) HasMinister(id string) bool {
+	rc.reconnectIfDead()
+	client := rc.getClient()
+	if client == nil {
+		return false
+	}
+	return client.HasMinister(id)
+}
+
+func (rc *ReconnectingClient) ResetMinisterSession(id string) {
+	client := rc.getClient()
+	if client != nil {
+		client.ResetMinisterSession(id)
+	}
+}
+
+func (rc *ReconnectingClient) EdictKey(edictID uint) storage.EdictKey {
+	rc.reconnectIfDead()
+	client := rc.getClient()
+	if client == nil {
+		return storage.EdictKey{}
+	}
+	return client.EdictKey(edictID)
+}
+
+func (rc *ReconnectingClient) CourtEdictKey() storage.EdictKey {
+	rc.reconnectIfDead()
+	client := rc.getClient()
+	if client == nil {
+		return storage.EdictKey{}
+	}
+	return client.CourtEdictKey()
+}
+
+// CreateEdict is a mutating method. It does NOT retry on
+// ErrPeerDisconnected because the edict may have already been created
+// on the server — only on ErrClosed (the call never left the client).
+func (rc *ReconnectingClient) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
+	client := rc.getClient()
+	if client == nil {
+		return nil, ErrClosed
+	}
+	edict, err := client.CreateEdict(issueRef, intent)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.CreateEdict(issueRef, intent)
+		}
+	}
+	return edict, err
+}
+
+// CreateEdictSilent is a mutating method. It does NOT retry on
+// ErrPeerDisconnected because the edict may have already been created
+// on the server — only on ErrClosed (the call never left the client).
+func (rc *ReconnectingClient) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
+	client := rc.getClient()
+	if client == nil {
+		return nil, ErrClosed
+	}
+	edict, err := client.CreateEdictSilent(issueRef, intent)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.CreateEdictSilent(issueRef, intent)
+		}
+	}
+	return edict, err
+}
+
+func (rc *ReconnectingClient) GetEdict(edictID uint) (*storage.Edict, error) {
+	client := rc.getClient()
+	if client == nil {
+		return nil, ErrClosed
+	}
+	edict, err := client.GetEdict(edictID)
+	if rc.reconnectIfError(err, rc.shouldRetryReadOnly) {
+		if client = rc.getClient(); client != nil {
+			return client.GetEdict(edictID)
+		}
+	}
+	return edict, err
+}
+
+// GrantRulerSeal is a mutating method. It does NOT retry on
+// ErrPeerDisconnected because the seal may have already been granted
+// on the server — only on ErrClosed (the call never left the client).
+func (rc *ReconnectingClient) GrantRulerSeal(edictID uint, notes string) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.GrantRulerSeal(edictID, notes)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.GrantRulerSeal(edictID, notes)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) ListActiveEdicts() ([]storage.ActiveEdict, error) {
+	client := rc.getClient()
+	if client == nil {
+		return nil, ErrClosed
+	}
+	edicts, err := client.ListActiveEdicts()
+	if rc.reconnectIfError(err, rc.shouldRetryReadOnly) {
+		if client = rc.getClient(); client != nil {
+			return client.ListActiveEdicts()
+		}
+	}
+	return edicts, err
+}
+
+func (rc *ReconnectingClient) CancelZhengming(requestID string) {
+	client := rc.getClient()
+	if client != nil {
+		client.CancelZhengming(requestID)
+	}
+}
+
+func (rc *ReconnectingClient) HandleZhengmingResponse(ctx context.Context, requestID, answer string) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.HandleZhengmingResponse(ctx, requestID, answer)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.HandleZhengmingResponse(ctx, requestID, answer)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) AllowRunnerFallback(allow bool) {
+	client := rc.getClient()
+	if client != nil {
+		client.AllowRunnerFallback(allow)
+	}
+}
+
+func (rc *ReconnectingClient) ClearSessionHistory(tabTarget string) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.ClearSessionHistory(tabTarget)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.ClearSessionHistory(tabTarget)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) RollbackSession(tabTarget string, snapshot int) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.RollbackSession(tabTarget, snapshot)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.RollbackSession(tabTarget, snapshot)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) AddSessionMessage(tabTarget, role, content string) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.AddSessionMessage(tabTarget, role, content)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.AddSessionMessage(tabTarget, role, content)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) AddSessionContextFile(tabTarget, path, content string) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.AddSessionContextFile(tabTarget, path, content)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.AddSessionContextFile(tabTarget, path, content)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) CompactSession(ctx context.Context, tabTarget, prompt string) (string, error) {
+	client := rc.getClient()
+	if client == nil {
+		return "", ErrClosed
+	}
+	result, err := client.CompactSession(ctx, tabTarget, prompt)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.CompactSession(ctx, tabTarget, prompt)
+		}
+	}
+	return result, err
+}
+
+func (rc *ReconnectingClient) SessionState(tabTarget string) shogunate.SessionState {
+	rc.reconnectIfDead()
+	client := rc.getClient()
+	if client == nil {
+		return shogunate.SessionState{}
+	}
+	return client.SessionState(tabTarget)
+}
+
+func (rc *ReconnectingClient) GetEdictSeals(key storage.EdictKey) ([]storage.Seal, error) {
+	client := rc.getClient()
+	if client == nil {
+		return nil, ErrClosed
+	}
+	seals, err := client.GetEdictSeals(key)
+	if rc.reconnectIfError(err, rc.shouldRetryReadOnly) {
+		if client = rc.getClient(); client != nil {
+			return client.GetEdictSeals(key)
+		}
+	}
+	return seals, err
+}
+
+func (rc *ReconnectingClient) PublishEvent(key storage.EdictKey, et storage.ShogunateEvent, payload storage.JSON) uint {
+	client := rc.getClient()
+	if client == nil {
+		return key.ID
+	}
+	return client.PublishEvent(key, et, payload)
+}
+
+func (rc *ReconnectingClient) RunShellCommand(ctx context.Context, input runners.Input) (runners.Output, error) {
+	client := rc.getClient()
+	if client == nil {
+		return runners.Output{}, ErrClosed
+	}
+	output, err := client.RunShellCommand(ctx, input)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.RunShellCommand(ctx, input)
+		}
+	}
+	return output, err
+}
+
+func (rc *ReconnectingClient) SubmitPrompt(targetID string, p *shogunate.Prompt) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.SubmitPrompt(targetID, p)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.SubmitPrompt(targetID, p)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.RestoreMinisterSession(tabType, msgs)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.RestoreMinisterSession(tabType, msgs)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) TakeSnapshot() shogunate.Snapshot {
+	client := rc.getClient()
+	if client == nil {
+		return shogunate.Snapshot{}
+	}
+	return client.TakeSnapshot()
+}
+
+func (rc *ReconnectingClient) CancelTab(channelID string) {
+	client := rc.getClient()
+	if client != nil {
+		client.CancelTab(channelID)
+	}
+}
+
+func (rc *ReconnectingClient) ConfigureLLM(ctx context.Context, req shogunate.ConfigureLLMRequest) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.ConfigureLLM(ctx, req)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.ConfigureLLM(ctx, req)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) GetSessionExport(tabTarget string) (*shogunate.SessionExport, error) {
+	client := rc.getClient()
+	if client == nil {
+		return nil, ErrClosed
+	}
+	export, err := client.GetSessionExport(tabTarget)
+	if rc.reconnectIfError(err, rc.shouldRetryReadOnly) {
+		if client = rc.getClient(); client != nil {
+			return client.GetSessionExport(tabTarget)
+		}
+	}
+	return export, err
+}
+
+func (rc *ReconnectingClient) Subscribe(ctx context.Context) <-chan any {
+	rc.eventsMu.Lock()
+	defer rc.eventsMu.Unlock()
+	if rc.events == nil {
+		rc.events = make(chan any, 256)
+		rc.mu.RLock()
+		conn := rc.conn
+		rc.mu.RUnlock()
+		if conn != nil {
+			SubscribeAll(conn, rc.events)
+		}
+	}
+	return rc.events
+}
+
+var _ shogunateapi.Client = (*ReconnectingClient)(nil)

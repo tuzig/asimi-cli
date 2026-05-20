@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
@@ -40,7 +41,11 @@ func connectOrStartDaemon(ctx context.Context) (*rpc.Conn, string, error) {
 	// Fast path: a running daemon that actually answers a request.
 	if c, err := rpc.Dial(path); err == nil {
 		conn := rpc.New(c, rpc.Options{})
-		go func() { _ = conn.Serve() }()
+		go func() {
+			if err := conn.Serve(); err != nil {
+				slog.Warn("autostart: conn.Serve error (fast path)", "err", err)
+			}
+		}()
 		if daemonResponds(ctx, conn) {
 			return conn, path, nil
 		}
@@ -64,7 +69,11 @@ func connectOrStartDaemon(ctx context.Context) (*rpc.Conn, string, error) {
 		return nil, path, fmt.Errorf("dial after spawn: %w", err)
 	}
 	conn := rpc.New(c, rpc.Options{})
-	go func() { _ = conn.Serve() }()
+	go func() {
+		if err := conn.Serve(); err != nil {
+			slog.Warn("autostart: conn.Serve error (after spawn)", "err", err)
+		}
+	}()
 	return conn, path, nil
 }
 

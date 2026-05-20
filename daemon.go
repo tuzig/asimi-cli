@@ -163,7 +163,9 @@ func serveOne(ctx context.Context, c net.Conn, shog shogunateapi.Client) {
 	}()
 
 	slog.Info("daemon: client connected")
-	_ = conn.Serve()
+	if err := conn.Serve(); err != nil {
+		slog.Warn("daemon: conn.Serve error", "err", err)
+	}
 	close(done)
 	slog.Info("daemon: client disconnected")
 }
