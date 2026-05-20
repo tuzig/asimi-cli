@@ -56,7 +56,7 @@ func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, connID uint64, fallbac
 		imageName = fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
 	}
 
-	containerName := fmt.Sprintf("asimi-shell-%s-%d", strings.ReplaceAll(repoInfo.Slug, "/", "-"), connID)
+	containerName := fmt.Sprintf("asimi-shell-%s-%d", repo.SanitizeSegment(repoInfo.Slug), connID)
 	slog.Debug("NewPodmanRunner", "containerName", containerName, "imageName", imageName, "slug", repoInfo.Slug)
 
 	return &PodmanRunner{

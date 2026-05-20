@@ -198,7 +198,7 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 	}
 	if err := rpc.NewShogunateClient(conn).SetContext(ctx, rpc.SetContextParams{
 		Project:      repoInfo.Slug,
-		Username:      username,
+		Username:     username,
 		ProjectRoot:  repoInfo.ProjectRoot,
 		WorktreePath: repoInfo.WorktreePath,
 		Branch:       repoInfo.Branch,

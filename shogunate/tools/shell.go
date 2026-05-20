@@ -13,14 +13,18 @@ import (
 // It uses the runners package for actual execution.
 type RunShellCommand struct {
 	shouldRunOnHost func(cmd string) (runOnHost, needsApproval bool)
+	runner          runners.Runner
 }
 
-// NewRunShellCommand creates a new RunShellCommand tool
+// NewRunShellCommand creates a new RunShellCommand tool.
+// runner is the per-shogunate shell runner (may be nil — tools that need it must check).
 func NewRunShellCommand(
 	hostChecker func(string) (bool, bool),
+	runner runners.Runner,
 ) *RunShellCommand {
 	return &RunShellCommand{
 		shouldRunOnHost: hostChecker,
+		runner:          runner,
 	}
 }
 
@@ -54,7 +58,6 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		runOnHost, requiresApproval = t.shouldRunOnHost(params.Command)
 	}
 
-	r := runners.GetRunner()
 	if runOnHost {
 		// Set the approval flag based on config patterns
 		runnerInput.BypassApproval = !requiresApproval
@@ -65,19 +68,19 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		output.Output = runnerOutput.Output
 		output.ExitCode = runnerOutput.ExitCode
 		runErr = err
-	} else if r != nil {
-		runnerOutput, err := r.Run(ctx, runnerInput)
+	} else if t.runner != nil {
+		runnerOutput, err := t.runner.Run(ctx, runnerInput)
 		output.Output = runnerOutput.Output
 		output.ExitCode = runnerOutput.ExitCode
 		runErr = err
 
 		// If we got a harness error, try to restart and retry once
 		if runErr != nil {
-			if restartErr := r.Restart(ctx); restartErr != nil {
+			if restartErr := t.runner.Restart(ctx); restartErr != nil {
 				return "", fmt.Errorf("command failed and restart failed: %w (restart error: %v)", runErr, restartErr)
 			}
 
-			runnerOutput, err = r.Run(ctx, runnerInput)
+			runnerOutput, err = t.runner.Run(ctx, runnerInput)
 			output.Output = runnerOutput.Output
 			output.ExitCode = runnerOutput.ExitCode
 			runErr = err

@@ -3224,12 +3224,14 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 	if m.shogunate == nil {
 		return
 	}
-	// Join answers into a single string for the response
 	answer := strings.Join(msg.Answers, "; ")
 	if answer == "[chat]" {
 		return
 	}
-	// Handle DB updates and emit zhengming_answered event
+	slog.Debug("handleAnsweringComplete: calling HandleZhengmingResponse",
+		"request_id", msg.RequestID,
+		"answer", answer,
+		"shogunate_type", fmt.Sprintf("%T", m.shogunate))
 	if err := m.shogunate.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
 		slog.Error("failed to handle zhengming response", "error", err)
 	}

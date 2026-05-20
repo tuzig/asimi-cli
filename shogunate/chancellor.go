@@ -503,7 +503,7 @@ func (c *Chancellor) Tools() []Tool {
 	if c.shogunate != nil && c.shogunate.GetRitualRunner() != nil {
 		toolList = append(toolList, InvokeRitualTool{chancellor: c})
 	}
-	toolList = append(toolList, tools.NewRunShellCommand(c.checkHostCommand))
+	toolList = append(toolList, tools.NewRunShellCommand(c.checkHostCommand, c.runner))
 	return toolList
 }
 
