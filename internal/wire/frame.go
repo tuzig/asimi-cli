@@ -1,44 +1,19 @@
-// Package wire defines the MessagePack RPC frame format used between the
-// shogunate daemon and the TUI over a unix socket.
+// Package wire defines helpers for the standard msgpack-RPC wire format
+// used between the shogunate daemon and the TUI over a unix socket.
 //
-// Every frame is a single MessagePack-encoded Frame struct preceded by a
-// 4-byte big-endian length prefix. A frame is one of:
+// Standard msgpack-RPC uses array envelopes:
 //
-//	request      t=FrameRequest,  id, m, p       → expects a response
-//	response     t=FrameResponse, id,    r | e   → replies to a request
-//	notification t=FrameNotify,       m, p       → fire-and-forget
+//	Request:      [0, msgid, method, params]
+//	Response:     [1, msgid, error, result]
+//	Notification: [2, method, params]
 //
 // The envelope is symmetric: either side may originate a request, which
 // lets the daemon prompt the TUI for approval using the same machinery
 // the TUI uses to call the daemon.
 package wire
 
-// FrameType identifies the role of a frame.
-type FrameType uint8
-
-const (
-	FrameRequest  FrameType = 0
-	FrameResponse FrameType = 1
-	FrameNotify   FrameType = 2
-)
-
-// MaxFrameSize caps a single frame at 16 MiB. The reader rejects larger
-// frames to protect against runaway peers.
-const MaxFrameSize = 16 * 1024 * 1024
-
-// Frame is the wire envelope. Params and result are carried as raw bytes
-// so the dispatcher can route a frame to the right handler before the
-// handler decodes its typed payload.
-type Frame struct {
-	T  FrameType `msgpack:"t"`
-	ID uint64    `msgpack:"id,omitempty"`
-	M  string    `msgpack:"m,omitempty"`
-	P  []byte    `msgpack:"p,omitempty"`
-	R  []byte    `msgpack:"r,omitempty"`
-	E  *Error    `msgpack:"e,omitempty"`
-}
-
-// Error is the wire representation of a handler failure.
+// Error is the wire representation of a handler failure, placed in the
+// error slot (index 2) of a standard msgpack-RPC response.
 type Error struct {
 	Code    int32  `msgpack:"c"`
 	Message string `msgpack:"m"`
@@ -59,6 +34,12 @@ const (
 	CodeFrameTooLarge    int32 = 3
 	CodeDecodeFailed     int32 = 4
 	CodeNotReady         int32 = 5
+)
+
+const (
+	FrameRequest  uint8 = 0
+	FrameResponse uint8 = 1
+	FrameNotify   uint8 = 2
 )
 
 // NewError builds a transport *Error.

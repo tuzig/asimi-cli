@@ -1,27 +1,25 @@
 # Shogunate RPC Protocol
 
 This is the wire protocol between the `asimi` TUI and the `asimi daemon`
-when the two run as separate processes. It is an in-house MessagePack
-RPC — no JSON-RPC, no gRPC, no generated stubs. Everything you need to
-read, extend, or re-implement the protocol is in one directory:
-`internal/wire` (frame + codec) and `internal/rpc` (dispatch).
+when the two run as separate processes. It is **standard msgpack-RPC**
+compatible with Neovim's built-in `rpcrequest` / `rpcnotify` and any
+other msgpack-RPC client (Python, etc.). No JSON-RPC, no gRPC, no
+generated stubs. Everything you need to read, extend, or re-implement
+the protocol is in one directory: `internal/wire` (frame + codec) and
+`internal/rpc` (dispatch).
 
 ## 1. Transport
 
-**Wire format**: length-prefixed [MessagePack](https://msgpack.org/)
-frames. Each frame is:
+**Wire format**: a stream of [MessagePack](https://msgpack.org/)
+arrays. Each value on the wire is exactly one msgpack-RPC envelope —
+a 3- or 4-element array. The stream is decoded with
+[`vmihailenco/msgpack/v5`](https://github.com/vmihailenco/msgpack).
 
-```
-+---------------------+------------------------+
-| 4-byte length (BE)  |  MessagePack payload   |
-+---------------------+------------------------+
-```
-
-* Length is unsigned big-endian. A frame larger than **16 MiB**
-  (`wire.MaxFrameSize`) is rejected with `wire.ErrFrameTooLarge`. Peers
-  should either close the connection or drop the offender on sight.
-* The payload is exactly one `wire.Frame` struct encoded with
-  [`vmihailenco/msgpack/v5`](https://github.com/vmihailenco/msgpack).
+* No length prefix, no framing headers. Just back-to-back msgpack
+  values.
+* A single value larger than **16 MiB** (`wire.MaxFrameSize`) is
+  rejected with `wire.ErrFrameTooLarge`. Peers should close the
+  connection.
 
 **Physical transport**: a single unix domain socket. The default path
 (`rpc.SocketPath`) prefers `$XDG_RUNTIME_DIR/asimi.sock` on Linux,
@@ -33,27 +31,33 @@ Socket permissions: directory `0700`, socket `0600` — user-scoped v1.
 
 ## 2. Frame envelope
 
-```go
-type Frame struct {
-    T  FrameType `msgpack:"t"`            // 0=req, 1=resp, 2=notif
-    ID uint64    `msgpack:"id,omitempty"` // correlates req/resp
-    M  string    `msgpack:"m,omitempty"`  // method name
-    P  []byte    `msgpack:"p,omitempty"`  // params (raw msgpack)
-    R  []byte    `msgpack:"r,omitempty"`  // result (raw msgpack)
-    E  *Error    `msgpack:"e,omitempty"`  // response error
-}
+Standard msgpack-RPC array envelopes:
 
+| Kind         | Array                                    |
+| ------------ | ---------------------------------------- |
+| Request      | `[0, msgid, method, params]`               |
+| Response     | `[1, msgid, error, result]`              |
+| Notification | `[2, method, params]`                    |
+
+Where:
+
+* `msgid` (`uint64`) correlates a request with its response.
+* `method` is the Go method name string (e.g. `"SubmitPrompt"`).
+* `params` is a single msgpack value (usually a tagged struct or map).
+  It is carried as raw bytes so the dispatcher can route to the right
+  handler before the handler decodes its typed payload.
+* `error` is `nil` on success, or an `*wire.Error` struct on failure.
+  Simple string errors are accepted from third-party clients and are
+  normalised to `code=0`.
+* `result` is the raw msgpack return value, present only when `error`
+  is `nil`.
+
+```go
 type Error struct {
     Code    int32  `msgpack:"c"`
     Message string `msgpack:"m"`
 }
 ```
-
-| Kind         | `T` | `ID`    | `M`  | `P`  | `R`  | `E`  |
-| ------------ | --- | ------- | ---- | ---- | ---- | ---- |
-| Request      | 0   | nonzero | ✓    | ✓    |      |      |
-| Response     | 1   | matches |      |      | ✓ or | ✓    |
-| Notification | 2   | 0       | ✓    | ✓    |      |      |
 
 **The envelope is symmetric** — either peer may issue a request. The
 daemon uses this to ask the TUI for host-command approval; the TUI uses
@@ -70,7 +74,7 @@ errors use codes above 1000 to avoid collision.
 | 0    | *(unset)*                   | non-wire error; look at `Message`  |
 | 1    | `CodeUnknownMethod`         | peer sent a method we don't serve  |
 | 2    | `CodePeerDisconnected`      | connection closed mid-call         |
-| 3    | `CodeFrameTooLarge`         | length header exceeded 16 MiB      |
+| 3    | `CodeFrameTooLarge`         | value exceeded 16 MiB              |
 | 4    | `CodeDecodeFailed`          | params didn't unmarshal            |
 | 5    | `CodeNotReady`              | reserved for handshake futures     |
 
@@ -199,7 +203,28 @@ hanging forever. A live-but-stuck TUI is bounded by the ctx the daemon
 passes to `RequestApproval` — wrap it in `context.WithTimeout` at the
 call site for a hard ceiling.
 
-## 7. Environment variables
+## 7. Neovim compatibility
+
+Because the protocol is standard msgpack-RPC, a Neovim Lua script can
+talk to the daemon directly over the unix socket:
+
+```lua
+local chan = vim.fn.sockconnect('unix', '/tmp/asimi-501.sock', {rpc = true})
+local ok, err = pcall(vim.fn.rpcrequest, chan, 'HasMinister', {id = 'chancellor'})
+```
+
+Notes for Neovim callers:
+
+* The socket path defaults to `rpc.SocketPath()` — use
+  `$XDG_RUNTIME_DIR/asimi.sock` on Linux or `/tmp/asimi-$UID.sock` on
+  macOS.
+* `rpcrequest` returns the `result` slot when `error` is `nil`. If the
+  server returns an `*wire.Error`, Neovim surfaces it as a Lua error.
+* `rpcnotify` sends a notification envelope (`[2, method, params]`).
+* Params and results are plain msgpack maps — tagged Go structs and Lua
+tables are fully compatible.
+
+## 8. Environment variables
 
 The TUI picks its transport mode from env vars; precedence in
 `runInteractiveMode`:
@@ -220,14 +245,14 @@ The autostart timeout is `autostartReadyTimeout = 10s` (in
 `autostart.go`). Raise it if you're seeing spurious timeouts on cold
 macOS machines with `podman machine start`.
 
-## 8. Cookbook: add a new method
+## 9. Cookbook: add a new method
 
 Wire a new `Client` method in five files:
 
 1. **Interface** — add the method signature to
    `internal/shogunateapi/client.go`. Wire-safe params/return types
    only (primitives, tagged structs, no closures, no `context.Context`
-   as a param, no channels). Kept in-process only? See § 9.
+   as a param, no channels). Kept in-process only? See § 10.
 2. **Server implementation** — implement on `*shogunate.Shogunate` (or
    whichever type satisfies `Client`). Keep it in
    `shogunate/shogunate.go` alongside siblings, or add a new file if
@@ -282,7 +307,7 @@ Wire a new `Client` method in five files:
 5. **Consume** on the client: the `SubscribeAll` handler will decode
    and deliver it on the shared `<-chan any`.
 
-## 9. The non-wire-safe holdouts
+## 10. The non-wire-safe holdouts
 
 Three methods on `shogunateapi.Client` are deliberately in-process
 only:
@@ -299,11 +324,11 @@ local-empty. Migrating each of these away collapses
 `LoopbackShogunate` into the plain `*ShogunateClient` and is the final
 step before the TUI can be truly stateless.
 
-## 10. Files at a glance
+## 11. Files at a glance
 
 ```
 internal/wire/
-  frame.go        Frame struct, Error codes, MaxFrameSize
+  frame.go        Error struct, Error codes, Frame constants
   codec.go        ReadFrame / WriteFrame / Encode / Decode
 internal/rpc/
   conn.go         Bidirectional Conn: Call / Notify / Handle / HandleNotify

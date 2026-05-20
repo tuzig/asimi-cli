@@ -62,7 +62,7 @@ type Conn struct {
 
 	closeOnce sync.Once
 	closed    chan struct{}
-	closeErr  atomic.Value // error
+	closeErr  atomic.Value
 
 	// ctx is cancelled on Close; handlers receive a child of it.
 	ctx    context.Context
@@ -309,5 +309,10 @@ func (c *Conn) setCloseErr(err error) {
 	if err == nil {
 		return
 	}
-	c.closeErr.CompareAndSwap(nil, err)
+	e := c.closeErr.Load() 
+	c.logger.Debug("Setting closeErr", "last error", e)
+	if e != nil {
+		return
+	}
+	c.closeErr.Store(err)
 }
