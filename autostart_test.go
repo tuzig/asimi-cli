@@ -45,12 +45,9 @@ func startFakeDaemon(t *testing.T, socketPath string) (stop func()) {
 			}
 			go func(nc net.Conn) {
 				conn := rpc.New(nc, rpc.Options{})
-				conn.Handle("Ping", func(ctx context.Context, params []byte) ([]byte, error) {
-					return nil, nil
-				})
-				// connectOrStartDaemon probes liveness with this
-				// method; a fake daemon must answer it or be evicted.
-				conn.Handle(rpc.MethodCourtEdictKey, func(ctx context.Context, params []byte) ([]byte, error) {
+				// connectOrStartDaemon probes liveness with Ping;
+				// a fake daemon must answer it or be evicted.
+				conn.Handle(rpc.MethodPing, func(ctx context.Context, params []byte) ([]byte, error) {
 					return nil, nil
 				})
 				_ = conn.Serve()

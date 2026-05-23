@@ -389,8 +389,9 @@ func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
 	if err := r.initialize(ctx); err != nil {
 		slog.Error("failed to initialize", "error", err)
 		if r.allowFallback && r.fallback != nil {
-			slog.Debug("falling back to host shell")
-			return r.fallback.Run(ctx, input)
+			slog.Warn("sandbox unavailable, falling back to host shell", "command", input.Command)
+			out, fallbackErr := r.fallback.Run(ctx, input)
+			return out, SandboxFallbackError{Err: err, FallbackErr: fallbackErr}
 		}
 		return Output{}, SandboxMissingError{}
 	}

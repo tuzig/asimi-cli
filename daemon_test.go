@@ -5,12 +5,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/rpc"
+	"github.com/afittestide/asimi/internal/runners"
+	shogunateTools "github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -389,4 +393,266 @@ func TestDaemonEmptyProjectRoot(t *testing.T) {
 	}
 }
 
+// TestInitShellRunnerMustNotFallbackToHost verifies that on a system
+// without podman, InitShellRunner returns a PodmanRunner (not a
+// HostRunner). A runner without a sandbox must NOT execute commands
+// on the host — it should return SandboxMissingError instead.
+func TestInitShellRunnerMustNotFallbackToHost(t *testing.T) {
+	cfg := &config.SandboxConfig{}
+	repoInfo := repo.RepoInfo{
+		ProjectRoot: t.TempDir(),
+		Slug:        "test-project",
+	}
+
+	runner := runners.InitShellRunner(cfg, repoInfo)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = runner.Close(ctx)
+	}()
+
+	// When podman is unavailable, InitShellRunner must return a
+	// PodmanRunner (not a HostRunner) so that commands fail with
+	// SandboxMissingError rather than silently running on the host.
+	if runner.RunnerType() == "host" {
+		t.Errorf("InitShellRunner returned HostRunner when podman is unavailable — commands will escape to host (uname → Darwin)")
+	}
+}
+
+// TestPodmanRunnerHostFallbackMustNotLeak verifies that when
+// AllowHostFallback=true and a HostRunner fallback is provided,
+// PodmanRunner.Run returns SandboxFallbackError (not nil) so the
+// caller always knows the sandbox was bypassed. Silent fallback to
+// the host is a security violation.
+func TestPodmanRunnerHostFallbackMustNotLeak(t *testing.T) {
+	cfg := &config.SandboxConfig{
+		AllowHostFallback: true,
+	}
+	repoInfo := repo.RepoInfo{
+		ProjectRoot: t.TempDir(),
+		Slug:        "test-project",
+	}
+
+	hostRunner := runners.NewHostRunner(1)
+	runner := runners.NewPodmanRunner(cfg, repoInfo, 1, hostRunner)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = runner.Close(ctx)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// When sandbox is unavailable and fallback is used, Run must
+	// return SandboxFallbackError — never a silent nil error.
+	output, err := runner.Run(ctx, runners.Input{
+		Command:        "uname",
+		Description:    "verify sandbox isolation",
+		BypassApproval: true,
+	})
+
+	if err == nil {
+		t.Errorf("command ran on host (output=%q) — AllowHostFallback silently escaped the sandbox", strings.TrimSpace(output.Output))
+	}
+}
+
+// TestShellCommandMustFailWithoutSandbox verifies the full tool
+// stack: when the RunShellCommand tool has a PodmanRunner with no
+// sandbox, the tool retries once (restart + retry), then returns
+// SandboxMissingError with an actionable message.
+func TestShellCommandMustFailWithoutSandbox(t *testing.T) {
+	cfg := &config.SandboxConfig{}
+	repoInfo := repo.RepoInfo{
+		ProjectRoot: t.TempDir(),
+		Slug:        "test-project",
+	}
+
+	runner := runners.NewPodmanRunner(cfg, repoInfo, 99, nil)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = runner.Close(ctx)
+	}()
+
+	shellTool := shogunateTools.NewRunShellCommand(nil, runner)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := shellTool.Call(ctx, `{"command":"uname","description":"test sandbox isolation"}`)
+	if err == nil {
+		t.Fatal("expected error when running shell command without sandbox, got nil — command may have run on host")
+	}
+	if !strings.Contains(err.Error(), "Sandbox container image is missing") {
+		t.Errorf("error = %q, want mention of sandbox image missing", err.Error())
+	}
+}
+
 var _ shogunate.Snapshot // keep the shogunate import warm for the test file
+
+// dialTwoClients is a test helper that starts serveClients on a unix
+// socket, dials two client connections, and completes the SetContext
+// handshake for each. Returns the two live client Conns, their
+// ShogunateClients, and a cleanup function.
+func dialTwoClients(t *testing.T, shared *DaemonShared, projectRootA, projectRootB string) (*rpc.Conn, *rpc.ShogunateClient, *rpc.Conn, *rpc.ShogunateClient, func()) {
+	t.Helper()
+
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "d.sock")
+	if len(sockPath) >= 104 {
+		sockPath = filepath.Join("/tmp", "asimi-d-"+time.Now().Format("150405.000000")+".sock")
+		t.Cleanup(func() { _ = os.Remove(sockPath) })
+	}
+
+	listener, err := rpc.Listen(sockPath)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- serveClients(ctx, listener, shared) }()
+
+	dialOne := func(projectRoot string) (*rpc.Conn, *rpc.ShogunateClient) {
+		t.Helper()
+		netConn, err := rpc.Dial(sockPath)
+		if err != nil {
+			t.Fatalf("Dial: %v", err)
+		}
+		clientConn := rpc.New(netConn, rpc.Options{})
+		go func() { _ = clientConn.Serve() }()
+
+		client := rpc.NewShogunateClient(clientConn)
+		handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer handshakeCancel()
+		if err := client.SetContext(handshakeCtx, rpc.SetContextParams{
+			Project:     "test-project",
+			Username:    "test-user",
+			ProjectRoot: projectRoot,
+		}); err != nil {
+			t.Fatalf("SetContext handshake: %v", err)
+		}
+		return clientConn, client
+	}
+
+	connA, clientA := dialOne(projectRootA)
+	connB, clientB := dialOne(projectRootB)
+
+	cleanup := func() {
+		cancel()
+		_ = listener.Close()
+		connA.Close()
+		connB.Close()
+		select {
+		case <-serveDone:
+		case <-time.After(3 * time.Second):
+			t.Log("serveClients didn't shut down in time")
+		}
+	}
+
+	return connA, clientA, connB, clientB, cleanup
+}
+
+// TestDaemonTwoClients verifies that two clients can connect to the
+// daemon simultaneously, each completing the handshake and exercising
+// RPC calls independently. Both clients get their own isolated
+// Shogunate instance backed by the shared DB.
+func TestDaemonTwoClients(t *testing.T) {
+	shared, cleanup := newTestShared(t)
+	defer cleanup()
+
+	projectRootA := t.TempDir()
+	projectRootB := t.TempDir()
+
+	_, clientA, _, clientB, stop := dialTwoClients(t, shared, projectRootA, projectRootB)
+	defer stop()
+
+	// Both clients should see the chancellor minister (each through
+	// its own isolated Shogunate). Retry briefly because
+	// RegisterShogunateHandlers runs after the handshake response.
+	waitForMinister := func(client *rpc.ShogunateClient, name string) bool {
+		for i := 0; i < 50; i++ {
+			if client.HasMinister(name) {
+				return true
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return false
+	}
+
+	if !waitForMinister(clientA, "chancellor") {
+		t.Error("client A: HasMinister(chancellor) = false, want true")
+	}
+	if !waitForMinister(clientB, "chancellor") {
+		t.Error("client B: HasMinister(chancellor) = false, want true")
+	}
+
+	// Each client can create an edict independently.
+	edictA, err := clientA.CreateEdict("#2", "client A edict")
+	if err != nil {
+		t.Fatalf("client A CreateEdict: %v", err)
+	}
+	if edictA.Intent != "client A edict" {
+		t.Errorf("client A edict.Intent = %q, want %q", edictA.Intent, "client A edict")
+	}
+
+	edictB, err := clientB.CreateEdict("#3", "client B edict")
+	if err != nil {
+		t.Fatalf("client B CreateEdict: %v", err)
+	}
+	if edictB.Intent != "client B edict" {
+		t.Errorf("client B edict.Intent = %q, want %q", edictB.Intent, "client B edict")
+	}
+}
+
+// TestDaemonTwoClientsIsolation verifies that one client disconnecting
+// does not affect the other. Client A disconnects, then client B must
+// still be able to make RPC calls.
+func TestDaemonTwoClientsIsolation(t *testing.T) {
+	shared, cleanup := newTestShared(t)
+	defer cleanup()
+
+	projectRootA := t.TempDir()
+	projectRootB := t.TempDir()
+
+	connA, _, connB, clientB, stop := dialTwoClients(t, shared, projectRootA, projectRootB)
+	defer stop()
+
+	// Confirm client B works before disconnecting A.
+	waitForMinister := func(client *rpc.ShogunateClient, name string) bool {
+		for i := 0; i < 50; i++ {
+			if client.HasMinister(name) {
+				return true
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return false
+	}
+	if !waitForMinister(clientB, "chancellor") {
+		t.Fatal("client B: HasMinister(chancellor) = false before disconnect")
+	}
+
+	// Disconnect client A.
+	connA.Close()
+
+	// Give the server a moment to process the disconnect.
+	time.Sleep(50 * time.Millisecond)
+
+	// Client B must still work after A is gone.
+	edictB, err := clientB.CreateEdict("#4", "client B still alive")
+	if err != nil {
+		t.Fatalf("client B CreateEdict after A disconnect: %v", err)
+	}
+	if edictB.Intent != "client B still alive" {
+		t.Errorf("client B edict.Intent = %q, want %q", edictB.Intent, "client B still alive")
+	}
+
+	// Client B's connection should still be alive.
+	select {
+	case <-connB.Done():
+		t.Error("client B connection closed unexpectedly after A disconnected")
+	default:
+	}
+}

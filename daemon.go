@@ -151,6 +151,12 @@ func serveOne(ctx context.Context, c net.Conn, shared *DaemonShared, connID uint
 
 	conn := rpc.New(c, rpc.Options{})
 
+	// Register liveness probe before Serve starts so autostart can
+	// verify the daemon is responsive before handshake completes.
+	conn.Handle(rpc.MethodPing, func(ctx context.Context, _ []byte) ([]byte, error) {
+		return wire.Encode(rpc.PingResult{Ok: true})
+	})
+
 	handshakeCh := make(chan rpc.SetContextParams, 1)
 	handshakeRespCh := make(chan error, 1)
 	conn.Handle(rpc.MethodSetContext, func(_ context.Context, params []byte) ([]byte, error) {

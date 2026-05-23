@@ -86,7 +86,7 @@ func isSocketAbsent(err error) bool {
 }
 
 // daemonProbeTimeout bounds the liveness probe against a daemon we
-// dialed successfully. CourtEdictKey is pure — no LLM, DB, or I/O — so a
+// dialed successfully. Ping is pure — no LLM, DB, or I/O — so a
 // healthy daemon answers well within this; exceeding it means the daemon
 // is frozen or wedged.
 const daemonProbeTimeout = 2 * time.Second
@@ -96,7 +96,7 @@ const daemonProbeTimeout = 2 * time.Second
 func daemonResponds(ctx context.Context, conn *rpc.Conn) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, daemonProbeTimeout)
 	defer cancel()
-	_, err := conn.Call(probeCtx, rpc.MethodCourtEdictKey, nil)
+	_, err := conn.Call(probeCtx, rpc.MethodPing, nil)
 	return err == nil
 }
 

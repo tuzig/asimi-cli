@@ -113,10 +113,21 @@ func (e SandboxMissingError) Error() string {
 	return "Sandbox container image is missing. Did you run `:init` ?"
 }
 
-func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
-	var runner Runner
-	runner = NewHostRunner(0)
+// SandboxFallbackError is returned when a command fell back to the
+// host because the sandbox was unavailable. The caller receives the
+// host output but must know the sandbox was bypassed.
+type SandboxFallbackError struct {
+	Err         error // original sandbox error
+	FallbackErr error // error from the host fallback (may be nil)
+}
 
+func (e SandboxFallbackError) Error() string {
+	return fmt.Sprintf("sandbox unavailable, command ran on host: %v", e.Err)
+}
+
+func (e SandboxFallbackError) Unwrap() error { return e.Err }
+
+func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	// Resolve image name using same default as NewPodmanRunner
 	imageName := config.ImageName
 	if imageName == "" {
@@ -126,10 +137,20 @@ func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	// Auto-detect and assign shell runner
 	if IsPodmanAvailable(imageName) {
 		slog.Info("using podman shell runner", "image", imageName)
-		runner = NewPodmanRunner(config, repoInfo, uint64(os.Getpid()), runner)
-	} else {
-		slog.Info("using host shell runner (podman not available or image missing)", "image", imageName)
+		var fallback Runner
+		if config.AllowHostFallback {
+			fallback = NewHostRunner(uint64(os.Getpid()))
+		}
+		runner := NewPodmanRunner(config, repoInfo, uint64(os.Getpid()), fallback)
+		SetRunner(runner)
+		return runner
 	}
+
+	// Podman is not available or image is missing. Return a PodmanRunner
+	// with no fallback so that Run() returns SandboxMissingError rather
+	// than silently executing on the host.
+	slog.Warn("podman not available or image missing; commands will fail until sandbox is set up", "image", imageName)
+	runner := NewPodmanRunner(config, repoInfo, uint64(os.Getpid()), nil)
 	SetRunner(runner)
 	return runner
 }

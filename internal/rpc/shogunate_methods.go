@@ -4,6 +4,7 @@ package rpc
 // server (RegisterShogunateHandlers) and client (ShogunateClient) stay
 // in sync. Method names double as msgpack dispatch keys.
 const (
+	MethodPing                 = "Ping"
 	MethodHasMinister          = "HasMinister"
 	MethodResetMinisterSession = "ResetMinisterSession"
 	MethodEdictKey             = "EdictKey"

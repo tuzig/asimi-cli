@@ -74,6 +74,13 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		output.ExitCode = runnerOutput.ExitCode
 		runErr = err
 
+		// If we got a SandboxFallbackError, the command already ran
+		// on the host — don't retry, just propagate the error so the
+		// caller knows the sandbox was bypassed.
+		if _, isFallback := runErr.(runners.SandboxFallbackError); isFallback {
+			return "", runErr
+		}
+
 		// If we got a harness error, try to restart and retry once
 		if runErr != nil {
 			if restartErr := t.runner.Restart(ctx); restartErr != nil {

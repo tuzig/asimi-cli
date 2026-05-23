@@ -11,6 +11,10 @@ import (
 // maps 1:1 to a method, even when the method takes or returns a single
 // value — keeps the on-wire schema self-describing and easy to extend.
 
+type PingResult struct {
+	Ok bool `msgpack:"ok"`
+}
+
 type HasMinisterParams struct {
 	ID string `msgpack:"id"`
 }
