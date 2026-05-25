@@ -19,6 +19,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
+	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1219,4 +1220,35 @@ func TestRestoreMinisterSession_UnknownTabType(t *testing.T) {
 	err := shog.RestoreMinisterSession("not-a-minister", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "minister not found")
+}
+
+// TestRestoreSession_SetsPersister verifies that the exported
+// RestoreSession method wires the persister into the restored session.
+// This is the bug where RestoreSession (exported) originally missed
+// calling sess.SetPersister(m.persister), unlike the private
+// restoreSession which did it correctly.
+func TestRestoreSession_SetsPersister(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	shog := NewShogunate(db, cfg, nil, nil)
+	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+
+	// Wire a persister into the shogunate so all ministers get it.
+	rec := &recordingPersister{}
+	shog.SetSessionPersister(rec)
+
+	// Restore a session for the chancellor — this calls the exported
+	// RestoreSession path.
+	err := shog.RestoreMinisterSession("chancellor", []schemas.ChatMessage{
+		{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
+	})
+	require.NoError(t, err)
+
+	chancellor := shog.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+	sess := chancellor.GetSession()
+	require.NotNil(t, sess, "chancellor should have a restored session")
+
+	// The restored session must have the persister attached.
+	assert.NotNil(t, sess.persister, "restored session must have persister wired")
 }

@@ -370,17 +370,19 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 
 // DaemonShared holds shared resources for the daemon process.
 type DaemonShared struct {
-	DB     *gorm.DB
-	Config *Config
-	Logger *slog.Logger
+	DB      *gorm.DB
+	Storage *storage.DB
+	Config  *Config
+	Logger  *slog.Logger
 }
 
 // ProvideDaemonShared creates a DaemonShared with the given dependencies.
-func ProvideDaemonShared(db *gorm.DB, cfg *Config, logger *slog.Logger) *DaemonShared {
+func ProvideDaemonShared(db *gorm.DB, sdb *storage.DB, cfg *Config, logger *slog.Logger) *DaemonShared {
 	return &DaemonShared{
-		DB:     db,
-		Config: cfg,
-		Logger: logger,
+		DB:      db,
+		Storage: sdb,
+		Config:  cfg,
+		Logger:  logger,
 	}
 }
 

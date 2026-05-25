@@ -24,7 +24,7 @@ import (
 )
 
 // initTestDB creates a temporary SQLite database for daemon tests.
-func initTestDB(t *testing.T) (*gorm.DB, func()) {
+func initTestDB(t *testing.T) (*gorm.DB, *storage.DB, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
@@ -64,13 +64,13 @@ func initTestDB(t *testing.T) (*gorm.DB, func()) {
 		t.Fatalf("AutoMigrate: %v", err)
 	}
 
-	return gdb, func() { sdb.Close() }
+	return gdb, sdb, func() { sdb.Close() }
 }
 
 // newTestShared builds a DaemonShared suitable for test.
 func newTestShared(t *testing.T) (*DaemonShared, func()) {
 	t.Helper()
-	gdb, cleanup := initTestDB(t)
+	gdb, sdb, cleanup := initTestDB(t)
 	cfg := &Config{
 		Shogunate: config.ShogunateConfig{
 			Username: "test-user",
@@ -78,9 +78,10 @@ func newTestShared(t *testing.T) (*DaemonShared, func()) {
 		},
 	}
 	return &DaemonShared{
-		DB:     gdb,
-		Config: cfg,
-		Logger: slog.Default(),
+		DB:      gdb,
+		Storage: sdb,
+		Config:  cfg,
+		Logger:  slog.Default(),
 	}, cleanup
 }
 

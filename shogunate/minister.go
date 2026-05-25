@@ -589,6 +589,7 @@ func (m *MinisterBase) RestoreSession(minister Minister, msgs []schemas.ChatMess
 	}
 	sess.SetMessages(msgs)
 	sess.TabType = m.ministerID
+	sess.SetPersister(m.persister)
 	m.SetSession(sess)
 	return nil
 }

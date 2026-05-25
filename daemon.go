@@ -237,6 +237,26 @@ func serveOne(ctx context.Context, c net.Conn, shared *DaemonShared, connID uint
 	}
 
 	shog := shogunate.NewShogunate(shared.DB, cfg, runner, shared.Logger)
+
+	// Wire session persister so daemon sessions are persisted to DB,
+	// same as the TUI path does via ProvideShogunate.
+	if shared.Storage != nil && shared.Config.Session.Enabled {
+		maxSessions := 50
+		maxAgeDays := 30
+		if shared.Config.Session.MaxSessions > 0 {
+			maxSessions = shared.Config.Session.MaxSessions
+		}
+		if shared.Config.Session.MaxAgeDays > 0 {
+			maxAgeDays = shared.Config.Session.MaxAgeDays
+		}
+		sessionStore, err := NewSessionStore(shared.Storage, repoInfo, maxSessions, maxAgeDays)
+		if err != nil {
+			shared.Logger.Warn("daemon: failed to create session store", "conn_id", connID, "err", err)
+		} else {
+			shog.SetSessionPersister(sessionStore)
+		}
+	}
+
 	if err := shog.Start(ctx); err != nil {
 		shared.Logger.Error("daemon: shogunate start failed", "conn_id", connID, "err", err)
 		handshakeRespCh <- wire.NewError(0, "shogunate start failed")
