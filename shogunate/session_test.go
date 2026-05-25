@@ -1410,3 +1410,235 @@ func TestSession_SetMessages_DoesNotPersist(t *testing.T) {
 
 	assert.Equal(t, 0, rec.calls, "restore (SetMessages) must not write back to storage")
 }
+
+// --- SanitizeMessages tests ---
+
+func TestSanitizeMessages_RemovesTrailingAssistantWithToolCalls(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	// Simulate: system, user, assistant with tool calls (no tool response yet)
+	sess.messages = append(sess.messages,
+		schemas.ChatMessage{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
+		schemas.ChatMessage{
+			Role:    schemas.ChatMessageRoleAssistant,
+			Content: textContent(""),
+			ChatAssistantMessage: &schemas.ChatAssistantMessage{
+				ToolCalls: []schemas.ChatAssistantMessageToolCall{
+					{ID: strPtr("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("read_file")}},
+				},
+			},
+		},
+	)
+
+	before := len(sess.messages)
+	sess.sanitizeMessages()
+
+	assert.Less(t, len(sess.messages), before, "should remove trailing assistant with tool calls")
+	assert.Equal(t, schemas.ChatMessageRoleUser, sess.messages[len(sess.messages)-1].Role)
+}
+
+func TestSanitizeMessages_KeepsAssistantWithoutToolCalls(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	sess.messages = append(sess.messages,
+		schemas.ChatMessage{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
+		schemas.ChatMessage{Role: schemas.ChatMessageRoleAssistant, Content: textContent("I can help with that.")},
+	)
+
+	before := len(sess.messages)
+	sess.sanitizeMessages()
+
+	assert.Equal(t, before, len(sess.messages), "should keep assistant message without tool calls")
+}
+
+func TestSanitizeMessages_RemovesTrailingToolResponseWithoutAICaller(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	// Tool response with no preceding AI tool-call message
+	sess.messages = append(sess.messages,
+		schemas.ChatMessage{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
+		schemas.ChatMessage{
+			Role:            schemas.ChatMessageRoleTool,
+			Content:         textContent("file content"),
+			ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("tc1")},
+		},
+	)
+
+	before := len(sess.messages)
+	sess.sanitizeMessages()
+
+	assert.Less(t, len(sess.messages), before, "should remove orphaned tool response")
+	assert.Equal(t, schemas.ChatMessageRoleUser, sess.messages[len(sess.messages)-1].Role)
+}
+
+func TestSanitizeMessages_KeepsToolResponseWithMatchingAICaller(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	sess.messages = append(sess.messages,
+		schemas.ChatMessage{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
+		schemas.ChatMessage{
+			Role:    schemas.ChatMessageRoleAssistant,
+			Content: textContent(""),
+			ChatAssistantMessage: &schemas.ChatAssistantMessage{
+				ToolCalls: []schemas.ChatAssistantMessageToolCall{
+					{ID: strPtr("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("read_file")}},
+				},
+			},
+		},
+		schemas.ChatMessage{
+			Role:            schemas.ChatMessageRoleTool,
+			Content:         textContent("file content"),
+			ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("tc1")},
+		},
+	)
+
+	before := len(sess.messages)
+	sess.sanitizeMessages()
+
+	assert.Equal(t, before, len(sess.messages), "should keep tool response with matching AI caller")
+}
+
+func TestSanitizeMessages_RemovesDanglingToolResponse(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	// Tool response whose ID doesn't match any AI tool call
+	sess.messages = append(sess.messages,
+		schemas.ChatMessage{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
+		schemas.ChatMessage{
+			Role:    schemas.ChatMessageRoleAssistant,
+			Content: textContent(""),
+			ChatAssistantMessage: &schemas.ChatAssistantMessage{
+				ToolCalls: []schemas.ChatAssistantMessageToolCall{
+					{ID: strPtr("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("read_file")}},
+				},
+			},
+		},
+		schemas.ChatMessage{
+			Role:            schemas.ChatMessageRoleTool,
+			Content:         textContent("orphan result"),
+			ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("tc999")},
+		},
+	)
+
+	before := len(sess.messages)
+	sess.sanitizeMessages()
+
+	assert.Less(t, len(sess.messages), before, "should remove tool response with mismatched ID")
+}
+
+func TestSanitizeMessages_RemovesMultipleTrailingToolCalls(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	// Two orphaned tool responses followed by an assistant with tool calls
+	sess.messages = append(sess.messages,
+		schemas.ChatMessage{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
+		schemas.ChatMessage{
+			Role:            schemas.ChatMessageRoleTool,
+			Content:         textContent("orphan1"),
+			ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("tc_orphan1")},
+		},
+		schemas.ChatMessage{
+			Role:            schemas.ChatMessageRoleTool,
+			Content:         textContent("orphan2"),
+			ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("tc_orphan2")},
+		},
+		schemas.ChatMessage{
+			Role:    schemas.ChatMessageRoleAssistant,
+			Content: textContent(""),
+			ChatAssistantMessage: &schemas.ChatAssistantMessage{
+				ToolCalls: []schemas.ChatAssistantMessageToolCall{
+					{ID: strPtr("tc2"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("write_file")}},
+				},
+			},
+		},
+	)
+
+	sess.sanitizeMessages()
+
+	// Should end with user message: orphaned tools removed, then trailing AI with tool calls removed
+	lastMsg := sess.messages[len(sess.messages)-1]
+	assert.Equal(t, schemas.ChatMessageRoleUser, lastMsg.Role, "should remove all trailing orphaned/or unmatched messages")
+}
+
+func TestSanitizeMessages_SkipsWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	cfg := &SessionConfig{
+		LLM: internalconfig.LLMConfig{
+			DisableContextSanitization: true,
+		},
+	}
+
+	sess, err := NewSession(nil, cfg, nil, nil, func(any) {}, "system", "")
+	require.NoError(t, err)
+
+	// Add trailing assistant with tool calls
+	sess.messages = append(sess.messages,
+		schemas.ChatMessage{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
+		schemas.ChatMessage{
+			Role:    schemas.ChatMessageRoleAssistant,
+			Content: textContent(""),
+			ChatAssistantMessage: &schemas.ChatAssistantMessage{
+				ToolCalls: []schemas.ChatAssistantMessageToolCall{
+					{ID: strPtr("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("read_file")}},
+				},
+			},
+		},
+	)
+
+	before := len(sess.messages)
+	sess.sanitizeMessages()
+
+	assert.Equal(t, before, len(sess.messages), "should not sanitize when disabled")
+}
+
+func TestSanitizeMessages_EmptyMessages(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	// No messages at all
+	sess.messages = []schemas.ChatMessage{}
+
+	sess.sanitizeMessages() // should not panic
+	assert.Empty(t, sess.messages)
+}
+
+func TestSanitizeMessages_RemovesToolResponseAtStart(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	// A tool response as the very first message (edge case)
+	sess.messages = []schemas.ChatMessage{
+		{
+			Role:            schemas.ChatMessageRoleTool,
+			Content:         textContent("orphan"),
+			ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr("tc1")},
+		},
+	}
+
+	sess.sanitizeMessages()
+
+	assert.Empty(t, sess.messages, "should remove tool response when it's the only message")
+}

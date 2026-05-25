@@ -16,10 +16,10 @@ Think of the Shogunate as mediating between three realms:
 Ren (人) — Your Will
   │
   ▼
-Heaven (天) — Truth - logs & test runs
+Earth (地) — Code
   │
   ▼
-Earth (地) — Code
+Heaven (天) — Truth - logs & test runs
 ```
 
 | Realm | What It Is | Unix Equivalent |

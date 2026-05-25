@@ -935,8 +935,84 @@ func (s *Session) getStreamBuffer() string {
 
 // --- Message Preparation ---
 
+// sanitizeMessages removes any trailing assistant messages with tool calls
+// that don't have corresponding tool responses, and any trailing tool
+// responses without a preceding assistant tool-call message. This prevents
+// API errors when the agent is interrupted mid-execution.
+func (s *Session) sanitizeMessages() {
+	if s.config != nil && s.config.DisableContextSanitization {
+		return
+	}
+
+	for len(s.messages) > 0 {
+		lastIdx := len(s.messages) - 1
+		lastMsg := s.messages[lastIdx]
+
+		// Remove trailing assistant messages that carry tool calls
+		if lastMsg.Role == schemas.ChatMessageRoleAssistant && lastMsg.ChatAssistantMessage != nil && len(lastMsg.ChatAssistantMessage.ToolCalls) > 0 {
+			slog.Debug("removing unmatched tool call from context")
+			s.messages = s.messages[:lastIdx]
+			continue
+		}
+
+		// Remove trailing tool responses that are orphaned
+		if lastMsg.Role == schemas.ChatMessageRoleTool {
+			if lastIdx == 0 {
+				slog.Debug("removing tool result without prior messages")
+				s.messages = s.messages[:lastIdx]
+				continue
+			}
+
+			// Look backwards past other tool messages to find the AI message with tool calls
+			var aiMsg *schemas.ChatMessage
+			for i := lastIdx - 1; i >= 0; i-- {
+				if s.messages[i].Role == schemas.ChatMessageRoleAssistant {
+					aiMsg = &s.messages[i]
+					break
+				}
+				if s.messages[i].Role != schemas.ChatMessageRoleTool {
+					break
+				}
+			}
+
+			if aiMsg == nil || aiMsg.ChatAssistantMessage == nil || len(aiMsg.ChatAssistantMessage.ToolCalls) == 0 {
+				slog.Debug("removing tool result without prior AI tool call")
+				s.messages = s.messages[:lastIdx]
+				continue
+			}
+
+			// Build set of tool call IDs from the AI message
+			toolCallIDs := make(map[string]struct{})
+			for _, tc := range aiMsg.ChatAssistantMessage.ToolCalls {
+				if tc.ID != nil && *tc.ID != "" {
+					toolCallIDs[*tc.ID] = struct{}{}
+				}
+			}
+
+			// Check that the tool response references one of those IDs
+			valid := len(toolCallIDs) > 0
+			if lastMsg.ChatToolMessage != nil && lastMsg.ChatToolMessage.ToolCallID != nil {
+				if _, exists := toolCallIDs[*lastMsg.ChatToolMessage.ToolCallID]; !exists || *lastMsg.ChatToolMessage.ToolCallID == "" {
+					valid = false
+				}
+			}
+
+			if !valid {
+				slog.Debug("removing dangling tool result from context")
+				s.messages = s.messages[:lastIdx]
+				continue
+			}
+		}
+
+		return
+	}
+}
+
 // prepareUserMessage builds the prompt with context and adds it to the message history
 func (s *Session) prepareUserMessage(prompt string, contextFiles map[string]string) {
+	// Before adding a new user message, remove any unmatched tool calls
+	s.sanitizeMessages()
+
 	fullPrompt := buildPromptWithContext(prompt, contextFiles)
 	s.messages = append(s.messages, schemas.ChatMessage{
 		Role:    schemas.ChatMessageRoleUser,
@@ -965,6 +1041,9 @@ func buildPromptWithContext(userPrompt string, contextFiles map[string]string) s
 // true it takes the streaming path, emitting content and reasoning chunks via
 // s.notify as deltas arrive.
 func (s *Session) generateLLMResponse(ctx context.Context, stream bool) (*responseChoice, error) {
+	// Remove any unmatched tool calls from context before sending to API
+	s.sanitizeMessages()
+
 	if s.model == nil {
 		return nil, fmt.Errorf("LLM model not configured")
 	}
