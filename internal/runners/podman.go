@@ -127,6 +127,10 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 	r.mu.Unlock()
 
 	if !hasConnection {
+		if err := r.preflightSandbox(ctx); err != nil {
+			return err
+		}
+
 		slog.Debug("establishing podman connection")
 		conn, err := r.establishConn(context.Background())
 		if err != nil {
@@ -355,14 +359,52 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 	return nil
 }
 
+func (r *PodmanRunner) preflightSandbox(ctx context.Context) error {
+	if err := r.checkSandboxFiles(); err != nil {
+		return err
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return CheckSandboxImageAvailable(probeCtx, r.imageName)
+}
+
+func (r *PodmanRunner) checkSandboxFiles() error {
+	root := r.projectWorkingRoot()
+	if root == "" {
+		return nil
+	}
+
+	required := []string{
+		".agents/sandbox",
+		".agents/sandbox/Dockerfile",
+		".agents/sandbox/bashrc",
+	}
+	for _, rel := range required {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			return SandboxSetupMissingError{}
+		}
+	}
+
+	return nil
+}
+
+func (r *PodmanRunner) projectWorkingRoot() string {
+	if r.repoInfo.ProjectRoot == "" {
+		return ""
+	}
+	if r.repoInfo.WorktreePath != "" {
+		return filepath.Join(r.repoInfo.ProjectRoot, r.repoInfo.WorktreePath)
+	}
+	return r.repoInfo.ProjectRoot
+}
+
 func (r *PodmanRunner) healthcheck(ctx context.Context) error {
-	// Allocate a command ID
 	r.outputsMu.Lock()
 	id := r.nextCommandID
 	r.nextCommandID++
 	r.outputsMu.Unlock()
 
-	// Register the output entry
 	cmd := &commandOutput{
 		ready: make(chan struct{}),
 	}
@@ -370,10 +412,8 @@ func (r *PodmanRunner) healthcheck(ctx context.Context) error {
 	r.outputs[id] = cmd
 	r.outputsMu.Unlock()
 
-	// Send the probe command through the full pipe, but protect the write with context
 	command := fmt.Sprintf("__asimi_run %d 'echo __ASIMI_HEALTHY'\n", id)
 
-	// Capture stdinPipe under lock so the write goroutine uses a stable reference
 	r.mu.Lock()
 	stdinPipe := r.stdinPipe
 	r.mu.Unlock()
@@ -411,7 +451,6 @@ func (r *PodmanRunner) healthcheck(ctx context.Context) error {
 		return fmt.Errorf("healthcheck: write timeout after %v", healthcheckTimeout)
 	}
 
-	// Wait for response or timeout
 	select {
 	case <-cmd.ready:
 		r.outputsMu.Lock()

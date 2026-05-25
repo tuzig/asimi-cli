@@ -473,7 +473,6 @@ func TestShellCommandFallbackWithoutSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected successful fallback to host, got error: %v", err)
 	}
-
 	var output runners.Output
 	if err := json.Unmarshal([]byte(result), &output); err != nil {
 		t.Fatalf("failed to parse output: %v", err)

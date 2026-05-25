@@ -128,6 +128,13 @@ func (e SandboxMissingError) Error() string {
 	return "Sandbox container image is missing.\nDid you run `:init` ?"
 }
 
+// SandboxSetupMissingError is returned when project sandbox files are missing.
+type SandboxSetupMissingError struct{}
+
+func (e SandboxSetupMissingError) Error() string {
+	return "Sandbox files are missing. Did you run `:init`?"
+}
+
 // SandboxFallbackError is returned when a command fell back to the
 // host because the sandbox was unavailable. The caller receives the
 // host output but must know the sandbox was bypassed.

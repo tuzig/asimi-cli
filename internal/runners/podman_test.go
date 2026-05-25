@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1107,6 +1108,18 @@ func makeConnCtx(t *testing.T, host string) context.Context {
 	return connCtx
 }
 
+// scaffoldSandboxFiles creates a temp dir with .agents/sandbox/{Dockerfile,bashrc}
+// so that preflightSandbox's checkSandboxFiles passes during tests.
+func scaffoldSandboxFiles(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, rel := range []string{".agents/sandbox/Dockerfile", ".agents/sandbox/bashrc"} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte("FROM scratch"), 0o644))
+	}
+	return dir
+}
+
 // TestFastPathDetectsStoppedContainer verifies Edict 589: when containerStarted==true
 // and stdinPipe!=nil, initialize() inspects the container. If it's stopped,
 // containerStarted is reset, stale pipes are closed/nil'd, and initialize()
@@ -1119,7 +1132,8 @@ func TestFastPathDetectsStoppedContainer(t *testing.T) {
 	host := mock.start(t)
 	connCtx := makeConnCtx(t, host)
 
-	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/fastpath-stopped"}, 0, nil)
+	projectRoot := scaffoldSandboxFiles(t)
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/fastpath-stopped"}, 0, nil)
 	runner.conn = connCtx
 	runner.containerStarted = true
 	stalePipe := &nopWriteCloser{}
@@ -1153,7 +1167,8 @@ func TestFastPathInspectFailureTriggersRecreation(t *testing.T) {
 	host := mock.start(t)
 	connCtx := makeConnCtx(t, host)
 
-	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/fastpath-removed"}, 0, nil)
+	projectRoot := scaffoldSandboxFiles(t)
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/fastpath-removed"}, 0, nil)
 	runner.conn = connCtx
 	runner.containerStarted = true
 	stalePipe := &nopWriteCloser{}
@@ -1187,7 +1202,8 @@ func TestFastPathRunningContainerNoRecreation(t *testing.T) {
 	host := mock.start(t)
 	connCtx := makeConnCtx(t, host)
 
-	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/fastpath-running"}, 0, nil)
+	projectRoot := scaffoldSandboxFiles(t)
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/fastpath-running"}, 0, nil)
 	runner.conn = connCtx
 	runner.containerStarted = true
 	runner.stdinPipe = &nopWriteCloser{} // non-nil: fast path condition

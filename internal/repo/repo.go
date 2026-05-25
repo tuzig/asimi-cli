@@ -78,7 +78,12 @@ func GetRepoInfo() RepoInfo {
 			if ref.Name().IsBranch() {
 				branch = ref.Name().Short()
 			} else {
-				branch = ref.Hash().String()[:7]
+				// Detached HEAD — check if we're in a rebase, which preserves
+				// the original branch name in .git/rebase-merge/head-name.
+				branch = branchFromRebase(projectRoot)
+				if branch == "" {
+					branch = ref.Hash().String()[:7]
+				}
 			}
 		} else if isWorktree {
 			// go-git doesn't fully support worktrees, try reading HEAD directly
@@ -160,7 +165,12 @@ func GetRepoInfoForRoot(root string) RepoInfo {
 			if ref.Name().IsBranch() {
 				branch = ref.Name().Short()
 			} else {
-				branch = ref.Hash().String()[:7]
+				// Detached HEAD — check if we're in a rebase, which preserves
+				// the original branch name in .git/rebase-merge/head-name.
+				branch = branchFromRebase(projectRoot)
+				if branch == "" {
+					branch = ref.Hash().String()[:7]
+				}
 			}
 		} else if isWorktree {
 			// go-git doesn't fully support worktrees, try reading HEAD directly
@@ -381,6 +391,21 @@ func readBranchFromWorktreeAt(dir string) string {
 		return headLine[:7]
 	}
 
+	return ""
+}
+
+// branchFromRebase reads the original branch name from .git/rebase-merge/head-name
+// during an interactive rebase, when HEAD is detached. Returns "" if not in a rebase.
+func branchFromRebase(projectRoot string) string {
+	headNamePath := filepath.Join(projectRoot, ".git", "rebase-merge", "head-name")
+	content, err := os.ReadFile(headNamePath)
+	if err != nil {
+		return ""
+	}
+	ref := strings.TrimSpace(string(content))
+	if strings.HasPrefix(ref, "refs/heads/") {
+		return strings.TrimPrefix(ref, "refs/heads/")
+	}
 	return ""
 }
 

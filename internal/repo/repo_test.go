@@ -2,6 +2,7 @@ package repo
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -205,6 +206,20 @@ func TestGetRepoInfoForRoot_NonExistentDir(t *testing.T) {
 	require.Empty(t, info.Branch, "Branch should be empty for nonexistent dir")
 	require.False(t, info.IsWorktree)
 	require.Empty(t, info.Slug, "Slug should be empty when no git remote")
+}
+
+func TestBranchFromRebase(t *testing.T) {
+	tmp := t.TempDir()
+
+	// No rebase dir — returns ""
+	require.Equal(t, "", branchFromRebase(tmp))
+
+	// Create rebase-merge/head-name
+	rebaseDir := filepath.Join(tmp, ".git", "rebase-merge")
+	require.NoError(t, os.MkdirAll(rebaseDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(rebaseDir, "head-name"), []byte("refs/heads/main"), 0o644))
+
+	require.Equal(t, "main", branchFromRebase(tmp))
 }
 
 func TestSanitizeSegment(t *testing.T) {
