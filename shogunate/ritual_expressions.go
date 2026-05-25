@@ -1015,6 +1015,9 @@ func (r *RitualRunner) runGivenStep(ctx context.Context, exec *RitualExecution, 
 		if err != nil {
 			return nil, err
 		}
+		if output.ExitCode != "0" {
+			return nil, fmt.Errorf("given failed (exit %s): %s", output.ExitCode, output.Output)
+		}
 		return output.Output, nil
 	case StepDefBuiltin:
 		return r.runGiven(ctx, exec, entry.Command)

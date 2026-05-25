@@ -112,6 +112,36 @@ func TestRunGivenStep_Bash(t *testing.T) {
 	}
 }
 
+func TestRunGivenStep_BashFailure(t *testing.T) {
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+	failRunner := &mockCmdRunner{output: "FAIL\n", exitCode: "1"}
+	runner := NewRitualRunner(registry, nil, nil, db, failRunner, nil)
+
+	exec := &RitualExecution{
+		ID:         "test-exec",
+		RitualName: "test",
+		EdictID:    100,
+	}
+
+	entry := StepDefEntry{
+		Kind:    StepDefBash,
+		Key:     "test",
+		Command: "exit 1",
+	}
+
+	_, err := runner.runGivenStep(context.Background(), exec, entry)
+	if err == nil {
+		t.Fatal("expected error for failing bash given step")
+	}
+	if !strings.Contains(err.Error(), "exit 1") {
+		t.Errorf("expected exit code in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "FAIL") {
+		t.Errorf("expected output in error, got: %v", err)
+	}
+}
+
 func TestRunThenStep_Bash(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()

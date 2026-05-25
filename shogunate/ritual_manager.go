@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +53,10 @@ type RitualGuard struct {
 	getMinister  func(id string) Minister
 	streamingCtx func() context.Context
 	version      string // Application version for health checks
+
+	// recoveryMu blocks event-driven rituals during recovery prompts
+	recoveryMu       sync.RWMutex
+	recoveryComplete bool
 }
 
 // RitualGuardOpts configures a new RitualGuard.
@@ -152,7 +157,11 @@ func (rg *RitualGuard) PublishEvent(key storage.EdictKey, eventType storage.Shog
 // serialized via ritualMu so only one runs at a time.
 func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inputs map[string]string) {
 	go func() {
-		rg.ritualMu.Lock()
+		// Try to acquire lock; if held, check for stale rituals and abort them
+		if !rg.ritualMu.TryLock() {
+			rg.abortStaleRitualsIfLocked()
+			rg.ritualMu.Lock()
+		}
 		defer rg.ritualMu.Unlock()
 		ctx := rg.streamingCtx()
 		exec, err := rg.ritualRunner.Start(ctx, ritualName, key, inputs, rg.notify)
@@ -164,6 +173,36 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 			rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
 		}
 	}()
+}
+
+// abortStaleRitualsIfLocked checks for running rituals older than flatlineAge
+// and aborts them directly in the database. This handles the case where a
+// previous ritual goroutine died while holding the lock.
+func (rg *RitualGuard) abortStaleRitualsIfLocked() {
+	if rg.db == nil {
+		return
+	}
+
+	cutoff := time.Now().Add(-rg.flatlineAge)
+	var staleRituals []RitualExecution
+	if err := rg.db.Where("state = ? AND updated_at < ?", RitualStateRunning, cutoff).
+		Find(&staleRituals).Error; err != nil {
+		rg.logger.Warn("failed to query stale rituals", "error", err)
+		return
+	}
+
+	for _, ritual := range staleRituals {
+		rg.logger.Info("aborting stale ritual",
+			"execution_id", ritual.ID,
+			"ritual", ritual.RitualName,
+			"edict_id", ritual.EdictID,
+			"updated_at", ritual.UpdatedAt)
+		if err := rg.abortRitual(context.Background(), &ritual, "ritual exceeded flatline age"); err != nil {
+			rg.logger.Warn("failed to abort stale ritual",
+				"execution_id", ritual.ID,
+				"error", err)
+		}
+	}
 }
 
 // DispatchEvent dispatches an event to all subscribers and triggers event-driven rituals.
@@ -189,7 +228,17 @@ func (rg *RitualGuard) DispatchEvent(event Event) {
 		rg.startRitual(ritualName, event.EdictKey, inputs)
 		return
 	}
-	// Trigger event-driven rituals
+	// Trigger event-driven rituals (skip if recovery prompts are in progress)
+	rg.recoveryMu.RLock()
+	recoveryComplete := rg.recoveryComplete
+	rg.recoveryMu.RUnlock()
+	if !recoveryComplete {
+		rituals := rg.ritualRegistry.GetByEvent(string(event.Type))
+		if len(rituals) > 0 {
+			rg.logger.Debug("skipping event-driven rituals during recovery prompts", "event", event.Type)
+		}
+		return
+	}
 	if rg.ritualRegistry != nil && rg.ritualRunner != nil {
 		rituals := rg.ritualRegistry.GetByEvent(string(event.Type))
 		sourceRitual, _ := event.Payload["ritual"].(string)
@@ -686,6 +735,9 @@ func (rg *RitualGuard) abortRitual(ctx context.Context, exec *RitualExecution, r
 func (rg *RitualGuard) Run(ctx context.Context) {
 	rg.logger.Info("ritual guard started (channel mode)")
 
+	// Start aborted ritual recovery in background so event loop can process zhengming answers
+	go rg.promptForAbortedRituals(ctx)
+
 	// Create ticker for stale ritual scan every 2 minutes
 	staleScanTicker := time.NewTicker(2 * time.Minute)
 	defer staleScanTicker.Stop()
@@ -699,6 +751,172 @@ func (rg *RitualGuard) Run(ctx context.Context) {
 			rg.DispatchEvent(event)
 		case <-staleScanTicker.C:
 			rg.scanForStaleRituals(ctx)
+		}
+	}
+}
+
+// promptForAbortedRituals scans for all aborted/failed rituals and prompts
+// the user for recovery decisions, one by one.
+func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
+	// Always mark recovery complete when done, so event-driven rituals can proceed
+	defer func() {
+		rg.recoveryMu.Lock()
+		rg.recoveryComplete = true
+		rg.recoveryMu.Unlock()
+	}()
+
+	if rg.db == nil || rg.getMinister == nil {
+		return
+	}
+
+	// Find aborted rituals for current user/project that have existing edicts (edict_id > 0)
+	// Limit to 5 at a time to avoid overwhelming the user
+	var abortedRituals []RitualExecution
+	if err := rg.db.Where("state IN ? AND edict_id > 0 AND username = ? AND project = ?",
+		[]RitualState{RitualStateAborted, RitualStateFailed, RitualStateStopped},
+		rg.username, rg.project).
+		Order("updated_at DESC").
+		Limit(5).
+		Find(&abortedRituals).Error; err != nil {
+		rg.logger.Warn("failed to query aborted rituals", "error", err)
+		return
+	}
+
+	if len(abortedRituals) == 0 {
+		return
+	}
+
+	rg.logger.Info("found aborted rituals for recovery", "count", len(abortedRituals))
+
+	// Check which edicts are sealed/cancelled - those rituals should be auto-completed
+	sealService := storage.NewSealService(rg.db)
+	var activeRituals []RitualExecution
+	for _, exec := range abortedRituals {
+		key := exec.EdictKey()
+		status, err := sealService.GetEdictStatus(key)
+		if err != nil {
+			rg.logger.Warn("failed to check edict status", "edict_id", exec.EdictID, "error", err)
+			continue
+		}
+		if status == storage.EdictSealed || status == storage.EdictCancelled {
+			// Auto-complete rituals for sealed/cancelled edicts
+			rg.logger.Info("auto-completing ritual for sealed/cancelled edict",
+				"ritual", exec.RitualName,
+				"edict_id", exec.EdictID,
+				"status", status)
+			exec.State = RitualStateCompleted
+			rg.db.Save(&exec)
+		} else {
+			activeRituals = append(activeRituals, exec)
+		}
+	}
+
+	if len(activeRituals) == 0 {
+		return
+	}
+
+	// Get chancellor for zhengming
+	chancellor := rg.getMinister("chancellor")
+	if chancellor == nil {
+		rg.logger.Warn("chancellor not available for recovery prompts")
+		return
+	}
+
+	type zhengmingGate interface {
+		RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+	}
+	gate, ok := chancellor.(zhengmingGate)
+	if !ok {
+		return
+	}
+
+	type zhengmingWaiter interface {
+		WaitForZhengming(context.Context, string) (string, error)
+	}
+	waiter, ok := chancellor.(zhengmingWaiter)
+	if !ok {
+		return
+	}
+
+	for _, exec := range activeRituals {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// Small delay to avoid database lock contention
+		time.Sleep(100 * time.Millisecond)
+
+		// Load step states to find incomplete step
+		var stepStates []RitualStepState
+		if err := rg.db.Where("execution_id = ?", exec.ID).Order("step_index").Find(&stepStates).Error; err != nil {
+			continue
+		}
+
+		incompleteStep := exec.CurrentStep
+		for i, ss := range stepStates {
+			if ss.Message == "" || ss.RetryCount > 0 ||
+				strings.Contains(ss.Message, "context canceled") ||
+				strings.Contains(ss.Message, "aborted") {
+				incompleteStep = i
+				break
+			}
+		}
+
+		// Load edict to get description
+		var edict storage.Edict
+		edictDesc := ""
+		if err := rg.db.Where("id = ?", exec.EdictID).First(&edict).Error; err == nil {
+			edictDesc = edict.Summary
+			if edictDesc == "" {
+				edictDesc = edict.Intent
+			}
+			if len(edictDesc) > 60 {
+				edictDesc = edictDesc[:57] + "..."
+			}
+		}
+
+		key := exec.EdictKey()
+		questionText := fmt.Sprintf("Ritual '%s' (e%d: %s) aborted at step %d. Recover?", exec.RitualName, exec.EdictID, edictDesc, incompleteStep)
+		questions := storage.ZhengmingQuestions{{
+			Text:    questionText,
+			Options: []string{fmt.Sprintf("Recover from step %d", incompleteStep), "Mark as completed", "Pass"},
+		}}
+
+		requestID, err := gate.RequestZhengming(key, questions, storage.PriorityUrgent)
+		if err != nil {
+			rg.logger.Warn("failed to request recovery zhengming", "error", err)
+			continue
+		}
+
+		answer, err := waiter.WaitForZhengming(ctx, requestID)
+		if err != nil {
+			rg.logger.Warn("recovery zhengming wait failed", "error", err)
+			continue
+		}
+
+		switch answer {
+		case "Mark as completed":
+			exec.State = RitualStateCompleted
+			rg.db.Save(&exec)
+			rg.logger.Info("marked aborted ritual as completed",
+				"ritual", exec.RitualName,
+				"edict_id", exec.EdictID)
+		case fmt.Sprintf("Recover from step %d", incompleteStep):
+			// Mark as "recovering" so ritualRunner.Start() knows to resume without prompting
+			exec.State = RitualStateRecovering
+			exec.CurrentStep = incompleteStep
+			rg.db.Save(&exec)
+			rg.logger.Info("starting ritual recovery",
+				"ritual", exec.RitualName,
+				"edict_id", exec.EdictID,
+				"from_step", incompleteStep)
+			rg.startRitual(exec.RitualName, key, map[string]string{"edict_id": fmt.Sprint(exec.EdictID)})
+		default:
+			rg.logger.Info("user passed on aborted ritual",
+				"ritual", exec.RitualName,
+				"edict_id", exec.EdictID)
 		}
 	}
 }

@@ -15,7 +15,7 @@ build:
 
 # Run with debug logging
 run:
-    pkill -x asimi || true
+    pkill -9 asimi || true
     rm -f asimi.log asimi-daemon.log
     go build .
     ASIMI_DAEMON=1 ./asimi --debug

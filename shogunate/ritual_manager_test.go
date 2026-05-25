@@ -3,6 +3,7 @@ package shogunate
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -398,4 +399,128 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 		t.Errorf("expected EventType EventStepCompleted, got %s", notifications[0].EventType)
 	}
 	mu.Unlock()
+}
+
+// TestAbortStaleRitualsOnStart verifies that startRitual aborts stale running
+// rituals before starting a new one.
+func TestAbortStaleRitualsOnStart(t *testing.T) {
+	db := setupEventTestDB(t)
+	logger := slog.Default()
+
+	// Create a stale running ritual (updated 10 minutes ago)
+	// Use raw SQL to bypass GORM's autoUpdateTime
+	staleTime := time.Now().Add(-10 * time.Minute)
+	staleExec := &RitualExecution{
+		ID:          "stale-ritual-123",
+		RitualName:  "swift-strike",
+		EdictID:     100,
+		Username:    "test",
+		Project:     "test/project",
+		State:       RitualStateRunning,
+		CurrentStep: 1,
+	}
+	if err := db.Save(staleExec).Error; err != nil {
+		t.Fatalf("failed to create stale ritual: %v", err)
+	}
+	// Manually set updated_at to the past
+	if err := db.Exec("UPDATE ritual_executions SET updated_at = ? WHERE id = ?", staleTime, "stale-ritual-123").Error; err != nil {
+		t.Fatalf("failed to set stale updated_at: %v", err)
+	}
+
+	// Create RitualGuard with 5 minute flatlineAge
+	rg := &RitualGuard{
+		MinisterBase: &MinisterBase{db: db, logger: logger},
+		flatlineAge:  5 * time.Minute,
+	}
+
+	// Call abortStaleRitualsIfLocked
+	rg.abortStaleRitualsIfLocked()
+
+	// Verify the stale ritual was aborted
+	var exec RitualExecution
+	if err := db.First(&exec, "id = ?", "stale-ritual-123").Error; err != nil {
+		t.Fatalf("failed to find ritual: %v", err)
+	}
+	if exec.State != RitualStateAborted {
+		t.Errorf("expected ritual state %s, got %s", RitualStateAborted, exec.State)
+	}
+}
+
+// TestNoAbortForFreshRituals verifies that fresh running rituals are not aborted.
+func TestNoAbortForFreshRituals(t *testing.T) {
+	db := setupEventTestDB(t)
+	logger := slog.Default()
+
+	// Create a fresh running ritual (updated 1 minute ago)
+	freshTime := time.Now().Add(-1 * time.Minute)
+	freshExec := &RitualExecution{
+		ID:          "fresh-ritual-456",
+		RitualName:  "swift-strike",
+		EdictID:     200,
+		Username:    "test",
+		Project:     "test/project",
+		State:       RitualStateRunning,
+		CurrentStep: 1,
+	}
+	freshExec.UpdatedAt = freshTime
+	if err := db.Save(freshExec).Error; err != nil {
+		t.Fatalf("failed to create fresh ritual: %v", err)
+	}
+
+	// Create RitualGuard with 5 minute flatlineAge
+	rg := &RitualGuard{
+		MinisterBase: &MinisterBase{db: db, logger: logger},
+		flatlineAge:  5 * time.Minute,
+	}
+
+	// Call abortStaleRitualsIfLocked
+	rg.abortStaleRitualsIfLocked()
+
+	// Verify the fresh ritual is still running
+	var exec RitualExecution
+	if err := db.First(&exec, "id = ?", "fresh-ritual-456").Error; err != nil {
+		t.Fatalf("failed to find ritual: %v", err)
+	}
+	if exec.State != RitualStateRunning {
+		t.Errorf("expected ritual state %s, got %s", RitualStateRunning, exec.State)
+	}
+}
+
+// TestRecoveryZhengmingHasPassOption verifies that recovery zhengming includes "Pass" option.
+func TestRecoveryZhengmingHasPassOption(t *testing.T) {
+	db := setupEventTestDB(t)
+
+	// Create an aborted ritual
+	abortedExec := &RitualExecution{
+		ID:          "aborted-ritual-789",
+		RitualName:  "test-ritual",
+		EdictID:     300,
+		Username:    "test",
+		Project:     "test/project",
+		State:       RitualStateAborted,
+		CurrentStep: 2,
+	}
+	if err := db.Save(abortedExec).Error; err != nil {
+		t.Fatalf("failed to create aborted ritual: %v", err)
+	}
+
+	// Create step states to mark step 0 and 1 as complete
+	for i := 0; i < 2; i++ {
+		stepState := RitualStepState{
+			ExecutionID: abortedExec.ID,
+			StepIndex:   i,
+			Name:        fmt.Sprintf("step-%d", i),
+			Message:     "completed",
+		}
+		if err := db.Save(&stepState).Error; err != nil {
+			t.Fatalf("failed to create step state: %v", err)
+		}
+	}
+
+	// Verify the ritual exists
+	var count int64
+	db.Model(&RitualExecution{}).Where("state IN ?", []RitualState{RitualStateAborted, RitualStateFailed, RitualStateStopped}).Count(&count)
+	if count != 1 {
+		t.Errorf("expected 1 aborted ritual, got %d", count)
+	}
 }

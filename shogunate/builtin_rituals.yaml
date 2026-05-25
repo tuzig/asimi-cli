@@ -205,7 +205,7 @@
         Call request_zhengming with question "What's our next step?" and
         a few clear options. e.g, "review borderlands"
         
-- name: review-borderland
+- name: review-borderlands
   description: |
     Code review - judge and sage review the borderlands before
     staging
