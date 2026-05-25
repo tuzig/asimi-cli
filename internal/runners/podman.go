@@ -81,7 +81,14 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 	r.mu.Lock()
 	hasConnection := r.conn != nil
+	containerStarted := r.containerStarted
 	r.mu.Unlock()
+
+	if !hasConnection || !containerStarted {
+		if err := r.preflightSandbox(ctx); err != nil {
+			return err
+		}
+	}
 
 	if !hasConnection {
 		slog.Debug("establishing podman connection")
@@ -189,6 +196,46 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 	slog.Debug("initialization complete")
 	return nil
+}
+
+func (r *PodmanRunner) preflightSandbox(ctx context.Context) error {
+	if err := r.checkSandboxFiles(); err != nil {
+		return err
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return CheckSandboxImageAvailable(probeCtx, r.imageName)
+}
+
+func (r *PodmanRunner) checkSandboxFiles() error {
+	root := r.projectWorkingRoot()
+	if root == "" {
+		return nil
+	}
+
+	required := []string{
+		".agents/sandbox",
+		".agents/sandbox/Dockerfile",
+		".agents/sandbox/bashrc",
+	}
+	for _, rel := range required {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			return SandboxSetupMissingError{}
+		}
+	}
+
+	return nil
+}
+
+func (r *PodmanRunner) projectWorkingRoot() string {
+	if r.repoInfo.ProjectRoot == "" {
+		return ""
+	}
+	if r.repoInfo.WorktreePath != "" {
+		return filepath.Join(r.repoInfo.ProjectRoot, r.repoInfo.WorktreePath)
+	}
+	return r.repoInfo.ProjectRoot
 }
 
 func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context, error) {
@@ -393,7 +440,7 @@ func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
 			out, fallbackErr := r.fallback.Run(ctx, input)
 			return out, SandboxFallbackError{Err: err, FallbackErr: fallbackErr}
 		}
-		return Output{}, SandboxMissingError{}
+		return Output{}, err
 	}
 
 	r.outputsMu.Lock()

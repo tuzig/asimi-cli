@@ -106,11 +106,18 @@ func (e PodmanUnavailableError) Error() string {
 	return e.Reason
 }
 
-// SandboxMissingError is returned when the sandbox image is missing
+// SandboxSetupMissingError is returned when project sandbox files are missing.
+type SandboxSetupMissingError struct{}
+
+func (e SandboxSetupMissingError) Error() string {
+	return "Sandbox files are missing. Did you run `:init`?"
+}
+
+// SandboxMissingError is returned when the sandbox image is missing.
 type SandboxMissingError struct{}
 
 func (e SandboxMissingError) Error() string {
-	return "Sandbox container image is missing. Did you run `:init` ?"
+	return "Sandbox container image is missing. Please run `just build-sandbox`."
 }
 
 // SandboxFallbackError is returned when a command fell back to the

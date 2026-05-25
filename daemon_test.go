@@ -459,8 +459,8 @@ func TestPodmanRunnerHostFallbackMustNotLeak(t *testing.T) {
 
 // TestShellCommandMustFailWithoutSandbox verifies the full tool
 // stack: when the RunShellCommand tool has a PodmanRunner with no
-// sandbox, the tool retries once (restart + retry), then returns
-// SandboxMissingError with an actionable message.
+// sandbox files, the tool retries once (restart + retry), then returns
+// SandboxSetupMissingError with an actionable message.
 func TestShellCommandMustFailWithoutSandbox(t *testing.T) {
 	cfg := &config.SandboxConfig{}
 	repoInfo := repo.RepoInfo{
@@ -484,8 +484,8 @@ func TestShellCommandMustFailWithoutSandbox(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when running shell command without sandbox, got nil — command may have run on host")
 	}
-	if !strings.Contains(err.Error(), "Sandbox container image is missing") {
-		t.Errorf("error = %q, want mention of sandbox image missing", err.Error())
+	if !strings.Contains(err.Error(), "Did you run `:init`?") {
+		t.Errorf("error = %q, want mention of :init", err.Error())
 	}
 }
 
