@@ -335,7 +335,12 @@ func (m *TUIModel) SetSession(session *shogunate.Session) {
 					},
 				}
 				repoInfo := repo.RepoInfo{
-					ProjectRoot: m.config.Storage.DatabasePath,
+					ProjectRoot: func() string {
+						if m.repoInfo != nil {
+							return m.repoInfo.ProjectRoot
+						}
+						return ""
+					}(),
 				}
 				m.shogunate.ConfigureModel(model, cfg, repoInfo)
 			}
@@ -373,8 +378,13 @@ func (m *TUIModel) llmRequest() shogunate.ConfigureLLMRequest {
 		RequestTimeoutSeconds:    m.config.LLM.RequestTimeoutSeconds,
 		StreamIdleTimeoutSeconds: m.config.LLM.StreamIdleTimeoutSeconds,
 		MaxRetries:               m.config.LLM.MaxRetries,
-		ProjectRoot:              m.config.Storage.DatabasePath,
-		AgentsFile:               m.config.Session.AgentsFile,
+		ProjectRoot: func() string {
+			if m.repoInfo != nil {
+				return m.repoInfo.ProjectRoot
+			}
+			return ""
+		}(),
+		AgentsFile: m.config.Session.AgentsFile,
 	}
 }
 

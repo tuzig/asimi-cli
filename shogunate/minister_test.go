@@ -1179,6 +1179,36 @@ func TestRestoreMinisterSession_AllTabs(t *testing.T) {
 	}
 }
 
+func TestReadProjectContext_ExplicitProjectRoot(t *testing.T) {
+	dir := t.TempDir()
+	content := "# Project Guide\nUse Go 1.22+"
+	err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(content), 0644)
+	require.NoError(t, err)
+
+	got := readProjectContext("AGENTS.md", dir)
+	assert.Equal(t, content, got)
+}
+
+func TestReadProjectContext_FallbackToGetwd(t *testing.T) {
+	dir := t.TempDir()
+	content := "# Fallback Content\nHello from cwd"
+	err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(content), 0644)
+	require.NoError(t, err)
+
+	// Change working directory so os.Getwd() resolves to our temp dir.
+	t.Chdir(dir)
+
+	got := readProjectContext("AGENTS.md", "")
+	assert.Equal(t, content, got)
+}
+
+func TestReadProjectContext_FileNotFound(t *testing.T) {
+	dir := t.TempDir()
+
+	got := readProjectContext("AGENTS.md", dir)
+	assert.Equal(t, "", got, "should return empty string when file does not exist")
+}
+
 // TestRestoreMinisterSession_UnknownTabType verifies the dispatcher
 // surfaces a clear error instead of silently restoring the wrong tab.
 func TestRestoreMinisterSession_UnknownTabType(t *testing.T) {

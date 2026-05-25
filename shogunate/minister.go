@@ -446,7 +446,7 @@ func buildSystemPrompt(minister Minister, config *SessionConfig, key storage.Edi
 		"Role":           minister.SystemPrompt(),
 		"MinisterID":     minister.ID(),
 		"Scratchpad":     scratchpad,
-		"ProjectContext": readProjectContext(agentsFile),
+		"ProjectContext": readProjectContext(agentsFile, minister.RepoInfo().ProjectRoot),
 		"AgentsFile":     agentsFile,
 		"EnvBlock":       envBlock,
 	})
@@ -490,13 +490,17 @@ func formatScratchpad(ctx map[string]interface{}) string {
 	return buf.String()
 }
 
-// readProjectContext reads the project context file (AGENTS.md or CLAUDE.md) from the working directory.
-func readProjectContext(agentsFile string) string {
-	wd, err := os.Getwd()
-	if err != nil {
-		return ""
+// readProjectContext reads the project context file (AGENTS.md or CLAUDE.md) from the project root directory.
+func readProjectContext(agentsFile, projectRoot string) string {
+	if projectRoot == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return ""
+		}
+		projectRoot = wd
+		slog.Warn("readProjectContext got no project root, using Asimi's")
 	}
-	b, err := os.ReadFile(filepath.Join(wd, agentsFile))
+	b, err := os.ReadFile(filepath.Join(projectRoot, agentsFile))
 	if err != nil {
 		return ""
 	}
