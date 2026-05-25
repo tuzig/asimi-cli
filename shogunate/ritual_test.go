@@ -1084,6 +1084,77 @@ func TestBackgroundGiven(t *testing.T) {
 	}
 }
 
+func TestStepGivenBashNotifications(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "given-bash-notify",
+		Steps: []RitualStep{
+			{
+				Name:     "work",
+				Minister: "forge",
+				Given:    []string{"!echo given-data"},
+				Task:     "do work",
+			},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "step-done\n", nil)
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "given-data\n", ExitCode: "0"},
+		},
+	}
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil)
+
+	var messages []RitualStepMsg
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			messages = append(messages, stepMsg)
+		}
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "given-bash-notify", testEK(10), nil, notify)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	if got := exec.Data["echo"]; got != "given-data\n" {
+		t.Errorf("expected given result to be stored under echo, got %q", got)
+	}
+
+	var cmdStatuses []string
+	for _, m := range messages {
+		if m.Message != "!echo given-data" {
+			continue
+		}
+		cmdStatuses = append(cmdStatuses, m.Status)
+		if m.StepName != "echo" {
+			t.Errorf("expected command notification step name 'echo', got %q", m.StepName)
+		}
+	}
+
+	expected := []string{"cmd_running", "cmd_done"}
+	if len(cmdStatuses) != len(expected) {
+		t.Fatalf("expected command statuses %v, got %v", expected, cmdStatuses)
+	}
+	for i := range expected {
+		if cmdStatuses[i] != expected[i] {
+			t.Errorf("expected command statuses %v, got %v", expected, cmdStatuses)
+			break
+		}
+	}
+}
+
 // ritualTestMinister is a Minister that auto-completes tasks with a configured result.
 type ritualTestMinister struct {
 	MinisterBase
@@ -1100,7 +1171,7 @@ func (m *ritualTestMinister) SystemPrompt() string        { return "" }
 func (m *ritualTestMinister) Title() string               { return m.id }
 func (m *ritualTestMinister) Tools() []Tool               { return nil }
 func (m *ritualTestMinister) Tasks() chan<- *Task         { return m.tasksCh }
-func (m *ritualTestMinister) Model() LLMProvider     { return nil }
+func (m *ritualTestMinister) Model() LLMProvider          { return nil }
 func (m *ritualTestMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (m *ritualTestMinister) Run(ctx context.Context) {
 	for {

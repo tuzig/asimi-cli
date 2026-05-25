@@ -971,9 +971,23 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			if err != nil {
 				return "", fmt.Errorf("given %q failed: %w", raw, err)
 			}
+			if entry.Kind == StepDefBash {
+				exec.Notify(RitualStepMsg{
+					StepName: entry.Key,
+					Status:   "cmd_running",
+					Message:  raw,
+				})
+			}
 			result, err := r.runGivenStep(ctx, exec, entry)
 			if err != nil {
 				return "", fmt.Errorf("given %q failed: %w", raw, err)
+			}
+			if entry.Kind == StepDefBash {
+				exec.Notify(RitualStepMsg{
+					StepName: entry.Key,
+					Status:   "cmd_done",
+					Message:  raw,
+				})
 			}
 			storeGivenResult(exec, entry.Key, result)
 		}
