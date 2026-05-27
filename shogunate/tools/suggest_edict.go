@@ -116,7 +116,7 @@ func (t SuggestEdictTool) Call(ctx context.Context, input string) (string, error
 	}}
 
 	key := storage.EdictKey{
-		ID:       1, // court-scoped suggestions live under edict 1
+		ID:       0, // no edict yet - created on approval
 		Username: t.Username,
 		Project:  t.Project,
 	}
