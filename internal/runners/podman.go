@@ -262,7 +262,7 @@ func (r *PodmanRunner) readStream(reader io.Reader) {
 			}
 		}
 
-		if inCommand && strings.HasPrefix(line, "__ASIMI_STDOUT_END:") {
+		if inCommand && strings.Contains(line, "__ASIMI_STDOUT_END:") {
 			parts := strings.Split(line, ":")
 			var exitCode string
 			if len(parts) >= 3 {
