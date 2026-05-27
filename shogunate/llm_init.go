@@ -62,6 +62,7 @@ func (s *Shogunate) ConfigureLLM(ctx context.Context, req ConfigureLLMRequest) e
 			MaxRetries:               req.MaxRetries,
 		},
 		AgentsFile: req.AgentsFile,
+		WorkingDir: req.ProjectRoot,
 	}
 	repoInfo := repo.RepoInfo{ProjectRoot: req.ProjectRoot}
 	s.ConfigureModel(client, cfg, repoInfo)

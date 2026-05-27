@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 )
@@ -66,7 +67,7 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-parallel-test", ek(1), nil, nil)
 	if err != nil {
@@ -140,7 +141,7 @@ func TestExecuteForkStep_Sequential(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-sequential-test", ek(2), nil, nil)
 	if err != nil {
@@ -222,7 +223,7 @@ func TestExecuteForkStep_WithLimit(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-limit-test", ek(3), nil, nil)
 	if err != nil {
@@ -256,7 +257,7 @@ func TestExecuteForkStep_WithLimit(t *testing.T) {
 func TestGetForkWorkUnits(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil, repo.RepoInfo{})
 
 	tests := []struct {
 		name      string
@@ -318,7 +319,7 @@ func TestGetForkWorkUnits(t *testing.T) {
 func TestToInterfaceSlice(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil, repo.RepoInfo{})
 
 	tests := []struct {
 		name    string
@@ -413,7 +414,7 @@ func TestExecuteForkItem(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-item-test", ek(4), nil, nil)
 	if err != nil {
@@ -486,7 +487,7 @@ func TestExecuteForkStep_FailureHandling(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-failure-test", ek(5), nil, nil)
 	if err != nil {
@@ -557,7 +558,7 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -647,7 +648,7 @@ func TestExecuteForkStep_TemplateExpansion(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-template-test", ek(7), nil, nil)
 	if err != nil {
@@ -730,7 +731,7 @@ func TestExecuteForkStep_Cancelation(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-cancel-test", ek(8), nil, nil)
 	if err != nil {

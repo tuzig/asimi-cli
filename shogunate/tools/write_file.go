@@ -18,7 +18,9 @@ type WriteFileInput struct {
 }
 
 // WriteFileTool is a tool for writing to files
-type WriteFileTool struct{}
+type WriteFileTool struct {
+	ProjectRoot string
+}
 
 func (t WriteFileTool) Name() string {
 	return "write_file"
@@ -57,19 +59,21 @@ func (t WriteFileTool) Call(ctx context.Context, input string) (string, error) {
 	params.Path = strings.Trim(params.Path, `"'`)
 
 	// Validate that the path is within the project root
-	if err := ValidatePathWithinProject(params.Path); err != nil {
+	if err := ValidatePathWithinProject(params.Path, t.ProjectRoot); err != nil {
 		return "", err
 	}
 
+	resolvedPath := ResolvePath(params.Path, t.ProjectRoot)
+
 	// Create parent directory if it doesn't exist
-	dir := filepath.Dir(params.Path)
+	dir := filepath.Dir(resolvedPath)
 	if dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", fmt.Errorf("failed to create directory: %w", err)
 		}
 	}
 
-	err = os.WriteFile(params.Path, []byte(params.Content), 0644)
+	err = os.WriteFile(resolvedPath, []byte(params.Content), 0644)
 	if err != nil {
 		return "", err
 	}

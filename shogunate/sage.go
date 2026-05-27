@@ -165,7 +165,7 @@ func (c *Sage) Tools() []Tool {
 		tools.ListQuenchedManifestsTool{Store: c, Username: c.Username(), Project: c.Project()},
 		tools.QueryPrecedentsTool{Store: c},
 	}
-	for _, t := range tools.GetROTools(c.config.LLM) {
+	for _, t := range tools.GetROTools(c.config.LLM, c.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
 	}
 	return toolList

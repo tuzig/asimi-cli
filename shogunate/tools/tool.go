@@ -19,100 +19,133 @@ type Tool interface {
 	ParameterSchema() map[string]any
 }
 
-// ValidatePathWithinProject checks if a file path is within the current working directory.
-// It prevents path traversal attacks and ensures files are only modified within the current directory tree.
-func ValidatePathWithinProject(path string) error {
+// ResolvePath resolves a path in the context of a project root.
+// If path is absolute, it returns filepath.Clean(path).
+// If path is relative and projectRoot is non-empty, it returns
+// filepath.Clean(filepath.Join(projectRoot, path)).
+// If path is relative and projectRoot is empty, it returns
+// filepath.Abs(path) for backward compatibility.
+func ResolvePath(path, projectRoot string) string {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	if projectRoot != "" {
+		return filepath.Clean(filepath.Join(projectRoot, path))
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		// filepath.Abs should not fail in normal conditions,
+		// but fall back to a cleaned path if it does.
+		return filepath.Clean(path)
+	}
+	return abs
+}
+
+// ValidatePathWithinProject checks if a file path is within the project root directory.
+// It prevents path traversal attacks and ensures files are only modified within the project tree.
+// When projectRoot is empty, it falls back to os.Getwd() for backward compatibility.
+func ValidatePathWithinProject(path, projectRoot string) error {
 	if path == "" {
 		return fmt.Errorf("path cannot be empty")
 	}
 
-	// Get the current working directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+	// Resolve the path using projectRoot context
+	absPath := ResolvePath(path, projectRoot)
+
+	// Resolve project root: use provided value or fall back to cwd
+	if projectRoot == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		projectRoot = cwd
 	}
 
-	// Convert both paths to absolute paths
-	absPath, err := filepath.Abs(path)
+	absRoot, err := filepath.Abs(projectRoot)
 	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
-	}
-
-	absCwd, err := filepath.Abs(cwd)
-	if err != nil {
-		return fmt.Errorf("failed to resolve current directory: %w", err)
+		return fmt.Errorf("failed to resolve project root: %w", err)
 	}
 
 	// Clean the paths to resolve any .. or . components
 	absPath = filepath.Clean(absPath)
-	absCwd = filepath.Clean(absCwd)
+	absRoot = filepath.Clean(absRoot)
 
 	// Evaluate symlinks to get the real path
-	// This prevents writing through symlinks to locations outside the current directory
+	// This prevents writing through symlinks to locations outside the project root
 	realPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		// If the file doesn't exist yet, check the parent directory
-		parentDir := filepath.Dir(absPath)
-		realParentPath, evalErr := filepath.EvalSymlinks(parentDir)
-		if evalErr != nil {
-			// Parent doesn't exist either, use the cleaned absolute path
-			realPath = absPath
-		} else {
-			// Reconstruct the path with the real parent
-			realPath = filepath.Join(realParentPath, filepath.Base(absPath))
+		// File (or parent dirs) may not exist yet. Walk up to find the
+		// nearest existing ancestor, resolve its symlinks, then append
+		// the remaining non-existent path components.
+		dir := absPath
+		extra := ""
+		for {
+			realDir, evalErr := filepath.EvalSymlinks(dir)
+			if evalErr == nil {
+				realPath = filepath.Join(realDir, extra)
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				// Reached filesystem root without resolving; use cleaned path
+				realPath = absPath
+				break
+			}
+			extra = filepath.Join(filepath.Base(dir), extra)
+			dir = parent
 		}
 	}
 
-	realCwd, err := filepath.EvalSymlinks(absCwd)
+	realRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
-		// If cwd symlink evaluation fails, use the cleaned path
-		realCwd = absCwd
+		// If root symlink evaluation fails, use the cleaned path
+		realRoot = absRoot
 	}
 
-	// Check if the file path is within the current working directory
-	relPath, err := filepath.Rel(realCwd, realPath)
+	// Check if the file path is within the project root
+	relPath, err := filepath.Rel(realRoot, realPath)
 	if err != nil {
 		return fmt.Errorf("failed to determine relative path: %w", err)
 	}
 
-	// If the relative path starts with "..", it's outside the current directory
+	// If the relative path starts with "..", it's outside the project root
 	if strings.HasPrefix(relPath, "..") {
-		return fmt.Errorf("access denied: path '%s' is outside the current working directory '%s'", path, cwd)
+		return fmt.Errorf("access denied: path '%s' is outside the project root '%s'", path, projectRoot)
 	}
 
 	return nil
 }
 
 // GetFileTools returns the list of file-based tools for use by ministers.
-func GetFileTools(llmConfig config.LLMConfig) []Tool {
+func GetFileTools(llmConfig config.LLMConfig, projectRoot string) []Tool {
 	return []Tool{
-		NewReadFileTool(),
-		WriteFileTool{},
-		GlobTool{},
-		ReplaceTextTool{},
-		ReadManyFilesTool{},
-		GrepTool{},
+		NewReadFileTool(projectRoot),
+		WriteFileTool{ProjectRoot: projectRoot},
+		GlobTool{ProjectRoot: projectRoot},
+		ReplaceTextTool{ProjectRoot: projectRoot},
+		ReadManyFilesTool{ProjectRoot: projectRoot},
+		GrepTool{ProjectRoot: projectRoot},
 	}
 }
 
 // GetROTools returns read-only tools for exploration and research.
-func GetROTools(llmConfig config.LLMConfig) []Tool {
+func GetROTools(llmConfig config.LLMConfig, projectRoot string) []Tool {
 	return []Tool{
-		GlobTool{},
-		NewReadFileTool(),
-		ReadManyFilesTool{},
-		GrepTool{},
+		GlobTool{ProjectRoot: projectRoot},
+		NewReadFileTool(projectRoot),
+		ReadManyFilesTool{ProjectRoot: projectRoot},
+		GrepTool{ProjectRoot: projectRoot},
 	}
 }
 
 // GetEditTools returns read/write tools for code editing (no shell).
-func GetEditTools(llmConfig config.LLMConfig) []Tool {
+func GetEditTools(llmConfig config.LLMConfig, projectRoot string) []Tool {
 	return []Tool{
-		NewReadFileTool(),
-		WriteFileTool{},
-		ReplaceTextTool{},
-		GlobTool{},
-		ReadManyFilesTool{},
-		GrepTool{},
+		NewReadFileTool(projectRoot),
+		WriteFileTool{ProjectRoot: projectRoot},
+		ReplaceTextTool{ProjectRoot: projectRoot},
+		GlobTool{ProjectRoot: projectRoot},
+		ReadManyFilesTool{ProjectRoot: projectRoot},
+		GrepTool{ProjectRoot: projectRoot},
 	}
 }

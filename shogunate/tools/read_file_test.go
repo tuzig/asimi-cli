@@ -28,7 +28,7 @@ func TestReadFileTool_BasicRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("reads entire file", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt"}`)
@@ -78,7 +78,7 @@ func TestReadFileTool_WithOffset(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("offset starts from correct line", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "offset": 3}`)
@@ -129,7 +129,7 @@ func TestReadFileTool_WithLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("limit returns correct number of lines", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "limit": 2}`)
@@ -181,7 +181,7 @@ func TestReadFileTool_WithOffsetAndLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("offset and limit together", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "offset": 2, "limit": 2}`)
@@ -228,7 +228,7 @@ func TestReadFileTool_EdgeCases(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("empty file", func(t *testing.T) {
 		if err := os.WriteFile("empty.txt", []byte(""), 0644); err != nil {
@@ -309,7 +309,7 @@ func TestReadFileTool_PathValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("path outside project is denied", func(t *testing.T) {
 		_, err := tool.Call(context.Background(), `{"path": "`+outsidePath+`"}`)
@@ -347,7 +347,7 @@ func TestReadFileTool_ClaudeCodeCLIWorkaround(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("offset as string works", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "offset": "3"}`)
@@ -384,7 +384,7 @@ func TestReadFileTool_ClaudeCodeCLIWorkaround(t *testing.T) {
 }
 
 func TestReadFileTool_Interface(t *testing.T) {
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("Name returns correct value", func(t *testing.T) {
 		if tool.Name() != "read_file" {
@@ -441,7 +441,7 @@ func TestReadFileTool_Interface(t *testing.T) {
 }
 
 func TestReadFileTool_Format(t *testing.T) {
-	tool := NewReadFileTool()
+	tool := NewReadFileTool("")
 
 	t.Run("format with result", func(t *testing.T) {
 		result := tool.Format(`{"path": "test.txt"}`, "line 1\nline 2", nil)
@@ -464,6 +464,64 @@ func TestReadFileTool_Format(t *testing.T) {
 		result := tool.Format(`{"path": "test.txt"}`, "", nil)
 		if !strings.Contains(result, "0 lines") {
 			t.Error("format should show 0 lines for empty result")
+		}
+	})
+}
+
+func TestReadFileTool_ExplicitProjectRootDiffersFromGetwd(t *testing.T) {
+	// Daemon-mode scenario: projectRoot != os.Getwd()
+	projectDir := t.TempDir()
+	processDir := t.TempDir()
+	t.Chdir(processDir)
+
+	// Create file inside the project
+	projectFile := filepath.Join(projectDir, "src", "code.go")
+	if err := os.MkdirAll(filepath.Dir(projectFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(projectFile, []byte("package main"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create file in the process directory (outside project)
+	processFile := filepath.Join(processDir, "unrelated.txt")
+	if err := os.WriteFile(processFile, []byte("unrelated"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewReadFileTool(projectDir)
+
+	t.Run("read file inside projectRoot with absolute path succeeds", func(t *testing.T) {
+		result, err := tool.Call(context.Background(), `{"path": "`+projectFile+`"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "package main" {
+			t.Errorf("expected 'package main', got %q", result)
+		}
+	})
+
+	t.Run("read file inside projectRoot with relative path succeeds", func(t *testing.T) {
+		result, err := tool.Call(context.Background(), `{"path": "src/code.go"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "package main" {
+			t.Errorf("expected 'package main', got %q", result)
+		}
+	})
+
+	t.Run("read file in cwd outside projectRoot is denied", func(t *testing.T) {
+		_, err := tool.Call(context.Background(), `{"path": "`+processFile+`"}`)
+		if err == nil {
+			t.Error("expected error for read of file in cwd but outside projectRoot")
+		}
+	})
+
+	t.Run("path traversal beyond projectRoot is denied", func(t *testing.T) {
+		_, err := tool.Call(context.Background(), `{"path": "`+filepath.Join(projectDir, "..", "escape.txt")+`"}`)
+		if err == nil {
+			t.Error("expected error for path traversal beyond projectRoot")
 		}
 	})
 }

@@ -182,7 +182,7 @@ func (r *RitualRunner) getUnsealedEdicts(ctx context.Context, exec *RitualExecut
 }
 
 func (r *RitualRunner) getHeavenSnapshot(ctx context.Context) (interface{}, error) {
-	repoInfo := repo.GetRepoInfo()
+	repoInfo := r.repoInfo
 
 	// Get the main branch name (default to "main")
 	branch := repoInfo.BranchSlugOrDefault()
@@ -468,7 +468,7 @@ func (r *RitualRunner) createBorderlandManifests(ctx context.Context, exec *Ritu
 
 // checkCleanWorkingDirectory verifies the working directory is clean (no unstaged changes)
 func (r *RitualRunner) checkCleanWorkingDirectory(ctx context.Context) (interface{}, error) {
-	repoInfo := repo.GetRepoInfo()
+	repoInfo := r.repoInfo
 	if !repoInfo.IsClean() {
 		return nil, fmt.Errorf("working directory is not clean: %v", repoInfo)
 	}
@@ -500,7 +500,7 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 		slug = cfg.Shogunate.Project
 	}
 	if slug == "" {
-		slug = repo.GetRepoInfo().Slug
+		slug = r.repoInfo.Slug
 	}
 	if slug == "" {
 		slug = "local"
@@ -598,7 +598,7 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 			"output": "failed to load configuration: " + loadErr.Error(),
 		}, fmt.Errorf("failed to load configuration: %w", loadErr)
 	}
-	repoInfo := repo.GetRepoInfo()
+	repoInfo := r.repoInfo
 	r.runner = runners.InitShellRunner(&cfg.Sandbox, repoInfo)
 	if r.runner == nil {
 		return map[string]string{
@@ -703,13 +703,10 @@ func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, err
 
 // getProjectMetadata captures repository information for use in ritual templates
 func (r *RitualRunner) getProjectMetadata(ctx context.Context) (interface{}, error) {
-	repoInfo := repo.GetRepoInfo()
+	repoInfo := r.repoInfo
 
-	// Use ProjectRoot if available, fall back to cwd for remote URL lookup
+	// Use ProjectRoot for remote URL lookup
 	root := repoInfo.ProjectRoot
-	if root == "" {
-		root, _ = os.Getwd()
-	}
 
 	// Parse host, org, project from remote URL
 	host, org, project := "local", "local", "unknown"

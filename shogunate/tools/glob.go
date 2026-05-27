@@ -18,7 +18,9 @@ type GlobInput struct {
 }
 
 // GlobTool finds files by glob pattern
-type GlobTool struct{}
+type GlobTool struct {
+	ProjectRoot string
+}
 
 func (t GlobTool) Name() string {
 	return "glob"
@@ -38,13 +40,22 @@ func (t GlobTool) Call(ctx context.Context, input string) (string, error) {
 		params.Pattern = "*"
 	}
 
+	// If ProjectRoot is set and pattern is not absolute, join with ProjectRoot
+	if t.ProjectRoot != "" && !filepath.IsAbs(params.Pattern) {
+		params.Pattern = filepath.Join(t.ProjectRoot, params.Pattern)
+	}
+
 	var matches []string
 	var err error
 
 	// Handle patterns starting with "**/"
 	if strings.HasPrefix(params.Pattern, "**/") {
 		subpattern := strings.TrimPrefix(params.Pattern, "**/")
-		matches, err = t.globRecursive(subpattern)
+		baseDir := t.ProjectRoot
+		if baseDir == "" {
+			baseDir = "."
+		}
+		matches, err = t.globRecursive(subpattern, baseDir)
 	} else {
 		matches, err = filepathx.Glob(params.Pattern)
 	}
@@ -56,7 +67,7 @@ func (t GlobTool) Call(ctx context.Context, input string) (string, error) {
 	var results []string
 	maxResults := 200
 	for _, path := range matches {
-		if err := ValidatePathWithinProject(path); err != nil {
+		if err := ValidatePathWithinProject(path, t.ProjectRoot); err != nil {
 			continue
 		}
 		results = append(results, path)
@@ -76,18 +87,18 @@ func (t GlobTool) Call(ctx context.Context, input string) (string, error) {
 	return output, nil
 }
 
-// globRecursive handles patterns starting with "**/" by searching recursively from current directory
-func (t GlobTool) globRecursive(subpattern string) ([]string, error) {
+// globRecursive handles patterns starting with "**/" by searching recursively from baseDir
+func (t GlobTool) globRecursive(subpattern string, baseDir string) ([]string, error) {
 	var allMatches []string
 
-	// First, try to match the subpattern in the current directory
-	currentDirMatches, err := filepathx.Glob(subpattern)
+	// First, try to match the subpattern in the base directory
+	currentDirMatches, err := filepathx.Glob(filepath.Join(baseDir, subpattern))
 	if err == nil {
 		allMatches = append(allMatches, currentDirMatches...)
 	}
 
-	// Get all directories in the current working directory
-	entries, err := os.ReadDir(".")
+	// Get all directories in baseDir
+	entries, err := os.ReadDir(baseDir)
 	if err != nil {
 		return allMatches, nil // Return what we have so far
 	}
@@ -103,8 +114,8 @@ func (t GlobTool) globRecursive(subpattern string) ([]string, error) {
 			continue
 		}
 
-		// Build pattern for this directory: dirname/**/subpattern
-		pattern := filepath.Join(dirName, "**", subpattern)
+		// Build pattern for this directory: baseDir/dirName/**/subpattern
+		pattern := filepath.Join(baseDir, dirName, "**", subpattern)
 		matches, err := filepathx.Glob(pattern)
 		if err != nil {
 			continue

@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestStepDefRegistry(t *testing.T) {
@@ -49,7 +51,7 @@ func TestStepDefRegistry(t *testing.T) {
 func TestResolveStepDef(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil, repo.RepoInfo{})
 
 	// Test bash command resolution
 	entry, err := runner.resolveStepDef("!just test")
@@ -89,7 +91,7 @@ func TestRunGivenStep_Bash(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
 	mockRunner := &mockCmdRunner{output: "diff output\n", exitCode: "0"}
-	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil, repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		ID:         "test-exec",
@@ -116,7 +118,7 @@ func TestRunGivenStep_BashFailure(t *testing.T) {
 	db := setupRitualTestDB(t)
 	registry := NewRitualRegistry()
 	failRunner := &mockCmdRunner{output: "FAIL\n", exitCode: "1"}
-	runner := NewRitualRunner(registry, nil, nil, db, failRunner, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, failRunner, nil, repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		ID:         "test-exec",
@@ -148,7 +150,7 @@ func TestRunThenStep_Bash(t *testing.T) {
 
 	// Success case
 	mockRunner := &mockCmdRunner{output: "ok\n", exitCode: "0"}
-	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil, repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		ID:         "test-exec",
@@ -169,7 +171,7 @@ func TestRunThenStep_Bash(t *testing.T) {
 
 	// Failure case
 	failRunner := &mockCmdRunner{output: "FAIL\n", exitCode: "1"}
-	runner = NewRitualRunner(registry, nil, nil, db, failRunner, nil)
+	runner = NewRitualRunner(registry, nil, nil, db, failRunner, nil, repo.RepoInfo{})
 
 	err = runner.runThenStep(context.Background(), exec, entry)
 	if err == nil {
@@ -206,7 +208,7 @@ func TestRunThenStep_Multiple(t *testing.T) {
 			{Output: "FAIL\n", ExitCode: "1"}, // second then
 		},
 	}
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil, repo.RepoInfo{})
 
 	ctx := context.Background()
 	exec, err := runner.Start(ctx, "multi-then", testEK(8), nil, nil)
@@ -232,7 +234,7 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 	}
 
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil, repo.RepoInfo{})
 
 	// Create test edict
 	edict := storage.Edict{
@@ -268,7 +270,7 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 			}
 		},
 	}
-	runner = NewRitualRunner(registry, nil, nil, db, mockRunner, nil)
+	runner = NewRitualRunner(registry, nil, nil, db, mockRunner, nil, repo.RepoInfo{})
 
 	// Create execution
 	exec := &RitualExecution{
@@ -318,7 +320,7 @@ func TestAwaitRulerSeal_NoManifests(t *testing.T) {
 			t.Errorf("git add should not be called when no manifests exist, but got: %s", cmd)
 		},
 	}
-	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil, repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		ID:         "test-await-ruler-seal-empty",
@@ -355,7 +357,7 @@ func TestCheckVerdictsPassed_AllApproved(t *testing.T) {
 	}
 
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default())
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		EdictID:  1,
@@ -403,7 +405,7 @@ func TestCheckVerdictsPassed_SomeRejected(t *testing.T) {
 	}
 
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default())
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		EdictID:  1,
@@ -458,7 +460,7 @@ func TestCheckVerdictsPassed_AllRejected(t *testing.T) {
 	}
 
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default())
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		EdictID:  1,
@@ -485,7 +487,7 @@ func TestCheckVerdictsPassed_NoManifests(t *testing.T) {
 	}
 
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default())
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		EdictID:  1,
@@ -535,7 +537,7 @@ func TestCheckVerdictsPassed_FailedVerdict(t *testing.T) {
 	}
 
 	registry := NewRitualRegistry()
-	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default())
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
 
 	exec := &RitualExecution{
 		EdictID:  1,
@@ -551,4 +553,47 @@ func TestCheckVerdictsPassed_FailedVerdict(t *testing.T) {
 	if !strings.Contains(err.Error(), "verdict check failed") {
 		t.Errorf("Expected error to contain 'verdict check failed', got: %v", err)
 	}
+}
+
+func TestRitualRunner_RepoInfoStoredAndUsed(t *testing.T) {
+	// Verify that the repoInfo passed to NewRitualRunner is stored in r.repoInfo
+	// and used by expressions, not re-fetched via GetRepoInfo().
+	t.Run("repoInfo is stored from constructor argument", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot:  "/explicit/daemon/root",
+			Branch:       "custom-branch",
+			IsWorktree:   true,
+			WorktreePath: "worktrees/custom",
+			Slug:         "owner/repo",
+		}
+		registry := NewRitualRegistry()
+		runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, info)
+
+		// The runner's repoInfo field should match what was passed in
+		assert.Equal(t, info, runner.repoInfo, "RitualRunner should store the repoInfo passed to constructor")
+	})
+
+	t.Run("repoInfo with empty ProjectRoot", func(t *testing.T) {
+		info := repo.RepoInfo{} // all zero values
+		registry := NewRitualRegistry()
+		runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, info)
+
+		assert.Equal(t, "", runner.repoInfo.ProjectRoot, "empty ProjectRoot should be stored as-is")
+		assert.Equal(t, "", runner.repoInfo.Branch, "empty Branch should be stored as-is")
+	})
+
+	t.Run("repoInfo differs from os.Getwd", func(t *testing.T) {
+		// In daemon mode, repoInfo.ProjectRoot may differ from the process cwd.
+		// The RitualRunner should use the provided repoInfo, not call GetRepoInfo().
+		daemonRoot := "/daemon/project/root"
+		info := repo.RepoInfo{
+			ProjectRoot: daemonRoot,
+			Branch:      "main",
+		}
+		registry := NewRitualRegistry()
+		runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, info)
+
+		// Verify the runner stores the daemon root, not os.Getwd()
+		assert.Equal(t, daemonRoot, runner.repoInfo.ProjectRoot)
+	})
 }

@@ -885,7 +885,7 @@ func sessBuildEnvBlock(repoInfo repo.RepoInfo) string {
 	var env strings.Builder
 
 	env.WriteString(fmt.Sprintf("- **OS:** %s\n", runtime.GOOS))
-	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+	if cwd := repoInfo.ProjectRoot; cwd != "" {
 		env.WriteString(fmt.Sprintf("- **Working copy path:** %s\n", cwd))
 	}
 

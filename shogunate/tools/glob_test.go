@@ -104,3 +104,51 @@ func splitLines(s string) []string {
 	}
 	return lines
 }
+
+func TestGlobTool_ExplicitProjectRootDiffersFromGetwd(t *testing.T) {
+	// Daemon-mode scenario: projectRoot != os.Getwd()
+	projectDir := t.TempDir()
+	processDir := t.TempDir()
+	t.Chdir(processDir)
+
+	// Create files inside the project
+	for _, f := range []string{
+		filepath.Join(projectDir, "root.go"),
+		filepath.Join(projectDir, "sub", "file1.go"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(f), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte("package test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Create file in the process directory (outside project)
+	if err := os.WriteFile(filepath.Join(processDir, "unrelated.go"), []byte("package unrelated"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change into project directory for glob to find files
+	tool := GlobTool{ProjectRoot: projectDir}
+
+	t.Run("glob finds files inside projectRoot", func(t *testing.T) {
+		result, err := tool.Call(context.Background(), `{"pattern": "**/*.go"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == "No matches found" {
+			t.Fatal("expected matches, got none")
+		}
+		if !containsLine(result, filepath.Join(projectDir, "root.go")) {
+			t.Error("expected root.go in results")
+		}
+		if !containsLine(result, filepath.Join(projectDir, "sub", "file1.go")) {
+			t.Error("expected sub/file1.go in results")
+		}
+		// Verify the unrelated file outside projectRoot is NOT in results
+		if containsLine(result, filepath.Join(processDir, "unrelated.go")) {
+			t.Error("did not expect unrelated.go in results")
+		}
+	})
+}

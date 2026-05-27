@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"gopkg.in/yaml.v3"
@@ -367,6 +368,7 @@ type RitualRunner struct {
 	runner          runners.Runner
 	logger          *slog.Logger
 	maxRetries      int
+	repoInfo        repo.RepoInfo
 }
 
 // NewRitualRunner creates a new ritual runner
@@ -377,6 +379,7 @@ func NewRitualRunner(
 	db *gorm.DB,
 	runner runners.Runner,
 	logger *slog.Logger,
+	repoInfo repo.RepoInfo,
 ) *RitualRunner {
 	if logger == nil {
 		logger = slog.Default()
@@ -390,6 +393,7 @@ func NewRitualRunner(
 		runner:       runner,
 		logger:       logger,
 		maxRetries:   3,
+		repoInfo:     repoInfo,
 	}
 }
 
@@ -519,67 +523,6 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 		}
 	}
 
-	// Check for existing aborted/paused ritual execution to recover from
-	var previousExec *RitualExecution
-	var recoveryData storage.JSON
-	var recoveryFirstIncompleteStep int = -1
-	var skipZhengmingPrompt bool
-	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND ritual_name = ? AND state IN (?, ?, ?, ?)", key.ID, key.Username, key.Project, ritualName, RitualStateAborted, RitualStateStopped, RitualStateFailed, RitualStateRecovering).
-		Order("updated_at DESC").
-		First(&previousExec).Error; err == nil {
-		// Found aborted execution - attempt recovery
-		r.logger.Info("found aborted ritual execution for recovery",
-			"ritual", ritualName,
-			"edict_id", key.ID,
-			"previous_execution_id", previousExec.ID,
-			"state", previousExec.State)
-
-		// If state is "recovering", user already approved - skip zhengming prompt
-		skipZhengmingPrompt = previousExec.State == RitualStateRecovering
-
-		// Load step states to determine which steps completed
-		var stepStates []RitualStepState
-		if err := r.db.Where("execution_id = ?", previousExec.ID).Order("step_index").Find(&stepStates).Error; err == nil {
-			// Find first incomplete step (message is empty, has error, or step was not reached)
-			firstIncompleteStep := len(def.Steps) // Default to end if all complete
-			for i := range def.Steps {
-				if i < len(stepStates) {
-					ss := stepStates[i]
-					// Step is incomplete if:
-					// - No message (never executed)
-					// - Has retries (failed and retried)
-					// - Message indicates error/cancellation (context canceled, timeout, etc.)
-					isIncomplete := ss.Message == "" || ss.RetryCount > 0
-					if !isIncomplete && ss.Message != "" {
-						// Check for error patterns that indicate incomplete execution
-						if strings.Contains(ss.Message, "context canceled") ||
-							strings.Contains(ss.Message, "timeout") ||
-							strings.Contains(ss.Message, "aborted") {
-							isIncomplete = true
-						}
-					}
-					if isIncomplete {
-						firstIncompleteStep = i
-						break
-					}
-				} else {
-					firstIncompleteStep = i
-					break
-				}
-			}
-
-			// Only recover if there are incomplete steps
-			if firstIncompleteStep > 0 && firstIncompleteStep < len(def.Steps) {
-				r.logger.Info("resuming ritual from incomplete step",
-					"ritual", ritualName,
-					"from_step", firstIncompleteStep,
-					"previous_execution_id", previousExec.ID)
-				recoveryData = previousExec.Data
-				recoveryFirstIncompleteStep = firstIncompleteStep
-			}
-		}
-	}
-
 	// Create execution record
 	exec := &RitualExecution{
 		ID:          GenerateID("ritual", ritualName, fmt.Sprint(key.ID), time.Now().String()),
@@ -594,85 +537,9 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 		notify:      notify,
 	}
 
-	// TODO move ritual recovery to its own file
-	// If recovering from aborted execution, request zhengming confirmation (if getMinister is available)
-	// Skip prompt if state is "recovering" (user already approved via promptForAbortedRituals)
-	if previousExec != nil && recoveryData != nil && recoveryFirstIncompleteStep >= 0 && !skipZhengmingPrompt {
-		if r.getMinister != nil {
-			// Request zhengming for recovery confirmation
-			minister := r.getMinister("chancellor")
-			if minister != nil {
-				type zhengmingGate interface {
-					RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
-				}
-				gate, ok := minister.(zhengmingGate)
-				if ok {
-					questions := storage.ZhengmingQuestions{{
-						Text:    fmt.Sprintf("Ritual '%s' was previously aborted at step %d/%d. Recover from step %d (preserving %d completed steps)?", ritualName, recoveryFirstIncompleteStep, len(def.Steps), recoveryFirstIncompleteStep, recoveryFirstIncompleteStep),
-						Options: []string{"Recover from step " + strconv.Itoa(recoveryFirstIncompleteStep), "Start fresh", "Pass"},
-					}}
-					requestID, err := gate.RequestZhengming(key, questions, storage.PriorityUrgent)
-					if err == nil {
-						// Wait for zhengming answer via minister's blocking wait
-						type zhengmingWaiter interface {
-							WaitForZhengming(context.Context, string) (string, error)
-						}
-						waiter := minister.(zhengmingWaiter)
-						answerText, waitErr := waiter.WaitForZhengming(ctx, requestID)
-						answer := ZhengmingAnswer{RequestID: requestID, Answer: answerText, EdictID: key.ID}
-						if waitErr != nil {
-							r.logger.Warn("recovery zhengming wait failed", "error", waitErr)
-							return nil, fmt.Errorf("recovery zhengming failed: %w", waitErr)
-						} else if answer.Answer == "Pass" {
-							r.logger.Info("user passed on recovery, skipping ritual",
-								"ritual", ritualName,
-								"previous_execution_id", previousExec.ID)
-							return nil, fmt.Errorf("user passed on ritual recovery")
-						} else if answer.Answer == "Start fresh" {
-							r.logger.Info("user declined recovery, starting fresh",
-								"ritual", ritualName,
-								"previous_execution_id", previousExec.ID)
-							// Mark the zhengming-saved execution as completed (cleanup)
-							previousExec.State = RitualStateCompleted
-							r.saveExecution(previousExec)
-							// Generate a fresh execution ID and reset state
-							exec.ID = GenerateID("ritual", ritualName, fmt.Sprint(key.ID), time.Now().String())
-							exec.State = RitualStatePending
-							// Clear recovery data to start fresh
-							previousExec = nil
-							recoveryData = nil
-							recoveryFirstIncompleteStep = -1
-						} else {
-							r.logger.Info("user approved recovery",
-								"ritual", ritualName,
-								"from_step", recoveryFirstIncompleteStep,
-								"previous_execution_id", previousExec.ID)
-						}
-					} else {
-						r.logger.Warn("recovery zhengming request failed, proceeding with recovery", "error", err)
-					}
-				}
-			}
-		}
-	}
-
-	// Recovery initialization: applies whether we skipped the zhengming prompt
-	// (recovering state = pre-approved) or went through it and got approval.
-	if previousExec != nil && recoveryData != nil && recoveryFirstIncompleteStep >= 0 {
-		if skipZhengmingPrompt {
-			r.logger.Info("proceeding with pre-approved recovery",
-				"ritual", ritualName,
-				"from_step", recoveryFirstIncompleteStep)
-		}
-		exec.CurrentStep = recoveryFirstIncompleteStep
-		exec.Data = recoveryData
-		exec.PreviousExecutionID = previousExec.ID
-		exec.RecoveryMode = true
-		r.logger.Info("ritual recovery initialized",
-			"ritual", ritualName,
-			"execution_id", exec.ID,
-			"resuming_from_step", exec.CurrentStep,
-			"previous_execution_id", previousExec.ID)
+	// Check for and recover from previous aborted/paused execution
+	if _, err := r.recoverFromPreviousExec(ctx, ritualName, key, def, exec); err != nil {
+		return nil, err
 	}
 
 	// Initialize step states
@@ -1371,7 +1238,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	actSession := exec.stepStates[exec.CurrentStep].Session
 	if actSession == nil {
 		cfg := minister.GetConfig()
-		sessionConfig := &SessionConfig{LLM: cfg}
+		sessionConfig := &SessionConfig{LLM: cfg, WorkingDir: minister.RepoInfo().ProjectRoot}
 		var err error
 		actSession, err = CreateSession(minister, minister.Model(), sessionConfig, notify, "chancellor", exec.EdictKey())
 		if err != nil {

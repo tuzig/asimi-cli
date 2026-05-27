@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -100,6 +99,7 @@ func NewRitualGuard(opts RitualGuardOpts) *RitualGuard {
 		opts.Base.db,
 		opts.Runner,
 		opts.Base.logger,
+		opts.Base.repoInfo,
 	)
 	rg.ritualRunner.onRunnerUpgrade = opts.OnRunnerUpgrade
 
@@ -415,7 +415,8 @@ func (rg *RitualGuard) pingLLM(base *MinisterBase) bool {
 
 	// Create a minimal session for ping test
 	config := &SessionConfig{
-		LLM: base.config.LLM,
+		LLM:        base.config.LLM,
+		WorkingDir: base.RepoInfo().ProjectRoot,
 	}
 
 	sess, err := CreateSession(rg, base.client, config, nil, "health_check")
@@ -457,11 +458,15 @@ func (rg *RitualGuard) getSandboxImageName() string {
 // It loads embedded rituals, user config (~/.config/asimi/rituals.yaml),
 // and project config (.agents/rituals.yaml).
 func (rg *RitualGuard) LoadRituals() error {
-	// Get project directory from current working directory
-	projectDir, err := os.Getwd()
-	if err != nil {
-		rg.logger.Warn("failed to get current directory", "error", err)
-		projectDir = ""
+	// Get project directory from repo info, falling back to current working directory
+	projectDir := rg.repoInfo.ProjectRoot
+	if projectDir == "" {
+		var err error
+		projectDir, err = os.Getwd()
+		if err != nil {
+			rg.logger.Warn("failed to get current directory", "error", err)
+			projectDir = ""
+		}
 	}
 
 	rituals, err := LoadAllRituals(projectDir)
@@ -751,172 +756,6 @@ func (rg *RitualGuard) Run(ctx context.Context) {
 			rg.DispatchEvent(event)
 		case <-staleScanTicker.C:
 			rg.scanForStaleRituals(ctx)
-		}
-	}
-}
-
-// promptForAbortedRituals scans for all aborted/failed rituals and prompts
-// the user for recovery decisions, one by one.
-func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
-	// Always mark recovery complete when done, so event-driven rituals can proceed
-	defer func() {
-		rg.recoveryMu.Lock()
-		rg.recoveryComplete = true
-		rg.recoveryMu.Unlock()
-	}()
-
-	if rg.db == nil || rg.getMinister == nil {
-		return
-	}
-
-	// Find aborted rituals for current user/project that have existing edicts (edict_id > 0)
-	// Limit to 5 at a time to avoid overwhelming the user
-	var abortedRituals []RitualExecution
-	if err := rg.db.Where("state IN ? AND edict_id > 0 AND username = ? AND project = ?",
-		[]RitualState{RitualStateAborted, RitualStateFailed, RitualStateStopped},
-		rg.username, rg.project).
-		Order("updated_at DESC").
-		Limit(5).
-		Find(&abortedRituals).Error; err != nil {
-		rg.logger.Warn("failed to query aborted rituals", "error", err)
-		return
-	}
-
-	if len(abortedRituals) == 0 {
-		return
-	}
-
-	rg.logger.Info("found aborted rituals for recovery", "count", len(abortedRituals))
-
-	// Check which edicts are sealed/cancelled - those rituals should be auto-completed
-	sealService := storage.NewSealService(rg.db)
-	var activeRituals []RitualExecution
-	for _, exec := range abortedRituals {
-		key := exec.EdictKey()
-		status, err := sealService.GetEdictStatus(key)
-		if err != nil {
-			rg.logger.Warn("failed to check edict status", "edict_id", exec.EdictID, "error", err)
-			continue
-		}
-		if status == storage.EdictSealed || status == storage.EdictCancelled {
-			// Auto-complete rituals for sealed/cancelled edicts
-			rg.logger.Info("auto-completing ritual for sealed/cancelled edict",
-				"ritual", exec.RitualName,
-				"edict_id", exec.EdictID,
-				"status", status)
-			exec.State = RitualStateCompleted
-			rg.db.Save(&exec)
-		} else {
-			activeRituals = append(activeRituals, exec)
-		}
-	}
-
-	if len(activeRituals) == 0 {
-		return
-	}
-
-	// Get chancellor for zhengming
-	chancellor := rg.getMinister("chancellor")
-	if chancellor == nil {
-		rg.logger.Warn("chancellor not available for recovery prompts")
-		return
-	}
-
-	type zhengmingGate interface {
-		RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
-	}
-	gate, ok := chancellor.(zhengmingGate)
-	if !ok {
-		return
-	}
-
-	type zhengmingWaiter interface {
-		WaitForZhengming(context.Context, string) (string, error)
-	}
-	waiter, ok := chancellor.(zhengmingWaiter)
-	if !ok {
-		return
-	}
-
-	for _, exec := range activeRituals {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		// Small delay to avoid database lock contention
-		time.Sleep(100 * time.Millisecond)
-
-		// Load step states to find incomplete step
-		var stepStates []RitualStepState
-		if err := rg.db.Where("execution_id = ?", exec.ID).Order("step_index").Find(&stepStates).Error; err != nil {
-			continue
-		}
-
-		incompleteStep := exec.CurrentStep
-		for i, ss := range stepStates {
-			if ss.Message == "" || ss.RetryCount > 0 ||
-				strings.Contains(ss.Message, "context canceled") ||
-				strings.Contains(ss.Message, "aborted") {
-				incompleteStep = i
-				break
-			}
-		}
-
-		// Load edict to get description
-		var edict storage.Edict
-		edictDesc := ""
-		if err := rg.db.Where("id = ?", exec.EdictID).First(&edict).Error; err == nil {
-			edictDesc = edict.Summary
-			if edictDesc == "" {
-				edictDesc = edict.Intent
-			}
-			if len(edictDesc) > 60 {
-				edictDesc = edictDesc[:57] + "..."
-			}
-		}
-
-		key := exec.EdictKey()
-		questionText := fmt.Sprintf("Ritual '%s' (e%d: %s) aborted at step %d. Recover?", exec.RitualName, exec.EdictID, edictDesc, incompleteStep)
-		questions := storage.ZhengmingQuestions{{
-			Text:    questionText,
-			Options: []string{fmt.Sprintf("Recover from step %d", incompleteStep), "Mark as completed", "Pass"},
-		}}
-
-		requestID, err := gate.RequestZhengming(key, questions, storage.PriorityUrgent)
-		if err != nil {
-			rg.logger.Warn("failed to request recovery zhengming", "error", err)
-			continue
-		}
-
-		answer, err := waiter.WaitForZhengming(ctx, requestID)
-		if err != nil {
-			rg.logger.Warn("recovery zhengming wait failed", "error", err)
-			continue
-		}
-
-		switch answer {
-		case "Mark as completed":
-			exec.State = RitualStateCompleted
-			rg.db.Save(&exec)
-			rg.logger.Info("marked aborted ritual as completed",
-				"ritual", exec.RitualName,
-				"edict_id", exec.EdictID)
-		case fmt.Sprintf("Recover from step %d", incompleteStep):
-			// Mark as "recovering" so ritualRunner.Start() knows to resume without prompting
-			exec.State = RitualStateRecovering
-			exec.CurrentStep = incompleteStep
-			rg.db.Save(&exec)
-			rg.logger.Info("starting ritual recovery",
-				"ritual", exec.RitualName,
-				"edict_id", exec.EdictID,
-				"from_step", incompleteStep)
-			rg.startRitual(exec.RitualName, key, map[string]string{"edict_id": fmt.Sprint(exec.EdictID)})
-		default:
-			rg.logger.Info("user passed on aborted ritual",
-				"ritual", exec.RitualName,
-				"edict_id", exec.EdictID)
 		}
 	}
 }

@@ -65,7 +65,7 @@ func (j *Judge) Tools() []Tool {
 		tools.RequestZhengmingTool{MinisterID: j.ministerID, Requester: j, WaitForAnswer: j.WaitForZhengming, Username: j.username, Project: j.project},
 	}
 	// Add edit tools (read, write, edit, list, grep)
-	for _, t := range tools.GetEditTools(j.config.LLM) {
+	for _, t := range tools.GetEditTools(j.config.LLM, j.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
 	}
 	// Add shell command tool if runner is available

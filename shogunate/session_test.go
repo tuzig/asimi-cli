@@ -1642,3 +1642,47 @@ func TestSanitizeMessages_RemovesToolResponseAtStart(t *testing.T) {
 
 	assert.Empty(t, sess.messages, "should remove tool response when it's the only message")
 }
+
+func TestNewSession_WorkingDirFromConfig(t *testing.T) {
+	// Not parallel because t.Chdir is used in subtests
+
+	t.Run("uses WorkingDir from SessionConfig when provided", func(t *testing.T) {
+		cfg := &SessionConfig{
+			WorkingDir: "/explicit/project/root",
+		}
+		sess, err := NewSession(nil, cfg, nil, nil, func(any) {}, "", "")
+		require.NoError(t, err)
+		assert.Equal(t, "/explicit/project/root", sess.WorkingDir)
+	})
+
+	t.Run("falls back to os.Getwd when SessionConfig has empty WorkingDir", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		cfg := &SessionConfig{WorkingDir: ""}
+		sess, err := NewSession(nil, cfg, nil, nil, func(any) {}, "", "")
+		require.NoError(t, err)
+		assert.Equal(t, tmpDir, sess.WorkingDir)
+	})
+
+	t.Run("falls back to os.Getwd when SessionConfig is nil", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		sess, err := NewSession(nil, nil, nil, nil, func(any) {}, "", "")
+		require.NoError(t, err)
+		assert.Equal(t, tmpDir, sess.WorkingDir)
+	})
+
+	t.Run("project root from config takes precedence over os.Getwd", func(t *testing.T) {
+		// Even if we're in a different directory, the config's WorkingDir wins
+		processDir := t.TempDir()
+		projectDir := t.TempDir()
+		t.Chdir(processDir)
+
+		cfg := &SessionConfig{WorkingDir: projectDir}
+		sess, err := NewSession(nil, cfg, nil, nil, func(any) {}, "", "")
+		require.NoError(t, err)
+		assert.Equal(t, projectDir, sess.WorkingDir, "WorkingDir should use config, not os.Getwd()")
+	})
+}

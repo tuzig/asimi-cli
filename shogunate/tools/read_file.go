@@ -25,11 +25,13 @@ type readFileInputRaw struct {
 }
 
 // ReadFileTool is a tool for reading files
-type ReadFileTool struct{}
+type ReadFileTool struct {
+	ProjectRoot string
+}
 
 // NewReadFileTool creates a new ReadFileTool
-func NewReadFileTool() *ReadFileTool {
-	return &ReadFileTool{}
+func NewReadFileTool(projectRoot string) *ReadFileTool {
+	return &ReadFileTool{ProjectRoot: projectRoot}
 }
 
 func (t ReadFileTool) Name() string {
@@ -67,12 +69,14 @@ func (t ReadFileTool) Call(ctx context.Context, input string) (string, error) {
 	// Clean up the path to remove any surrounding quotes
 	params.Path = strings.Trim(params.Path, `"'`)
 
-	if err := ValidatePathWithinProject(params.Path); err != nil {
+	if err := ValidatePathWithinProject(params.Path, t.ProjectRoot); err != nil {
 		return "", err
 	}
 
+	resolvedPath := ResolvePath(params.Path, t.ProjectRoot)
+
 	// Read file content
-	content, err := os.ReadFile(params.Path)
+	content, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return "", err
 	}

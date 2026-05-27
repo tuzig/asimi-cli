@@ -1252,3 +1252,56 @@ func TestRestoreSession_SetsPersister(t *testing.T) {
 	// The restored session must have the persister attached.
 	assert.NotNil(t, sess.persister, "restored session must have persister wired")
 }
+
+func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
+	t.Run("uses ProjectRoot from repoInfo", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/custom/project/root",
+			Branch:      "feature-branch",
+		}
+		result := sessBuildEnvBlock(info)
+		assert.Contains(t, result, "/custom/project/root", "should contain project root from repoInfo")
+		assert.Contains(t, result, "feature-branch", "should contain branch from repoInfo")
+		assert.Contains(t, result, "Working copy path:", "should include working copy path label")
+	})
+
+	t.Run("empty ProjectRoot omits working copy path", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "",
+			Branch:      "main",
+		}
+		result := sessBuildEnvBlock(info)
+		assert.NotContains(t, result, "Working copy path:", "should not include working copy path when empty")
+		assert.Contains(t, result, "main", "should still contain branch")
+	})
+
+	t.Run("includes OS and Shell info", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/test/root",
+			Branch:      "main",
+		}
+		result := sessBuildEnvBlock(info)
+		assert.Contains(t, result, "**OS:**", "should include OS info")
+		assert.Contains(t, result, "**Shell:**", "should include Shell info")
+	})
+
+	t.Run("worktree info when IsWorktree is true", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/test/root",
+			Branch:      "feature",
+			IsWorktree:  true,
+		}
+		result := sessBuildEnvBlock(info)
+		assert.Contains(t, result, "worktree", "should mention worktree when IsWorktree is true")
+	})
+
+	t.Run("no worktree warning when not a worktree", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/test/root",
+			Branch:      "main",
+			IsWorktree:  false,
+		}
+		result := sessBuildEnvBlock(info)
+		assert.NotContains(t, result, "worktree", "should not mention worktree when not a worktree")
+	})
+}

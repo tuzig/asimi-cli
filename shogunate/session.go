@@ -140,6 +140,7 @@ type SessionConfig struct {
 	LLM        internalconfig.LLMConfig
 	AgentsFile string
 	Sandbox    internalconfig.SandboxConfig
+	WorkingDir string
 }
 
 // Session represents a chat session for a minister
@@ -220,7 +221,12 @@ func NewSession(
 	channelID string,
 ) (*Session, error) {
 	now := time.Now()
-	workingDir, _ := os.Getwd()
+	workingDir := ""
+	if cfg != nil && cfg.WorkingDir != "" {
+		workingDir = cfg.WorkingDir
+	} else {
+		workingDir, _ = os.Getwd()
+	}
 
 	session := &Session{
 		ID:           GenerateID("session", now.String()),

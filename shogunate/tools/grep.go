@@ -20,7 +20,9 @@ type GrepInput struct {
 }
 
 // GrepTool searches for patterns in files
-type GrepTool struct{}
+type GrepTool struct {
+	ProjectRoot string
+}
 
 func (t GrepTool) Name() string {
 	return "grep"
@@ -41,8 +43,11 @@ func (t GrepTool) Call(ctx context.Context, input string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
+	if t.ProjectRoot != "" && !filepath.IsAbs(params.Path) {
+		params.Path = filepath.Join(t.ProjectRoot, params.Path)
+	}
 
-	if err := ValidatePathWithinProject(params.Path); err != nil {
+	if err := ValidatePathWithinProject(params.Path, t.ProjectRoot); err != nil {
 		return "", err
 	}
 

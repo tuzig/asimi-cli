@@ -117,6 +117,88 @@ func GetRepoInfo() RepoInfo {
 	return repoInfo
 }
 
+// GetRepoInfoForRoot returns information about the git repository at the given root directory.
+// It is identical to GetRepoInfo but takes an explicit root instead of calling os.Getwd().
+func GetRepoInfoForRoot(root string) RepoInfo {
+	// Detect if we're in a worktree by checking if .git is a file vs directory
+	gitPath := filepath.Join(root, ".git")
+	info, err := os.Stat(gitPath)
+	isWorktree := err == nil && !info.IsDir()
+
+	// Find project root - for worktrees, find the main repo root
+	var projectRoot string
+	var worktreePath string
+
+	if isWorktree {
+		// Read .git file to find the main repository
+		mainRepoRoot, err := findMainRepoRoot(root)
+		if err == nil && mainRepoRoot != "" {
+			projectRoot = mainRepoRoot
+			// Calculate worktree path relative to main repo
+			relPath, err := filepath.Rel(projectRoot, root)
+			if err == nil && relPath != "." {
+				worktreePath = relPath
+			}
+		} else {
+			// Fallback to current directory if we can't find main repo
+			projectRoot = root
+		}
+	} else {
+		// Not a worktree, use given root
+		projectRoot = root
+	}
+
+	// Get current branch and status using go-git
+	branch := ""
+	status := ""
+	repo, err := gogit.PlainOpenWithOptions(root, &gogit.PlainOpenOptions{
+		DetectDotGit: true,
+	})
+	if err == nil {
+		ref, err := repo.Head()
+		if err == nil {
+			if ref.Name().IsBranch() {
+				branch = ref.Name().Short()
+			} else {
+				branch = ref.Hash().String()[:7]
+			}
+		} else if isWorktree {
+			// go-git doesn't fully support worktrees, try reading HEAD directly
+			branch = readBranchFromWorktreeAt(root)
+		}
+		// Get git status - only read once at startup
+		// Skip in tests to avoid slow git operations
+		if os.Getenv("ASIMI_SKIP_GIT_STATUS") == "" {
+			status = readShortStatus(repo)
+		}
+	} else if isWorktree {
+		// go-git failed, try reading branch directly from worktree
+		branch = readBranchFromWorktreeAt(root)
+	}
+
+	// Detect if branch is a main branch
+	isMain := isMainBranch(branch)
+
+	repoInfo := RepoInfo{
+		ProjectRoot:  projectRoot,
+		WorktreePath: worktreePath,
+		Branch:       branch,
+		IsWorktree:   isWorktree,
+		IsMain:       isMain,
+		Slug:         projectSlug(projectRoot),
+		status:       status,
+		repo:         repo,
+	}
+
+	// Calculate diff stats if we have a repo and not skipping git status
+	if repo != nil && os.Getenv("ASIMI_SKIP_GIT_STATUS") == "" {
+		// TODO: this should run in the background and update the status when done
+		repoInfo.RefreshDiff()
+	}
+
+	return repoInfo
+}
+
 // GetStatus returns a short git status string (e.g., "[!+]")
 // This is cached at the time RepoInfo is created and does not update dynamically
 func (r *RepoInfo) GetStatus() string {
@@ -248,8 +330,12 @@ func readBranchFromWorktree() string {
 	if err != nil {
 		return ""
 	}
+	return readBranchFromWorktreeAt(cwd)
+}
 
-	gitPath := filepath.Join(cwd, ".git")
+// readBranchFromWorktreeAt reads the branch name directly from a git worktree at dir
+func readBranchFromWorktreeAt(dir string) string {
+	gitPath := filepath.Join(dir, ".git")
 	info, err := os.Stat(gitPath)
 	if err != nil {
 		return ""

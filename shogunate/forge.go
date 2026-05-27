@@ -60,7 +60,7 @@ func (f *Forge) Tools() []Tool {
 		&CreateManifestTool{forge: f},
 	}
 	// Add file-based tools
-	for _, t := range tools.GetFileTools(f.config.LLM) {
+	for _, t := range tools.GetFileTools(f.config.LLM, f.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
 	}
 	// Add shell command tool if runner is available

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 
@@ -574,7 +575,7 @@ func TestRitualStreamMessages(t *testing.T) {
 	shogunate := newRitualTestShogunate(t, "hello\n", nil)
 
 	// Create ritual runner
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	// Collect messages from the stream
 	var messages []any
@@ -670,7 +671,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 	registry.Register(ritual)
 
 	shogunate := newRitualTestShogunate(t, "ok\n", nil)
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -725,7 +726,7 @@ func TestRitualStreamMessages_Failure(t *testing.T) {
 
 	// Mock shogunate where ministers return errors
 	shogunate := newRitualTestShogunate(t, "", fmt.Errorf("minister failed"))
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -801,7 +802,7 @@ func TestRitualGotoPassesErrorMessage(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -857,7 +858,7 @@ func TestRitualGotoPassesOutputAndError(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -913,7 +914,7 @@ func TestRitualGotoCreatesEphemeralSessions(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -963,7 +964,7 @@ func TestRitualStepPreservesOutputOnFailure(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "preserve-output-test", testEK(7), nil, nil)
 	if err != nil {
@@ -1035,7 +1036,7 @@ func TestBackgroundGiven(t *testing.T) {
 			{Output: "background-data\n", ExitCode: "0"}, // background given
 		},
 	}
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil, repo.RepoInfo{})
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -1390,7 +1391,7 @@ func TestRitualMinisterStepCompletes(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -1457,7 +1458,7 @@ func TestRitualTimeoutCancelsStep(t *testing.T) {
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	notify := func(msg any) {}
 
@@ -1537,7 +1538,7 @@ func TestRitualMinisterStepRoutesThroughTaskPattern(t *testing.T) {
 		GetMinister: shogunate.GetMinister,
 	})
 
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "minister-ling-test", testEK(edict.ID), nil, nil)
 	require.NoError(t, err)
@@ -2019,7 +2020,7 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 		GetMinister: shog.GetMinister,
 	})
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	// Run the ritual
 	exec, err := runner.Start(ctx, "test-pollution", testEK(1), nil, nil)
@@ -2094,7 +2095,7 @@ func TestRitualEphemeralSessionIsDiscarded(t *testing.T) {
 		GetMinister: shog.GetMinister,
 	})
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "test-discard", testEK(1), nil, nil)
 	if err != nil {
@@ -2179,7 +2180,7 @@ func TestRitualStepActResultIsAvailableInNextStepTemplate(t *testing.T) {
 		Base:        base,
 		GetMinister: shog.GetMinister,
 	})
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "step-cross-ref", testEK(1), nil, nil)
 	require.NoError(t, err)

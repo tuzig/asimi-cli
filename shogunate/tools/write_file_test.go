@@ -358,3 +358,77 @@ func TestWriteFileTool_Format(t *testing.T) {
 		}
 	})
 }
+
+func TestWriteFileTool_ExplicitProjectRootDiffersFromGetwd(t *testing.T) {
+	// Daemon-mode scenario: projectRoot != os.Getwd()
+	projectDir := t.TempDir()
+	processDir := t.TempDir()
+	t.Chdir(processDir)
+
+	// Create a subdirectory in the project
+	if err := os.MkdirAll(filepath.Join(projectDir, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := WriteFileTool{ProjectRoot: projectDir}
+
+	t.Run("write to file inside projectRoot with absolute path succeeds", func(t *testing.T) {
+		result, err := tool.Call(context.Background(), `{"path": "`+filepath.Join(projectDir, "src", "main.go")+`", "content": "package main"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "Successfully wrote") {
+			t.Errorf("expected success message, got %q", result)
+		}
+
+		content, err := os.ReadFile(filepath.Join(projectDir, "src", "main.go"))
+		if err != nil {
+			t.Fatalf("failed to read file: %v", err)
+		}
+		if string(content) != "package main" {
+			t.Errorf("expected 'package main', got %q", string(content))
+		}
+	})
+
+	t.Run("write to file inside projectRoot with relative path succeeds", func(t *testing.T) {
+		result, err := tool.Call(context.Background(), `{"path": "src/util.go", "content": "package util"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "Successfully wrote") {
+			t.Errorf("expected success message, got %q", result)
+		}
+
+		content, err := os.ReadFile(filepath.Join(projectDir, "src", "util.go"))
+		if err != nil {
+			t.Fatalf("failed to read file: %v", err)
+		}
+		if string(content) != "package util" {
+			t.Errorf("expected 'package util', got %q", string(content))
+		}
+	})
+
+	t.Run("write to path in cwd (outside projectRoot) is denied", func(t *testing.T) {
+		_, err := tool.Call(context.Background(), `{"path": "`+filepath.Join(processDir, "outside.txt")+`", "content": "bad"}`)
+		if err == nil {
+			t.Error("expected error for write to cwd outside projectRoot")
+		}
+	})
+
+	t.Run("path traversal beyond projectRoot is denied", func(t *testing.T) {
+		_, err := tool.Call(context.Background(), `{"path": "`+filepath.Join(projectDir, "..", "escape.txt")+`", "content": "bad"}`)
+		if err == nil {
+			t.Error("expected error for path traversal beyond projectRoot")
+		}
+	})
+
+	t.Run("write to new file inside projectRoot with relative path succeeds", func(t *testing.T) {
+		result, err := tool.Call(context.Background(), `{"path": "newdir/new.txt", "content": "new"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "Successfully wrote") {
+			t.Errorf("expected success message, got %q", result)
+		}
+	})
+}

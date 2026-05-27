@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -72,7 +73,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	// === PHASE 1: START AND ABORT ===
 	ctx1, cancel1 := context.WithCancel(context.Background())
@@ -171,7 +172,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil)
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	// === PHASE 1: Start and abort during judge step ===
 	ctx1, cancel1 := context.WithCancel(context.Background())

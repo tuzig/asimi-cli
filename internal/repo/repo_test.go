@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"os"
 	"testing"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -180,6 +181,32 @@ func TestParseGitNumstat(t *testing.T) {
 		})
 	}
 }
+func TestGetRepoInfoForRoot(t *testing.T) {
+	// Use the current project directory as a real git repo
+	root, err := os.Getwd()
+	require.NoError(t, err)
+
+	t.Setenv("ASIMI_SKIP_GIT_STATUS", "1")
+
+	info := GetRepoInfoForRoot(root)
+	require.NotEmpty(t, info.ProjectRoot, "ProjectRoot should be set")
+	require.NotEmpty(t, info.Branch, "Branch should be detected")
+	require.False(t, info.IsWorktree, "project root should not be a worktree")
+	require.Contains(t, []string{"main", "master"}, info.Branch, "should detect a main branch")
+	require.Equal(t, root, info.ProjectRoot, "ProjectRoot should match the provided root")
+}
+
+func TestGetRepoInfoForRoot_NonExistentDir(t *testing.T) {
+	t.Setenv("ASIMI_SKIP_GIT_STATUS", "1")
+
+	info := GetRepoInfoForRoot("/nonexistent/path/that/does/not/exist")
+	// When .git doesn't exist, isWorktree=false, so projectRoot=root (not a git repo)
+	require.Equal(t, "/nonexistent/path/that/does/not/exist", info.ProjectRoot)
+	require.Empty(t, info.Branch, "Branch should be empty for nonexistent dir")
+	require.False(t, info.IsWorktree)
+	require.Empty(t, info.Slug, "Slug should be empty when no git remote")
+}
+
 func TestSanitizeSegment(t *testing.T) {
 	tests := []struct {
 		name     string

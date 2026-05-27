@@ -61,7 +61,7 @@ func (s *Strategist) Tools() []Tool {
 		tools.RequestZhengmingTool{MinisterID: "chancellor", Requester: s, WaitForAnswer: s.WaitForZhengming, Username: s.Username(), Project: s.Project()},
 	}
 	// Add read-only file tools
-	for _, t := range tools.GetROTools(s.config.LLM) {
+	for _, t := range tools.GetROTools(s.config.LLM, s.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
 	}
 	return toolList

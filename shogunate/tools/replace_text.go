@@ -19,7 +19,9 @@ type ReplaceTextInput struct {
 
 // ReplaceTextTool is a tool for replacing text in a file
 // TODO: add a glob pattern fieldto limit the tools reach. i,e. "*.md"
-type ReplaceTextTool struct{}
+type ReplaceTextTool struct {
+	ProjectRoot string
+}
 
 func (t ReplaceTextTool) Name() string {
 	return "replace_text"
@@ -37,11 +39,13 @@ func (t ReplaceTextTool) Call(ctx context.Context, input string) (string, error)
 	}
 
 	// Validate that the path is within the project root
-	if err := ValidatePathWithinProject(params.Path); err != nil {
+	if err := ValidatePathWithinProject(params.Path, t.ProjectRoot); err != nil {
 		return "", err
 	}
 
-	content, err := os.ReadFile(params.Path)
+	resolvedPath := ResolvePath(params.Path, t.ProjectRoot)
+
+	content, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return "", err
 	}
@@ -62,7 +66,7 @@ func (t ReplaceTextTool) Call(ctx context.Context, input string) (string, error)
 		return fmt.Sprintf("No occurrences of '%s' found in %s", params.OldText, params.Path), nil
 	}
 
-	err = os.WriteFile(params.Path, []byte(newContent), 0644)
+	err = os.WriteFile(resolvedPath, []byte(newContent), 0644)
 	if err != nil {
 		return "", err
 	}

@@ -18,20 +18,24 @@ type QueryCourtTool struct {
 	Project  string
 }
 
+// Name returns the tool identifier.
 func (t QueryCourtTool) Name() string { return "query_court" }
 
+// Description returns a human-readable explanation of what the tool does.
 func (t QueryCourtTool) Description() string {
 	return `Query the current state of the court. Returns active edicts, their seal status,
 recent manifests, verdicts, and precedents. Use this for a broad overview
 of what's happening in the Shogunate.`
 }
 
+// Call executes the court query and returns a JSON snapshot.
 func (t QueryCourtTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
+		Scope   string `json:"scope"`   // "active", "all", or specific edict_id
 		EdictID uint   `json:"edict_id"`
-		Scope   string `json:"scope"` // "active", "all", or specific edict_id
 	}
-	json.Unmarshal([]byte(input), &params)
+	// Input may be empty for a default scope query; ignore unmarshal errors.
+	_ = json.Unmarshal([]byte(input), &params) //nolint:errcheck // intentional: empty input is valid
 
 	result := make(map[string]interface{})
 
@@ -78,6 +82,7 @@ func (t QueryCourtTool) Call(ctx context.Context, input string) (string, error) 
 	result["seals"] = sealSummaries
 
 	var zhengming []storage.Zhengming
+	// TODO: Limit this by username & project
 	t.DB.Where("status = ?", storage.ZhengmingPending).
 		Order("created_at DESC").Limit(10).Find(&zhengming)
 	if len(zhengming) > 0 {
@@ -94,10 +99,11 @@ func (t QueryCourtTool) Call(ctx context.Context, input string) (string, error) 
 		result["pending_zhengming"] = zhSummaries
 	}
 
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	resultJSON, _ := json.MarshalIndent(result, "", "  ") //nolint:errcheck // result is always marshallable
 	return string(resultJSON), nil
 }
 
+// Format renders the query result for display in the TUI.
 func (t QueryCourtTool) Format(input, result string, err error) string {
 	msg := utils.NewMsgBlockBuilder("QueryCourt")
 	msg.WriteLn()
@@ -105,7 +111,8 @@ func (t QueryCourtTool) Format(input, result string, err error) string {
 		msg.Writef("Error: %v", err)
 	} else {
 		var res map[string]interface{}
-		json.Unmarshal([]byte(result), &res)
+		// Best-effort parse; format degrades gracefully on failure.
+		_ = json.Unmarshal([]byte(result), &res) //nolint:errcheck // best-effort for display
 		if edicts, ok := res["edicts"].([]interface{}); ok {
 			msg.Writef("Found %d edicts", len(edicts))
 		}
@@ -113,6 +120,7 @@ func (t QueryCourtTool) Format(input, result string, err error) string {
 	return msg.String() + "\n"
 }
 
+// ParameterSchema returns the JSON schema for the tool's input parameters.
 func (t QueryCourtTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type": "object",

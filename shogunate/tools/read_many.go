@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/afittestide/asimi/internal/utils"
@@ -17,7 +18,9 @@ type ReadManyFilesInput struct {
 }
 
 // ReadManyFilesTool is a tool for reading multiple files using glob patterns.
-type ReadManyFilesTool struct{}
+type ReadManyFilesTool struct {
+	ProjectRoot string
+}
 
 func (t ReadManyFilesTool) Name() string {
 	return "read_many_files"
@@ -38,6 +41,10 @@ func (t ReadManyFilesTool) Call(ctx context.Context, input string) (string, erro
 	var allMatches []string
 
 	for _, pattern := range params.Paths {
+		// If ProjectRoot is set and pattern is not absolute, join with ProjectRoot
+		if t.ProjectRoot != "" && !filepath.IsAbs(pattern) {
+			pattern = filepath.Join(t.ProjectRoot, pattern)
+		}
 		matches, err := filepathx.Glob(pattern)
 		if err != nil {
 			// Silently ignore glob errors for now
@@ -57,7 +64,7 @@ func (t ReadManyFilesTool) Call(ctx context.Context, input string) (string, erro
 	}
 
 	for _, path := range uniqueMatches {
-		if err := ValidatePathWithinProject(path); err != nil {
+		if err := ValidatePathWithinProject(path, t.ProjectRoot); err != nil {
 			// Skip files outside the project directory
 			continue
 		}

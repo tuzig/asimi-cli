@@ -101,3 +101,39 @@ func TestGrepToolHiddenDirectory(t *testing.T) {
 		t.Error("Expected to find content in .hidden/secret.txt with includeHidden=true")
 	}
 }
+
+func TestGrepTool_ExplicitProjectRootDiffersFromGetwd(t *testing.T) {
+	// Daemon-mode scenario: projectRoot != os.Getwd()
+	projectDir := t.TempDir()
+	processDir := t.TempDir()
+	// Deliberately do NOT chdir into projectDir — CWD stays the test's own dir,
+	// so we verify that grep with a relative path resolves against ProjectRoot.
+
+	// Create files inside the project
+	os.WriteFile(filepath.Join(projectDir, "findme.txt"), []byte("hello world\nfoo bar"), 0644)
+
+	// Create file in the process directory (outside project)
+	os.WriteFile(filepath.Join(processDir, "unrelated.txt"), []byte("hello elsewhere"), 0644)
+
+	tool := GrepTool{ProjectRoot: projectDir}
+
+	t.Run("grep within projectRoot finds matches", func(t *testing.T) {
+		result, err := tool.Call(context.Background(), `{"pattern": "hello", "path": "."}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == "No matches found" {
+			t.Fatal("expected matches in projectRoot")
+		}
+		if !strings.Contains(result, "findme.txt") {
+			t.Error("expected findme.txt in results")
+		}
+	})
+
+	t.Run("grep with path outside projectRoot is denied", func(t *testing.T) {
+		_, err := tool.Call(context.Background(), `{"pattern": "hello", "path": "`+processDir+`"}`)
+		if err == nil {
+			t.Error("expected error for grep with path outside projectRoot")
+		}
+	})
+}
