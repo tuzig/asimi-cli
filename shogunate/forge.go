@@ -65,7 +65,7 @@ func (f *Forge) Tools() []Tool {
 	}
 	// Add shell command tool if runner is available
 	if f.runner != nil {
-		toolList = append(toolList, tools.NewRunShellCommand(nil, f.runner))
+		toolList = append(toolList, tools.NewRunShellCommand(f.CheckHostCommand, f.runner))
 	}
 	return toolList
 }

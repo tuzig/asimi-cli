@@ -1253,6 +1253,62 @@ func TestRestoreSession_SetsPersister(t *testing.T) {
 	assert.NotNil(t, sess.persister, "restored session must have persister wired")
 }
 
+func TestMinisterBase_CheckHostCommand(t *testing.T) {
+	t.Run("nil_config", func(t *testing.T) {
+		m := &MinisterBase{config: nil}
+		runOnHost, needsApproval := m.CheckHostCommand("go test ./...")
+		assert.False(t, runOnHost)
+		assert.False(t, needsApproval)
+	})
+
+	t.Run("nil_run_on_host", func(t *testing.T) {
+		m := &MinisterBase{config: &SessionConfig{Sandbox: config.SandboxConfig{RunOnHost: nil}}}
+		runOnHost, needsApproval := m.CheckHostCommand("go test ./...")
+		assert.False(t, runOnHost)
+		assert.False(t, needsApproval)
+	})
+
+	t.Run("safe_run_on_host_match", func(t *testing.T) {
+		m := &MinisterBase{config: &SessionConfig{Sandbox: config.SandboxConfig{
+			RunOnHost:     []string{"^go test"},
+			SafeRunOnHost: []string{"^gh "},
+		}}}
+		runOnHost, needsApproval := m.CheckHostCommand("gh issue list")
+		assert.True(t, runOnHost)
+		assert.False(t, needsApproval, "safe patterns should not require approval")
+	})
+
+	t.Run("run_on_host_match", func(t *testing.T) {
+		m := &MinisterBase{config: &SessionConfig{Sandbox: config.SandboxConfig{
+			RunOnHost:     []string{"^go test"},
+			SafeRunOnHost: []string{"^gh "},
+		}}}
+		runOnHost, needsApproval := m.CheckHostCommand("go test ./...")
+		assert.True(t, runOnHost)
+		assert.True(t, needsApproval, "non-safe patterns should require approval")
+	})
+
+	t.Run("no_match", func(t *testing.T) {
+		m := &MinisterBase{config: &SessionConfig{Sandbox: config.SandboxConfig{
+			RunOnHost:     []string{"^go test"},
+			SafeRunOnHost: []string{"^gh "},
+		}}}
+		runOnHost, needsApproval := m.CheckHostCommand("docker build .")
+		assert.False(t, runOnHost)
+		assert.False(t, needsApproval)
+	})
+
+	t.Run("safe_pattern_takes_priority", func(t *testing.T) {
+		m := &MinisterBase{config: &SessionConfig{Sandbox: config.SandboxConfig{
+			RunOnHost:     []string{"^go "},
+			SafeRunOnHost: []string{"^go version"},
+		}}}
+		runOnHost, needsApproval := m.CheckHostCommand("go version")
+		assert.True(t, runOnHost)
+		assert.False(t, needsApproval, "safe pattern should take priority over run-on-host pattern")
+	})
+}
+
 func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 	t.Run("uses ProjectRoot from repoInfo", func(t *testing.T) {
 		info := repo.RepoInfo{

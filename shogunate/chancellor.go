@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 	"time"
 
@@ -503,35 +502,8 @@ func (c *Chancellor) Tools() []Tool {
 	if c.shogunate != nil && c.shogunate.GetRitualRunner() != nil {
 		toolList = append(toolList, InvokeRitualTool{chancellor: c})
 	}
-	toolList = append(toolList, tools.NewRunShellCommand(c.checkHostCommand, c.runner))
+	toolList = append(toolList, tools.NewRunShellCommand(c.CheckHostCommand, c.runner))
 	return toolList
-}
-
-// checkHostCommand matches a command against config.RunOnHost and config.SafeRunOnHost patterns.
-// Returns (runOnHost, needsApproval):
-//   - (true, true) if command should run on host and requires approval
-//   - (true, false) if command should run on host with no approvel (e.g. `gh issue list`)
-//   - (false, false) If command should run in the sandbox
-func (c *Chancellor) checkHostCommand(cmd string) (runOnHost, needsApproval bool) {
-	if c.config == nil || c.config.Sandbox.RunOnHost == nil {
-		return false, false
-	}
-
-	// Check SafeRunOnHost first (higher priority - no approval needed)
-	for _, pattern := range c.config.Sandbox.SafeRunOnHost {
-		if matched, _ := regexp.MatchString(pattern, cmd); matched {
-			return true, false
-		}
-	}
-
-	// Check RunOnHost patterns (requires approval)
-	for _, pattern := range c.config.Sandbox.RunOnHost {
-		if matched, _ := regexp.MatchString(pattern, cmd); matched {
-			return true, true
-		}
-	}
-
-	return false, false
 }
 
 // getLastStepOutput returns the full output of the last step that produced a message.

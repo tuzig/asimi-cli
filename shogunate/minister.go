@@ -18,6 +18,8 @@ import (
 	"text/template"
 	"time"
 
+	"regexp"
+
 	"github.com/afittestide/asimi/internal"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
@@ -209,7 +211,7 @@ type StreamDoneMsg struct {
 type MinisterBase struct {
 	db         *gorm.DB
 	ministerID string
-	client LLMProvider // LLM client for chat completions
+	client     LLMProvider // LLM client for chat completions
 	config     *SessionConfig
 	repoInfo   repo.RepoInfo
 	runner     runners.Runner
@@ -374,6 +376,33 @@ func (m *MinisterBase) Scratchpad() string {
 // SetRunner updates the shell runner
 func (m *MinisterBase) SetRunner(r runners.Runner) {
 	m.runner = r
+}
+
+// CheckHostCommand matches a command against config.RunOnHost and config.SafeRunOnHost patterns.
+// Returns (runOnHost, needsApproval):
+//   - (true, true) if command should run on host and requires approval
+//   - (true, false) if command should run on host without approval (e.g. `gh issue list`)
+//   - (false, false) if command should run in the sandbox
+func (m *MinisterBase) CheckHostCommand(cmd string) (runOnHost, needsApproval bool) {
+	if m.config == nil || m.config.Sandbox.RunOnHost == nil {
+		return false, false
+	}
+
+	// Check SafeRunOnHost first (higher priority - no approval needed)
+	for _, pattern := range m.config.Sandbox.SafeRunOnHost {
+		if matched, _ := regexp.MatchString(pattern, cmd); matched {
+			return true, false
+		}
+	}
+
+	// Check RunOnHost patterns (requires approval)
+	for _, pattern := range m.config.Sandbox.RunOnHost {
+		if matched, _ := regexp.MatchString(pattern, cmd); matched {
+			return true, true
+		}
+	}
+
+	return false, false
 }
 
 // RepoInfo returns the repository information

@@ -70,7 +70,7 @@ func (j *Judge) Tools() []Tool {
 	}
 	// Add shell command tool if runner is available
 	if j.runner != nil {
-		toolList = append(toolList, tools.NewRunShellCommand(nil, j.runner))
+		toolList = append(toolList, tools.NewRunShellCommand(j.CheckHostCommand, j.runner))
 	}
 	return toolList
 }
