@@ -1367,21 +1367,29 @@ func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string
 	data := map[string]interface{}{
 		"Act": act,
 	}
-	// Previous step results (use != to include steps after CurrentStep that ran before a goto)
-	for i, ss := range exec.stepStates {
-		if ss.Message != "" && i != exec.CurrentStep {
-			if data["step_results"] == nil {
-				data["step_results"] = map[string]string{}
-			}
-			data["step_results"].(map[string]string)[ss.Name] = ss.Message
-		}
-	}
-	// If the current step is being retried, surface the prior failure so the LLM
-	// can correct its approach instead of repeating the same mistake.
+	// Check if this is a retry/goto - if so, don't include step_results since they're
+	// already in the session history from the previous attempt.
+	isRetry := false
 	if exec.CurrentStep < len(exec.stepStates) {
 		curState := exec.stepStates[exec.CurrentStep]
-		if curState.RetryCount > 0 && curState.Message != "" {
-			data["previous_failure"] = curState.Message
+		if curState.RetryCount > 0 {
+			isRetry = true
+			// Surface the prior failure so the LLM can correct its approach
+			if curState.Message != "" {
+				data["previous_failure"] = curState.Message
+			}
+		}
+	}
+	// Previous step results (use != to include steps after CurrentStep that ran before a goto)
+	// Skip on retry/goto to avoid duplicating context already in session history
+	if !isRetry {
+		for i, ss := range exec.stepStates {
+			if ss.Message != "" && i != exec.CurrentStep {
+				if data["step_results"] == nil {
+					data["step_results"] = map[string]string{}
+				}
+				data["step_results"].(map[string]string)[ss.Name] = ss.Message
+			}
 		}
 	}
 	var buf bytes.Buffer

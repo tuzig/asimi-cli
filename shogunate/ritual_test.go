@@ -1756,6 +1756,68 @@ func TestExpandTemplate_GotoIncludesLaterSteps(t *testing.T) {
 	}
 }
 
+func TestBuildWorkPrompt_RetryOmitsStepResults(t *testing.T) {
+	// Regression test: on retry/goto, step_results should be omitted
+	// to avoid duplicating context that's already in the session history.
+	runner := &RitualRunner{logger: slog.Default()}
+
+	// Simulate a retry: RetryCount > 0 means this is a retry
+	exec := &RitualExecution{
+		CurrentStep: 1,
+		stepStates: []RitualStepState{
+			{Name: "plan", Message: "plan output", RetryCount: 0},
+			{Name: "implement", Message: "failed attempt 1", RetryCount: 1}, // being retried
+		},
+	}
+
+	result := runner.buildWorkPrompt(exec, "try again")
+
+	// Should contain the task and previous failure
+	if !strings.Contains(result, "# Task") {
+		t.Error("should contain Task section")
+	}
+	if !strings.Contains(result, "try again") {
+		t.Error("should contain the act")
+	}
+	if !strings.Contains(result, "Previous Attempt Failed") {
+		t.Error("should contain previous failure section")
+	}
+	if !strings.Contains(result, "failed attempt 1") {
+		t.Error("should contain the failure message")
+	}
+
+	// Should NOT contain step_results on retry (they're in session history)
+	if strings.Contains(result, "plan output") {
+		t.Error("should NOT contain step results on retry - they're in session history")
+	}
+	if strings.Contains(result, "# Reference Data") {
+		t.Error("should NOT include Reference Data section on retry")
+	}
+}
+
+func TestBuildWorkPrompt_FirstAttemptIncludesStepResults(t *testing.T) {
+	// Verify that on first attempt (no retry), step_results ARE included
+	runner := &RitualRunner{logger: slog.Default()}
+
+	exec := &RitualExecution{
+		CurrentStep: 1,
+		stepStates: []RitualStepState{
+			{Name: "plan", Message: "plan output", RetryCount: 0},
+			{Name: "implement", Message: "", RetryCount: 0}, // first attempt
+		},
+	}
+
+	result := runner.buildWorkPrompt(exec, "implement it")
+
+	// Should contain step_results on first attempt
+	if !strings.Contains(result, "plan output") {
+		t.Error("first attempt should contain step results")
+	}
+	if !strings.Contains(result, "# Reference Data") {
+		t.Error("first attempt should include Reference Data section")
+	}
+}
+
 func TestLintFixRitual(t *testing.T) {
 	rituals, err := LoadEmbeddedRituals()
 	if err != nil {
