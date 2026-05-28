@@ -106,7 +106,8 @@ func newTestRitualGuard(t *testing.T, db *gorm.DB, getMinister func(id string) M
 
 // --- Recovery detection tests (RitualRunner.Start) ---
 
-// TestRitualRecoveryDetection tests that aborted executions are detected for recovery
+// TestRitualRecoveryDetection tests that aborted executions are detected
+// but Start() starts fresh (zhengming now lives in promptForAbortedRituals).
 func TestRitualRecoveryDetection(t *testing.T) {
 	db := setupRitualTestDB(t)
 
@@ -196,31 +197,26 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		repo.RepoInfo{},
 	)
 
-	// Start ritual - should detect aborted execution
+	// Start ritual - should start fresh for aborted state
 	ctx := context.Background()
 	exec, err := runner.Start(ctx, "test-recovery", edictKey, map[string]string{}, nil)
 	if err != nil {
 		t.Fatalf("failed to start ritual: %v", err)
 	}
 
-	// Verify recovery mode is enabled (even without zhengming, recovery is prepared)
-	if !exec.RecoveryMode {
-		t.Error("expected RecoveryMode to be true")
+	// Verify NOT in recovery mode (aborted state no longer auto-recovers in Start)
+	if exec.RecoveryMode {
+		t.Error("expected RecoveryMode to be false for aborted state in Start()")
 	}
 
-	// Verify it's resuming from step 1 (first incomplete step)
-	if exec.CurrentStep != 1 {
-		t.Errorf("expected CurrentStep to be 1, got %d", exec.CurrentStep)
+	// Verify it starts from step 0 (fresh start)
+	if exec.CurrentStep != 0 {
+		t.Errorf("expected CurrentStep to be 0, got %d", exec.CurrentStep)
 	}
 
-	// Verify previous execution ID is tracked
-	if exec.PreviousExecutionID != abortedExecID {
-		t.Errorf("expected PreviousExecutionID to be %q, got %q", abortedExecID, exec.PreviousExecutionID)
-	}
-
-	// Verify step1_result is preserved
-	if exec.Data["step1_result"] != "completed" {
-		t.Errorf("expected step1_result to be preserved, got %v", exec.Data["step1_result"])
+	// Verify no previous execution ID
+	if exec.PreviousExecutionID != "" {
+		t.Errorf("expected PreviousExecutionID to be empty, got %q", exec.PreviousExecutionID)
 	}
 }
 
@@ -397,7 +393,8 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 	}
 }
 
-// TestRitualRecoveryWithRetry tests that steps with retries are considered incomplete
+// TestRitualRecoveryWithRetry tests that Start() starts fresh for aborted state
+// even when steps have retries (zhengming now lives in promptForAbortedRituals).
 func TestRitualRecoveryWithRetry(t *testing.T) {
 	db := setupRitualTestDB(t)
 
@@ -484,21 +481,21 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 		repo.RepoInfo{},
 	)
 
-	// Start ritual - should recover from step 2 (has retries)
+	// Start ritual - should start fresh (aborted state no longer auto-recovers in Start)
 	ctx := context.Background()
 	exec, err := runner.Start(ctx, "test-retry", edictKey, map[string]string{}, nil)
 	if err != nil {
 		t.Fatalf("failed to start ritual: %v", err)
 	}
 
-	// Verify recovery mode is enabled
-	if !exec.RecoveryMode {
-		t.Error("expected RecoveryMode to be true")
+	// Verify NOT in recovery mode
+	if exec.RecoveryMode {
+		t.Error("expected RecoveryMode to be false for aborted state in Start()")
 	}
 
-	// Verify it's resuming from step 2 (step with retries)
-	if exec.CurrentStep != 1 {
-		t.Errorf("expected CurrentStep to be 1 (step with retries), got %d", exec.CurrentStep)
+	// Verify it starts from step 0
+	if exec.CurrentStep != 0 {
+		t.Errorf("expected CurrentStep to be 0 (fresh start), got %d", exec.CurrentStep)
 	}
 }
 
@@ -588,16 +585,16 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 		t.Fatalf("failed to start ritual: %v", err)
 	}
 
-	// Verify recovery log messages
-	foundRecoveryLog := false
+	// Verify log message about finding previous execution
+	foundPreviousLog := false
 	for _, msg := range logMessages {
-		if strings.Contains(msg, "recovery") && strings.Contains(msg, "aborted") {
-			foundRecoveryLog = true
+		if strings.Contains(msg, "found previous ritual execution") {
+			foundPreviousLog = true
 			break
 		}
 	}
-	if !foundRecoveryLog {
-		t.Error("expected log message about recovery from aborted execution")
+	if !foundPreviousLog {
+		t.Error("expected log message about finding previous ritual execution")
 	}
 }
 
@@ -913,69 +910,57 @@ func TestSkipZhengmingPrompt_RecoveringState(t *testing.T) {
 	}
 }
 
-// TestSkipZhengmingPrompt_AbortedStateTriggersZhengming verifies that when
-// a previous execution has state "aborted" (not "recovering"), the ritual
-// runner DOES request zhengming confirmation.
-func TestSkipZhengmingPrompt_AbortedStateTriggersZhengming(t *testing.T) {
+// TestRitualStateDismissed_ConstantValue verifies that RitualStateDismissed
+// has the expected string value.
+func TestRitualStateDismissed_ConstantValue(t *testing.T) {
+	if RitualStateDismissed != "dismissed" {
+		t.Errorf("expected RitualStateDismissed to be %q, got %q", "dismissed", RitualStateDismissed)
+	}
+}
+
+// TestRitualStart_DismissedStateReturnsError verifies that Start() returns
+// an error when the previous execution has state "dismissed".
+func TestRitualStart_DismissedStateReturnsError(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
 		t.Fatalf("failed to migrate edict table: %v", err)
 	}
 
-	edict := storage.Edict{Intent: "Test aborted triggers zhengming", Username: "testuser", Project: "testproject"}
+	edict := storage.Edict{Intent: "Test dismissed", Username: "testuser", Project: "testproject"}
 	if err := db.Create(&edict).Error; err != nil {
 		t.Fatalf("failed to create edict: %v", err)
 	}
 	edictKey := edict.Key()
 
 	ritual := &RitualDef{
-		Name:        "test-aborted-zhengming",
-		Description: "Test aborted zhengming ritual",
+		Name:        "test-dismissed-start",
+		Description: "Test dismissed in Start",
 		Steps: []RitualStep{
 			{Name: "step1", Minister: "forge", Act: "Do step 1"},
 			{Name: "step2", Minister: "judge", Act: "Do step 2"},
 		},
 	}
 
-	abortedExecID := "ritual-aborted-zhengming-123"
+	dismissedExecID := "ritual-dismissed-123"
 	err := db.Create(&RitualExecution{
-		ID: abortedExecID, RitualName: "test-aborted-zhengming", EdictID: edict.ID,
+		ID: dismissedExecID, RitualName: "test-dismissed-start", EdictID: edict.ID,
 		Username: "testuser", Project: "testproject", CurrentStep: 1,
-		State: RitualStateAborted,
-		Data:  storage.JSON{"inputs": map[string]interface{}{"edict_id": edict.ID}, "step1_result": "completed"},
+		State: RitualStateDismissed,
+		Data:  storage.JSON{"inputs": map[string]interface{}{"edict_id": edict.ID}},
 	}).Error
 	if err != nil {
-		t.Fatalf("failed to create aborted execution: %v", err)
+		t.Fatalf("failed to create dismissed execution: %v", err)
 	}
-
-	db.Create(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step1", Message: "Step 1 completed", RetryCount: 0})
-	db.Create(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step2", Message: "", RetryCount: 0})
 
 	registry := NewRitualRegistry()
 	if err := registry.Register(ritual); err != nil {
 		t.Fatalf("failed to register ritual: %v", err)
 	}
 
-	zhengmingCalled := false
-	chancellor := newMockChancellor(
-		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (string, error) {
-			zhengmingCalled = true
-			return "req-aborted", nil
-		},
-		func(ctx context.Context, requestID string) (string, error) {
-			return "Recover from step 1", nil
-		},
-	)
-
 	runner := NewRitualRunner(
 		registry,
-		func(id string) Minister {
-			if id == "chancellor" {
-				return chancellor
-			}
-			return nil
-		},
+		nil,
 		nil,
 		db,
 		nil,
@@ -984,21 +969,12 @@ func TestSkipZhengmingPrompt_AbortedStateTriggersZhengming(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	_, err = runner.Start(ctx, "test-aborted-zhengming", edictKey, map[string]string{}, nil)
-	if err != nil {
-		t.Fatalf("failed to start ritual: %v", err)
+	_, err = runner.Start(ctx, "test-dismissed-start", edictKey, map[string]string{}, nil)
+	if err == nil {
+		t.Fatal("expected error for dismissed ritual, got nil")
 	}
-
-	if !zhengmingCalled {
-		t.Error("expected RequestZhengming to be called when previous state is 'aborted'")
-	}
-}
-
-// TestRitualStateRecovering_ConstantValue verifies that RitualStateRecovering
-// has the expected string value.
-func TestRitualStateRecovering_ConstantValue(t *testing.T) {
-	if RitualStateRecovering != "recovering" {
-		t.Errorf("expected RitualStateRecovering to be %q, got %q", "recovering", RitualStateRecovering)
+	if err.Error() != "ritual dismissed by user" {
+		t.Errorf("expected error 'ritual dismissed by user', got %q", err.Error())
 	}
 }
 
@@ -1270,7 +1246,7 @@ func TestPromptForAbortedRituals_MarkAsCompletedAnswer(t *testing.T) {
 }
 
 // TestPromptForAbortedRituals_PassAnswer verifies that answering "Pass"
-// leaves the ritual in its current aborted state.
+// sets the ritual state to dismissed.
 func TestPromptForAbortedRituals_PassAnswer(t *testing.T) {
 	db := setupRecoveryTestDB(t)
 
@@ -1316,8 +1292,8 @@ func TestPromptForAbortedRituals_PassAnswer(t *testing.T) {
 	if err := db.First(&exec, "id = ?", abortedExecID).Error; err != nil {
 		t.Fatalf("failed to find ritual: %v", err)
 	}
-	if exec.State != RitualStateAborted {
-		t.Errorf("expected state %s, got %s", RitualStateAborted, exec.State)
+	if exec.State != RitualStateDismissed {
+		t.Errorf("expected state %s, got %s", RitualStateDismissed, exec.State)
 	}
 }
 
@@ -2043,4 +2019,60 @@ type testWriter struct {
 func (w *testWriter) Write(p []byte) (n int, err error) {
 	*w.messages = append(*w.messages, string(p))
 	return len(p), nil
+}
+
+// TestPromptForAbortedRituals_DismissedStateSkipped verifies that
+// rituals in dismissed state are not re-prompted in the per-ritual loop.
+func TestPromptForAbortedRituals_DismissedStateSkipped(t *testing.T) {
+	db := setupRecoveryTestDB(t)
+
+	edict := storage.Edict{Intent: "Test dismissed skip", Username: "testuser", Project: "testproject"}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Create a dismissed ritual
+	dismissedExec := &RitualExecution{
+		ID: "dismissed-skip", RitualName: "test-ritual", EdictID: edict.ID,
+		Username: "testuser", Project: "testproject", State: RitualStateDismissed, CurrentStep: 1,
+	}
+	if err := db.Save(dismissedExec).Error; err != nil {
+		t.Fatalf("failed to create dismissed ritual: %v", err)
+	}
+
+	zhengmingCalled := false
+	chancellor := newMockChancellor(
+		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (string, error) {
+			zhengmingCalled = true
+			return "req-dismissed-skip", nil
+		},
+		func(ctx context.Context, requestID string) (string, error) {
+			return "Pass", nil
+		},
+	)
+
+	rg := newTestRitualGuard(t, db, func(id string) Minister {
+		if id == "chancellor" {
+			return chancellor
+		}
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rg.promptForAbortedRituals(ctx)
+
+	if zhengmingCalled {
+		t.Error("expected RequestZhengming NOT to be called for dismissed ritual")
+	}
+
+	// Verify the state remains dismissed
+	var exec RitualExecution
+	if err := db.First(&exec, "id = ?", "dismissed-skip").Error; err != nil {
+		t.Fatalf("failed to find ritual: %v", err)
+	}
+	if exec.State != RitualStateDismissed {
+		t.Errorf("expected state %s, got %s", RitualStateDismissed, exec.State)
+	}
 }

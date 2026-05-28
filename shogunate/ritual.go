@@ -81,6 +81,7 @@ const (
 	RitualStateFailed     RitualState = "failed"
 	RitualStateAborted    RitualState = "aborted"
 	RitualStateRecovering RitualState = "recovering" // user approved recovery, skip zhengming prompt
+	RitualStateDismissed  RitualState = "dismissed"  // user chose "Pass" at recovery prompt
 )
 
 // OnFailureAction defines what happens when a step fails

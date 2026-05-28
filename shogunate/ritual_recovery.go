@@ -43,120 +43,66 @@ type recoveryResult struct {
 // recoverFromPreviousExec checks for an aborted/paused ritual execution for the
 // given edict, confirms recovery via zhengming if needed, and applies recovery
 // state to the provided exec. Returns a recoveryResult when recovery was
-// applied, or an error if the user passed or zhengming failed.
+// applied, or an error if the user dismissed or zhengming failed.
 func (r *RitualRunner) recoverFromPreviousExec(ctx context.Context, ritualName string, key storage.EdictKey, def *RitualDef, exec *RitualExecution) (recoveryResult, error) {
 	// Look up previous aborted/paused execution for this ritual
 	var previousExec *RitualExecution
-	var recoveryData storage.JSON
-	var recoveryFirstIncompleteStep = -1
-	var skipZhengmingPrompt bool
-	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND ritual_name = ? AND state IN (?, ?, ?, ?)", key.ID, key.Username, key.Project, ritualName, RitualStateAborted, RitualStateStopped, RitualStateFailed, RitualStateRecovering).
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND ritual_name = ? AND state IN (?, ?, ?, ?, ?)", key.ID, key.Username, key.Project, ritualName, RitualStateAborted, RitualStateStopped, RitualStateFailed, RitualStateRecovering, RitualStateDismissed).
 		Order("updated_at DESC").
-		First(&previousExec).Error; err == nil {
-		// Found aborted execution - attempt recovery
-		r.logger.Info("found aborted ritual execution for recovery",
+		First(&previousExec).Error; err != nil {
+		// No previous execution found — start fresh
+		return recoveryResult{}, nil
+	}
+
+	// Found previous execution — handle based on state
+	r.logger.Info("found previous ritual execution",
+		"ritual", ritualName,
+		"edict_id", key.ID,
+		"previous_execution_id", previousExec.ID,
+		"state", previousExec.State)
+
+	// If dismissed, user explicitly chose to skip — abort this invocation
+	if previousExec.State == RitualStateDismissed {
+		r.logger.Info("ritual dismissed by user",
 			"ritual", ritualName,
-			"edict_id", key.ID,
-			"previous_execution_id", previousExec.ID,
-			"state", previousExec.State)
+			"previous_execution_id", previousExec.ID)
+		return recoveryResult{}, fmt.Errorf("ritual dismissed by user")
+	}
 
-		// If state is "recovering", user already approved - skip zhengming prompt
-		skipZhengmingPrompt = previousExec.State == RitualStateRecovering
-
-		// Load step states to determine which steps completed
+	// If state is "recovering", user already approved — apply recovery data directly
+	if previousExec.State == RitualStateRecovering {
 		var stepStates []RitualStepState
 		if err := r.db.Where("execution_id = ?", previousExec.ID).Order("step_index").Find(&stepStates).Error; err == nil {
-			// Find first incomplete step (message is empty, has error, or step was not reached)
 			firstIncompleteStep := findFirstIncompleteStep(stepStates, len(def.Steps))
-
-			// Only recover if there are incomplete steps
 			if firstIncompleteStep > 0 && firstIncompleteStep < len(def.Steps) {
 				r.logger.Info("resuming ritual from incomplete step",
 					"ritual", ritualName,
 					"from_step", firstIncompleteStep,
 					"previous_execution_id", previousExec.ID)
-				recoveryData = previousExec.Data
-				recoveryFirstIncompleteStep = firstIncompleteStep
-			} else if firstIncompleteStep == 0 {
-				// First step never completed - start fresh
-				r.logger.Info("first step incomplete, starting fresh",
-					"ritual", ritualName,
+
+				exec.RecoveryMode = true
+				exec.PreviousExecutionID = previousExec.ID
+				exec.CurrentStep = firstIncompleteStep
+				exec.Data = previousExec.Data
+
+				// Mark the previous "recovering" execution as completed to prevent zombie state
+				previousExec.State = RitualStateCompleted
+				r.db.Save(previousExec)
+				r.logger.Info("marked previous recovering execution as completed",
 					"previous_execution_id", previousExec.ID)
-			} else {
-				// All steps completed (-1) - start fresh
-				r.logger.Info("all steps completed in previous execution, starting fresh",
-					"ritual", ritualName,
-					"previous_execution_id", previousExec.ID)
+
+				return recoveryResult{
+					previousExecutionID: previousExec.ID,
+					fromStep:            firstIncompleteStep,
+				}, nil
 			}
 		}
 	}
 
-	// No recovery needed
-	if recoveryFirstIncompleteStep <= 0 {
-		return recoveryResult{}, nil
-	}
-
-	// Confirm recovery via zhengming (unless skipZhengmingPrompt is set or no zhengming available)
-	if !skipZhengmingPrompt && r.getMinister != nil {
-		minister := r.getMinister("chancellor")
-		if minister != nil {
-			type zhengmingRequester interface {
-				RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
-				WaitForZhengming(context.Context, string) (string, error)
-			}
-			requester, ok := minister.(zhengmingRequester)
-			if ok {
-				questions := storage.ZhengmingQuestions{
-					{
-						Text: fmt.Sprintf("Ritual %q was aborted at step %d. Resume or start fresh?", ritualName, recoveryFirstIncompleteStep),
-						Options: []string{
-							fmt.Sprintf("Recover from step %d", recoveryFirstIncompleteStep),
-							"Start fresh",
-						},
-					},
-				}
-
-				requestID, err := requester.RequestZhengming(key, questions, storage.PriorityUrgent)
-				if err != nil {
-					r.logger.Warn("failed to request zhengming for recovery", "error", err)
-					return recoveryResult{}, nil
-				}
-
-				answer, err := requester.WaitForZhengming(ctx, requestID)
-				if err != nil {
-					r.logger.Warn("failed waiting for zhengming answer", "error", err)
-					return recoveryResult{}, nil
-				}
-
-				if answer != questions[0].Options[0] {
-					r.logger.Info("user chose not to recover", "answer", answer)
-					return recoveryResult{}, nil
-				}
-			}
-		}
-	}
-	// Apply recovery state
-	exec.RecoveryMode = true
-	exec.PreviousExecutionID = previousExec.ID
-	exec.CurrentStep = recoveryFirstIncompleteStep
-	exec.Data = recoveryData
-	r.logger.Info("applied recovery state",
-		"ritual", ritualName,
-		"from_step", recoveryFirstIncompleteStep,
-		"previous_execution_id", previousExec.ID)
-
-	// Mark the previous "recovering" execution as completed to prevent zombie state
-	if previousExec.State == RitualStateRecovering {
-		previousExec.State = RitualStateCompleted
-		r.db.Save(previousExec)
-		r.logger.Info("marked previous recovering execution as completed",
-			"previous_execution_id", previousExec.ID)
-	}
-
-	return recoveryResult{
-		previousExecutionID: previousExec.ID,
-		fromStep:            recoveryFirstIncompleteStep,
-	}, nil
+	// For aborted/stopped/failed states: start fresh (user was already
+	// prompted at startup via promptForAbortedRituals, or this is a new
+	// invocation — the zhengming prompt now lives there, not here).
+	return recoveryResult{}, nil
 }
 
 // promptForAbortedRituals scans for aborted/stopped/failed ritual executions
@@ -179,10 +125,17 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 		return
 	}
 
+	// Set recoveryComplete before the per-ritual loop so event-driven rituals
+	// are not blocked. ritualMu already serializes ritual execution, so a
+	// recovering ritual cannot conflict with itself.
+	rg.recoveryMu.Lock()
+	rg.recoveryComplete = true
+	rg.recoveryMu.Unlock()
+
 	// Query aborted/stopped/failed rituals, excluding edict_id=0
 	var abortedExecs []RitualExecution
-	err := rg.db.Where("edict_id != 0 AND state IN (?, ?, ?, ?)",
-		RitualStateAborted, RitualStateStopped, RitualStateFailed, RitualStateRecovering).
+	err := rg.db.Where("edict_id != 0 AND state IN (?, ?, ?, ?, ?)",
+		RitualStateAborted, RitualStateStopped, RitualStateFailed, RitualStateRecovering, RitualStateDismissed).
 		Order("updated_at DESC").
 		Limit(5).
 		Find(&abortedExecs).Error
@@ -240,8 +193,8 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 		default:
 		}
 
-		// Skip already completed rituals (from first pass)
-		if exec.State == RitualStateCompleted {
+		// Skip already completed or dismissed rituals (from first pass or prior runs)
+		if exec.State == RitualStateCompleted || exec.State == RitualStateDismissed {
 			continue
 		}
 
@@ -324,8 +277,9 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 				"execution_id", exec.ID)
 
 		case answer == "Pass":
-			// Leave in current state
-			rg.logger.Info("user passed on aborted ritual",
+			exec.State = RitualStateDismissed
+			rg.db.Save(&exec)
+			rg.logger.Info("user dismissed aborted ritual",
 				"execution_id", exec.ID)
 
 		default:
