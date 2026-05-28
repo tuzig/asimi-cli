@@ -31,5 +31,9 @@ git() {
 alias ll="ls -l"
 export TERM="dumb"
 export GIT_TERMINAL_PROMPT=0
+# Disable interactive features that could block shell
+set +m  # Disable job control
+bind 'set disable-completion on' 2>/dev/null || true  # Disable tab completion
+bind 'set pagination off' 2>/dev/null || true  # Disable pagination in readline
 # for ruby projects:
 # export BUNDLE_RETRY=0
