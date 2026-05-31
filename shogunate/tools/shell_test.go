@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +24,7 @@ func TestRunShellCommandUsesLocalRunner(t *testing.T) {
 		},
 	}
 
-	tool := NewRunShellCommand(nil, mockRunner)
+	tool := NewRunShellCommand(nil, mockRunner, nil)
 	require.NotNil(t, tool)
 
 	result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
@@ -41,7 +42,7 @@ func TestRunShellCommandUsesLocalRunner(t *testing.T) {
 }
 
 func TestRunShellCommandNoRunner(t *testing.T) {
-	tool := NewRunShellCommand(nil, nil)
+	tool := NewRunShellCommand(nil, nil, nil)
 
 	_, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
 	require.Error(t, err)
@@ -62,7 +63,7 @@ func TestRunShellCommandHostOverride(t *testing.T) {
 	// hostChecker returns (runOnHost=true, needsApproval=false)
 	hostChecker := func(cmd string) (bool, bool) { return true, false }
 
-	tool := NewRunShellCommand(hostChecker, mockRunner)
+	tool := NewRunShellCommand(hostChecker, mockRunner, nil)
 	result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
 	require.NoError(t, err)
 
@@ -74,6 +75,109 @@ func TestRunShellCommandHostOverride(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(result), &output))
 	assert.Contains(t, output.Output, "hello")
 	assert.Equal(t, "0", output.ExitCode)
+}
+
+func TestRunShellCommandSandboxMissingFallback(t *testing.T) {
+	// When the sandbox is missing, we fall back to host execution
+	var runnerCalls int
+	mockRunner := &mockRunner{
+		runFn: func(ctx context.Context, input runners.Input) (runners.Output, error) {
+			runnerCalls++
+			return runners.Output{}, runners.SandboxMissingError{}
+		},
+	}
+
+	tool := NewRunShellCommand(nil, mockRunner, nil)
+	result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
+	require.NoError(t, err)
+
+	// The sandbox runner was called once
+	assert.Equal(t, 1, runnerCalls)
+
+	// Output comes from host fallback
+	var output runners.Output
+	require.NoError(t, json.Unmarshal([]byte(result), &output))
+	assert.Contains(t, output.Output, "hello")
+	assert.Equal(t, "0", output.ExitCode)
+}
+
+func TestRunShellCommandHostOverrideWithMsgChan(t *testing.T) {
+	// When msgChan is provided and host command requires approval,
+	// the approval request flows through msgChan.
+	mockRunner := &mockRunner{
+		runFn: func(ctx context.Context, input runners.Input) (runners.Output, error) {
+			return runners.Output{Output: "should not be called", ExitCode: "0"}, nil
+		},
+	}
+
+	// hostChecker returns (runOnHost=true, needsApproval=true)
+	hostChecker := func(cmd string) (bool, bool) { return true, true }
+
+	// Create a message channel to capture approval requests
+	msgChan := make(chan runners.Msg, 1)
+	tool := NewRunShellCommand(hostChecker, mockRunner, msgChan)
+
+	// Run in a goroutine since it blocks waiting for approval
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
+		require.NoError(t, err)
+		var output runners.Output
+		require.NoError(t, json.Unmarshal([]byte(result), &output))
+		assert.Contains(t, output.Output, "hello")
+	}()
+
+	// Wait for the approval request to arrive on msgChan
+	select {
+	case msg := <-msgChan:
+		// Verify it's an approval request
+		approvalMsg, ok := msg.(runners.ApprovalRequestMsg)
+		require.True(t, ok, "expected ApprovalRequestMsg, got %T", msg)
+		assert.Equal(t, "echo hello", approvalMsg.Command)
+		// Approve the command
+		approvalMsg.ResponseChan <- true
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for approval request")
+	}
+
+	<-done
+}
+
+func TestRunShellCommandSandboxMissingFallbackWithMsgChan(t *testing.T) {
+	// When msgChan is provided and sandbox is missing,
+	// the fallback host runner requests approval via msgChan.
+	mockRunner := &mockRunner{
+		runFn: func(ctx context.Context, input runners.Input) (runners.Output, error) {
+			return runners.Output{}, runners.SandboxMissingError{}
+		},
+	}
+
+	msgChan := make(chan runners.Msg, 1)
+	tool := NewRunShellCommand(nil, mockRunner, msgChan)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
+		require.NoError(t, err)
+		var output runners.Output
+		require.NoError(t, json.Unmarshal([]byte(result), &output))
+		assert.Contains(t, output.Output, "hello")
+	}()
+
+	// Wait for the approval request
+	select {
+	case msg := <-msgChan:
+		approvalMsg, ok := msg.(runners.ApprovalRequestMsg)
+		require.True(t, ok, "expected ApprovalRequestMsg, got %T", msg)
+		assert.Equal(t, "echo hello", approvalMsg.Command)
+		approvalMsg.ResponseChan <- true
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for approval request")
+	}
+
+	<-done
 }
 
 // mockRunner implements runners.Runner for testing

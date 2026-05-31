@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
@@ -14,17 +15,21 @@ import (
 type RunShellCommand struct {
 	shouldRunOnHost func(cmd string) (runOnHost, needsApproval bool)
 	runner          runners.Runner
+	msgChan         chan<- runners.Msg // for ephemeral HostRunner approval
 }
 
 // NewRunShellCommand creates a new RunShellCommand tool.
 // runner is the per-shogunate shell runner (may be nil — tools that need it must check).
+// msgChan is the approval channel passed to ephemeral HostRunner instances (may be nil).
 func NewRunShellCommand(
 	hostChecker func(string) (bool, bool),
 	runner runners.Runner,
+	msgChan chan<- runners.Msg,
 ) *RunShellCommand {
 	return &RunShellCommand{
 		shouldRunOnHost: hostChecker,
 		runner:          runner,
+		msgChan:         msgChan,
 	}
 }
 
@@ -64,6 +69,7 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 
 		// Create ephemeral host runner and run directly on host
 		hostRunner := runners.NewHostRunner(0)
+		hostRunner.SetMessageChannel(t.msgChan)
 		runnerOutput, err := hostRunner.Run(ctx, runnerInput)
 		output.Output = runnerOutput.Output
 		output.ExitCode = runnerOutput.ExitCode
@@ -81,8 +87,25 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 			return "", runErr
 		}
 
-		// If we got a harness error, try to restart and retry once
-		if runErr != nil {
+		// If sandbox is missing (e.g., during project-init), fall back to host execution.
+		// Don't attempt restart since this is a permanent state until sandbox is built.
+		if _, isMissing := runErr.(runners.SandboxMissingError); isMissing {
+			slog.Warn("sandbox not available, running on host", "command", runnerInput.Command)
+			hostRunner := runners.NewHostRunner(0)
+			hostRunner.SetMessageChannel(t.msgChan)
+			// When no approval channel is available, bypass approval since the
+			// user implicitly approved by running the ritual.
+			bypassApproval := t.msgChan == nil
+			hostOutput, hostErr := hostRunner.Run(ctx, runners.Input{
+				Command:        runnerInput.Command,
+				Description:    runnerInput.Description,
+				BypassApproval: bypassApproval,
+			})
+			output.Output = hostOutput.Output
+			output.ExitCode = hostOutput.ExitCode
+			runErr = hostErr
+		} else if runErr != nil {
+			// For transient harness errors, try to restart and retry once
 			if restartErr := t.runner.Restart(ctx); restartErr != nil {
 				return "", fmt.Errorf("command failed and restart failed: %w (restart error: %v)", runErr, restartErr)
 			}

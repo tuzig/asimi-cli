@@ -215,6 +215,7 @@ type MinisterBase struct {
 	config     *SessionConfig
 	repoInfo   repo.RepoInfo
 	runner     runners.Runner
+	msgChan    chan<- runners.Msg // channel for host-side approval requests
 	logger     *slog.Logger
 	notify     internal.NotifyFunc
 	prompts    chan *Prompt
@@ -371,6 +372,18 @@ func (m *MinisterBase) Project() string {
 // Ministers can override this to provide context like available rituals, rules, etc.
 func (m *MinisterBase) Scratchpad() string {
 	return ""
+}
+
+// SetMessageChannel sets the message channel for approval requests.
+// Ephemeral HostRunner instances created by shell tools use this channel
+// to request user approval for host-side commands.
+func (m *MinisterBase) SetMessageChannel(msgChan chan<- runners.Msg) {
+	m.msgChan = msgChan
+}
+
+// MessageChannel returns the message channel (may be nil).
+func (m *MinisterBase) MessageChannel() chan<- runners.Msg {
+	return m.msgChan
 }
 
 // SetRunner updates the shell runner

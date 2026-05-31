@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -458,11 +459,10 @@ func TestPodmanRunnerHostFallbackMustNotLeak(t *testing.T) {
 	}
 }
 
-// TestShellCommandMustFailWithoutSandbox verifies the full tool
-// stack: when the RunShellCommand tool has a PodmanRunner with no
-// sandbox, the tool retries once (restart + retry), then returns
-// SandboxMissingError with an actionable message.
-func TestShellCommandMustFailWithoutSandbox(t *testing.T) {
+// TestShellCommandFallbackWithoutSandbox verifies that when the sandbox
+// image is missing (e.g., during project-init), RunShellCommand falls
+// back to host execution rather than failing completely.
+func TestShellCommandFallbackWithoutSandbox(t *testing.T) {
 	cfg := &config.SandboxConfig{}
 	repoInfo := repo.RepoInfo{
 		ProjectRoot: t.TempDir(),
@@ -476,17 +476,28 @@ func TestShellCommandMustFailWithoutSandbox(t *testing.T) {
 		_ = runner.Close(ctx)
 	}()
 
-	shellTool := shogunateTools.NewRunShellCommand(nil, runner)
+	shellTool := shogunateTools.NewRunShellCommand(nil, runner, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := shellTool.Call(ctx, `{"command":"uname","description":"test sandbox isolation"}`)
-	if err == nil {
-		t.Fatal("expected error when running shell command without sandbox, got nil — command may have run on host")
+	// When sandbox is missing, the tool should fall back to host execution
+	result, err := shellTool.Call(ctx, `{"command":"echo hello","description":"test fallback to host"}`)
+	if err != nil {
+		t.Fatalf("expected successful fallback to host, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "Sandbox container image is missing") {
-		t.Errorf("error = %q, want mention of sandbox image missing", err.Error())
+
+	var output runners.Output
+	if err := json.Unmarshal([]byte(result), &output); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	// Output should come from host execution
+	if !strings.Contains(output.Output, "hello") {
+		t.Errorf("output = %q, want to contain 'hello'", output.Output)
+	}
+	if output.ExitCode != "0" {
+		t.Errorf("exitCode = %q, want '0'", output.ExitCode)
 	}
 }
 

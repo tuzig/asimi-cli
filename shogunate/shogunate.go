@@ -494,11 +494,19 @@ func (s *Shogunate) SetRunner(r runners.Runner) {
 }
 
 // SetRunnerMessageChannel sets the message channel on the runner for approval requests
+// and propagates it to all ministers so ephemeral HostRunner instances can use it too.
 func (s *Shogunate) SetRunnerMessageChannel(msgChan chan<- runners.Msg) {
 	if s == nil || s.runner == nil {
 		return
 	}
 	s.runner.SetMessageChannel(msgChan)
+	// Propagate to all ministers so their shell tools can pass msgChan
+	// to ephemeral HostRunner instances
+	for _, m := range s.ministers {
+		if setter, ok := m.(interface{ SetMessageChannel(chan<- runners.Msg) }); ok {
+			setter.SetMessageChannel(msgChan)
+		}
+	}
 }
 
 // Subscribe returns a channel carrying every TUI-bound notification produced
@@ -524,7 +532,7 @@ func (s *Shogunate) Subscribe(ctx context.Context) <-chan any {
 
 	if s.runner != nil {
 		runnerMsgChan := make(chan runners.Msg, 10)
-		s.runner.SetMessageChannel(runnerMsgChan)
+		s.SetRunnerMessageChannel(runnerMsgChan)
 		go func() {
 			for {
 				select {
