@@ -156,23 +156,9 @@ type CancelTabParams struct {
 	ChannelID string `msgpack:"channel_id"`
 }
 
-type ConfigureLLMParams struct {
-	Req shogunate.ConfigureLLMRequest `msgpack:"req"`
-}
-
 type GetSessionExportParams struct {
 	TabTarget string `msgpack:"tab_target"`
 }
 type GetSessionExportResult struct {
 	Export *shogunate.SessionExport `msgpack:"export"`
 }
-
-type SetContextParams struct {
-	Project      string `msgpack:"project"`
-	Username      string `msgpack:"username"`
-	ProjectRoot   string `msgpack:"project_root"`
-	WorktreePath  string `msgpack:"worktree_path"`
-	Branch        string `msgpack:"branch"`
-}
-
-type SetContextResult struct{}

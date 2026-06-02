@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
@@ -66,18 +67,18 @@ type Client interface {
 	AllowRunnerFallback(allow bool)
 	RunShellCommand(ctx context.Context, input runners.Input) (runners.Output, error)
 
+	// SetContext sends client-side credentials and project context to
+	// the shogunate. In daemon mode this travels over the wire; in
+	// single-process mode it initialises Bifrost inline. Idempotent —
+	// each call reconfigures the LLM client.
+	SetContext(ctx context.Context, params types.SetContextParams) error
+
 	// In-process only; LLM client setup. Kept for in-process callers;
-	// the wire-safe path is ConfigureLLM below.
+	// the wire-safe path is SetContext above.
 	//
-	// Deprecated: use ConfigureLLM. ConfigureModel only works in the
+	// Deprecated: use SetContext. ConfigureModel only works in the
 	// same process because it takes a bifrost.LLMProvider pointer.
 	ConfigureModel(client shogunate.LLMProvider, config *shogunate.SessionConfig, repoInfo repo.RepoInfo)
-
-	// ConfigureLLM builds the Bifrost client on the server side from
-	// a plain config struct and wires it into every minister. Wire-
-	// safe — the TUI provides just provider/model/timeouts, the daemon
-	// reads credentials from the shared keyring.
-	ConfigureLLM(ctx context.Context, req shogunate.ConfigureLLMRequest) error
 
 	// Snapshots for the shogunate debug view.
 	TakeSnapshot() shogunate.Snapshot

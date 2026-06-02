@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -286,6 +288,24 @@ func (s *Shogunate) Start(ctx context.Context) error {
 	return nil
 }
 
+// SetRepoInfo sets the repo info on the shogunate and all ministers.
+// This must be called before Start() to ensure rituals load from the
+// correct project root. ConfigureModel will also set repoInfo, but
+// that happens after Start() in the normal flow.
+func (s *Shogunate) SetRepoInfo(repoInfo repo.RepoInfo) {
+	if s == nil {
+		return
+	}
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetRepoInfo(repo.RepoInfo) }); ok {
+			base.SetRepoInfo(repoInfo)
+		}
+	}
+	if s.ritualGuard != nil {
+		s.ritualGuard.repoInfo = repoInfo
+	}
+}
+
 // Stop gracefully shuts down the Shogunate.
 func (s *Shogunate) Stop() error {
 	if s == nil {
@@ -324,7 +344,90 @@ func (s *Shogunate) ConfigureModel(client LLMProvider, config *SessionConfig, re
 			base.SetMinisterConfig(client, config, repoInfo)
 		}
 	}
+	// Propagate sandbox and project config to the RitualRunner so it never
+	// needs to call config.LoadConfig (which is CWD-relative and fragile).
+	if s.ritualGuard != nil && s.ritualGuard.RitualRunner() != nil {
+		sandboxCfg := &config.Sandbox
+		projectSlug := ""
+		if s.config != nil {
+			projectSlug = s.config.Project
+		}
+		s.ritualGuard.RitualRunner().SetConfig(sandboxCfg, projectSlug)
+	}
+	// Update repoInfo on the RitualGuard (not covered by the Ministers
+	// loop since RitualGuard is stored separately) and reload rituals
+	// when the project root becomes available for the first time.
+	// Start() skips loading if repoInfo.ProjectRoot was empty, so we
+	// retry here once SetContext/ConfigureModel has the real root.
+	// We only reload when the registry is still empty (i.e., no one
+	// has manually registered rituals since Start).
+	if s.ritualGuard != nil && repoInfo.ProjectRoot != "" {
+		wasEmpty := s.ritualGuard.repoInfo.ProjectRoot == ""
+		s.ritualGuard.repoInfo = repoInfo
+		if wasEmpty && len(s.ritualGuard.RitualRegistry().List()) == 0 {
+			if err := s.ritualGuard.LoadRituals(); err != nil {
+				s.logger.Warn("failed to load rituals after ConfigureModel", "error", err)
+			}
+		}
+	}
 	s.logger.Info("shogunate model configured", "ministers", s.ministerIDs())
+}
+
+// SetContext reconfigures the Shogunate with the given credentials and
+// project context. In single-process mode this initialises Bifrost
+// inline using the APIKeys from the params. It is idempotent — each
+// call re-initialises the LLM client.
+func (s *Shogunate) SetContext(ctx context.Context, params types.SetContextParams) error {
+	if s == nil {
+		return fmt.Errorf("shogunate not initialised")
+	}
+
+	// Load project config from ProjectRoot.
+	projectRoot := params.ProjectRoot
+	if projectRoot == "" {
+		projectRoot = "."
+	}
+	// Validate that the path exists and is a directory before loading config.
+	if info, err := os.Stat(projectRoot); err != nil {
+		return fmt.Errorf("invalid project_root %q: %w", projectRoot, err)
+	} else if !info.IsDir() {
+		return fmt.Errorf("invalid project_root %q: not a directory", projectRoot)
+	}
+
+	projectCfg, err := config.LoadProjectConfig(projectRoot)
+	if err != nil {
+		return fmt.Errorf("load project config: %w", err)
+	}
+
+	repoInfo := repo.RepoInfo{
+		ProjectRoot:  params.ProjectRoot,
+		WorktreePath: params.WorktreePath,
+		Branch:       params.Branch,
+		Slug:         params.Project,
+	}
+
+	// Init Bifrost with the APIKeys provided by the client.
+	bifrostClient, err := InitBifrost(
+		ctx,
+		projectCfg.LLM.RequestTimeoutSeconds,
+		projectCfg.LLM.StreamIdleTimeoutSeconds,
+		projectCfg.LLM.MaxRetries,
+		projectCfg.LLM.BaseURL,
+		params.APIKeys,
+	)
+	if err != nil {
+		return fmt.Errorf("init bifrost: %w", err)
+	}
+
+	sessionCfg := &SessionConfig{
+		LLM:        projectCfg.LLM,
+		Sandbox:    projectCfg.Sandbox,
+		AgentsFile: projectCfg.Session.AgentsFile,
+		WorkingDir: params.ProjectRoot,
+	}
+
+	s.ConfigureModel(bifrostClient, sessionCfg, repoInfo)
+	return nil
 }
 
 // Ministers returns the active ministers.

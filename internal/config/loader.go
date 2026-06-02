@@ -115,6 +115,50 @@ func EnsureUserConfigExists() (bool, error) {
 	return true, nil
 }
 
+// LoadProjectConfig loads configuration for a specific project root without
+// relying on the current working directory or environment-variable credentials.
+//
+// Layer order (later wins):
+//  1. Built-in defaults (DefaultConfig)
+//  2. User-level config: ~/.config/asimi/asimi.conf
+//  3. Project-level config: {projectRoot}/.agents/asimi.conf
+//
+// The daemon receives API keys via its APIKeys mechanism, so this function
+// intentionally skips all env-var credential resolution.
+func LoadProjectConfig(projectRoot string) (*Config, error) {
+	k := koanf.New(".")
+
+	// 1. User-level config
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user home directory: %w", err)
+	}
+	userConfigPath := filepath.Join(homeDir, ".config", "asimi", "asimi.conf")
+	if err := k.Load(file.Provider(userConfigPath), koanftoml.Parser()); err != nil {
+		// Missing user config is common on first run; downgrade to Debug
+		// so it doesn't pollute normal startup output.
+		slog.Debug("Failed to load user config", "path", userConfigPath, "error", err)
+	}
+
+	// 2. Project-level config
+	projectConfigPath := filepath.Join(projectRoot, ".agents", "asimi.conf")
+	if _, statErr := os.Stat(projectConfigPath); statErr == nil {
+		if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
+			slog.Debug("Failed to load project config", "path", projectConfigPath, "error", err)
+		}
+	} else if !os.IsNotExist(statErr) {
+		slog.Warn("Unable to stat project config", "path", projectConfigPath, "error", statErr)
+	}
+
+	// Unmarshal onto defaults so every field has a value.
+	config := DefaultConfig()
+	if err := k.Unmarshal("", &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	return &config, nil
+}
+
 // LoadConfig loads configuration from multiple sources
 func LoadConfig() (*Config, error) {
 	// Create a new koanf instance

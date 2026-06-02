@@ -535,12 +535,8 @@ func formatScratchpad(ctx map[string]interface{}) string {
 // readProjectContext reads the project context file (AGENTS.md or CLAUDE.md) from the project root directory.
 func readProjectContext(agentsFile, projectRoot string) string {
 	if projectRoot == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return ""
-		}
-		projectRoot = wd
-		slog.Warn("readProjectContext got no project root, using Asimi's")
+		slog.Error("readProjectContext called with empty project root")
+		return ""
 	}
 	b, err := os.ReadFile(filepath.Join(projectRoot, agentsFile))
 	if err != nil {
@@ -554,6 +550,11 @@ func readProjectContext(agentsFile, projectRoot string) string {
 func (m *MinisterBase) SetMinisterConfig(client LLMProvider, config *SessionConfig, repoInfo repo.RepoInfo) {
 	m.client = client
 	m.config = config
+	m.repoInfo = repoInfo
+}
+
+// SetRepoInfo updates the repo info without changing the LLM client or config.
+func (m *MinisterBase) SetRepoInfo(repoInfo repo.RepoInfo) {
 	m.repoInfo = repoInfo
 }
 

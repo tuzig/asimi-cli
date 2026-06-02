@@ -28,7 +28,7 @@ func TestReadFileTool_BasicRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool("")
+	tool := NewReadFileTool(tmpDir)
 
 	t.Run("reads entire file", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt"}`)
@@ -78,7 +78,7 @@ func TestReadFileTool_WithOffset(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool("")
+	tool := NewReadFileTool(tmpDir)
 
 	t.Run("offset starts from correct line", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "offset": 3}`)
@@ -129,7 +129,7 @@ func TestReadFileTool_WithLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool("")
+	tool := NewReadFileTool(tmpDir)
 
 	t.Run("limit returns correct number of lines", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "limit": 2}`)
@@ -181,7 +181,7 @@ func TestReadFileTool_WithOffsetAndLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool("")
+	tool := NewReadFileTool(tmpDir)
 
 	t.Run("offset and limit together", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "offset": 2, "limit": 2}`)
@@ -228,7 +228,7 @@ func TestReadFileTool_EdgeCases(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool("")
+	tool := NewReadFileTool(tmpDir)
 
 	t.Run("empty file", func(t *testing.T) {
 		if err := os.WriteFile("empty.txt", []byte(""), 0644); err != nil {
@@ -309,7 +309,7 @@ func TestReadFileTool_PathValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool("")
+	tool := NewReadFileTool(tmpDir)
 
 	t.Run("path outside project is denied", func(t *testing.T) {
 		_, err := tool.Call(context.Background(), `{"path": "`+outsidePath+`"}`)
@@ -347,7 +347,7 @@ func TestReadFileTool_ClaudeCodeCLIWorkaround(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewReadFileTool("")
+	tool := NewReadFileTool(tmpDir)
 
 	t.Run("offset as string works", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "offset": "3"}`)

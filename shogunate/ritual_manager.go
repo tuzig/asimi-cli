@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -458,15 +457,11 @@ func (rg *RitualGuard) getSandboxImageName() string {
 // It loads embedded rituals, user config (~/.config/asimi/rituals.yaml),
 // and project config (.agents/rituals.yaml).
 func (rg *RitualGuard) LoadRituals() error {
-	// Get project directory from repo info, falling back to current working directory
+	// Get project directory from repo info; SetContext is the sole authority
 	projectDir := rg.repoInfo.ProjectRoot
 	if projectDir == "" {
-		var err error
-		projectDir, err = os.Getwd()
-		if err != nil {
-			rg.logger.Warn("failed to get current directory", "error", err)
-			projectDir = ""
-		}
+		rg.logger.Error("LoadRituals called with empty project root")
+		return fmt.Errorf("project root not set: SetContext is the sole authority for project root")
 	}
 
 	rituals, err := LoadAllRituals(projectDir)

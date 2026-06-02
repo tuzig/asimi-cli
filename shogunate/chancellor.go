@@ -486,7 +486,7 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 // Tools returns the Chancellor's LLM tools for interactive sessions
 func (c *Chancellor) Tools() []Tool {
 	toolList := []Tool{
-		tools.AsimiSQLTool{DBPath: c.getDBPath()},
+		tools.AsimiSQLTool{DBPath: c.getDBPath(), ProjectRoot: c.RepoInfo().ProjectRoot},
 		tools.UpdateEdictTool{Manager: c, Username: c.username, Project: c.project},
 		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, WaitForAnswer: c.WaitForZhengming, Username: c.username, Project: c.project},
 		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.username, Project: c.project},
@@ -502,7 +502,7 @@ func (c *Chancellor) Tools() []Tool {
 	if c.shogunate != nil && c.shogunate.GetRitualRunner() != nil {
 		toolList = append(toolList, InvokeRitualTool{chancellor: c})
 	}
-	toolList = append(toolList, tools.NewRunShellCommand(c.CheckHostCommand, c.runner, c.msgChan))
+	toolList = append(toolList, tools.NewRunShellCommand(c.CheckHostCommand, c.runner, c.msgChan, c.RepoInfo().ProjectRoot))
 	return toolList
 }
 

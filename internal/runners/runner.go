@@ -139,7 +139,7 @@ func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 		slog.Info("using podman shell runner", "image", imageName)
 		var fallback Runner
 		if config.AllowHostFallback {
-			fallback = NewHostRunner(uint64(os.Getpid()))
+			fallback = NewHostRunner(uint64(os.Getpid()), repoInfo.ProjectRoot)
 		}
 		runner := NewPodmanRunner(config, repoInfo, uint64(os.Getpid()), fallback)
 		SetRunner(runner)
@@ -154,8 +154,8 @@ func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	SetRunner(runner)
 	return runner
 }
-func HostRun(ctx context.Context, in Input) (Output, error) {
-	runner := NewHostRunner(0)
+func HostRun(ctx context.Context, in Input, projectRoot string) (Output, error) {
+	runner := NewHostRunner(0, projectRoot)
 	out, err := runner.Run(ctx, in)
 	slog.Debug("Run a host command", "cmd", in.Command, "err", err, "out", out)
 	return out, err

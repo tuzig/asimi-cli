@@ -64,7 +64,7 @@ type Conn struct {
 
 	closeOnce sync.Once
 	closed    chan struct{}
-	closeErr  atomic.Value
+	closeErr  atomic.Pointer[error]
 
 	// ctx is cancelled on Close; handlers receive a child of it.
 	ctx    context.Context
@@ -303,10 +303,8 @@ func (c *Conn) Done() <-chan struct{} { return c.closed }
 
 // Err returns the error that caused the Conn to close, if any.
 func (c *Conn) Err() error {
-	if v := c.closeErr.Load(); v != nil {
-		if e, ok := v.(error); ok {
-			return e
-		}
+	if p := c.closeErr.Load(); p != nil {
+		return *p
 	}
 	return nil
 }
@@ -315,10 +313,7 @@ func (c *Conn) setCloseErr(err error) {
 	if err == nil {
 		return
 	}
-	e := c.closeErr.Load()
-	c.logger.Debug("Setting closeErr", "new error", err, "last error", e)
-	if e != nil {
-		return
-	}
-	c.closeErr.Store(err)
+	// Use a local copy so every Store provides a consistent pointer type.
+	e := err
+	c.closeErr.CompareAndSwap(nil, &e)
 }

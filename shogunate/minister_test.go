@@ -1190,17 +1190,11 @@ func TestReadProjectContext_ExplicitProjectRoot(t *testing.T) {
 	assert.Equal(t, content, got)
 }
 
-func TestReadProjectContext_FallbackToGetwd(t *testing.T) {
-	dir := t.TempDir()
-	content := "# Fallback Content\nHello from cwd"
-	err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(content), 0644)
-	require.NoError(t, err)
-
-	// Change working directory so os.Getwd() resolves to our temp dir.
-	t.Chdir(dir)
-
+func TestReadProjectContext_EmptyProjectRoot_ReturnsEmpty(t *testing.T) {
+	// When projectRoot is empty, readProjectContext returns empty string
+	// because SetContext is the sole authority for project root in daemon mode.
 	got := readProjectContext("AGENTS.md", "")
-	assert.Equal(t, content, got)
+	assert.Equal(t, "", got, "should return empty string when projectRoot is empty")
 }
 
 func TestReadProjectContext_FileNotFound(t *testing.T) {

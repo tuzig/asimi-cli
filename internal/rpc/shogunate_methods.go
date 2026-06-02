@@ -30,7 +30,6 @@ const (
 	MethodCompactSession       = "CompactSession"
 	MethodTakeSnapshot         = "TakeSnapshot"
 	MethodCancelTab            = "CancelTab"
-	MethodConfigureLLM         = "ConfigureLLM"
 	MethodGetSessionExport     = "GetSessionExport"
 	MethodSetContext           = "SetContext"
 )

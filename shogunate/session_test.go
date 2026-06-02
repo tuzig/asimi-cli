@@ -1655,26 +1655,24 @@ func TestNewSession_WorkingDirFromConfig(t *testing.T) {
 		assert.Equal(t, "/explicit/project/root", sess.WorkingDir)
 	})
 
-	t.Run("falls back to os.Getwd when SessionConfig has empty WorkingDir", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		t.Chdir(tmpDir)
-
+	t.Run("empty WorkingDir when SessionConfig has empty WorkingDir", func(t *testing.T) {
+		// When SessionConfig has empty WorkingDir, WorkingDir stays empty
+		// because SetContext is the sole authority for project root in daemon mode.
 		cfg := &SessionConfig{WorkingDir: ""}
 		sess, err := NewSession(nil, cfg, nil, nil, func(any) {}, "", "")
 		require.NoError(t, err)
-		assert.Equal(t, tmpDir, sess.WorkingDir)
+		assert.Equal(t, "", sess.WorkingDir)
 	})
 
-	t.Run("falls back to os.Getwd when SessionConfig is nil", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		t.Chdir(tmpDir)
-
+	t.Run("empty WorkingDir when SessionConfig is nil", func(t *testing.T) {
+		// When SessionConfig is nil, WorkingDir stays empty
+		// because SetContext is the sole authority for project root in daemon mode.
 		sess, err := NewSession(nil, nil, nil, nil, func(any) {}, "", "")
 		require.NoError(t, err)
-		assert.Equal(t, tmpDir, sess.WorkingDir)
+		assert.Equal(t, "", sess.WorkingDir)
 	})
 
-	t.Run("project root from config takes precedence over os.Getwd", func(t *testing.T) {
+	t.Run("project root from config takes precedence", func(t *testing.T) {
 		// Even if we're in a different directory, the config's WorkingDir wins
 		processDir := t.TempDir()
 		projectDir := t.TempDir()

@@ -99,8 +99,14 @@ errors use codes above 1000 to avoid collision.
 6. **Close** — `Close()` is idempotent. Any in-flight Call on that conn
    fails with `ErrPeerDisconnected`.
 
-There is **no handshake frame** today. Protocol versioning is a planned
-addition; currently both peers assume "same build" compatibility.
+There is **no dedicated handshake frame**. Instead, the TUI calls
+`SetContext` immediately after the connection is established, sending
+project metadata, API keys, and OAuth tokens to the daemon. The daemon
+uses this to initialise (or re-initialise) its Bifrost LLM client.
+`SetContext` is **idempotent** — it can be called at any time to push
+runtime configuration updates (model switch, OAuth token refresh, etc.)
+without reconnecting. Protocol versioning is a planned addition;
+currently both peers assume "same build" compatibility.
 
 ## 4. Method catalog — TUI → daemon
 
@@ -137,11 +143,21 @@ Every method name is a Go constant in
 | `GetSessionExport`         | `{tab_target}`                                      | `{export *SessionExport}`       |
 | `TakeSnapshot`             | —                                                   | `{snapshot Snapshot}`           |
 | `CancelTab`                | `{channel_id}`                                      | —                               |
-| `ConfigureLLM`             | `{req ConfigureLLMRequest}`                         | —                               |
+| `SetContext`               | `{project, username, project_root, worktree_path, branch, api_keys?, auth_token?, refresh_token?}` | — |
 
 The `shogunate.Prompt` type has a `context.Context` field that doesn't
 cross the wire. `SubmitPromptParams` carries the same fields minus
 `Ctx`; the server rebuilds `ctx` from the handler's own ctx.
+
+**`SetContext` params in detail** — the `api_keys` field is a
+`map[string]string` keyed by provider name (e.g. `"anthropic"`,
+`"openai"`, `"google"`). It is optional (`omitempty`); when omitted or
+empty the daemon falls back to environment variables or its own
+credential store. Each call **replaces** the entire key set — callers
+must send the full map on every invocation, not a delta. The
+`auth_token` and `refresh_token` fields carry OAuth credentials for
+providers that use browser-based auth; they follow the same
+replace semantics.
 
 ## 5. Notification catalog — daemon → TUI
 
@@ -309,20 +325,18 @@ Wire a new `Client` method in five files:
 
 ## 10. The non-wire-safe holdouts
 
-Three methods on `shogunateapi.Client` are deliberately in-process
-only:
+One method on `shogunateapi.Client` is deliberately in-process only:
 
 | Method           | Why                                                                                       |
 | ---------------- | ----------------------------------------------------------------------------------------- |
 | `GetMinister`    | Returns a `Minister` interface whose methods include I/O. Used only by `saveSession()`.   |
-| `ConfigureModel` | Takes a live `bifrost.LLMProvider` pointer. Replaced on the wire path by `ConfigureLLM`.  |
 
-`LoopbackShogunate` wraps a `*ShogunateClient` and delegates these
-two to a **local** `shogunateapi.Client` reference. Anything that
-relies on them only reflects local state — in daemon mode, that means
-local-empty. Migrating each of these away collapses
-`LoopbackShogunate` into the plain `*ShogunateClient` and is the final
-step before the TUI can be truly stateless.
+`ConfigureModel` was previously listed here because it takes a live
+`bifrost.LLMProvider` pointer. It is now deprecated: the daemon calls
+`ConfigureModel` internally after every `SetContext`, so the TUI never
+needs to invoke it directly. Once `GetMinister` is migrated to a
+wire-safe shape, `LoopbackShogunate` collapses into the plain
+`*ShogunateClient` and the TUI becomes truly stateless.
 
 ## 11. Files at a glance
 

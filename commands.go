@@ -525,7 +525,7 @@ func verifyInitWithRetry(model *TUIModel, containerRunner runners.Runner, retryC
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		if !runBuildSandbox(ctx, report, &results) {
+		if !runBuildSandbox(ctx, model.status.repoInfo.ProjectRoot, report, &results) {
 			slog.Debug("build-sandbox failed, handling failure")
 			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
 		}
@@ -546,7 +546,7 @@ func verifyInitWithRetry(model *TUIModel, containerRunner runners.Runner, retryC
 
 		// Run tests on host
 		slog.Debug("Running tests on host")
-		if !runHostTests(ctx, report, &results) {
+		if !runHostTests(ctx, model.status.repoInfo.ProjectRoot, report, &results) {
 			slog.Debug("Host tests failed, handling failure")
 			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
 		}
@@ -575,7 +575,7 @@ func verifyInitWithRetry(model *TUIModel, containerRunner runners.Runner, retryC
 			result, err := runners.HostRun(ctx2, runners.Input{
 				Command:     fmt.Sprintf("git add %s", file),
 				Description: fmt.Sprintf("Staging %s", file),
-			})
+			}, model.status.repoInfo.ProjectRoot)
 
 			if err != nil || result.ExitCode != "0" {
 				slog.Warn("Failed to stage file", "file", file, "error", err, "exitCode", result.ExitCode)
@@ -608,12 +608,12 @@ func checkFileExists(filename, successMsg string, report func(string)) bool {
 }
 
 // runBuildSandbox runs the build-sandbox command on the host
-func runBuildSandbox(ctx context.Context, report func(string), results *[]string) bool {
+func runBuildSandbox(ctx context.Context, projectRoot string, report func(string), results *[]string) bool {
 	report("$ just build-sandbox # on host")
 	result, err := runners.HostRun(ctx, runners.Input{
 		Command:     "just build-sandbox",
 		Description: "Building infrastructure files",
-	})
+	}, projectRoot)
 
 	if err != nil || result.ExitCode != "0" {
 		report(fmt.Sprintf("❌ just build-sandbox failed (exit code: %s)", result.ExitCode))
@@ -654,12 +654,12 @@ func runSmokeTest(ctx context.Context, containerRunner runners.Runner, report fu
 }
 
 // runHostTests runs the test suite on the host
-func runHostTests(ctx context.Context, report func(string), results *[]string) bool {
+func runHostTests(ctx context.Context, projectRoot string, report func(string), results *[]string) bool {
 	report("$ just test # on host")
 	result, err := runners.HostRun(ctx, runners.Input{
 		Command:     "just test",
 		Description: "Running tests on host",
-	})
+	}, projectRoot)
 
 	if err != nil || result.ExitCode != "0" {
 		report(fmt.Sprintf("❌ just test on host failed (exit code: %s)", result.ExitCode))

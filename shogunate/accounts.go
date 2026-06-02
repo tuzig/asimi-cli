@@ -42,11 +42,15 @@ func NewBifrostLogger(logger *slog.Logger) *BifrostLogger {
 }
 
 // Account implements schemas.Account using the OS keyring for credential storage.
+// When apiKeys is populated (sandbox/daemon mode), keys are read from the map
+// first; providers absent from the map fall through to keyring for backward
+// compatibility with in-process mode.
 type Account struct {
 	requestTimeout    int
 	streamIdleTimeout int
 	maxRetries        int
 	baseURL           string
+	apiKeys           map[string]string
 }
 
 // NewAccount creates a new Account implementation backed by the OS keyring.
@@ -54,7 +58,19 @@ func NewAccount(requestTimeout, streamIdleTimeout, maxRetries int, baseURL strin
 	return &Account{requestTimeout: requestTimeout, streamIdleTimeout: streamIdleTimeout, maxRetries: maxRetries, baseURL: baseURL}
 }
 
-// GetConfiguredProviders returns providers that have credentials configured
+// NewAccountWithKeys creates a new Account that reads API keys from the given
+// map first, falling through to keyring for providers not present in the map.
+// Environment-variable reads are removed from the primary path; the caller
+// (typically the daemon) is responsible for populating the map from env vars
+// or any other source.
+func NewAccountWithKeys(requestTimeout, streamIdleTimeout, maxRetries int, baseURL string, apiKeys map[string]string) schemas.Account {
+	return &Account{requestTimeout: requestTimeout, streamIdleTimeout: streamIdleTimeout, maxRetries: maxRetries, baseURL: baseURL, apiKeys: apiKeys}
+}
+
+// GetConfiguredProviders returns providers that have credentials configured.
+// When apiKeys is populated, only providers present in the map are reported.
+// Otherwise (in-process mode), all standard providers plus Bedrock (if AWS
+// env vars are present) are returned for backward compatibility.
 func (a *Account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
 	providers := []schemas.ModelProvider{
 		schemas.OpenAI,
@@ -63,10 +79,20 @@ func (a *Account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
 		schemas.Gemini,
 		schemas.OpenRouter,
 	}
-	// Add Bedrock if AWS credentials are available via environment
-	if hasAWSEnvCredentials() {
-		providers = append(providers, schemas.Bedrock)
+
+	// Check for Bedrock credentials
+	if a.apiKeys != nil {
+		// Daemon mode: check the apiKeys map for AWS credentials
+		if a.apiKeys["AWS_ACCESS_KEY_ID"] != "" && a.apiKeys["AWS_SECRET_ACCESS_KEY"] != "" {
+			providers = append(providers, schemas.Bedrock)
+		}
+	} else {
+		// In-process mode: check environment variables for AWS credentials
+		if hasAWSEnvCredentials() {
+			providers = append(providers, schemas.Bedrock)
+		}
 	}
+
 	return providers, nil
 }
 
@@ -80,6 +106,49 @@ func hasAWSEnvCredentials() bool {
 func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
 	providerStr := string(provider)
 
+	// Primary path: read from the injected apiKeys map (sandbox/daemon mode).
+	if a.apiKeys != nil {
+		// Special handling for Bedrock: check for AWS credentials in the map
+		if providerStr == "bedrock" {
+			accessKey := a.apiKeys["AWS_ACCESS_KEY_ID"]
+			secretKey := a.apiKeys["AWS_SECRET_ACCESS_KEY"]
+			if accessKey != "" && secretKey != "" {
+				enabled := true
+				key := schemas.Key{
+					ID:     "bedrock_aws",
+					Name:   "Bedrock AWS Credentials",
+					Models: []string{"*"},
+					Weight: 1.0,
+					Enabled: &enabled,
+					BedrockKeyConfig: &schemas.BedrockKeyConfig{
+						AccessKey: schemas.EnvVar{Val: accessKey},
+						SecretKey: schemas.EnvVar{Val: secretKey},
+					},
+				}
+				if sessionToken := a.apiKeys["AWS_SESSION_TOKEN"]; sessionToken != "" {
+					key.BedrockKeyConfig.SessionToken = &schemas.EnvVar{Val: sessionToken}
+				}
+				return []schemas.Key{key}, nil
+			}
+			// No AWS credentials in map — return empty, don't fall through to keyring
+			return []schemas.Key{}, nil
+		}
+
+		if apiKey, ok := a.apiKeys[providerStr]; ok && apiKey != "" {
+			enabled := true
+			return []schemas.Key{
+				{ID: providerStr + "_apikey", Name: providerStr + " API Key", Value: schemas.EnvVar{Val: apiKey}, Models: []string{"*"}, Weight: 1.0, Enabled: &enabled},
+			}, nil
+		}
+		// Provider is in the map but empty — skip keyring fallback; the
+		// caller explicitly provided no key for this provider.
+		if _, exists := a.apiKeys[providerStr]; exists {
+			return []schemas.Key{}, nil
+		}
+	}
+
+	// Fallback: keyring-backed path for in-process mode (providers not in the map).
+
 	token, err := keyring.GetOauthToken(providerStr)
 	if err == nil && token != nil && token.AccessToken != "" {
 		enabled := true
@@ -88,55 +157,20 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 		}, nil
 	}
 
-	envVarNames := map[string]string{
-		"openrouter": "OPENROUTER_API_KEY",
-		"openai":     "OPENAI_API_KEY",
-		"anthropic":  "ANTHROPIC_API_KEY",
-		"gemini":     "GEMINI_API_KEY",
-		// Note: "bedrock" is NOT included here because it requires special handling
-		// (both AWS_ACCESS_KEY_ID AND AWS_SECRET_ACCESS_KEY must be set)
-	}
-	if envName, ok := envVarNames[providerStr]; ok {
-		if apiKey := os.Getenv(envName); apiKey != "" {
+	// Bedrock via keyring: only if AWS keys were injected into the map or
+	// discovered through keyring. Env-var-only Bedrock is the client's
+	// responsibility when using NewAccountWithKeys.
+	if providerStr == "bedrock" {
+		// When apiKeys map is in use and "bedrock" wasn't provided, check
+		// keyring as a last resort.
+		apiKey, err := keyring.GetAPIKey(providerStr)
+		if err == nil && apiKey != "" {
 			enabled := true
 			return []schemas.Key{
-				{ID: providerStr + "_apikey", Name: providerStr + " API Key", Value: schemas.EnvVar{Val: apiKey}, Models: []string{"*"}, Weight: 1.0, Enabled: &enabled},
+				{ID: providerStr + "_apikey", Name: providerStr + " API Key", Value: schemas.EnvVar{Val: apiKey}, Models: []string{}, Weight: 1.0, Enabled: &enabled},
 			}, nil
 		}
-	}
-
-	// Handle Bedrock with AWS credentials
-	if providerStr == "bedrock" && hasAWSEnvCredentials() {
-		enabled := true
-		region := os.Getenv("AWS_REGION")
-		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-		sessionToken := os.Getenv("AWS_SESSION_TOKEN")
-
-		// SigV4 auth: AWS credentials go in BedrockKeyConfig and Key.Value
-		// MUST stay empty. Bifrost treats a non-empty Key.Value as a Bedrock
-		// API key and sends it as a Bearer token, skipping SigV4 signing.
-		key := schemas.Key{
-			ID:      "bedrock_aws",
-			Name:    "AWS Credentials",
-			Models:  []string{"*"},
-			Weight:  1.0,
-			Enabled: &enabled,
-			BedrockKeyConfig: &schemas.BedrockKeyConfig{
-				AccessKey: schemas.EnvVar{Val: accessKey},
-				SecretKey: schemas.EnvVar{Val: secretKey},
-			},
-		}
-		if region != "" {
-			regionVal := schemas.EnvVar{Val: region}
-			key.BedrockKeyConfig.Region = &regionVal
-		}
-		if sessionToken != "" {
-			tokenVal := schemas.EnvVar{Val: sessionToken}
-			key.BedrockKeyConfig.SessionToken = &tokenVal
-		}
-
-		return []schemas.Key{key}, nil
+		return []schemas.Key{}, nil
 	}
 
 	apiKey, err := keyring.GetAPIKey(providerStr)

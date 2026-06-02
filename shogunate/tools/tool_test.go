@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,36 +111,16 @@ func TestValidatePathWithinProject_ExplicitProjectRoot(t *testing.T) {
 	})
 }
 
-func TestValidatePathWithinProject_EmptyProjectRoot_FallsBackToGetwd(t *testing.T) {
-	// When projectRoot is empty, ValidatePathWithinProject falls back to os.Getwd()
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Create a file in the current working directory
-	if err := os.WriteFile("local.txt", []byte("local"), 0644); err != nil {
-		t.Fatal(err)
+func TestValidatePathWithinProject_EmptyProjectRoot_ReturnsError(t *testing.T) {
+	// When projectRoot is empty, ValidatePathWithinProject returns an error
+	// because SetContext is the sole authority for project root in daemon mode.
+	err := ValidatePathWithinProject("local.txt", "")
+	if err == nil {
+		t.Error("expected error for empty projectRoot")
 	}
-
-	t.Run("path inside cwd is allowed when projectRoot is empty", func(t *testing.T) {
-		err := ValidatePathWithinProject("local.txt", "")
-		if err != nil {
-			t.Errorf("expected no error for local path with empty projectRoot, got: %v", err)
-		}
-	})
-
-	t.Run("path traversal beyond cwd is denied when projectRoot is empty", func(t *testing.T) {
-		err := ValidatePathWithinProject("../escape.txt", "")
-		if err == nil {
-			t.Error("expected error for path traversal with empty projectRoot")
-		}
-	})
-
-	t.Run("absolute path outside cwd is denied when projectRoot is empty", func(t *testing.T) {
-		err := ValidatePathWithinProject("/etc/passwd", "")
-		if err == nil {
-			t.Error("expected error for absolute path outside cwd with empty projectRoot")
-		}
-	})
+	if !strings.Contains(err.Error(), "project root not set") {
+		t.Errorf("expected 'project root not set' error, got: %v", err)
+	}
 }
 
 func TestValidatePathWithinProject_ProjectRootDiffersFromGetwd(t *testing.T) {

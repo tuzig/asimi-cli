@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -43,23 +42,18 @@ func ResolvePath(path, projectRoot string) string {
 
 // ValidatePathWithinProject checks if a file path is within the project root directory.
 // It prevents path traversal attacks and ensures files are only modified within the project tree.
-// When projectRoot is empty, it falls back to os.Getwd() for backward compatibility.
+// Returns an error if projectRoot is empty — SetContext is the sole authority for project root.
 func ValidatePathWithinProject(path, projectRoot string) error {
 	if path == "" {
 		return fmt.Errorf("path cannot be empty")
 	}
 
+	if projectRoot == "" {
+		return fmt.Errorf("project root not set: SetContext is the sole authority for project root in daemon mode")
+	}
+
 	// Resolve the path using projectRoot context
 	absPath := ResolvePath(path, projectRoot)
-
-	// Resolve project root: use provided value or fall back to cwd
-	if projectRoot == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
-		}
-		projectRoot = cwd
-	}
 
 	absRoot, err := filepath.Abs(projectRoot)
 	if err != nil {

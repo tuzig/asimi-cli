@@ -77,7 +77,7 @@ func (m *Marshal) Tools() []Tool {
 	}
 	// Add shell command tool if runner is available
 	if m.runner != nil {
-		toolList = append(toolList, tools.NewRunShellCommand(m.CheckHostCommand, m.runner, m.msgChan))
+		toolList = append(toolList, tools.NewRunShellCommand(m.CheckHostCommand, m.runner, m.msgChan, m.RepoInfo().ProjectRoot))
 	}
 	return toolList
 }

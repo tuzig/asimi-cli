@@ -246,19 +246,20 @@ func ProvideCommandHistory(db *storage.DB, repoInfo repo.RepoInfo, logger *slog.
 }
 
 // ProvideSessionHistory creates and returns the session history store
-func ProvideSessionHistory(db *storage.DB, config *Config, repoInfo repo.RepoInfo, logger *slog.Logger) (*SessionStore, error) {
-	if !config.Session.Enabled {
+func ProvideSessionHistory(db *storage.DB, cfg *Config, repoInfo repo.RepoInfo, logger *slog.Logger) (*SessionStore, error) {
+	if !cfg.Session.Enabled {
 		return nil, nil // Session storage is disabled
 	}
 
 	logger.Info("loading session history")
-	maxSessions := 50
-	maxAgeDays := 30
-	if config.Session.MaxSessions > 0 {
-		maxSessions = config.Session.MaxSessions
+	defaults := config.DefaultSessionConfig()
+	maxSessions := defaults.MaxSessions
+	maxAgeDays := defaults.MaxAgeDays
+	if cfg.Session.MaxSessions > 0 {
+		maxSessions = cfg.Session.MaxSessions
 	}
-	if config.Session.MaxAgeDays > 0 {
-		maxAgeDays = config.Session.MaxAgeDays
+	if cfg.Session.MaxAgeDays > 0 {
+		maxAgeDays = cfg.Session.MaxAgeDays
 	}
 
 	store, err := NewSessionStore(db, repoInfo, maxSessions, maxAgeDays)
@@ -429,6 +430,7 @@ func ProvideShogunate(params ShogunateParams) *shogunate.Shogunate {
 	params.Lifecycle.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			params.Logger.Info("starting Shogunate")
+			s.SetRepoInfo(params.RepoInfo)
 			return s.Start(ctx)
 		},
 		OnStop: func(ctx context.Context) error {

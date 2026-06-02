@@ -10,6 +10,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -549,20 +550,6 @@ func (rc *ReconnectingClient) CancelTab(channelID string) {
 	}
 }
 
-func (rc *ReconnectingClient) ConfigureLLM(ctx context.Context, req shogunate.ConfigureLLMRequest) error {
-	client := rc.getClient()
-	if client == nil {
-		return ErrClosed
-	}
-	err := client.ConfigureLLM(ctx, req)
-	if rc.reconnectIfError(err, rc.shouldRetry) {
-		if client = rc.getClient(); client != nil {
-			return client.ConfigureLLM(ctx, req)
-		}
-	}
-	return err
-}
-
 func (rc *ReconnectingClient) GetSessionExport(tabTarget string) (*shogunate.SessionExport, error) {
 	client := rc.getClient()
 	if client == nil {
@@ -590,6 +577,25 @@ func (rc *ReconnectingClient) Subscribe(ctx context.Context) <-chan any {
 		}
 	}
 	return rc.events
+}
+
+// SetContext updates the shogunate's session configuration (model, API keys,
+// repo info) over the wire. The daemon re-initializes Bifrost and calls
+// ConfigureModel internally after every SetContext.
+func (rc *ReconnectingClient) SetContext(ctx context.Context, params types.SetContextParams) error {
+	rc.mu.RLock()
+	client := rc.client
+	rc.mu.RUnlock()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.SetContext(ctx, params)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.SetContext(ctx, params)
+		}
+	}
+	return err
 }
 
 var _ shogunateapi.Client = (*ReconnectingClient)(nil)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -43,7 +44,7 @@ func TestGlobTool(t *testing.T) {
 	}
 
 	t.Run("recursive pattern matches root and nested files", func(t *testing.T) {
-		tool := GlobTool{}
+		tool := GlobTool{ProjectRoot: tmpDir}
 		result, err := tool.Call(context.Background(), `{"pattern": "**/*.go"}`)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -69,7 +70,7 @@ func TestGlobTool(t *testing.T) {
 	})
 
 	t.Run("regular pattern works", func(t *testing.T) {
-		tool := GlobTool{}
+		tool := GlobTool{ProjectRoot: tmpDir}
 		result, err := tool.Call(context.Background(), `{"pattern": "*.go"}`)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -83,7 +84,8 @@ func TestGlobTool(t *testing.T) {
 
 func containsLine(result, expected string) bool {
 	for _, line := range splitLines(result) {
-		if line == expected || filepath.Base(line) == expected {
+		line = strings.TrimSpace(line)
+		if line == expected || filepath.Base(line) == expected || strings.HasSuffix(line, string(filepath.Separator)+expected) {
 			return true
 		}
 	}

@@ -224,8 +224,6 @@ func NewSession(
 	workingDir := ""
 	if cfg != nil && cfg.WorkingDir != "" {
 		workingDir = cfg.WorkingDir
-	} else {
-		workingDir, _ = os.Getwd()
 	}
 
 	session := &Session{

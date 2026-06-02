@@ -11,12 +11,13 @@ import (
 
 // HostRunner runs commands directly on the host system
 type HostRunner struct {
-	msgChan chan<- Msg
+	projectRoot string
+	msgChan     chan<- Msg
 }
 
 // NewHostRunner creates a new HostRunner
-func NewHostRunner(connID uint64) *HostRunner {
-	return &HostRunner{}
+func NewHostRunner(connID uint64, projectRoot string) *HostRunner {
+	return &HostRunner{projectRoot: projectRoot}
 }
 
 func (r *HostRunner) SetMessageChannel(msgChan chan<- Msg) {
@@ -52,6 +53,10 @@ func (r *HostRunner) Run(ctx context.Context, input Input) (Output, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
+	if r.projectRoot != "" {
+		cmd.Dir = r.projectRoot
+	}
 
 	runErr := cmd.Run()
 	output.Output = stdout.String() + "\n" + stderr.String()

@@ -15,6 +15,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/shogunate/tools"
@@ -359,7 +360,7 @@ func (m *TUIModel) switchModel() tea.Cmd {
 			return llmInitErrorMsg{err: fmt.Errorf("shogunate not initialised")}
 		}
 		slog.Info("switching LLM model", "provider", m.config.LLM.Provider, "model", m.config.LLM.Model)
-		if err := m.shogunate.ConfigureLLM(context.Background(), m.llmRequest()); err != nil {
+		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
 			return llmInitErrorMsg{err: err}
 		}
 		slog.Info("LLM model switched successfully")
@@ -367,25 +368,72 @@ func (m *TUIModel) switchModel() tea.Cmd {
 	}
 }
 
-// llmRequest builds the wire-safe config used by ConfigureLLM calls.
-func (m *TUIModel) llmRequest() shogunate.ConfigureLLMRequest {
-	return shogunate.ConfigureLLMRequest{
-		Provider:                 m.config.LLM.Provider,
-		Model:                    m.config.LLM.Model,
-		BaseURL:                  m.config.LLM.BaseURL,
-		MaxTurns:                 m.config.LLM.MaxTurns,
-		MaxThinkingTokens:        m.config.LLM.MaxThinkingTokens,
-		RequestTimeoutSeconds:    m.config.LLM.RequestTimeoutSeconds,
-		StreamIdleTimeoutSeconds: m.config.LLM.StreamIdleTimeoutSeconds,
-		MaxRetries:               m.config.LLM.MaxRetries,
-		ProjectRoot: func() string {
-			if m.repoInfo != nil {
-				return m.repoInfo.ProjectRoot
-			}
-			return ""
-		}(),
-		AgentsFile: m.config.Session.AgentsFile,
+// setContextParams builds the params for a SetContext call from the TUI's
+// current state. APIKeys is always populated from environment variables
+// so that daemon mode receives the keys on every call (e.g., model switch).
+func (m *TUIModel) setContextParams() types.SetContextParams {
+	projectRoot := ""
+	worktreePath := ""
+	branch := ""
+	if m.repoInfo != nil {
+		projectRoot = m.repoInfo.ProjectRoot
+		worktreePath = m.repoInfo.WorktreePath
+		branch = m.repoInfo.Branch
 	}
+	project := ""
+	username := ""
+	if m.config != nil {
+		project = m.config.Shogunate.Project
+		username = m.config.Shogunate.Username
+	}
+	return types.SetContextParams{
+		Project:      project,
+		Username:     username,
+		ProjectRoot:  projectRoot,
+		WorktreePath: worktreePath,
+		Branch:       branch,
+		APIKeys:      collectAPIKeys(),
+	}
+}
+
+// collectAPIKeys gathers API keys from environment variables for all
+// supported providers. This runs in the TUI process and passes keys to
+// the daemon via SetContext, since the daemon no longer reads env vars directly.
+func collectAPIKeys() map[string]string {
+	keys := make(map[string]string)
+
+	// Standard provider API keys
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		keys["anthropic"] = key
+	}
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		keys["openai"] = key
+	}
+	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
+		keys["openrouter"] = key
+	}
+	if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+		keys["gemini"] = key
+	}
+	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
+		// Also check GOOGLE_API_KEY as an alternative for Gemini
+		if _, ok := keys["gemini"]; !ok {
+			keys["gemini"] = key
+		}
+	}
+
+	// AWS credentials for Bedrock
+	if key := os.Getenv("AWS_ACCESS_KEY_ID"); key != "" {
+		keys["AWS_ACCESS_KEY_ID"] = key
+	}
+	if key := os.Getenv("AWS_SECRET_ACCESS_KEY"); key != "" {
+		keys["AWS_SECRET_ACCESS_KEY"] = key
+	}
+	if key := os.Getenv("AWS_SESSION_TOKEN"); key != "" {
+		keys["AWS_SESSION_TOKEN"] = key
+	}
+
+	return keys
 }
 
 func (m *TUIModel) saveSession() {
@@ -434,7 +482,7 @@ func (m TUIModel) Init() tea.Cmd {
 			return llmInitErrorMsg{err: fmt.Errorf("shogunate not initialised")}
 		}
 		slog.Info("connecting to LLM", "provider", m.config.LLM.Provider)
-		if err := m.shogunate.ConfigureLLM(context.Background(), m.llmRequest()); err != nil {
+		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
 			return llmInitErrorMsg{err: err}
 		}
 		slog.Info("LLM client connected")

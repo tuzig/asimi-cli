@@ -25,7 +25,7 @@ func TestGrepToolWithDotPath(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	tool := GrepTool{}
+	tool := GrepTool{ProjectRoot: tmpDir}
 
 	// Test 1: Search with path="." should work now (bug fix)
 	result, err := tool.Call(context.Background(), `{"pattern": "hello", "path": "."}`)
@@ -77,7 +77,7 @@ func TestGrepToolHiddenDirectory(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	tool := GrepTool{}
+	tool := GrepTool{ProjectRoot: tmpDir}
 
 	// Test: Without includeHidden, hidden dirs should be skipped
 	result, err := tool.Call(context.Background(), `{"pattern": "content", "path": "."}`)

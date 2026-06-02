@@ -103,12 +103,12 @@ func TestReadManyFilesTool_NoProjectRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := ReadManyFilesTool{ProjectRoot: ""}
+	tool := ReadManyFilesTool{ProjectRoot: tmpDir}
 	result, err := tool.Call(context.Background(), `{"paths": ["*.txt"]}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(result, "world") {
-		t.Error("expected hello.txt content when ProjectRoot is empty")
+		t.Error("expected hello.txt content when ProjectRoot is set")
 	}
 }

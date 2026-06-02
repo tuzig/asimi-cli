@@ -9,7 +9,6 @@ import (
 
 	cucumberexpressions "github.com/cucumber/cucumber-expressions/go/v19"
 
-	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
@@ -192,7 +191,7 @@ func (r *RitualRunner) getHeavenSnapshot(ctx context.Context) (interface{}, erro
 		Command:        fmt.Sprintf("git log -1 --format='%%H' origin/%s", branch),
 		Description:    "get latest commit on upstream branch",
 		BypassApproval: true,
-	})
+	}, r.repoInfo.ProjectRoot)
 	latestCommit := ""
 	if err == nil {
 		latestCommit = strings.TrimSpace(output.Output)
@@ -207,7 +206,7 @@ func (r *RitualRunner) getHeavenSnapshot(ctx context.Context) (interface{}, erro
 		Command:        fmt.Sprintf("git log -1 --format='%%cr' origin/%s", branch),
 		Description:    "get age of upstream commit",
 		BypassApproval: true,
-	})
+	}, r.repoInfo.ProjectRoot)
 	if err == nil {
 		ageStr = strings.TrimSpace(output2.Output)
 	}
@@ -403,7 +402,7 @@ func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) 
 		Command:        "git diff",
 		Description:    "get borderlands (git diff)",
 		BypassApproval: true,
-	})
+	}, r.repoInfo.ProjectRoot)
 	if err == nil {
 		result["borderlands:changes"] = diff.Output
 	}
@@ -411,7 +410,7 @@ func (r *RitualRunner) getBorderlands(ctx context.Context) (interface{}, error) 
 		Command:        "git ls-files --others --exclude-standard",
 		Description:    "get borderlands (untracked files)",
 		BypassApproval: true,
-	})
+	}, r.repoInfo.ProjectRoot)
 	if err == nil {
 		result["borderlands:untracked"] = untracked.Output
 	}
@@ -482,7 +481,7 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 		Command:        "mkdir -p .agents/sandbox",
 		Description:    "create .agents/sandbox directory structure",
 		BypassApproval: true,
-	}); err != nil {
+	}, r.repoInfo.ProjectRoot); err != nil {
 		return nil, fmt.Errorf("failed to create .agents/sandbox directory: %w", err)
 	}
 
@@ -491,14 +490,11 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 	// (toml rejects duplicates, just rejects malformed recipes), so we do the
 	// boilerplate substitution deterministically here.
 	//
-	// Slug precedence: shogunate.project from config (set explicitly by the user
+	// Slug precedence: injected projectSlug from config (set explicitly by the user
 	// via the :init prompt or the project's asimi.conf) → git remote slug →
 	// "local" as a last-ditch fallback. The config value is the source of truth
 	// because the user may have set it before any git remote was configured.
-	slug := ""
-	if cfg, err := config.LoadConfig(); err == nil {
-		slug = cfg.Shogunate.Project
-	}
+	slug := r.projectSlug
 	if slug == "" {
 		slug = r.repoInfo.Slug
 	}
@@ -551,7 +547,7 @@ func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 		Command:        "just build-sandbox",
 		Description:    "build the sandbox",
 		BypassApproval: true,
-	})
+	}, r.repoInfo.ProjectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build the sandbox image: %w", err)
 	}
@@ -590,16 +586,15 @@ func (r *RitualRunner) verifySandboxUp(ctx context.Context) (interface{}, error)
 
 func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, error) {
 	// Step 1: Reload the runner to pick up the newly built sandbox image
-	// TODO: Find a better way then reloading the config
-	cfg, loadErr := config.LoadConfig()
-	if loadErr != nil {
+	// Use the injected sandbox config instead of CWD-relative LoadConfig.
+	if r.sandboxConfig == nil {
 		return map[string]string{
 			"status": "failed",
-			"output": "failed to load configuration: " + loadErr.Error(),
-		}, fmt.Errorf("failed to load configuration: %w", loadErr)
+			"output": "sandbox configuration not available",
+		}, fmt.Errorf("sandbox configuration not available (SetConfig not called)")
 	}
 	repoInfo := r.repoInfo
-	r.runner = runners.InitShellRunner(&cfg.Sandbox, repoInfo)
+	r.runner = runners.InitShellRunner(r.sandboxConfig, repoInfo)
 	if r.runner == nil {
 		return map[string]string{
 			"status": "failed",
@@ -793,7 +788,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			Command:        "git add " + strings.Join(paths, " "),
 			Description:    "stage infrastructure files",
 			BypassApproval: true,
-		})
+		}, r.repoInfo.ProjectRoot)
 		if err != nil {
 			return fmt.Errorf("failed to stage infrastructure: %w", err)
 		}

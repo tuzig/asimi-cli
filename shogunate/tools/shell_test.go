@@ -24,7 +24,7 @@ func TestRunShellCommandUsesLocalRunner(t *testing.T) {
 		},
 	}
 
-	tool := NewRunShellCommand(nil, mockRunner, nil)
+	tool := NewRunShellCommand(nil, mockRunner, nil, "")
 	require.NotNil(t, tool)
 
 	result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
@@ -42,7 +42,7 @@ func TestRunShellCommandUsesLocalRunner(t *testing.T) {
 }
 
 func TestRunShellCommandNoRunner(t *testing.T) {
-	tool := NewRunShellCommand(nil, nil, nil)
+	tool := NewRunShellCommand(nil, nil, nil, "")
 
 	_, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
 	require.Error(t, err)
@@ -63,7 +63,7 @@ func TestRunShellCommandHostOverride(t *testing.T) {
 	// hostChecker returns (runOnHost=true, needsApproval=false)
 	hostChecker := func(cmd string) (bool, bool) { return true, false }
 
-	tool := NewRunShellCommand(hostChecker, mockRunner, nil)
+	tool := NewRunShellCommand(hostChecker, mockRunner, nil, t.TempDir())
 	result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
 	require.NoError(t, err)
 
@@ -87,7 +87,8 @@ func TestRunShellCommandSandboxMissingFallback(t *testing.T) {
 		},
 	}
 
-	tool := NewRunShellCommand(nil, mockRunner, nil)
+	tool := NewRunShellCommand(nil, mockRunner, nil, t.TempDir())
+
 	result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
 	require.NoError(t, err)
 
@@ -115,7 +116,7 @@ func TestRunShellCommandHostOverrideWithMsgChan(t *testing.T) {
 
 	// Create a message channel to capture approval requests
 	msgChan := make(chan runners.Msg, 1)
-	tool := NewRunShellCommand(hostChecker, mockRunner, msgChan)
+	tool := NewRunShellCommand(hostChecker, mockRunner, msgChan, t.TempDir())
 
 	// Run in a goroutine since it blocks waiting for approval
 	done := make(chan struct{})
@@ -154,7 +155,7 @@ func TestRunShellCommandSandboxMissingFallbackWithMsgChan(t *testing.T) {
 	}
 
 	msgChan := make(chan runners.Msg, 1)
-	tool := NewRunShellCommand(nil, mockRunner, msgChan)
+	tool := NewRunShellCommand(nil, mockRunner, msgChan, t.TempDir())
 
 	done := make(chan struct{})
 	go func() {

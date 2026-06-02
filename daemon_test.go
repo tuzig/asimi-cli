@@ -15,13 +15,13 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/rpc"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/types"
+	"github.com/afittestide/asimi/shogunate"
 	shogunateTools "github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
-
-	"github.com/afittestide/asimi/shogunate"
 )
 
 // initTestDB creates a temporary SQLite database for daemon tests.
@@ -126,7 +126,7 @@ func dialServeOne(t *testing.T, shared *DaemonShared, projectRoot string) (*rpc.
 	client := rpc.NewShogunateClient(clientConn)
 	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer handshakeCancel()
-	if err := client.SetContext(handshakeCtx, rpc.SetContextParams{
+	if err := client.SetContext(handshakeCtx, types.SetContextParams{
 		Project:     "test-project",
 		Username:    "test-user",
 		ProjectRoot: projectRoot,
@@ -308,23 +308,14 @@ func TestDaemonInvalidProjectRoot(t *testing.T) {
 	// Send SetContext with a path that does not exist on disk.
 	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer handshakeCancel()
-	err = client.SetContext(handshakeCtx, rpc.SetContextParams{
+	err = client.SetContext(handshakeCtx, types.SetContextParams{
 		Project:     "test-project",
 		Username:    "test-user",
 		ProjectRoot: "/no/such/directory/ever",
 	})
-	// The server may return the SetContext response successfully
-	// (because the handler just captures the params) and then close
-	// the connection. Either way, the connection must end.
-	_ = err
-
-	// The server should close the connection after validating
-	// project_root. Wait for the connection Done channel.
-	select {
-	case <-clientConn.Done():
-		// Expected: server closed the connection.
-	case <-time.After(5 * time.Second):
-		t.Error("server did not close connection for invalid project_root")
+	// The server should return an error for an invalid project_root.
+	if err == nil {
+		t.Error("expected error for invalid project_root, got nil")
 	}
 
 	cancel()
@@ -372,18 +363,14 @@ func TestDaemonEmptyProjectRoot(t *testing.T) {
 	// Send SetContext with empty project_root.
 	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer handshakeCancel()
-	_ = client.SetContext(handshakeCtx, rpc.SetContextParams{
+	err = client.SetContext(handshakeCtx, types.SetContextParams{
 		Project:     "test-project",
 		Username:    "test-user",
 		ProjectRoot: "",
 	})
-
-	// The server should close the connection because project_root is empty.
-	select {
-	case <-clientConn.Done():
-		// Expected.
-	case <-time.After(5 * time.Second):
-		t.Error("server did not close connection for empty project_root")
+	// The server should return an error for empty project_root.
+	if err == nil {
+		t.Error("expected error for empty project_root, got nil")
 	}
 
 	cancel()
@@ -435,7 +422,7 @@ func TestPodmanRunnerHostFallbackMustNotLeak(t *testing.T) {
 		Slug:        "test-project",
 	}
 
-	hostRunner := runners.NewHostRunner(1)
+	hostRunner := runners.NewHostRunner(1, t.TempDir())
 	runner := runners.NewPodmanRunner(cfg, repoInfo, 1, hostRunner)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -476,7 +463,7 @@ func TestShellCommandFallbackWithoutSandbox(t *testing.T) {
 		_ = runner.Close(ctx)
 	}()
 
-	shellTool := shogunateTools.NewRunShellCommand(nil, runner, nil)
+	shellTool := shogunateTools.NewRunShellCommand(nil, runner, nil, t.TempDir())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -498,6 +485,76 @@ func TestShellCommandFallbackWithoutSandbox(t *testing.T) {
 	}
 	if output.ExitCode != "0" {
 		t.Errorf("exitCode = %q, want '0'", output.ExitCode)
+	}
+}
+
+// TestDaemonSafeRunOnHostUsesClientProjectRoot verifies the critical
+// daemon-mode invariant: when a safe_run_on_host command is executed
+// via the RunShellCommand tool, it runs in the CLIENT's ProjectRoot,
+// NOT the daemon process's CWD.
+func TestDaemonSafeRunOnHostUsesClientProjectRoot(t *testing.T) {
+	// Create two distinct project directories with unique marker files
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+	markerA := "CLIENT_A_MARKER"
+	markerB := "CLIENT_B_MARKER"
+
+	if err := os.WriteFile(filepath.Join(projectA, "whoami.txt"), []byte(markerA), 0644); err != nil {
+		t.Fatalf("write marker A: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectB, "whoami.txt"), []byte(markerB), 0644); err != nil {
+		t.Fatalf("write marker B: %v", err)
+	}
+
+	// Simulate what the daemon does when a safe_run_on_host command
+	// arrives: it creates an ephemeral HostRunner with the client's
+	// ProjectRoot. Verify that commands run in the client's directory.
+	hostRunnerA := runners.NewHostRunner(0, projectA)
+	output, err := hostRunnerA.Run(context.Background(), runners.Input{
+		Command:        "cat whoami.txt",
+		BypassApproval: true,
+	})
+	if err != nil {
+		t.Fatalf("HostRunner A: %v", err)
+	}
+	if !strings.Contains(output.Output, markerA) {
+		t.Errorf("safe_run_on_host command ran in wrong directory.\nGot: %q\nWant: %q\nProjectRoot: %s", output.Output, markerA, projectA)
+	}
+	if strings.Contains(output.Output, markerB) {
+		t.Errorf("safe_run_on_host ran in project B instead of A.\nGot: %q\nProjectRoot: %s", output.Output, projectA)
+	}
+
+	// Now verify client B gets its own project root
+	hostRunnerB := runners.NewHostRunner(0, projectB)
+	outputB, err := hostRunnerB.Run(context.Background(), runners.Input{
+		Command:        "cat whoami.txt",
+		BypassApproval: true,
+	})
+	if err != nil {
+		t.Fatalf("HostRunner B: %v", err)
+	}
+	if !strings.Contains(outputB.Output, markerB) {
+		t.Errorf("safe_run_on_host command ran in wrong directory for B.\nGot: %q\nWant: %q\nProjectRoot: %s", outputB.Output, markerB, projectB)
+	}
+	if strings.Contains(outputB.Output, markerA) {
+		t.Errorf("safe_run_on_host for B found A's marker.\nGot: %q\nProjectRoot: %s", outputB.Output, projectB)
+	}
+
+	// Also verify the full tool path: RunShellCommand with safe_run_on_host
+	// pattern uses the projectRoot passed to NewRunShellCommand.
+	hostChecker := func(cmd string) (bool, bool) { return true, false } // safe, no approval needed
+	tool := shogunateTools.NewRunShellCommand(hostChecker, nil, nil, projectA)
+	result, err := tool.Call(context.Background(), `{"command":"cat whoami.txt","description":"verify project root"}`)
+	if err != nil {
+		t.Fatalf("RunShellCommand: %v", err)
+	}
+
+	var toolOutput runners.Output
+	if err := json.Unmarshal([]byte(result), &toolOutput); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	if !strings.Contains(toolOutput.Output, markerA) {
+		t.Errorf("RunShellCommand safe_run_on_host did NOT run in client ProjectRoot.\nGot: %q\nWant: %q\nprojectRoot: %s", toolOutput.Output, markerA, projectA)
 	}
 }
 
@@ -539,7 +596,7 @@ func dialTwoClients(t *testing.T, shared *DaemonShared, projectRootA, projectRoo
 		client := rpc.NewShogunateClient(clientConn)
 		handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 5*time.Second)
 		defer handshakeCancel()
-		if err := client.SetContext(handshakeCtx, rpc.SetContextParams{
+		if err := client.SetContext(handshakeCtx, types.SetContextParams{
 			Project:     "test-project",
 			Username:    "test-user",
 			ProjectRoot: projectRoot,

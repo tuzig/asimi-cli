@@ -12,7 +12,8 @@ import (
 
 // AsimiSQLTool executes SQL queries against the Shogunate database.
 type AsimiSQLTool struct {
-	DBPath string
+	DBPath      string
+	ProjectRoot string
 }
 
 func (t AsimiSQLTool) Name() string {
@@ -61,7 +62,7 @@ func (t AsimiSQLTool) Call(ctx context.Context, input string) (string, error) {
 		BypassApproval: true,
 	}
 
-	runnerOutput, err := runners.HostRun(ctx, runnerInput)
+	runnerOutput, err := runners.HostRun(ctx, runnerInput, t.ProjectRoot)
 	if err != nil {
 		return "", fmt.Errorf("sqlite3 error: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/wire"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
@@ -243,12 +244,8 @@ func (c *ShogunateClient) CancelTab(channelID string) {
 	_ = c.callVoid(context.Background(), MethodCancelTab, CancelTabParams{ChannelID: channelID})
 }
 
-func (c *ShogunateClient) SetContext(ctx context.Context, params SetContextParams) error {
+func (c *ShogunateClient) SetContext(ctx context.Context, params types.SetContextParams) error {
 	return c.callVoid(ctx, MethodSetContext, params)
-}
-
-func (c *ShogunateClient) ConfigureLLM(ctx context.Context, req shogunate.ConfigureLLMRequest) error {
-	return c.callVoid(ctx, MethodConfigureLLM, ConfigureLLMParams{Req: req})
 }
 
 func (c *ShogunateClient) GetSessionExport(tabTarget string) (*shogunate.SessionExport, error) {

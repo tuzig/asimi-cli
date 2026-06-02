@@ -9,6 +9,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/rpc"
+	"github.com/afittestide/asimi/internal/types"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -123,12 +124,13 @@ func newDaemonConn(ctx context.Context, socketPath string) (*rpc.Conn, error) {
 		username = u.Username
 	}
 
-	if err := rpc.NewShogunateClient(conn).SetContext(ctx, rpc.SetContextParams{
+	if err := rpc.NewShogunateClient(conn).SetContext(ctx, types.SetContextParams{
 		Project:      repoInfo.Slug,
 		Username:     username,
 		ProjectRoot:  repoInfo.ProjectRoot,
 		WorktreePath: repoInfo.WorktreePath,
 		Branch:       repoInfo.Branch,
+		APIKeys:      collectAPIKeys(),
 	}); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("handshake failed: %w", err)

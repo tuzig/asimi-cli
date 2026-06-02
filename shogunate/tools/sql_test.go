@@ -19,7 +19,6 @@ import (
 // AsimiSQLTool is used through the scheduler, the raw output flows through
 // and needs to be truncated. This test verifies that truncation is applied.
 func TestAsimiSQLTool_LargeOutputNotTruncated(t *testing.T) {
-	// Create a temporary database
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
 
@@ -36,7 +35,7 @@ func TestAsimiSQLTool_LargeOutputNotTruncated(t *testing.T) {
 		t.Skip("sqlite3 not available in this environment")
 	}
 
-	tool := AsimiSQLTool{DBPath: dbPath}
+	tool := AsimiSQLTool{DBPath: dbPath, ProjectRoot: tempDir}
 
 	// Generate a query that would return many rows (simulated large output)
 	// We'll test the truncation happens at the Session level, not here
@@ -73,7 +72,7 @@ func TestAsimiSQLTool_OutputSizeVerification(t *testing.T) {
 		t.Skip("sqlite3 not available in this environment")
 	}
 
-	tool := AsimiSQLTool{DBPath: dbPath}
+	tool := AsimiSQLTool{DBPath: dbPath, ProjectRoot: tempDir}
 
 	// Test that an empty result is returned properly
 	result, err := tool.Call(context.Background(), `{"query":"SELECT name FROM sqlite_master"}`)
@@ -85,7 +84,8 @@ func TestAsimiSQLTool_OutputSizeVerification(t *testing.T) {
 
 // TestAsimiSQLTool_ErrorsHandled verifies error handling
 func TestAsimiSQLTool_ErrorsHandled(t *testing.T) {
-	tool := AsimiSQLTool{DBPath: "/nonexistent/path/db.sqlite"}
+	tempDir := t.TempDir()
+	tool := AsimiSQLTool{DBPath: "/nonexistent/path/db.sqlite", ProjectRoot: tempDir}
 
 	// Invalid JSON input
 	_, err := tool.Call(context.Background(), "not json")
@@ -100,7 +100,7 @@ func TestAsimiSQLTool_ErrorsHandled(t *testing.T) {
 
 // TestAsimiSQLTool_Format verifies the Format method works correctly
 func TestAsimiSQLTool_Format(t *testing.T) {
-	tool := AsimiSQLTool{DBPath: "/test/path"}
+	tool := AsimiSQLTool{DBPath: "/test/path", ProjectRoot: t.TempDir()}
 
 	// Test with short query
 	result := tool.Format(`{"query":"SELECT * FROM edicts"}`, "output", nil)
@@ -120,7 +120,7 @@ func TestAsimiSQLTool_Format(t *testing.T) {
 
 // TestAsimiSQLTool_ParameterSchema verifies the tool's parameter schema
 func TestAsimiSQLTool_ParameterSchema(t *testing.T) {
-	tool := AsimiSQLTool{DBPath: "/test"}
+	tool := AsimiSQLTool{DBPath: "/test", ProjectRoot: t.TempDir()}
 
 	schema := tool.ParameterSchema()
 	assert.NotNil(t, schema)
@@ -139,11 +139,53 @@ func TestAsimiSQLTool_ParameterSchema(t *testing.T) {
 
 // TestAsimiSQLTool_NameAndDescription verifies tool metadata
 func TestAsimiSQLTool_NameAndDescription(t *testing.T) {
-	tool := AsimiSQLTool{DBPath: "/test"}
+	tool := AsimiSQLTool{DBPath: "/test", ProjectRoot: t.TempDir()}
 
 	assert.Equal(t, "asimisql", tool.Name())
 
 	desc := tool.Description()
 	assert.Contains(t, desc, "Execute SQL")
 	assert.Contains(t, desc, "Shogunate database")
+}
+
+// TestAsimiSQLTool_ProjectRootPassedToHostRun verifies that when
+// AsimiSQLTool.Call is invoked, the projectRoot is correctly passed
+// through to HostRun, which sets it as the working directory for
+// command execution. We confirm this by placing the database in a
+// subdirectory and using a relative DB path — if projectRoot is
+// correct, sqlite3 resolves the relative path from that directory.
+func TestAsimiSQLTool_ProjectRootPassedToHostRun(t *testing.T) {
+	projectRoot := t.TempDir()
+	subDir := filepath.Join(projectRoot, "data")
+	err := os.MkdirAll(subDir, 0755)
+	require.NoError(t, err)
+
+	// Place the DB in the subdirectory
+	dbPath := filepath.Join(subDir, "test.db")
+	err = os.WriteFile(dbPath, []byte(""), 0644)
+	require.NoError(t, err)
+
+	// Check if sqlite3 is available - if not, skip
+	_, err = os.Stat("/usr/bin/sqlite3")
+	if os.IsNotExist(err) {
+		_, err = os.Stat("/usr/local/bin/sqlite3")
+	}
+	if os.IsNotExist(err) {
+		t.Skip("sqlite3 not available in this environment")
+	}
+
+	// Use a relative path from projectRoot
+	relDBPath := "data/test.db"
+	tool := AsimiSQLTool{DBPath: relDBPath, ProjectRoot: projectRoot}
+
+	// This query will succeed only if sqlite3 runs from projectRoot
+	// (so the relative path "data/test.db" resolves correctly)
+	result, err := tool.Call(context.Background(), `{"query":"SELECT name FROM sqlite_master"}`)
+	require.NoError(t, err)
+	assert.Contains(t, result, `"status":"ok"`)
+
+	// Sanity check: the same tool with a wrong projectRoot should fail
+	wrongTool := AsimiSQLTool{DBPath: relDBPath, ProjectRoot: t.TempDir()}
+	_, err = wrongTool.Call(context.Background(), `{"query":"SELECT name FROM sqlite_master"}`)
+	assert.Error(t, err, "expected error when projectRoot doesn't match relative DB path")
 }

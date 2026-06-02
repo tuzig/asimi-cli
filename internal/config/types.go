@@ -130,6 +130,14 @@ func DefaultShogunateConfig() *ShogunateConfig {
 	}
 }
 
+// DefaultSessionConfig returns the default session configuration.
+func DefaultSessionConfig() *SessionConfig {
+	return &SessionConfig{
+		MaxSessions: 50,
+		MaxAgeDays:  30,
+	}
+}
+
 // ReloadProjectConf reloads the project's configuration file
 func (c *Config) ReloadProjectConf() error {
 	projectConfigPath := filepath.Join(".agents", "asimi.conf")

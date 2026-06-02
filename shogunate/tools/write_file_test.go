@@ -20,7 +20,7 @@ func TestWriteFileTool_BasicWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := WriteFileTool{}
+	tool := WriteFileTool{ProjectRoot: tmpDir}
 
 	t.Run("writes simple file", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "test.txt", "content": "hello world"}`)
@@ -75,7 +75,7 @@ func TestWriteFileTool_DirectoryCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := WriteFileTool{}
+	tool := WriteFileTool{ProjectRoot: tmpDir}
 
 	t.Run("creates nested directories", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "a/b/c/nested.txt", "content": "nested content"}`)
@@ -126,7 +126,7 @@ func TestWriteFileTool_PathValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := WriteFileTool{}
+	tool := WriteFileTool{ProjectRoot: tmpDir}
 
 	t.Run("path outside project is denied", func(t *testing.T) {
 		parentDir := filepath.Dir(tmpDir)
@@ -164,7 +164,7 @@ func TestWriteFileTool_InvalidInput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := WriteFileTool{}
+	tool := WriteFileTool{ProjectRoot: tmpDir}
 
 	t.Run("empty JSON object", func(t *testing.T) {
 		_, err := tool.Call(context.Background(), `{}`)
@@ -214,7 +214,7 @@ func TestWriteFileTool_QuotedPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := WriteFileTool{}
+	tool := WriteFileTool{ProjectRoot: tmpDir}
 
 	t.Run("handles double quoted path", func(t *testing.T) {
 		result, err := tool.Call(context.Background(), `{"path": "\"quoted.txt\"", "content": "content"}`)

@@ -16,6 +16,7 @@ type RunShellCommand struct {
 	shouldRunOnHost func(cmd string) (runOnHost, needsApproval bool)
 	runner          runners.Runner
 	msgChan         chan<- runners.Msg // for ephemeral HostRunner approval
+	projectRoot     string             // working directory for ephemeral HostRunner
 }
 
 // NewRunShellCommand creates a new RunShellCommand tool.
@@ -25,11 +26,13 @@ func NewRunShellCommand(
 	hostChecker func(string) (bool, bool),
 	runner runners.Runner,
 	msgChan chan<- runners.Msg,
+	projectRoot string,
 ) *RunShellCommand {
 	return &RunShellCommand{
 		shouldRunOnHost: hostChecker,
 		runner:          runner,
 		msgChan:         msgChan,
+		projectRoot:     projectRoot,
 	}
 }
 
@@ -68,7 +71,7 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		runnerInput.BypassApproval = !requiresApproval
 
 		// Create ephemeral host runner and run directly on host
-		hostRunner := runners.NewHostRunner(0)
+		hostRunner := runners.NewHostRunner(0, t.projectRoot)
 		hostRunner.SetMessageChannel(t.msgChan)
 		runnerOutput, err := hostRunner.Run(ctx, runnerInput)
 		output.Output = runnerOutput.Output
@@ -91,7 +94,7 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		// Don't attempt restart since this is a permanent state until sandbox is built.
 		if _, isMissing := runErr.(runners.SandboxMissingError); isMissing {
 			slog.Warn("sandbox not available, running on host", "command", runnerInput.Command)
-			hostRunner := runners.NewHostRunner(0)
+			hostRunner := runners.NewHostRunner(0, t.projectRoot)
 			hostRunner.SetMessageChannel(t.msgChan)
 			// When no approval channel is available, bypass approval since the
 			// user implicitly approved by running the ritual.

@@ -272,17 +272,6 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 		return nil, nil
 	})
 
-	c.Handle(MethodConfigureLLM, func(ctx context.Context, params []byte) ([]byte, error) {
-		var p ConfigureLLMParams
-		if err := wire.Decode(params, &p); err != nil {
-			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
-		}
-		if err := impl.ConfigureLLM(ctx, p.Req); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	})
-
 	c.Handle(MethodGetSessionExport, func(ctx context.Context, params []byte) ([]byte, error) {
 		var p GetSessionExportParams
 		if err := wire.Decode(params, &p); err != nil {

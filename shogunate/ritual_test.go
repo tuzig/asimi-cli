@@ -519,6 +519,7 @@ func TestRitualGuardLoadRituals(t *testing.T) {
 	// Test that RitualGuard.LoadRituals correctly loads and registers rituals
 	db := setupRitualTestDB(t)
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base.repoInfo = repo.RepoInfo{ProjectRoot: t.TempDir()}
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 
 	err := rg.LoadRituals()
@@ -535,6 +536,21 @@ func TestRitualGuardLoadRituals(t *testing.T) {
 	dawnAudience := registry.Get("dawn-audience")
 	if dawnAudience == nil {
 		t.Error("expected dawn-audience to be registered")
+	}
+}
+
+func TestRitualGuardLoadRituals_EmptyProjectRoot(t *testing.T) {
+	// LoadRituals must return an error when projectRoot is empty
+	db := setupRitualTestDB(t)
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	rg := NewRitualGuard(RitualGuardOpts{Base: base})
+
+	err := rg.LoadRituals()
+	if err == nil {
+		t.Fatal("expected error when projectRoot is empty")
+	}
+	if !strings.Contains(err.Error(), "project root not set") {
+		t.Errorf("expected 'project root not set' error, got: %v", err)
 	}
 }
 

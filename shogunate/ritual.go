@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
@@ -370,6 +371,8 @@ type RitualRunner struct {
 	logger          *slog.Logger
 	maxRetries      int
 	repoInfo        repo.RepoInfo
+	sandboxConfig   *config.SandboxConfig // injected by ConfigureModel, avoids CWD-relative LoadConfig
+	projectSlug     string                // injected by ConfigureModel, avoids CWD-relative LoadConfig
 }
 
 // NewRitualRunner creates a new ritual runner
@@ -396,6 +399,14 @@ func NewRitualRunner(
 		maxRetries:   3,
 		repoInfo:     repoInfo,
 	}
+}
+
+// SetConfig injects sandbox and project configuration from the shogunate's
+// SessionConfig. This is called by ConfigureModel so that the RitualRunner
+// never needs to call config.LoadConfig (which is CWD-relative and fragile).
+func (r *RitualRunner) SetConfig(sandboxCfg *config.SandboxConfig, projectSlug string) {
+	r.sandboxConfig = sandboxCfg
+	r.projectSlug = projectSlug
 }
 
 // waitForZhengming delegates to the chancellor's MinisterBase blocking wait.

@@ -16,7 +16,7 @@ func TestNewPodmanRunner(t *testing.T) {
 		Slug:        "test/project",
 	}
 
-	hostRunner := NewHostRunner(1)
+	hostRunner := NewHostRunner(1, t.TempDir())
 
 	config := &Config{
 		AllowHostFallback: true,
@@ -59,7 +59,7 @@ func TestPodmanRunnerWithFallback(t *testing.T) {
 		Slug:        "test/nonexistent-image",
 	}
 
-	hostRunner := NewHostRunner(3)
+	hostRunner := NewHostRunner(3, t.TempDir())
 
 	config := &Config{
 		AllowHostFallback: true,

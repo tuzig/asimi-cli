@@ -18,6 +18,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/rpc"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/wire"
 	"github.com/afittestide/asimi/shogunate"
 	"go.uber.org/fx"
@@ -140,114 +141,43 @@ func serveClients(ctx context.Context, listener net.Listener, shared *DaemonShar
 	}
 }
 
-// serveOne runs the RPC server loop for a single client connection.
-// It performs a handshake (SetContext), then creates per-connection
-// Runner and Shogunate, registers handlers, pumps server→client
-// notifications, and blocks until the client disconnects or ctx
-// cancels. connID uniquely identifies this connection within the
-// daemon process.
-func serveOne(ctx context.Context, c net.Conn, shared *DaemonShared, connID uint64) {
-	defer c.Close()
+// createShogunate creates a PodmanRunner and Shogunate for a new
+// daemon connection. It loads the project config, builds the runner,
+// creates the Shogunate, wires the session persister (using
+// config.DefaultSessionConfig for defaults), and starts it.
+func createShogunate(
+	ctx context.Context,
+	shared *DaemonShared,
+	connID uint64,
+	hp types.SetContextParams,
+	projectCfg *config.Config,
+	repoInfo repo.RepoInfo,
+) (*shogunate.Shogunate, *runners.PodmanRunner, error) {
+	runner := runners.NewPodmanRunner(&projectCfg.Sandbox, repoInfo, connID, nil)
 
-	conn := rpc.New(c, rpc.Options{})
-
-	// Register liveness probe before Serve starts so autostart can
-	// verify the daemon is responsive before handshake completes.
-	conn.Handle(rpc.MethodPing, func(ctx context.Context, _ []byte) ([]byte, error) {
-		return wire.Encode(rpc.PingResult{Ok: true})
-	})
-
-	handshakeCh := make(chan rpc.SetContextParams, 1)
-	handshakeRespCh := make(chan error, 1)
-	conn.Handle(rpc.MethodSetContext, func(_ context.Context, params []byte) ([]byte, error) {
-		var p rpc.SetContextParams
-		if err := wire.Decode(params, &p); err != nil {
-			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
-		}
-		select {
-		case handshakeCh <- p:
-		default:
-		}
-		if err := <-handshakeRespCh; err != nil {
-			return nil, err
-		}
-		return wire.Encode(rpc.SetContextResult{})
-	})
-
-	// (3) Start Serve() in a goroutine EXACTLY ONCE.
-	go func() {
-		if err := conn.Serve(); err != nil {
-			shared.Logger.Debug("daemon: conn.Serve exited", "conn_id", connID, "err", err)
-		}
-	}()
-
-	// (4) Wait for handshake with a 30s timeout.
-	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer handshakeCancel()
-
-	var hp rpc.SetContextParams
-	select {
-	case hp = <-handshakeCh:
-		// Handshake received.
-	case <-handshakeCtx.Done():
-		shared.Logger.Warn("daemon: handshake timeout", "conn_id", connID)
-		conn.Close()
-		return
-	}
-
-	// (5) Validate project_root exists via os.Stat.
-	if hp.ProjectRoot == "" {
-		shared.Logger.Warn("daemon: empty project_root", "conn_id", connID)
-		handshakeRespCh <- wire.NewError(0, "empty project_root")
-		conn.Close()
-		return
-	}
-	if _, err := os.Stat(hp.ProjectRoot); err != nil {
-		shared.Logger.Warn("daemon: invalid project_root", "conn_id", connID, "path", hp.ProjectRoot, "err", err)
-		handshakeRespCh <- wire.NewError(0, "invalid project_root")
-		conn.Close()
-		return
-	}
-
-	// (6) Create per-connection resources from handshake params.
-	repoInfo := repo.RepoInfo{
-		ProjectRoot:  hp.ProjectRoot,
-		WorktreePath: hp.WorktreePath,
-		Branch:       hp.Branch,
-		Slug:         hp.Project,
-	}
-
-	runner := runners.NewPodmanRunner(&shared.Config.Sandbox, repoInfo, connID, nil)
-	defer func() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer closeCancel()
-		_ = runner.Close(closeCtx)
-	}()
-
-	cfg := config.DefaultShogunateConfig()
-	// TODO: Remove Username as it should come from the unix socket so
-	// users can't fake it
+	shogCfg := config.DefaultShogunateConfig()
 	if hp.Username != "" {
-		cfg.Username = hp.Username
+		shogCfg.Username = hp.Username
 	}
 	if hp.Project != "" {
-		cfg.Project = hp.Project
+		shogCfg.Project = hp.Project
 	} else if repoInfo.Slug != "" {
-		cfg.Project = repoInfo.Slug
+		shogCfg.Project = repoInfo.Slug
 	}
 
-	shog := shogunate.NewShogunate(shared.DB, cfg, runner, shared.Logger)
+	shog := shogunate.NewShogunate(shared.DB, shogCfg, runner, shared.Logger)
 
 	// Wire session persister so daemon sessions are persisted to DB,
 	// same as the TUI path does via ProvideShogunate.
-	if shared.Storage != nil && shared.Config.Session.Enabled {
-		maxSessions := 50
-		maxAgeDays := 30
-		if shared.Config.Session.MaxSessions > 0 {
-			maxSessions = shared.Config.Session.MaxSessions
+	if shared.Storage != nil && projectCfg.Session.Enabled {
+		defaults := config.DefaultSessionConfig()
+		maxSessions := defaults.MaxSessions
+		maxAgeDays := defaults.MaxAgeDays
+		if projectCfg.Session.MaxSessions > 0 {
+			maxSessions = projectCfg.Session.MaxSessions
 		}
-		if shared.Config.Session.MaxAgeDays > 0 {
-			maxAgeDays = shared.Config.Session.MaxAgeDays
+		if projectCfg.Session.MaxAgeDays > 0 {
+			maxAgeDays = projectCfg.Session.MaxAgeDays
 		}
 		sessionStore, err := NewSessionStore(shared.Storage, repoInfo, maxSessions, maxAgeDays)
 		if err != nil {
@@ -258,30 +188,137 @@ func serveOne(ctx context.Context, c net.Conn, shared *DaemonShared, connID uint
 	}
 
 	if err := shog.Start(ctx); err != nil {
-		shared.Logger.Error("daemon: shogunate start failed", "conn_id", connID, "err", err)
-		handshakeRespCh <- wire.NewError(0, "shogunate start failed")
+		return nil, nil, fmt.Errorf("shogunate start: %w", err)
+	}
+
+	return shog, runner, nil
+}
+
+// reconfigureModel reloads the project config, reinitialises Bifrost,
+// and reconfigures the Shogunate model. It is called on every
+// SetContext — both the first handshake and subsequent re-calls — so
+// that the model always reflects the latest handshake params and
+// on-disk config.
+func reconfigureModel(ctx context.Context, shog *shogunate.Shogunate, hp types.SetContextParams) error {
+	projectCfg, err := config.LoadProjectConfig(hp.ProjectRoot)
+	if err != nil {
+		return fmt.Errorf("load project config: %w", err)
+	}
+
+	repoInfo := repo.RepoInfo{
+		ProjectRoot:  hp.ProjectRoot,
+		WorktreePath: hp.WorktreePath,
+		Branch:       hp.Branch,
+		Slug:         hp.Project,
+	}
+
+	bifrostClient, err := shogunate.InitBifrost(
+		ctx,
+		projectCfg.LLM.RequestTimeoutSeconds,
+		projectCfg.LLM.StreamIdleTimeoutSeconds,
+		projectCfg.LLM.MaxRetries,
+		projectCfg.LLM.BaseURL,
+		hp.APIKeys,
+	)
+	if err != nil {
+		return fmt.Errorf("init bifrost: %w", err)
+	}
+
+	sessionCfg := &shogunate.SessionConfig{
+		LLM:        projectCfg.LLM,
+		Sandbox:    projectCfg.Sandbox,
+		AgentsFile: projectCfg.Session.AgentsFile,
+		WorkingDir: hp.ProjectRoot,
+	}
+
+	shog.ConfigureModel(bifrostClient, sessionCfg, repoInfo)
+
+	return nil
+}
+
+// serveOne runs the RPC server loop for a single client connection.
+// It performs a handshake (SetContext), creates per-connection
+// Runner and Shogunate, registers handlers, pumps server→client
+// notifications, and blocks until the client disconnects or ctx
+// cancels. connID uniquely identifies this connection within the
+// daemon process.
+//
+// SetContext is idempotent: the first call creates the Shogunate and
+// Runner; every call (re)configures the model from the latest params.
+func serveOne(ctx context.Context, c net.Conn, shared *DaemonShared, connID uint64) {
+	defer c.Close()
+
+	conn := rpc.New(c, rpc.Options{})
+	conn.Handle(rpc.MethodPing, func(ctx context.Context, _ []byte) ([]byte, error) {
+		return wire.Encode(rpc.PingResult{Ok: true})
+	})
+
+	var shog *shogunate.Shogunate
+	var runner *runners.PodmanRunner
+	firstHandshakeCh := make(chan struct{})
+	var firstHandshakeOnce sync.Once
+
+	conn.Handle(rpc.MethodSetContext, func(_ context.Context, params []byte) ([]byte, error) {
+		var p types.SetContextParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		if p.ProjectRoot == "" {
+			return nil, wire.NewError(0, "empty project_root")
+		}
+		if _, err := os.Stat(p.ProjectRoot); err != nil {
+			return nil, wire.NewError(0, "invalid project_root")
+		}
+		if shog == nil {
+			projectCfg, err := config.LoadProjectConfig(p.ProjectRoot)
+			if err != nil {
+				return nil, wire.NewError(0, err.Error())
+			}
+			repoInfo := repo.RepoInfo{ProjectRoot: p.ProjectRoot, WorktreePath: p.WorktreePath, Branch: p.Branch, Slug: p.Project}
+			shog, runner, err = createShogunate(ctx, shared, connID, p, projectCfg, repoInfo)
+			if err != nil {
+				return nil, wire.NewError(0, err.Error())
+			}
+		}
+		if err := reconfigureModel(ctx, shog, p); err != nil {
+			return nil, wire.NewError(0, err.Error())
+		}
+		firstHandshakeOnce.Do(func() { close(firstHandshakeCh) })
+		return wire.Encode(struct{}{})
+	})
+
+	go func() {
+		if err := conn.Serve(); err != nil {
+			shared.Logger.Debug("daemon: conn.Serve exited", "conn_id", connID, "err", err)
+		}
+	}()
+
+	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer handshakeCancel()
+	select {
+	case <-firstHandshakeCh:
+	case <-handshakeCtx.Done():
+		shared.Logger.Warn("daemon: handshake timeout", "conn_id", connID)
 		conn.Close()
 		return
 	}
 
 	rpc.RegisterShogunateHandlers(conn, shog)
 
-	select {
-	case handshakeRespCh <- nil:
-	default:
-	}
-
 	connCtx, connCancel := context.WithCancel(ctx)
 	defer connCancel()
-
 	go rpc.PumpShogunateEvents(connCtx, conn, shog.Subscribe(connCtx))
 
-	shared.Logger.Info("daemon: client connected",
-		"conn_id", connID, "project", hp.Project, "project_root", hp.ProjectRoot)
+	defer func() {
+		if runner != nil {
+			closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer closeCancel()
+			_ = runner.Close(closeCtx)
+		}
+	}()
 
-	// (7) Block until the connection is done.
+	shared.Logger.Info("daemon: client connected", "conn_id", connID)
 	<-conn.Done()
-
 	shared.Logger.Info("daemon: client disconnected", "conn_id", connID)
 }
 

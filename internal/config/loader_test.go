@@ -503,6 +503,137 @@ func TestEnsureUserConfigExists(t *testing.T) {
 }
 
 // =============================================================================
+// LoadProjectConfig Tests
+// =============================================================================
+
+func TestLoadProjectConfig_DefaultsOnly(t *testing.T) {
+	// When no user or project config exists, defaults should be returned.
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	projectDir := t.TempDir()
+
+	cfg, err := LoadProjectConfig(projectDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// Should have the built-in defaults
+	assert.True(t, cfg.Session.Enabled)
+	assert.Equal(t, 300, cfg.LLM.RequestTimeoutSeconds)
+	assert.Equal(t, 600, cfg.LLM.StreamIdleTimeoutSeconds)
+	assert.Equal(t, 3, cfg.LLM.MaxRetries)
+}
+
+func TestLoadProjectConfig_ProjectOverridesDefaults(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	projectDir := t.TempDir()
+	agentsDir := filepath.Join(projectDir, ".agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+
+	projectConfig := `[llm]
+provider = "openai"
+model = "gpt-4o"
+
+[session]
+agents_file = "CLAUDE.md"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
+
+	cfg, err := LoadProjectConfig(projectDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "openai", cfg.LLM.Provider)
+	assert.Equal(t, "gpt-4o", cfg.LLM.Model)
+	assert.Equal(t, "CLAUDE.md", cfg.Session.AgentsFile)
+	// Defaults should still be present for unoverridden fields
+	assert.True(t, cfg.Session.Enabled)
+}
+
+func TestLoadProjectConfig_UserConfigPlusProjectOverride(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	// User-level config
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	// Project-level config overrides model only
+	projectDir := t.TempDir()
+	agentsDir := filepath.Join(projectDir, ".agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+	projectConfig := `[llm]
+model = "claude-opus-4"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
+
+	cfg, err := LoadProjectConfig(projectDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// User config sets provider, project config overrides model
+	assert.Equal(t, "anthropic", cfg.LLM.Provider)
+	assert.Equal(t, "claude-opus-4", cfg.LLM.Model)
+}
+
+func TestLoadProjectConfig_NoEnvVarResolution(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	// Set env var that LoadConfig would pick up
+	os.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+	projectDir := t.TempDir()
+
+	cfg, err := LoadProjectConfig(projectDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// LoadProjectConfig should NOT resolve API keys from env vars
+	assert.Empty(t, cfg.LLM.APIKey)
+	assert.Empty(t, cfg.LLM.Provider)
+}
+
+func TestLoadProjectConfig_SandboxFromProjectConfig(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	projectDir := t.TempDir()
+	agentsDir := filepath.Join(projectDir, ".agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+	projectConfig := `[sandbox]
+run_on_host = ["^kubectl\\s"]
+safe_run_on_host = ["^kubectl\\s+get"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
+
+	cfg, err := LoadProjectConfig(projectDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, []string{`^kubectl\s`}, cfg.Sandbox.RunOnHost)
+	assert.Equal(t, []string{`^kubectl\s+get`}, cfg.Sandbox.SafeRunOnHost)
+}
+
+// =============================================================================
 // TOML Comment Preservation Tests
 // =============================================================================
 

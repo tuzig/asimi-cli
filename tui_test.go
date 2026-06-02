@@ -2096,10 +2096,14 @@ func TestInitCommandE2E(t *testing.T) {
 
 	// 2. Set up infrastructure
 	db := setupTestGormDB(t)
-	runner := runners.NewHostRunner(0)
+	runner := runners.NewHostRunner(0, t.TempDir())
 
 	// 3. Create and start Shogunate with a host runner for bash then-steps
 	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
+	shog.SetRepoInfo(repo.RepoInfo{
+		ProjectRoot: tmpDir,
+		Slug:        "testorg/ror-demo",
+	})
 	require.NoError(t, shog.Start(context.Background()))
 	t.Cleanup(func() { shog.Stop() })
 
@@ -2213,7 +2217,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 
 	// 2. Set up infrastructure with a real LLM
 	db := setupTestGormDB(t)
-	runner := runners.NewHostRunner(0)
+	runner := runners.NewHostRunner(0, t.TempDir())
 
 	// Set up auto-approval channel for host commands (e.g., bundle exec rake test)
 	runnerMsgChan := make(chan runners.Msg, 10)
@@ -2227,6 +2231,10 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	}()
 
 	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
+	shog.SetRepoInfo(repo.RepoInfo{
+		ProjectRoot: tmpDir,
+		Slug:        "testorg/ror-demo",
+	})
 	require.NoError(t, shog.Start(context.Background()))
 	t.Cleanup(func() { shog.Stop() })
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/rpc"
+	"github.com/afittestide/asimi/internal/types"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -196,12 +197,13 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 	if u, err := user.Current(); err == nil {
 		username = u.Username
 	}
-	if err := rpc.NewShogunateClient(conn).SetContext(ctx, rpc.SetContextParams{
+	if err := rpc.NewShogunateClient(conn).SetContext(ctx, types.SetContextParams{
 		Project:      repoInfo.Slug,
 		Username:     username,
 		ProjectRoot:  repoInfo.ProjectRoot,
 		WorktreePath: repoInfo.WorktreePath,
 		Branch:       repoInfo.Branch,
+		APIKeys:      collectAPIKeys(),
 	}); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("installDaemonAutostart: handshake failed: %w", err)

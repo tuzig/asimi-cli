@@ -619,7 +619,7 @@ func (m *TUIModel) performOAuthLogin(provider string) tea.Cmd {
 		}
 
 		// Initialize LLM with new credentials
-		if err := m.shogunate.ConfigureLLM(context.Background(), m.llmRequest()); err != nil {
+		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
 			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 
@@ -658,7 +658,7 @@ func (m *TUIModel) completeAnthropicOAuth(authCode, verifier string) tea.Cmd {
 		}
 
 		// Initialize LLM with new credentials
-		if err := m.shogunate.ConfigureLLM(context.Background(), m.llmRequest()); err != nil {
+		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
 			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 
