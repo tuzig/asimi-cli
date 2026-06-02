@@ -242,21 +242,28 @@ func (c *ChatComponent) Clear() {
 	c.rawSessionHistory = make([]string, 0)
 	c.toolCallMessageIndex = make(map[string]int)
 	c.Viewport.GotoTop()
+	c.UpdateContent()
 }
 
 // SetSize updates the width & height of the chat component
 func (c *ChatComponent) SetSize(width, height int) {
+	if height < 0 {
+		height = 0
+	}
+
+	needsRender := c.Width != width || c.Height != height
+
 	c.Width = width
 	c.Style = c.Style.Width(width)
 	// Viewport is 1 column narrower to leave room for the gutter
 	c.Viewport.Width = width - 1
-
-	if height < 0 {
-		height = 0
-	}
 	c.Height = height
 	c.Style = c.Style.Height(c.Height)
 	c.Viewport.Height = c.Height
+
+	if !needsRender {
+		return
+	}
 	c.UpdateContent()
 }
 

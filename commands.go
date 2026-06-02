@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -178,9 +179,6 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	model.saveSession()
 
 	model.sessionActive = true
-
-	// Clear the chat instead of creating a new component to avoid re-initializing the markdown renderer
-	model.tabs.Content().Chat.Clear()
 
 	// Reset the appropriate minister session based on active tab
 	if model.shogunate != nil {
@@ -395,10 +393,11 @@ func createInitEdict(model *TUIModel) tea.Cmd {
 
 // clearAsimiFiles removes infrastructure files to allow a fresh init
 func clearAsimiFiles(model *TUIModel) []string {
+	projectRoot := model.status.repoInfo.ProjectRoot
 	files := []string{
-		".agents",
-		"AGENTS.md",
-		"Justfile",
+		filepath.Join(projectRoot, ".agents"),
+		filepath.Join(projectRoot, "AGENTS.md"),
+		filepath.Join(projectRoot, "Justfile"),
 	}
 
 	var errors []string
@@ -424,21 +423,22 @@ func handleProjectNameInput(model *TUIModel, projectName string) tea.Cmd {
 	// containing only the [shogunate] section, and the ritual's template-seeding
 	// step would later skip the file (since it exists), leaving the user with a
 	// near-empty config missing every default section.
-	if err := shogunate.EnsureProjectConfig(); err != nil {
+	projectRoot := model.status.repoInfo.ProjectRoot
+	if err := config.EnsureProjectConfig(projectRoot); err != nil {
 		return func() tea.Msg {
 			return showContextMsg{content: fmt.Sprintf("Failed to seed project config: %v", err)}
 		}
 	}
 
 	// Save project name to .agents/asimi.conf
-	if err := config.SetProjectConfig("shogunate", "project", projectName); err != nil {
+	if err := config.SetProjectConfig(projectRoot, "shogunate", "project", projectName); err != nil {
 		return func() tea.Msg {
 			return showContextMsg{content: fmt.Sprintf("Failed to save project name: %v", err)}
 		}
 	}
 
 	// Reload project config to pick up the new project name
-	if err := model.config.ReloadProjectConf(); err != nil {
+	if err := model.config.ReloadProjectConf(model.status.repoInfo.ProjectRoot); err != nil {
 		slog.Warn("Failed to reload config after setting project name", "error", err)
 	}
 
@@ -477,7 +477,7 @@ func verifyInitWithRetry(model *TUIModel, containerRunner runners.Runner, retryC
 		// Reload configuration on retry attempts to pick up any changes made by the LLM
 		// (e.g., modifications to .agents/asimi.conf, Dockerfile, etc.)
 		slog.Debug("Reloading configuration for retry attempt", "retryCount", retryCount)
-		err := model.config.ReloadProjectConf()
+		err := model.config.ReloadProjectConf(model.status.repoInfo.ProjectRoot)
 		if err != nil {
 			slog.Warn("Failed to reload config during verifyInit retry", "error", err)
 		} else {

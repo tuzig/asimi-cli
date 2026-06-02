@@ -17,7 +17,6 @@ require (
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/google/uuid v1.6.0
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.0
-	github.com/knadh/koanf/providers/env/v2 v2.0.0
 	github.com/knadh/koanf/providers/file v1.2.0
 	github.com/knadh/koanf/v2 v2.2.2
 	github.com/mattn/go-isatty v0.0.20
