@@ -349,8 +349,8 @@ type RitualRunner struct {
 	logger          *slog.Logger
 	maxRetries      int
 	repoInfo        repo.RepoInfo
-	sandboxConfig   *config.SandboxConfig // injected by ConfigureModel, avoids CWD-relative LoadConfig
-	projectSlug     string                // injected by ConfigureModel, avoids CWD-relative LoadConfig
+	sandboxConfig   *config.SandboxConfig // injected by ConfigureModel
+	projectSlug     string                // injected by ConfigureModel
 }
 
 // NewRitualRunner creates a new ritual runner
@@ -381,7 +381,7 @@ func NewRitualRunner(
 
 // SetConfig injects sandbox and project configuration from the shogunate's
 // SessionConfig. This is called by ConfigureModel so that the RitualRunner
-// never needs to call config.LoadConfig (which is CWD-relative and fragile).
+// never needs to reload config from disk.
 func (r *RitualRunner) SetConfig(sandboxCfg *config.SandboxConfig, projectSlug string, repoInfo repo.RepoInfo) {
 	r.sandboxConfig = sandboxCfg
 	r.projectSlug = projectSlug

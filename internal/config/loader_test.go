@@ -171,7 +171,7 @@ model = "gpt-3.5-turbo"
 		err = SaveConfig(cfg)
 		require.NoError(t, err)
 
-		loadedConfig, err := LoadConfig()
+		loadedConfig, err := LoadProjectConfig("", true)
 		require.NoError(t, err)
 		assert.Equal(t, "gpt-4", loadedConfig.LLM.Model)
 	})
@@ -221,7 +221,7 @@ max_sessions = 50
 		err = SaveConfig(cfg)
 		require.NoError(t, err)
 
-		loadedConfig, err := LoadConfig()
+		loadedConfig, err := LoadProjectConfig("", true)
 		require.NoError(t, err)
 		assert.Equal(t, "gpt-4", loadedConfig.LLM.Model)
 		assert.Equal(t, "openai", loadedConfig.LLM.Provider)
@@ -351,174 +351,6 @@ func TestEnsureUserConfigExists(t *testing.T) {
 }
 
 // =============================================================================
-// LoadConfig Tests
-// =============================================================================
-
-func TestLoadConfig_DefaultsOnly(t *testing.T) {
-	tempHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempHome)
-	defer os.Setenv("HOME", originalHome)
-
-	// Clear any API key env vars
-	envVars := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
-	for _, env := range envVars {
-		orig := os.Getenv(env)
-		os.Unsetenv(env)
-		defer os.Setenv(env, orig)
-	}
-
-	cfg, err := LoadConfig()
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	// Should have built-in defaults
-	assert.True(t, cfg.Session.Enabled)
-	assert.Equal(t, 300, cfg.LLM.RequestTimeoutSeconds)
-	assert.Equal(t, 600, cfg.LLM.StreamIdleTimeoutSeconds)
-	assert.Equal(t, 3, cfg.LLM.MaxRetries)
-	// No provider auto-discovered since no env vars set
-	assert.Empty(t, cfg.LLM.Provider)
-	assert.Empty(t, cfg.LLM.APIKey)
-}
-
-func TestLoadConfig_UserConfigOverridesDefaults(t *testing.T) {
-	tempHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempHome)
-	defer os.Setenv("HOME", originalHome)
-
-	// Clear API key env vars
-	envVars := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
-	for _, env := range envVars {
-		orig := os.Getenv(env)
-		os.Unsetenv(env)
-		defer os.Setenv(env, orig)
-	}
-
-	// Create user config
-	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
-	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
-	userConfig := `[llm]
-provider = "anthropic"
-model = "claude-sonnet-4-20250514"
-
-[session]
-max_sessions = 100
-`
-	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
-
-	cfg, err := LoadConfig()
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	assert.Equal(t, "anthropic", cfg.LLM.Provider)
-	assert.Equal(t, "claude-sonnet-4-20250514", cfg.LLM.Model)
-	assert.Equal(t, 100, cfg.Session.MaxSessions)
-	// Defaults still present for unoverridden fields
-	assert.True(t, cfg.Session.Enabled)
-}
-
-func TestLoadConfig_EnvKeyResolution(t *testing.T) {
-	tempHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempHome)
-	defer os.Setenv("HOME", originalHome)
-
-	// Clear all API key env vars first
-	envVars := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
-	for _, env := range envVars {
-		orig := os.Getenv(env)
-		os.Unsetenv(env)
-		defer os.Setenv(env, orig)
-	}
-
-	// Set Anthropic key — should NOT auto-discover provider (no auto-discovery in LoadConfig)
-	os.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-
-	cfg, err := LoadConfig()
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	// LoadConfig does not auto-discover providers; it only resolves keys for already-configured providers
-	assert.Empty(t, cfg.LLM.Provider)
-	assert.Empty(t, cfg.LLM.APIKey)
-}
-
-func TestLoadConfig_ProviderSetButNoKey_ResolvesFromEnv(t *testing.T) {
-	tempHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempHome)
-	defer os.Setenv("HOME", originalHome)
-
-	// Clear all API key env vars first
-	envVars := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
-	for _, env := range envVars {
-		orig := os.Getenv(env)
-		os.Unsetenv(env)
-		defer os.Setenv(env, orig)
-	}
-
-	// User config sets provider but no API key
-	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
-	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
-	userConfig := `[llm]
-provider = "openai"
-model = "gpt-4o"
-`
-	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
-
-	// Env has the key
-	os.Setenv("OPENAI_API_KEY", "sk-test-key")
-
-	cfg, err := LoadConfig()
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	assert.Equal(t, "openai", cfg.LLM.Provider)
-	assert.Equal(t, "sk-test-key", cfg.LLM.APIKey)
-}
-
-func TestLoadConfig_NoProjectConfig(t *testing.T) {
-	tempHome := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempHome)
-	defer os.Setenv("HOME", originalHome)
-
-	// Create a .agents/asimi.conf in CWD — LoadConfig should NOT read it
-	originalDir, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalDir)
-
-	projectDir := t.TempDir()
-	require.NoError(t, os.Chdir(projectDir))
-
-	agentsDir := filepath.Join(projectDir, ".agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-	projectConfig := `[llm]
-provider = "openai"
-model = "gpt-4o"
-`
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
-
-	// Clear env vars
-	envVars := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
-	for _, env := range envVars {
-		orig := os.Getenv(env)
-		os.Unsetenv(env)
-		defer os.Setenv(env, orig)
-	}
-
-	cfg, err := LoadConfig()
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	// Project config should NOT be loaded — provider should be empty
-	assert.Empty(t, cfg.LLM.Provider)
-	assert.Empty(t, cfg.LLM.Model)
-}
-
-// =============================================================================
 // LoadProjectConfig Tests
 // =============================================================================
 
@@ -531,7 +363,7 @@ func TestLoadProjectConfig_DefaultsOnly(t *testing.T) {
 
 	projectDir := t.TempDir()
 
-	cfg, err := LoadProjectConfig(projectDir)
+	cfg, err := LoadProjectConfig(projectDir, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
@@ -561,7 +393,7 @@ agents_file = "CLAUDE.md"
 `
 	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
 
-	cfg, err := LoadProjectConfig(projectDir)
+	cfg, err := LoadProjectConfig(projectDir, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
@@ -596,7 +428,7 @@ model = "claude-opus-4"
 `
 	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
 
-	cfg, err := LoadProjectConfig(projectDir)
+	cfg, err := LoadProjectConfig(projectDir, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
@@ -617,7 +449,7 @@ func TestLoadProjectConfig_NoEnvVarResolution(t *testing.T) {
 
 	projectDir := t.TempDir()
 
-	cfg, err := LoadProjectConfig(projectDir)
+	cfg, err := LoadProjectConfig(projectDir, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
@@ -641,7 +473,7 @@ safe_run_on_host = ["^kubectl\\s+get"]
 `
 	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
 
-	cfg, err := LoadProjectConfig(projectDir)
+	cfg, err := LoadProjectConfig(projectDir, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
@@ -649,107 +481,114 @@ safe_run_on_host = ["^kubectl\\s+get"]
 	assert.Equal(t, []string{`^kubectl\s+get`}, cfg.Sandbox.SafeRunOnHost)
 }
 
-// =============================================================================
-// OverlayProjectConfig Tests
-// =============================================================================
+func TestLoadProjectConfig_ResolveKeysTrue(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
 
-func TestOverlayProjectConfig_NoProjectRoot(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.LLM.Provider = "anthropic"
-	cfg.LLM.Model = "claude-sonnet-4-20250514"
+	// User config sets provider but no API key
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
 
-	// Empty project root should be a no-op
-	err := OverlayProjectConfig(&cfg, "")
+	// Set the env var that resolveAPIKeys picks up
+	os.Setenv("ANTHROPIC_API_KEY", "sk-ant-resolved")
+	defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+	projectDir := t.TempDir()
+
+	cfg, err := LoadProjectConfig(projectDir, true)
 	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// With resolveKeys=true, the env key should be populated
+	assert.Equal(t, "anthropic", cfg.LLM.Provider)
+	assert.Equal(t, "sk-ant-resolved", cfg.LLM.APIKey)
+}
+
+func TestLoadProjectConfig_ResolveKeysFalse(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	// User config sets provider but no API key
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	// Set the env var that resolveAPIKeys would pick up
+	os.Setenv("ANTHROPIC_API_KEY", "sk-ant-resolved")
+	defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+	projectDir := t.TempDir()
+
+	cfg, err := LoadProjectConfig(projectDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// With resolveKeys=false, the env key should NOT be populated
+	assert.Equal(t, "anthropic", cfg.LLM.Provider)
+	assert.Empty(t, cfg.LLM.APIKey)
+}
+
+func TestLoadProjectConfig_SessionEnabledDefault(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	// User config has [session] section but no enabled key
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[session]
+max_sessions = 20
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	projectDir := t.TempDir()
+
+	cfg, err := LoadProjectConfig(projectDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// session.enabled should default to true even though [session] exists without it
+	assert.True(t, cfg.Session.Enabled)
+	assert.Equal(t, 20, cfg.Session.MaxSessions)
+}
+
+func TestLoadProjectConfig_EmptyProjectRoot(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	// User config sets some values
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	// Empty projectRoot — should skip project layer without error
+	cfg, err := LoadProjectConfig("", false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// User-level config should still be loaded
 	assert.Equal(t, "anthropic", cfg.LLM.Provider)
 	assert.Equal(t, "claude-sonnet-4-20250514", cfg.LLM.Model)
-}
-
-func TestOverlayProjectConfig_NoProjectConfig(t *testing.T) {
-	projectDir := t.TempDir()
-
-	cfg := DefaultConfig()
-	cfg.LLM.Provider = "openai"
-	cfg.LLM.Model = "gpt-4o"
-
-	// No .agents/asimi.conf exists — should be a no-op
-	err := OverlayProjectConfig(&cfg, projectDir)
-	require.NoError(t, err)
-	assert.Equal(t, "openai", cfg.LLM.Provider)
-	assert.Equal(t, "gpt-4o", cfg.LLM.Model)
-}
-
-func TestOverlayProjectConfig_OverwritesExistingFields(t *testing.T) {
-	projectDir := t.TempDir()
-	agentsDir := filepath.Join(projectDir, ".agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-
-	projectConfig := `[llm]
-model = "claude-opus-4"
-
-[session]
-agents_file = "CLAUDE.md"
-`
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
-
-	cfg := DefaultConfig()
-	cfg.LLM.Provider = "anthropic"
-	cfg.LLM.Model = "claude-sonnet-4-20250514"
-
-	err := OverlayProjectConfig(&cfg, projectDir)
-	require.NoError(t, err)
-
-	// Project config overwrites model but provider stays
-	assert.Equal(t, "anthropic", cfg.LLM.Provider)
-	assert.Equal(t, "claude-opus-4", cfg.LLM.Model)
-	assert.Equal(t, "CLAUDE.md", cfg.Session.AgentsFile)
-}
-
-func TestOverlayProjectConfig_SandboxOverrides(t *testing.T) {
-	projectDir := t.TempDir()
-	agentsDir := filepath.Join(projectDir, ".agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-
-	projectConfig := `[sandbox]
-run_on_host = ["^kubectl\\s"]
-safe_run_on_host = ["^kubectl\\s+get"]
-`
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
-
-	cfg := DefaultConfig()
-	cfg.Sandbox.RunOnHost = []string{`^gh\s`}
-
-	err := OverlayProjectConfig(&cfg, projectDir)
-	require.NoError(t, err)
-
-	assert.Equal(t, []string{`^kubectl\s`}, cfg.Sandbox.RunOnHost)
-	assert.Equal(t, []string{`^kubectl\s+get`}, cfg.Sandbox.SafeRunOnHost)
-}
-
-func TestOverlayProjectConfig_PreservesDefaultsNotInProject(t *testing.T) {
-	projectDir := t.TempDir()
-	agentsDir := filepath.Join(projectDir, ".agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-
-	// Project config only sets one field
-	projectConfig := `[session]
-agents_file = "AGENTS.local.md"
-`
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
-
-	cfg := DefaultConfig()
-	cfg.LLM.RequestTimeoutSeconds = 300
-	cfg.LLM.StreamIdleTimeoutSeconds = 600
-	cfg.LLM.MaxRetries = 3
-
-	err := OverlayProjectConfig(&cfg, projectDir)
-	require.NoError(t, err)
-
-	// Only agents_file is overridden; other defaults remain
-	assert.Equal(t, "AGENTS.local.md", cfg.Session.AgentsFile)
-	assert.Equal(t, 300, cfg.LLM.RequestTimeoutSeconds)
-	assert.Equal(t, 600, cfg.LLM.StreamIdleTimeoutSeconds)
-	assert.Equal(t, 3, cfg.LLM.MaxRetries)
 }
 
 // =============================================================================
@@ -1315,11 +1154,11 @@ func TestDefaultConfContent_ReferencesCorrectPaths(t *testing.T) {
 	content := DefaultConfContent()
 
 	// The embedded default.conf must reference the actual config file paths
-	// used by LoadConfig and OverlayProjectConfig — not stale names.
+	// used by LoadProjectConfig — not stale names.
 	assert.Contains(t, content, "~/.config/asimi/asimi.conf",
-		"comment must reference user config path used by LoadConfig")
+		"comment must reference user config path used by LoadProjectConfig")
 	assert.Contains(t, content, ".agents/asimi.conf",
-		"comment must reference project config path used by OverlayProjectConfig")
+		"comment must reference project config path used by LoadProjectConfig")
 
 	// The ASIMI_* env var loading layer was removed; the comment must not claim it exists.
 	assert.NotContains(t, content, "ASIMI_*",

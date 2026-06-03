@@ -593,7 +593,7 @@ func (r *RitualRunner) verifySandboxUp(ctx context.Context) (interface{}, error)
 
 func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, error) {
 	// Step 1: Reload the runner to pick up the newly built sandbox image
-	// Use the injected sandbox config instead of CWD-relative LoadConfig.
+	// Use the injected sandbox config instead of reloading from disk.
 	if r.sandboxConfig == nil {
 		return map[string]string{
 			"status": "failed",

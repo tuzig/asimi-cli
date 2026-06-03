@@ -345,9 +345,9 @@ func (s *Shogunate) ConfigureModel(client LLMProvider, config *SessionConfig, re
 		}
 	}
 	// Propagate sandbox config, project slug, and repoInfo to the
-	// RitualRunner so it never needs to call config.LoadConfig (which
-	// is CWD-relative and fragile). repoInfo is especially important
-	// because the runner is created with an empty ProjectRoot at daemon
+	// RitualRunner so it never needs to reload config from disk.
+	// repoInfo is especially important because the runner is created
+	// with an empty ProjectRoot at daemon
 	// startup and only receives the real root via SetContext/ConfigureModel.
 	if s.ritualGuard != nil && s.ritualGuard.RitualRunner() != nil {
 		sandboxCfg := &config.Sandbox
@@ -397,7 +397,7 @@ func (s *Shogunate) SetContext(ctx context.Context, params types.SetContextParam
 		return fmt.Errorf("invalid project_root %q: not a directory", projectRoot)
 	}
 
-	projectCfg, err := config.LoadProjectConfig(projectRoot)
+	projectCfg, err := config.LoadProjectConfig(projectRoot, false)
 	if err != nil {
 		return fmt.Errorf("load project config: %w", err)
 	}

@@ -80,12 +80,10 @@ func ProvideLogger() (LoggerResult, error) {
 	}, nil
 }
 
-// ProvideConfig loads user-level configuration for the daemon.
-// It reads built-in defaults + ~/.config/asimi/asimi.conf and resolves
-// API keys from environment variables. Project-level config is NOT
-// loaded here — the daemon loads per-client via LoadProjectConfig, and
-// the TUI overlays project config after RepoInfo is available.
-func ProvideConfig(logger *slog.Logger) (*Config, error) {
+// ProvideConfig loads user-level and project-level configuration for the daemon.
+// It reads built-in defaults + ~/.config/asimi/asimi.conf + project-level
+// .agents/asimi.conf, and resolves API keys from environment variables.
+func ProvideConfig(logger *slog.Logger, repoInfo repo.RepoInfo) (*Config, error) {
 	logger.Info("loading configuration")
 
 	// Ensure user config file exists (creates it on first run)
@@ -97,7 +95,7 @@ func ProvideConfig(logger *slog.Logger) (*Config, error) {
 		config.ConfigCreated = true
 	}
 
-	cfg, err := config.LoadConfig()
+	cfg, err := config.LoadProjectConfig(repoInfo.ProjectRoot, true)
 	if err != nil {
 		logger.Info("using default configuration due to load failure")
 		logger.Debug("Warning: Using defaults due to config load failure", "error", err)
@@ -164,7 +162,7 @@ func ProvideStorage(params StorageParams) (StorageResult, error) {
 }
 
 // ProvideRepoInfo returns information about the git repository
-func ProvideRepoInfo(config *Config, logger *slog.Logger) repo.RepoInfo {
+func ProvideRepoInfo(logger *slog.Logger) repo.RepoInfo {
 	logger.Info("detecting git repository")
 	repoInfo := repo.GetRepoInfo()
 	if repoInfo.ProjectRoot != "" {
@@ -290,14 +288,6 @@ type TUIModelParams struct {
 
 // ProvideTUIModel creates and returns the TUI model
 func ProvideTUIModel(params TUIModelParams) *TUIModel {
-	// Overlay project-level config onto user-level defaults.
-	// After ProvideConfig returns user-level config and ProvideRepoInfo
-	// returns repo info, we merge any project-specific settings from
-	// {projectRoot}/.agents/asimi.conf onto the existing cfg.
-	if err := config.OverlayProjectConfig(params.Config, params.RepoInfo.ProjectRoot); err != nil {
-		params.Logger.Warn("failed to overlay project config", "error", err)
-	}
-
 	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler, params.Shogunate)
 }
 

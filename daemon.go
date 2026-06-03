@@ -39,6 +39,7 @@ func runDaemonMode() error {
 	fxOptions := []fx.Option{
 		fx.Provide(
 			ProvideLogger,
+			ProvideRepoInfo,
 			ProvideConfig,
 			ProvideStorage,
 			ProvideGormDB,
@@ -201,7 +202,7 @@ func createShogunate(
 // that the model always reflects the latest handshake params and
 // on-disk config.
 func reconfigureModel(ctx context.Context, shog *shogunate.Shogunate, hp types.SetContextParams) error {
-	projectCfg, err := config.LoadProjectConfig(hp.ProjectRoot)
+	projectCfg, err := config.LoadProjectConfig(hp.ProjectRoot, false)
 	if err != nil {
 		return fmt.Errorf("load project config: %w", err)
 	}
@@ -271,7 +272,7 @@ func serveOne(ctx context.Context, c net.Conn, shared *DaemonShared, connID uint
 			return nil, wire.NewError(0, "invalid project_root")
 		}
 		if shog == nil {
-			projectCfg, err := config.LoadProjectConfig(p.ProjectRoot)
+			projectCfg, err := config.LoadProjectConfig(p.ProjectRoot, false)
 			if err != nil {
 				return nil, wire.NewError(0, err.Error())
 			}

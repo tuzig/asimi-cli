@@ -1,15 +1,8 @@
 package config
 
 import (
-	"fmt"
-	"os"
 	"os/user"
-	"path/filepath"
 	"time"
-
-	koanftoml "github.com/knadh/koanf/parsers/toml/v2"
-	"github.com/knadh/koanf/providers/file"
-	koanf "github.com/knadh/koanf/v2"
 )
 
 // Config represents the application configuration structure
@@ -138,26 +131,4 @@ func DefaultSessionConfig() *SessionConfig {
 	}
 }
 
-// ReloadProjectConf reloads the project's configuration file from
-// filepath.Join(projectRoot, ".agents", "asimi.conf").
-func (c *Config) ReloadProjectConf(projectRoot string) error {
-	projectConfigPath := filepath.Join(projectRoot, ".agents", "asimi.conf")
 
-	// Check if project config exists
-	if _, err := os.Stat(projectConfigPath); os.IsNotExist(err) {
-		return nil // No project config to reload
-	}
-
-	// Create a new koanf instance and load project config
-	k := koanf.New(".")
-	if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
-		return fmt.Errorf("failed to load project config: %w", err)
-	}
-
-	// Unmarshal into the current config, overwriting project-level settings
-	if err := k.Unmarshal("", c); err != nil {
-		return fmt.Errorf("failed to unmarshal project config: %w", err)
-	}
-
-	return nil
-}

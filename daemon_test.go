@@ -574,7 +574,7 @@ func TestCreateShogunateSetsRepoInfoBeforeStart(t *testing.T) {
 		t.Fatalf("mkdir .agents: %v", err)
 	}
 
-	projectCfg, err := config.LoadProjectConfig(projectRoot)
+	projectCfg, err := config.LoadProjectConfig(projectRoot, false)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}

@@ -104,10 +104,10 @@ func runInteractiveMode() error {
 	fxOptions = append(fxOptions,
 		fx.Provide(
 			ProvideLogger,
+			ProvideRepoInfo,
 			ProvideConfig,
 			ProvideStorage,
 			ProvideGormDB,
-			ProvideRepoInfo,
 			ProvideScheduler,
 			ProvideShellRunner,
 			ProvidePromptHistory,

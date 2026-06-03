@@ -438,8 +438,10 @@ func handleProjectNameInput(model *TUIModel, projectName string) tea.Cmd {
 	}
 
 	// Reload project config to pick up the new project name
-	if err := model.config.ReloadProjectConf(model.status.repoInfo.ProjectRoot); err != nil {
+	if reloaded, err := config.LoadProjectConfig(model.status.repoInfo.ProjectRoot, true); err != nil {
 		slog.Warn("Failed to reload config after setting project name", "error", err)
+	} else {
+		model.config = reloaded
 	}
 
 	// Proceed with creating the init edict
@@ -477,10 +479,10 @@ func verifyInitWithRetry(model *TUIModel, containerRunner runners.Runner, retryC
 		// Reload configuration on retry attempts to pick up any changes made by the LLM
 		// (e.g., modifications to .agents/asimi.conf, Dockerfile, etc.)
 		slog.Debug("Reloading configuration for retry attempt", "retryCount", retryCount)
-		err := model.config.ReloadProjectConf(model.status.repoInfo.ProjectRoot)
-		if err != nil {
+		if reloaded, err := config.LoadProjectConfig(model.status.repoInfo.ProjectRoot, true); err != nil {
 			slog.Warn("Failed to reload config during verifyInit retry", "error", err)
 		} else {
+			model.config = reloaded
 			slog.Debug("Configuration reloaded successfully")
 		}
 
