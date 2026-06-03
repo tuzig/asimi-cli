@@ -344,15 +344,18 @@ func (s *Shogunate) ConfigureModel(client LLMProvider, config *SessionConfig, re
 			base.SetMinisterConfig(client, config, repoInfo)
 		}
 	}
-	// Propagate sandbox and project config to the RitualRunner so it never
-	// needs to call config.LoadConfig (which is CWD-relative and fragile).
+	// Propagate sandbox config, project slug, and repoInfo to the
+	// RitualRunner so it never needs to call config.LoadConfig (which
+	// is CWD-relative and fragile). repoInfo is especially important
+	// because the runner is created with an empty ProjectRoot at daemon
+	// startup and only receives the real root via SetContext/ConfigureModel.
 	if s.ritualGuard != nil && s.ritualGuard.RitualRunner() != nil {
 		sandboxCfg := &config.Sandbox
 		projectSlug := ""
 		if s.config != nil {
 			projectSlug = s.config.Project
 		}
-		s.ritualGuard.RitualRunner().SetConfig(sandboxCfg, projectSlug)
+		s.ritualGuard.RitualRunner().SetConfig(sandboxCfg, projectSlug, repoInfo)
 	}
 	// Update repoInfo on the RitualGuard (not covered by the Ministers
 	// loop since RitualGuard is stored separately) and reload rituals

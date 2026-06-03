@@ -2773,3 +2773,29 @@ func TestBackpressure_EmptyReasoningSkipped(t *testing.T) {
 	assert.Equal(t, MessageTypeAI, chat.Messages[0].Type)
 	assert.Equal(t, "only text", chat.Messages[0].Content)
 }
+
+func TestSetContextParams_FallsBackToCwdWhenRepoInfoNil(t *testing.T) {
+	m := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	params := m.setContextParams()
+	// When repoInfo is nil, ProjectRoot should fall back to the process CWD,
+	// not remain empty (which would break daemon-mode directory creation).
+	assert.NotEmpty(t, params.ProjectRoot, "ProjectRoot must not be empty when repoInfo is nil")
+}
+
+func TestSetContextParams_FallsBackToCwdWhenProjectRootEmpty(t *testing.T) {
+	// repoInfo with empty ProjectRoot (e.g., outside a git repo)
+	emptyRepo := &repo.RepoInfo{ProjectRoot: ""}
+	m := NewTUIModel(mockConfig(), emptyRepo, nil, nil, nil, nil, nil, nil)
+	params := m.setContextParams()
+	assert.NotEmpty(t, params.ProjectRoot, "ProjectRoot must not be empty when repoInfo.ProjectRoot is empty")
+}
+
+func TestSetContextParams_UsesRepoInfoProjectRootWhenAvailable(t *testing.T) {
+	projectRoot := "/explicit/project/root"
+	r := &repo.RepoInfo{ProjectRoot: projectRoot, Branch: "feature", WorktreePath: "sub"}
+	m := NewTUIModel(mockConfig(), r, nil, nil, nil, nil, nil, nil)
+	params := m.setContextParams()
+	assert.Equal(t, projectRoot, params.ProjectRoot)
+	assert.Equal(t, "feature", params.Branch)
+	assert.Equal(t, "sub", params.WorktreePath)
+}

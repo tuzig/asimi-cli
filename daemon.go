@@ -166,6 +166,7 @@ func createShogunate(
 	}
 
 	shog := shogunate.NewShogunate(shared.DB, shogCfg, runner, shared.Logger)
+	shog.SetRepoInfo(repoInfo)
 
 	// Wire session persister so daemon sessions are persisted to DB,
 	// same as the TUI path does via ProvideShogunate.

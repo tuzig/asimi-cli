@@ -767,9 +767,6 @@ github.com/knadh/koanf/maps
 # github.com/knadh/koanf/parsers/toml/v2 v2.2.0
 ## explicit; go 1.23.0
 github.com/knadh/koanf/parsers/toml/v2
-# github.com/knadh/koanf/providers/env/v2 v2.0.0
-## explicit; go 1.23.0
-github.com/knadh/koanf/providers/env/v2
 # github.com/knadh/koanf/providers/file v1.2.0
 ## explicit; go 1.23.0
 github.com/knadh/koanf/providers/file

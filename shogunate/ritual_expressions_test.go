@@ -3,6 +3,9 @@ package shogunate
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStepDefRegistry(t *testing.T) {
@@ -596,4 +600,173 @@ func TestRitualRunner_RepoInfoStoredAndUsed(t *testing.T) {
 		// Verify the runner stores the daemon root, not os.Getwd()
 		assert.Equal(t, daemonRoot, runner.repoInfo.ProjectRoot)
 	})
+
+	t.Run("SetConfig updates repoInfo when ProjectRoot is non-empty", func(t *testing.T) {
+		// This is the core daemon-mode bug: the RitualRunner is created at
+		// daemon startup with empty repoInfo. SetContext/ConfigureModel later
+		// supplies the real root, but the runner never sees it unless
+		// SetConfig propagates repoInfo.
+		registry := NewRitualRegistry()
+		runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, repo.RepoInfo{})
+
+		// Before SetConfig: empty ProjectRoot
+		assert.Equal(t, "", runner.repoInfo.ProjectRoot)
+
+		// Simulate what ConfigureModel does after the first handshake
+		updatedInfo := repo.RepoInfo{ProjectRoot: "/client/project", Branch: "main", Slug: "org/repo"}
+		runner.SetConfig(nil, "org/repo", updatedInfo)
+
+		assert.Equal(t, "/client/project", runner.repoInfo.ProjectRoot)
+		assert.Equal(t, "main", runner.repoInfo.Branch)
+	})
+
+	t.Run("SetConfig does not overwrite repoInfo with empty ProjectRoot", func(t *testing.T) {
+		registry := NewRitualRegistry()
+		runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, repo.RepoInfo{
+			ProjectRoot: "/existing/root",
+		})
+
+		// SetConfig with empty repoInfo should preserve the existing root
+		runner.SetConfig(nil, "", repo.RepoInfo{})
+		assert.Equal(t, "/existing/root", runner.repoInfo.ProjectRoot, "empty repoInfo should not overwrite existing ProjectRoot")
+	})
+}
+
+func TestGetInfrastructureTemplates_ResolvesAgainstProjectRoot(t *testing.T) {
+	// Create a temp dir to serve as the "project root" — distinct from CWD.
+	projectRoot := t.TempDir()
+
+	// Verify CWD is NOT the project root (the split-brain scenario).
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NotEqual(t, projectRoot, cwd, "project root must differ from CWD for a meaningful test")
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, repo.RepoInfo{
+		ProjectRoot: projectRoot,
+		Slug:        "test/project",
+	})
+
+	result, err := runner.getInfrastructureTemplates(context.Background())
+	require.NoError(t, err)
+
+	resultMap, ok := result.(map[string]interface{})
+	require.True(t, ok, "result should be a map")
+
+	// Verify template_files contains absolute paths under projectRoot
+	templateFiles, ok := resultMap["template_files"].([]string)
+	require.True(t, ok, "template_files should be []string")
+	require.NotEmpty(t, templateFiles, "all files are new, so template_files should not be empty")
+
+	for _, f := range templateFiles {
+		assert.True(t, filepath.IsAbs(f), "template_file path should be absolute: %s", f)
+		assert.Contains(t, f, projectRoot, "template_file path should be under project root: %s", f)
+	}
+
+	// Verify directories are absolute and under projectRoot
+	dirs, ok := resultMap["directories"].([]string)
+	require.True(t, ok, "directories should be []string")
+	for _, d := range dirs {
+		assert.True(t, filepath.IsAbs(d), "directory path should be absolute: %s", d)
+		assert.Contains(t, d, projectRoot, "directory path should be under project root: %s", d)
+	}
+
+	// Verify files were actually written to disk under projectRoot
+	expectedFiles := []string{
+		filepath.Join(projectRoot, "Justfile"),
+		filepath.Join(projectRoot, ".agents/asimi.conf"),
+		filepath.Join(projectRoot, ".agents/sandbox/Dockerfile"),
+		filepath.Join(projectRoot, ".agents/sandbox/bashrc"),
+		filepath.Join(projectRoot, ".agents/sandbox/asimi_runtime.sh"),
+	}
+	for _, f := range expectedFiles {
+		info, err := os.Stat(f)
+		require.NoError(t, err, "file should exist at %s", f)
+		assert.NotZero(t, info.Size(), "file should not be empty: %s", f)
+	}
+
+	// Verify directory was created with os.MkdirAll (not HostRun)
+	dirInfo, err := os.Stat(filepath.Join(projectRoot, ".agents", "sandbox"))
+	require.NoError(t, err, ".agents/sandbox directory should exist")
+	assert.True(t, dirInfo.IsDir(), ".agents/sandbox should be a directory")
+}
+
+func TestGetInfrastructureTemplates_PreservesExistingFiles(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	// Pre-create a Dockerfile with custom content
+	sandboxDir := filepath.Join(projectRoot, ".agents", "sandbox")
+	require.NoError(t, os.MkdirAll(sandboxDir, 0o755))
+
+	customDockerfile := "FROM custom-base:latest\n"
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "Dockerfile"), []byte(customDockerfile), 0o644))
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, repo.RepoInfo{
+		ProjectRoot: projectRoot,
+		Slug:        "test/project",
+	})
+
+	result, err := runner.getInfrastructureTemplates(context.Background())
+	require.NoError(t, err)
+
+	resultMap := result.(map[string]interface{})
+	templateFiles := resultMap["template_files"].([]string)
+
+	// Dockerfile should NOT appear in createdFiles since it already existed
+	for _, f := range templateFiles {
+		assert.NotContains(t, f, "Dockerfile", "existing Dockerfile should not be overwritten")
+	}
+
+	// The pre-existing Dockerfile should be unchanged
+	content, err := os.ReadFile(filepath.Join(sandboxDir, "Dockerfile"))
+	require.NoError(t, err)
+	assert.Equal(t, customDockerfile, string(content), "existing Dockerfile should be preserved")
+}
+
+func TestGetInfrastructureTemplates_SlugSubstitution(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, repo.RepoInfo{
+		ProjectRoot: projectRoot,
+		Slug:        "myorg/myrepo",
+	})
+
+	_, err := runner.getInfrastructureTemplates(context.Background())
+	require.NoError(t, err)
+
+	// Check Justfile has the slug substituted
+	justfileContent, err := os.ReadFile(filepath.Join(projectRoot, "Justfile"))
+	require.NoError(t, err)
+	assert.Contains(t, string(justfileContent), `PROJECT_NAME := "myorg/myrepo"`)
+
+	// Check asimi.conf has slug-based image name
+	confContent, err := os.ReadFile(filepath.Join(projectRoot, ".agents", "asimi.conf"))
+	require.NoError(t, err)
+	assert.Contains(t, string(confContent), `image_name = "localhost/asimi-sandbox-myorg/myrepo:latest"`)
+	assert.Contains(t, string(confContent), `project = "myorg/myrepo"`)
+}
+
+func TestGetInfrastructureTemplates_TemplateFilesListSorted(t *testing.T) {
+	// Ensure createdFiles list is deterministic (map iteration order is random in Go).
+	// This matters because the LLM receives template_files in the prompt.
+	projectRoot := t.TempDir()
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, repo.RepoInfo{
+		ProjectRoot: projectRoot,
+	})
+
+	result, err := runner.getInfrastructureTemplates(context.Background())
+	require.NoError(t, err)
+
+	resultMap := result.(map[string]interface{})
+	templateFiles := resultMap["template_files"].([]string)
+
+	// Verify sorted for determinism
+	sorted := make([]string, len(templateFiles))
+	copy(sorted, templateFiles)
+	sort.Strings(sorted)
+	assert.Equal(t, sorted, templateFiles, "template_files should be sorted for determinism")
 }

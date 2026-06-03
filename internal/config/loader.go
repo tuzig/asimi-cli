@@ -7,11 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	koanftoml "github.com/knadh/koanf/parsers/toml/v2"
-	koanfenv "github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/file"
 	koanf "github.com/knadh/koanf/v2"
 )
@@ -115,6 +113,111 @@ func EnsureUserConfigExists() (bool, error) {
 	return true, nil
 }
 
+// resolveAPIKeys fills in provider-specific API keys from well-known
+// environment variables. It is used by LoadConfig so that initial boot
+// still auto-discovers credentials, but is deliberately excluded from
+// LoadProjectConfig (daemon receives keys via APIKeys).
+func resolveAPIKeys(cfg *Config) {
+	if cfg.LLM.Provider != "" && cfg.LLM.APIKey == "" {
+		switch cfg.LLM.Provider {
+		case "anthropic":
+			if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+				cfg.LLM.APIKey = key
+			}
+		case "openai":
+			if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+				cfg.LLM.APIKey = key
+			}
+		case "openrouter":
+			if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
+				cfg.LLM.APIKey = key
+			}
+		case "googleai":
+			if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+				cfg.LLM.APIKey = key
+			} else if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
+				cfg.LLM.APIKey = key
+			}
+		}
+	}
+}
+
+// LoadConfig loads user-level defaults plus ~/.config/asimi/asimi.conf
+// and resolves API keys from environment variables. It does NOT load
+// project-level config or ASIMI_ prefix env vars — the daemon loads
+// per-client via LoadProjectConfig, and the TUI overlays project config
+// after RepoInfo is available.
+//
+// Layer order (later wins):
+//  1. Built-in defaults (DefaultConfig)
+//  2. User-level config: ~/.config/asimi/asimi.conf
+//  3. Env-var credential resolution (API keys for already-configured providers)
+func LoadConfig() (*Config, error) {
+	k := koanf.New(".")
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user home directory: %w", err)
+	}
+
+	userConfigPath := filepath.Join(homeDir, ".config", "asimi", "asimi.conf")
+	if err := k.Load(file.Provider(userConfigPath), koanftoml.Parser()); err != nil {
+		// Missing user config is common on first run; downgrade to Debug
+		// so it doesn't pollute normal startup output.
+		slog.Debug("Failed to load user config", "path", userConfigPath, "error", err)
+	}
+
+	// Unmarshal onto defaults so every field has a value.
+	cfg := DefaultConfig()
+	if err := k.Unmarshal("", &cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Set default values for session config if not explicitly configured
+	if !k.Exists("session.enabled") {
+		cfg.Session.Enabled = true // Default to enabled
+	}
+
+	// Resolve API keys from environment variables
+	resolveAPIKeys(&cfg)
+
+	return &cfg, nil
+}
+
+// OverlayProjectConfig reads project-level config from
+// {projectRoot}/.agents/asimi.conf and unmarshals it onto the existing
+// cfg, overwriting any fields set in the project config. Fields not
+// present in the project config are left unchanged on cfg.
+//
+// This is the initial-load counterpart to Config.ReloadProjectConf:
+// it uses the same koanf-based approach but is a standalone function so
+// the TUI boot path can call it after fx provides both Config and RepoInfo.
+func OverlayProjectConfig(cfg *Config, projectRoot string) error {
+	if projectRoot == "" {
+		return nil // No project root, nothing to overlay
+	}
+
+	projectConfigPath := filepath.Join(projectRoot, ".agents", "asimi.conf")
+
+	if _, err := os.Stat(projectConfigPath); os.IsNotExist(err) {
+		return nil // No project config to overlay
+	} else if err != nil {
+		slog.Warn("Unable to stat project config", "path", projectConfigPath, "error", err)
+		return nil
+	}
+
+	k := koanf.New(".")
+	if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
+		return fmt.Errorf("failed to load project config: %w", err)
+	}
+
+	if err := k.Unmarshal("", cfg); err != nil {
+		return fmt.Errorf("failed to unmarshal project config: %w", err)
+	}
+
+	return nil
+}
+
 // LoadProjectConfig loads configuration for a specific project root without
 // relying on the current working directory or environment-variable credentials.
 //
@@ -159,134 +262,6 @@ func LoadProjectConfig(projectRoot string) (*Config, error) {
 	return &config, nil
 }
 
-// LoadConfig loads configuration from multiple sources
-func LoadConfig() (*Config, error) {
-	// Create a new koanf instance
-	k := koanf.New(".")
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		slog.Error("Failed to get user home directory", "error", err)
-	} else {
-		userConfigPath := filepath.Join(homeDir, ".config", "asimi", "asimi.conf")
-		if err := k.Load(file.Provider(userConfigPath), koanftoml.Parser()); err != nil {
-			slog.Warn("Failed to load user config", "path", userConfigPath, "error", err)
-		}
-	}
-
-	projectConfigPath := filepath.Join(".agents", "asimi.conf")
-	if _, err := os.Stat(projectConfigPath); err == nil {
-		if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
-			slog.Warn("Failed to load project config", "path", projectConfigPath, "error", err)
-		}
-	} else if !os.IsNotExist(err) {
-		slog.Warn("Unable to stat project config", "path", projectConfigPath, "error", err)
-	}
-
-	// 3. Load environment variables
-	// Environment variables with prefix "ASIMI_" will override config values
-	// e.g., ASIMI_SERVER_PORT=8080 will override the server port
-	if err := k.Load(koanfenv.Provider(".", koanfenv.Opt{
-		Prefix: "ASIMI_",
-		TransformFunc: func(key, value string) (string, any) {
-			// Transform environment variable names to match config keys
-			// ASIMI_SERVER_PORT becomes "server.port"
-			key = strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, "ASIMI_")), "_", ".")
-			return key, value
-		},
-	}), nil); err != nil {
-		slog.Warn("Failed to load environment variables", "error", err)
-	}
-
-	// Special handling for API keys from standard environment variables
-	// Check for OPENAI_API_KEY if using OpenAI
-	if k.String("llm.provider") == "openai" && k.String("llm.api_key") == "" {
-		if openaiKey := os.Getenv("OPENAI_API_KEY"); openaiKey != "" {
-			if err := k.Set("llm.api_key", openaiKey); err != nil {
-				slog.Warn("Failed to set OpenAI API key from environment", "error", err)
-			}
-		}
-	}
-
-	// Check for ANTHROPIC_API_KEY if using Anthropic
-	if k.String("llm.provider") == "anthropic" && k.String("llm.api_key") == "" {
-		if anthropicKey := os.Getenv("ANTHROPIC_API_KEY"); anthropicKey != "" {
-			if err := k.Set("llm.api_key", anthropicKey); err != nil {
-				slog.Warn("Failed to set Anthropic API key from environment", "error", err)
-			}
-		}
-	}
-
-	// Unmarshal the configuration into our struct
-	config := DefaultConfig()
-	if err := k.Unmarshal("", &config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	// Set default values for session config if not explicitly configured
-	// Check if session.enabled was explicitly set in config or environment
-	if !k.Exists("session.enabled") {
-		config.Session.Enabled = true // Default to enabled
-	}
-
-	// Auto-discovery: If no provider is configured, detect from environment variables
-	// Priority: Anthropic > OpenAI > OpenRouter > Google AI
-	if config.LLM.Provider == "" {
-		if anthropicKey := os.Getenv("ANTHROPIC_API_KEY"); anthropicKey != "" {
-			config.LLM.Provider = "anthropic"
-			config.LLM.Model = "claude-sonnet-4-20250514"
-			config.LLM.APIKey = anthropicKey
-			slog.Info("Auto-configured provider", "provider", "anthropic", "source", "ANTHROPIC_API_KEY")
-		} else if openaiKey := os.Getenv("OPENAI_API_KEY"); openaiKey != "" {
-			config.LLM.Provider = "openai"
-			config.LLM.Model = "gpt-4o"
-			config.LLM.APIKey = openaiKey
-			slog.Info("Auto-configured provider", "provider", "openai", "source", "OPENAI_API_KEY")
-		} else if openrouterKey := os.Getenv("OPENROUTER_API_KEY"); openrouterKey != "" {
-			config.LLM.Provider = "openrouter"
-			config.LLM.Model = "anthropic/claude-sonnet-4"
-			config.LLM.APIKey = openrouterKey
-			slog.Info("Auto-configured provider", "provider", "openrouter", "source", "OPENROUTER_API_KEY")
-		} else if geminiKey := os.Getenv("GEMINI_API_KEY"); geminiKey != "" {
-			config.LLM.Provider = "googleai"
-			config.LLM.Model = "gemini-2.5-flash"
-			config.LLM.APIKey = geminiKey
-			slog.Info("Auto-configured provider", "provider", "googleai", "source", "GEMINI_API_KEY")
-		} else if googleKey := os.Getenv("GOOGLE_API_KEY"); googleKey != "" {
-			config.LLM.Provider = "googleai"
-			config.LLM.Model = "gemini-2.5-flash"
-			config.LLM.APIKey = googleKey
-			slog.Info("Auto-configured provider", "provider", "googleai", "source", "GOOGLE_API_KEY")
-		}
-	}
-
-	// If provider is set but API key is not, try to load from environment
-	if config.LLM.Provider != "" && config.LLM.APIKey == "" {
-		switch config.LLM.Provider {
-		case "anthropic":
-			if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-				config.LLM.APIKey = key
-			}
-		case "openai":
-			if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-				config.LLM.APIKey = key
-			}
-		case "openrouter":
-			if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-				config.LLM.APIKey = key
-			}
-		case "googleai":
-			if key := os.Getenv("GEMINI_API_KEY"); key != "" {
-				config.LLM.APIKey = key
-			} else if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
-				config.LLM.APIKey = key
-			}
-		}
-	}
-
-	return &config, nil
-}
-
 // SaveConfig saves the current config to the user-level config file (~/.config/asimi/asimi.conf).
 // It preserves all comments in the existing file.
 func SaveConfig(cfg *Config) error {
@@ -316,17 +291,19 @@ func SaveConfig(cfg *Config) error {
 	return nil
 }
 
-// SetProjectConfig updates keys in the project config file (.agents/asimi.conf).
-// It accepts a section name followed by key-value pairs, similar to slog.Info().
-// Example: SetProjectConfig("session", "agents_file", "CLAUDE.md", "enabled", "true")
+// SetProjectConfig updates keys in the project config file under the given
+// projectRoot directory. It accepts a section name followed by key-value pairs,
+// similar to slog.Info().
+// Example: SetProjectConfig("/path/to/project", "session", "agents_file", "CLAUDE.md")
 // It preserves all comments in the existing file.
-func SetProjectConfig(section string, keyValues ...string) error {
+func SetProjectConfig(projectRoot, section string, keyValues ...string) error {
 	if len(keyValues)%2 != 0 {
 		return fmt.Errorf("SetProjectConfig requires an even number of key-value arguments")
 	}
 
-	projectConfigPath := filepath.Join(".agents", "asimi.conf")
-	if err := os.MkdirAll(".agents", 0o755); err != nil {
+	projectConfigPath := filepath.Join(projectRoot, ".agents", "asimi.conf")
+	agentsDir := filepath.Join(projectRoot, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create .agents directory: %w", err)
 	}
 
@@ -357,3 +334,23 @@ func GetEnv(key, fallback string) string {
 	}
 	return fallback
 }
+
+// EnsureProjectConfig seeds .agents/asimi.conf from the embedded default
+// template if the file does not already exist. It creates .agents/ as needed.
+// This lets callers modify keys in place (via config.SetProjectConfig) without
+// the first write producing a stub file that overrides the full default set.
+func EnsureProjectConfig(projectRoot string) error {
+	path := filepath.Join(projectRoot, ".agents", "asimi.conf")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	agentsDir := filepath.Join(projectRoot, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create .agents directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(defaultConfContent), 0o644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", path, err)
+	}
+	return nil
+}
+

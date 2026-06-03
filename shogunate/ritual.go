@@ -28,9 +28,6 @@ import (
 //go:embed dotagents/Justfile
 var dotagentsJustfile string
 
-//go:embed dotagents/asimi.conf
-var dotagentsAsimiConf string
-
 //go:embed dotagents/sandbox/Dockerfile
 var dotagentsDockerfile string
 
@@ -39,25 +36,6 @@ var dotagentsBashrc string
 
 //go:embed dotagents/sandbox/asimi_runtime.sh
 var dotagentsAsimiRuntime string
-
-// EnsureProjectConfig seeds .agents/asimi.conf from the embedded default
-// template if the file does not already exist. It creates .agents/ as needed.
-// This lets callers modify keys in place (via config.SetProjectConfig) without
-// the first write producing a stub file that overrides the full default set.
-func EnsureProjectConfig() error {
-	const path = ".agents/asimi.conf"
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	}
-	if err := os.MkdirAll(".agents", 0o755); err != nil {
-		return fmt.Errorf("failed to create .agents directory: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(dotagentsAsimiConf), 0o644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", path, err)
-	}
-	return nil
-}
-
 // RitualStepMsg notifies the UI of ritual step progress
 type RitualStepMsg struct {
 	ChannelID   string `msgpack:"channel_id"`
@@ -404,9 +382,12 @@ func NewRitualRunner(
 // SetConfig injects sandbox and project configuration from the shogunate's
 // SessionConfig. This is called by ConfigureModel so that the RitualRunner
 // never needs to call config.LoadConfig (which is CWD-relative and fragile).
-func (r *RitualRunner) SetConfig(sandboxCfg *config.SandboxConfig, projectSlug string) {
+func (r *RitualRunner) SetConfig(sandboxCfg *config.SandboxConfig, projectSlug string, repoInfo repo.RepoInfo) {
 	r.sandboxConfig = sandboxCfg
 	r.projectSlug = projectSlug
+	if repoInfo.ProjectRoot != "" {
+		r.repoInfo = repoInfo
+	}
 }
 
 // waitForZhengming delegates to the chancellor's MinisterBase blocking wait.

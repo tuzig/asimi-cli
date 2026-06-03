@@ -138,9 +138,10 @@ func DefaultSessionConfig() *SessionConfig {
 	}
 }
 
-// ReloadProjectConf reloads the project's configuration file
-func (c *Config) ReloadProjectConf() error {
-	projectConfigPath := filepath.Join(".agents", "asimi.conf")
+// ReloadProjectConf reloads the project's configuration file from
+// filepath.Join(projectRoot, ".agents", "asimi.conf").
+func (c *Config) ReloadProjectConf(projectRoot string) error {
+	projectConfigPath := filepath.Join(projectRoot, ".agents", "asimi.conf")
 
 	// Check if project config exists
 	if _, err := os.Stat(projectConfigPath); os.IsNotExist(err) {

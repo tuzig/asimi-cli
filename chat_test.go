@@ -150,6 +150,65 @@ func TestAddThinkingChunk_SkipsEmptyChunks(t *testing.T) {
 		"no new message should be added for empty thinking chunks")
 }
 
+// ===== Clear() Tests =====
+
+func TestClear_ResetsMessagesAndState(t *testing.T) {
+	chat := NewChatComponent(80, 20, false)
+	chat.AddUserMessage("some content")
+	chat.AddMessage("another message")
+	chat.AutoScroll = false
+	chat.UserScrolled = true
+	chat.ScrollLocked = true
+
+	chat.Clear()
+
+	assert.Empty(t, chat.Messages, "Clear should empty Messages")
+	assert.True(t, chat.AutoScroll, "Clear should reset AutoScroll to true")
+	assert.False(t, chat.UserScrolled, "Clear should reset UserScrolled")
+	assert.False(t, chat.ScrollLocked, "Clear should reset ScrollLocked")
+	assert.Empty(t, chat.rawSessionHistory, "Clear should clear rawSessionHistory")
+	assert.Empty(t, chat.toolCallMessageIndex, "Clear should clear toolCallMessageIndex")
+}
+
+func TestClear_SynchronouslyUpdatesViewport(t *testing.T) {
+	chat := NewChatComponent(80, 20, false)
+	chat.AddUserMessage("this should disappear after Clear")
+
+	chat.Clear()
+
+	// Clear() now calls UpdateContent(), so viewport should reflect the empty state
+	assert.False(t, chat.contentDirty,
+		"Clear should not leave contentDirty=true — it calls UpdateContent()")
+	assert.False(t, strings.Contains(chat.Viewport.View(), "this should disappear after Clear"),
+		"viewport should not contain old messages after Clear")
+}
+
+func TestClear_ViewportAtTop(t *testing.T) {
+	chat := NewChatComponent(80, 20, false)
+	// Add enough messages to scroll
+	for i := 0; i < 50; i++ {
+		chat.AddMessage("line " + string(rune('A'+i%26)))
+	}
+	chat.Viewport.GotoBottom()
+
+	chat.Clear()
+
+	assert.True(t, chat.Viewport.AtTop(),
+		"Clear should scroll viewport to top via GotoTop")
+}
+
+func TestClear_AllowsSubsequentMessages(t *testing.T) {
+	chat := NewChatComponent(80, 20, false)
+	chat.AddUserMessage("before clear")
+	chat.Clear()
+	chat.AddUserMessage("after clear")
+
+	assert.Len(t, chat.Messages, 1, "should have exactly one message after Clear + AddUserMessage")
+	assert.Equal(t, "after clear", chat.Messages[0].Content)
+	assert.Contains(t, chat.Viewport.View(), "after clear",
+		"viewport should show new messages after Clear")
+}
+
 // ===== Original Tests =====
 
 func TestChatComponent_StartBlock(t *testing.T) {

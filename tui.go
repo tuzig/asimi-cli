@@ -380,6 +380,14 @@ func (m *TUIModel) setContextParams() types.SetContextParams {
 		worktreePath = m.repoInfo.WorktreePath
 		branch = m.repoInfo.Branch
 	}
+	// Fallback to CWD when repoInfo is unavailable or ProjectRoot is empty
+	// (e.g., outside a git repo). The daemon's "." would resolve to its own
+	// launch directory, so we must provide an absolute path here.
+	if projectRoot == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			projectRoot = cwd
+		}
+	}
 	project := ""
 	username := ""
 	if m.config != nil {

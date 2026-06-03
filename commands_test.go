@@ -2,8 +2,10 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/stretchr/testify/require"
 )
 
@@ -146,19 +148,13 @@ func TestHandleInitCommand(t *testing.T) {
 	skipIfNotCI(t)
 	// Setup a temporary directory for the test
 	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-	defer func() {
-		err := os.Chdir(originalWd)
-		if err != nil {
-			t.Logf("Failed to change back to original directory: %v", err)
-		}
-	}()
 
 	// Setup a mock model with no session (simulates no active session state)
-	mockTUI := &TUIModel{}
+	mockTUI := &TUIModel{
+		status: StatusComponent{
+			repoInfo: &repo.RepoInfo{ProjectRoot: tmpDir},
+		},
+	}
 
 	t.Run("No session returns error message", func(t *testing.T) {
 		cmd := handleInitCommand(mockTUI, []string{})
@@ -172,13 +168,13 @@ func TestHandleInitCommand(t *testing.T) {
 
 	t.Run("Clear mode with no session removes files", func(t *testing.T) {
 		// Create the files that clearAsimiFiles should remove
-		err := os.MkdirAll(".agents", 0755)
+		err := os.MkdirAll(filepath.Join(tmpDir, ".agents"), 0755)
 		require.NoError(t, err)
-		err = os.WriteFile(".agents/test", []byte("test"), 0644)
+		err = os.WriteFile(filepath.Join(tmpDir, ".agents/test"), []byte("test"), 0644)
 		require.NoError(t, err)
-		err = os.WriteFile("AGENTS.md", []byte("# Agents"), 0644)
+		err = os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte("# Agents"), 0644)
 		require.NoError(t, err)
-		err = os.WriteFile("Justfile", []byte("test:"), 0644)
+		err = os.WriteFile(filepath.Join(tmpDir, "Justfile"), []byte("test:"), 0644)
 		require.NoError(t, err)
 
 		cmd := handleInitCommand(mockTUI, []string{"clear"})
@@ -190,11 +186,11 @@ func TestHandleInitCommand(t *testing.T) {
 		require.Contains(t, sysMsg.content, "No model connection")
 
 		// But files should still be removed
-		_, err = os.Stat(".agents")
+		_, err = os.Stat(filepath.Join(tmpDir, ".agents"))
 		require.True(t, os.IsNotExist(err), ".agents should be removed")
-		_, err = os.Stat("AGENTS.md")
+		_, err = os.Stat(filepath.Join(tmpDir, "AGENTS.md"))
 		require.True(t, os.IsNotExist(err), "AGENTS.md should be removed")
-		_, err = os.Stat("Justfile")
+		_, err = os.Stat(filepath.Join(tmpDir, "Justfile"))
 		require.True(t, os.IsNotExist(err), "Justfile should be removed")
 	})
 
@@ -206,12 +202,6 @@ func TestHandleInitCommand(t *testing.T) {
 
 	t.Run("Some files exist - skipped without session", func(t *testing.T) {
 		t.Skip("Requires shogunate session setup - see integration tests")
-
-		// Clean up for the next test
-		err = os.Remove("Justfile")
-		require.NoError(t, err)
-		err = os.RemoveAll(".agents")
-		require.NoError(t, err)
 	})
 
 	t.Run("All files exist - skipped without session", func(t *testing.T) {
@@ -226,50 +216,78 @@ func TestHandleInitCommand(t *testing.T) {
 func TestClearAsimiFiles(t *testing.T) {
 	// Setup a temporary directory for the test
 	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-	defer func() {
-		err := os.Chdir(originalWd)
-		if err != nil {
-			t.Logf("Failed to change back to original directory: %v", err)
-		}
-	}()
 
-	mockTUI := &TUIModel{}
+	mockTUI := &TUIModel{
+		status: StatusComponent{
+			repoInfo: &repo.RepoInfo{ProjectRoot: tmpDir},
+		},
+	}
 
 	t.Run("Clears all infrastructure files", func(t *testing.T) {
 		// Create the files that clearAsimiFiles should remove
-		err := os.MkdirAll(".agents", 0755)
+		err := os.MkdirAll(filepath.Join(tmpDir, ".agents"), 0755)
 		require.NoError(t, err)
-		err = os.WriteFile(".agents/test", []byte("test"), 0644)
+		err = os.WriteFile(filepath.Join(tmpDir, ".agents/test"), []byte("test"), 0644)
 		require.NoError(t, err)
-		err = os.WriteFile("AGENTS.md", []byte("# Agents"), 0644)
+		err = os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte("# Agents"), 0644)
 		require.NoError(t, err)
-		err = os.WriteFile("Justfile", []byte("test:"), 0644)
+		err = os.WriteFile(filepath.Join(tmpDir, "Justfile"), []byte("test:"), 0644)
 		require.NoError(t, err)
 
 		errors := clearAsimiFiles(mockTUI)
 		require.Empty(t, errors, "Expected no errors, got: %v", errors)
 
 		// Verify files are removed
-		_, err = os.Stat(".agents")
+		_, err = os.Stat(filepath.Join(tmpDir, ".agents"))
 		require.True(t, os.IsNotExist(err), ".agents should be removed")
-		_, err = os.Stat("AGENTS.md")
+		_, err = os.Stat(filepath.Join(tmpDir, "AGENTS.md"))
 		require.True(t, os.IsNotExist(err), "AGENTS.md should be removed")
-		_, err = os.Stat("Justfile")
+		_, err = os.Stat(filepath.Join(tmpDir, "Justfile"))
 		require.True(t, os.IsNotExist(err), "Justfile should be removed")
 	})
 
 	t.Run("Handles missing files gracefully", func(t *testing.T) {
 		// Ensure no files exist
-		os.RemoveAll(".agents")
-		os.Remove("AGENTS.md")
-		os.Remove("Justfile")
+		os.RemoveAll(filepath.Join(tmpDir, ".agents"))
+		os.Remove(filepath.Join(tmpDir, "AGENTS.md"))
+		os.Remove(filepath.Join(tmpDir, "Justfile"))
 
 		errors := clearAsimiFiles(mockTUI)
 		require.Empty(t, errors, "Expected no errors for missing files, got: %v", errors)
+	})
+
+	t.Run("Uses projectRoot not CWD", func(t *testing.T) {
+		// This is the core bug fix: clearAsimiFiles must use projectRoot, not CWD.
+		// Create files in projectRoot (tmpDir) while CWD stays elsewhere.
+		projectDir := filepath.Join(tmpDir, "project")
+		err := os.MkdirAll(projectDir, 0755)
+		require.NoError(t, err)
+		err = os.MkdirAll(filepath.Join(projectDir, ".agents"), 0755)
+		require.NoError(t, err)
+		err = os.WriteFile(filepath.Join(projectDir, ".agents/test"), []byte("test"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile(filepath.Join(projectDir, "AGENTS.md"), []byte("# Agents"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile(filepath.Join(projectDir, "Justfile"), []byte("test:"), 0644)
+		require.NoError(t, err)
+
+		// Point the model's repoInfo to the project subdirectory
+		mockTUIWithSubdir := &TUIModel{
+			status: StatusComponent{
+				repoInfo: &repo.RepoInfo{ProjectRoot: projectDir},
+			},
+		}
+
+		errors := clearAsimiFiles(mockTUIWithSubdir)
+		require.Empty(t, errors, "Expected no errors, got: %v", errors)
+
+		// Files in projectDir should be removed
+		_, err = os.Stat(filepath.Join(projectDir, ".agents"))
+		require.True(t, os.IsNotExist(err), ".agents in projectDir should be removed")
+		_, err = os.Stat(filepath.Join(projectDir, "AGENTS.md"))
+		require.True(t, os.IsNotExist(err), "AGENTS.md in projectDir should be removed")
+		_, err = os.Stat(filepath.Join(projectDir, "Justfile"))
+		require.True(t, os.IsNotExist(err), "Justfile in projectDir should be removed")
 	})
 }
 

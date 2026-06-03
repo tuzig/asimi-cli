@@ -558,6 +558,77 @@ func TestDaemonSafeRunOnHostUsesClientProjectRoot(t *testing.T) {
 	}
 }
 
+// TestCreateShogunateSetsRepoInfoBeforeStart verifies the critical
+// daemon-mode invariant: createShogunate must wire repoInfo before
+// calling Start(), so that LoadRituals() finds the correct ProjectRoot
+// on the first attempt. Without SetRepoInfo before Start, rituals
+// would fail to load and only be picked up later by ConfigureModel's
+// fallback path, producing spurious ERROR/WARN logs.
+func TestCreateShogunateSetsRepoInfoBeforeStart(t *testing.T) {
+	shared, cleanup := newTestShared(t)
+	defer cleanup()
+
+	projectRoot := t.TempDir()
+	agentsDir := filepath.Join(projectRoot, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatalf("mkdir .agents: %v", err)
+	}
+
+	projectCfg, err := config.LoadProjectConfig(projectRoot)
+	if err != nil {
+		t.Fatalf("LoadProjectConfig: %v", err)
+	}
+
+	repoInfo := repo.RepoInfo{
+		ProjectRoot: projectRoot,
+		Slug:        "test-project",
+		Branch:      "main",
+	}
+
+	shog, _, err := createShogunate(
+		context.Background(),
+		shared,
+		1,
+		types.SetContextParams{
+			Project:     "test-project",
+			Username:    "test-user",
+			ProjectRoot: projectRoot,
+		},
+		projectCfg,
+		repoInfo,
+	)
+	if err != nil {
+		t.Fatalf("createShogunate: %v", err)
+	}
+	defer shog.Stop()
+
+	// The Shogunate must have rituals loaded in its registry.
+	// This proves SetRepoInfo was called before Start(), because
+	// LoadRituals() inside Start() would fail with an empty project root
+	// if repoInfo wasn't wired first.
+	reg := shog.GetRitualRegistry()
+	rituals := reg.List()
+	if len(rituals) == 0 {
+		t.Error("ritual registry is empty after createShogunate — SetRepoInfo was not called before Start()")
+	}
+
+	// Verify that embedded rituals (e.g. dawn-audience) loaded on the
+	// first attempt, not via the ConfigureModel fallback path.
+	if !ritualsContain(rituals, "dawn-audience") {
+		t.Errorf("expected embedded ritual 'dawn-audience' in registry, got %v", rituals)
+	}
+}
+
+// ritualsContain checks if a ritual name exists in the list.
+func ritualsContain(names []string, target string) bool {
+	for _, n := range names {
+		if n == target {
+			return true
+		}
+	}
+	return false
+}
+
 var _ shogunate.Snapshot // keep the shogunate import warm for the test file
 
 // dialTwoClients is a test helper that starts serveClients on a unix

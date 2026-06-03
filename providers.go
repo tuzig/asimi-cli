@@ -80,7 +80,11 @@ func ProvideLogger() (LoggerResult, error) {
 	}, nil
 }
 
-// ProvideConfig loads and returns the application configuration
+// ProvideConfig loads user-level configuration for the daemon.
+// It reads built-in defaults + ~/.config/asimi/asimi.conf and resolves
+// API keys from environment variables. Project-level config is NOT
+// loaded here — the daemon loads per-client via LoadProjectConfig, and
+// the TUI overlays project config after RepoInfo is available.
 func ProvideConfig(logger *slog.Logger) (*Config, error) {
 	logger.Info("loading configuration")
 
@@ -286,6 +290,14 @@ type TUIModelParams struct {
 
 // ProvideTUIModel creates and returns the TUI model
 func ProvideTUIModel(params TUIModelParams) *TUIModel {
+	// Overlay project-level config onto user-level defaults.
+	// After ProvideConfig returns user-level config and ProvideRepoInfo
+	// returns repo info, we merge any project-specific settings from
+	// {projectRoot}/.agents/asimi.conf onto the existing cfg.
+	if err := config.OverlayProjectConfig(params.Config, params.RepoInfo.ProjectRoot); err != nil {
+		params.Logger.Warn("failed to overlay project config", "error", err)
+	}
+
 	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler, params.Shogunate)
 }
 

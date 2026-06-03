@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	cucumberexpressions "github.com/cucumber/cucumber-expressions/go/v19"
 
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
@@ -476,12 +479,11 @@ func (r *RitualRunner) checkCleanWorkingDirectory(ctx context.Context) (interfac
 
 // getInfrastructureTemplates creates infrastructure files from embedded templates and returns their paths
 func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interface{}, error) {
-	// Ensure directory structure exists using host runner
-	if _, err := runners.HostRun(ctx, runners.Input{
-		Command:        "mkdir -p .agents/sandbox",
-		Description:    "create .agents/sandbox directory structure",
-		BypassApproval: true,
-	}, r.repoInfo.ProjectRoot); err != nil {
+	// Ensure directory structure exists — use os.MkdirAll with ProjectRoot so
+	// paths resolve consistently regardless of process CWD.
+	r.logger.Debug("making dirs", "project root", r.repoInfo.ProjectRoot)
+	sandboxDir := filepath.Join(r.repoInfo.ProjectRoot, ".agents", "sandbox")
+	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create .agents/sandbox directory: %w", err)
 	}
 
@@ -503,18 +505,20 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 	}
 	justfile := strings.Replace(dotagentsJustfile, `PROJECT_NAME := "CHANGE_ME"`,
 		fmt.Sprintf(`PROJECT_NAME := "%s"`, slug), 1)
-	asimiConf := strings.Replace(dotagentsAsimiConf, `image_name = ""`,
+	asimiConf := strings.Replace(config.DefaultConfContent(), `image_name = ""`,
 		fmt.Sprintf(`image_name = "localhost/asimi-sandbox-%s:latest"`, slug), 1)
 	asimiConf = strings.Replace(asimiConf, `project = ""`,
 		fmt.Sprintf(`project = "%s"`, slug), 1)
 
-	// Write embedded templates to project root
+	// Write embedded templates to project root.
+	// All paths are prefixed with ProjectRoot via filepath.Join so os.Stat and
+	// os.WriteFile resolve against the project root, not the process CWD.
 	files := map[string]string{
-		"Justfile":                         justfile,
-		".agents/asimi.conf":               asimiConf,
-		".agents/sandbox/Dockerfile":       dotagentsDockerfile,
-		".agents/sandbox/bashrc":           dotagentsBashrc,
-		".agents/sandbox/asimi_runtime.sh": dotagentsAsimiRuntime,
+		filepath.Join(r.repoInfo.ProjectRoot, "Justfile"):                         justfile,
+		filepath.Join(r.repoInfo.ProjectRoot, ".agents/asimi.conf"):               asimiConf,
+		filepath.Join(r.repoInfo.ProjectRoot, ".agents/sandbox/Dockerfile"):       dotagentsDockerfile,
+		filepath.Join(r.repoInfo.ProjectRoot, ".agents/sandbox/bashrc"):           dotagentsBashrc,
+		filepath.Join(r.repoInfo.ProjectRoot, ".agents/sandbox/asimi_runtime.sh"): dotagentsAsimiRuntime,
 	}
 
 	// Only seed files that don't already exist — preserve any prior customization
@@ -532,9 +536,12 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 		createdFiles = append(createdFiles, destPath)
 	}
 
+	// Sort createdFiles for deterministic output (map iteration order is random).
+	sort.Strings(createdFiles)
+
 	return map[string]interface{}{
 		"template_files": createdFiles,
-		"directories":    []string{".agents", ".agents/sandbox"},
+		"directories":    []string{filepath.Join(r.repoInfo.ProjectRoot, ".agents"), filepath.Join(r.repoInfo.ProjectRoot, ".agents", "sandbox")},
 	}, nil
 }
 
@@ -780,7 +787,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		// should still succeed.
 		paths := []string{"Justfile", ".agents/"}
 		for _, p := range []string{"AGENTS.md", "CLAUDE.md"} {
-			if _, err := os.Stat(p); err == nil {
+			if _, err := os.Stat(filepath.Join(r.repoInfo.ProjectRoot, p)); err == nil {
 				paths = append(paths, p)
 			}
 		}
