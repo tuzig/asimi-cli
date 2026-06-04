@@ -1799,6 +1799,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			chat.AddAIChunk(msg.Text)
 		}
 		m.status.AddStreamChars(len(msg.Text) + len(msg.Reasoning))
+		m.status.SetVerified() // LLM returned content — provider is confirmed working
 		m.status.ContextPercent = msg.PercentContextUsed
 		var cmds []tea.Cmd
 		// Schedule the debounce tick if dirty and none pending
@@ -2560,8 +2561,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case llmInitSuccessMsg:
 		// LLM is configured daemon-side by now; just reflect readiness
-		// in the status bar.
-		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
+		// in the status bar. Client init success doesn't mean verified.
+		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
 
 		// Fire shogunate_started event to trigger wakeup ritual and health checks
 		latest, hasUpdate, _ := utils.CheckForUpdates()
@@ -2931,12 +2932,12 @@ func (m *TUIModel) updateComponentDimensions() {
 	m.prompt().SetHeight(promptHeight)
 
 	// Update status info
-	// TODO: move this to a proper place and drop the currentEdictKey
+	/* TODO: move this to a proper place and drop the currentEdictKey
 	if m.shogunate != nil && m.currentEdictKey.ID != 0 {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
-	} else {
-		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
-	}
+	} else { */
+	m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
+	// }
 	slog.Debug("Updated dimensions", "m.height", m.height, "prompt height", promptHeight, "content height", contentHeight)
 }
 

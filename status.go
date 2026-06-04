@@ -15,6 +15,7 @@ type StatusComponent struct {
 	Model       string
 	Connected   bool
 	HasError    bool // Track if there's a model error
+	Verified    bool // True once a session confirms the provider works
 	Width       int
 	Style       lipgloss.Style
 	repoInfo    *repo.RepoInfo // Git repository information
@@ -104,6 +105,9 @@ func (s StatusComponent) rateBar() string {
 	return string(blocks[idx])
 }
 
+// SetVerified marks the provider as verified (confirmed working via a session)
+func (s *StatusComponent) SetVerified() { s.Verified = true }
+
 // SetError marks the status component as having an error
 func (s *StatusComponent) SetError() {
 	s.HasError = true
@@ -119,10 +123,10 @@ func (s StatusComponent) getStatusIcon() string {
 	if s.HasError {
 		return "❌"
 	}
-	if s.Connected {
+	if s.Verified {
 		return "✅"
 	}
-	return "🔌"
+	return "❓"
 }
 
 // shortenProviderModel shortens provider and model names for display
@@ -394,11 +398,11 @@ func (s StatusComponent) renderMiddleSection() string {
 func (s StatusComponent) renderRightSection() string {
 	providerModel := shortenProviderModel(s.Provider, s.Model)
 
-	// Color based on connection status: yellow on startup, green connected, red disconnected/error
+	// Color based on status: red on error, yellow when unverified, default when verified
 	style := s.Style.Copy()
 	if s.HasError {
 		style.Foreground(globalTheme.Error)
-	} else if !s.Connected {
+	} else if !s.Verified && !s.HasError {
 		style.Foreground(globalTheme.Warning)
 	}
 

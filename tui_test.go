@@ -1415,6 +1415,60 @@ func TestStreamChunkMsg_StopsWaiting(t *testing.T) {
 	require.True(t, updatedModel.waitingStart.After(initialWaitStart), "Waiting timer should be reset when chunk arrives")
 }
 
+// TestStreamChunkMsg_SetsVerified tests that receiving a stream chunk marks the
+// provider as verified. Edict 450 moved SetVerified() from SetSession() (test-only
+// path) to the StreamChunkMsg handler — the true proof that the LLM is working.
+func TestStreamChunkMsg_SetsVerified(t *testing.T) {
+	model := newTestModel(t)
+
+	// Before any stream chunk, provider should not be verified
+	require.False(t, model.status.Verified, "status should start unverified")
+
+	// Receive a stream chunk
+	newModel, _ := model.handleCustomMessages(shogunate.StreamChunkMsg{Text: "hello"})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// After receiving a chunk, provider should be verified
+	require.True(t, updatedModel.status.Verified, "StreamChunkMsg should set Verified=true")
+}
+
+// TestStreamChunkMsg_SetsVerified_Idempotent tests that repeated chunks
+// keep Verified true (idempotent — no state regression).
+func TestStreamChunkMsg_SetsVerified_Idempotent(t *testing.T) {
+	model := newTestModel(t)
+
+	require.False(t, model.status.Verified)
+
+	newModel, _ := model.handleCustomMessages(shogunate.StreamChunkMsg{Text: "first"})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	require.True(t, updatedModel.status.Verified)
+
+	// Second chunk should keep it verified
+	newModel2, _ := updatedModel.handleCustomMessages(shogunate.StreamChunkMsg{Text: "second"})
+	updatedModel2, ok := newModel2.(TUIModel)
+	require.True(t, ok)
+	require.True(t, updatedModel2.status.Verified)
+}
+
+// TestSetSession_DoesNotSetVerified tests that SetSession no longer calls
+// SetVerified. Edict 450 removed SetVerified from SetSession because
+// SetSession is only called in tests, never during normal runtime.
+func TestSetSession_DoesNotSetVerified(t *testing.T) {
+	ri := &repo.RepoInfo{}
+	model := NewTUIModel(mockConfig(), ri, nil, nil, nil, nil, nil, nil)
+	model.persistentPromptHistory = nil
+	model.initHistory()
+
+	sess, err := shogunate.NewSession(nil, nil, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	require.False(t, model.status.Verified, "should start unverified")
+	model.SetSession(sess)
+	require.False(t, model.status.Verified, "SetSession should NOT set Verified")
+}
+
 // TestStreamCompleteMsg_StopsWaiting tests that stream completion stops waiting
 func TestStreamCompleteMsg_StopsWaiting(t *testing.T) {
 	model := newTestModel(t)
