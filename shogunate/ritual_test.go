@@ -1834,37 +1834,37 @@ func TestBuildWorkPrompt_FirstAttemptIncludesStepResults(t *testing.T) {
 	}
 }
 
-func TestLintFixRitual(t *testing.T) {
+func TestFixLintRitual(t *testing.T) {
 	rituals, err := LoadEmbeddedRituals()
 	if err != nil {
 		t.Fatalf("LoadEmbeddedRituals() error = %v", err)
 	}
 
-	var lintFix *RitualDef
+	var fixLint *RitualDef
 	for _, r := range rituals {
-		if r.Name == "lint-fix" {
-			lintFix = r
+		if r.Name == "fix-lint" {
+			fixLint = r
 			break
 		}
 	}
 
-	if lintFix == nil {
-		t.Fatal("lint-fix ritual not found")
+	if fixLint == nil {
+		t.Fatal("fix-lint ritual not found")
 	}
 
-	if len(lintFix.Steps) != 3 {
-		t.Fatalf("lint-fix: expected 3 steps, got %d", len(lintFix.Steps))
+	if len(fixLint.Steps) != 3 {
+		t.Fatalf("fix-lint: expected 3 steps, got %d", len(fixLint.Steps))
 	}
 
-	forkStep := lintFix.Steps[1]
+	forkStep := fixLint.Steps[1]
 	if forkStep.Fork == nil {
-		t.Fatal("lint-fix: expected fork step to have Fork defined")
+		t.Fatal("fix-lint: expected fork step to have Fork defined")
 	}
 	if forkStep.Fork.Over != "lint" {
-		t.Fatalf("lint-fix: expected fork over 'lint', got %q", forkStep.Fork.Over)
+		t.Fatalf("fix-lint: expected fork over 'lint', got %q", forkStep.Fork.Over)
 	}
 	if forkStep.Fork.BatchSize != 5 {
-		t.Fatalf("lint-fix: expected batch_size 5, got %d", forkStep.Fork.BatchSize)
+		t.Fatalf("fix-lint: expected batch_size 5, got %d", forkStep.Fork.BatchSize)
 	}
 }
 

@@ -250,7 +250,7 @@
         ## Verdicts
         {{ .verdicts }}
 
-- name: lint-fix
+- name: fix-lint
   description: "Fix linter errors in parallel using fork/join"
   max_retries: 2
   background:

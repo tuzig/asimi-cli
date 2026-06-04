@@ -384,9 +384,9 @@ func (s *SessionStore) ListSessions(limit int, tabType string) ([]shogunate.Sess
 	return sessions, nil
 }
 
-// CleanupOldSessions removes old sessions
+// CleanupOldSessions removes old sessions for the current branch
 func (s *SessionStore) CleanupOldSessions() error {
-	return s.store.CleanupOldSessions()
+	return s.store.CleanupOldSessions(0)
 }
 
 // DeleteSession deletes a session and all its messages from the store
