@@ -118,7 +118,7 @@ func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 	// No manifests: check for edict-level verdict (ManifestID = "")
 	var verdictCount int64
 	err = j.db.Model(&storage.JudgeVerdict{}).
-		Where("manifest_id = '' AND test_suite = 'edict'").
+		Where("manifest_id = '' AND test_suite = 'edict' AND username = ? AND project = ?", key.Username, key.Project).
 		Count(&verdictCount).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check edict-level verdicts: %w", err)
@@ -147,12 +147,14 @@ func (j *Judge) sealIfComplete(key storage.EdictKey) bool {
 }
 
 // InsertVerdict records a CI judgment for a manifest
-func (j *Judge) InsertVerdict(manifestID, testSuite string, outcome storage.VerdictOutcome, evidence storage.JSON) (string, error) {
+func (j *Judge) InsertVerdict(manifestID, testSuite string, outcome storage.VerdictOutcome, evidence storage.JSON, key storage.EdictKey) (string, error) {
 	verdictID := GenerateID("verdict", manifestID, testSuite)
 
 	verdict := storage.JudgeVerdict{
 		VerdictID:  verdictID,
 		ManifestID: manifestID,
+		Username:   key.Username,
+		Project:    key.Project,
 		TestSuite:  testSuite,
 		Outcome:    outcome,
 		Evidence:   evidence,
@@ -164,10 +166,12 @@ func (j *Judge) InsertVerdict(manifestID, testSuite string, outcome storage.Verd
 	return verdictID, nil
 }
 
-// UpdateManifestStatus updates a manifest's status after judgment
-func (j *Judge) UpdateManifestStatus(manifestID string, status storage.ManifestStatus, verdictID string) error {
+// UpdateManifestStatus updates a manifest's status after judgment.
+// It uses the EdictKey to filter by username/project for defense-in-depth,
+// ensuring a manifest can only be updated within its own project scope.
+func (j *Judge) UpdateManifestStatus(manifestID string, status storage.ManifestStatus, verdictID string, key storage.EdictKey) error {
 	result := j.db.Model(&storage.ForgeManifest{}).
-		Where("manifest_id = ?", manifestID).
+		Where("manifest_id = ? AND username = ? AND project = ?", manifestID, key.Username, key.Project).
 		Updates(map[string]interface{}{
 			"status":     status,
 			"verdict_id": verdictID,
@@ -176,7 +180,7 @@ func (j *Judge) UpdateManifestStatus(manifestID string, status storage.ManifestS
 		return fmt.Errorf("failed to update manifest status: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("manifest not found: %s", manifestID)
+		return fmt.Errorf("manifest not found: %s (username=%s, project=%s)", manifestID, key.Username, key.Project)
 	}
 	return nil
 }
@@ -251,11 +255,12 @@ func (j *Judge) judgeManifest(ctx context.Context, key storage.EdictKey, manifes
 			"auto",
 			storage.VerdictPassed,
 			storage.JSON{"reason": "no CI configured"},
+			key,
 		)
 		if err != nil {
 			return fmt.Errorf("insert auto-pass verdict: %w", err)
 		}
-		return j.UpdateManifestStatus(manifest.ManifestID, storage.ManifestQuenched, verdictID)
+		return j.UpdateManifestStatus(manifest.ManifestID, storage.ManifestQuenched, verdictID, key)
 	}
 
 	// Run CI
@@ -270,6 +275,7 @@ func (j *Judge) judgeManifest(ctx context.Context, key storage.EdictKey, manifes
 		j.ci.GetTestSuite(),
 		outcome,
 		evidence,
+		key,
 	)
 	if err != nil {
 		return fmt.Errorf("insert verdict: %w", err)
@@ -283,7 +289,7 @@ func (j *Judge) judgeManifest(ctx context.Context, key storage.EdictKey, manifes
 		newStatus = storage.ManifestRejected
 	}
 
-	if err := j.UpdateManifestStatus(manifest.ManifestID, newStatus, verdictID); err != nil {
+	if err := j.UpdateManifestStatus(manifest.ManifestID, newStatus, verdictID, key); err != nil {
 		return fmt.Errorf("update manifest status: %w", err)
 	}
 
@@ -446,7 +452,7 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 			continue
 		}
 
-		verdictID, err := t.judge.InsertVerdict(m.ManifestID, "test", outcome, evidence)
+		verdictID, err := t.judge.InsertVerdict(m.ManifestID, "test", outcome, evidence, key)
 		if err != nil {
 			return "", fmt.Errorf("failed to record verdict: %w", err)
 		}
@@ -456,7 +462,7 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 		if !params.Passed {
 			status = storage.ManifestRejected
 		}
-		if err := t.judge.UpdateManifestStatus(m.ManifestID, status, verdictID); err != nil {
+		if err := t.judge.UpdateManifestStatus(m.ManifestID, status, verdictID, key); err != nil {
 			return "", fmt.Errorf("failed to update manifest status: %w", err)
 		}
 		recordedCount++
@@ -468,6 +474,8 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 		verdict := storage.JudgeVerdict{
 			VerdictID:  verdictID,
 			ManifestID: "", // empty = edict-level verdict
+			Username:   key.Username,
+			Project:    key.Project,
 			TestSuite:  "edict",
 			Outcome:    outcome,
 			Evidence:   storage.JSON{"details": params.Details},
@@ -592,7 +600,7 @@ func (t *UpdateManifestStatusTool) Call(ctx context.Context, input string) (stri
 		return "", fmt.Errorf("invalid status: %s (use 'quenched' or 'rejected')", params.Status)
 	}
 
-	if err := t.judge.UpdateManifestStatus(params.ManifestID, status, params.VerdictID); err != nil {
+	if err := t.judge.UpdateManifestStatus(params.ManifestID, status, params.VerdictID, storage.EdictKey{Username: t.judge.username, Project: t.judge.project}); err != nil {
 		return "", err
 	}
 

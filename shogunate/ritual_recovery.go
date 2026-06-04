@@ -134,8 +134,8 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 
 	// Query aborted/stopped/failed rituals, excluding edict_id=0
 	var abortedExecs []RitualExecution
-	err := rg.db.Where("edict_id != 0 AND state IN (?, ?, ?, ?, ?)",
-		RitualStateAborted, RitualStateStopped, RitualStateFailed, RitualStateRecovering, RitualStateDismissed).
+	err := rg.db.Where("edict_id != 0 AND username = ? AND project = ? AND state IN (?, ?, ?, ?, ?)",
+		rg.Username(), rg.Project(), RitualStateAborted, RitualStateStopped, RitualStateFailed, RitualStateRecovering, RitualStateDismissed).
 		Order("updated_at DESC").
 		Limit(5).
 		Find(&abortedExecs).Error

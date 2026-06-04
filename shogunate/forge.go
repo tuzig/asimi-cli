@@ -83,9 +83,9 @@ func (f *Forge) GetPendingLing(key storage.EdictKey) ([]storage.Ling, error) {
 }
 
 // MarkLingCompleted marks a ling as completed
-func (f *Forge) MarkLingCompleted(lingID string) error {
+func (f *Forge) MarkLingCompleted(lingID string, key storage.EdictKey) error {
 	result := f.db.Model(&storage.Ling{}).
-		Where("ling_id = ?", lingID).
+		Where("ling_id = ? AND username = ? AND project = ?", lingID, key.Username, key.Project).
 		Update("status", storage.LingDone)
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark ling completed: %w", result.Error)
@@ -185,8 +185,9 @@ func (f *Forge) StageManifest(key storage.EdictKey, lingID, filePath, funcName, 
 }
 
 // DeleteForgedManifest removes a forged manifest
-func (f *Forge) DeleteForgedManifest(manifestID string) error {
-	result := f.db.Where("manifest_id = ? AND status = ?", manifestID, storage.ManifestForged).
+func (f *Forge) DeleteForgedManifest(manifestID string, key storage.EdictKey) error {
+	result := f.db.Where("manifest_id = ? AND username = ? AND project = ? AND status = ?",
+		manifestID, key.Username, key.Project, storage.ManifestForged).
 		Delete(&storage.ForgeManifest{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete forged manifest: %w", result.Error)
@@ -219,7 +220,7 @@ func (f *Forge) SaveLingResult(ling *storage.Ling, output string, err error) err
 		description = fmt.Sprintf("%s\nresult: %s", ling.Description, output)
 	}
 	result := f.db.Model(&storage.Ling{}).
-		Where("ling_id = ?", ling.LingID).
+		Where("ling_id = ? AND username = ? AND project = ?", ling.LingID, ling.Username, ling.Project).
 		Updates(map[string]interface{}{
 			"description": description,
 			"status":      status,
@@ -405,7 +406,7 @@ func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Li
 		}
 
 		// Mark ling as completed
-		if err := f.MarkLingCompleted(ling.LingID); err != nil {
+		if err := f.MarkLingCompleted(ling.LingID, task.EdictKey); err != nil {
 			f.logger.Error("failed to mark ling completed",
 				"ling_id", ling.LingID,
 				"error", err)

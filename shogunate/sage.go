@@ -163,7 +163,7 @@ func (c *Sage) Tools() []Tool {
 			AddFailure: AddFailure,
 		},
 		tools.ListQuenchedManifestsTool{Store: c, Username: c.Username(), Project: c.Project()},
-		tools.QueryPrecedentsTool{Store: c},
+		tools.QueryPrecedentsTool{Store: c, Username: c.Username(), Project: c.Project()},
 	}
 	for _, t := range tools.GetROTools(c.config.LLM, c.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
@@ -390,9 +390,9 @@ func (c *Sage) LogPrecedent(manifestID, principle string, ruling storage.Precede
 }
 
 // RejectManifest marks a manifest as rejected by the Censor
-func (c *Sage) RejectManifest(manifestID string) error {
+func (c *Sage) RejectManifest(key storage.EdictKey, manifestID string) error {
 	result := c.db.Model(&storage.ForgeManifest{}).
-		Where("manifest_id = ?", manifestID).
+		Where("manifest_id = ? AND username = ? AND project = ?", manifestID, key.Username, key.Project).
 		Update("status", storage.ManifestRejected)
 	if result.Error != nil {
 		return fmt.Errorf("failed to reject manifest: %w", result.Error)
@@ -404,10 +404,11 @@ func (c *Sage) RejectManifest(manifestID string) error {
 }
 
 // GetPrecedentsForManifest retrieves all precedents for a specific manifest
-func (c *Sage) GetPrecedentsForManifest(manifestID string) ([]storage.CensorPrecedent, error) {
+func (c *Sage) GetPrecedentsForManifest(username, project, manifestID string) ([]storage.CensorPrecedent, error) {
 	var precedents []storage.CensorPrecedent
-	err := c.db.Where("manifest_id = ?", manifestID).
-		Order("created_at ASC").
+	err := c.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+		Where("censor_precedents.manifest_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", manifestID, username, project).
+		Order("censor_precedents.created_at ASC").
 		Find(&precedents).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get precedents: %w", err)
@@ -416,10 +417,11 @@ func (c *Sage) GetPrecedentsForManifest(manifestID string) ([]storage.CensorPrec
 }
 
 // QueryPrecedentsByPrinciple searches precedents by principle (for case law lookup)
-func (c *Sage) QueryPrecedentsByPrinciple(principle string, limit int) ([]storage.CensorPrecedent, error) {
+func (c *Sage) QueryPrecedentsByPrinciple(username, project, principle string, limit int) ([]storage.CensorPrecedent, error) {
 	var precedents []storage.CensorPrecedent
-	query := c.db.Where("principle LIKE ?", "%"+principle+"%").
-		Order("created_at DESC")
+	query := c.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+		Where("censor_precedents.principle LIKE ? AND forge_manifests.username = ? AND forge_manifests.project = ?", "%"+principle+"%", username, project).
+		Order("censor_precedents.created_at DESC")
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
@@ -431,11 +433,11 @@ func (c *Sage) QueryPrecedentsByPrinciple(principle string, limit int) ([]storag
 }
 
 // GetEdictsWithQuenchedManifests returns edicts with quenched manifests needing review
-func (c *Sage) GetEdictsWithQuenchedManifests() ([]storage.Edict, error) {
+func (c *Sage) GetEdictsWithQuenchedManifests(username, project string) ([]storage.Edict, error) {
 	var edicts []storage.Edict
 	err := c.db.Distinct("edicts.*").
-		Joins("JOIN forge_manifests ON forge_manifests.id = edicts.id AND forge_manifests.username = edicts.username AND forge_manifests.project = edicts.project").
-		Where("forge_manifests.status = ?", storage.ManifestQuenched).
+		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.id AND forge_manifests.username = edicts.username AND forge_manifests.project = edicts.project").
+		Where("forge_manifests.status = ? AND edicts.username = ? AND edicts.project = ?", storage.ManifestQuenched, username, project).
 		Find(&edicts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edicts with quenched manifests: %w", err)
@@ -539,7 +541,7 @@ func (c *Sage) ReviewDiffWithManifests(ctx context.Context, diff string, manifes
 		}
 
 		if hasErrors {
-			if err := c.RejectManifest(manifest.ManifestID); err != nil {
+			if err := c.RejectManifest(storage.EdictKey{Username: manifest.Username, Project: manifest.Project}, manifest.ManifestID); err != nil {
 				c.logger.Warn("failed to reject manifest",
 					"manifest_id", manifest.ManifestID,
 					"error", err)

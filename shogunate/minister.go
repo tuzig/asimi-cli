@@ -819,7 +819,7 @@ func (m *MinisterBase) HandleZhengmingResponse(ctx context.Context, requestID, a
 	}
 
 	var req storage.Zhengming
-	if err := m.db.First(&req, "request_id = ?", requestID).Error; err != nil {
+	if err := m.db.First(&req, "request_id = ? AND username = ? AND project = ?", requestID, m.username, m.project).Error; err != nil {
 		return fmt.Errorf("get request: %w", err)
 	}
 

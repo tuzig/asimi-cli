@@ -92,8 +92,79 @@ func (db *DB) getSchemaVersion() (int, error) {
 
 // runMigrations runs all necessary migrations from currentVersion to SchemaVersion
 func (db *DB) runMigrations(currentVersion int) error {
-	// No migrations needed - schema version 1 is the base schema
-	// Single-user deployment means database can be rebuilt from scratch
+	for v := currentVersion + 1; v <= SchemaVersion; v++ {
+		switch v {
+		case 2:
+			if err := db.migrateV1toV2(); err != nil {
+				return fmt.Errorf("migration v1→v2 failed: %w", err)
+			}
+		case 3:
+			if err := db.migrateV2toV3(); err != nil {
+				return fmt.Errorf("migration v2→v3 failed: %w", err)
+			}
+		default:
+			return fmt.Errorf("unknown migration version: %d", v)
+		}
+	}
+	return nil
+}
+
+// migrateV1toV2 adds username and project columns to ritual tables
+func (db *DB) migrateV1toV2() error {
+	migrations := []string{
+		`ALTER TABLE ritual_executions ADD COLUMN username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE ritual_executions ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE ritual_step_states ADD COLUMN username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE ritual_step_states ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_ritual_executions_user_project ON ritual_executions(username, project)`,
+		`CREATE INDEX IF NOT EXISTS idx_ritual_step_states_user_project ON ritual_step_states(username, project)`,
+	}
+	for _, m := range migrations {
+		if _, err := db.conn.Exec(m); err != nil {
+			return fmt.Errorf("exec %q: %w", m, err)
+		}
+	}
+	if _, err := db.conn.Exec(
+		"INSERT INTO schema_version (version, applied_at) VALUES (?, unixepoch())",
+		2,
+	); err != nil {
+		return fmt.Errorf("record version 2: %w", err)
+	}
+	slog.Debug("migrated schema v1→v2: added username/project to ritual tables")
+	return nil
+}
+
+// migrateV2toV3 adds username and project columns to censor_precedents
+func (db *DB) migrateV2toV3() error {
+	// censor_precedents is a GORM-managed table; it may not exist
+	// in databases that don't use GORM (e.g., the local SQLite store)
+	var tableExists bool
+	err := db.conn.QueryRow(
+		"SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='censor_precedents'",
+	).Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("check censor_precedents existence: %w", err)
+	}
+
+	if tableExists {
+		migrations := []string{
+			`ALTER TABLE censor_precedents ADD COLUMN username TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE censor_precedents ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
+			`CREATE INDEX IF NOT EXISTS idx_censor_precedents_user_project ON censor_precedents(username, project)`,
+		}
+		for _, m := range migrations {
+			if _, err := db.conn.Exec(m); err != nil {
+				return fmt.Errorf("exec %q: %w", m, err)
+			}
+		}
+	}
+	if _, err := db.conn.Exec(
+		"INSERT INTO schema_version (version, applied_at) VALUES (?, unixepoch())",
+		3,
+	); err != nil {
+		return fmt.Errorf("record version 3: %w", err)
+	}
+	slog.Debug("migrated schema v2→v3: added username/project to censor_precedents")
 	return nil
 }
 

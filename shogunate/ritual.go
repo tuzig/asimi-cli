@@ -1596,10 +1596,10 @@ func (r *RitualRunner) saveExecution(exec *RitualExecution) {
 	}
 }
 
-// GetExecution retrieves an execution by ID
-func (r *RitualRunner) GetExecution(executionID string) (*RitualExecution, error) {
+// GetExecution retrieves an execution by ID, scoped to username/project
+func (r *RitualRunner) GetExecution(executionID, username, project string) (*RitualExecution, error) {
 	var exec RitualExecution
-	if err := r.db.First(&exec, "id = ?", executionID).Error; err != nil {
+	if err := r.db.First(&exec, "id = ? AND username = ? AND project = ?", executionID, username, project).Error; err != nil {
 		return nil, err
 	}
 
@@ -1616,12 +1616,16 @@ func (r *RitualRunner) GetExecution(executionID string) (*RitualExecution, error
 	return &exec, nil
 }
 
-// ListExecutions lists executions for an edict
+// ListExecutions lists executions for an edict.
+// When key.ID is zero, it lists all executions scoped to key.Username/key.Project.
 func (r *RitualRunner) ListExecutions(key storage.EdictKey) ([]RitualExecution, error) {
 	var executions []RitualExecution
 	query := r.db.Order("created_at DESC")
 	if key.ID != 0 {
 		query = query.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project)
+	} else {
+		// Even without an edict ID, scope by username/project to avoid cross-project leaks
+		query = query.Where("username = ? AND project = ?", key.Username, key.Project)
 	}
 	if err := query.Find(&executions).Error; err != nil {
 		return nil, err

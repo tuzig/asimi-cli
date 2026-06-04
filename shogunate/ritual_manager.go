@@ -184,7 +184,7 @@ func (rg *RitualGuard) abortStaleRitualsIfLocked() {
 
 	cutoff := time.Now().Add(-rg.flatlineAge)
 	var staleRituals []RitualExecution
-	if err := rg.db.Where("state = ? AND updated_at < ?", RitualStateRunning, cutoff).
+	if err := rg.db.Where("state = ? AND username = ? AND project = ? AND updated_at < ?", RitualStateRunning, rg.Username(), rg.Project(), cutoff).
 		Find(&staleRituals).Error; err != nil {
 		rg.logger.Warn("failed to query stale rituals", "error", err)
 		return
@@ -520,7 +520,7 @@ func (rg *RitualGuard) DrainUnprocessedEvents() []DrainedEvent {
 		return nil
 	}
 
-	events, err := rg.GetEventsFrom(lastEventID, 0)
+	events, err := rg.GetEventsFrom(lastEventID, 0, rg.Username(), rg.Project())
 	if err != nil {
 		rg.logger.Warn("drain: failed to get unprocessed events", "error", err)
 		return nil
@@ -554,10 +554,10 @@ func (rg *RitualGuard) DrainUnprocessedEvents() []DrainedEvent {
 
 // --- Database Methods ---
 
-// GetEventsFrom retrieves events starting from a given event ID
-func (rg *RitualGuard) GetEventsFrom(fromEventID uint, limit int) ([]storage.TianEvent, error) {
+// GetEventsFrom retrieves events starting from a given event ID, filtered by username and project
+func (rg *RitualGuard) GetEventsFrom(fromEventID uint, limit int, username string, project string) ([]storage.TianEvent, error) {
 	var events []storage.TianEvent
-	query := rg.db.Where("id > ?", fromEventID).
+	query := rg.db.Where("id > ? AND username = ? AND project = ?", fromEventID, username, project).
 		Order("id ASC")
 	if limit > 0 {
 		query = query.Limit(limit)
@@ -630,7 +630,7 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 
 	// Find all running rituals
 	var runningRituals []RitualExecution
-	if err := rg.db.Where("state = ?", RitualStateRunning).Find(&runningRituals).Error; err != nil {
+	if err := rg.db.Where("state = ? AND username = ? AND project = ?", RitualStateRunning, rg.Username(), rg.Project()).Find(&runningRituals).Error; err != nil {
 		rg.logger.Warn("failed to query running rituals", "error", err)
 		return
 	}
@@ -653,7 +653,7 @@ func (rg *RitualGuard) scanForStaleRituals(ctx context.Context) {
 
 	// Find edicts that are sealed or cancelled
 	var edicts []storage.Edict
-	if err := rg.db.Where("id IN ?", edictIDs).Find(&edicts).Error; err != nil {
+	if err := rg.db.Where("id IN ? AND username = ? AND project = ?", edictIDs, rg.Username(), rg.Project()).Find(&edicts).Error; err != nil {
 		rg.logger.Warn("failed to query edicts", "error", err)
 		return
 	}

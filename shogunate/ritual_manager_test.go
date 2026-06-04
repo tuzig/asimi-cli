@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -187,6 +188,8 @@ func TestDrainUnprocessedEvents(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		db.Create(&storage.TianEvent{
 			EdictID:   99,
+			Username:  "testuser",
+			Project:   "testproject",
 			EventType: "step_completed",
 			Payload:   storage.JSON{"i": i},
 		})
@@ -427,9 +430,10 @@ func TestAbortStaleRitualsOnStart(t *testing.T) {
 		t.Fatalf("failed to set stale updated_at: %v", err)
 	}
 
-	// Create RitualGuard with 5 minute flatlineAge
+	// Create RitualGuard with 5 minute flatlineAge and matching username/project
+	base := NewMinisterBase(db, nil, logger, "test", "test/project")
 	rg := &RitualGuard{
-		MinisterBase: &MinisterBase{db: db, logger: logger},
+		MinisterBase: base,
 		flatlineAge:  5 * time.Minute,
 	}
 
@@ -467,9 +471,10 @@ func TestNoAbortForFreshRituals(t *testing.T) {
 		t.Fatalf("failed to create fresh ritual: %v", err)
 	}
 
-	// Create RitualGuard with 5 minute flatlineAge
+	// Create RitualGuard with 5 minute flatlineAge and matching username/project
+	base := NewMinisterBase(db, nil, logger, "test", "test/project")
 	rg := &RitualGuard{
-		MinisterBase: &MinisterBase{db: db, logger: logger},
+		MinisterBase: base,
 		flatlineAge:  5 * time.Minute,
 	}
 
@@ -483,6 +488,186 @@ func TestNoAbortForFreshRituals(t *testing.T) {
 	}
 	if exec.State != RitualStateRunning {
 		t.Errorf("expected ritual state %s, got %s", RitualStateRunning, exec.State)
+	}
+}
+
+// TestAbortStaleRituals_OtherProjectExcluded verifies that abortStaleRitualsIfLocked
+// does not abort stale rituals belonging to a different username or project.
+func TestAbortStaleRituals_OtherProjectExcluded(t *testing.T) {
+	db := setupEventTestDB(t)
+	logger := slog.Default()
+
+	// Create a stale running ritual for the current user/project
+	staleTime := time.Now().Add(-10 * time.Minute)
+	localExec := &RitualExecution{
+		ID: "stale-local", RitualName: "swift-strike", EdictID: 100,
+		Username: "test", Project: "test/project", State: RitualStateRunning, CurrentStep: 1,
+	}
+	if err := db.Save(localExec).Error; err != nil {
+		t.Fatalf("failed to create local stale ritual: %v", err)
+	}
+	if err := db.Exec("UPDATE ritual_executions SET updated_at = ? WHERE id = ?", staleTime, "stale-local").Error; err != nil {
+		t.Fatalf("failed to set stale updated_at: %v", err)
+	}
+
+	// Create a stale running ritual for a different project (same user)
+	otherProjectExec := &RitualExecution{
+		ID: "stale-other-project", RitualName: "swift-strike", EdictID: 101,
+		Username: "test", Project: "other/project", State: RitualStateRunning, CurrentStep: 1,
+	}
+	if err := db.Save(otherProjectExec).Error; err != nil {
+		t.Fatalf("failed to create other-project stale ritual: %v", err)
+	}
+	if err := db.Exec("UPDATE ritual_executions SET updated_at = ? WHERE id = ?", staleTime, "stale-other-project").Error; err != nil {
+		t.Fatalf("failed to set stale updated_at for other-project: %v", err)
+	}
+
+	// Create a stale running ritual for a different username (same project)
+	otherUserExec := &RitualExecution{
+		ID: "stale-other-user", RitualName: "swift-strike", EdictID: 102,
+		Username: "otheruser", Project: "test/project", State: RitualStateRunning, CurrentStep: 1,
+	}
+	if err := db.Save(otherUserExec).Error; err != nil {
+		t.Fatalf("failed to create other-user stale ritual: %v", err)
+	}
+	if err := db.Exec("UPDATE ritual_executions SET updated_at = ? WHERE id = ?", staleTime, "stale-other-user").Error; err != nil {
+		t.Fatalf("failed to set stale updated_at for other-user: %v", err)
+	}
+
+	// Create RitualGuard with the local user/project
+	base := NewMinisterBase(db, nil, logger, "test", "test/project")
+	rg := &RitualGuard{
+		MinisterBase: base,
+		flatlineAge:  5 * time.Minute,
+	}
+
+	rg.abortStaleRitualsIfLocked()
+
+	// Local ritual should be aborted
+	var localResult RitualExecution
+	if err := db.First(&localResult, "id = ?", "stale-local").Error; err != nil {
+		t.Fatalf("failed to find local ritual: %v", err)
+	}
+	if localResult.State != RitualStateAborted {
+		t.Errorf("expected local ritual state %s, got %s", RitualStateAborted, localResult.State)
+	}
+
+	// Other-project ritual should remain running
+	var otherProjectResult RitualExecution
+	if err := db.First(&otherProjectResult, "id = ?", "stale-other-project").Error; err != nil {
+		t.Fatalf("failed to find other-project ritual: %v", err)
+	}
+	if otherProjectResult.State != RitualStateRunning {
+		t.Errorf("expected other-project ritual state to remain %s, got %s", RitualStateRunning, otherProjectResult.State)
+	}
+
+	// Other-user ritual should remain running
+	var otherUserResult RitualExecution
+	if err := db.First(&otherUserResult, "id = ?", "stale-other-user").Error; err != nil {
+		t.Fatalf("failed to find other-user ritual: %v", err)
+	}
+	if otherUserResult.State != RitualStateRunning {
+		t.Errorf("expected other-user ritual state to remain %s, got %s", RitualStateRunning, otherUserResult.State)
+	}
+}
+
+// TestScanForStaleRituals_OtherProjectExcluded verifies that scanForStaleRituals
+// only considers running rituals belonging to the current username and project.
+func TestScanForStaleRituals_OtherProjectExcluded(t *testing.T) {
+	db := setupEventTestDB(t)
+	// Migrate tables needed by scanForStaleRituals
+	if err := db.AutoMigrate(&storage.Edict{}, &storage.Seal{}); err != nil {
+		t.Fatalf("failed to migrate edict/seal tables: %v", err)
+	}
+	logger := slog.Default()
+
+	// Create an edict for the local user/project that is sealed
+	localEdict := storage.Edict{Intent: "local edict", Username: "test", Project: "test/project"}
+	if err := db.Create(&localEdict).Error; err != nil {
+		t.Fatalf("failed to create local edict: %v", err)
+	}
+	db.Create(&storage.Seal{EdictID: localEdict.ID, Username: "test", Project: "test/project", MinisterID: "ruler"})
+
+	// Create a running ritual for the local user/project
+	localExec := &RitualExecution{
+		ID: "running-local", RitualName: "swift-strike", EdictID: localEdict.ID,
+		Username: "test", Project: "test/project", State: RitualStateRunning, CurrentStep: 1,
+	}
+	if err := db.Save(localExec).Error; err != nil {
+		t.Fatalf("failed to create local running ritual: %v", err)
+	}
+
+	// Create an edict for a different project that is sealed
+	otherProjectEdict := storage.Edict{Intent: "other project edict", Username: "test", Project: "other/project"}
+	if err := db.Create(&otherProjectEdict).Error; err != nil {
+		t.Fatalf("failed to create other-project edict: %v", err)
+	}
+	db.Create(&storage.Seal{EdictID: otherProjectEdict.ID, Username: "test", Project: "other/project", MinisterID: "judge"})
+
+	// Create a running ritual for the other project
+	otherProjectExec := &RitualExecution{
+		ID: "running-other-project", RitualName: "swift-strike", EdictID: otherProjectEdict.ID,
+		Username: "test", Project: "other/project", State: RitualStateRunning, CurrentStep: 1,
+	}
+	if err := db.Save(otherProjectExec).Error; err != nil {
+		t.Fatalf("failed to create other-project running ritual: %v", err)
+	}
+
+	// Create an edict for a different username that is sealed
+	otherUserEdict := storage.Edict{Intent: "other user edict", Username: "otheruser", Project: "test/project"}
+	if err := db.Create(&otherUserEdict).Error; err != nil {
+		t.Fatalf("failed to create other-user edict: %v", err)
+	}
+	db.Create(&storage.Seal{EdictID: otherUserEdict.ID, Username: "otheruser", Project: "test/project", MinisterID: "judge"})
+
+	// Create a running ritual for the other user
+	otherUserExec := &RitualExecution{
+		ID: "running-other-user", RitualName: "swift-strike", EdictID: otherUserEdict.ID,
+		Username: "otheruser", Project: "test/project", State: RitualStateRunning, CurrentStep: 1,
+	}
+	if err := db.Save(otherUserExec).Error; err != nil {
+		t.Fatalf("failed to create other-user running ritual: %v", err)
+	}
+
+	// Create RitualGuard with the local user/project
+	scanBase := NewMinisterBase(db, nil, logger, "test", "test/project")
+	rg := &RitualGuard{
+		MinisterBase: scanBase,
+		ritualRunner: NewRitualRunner(
+			NewRitualRegistry(),
+			func(id string) Minister { return nil },
+			nil, db, nil, logger, repo.RepoInfo{},
+		),
+	}
+
+	ctx := context.Background()
+	rg.scanForStaleRituals(ctx)
+
+	// Local ritual should be aborted (sealed edict)
+	var localResult RitualExecution
+	if err := db.First(&localResult, "id = ?", "running-local").Error; err != nil {
+		t.Fatalf("failed to find local ritual: %v", err)
+	}
+	if localResult.State != RitualStateAborted {
+		t.Errorf("expected local ritual state %s, got %s", RitualStateAborted, localResult.State)
+	}
+
+	// Other-project ritual should remain running (not queried)
+	var otherProjectResult RitualExecution
+	if err := db.First(&otherProjectResult, "id = ?", "running-other-project").Error; err != nil {
+		t.Fatalf("failed to find other-project ritual: %v", err)
+	}
+	if otherProjectResult.State != RitualStateRunning {
+		t.Errorf("expected other-project ritual state to remain %s, got %s", RitualStateRunning, otherProjectResult.State)
+	}
+
+	// Other-user ritual should remain running (not queried)
+	var otherUserResult RitualExecution
+	if err := db.First(&otherUserResult, "id = ?", "running-other-user").Error; err != nil {
+		t.Fatalf("failed to find other-user ritual: %v", err)
+	}
+	if otherUserResult.State != RitualStateRunning {
+		t.Errorf("expected other-user ritual state to remain %s, got %s", RitualStateRunning, otherUserResult.State)
 	}
 }
 

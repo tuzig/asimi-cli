@@ -2021,6 +2021,109 @@ func (w *testWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// TestPromptForAbortedRituals_OtherProjectExcluded verifies that aborted
+// rituals belonging to a different project are not included in the query results.
+func TestPromptForAbortedRituals_OtherProjectExcluded(t *testing.T) {
+	db := setupRecoveryTestDB(t)
+
+	// Create edict and aborted ritual for the current user/project
+	localEdict := storage.Edict{Intent: "Local edict", Username: "testuser", Project: "testproject"}
+	if err := db.Create(&localEdict).Error; err != nil {
+		t.Fatalf("failed to create local edict: %v", err)
+	}
+	localExec := &RitualExecution{
+		ID: "aborted-local", RitualName: "test-ritual", EdictID: localEdict.ID,
+		Username: "testuser", Project: "testproject", State: RitualStateAborted, CurrentStep: 1,
+	}
+	if err := db.Save(localExec).Error; err != nil {
+		t.Fatalf("failed to create local aborted ritual: %v", err)
+	}
+
+	// Create edict and aborted ritual for a different project
+	otherEdict := storage.Edict{Intent: "Other project edict", Username: "testuser", Project: "other-project"}
+	if err := db.Create(&otherEdict).Error; err != nil {
+		t.Fatalf("failed to create other-project edict: %v", err)
+	}
+	otherExec := &RitualExecution{
+		ID: "aborted-other-project", RitualName: "test-ritual", EdictID: otherEdict.ID,
+		Username: "testuser", Project: "other-project", State: RitualStateAborted, CurrentStep: 1,
+	}
+	if err := db.Save(otherExec).Error; err != nil {
+		t.Fatalf("failed to create other-project aborted ritual: %v", err)
+	}
+
+	// Create edict and aborted ritual for a different username
+	otherUserEdict := storage.Edict{Intent: "Other user edict", Username: "otheruser", Project: "testproject"}
+	if err := db.Create(&otherUserEdict).Error; err != nil {
+		t.Fatalf("failed to create other-user edict: %v", err)
+	}
+	otherUserExec := &RitualExecution{
+		ID: "aborted-other-user", RitualName: "test-ritual", EdictID: otherUserEdict.ID,
+		Username: "otheruser", Project: "testproject", State: RitualStateAborted, CurrentStep: 1,
+	}
+	if err := db.Save(otherUserExec).Error; err != nil {
+		t.Fatalf("failed to create other-user aborted ritual: %v", err)
+	}
+
+	zhengmingCalled := false
+	chancellor := newMockChancellor(
+		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (string, error) {
+			zhengmingCalled = true
+			// Verify the key belongs to our user/project
+			if key.Username != "testuser" || key.Project != "testproject" {
+				t.Errorf("zhengming called for wrong user/project: %s/%s", key.Username, key.Project)
+			}
+			return "req-1", nil
+		},
+		func(ctx context.Context, requestID string) (string, error) {
+			return "Mark as completed", nil
+		},
+	)
+
+	rg := newTestRitualGuard(t, db, func(id string) Minister {
+		if id == "chancellor" {
+			return chancellor
+		}
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rg.promptForAbortedRituals(ctx)
+
+	// The local ritual should be prompted and completed
+	if !zhengmingCalled {
+		t.Error("expected RequestZhengming to be called for local aborted ritual")
+	}
+
+	var localResult RitualExecution
+	if err := db.First(&localResult, "id = ?", "aborted-local").Error; err != nil {
+		t.Fatalf("failed to find local ritual: %v", err)
+	}
+	if localResult.State != RitualStateCompleted {
+		t.Errorf("expected local ritual state %s, got %s", RitualStateCompleted, localResult.State)
+	}
+
+	// The other-project ritual should remain untouched
+	var otherResult RitualExecution
+	if err := db.First(&otherResult, "id = ?", "aborted-other-project").Error; err != nil {
+		t.Fatalf("failed to find other-project ritual: %v", err)
+	}
+	if otherResult.State != RitualStateAborted {
+		t.Errorf("expected other-project ritual state to remain %s, got %s", RitualStateAborted, otherResult.State)
+	}
+
+	// The other-user ritual should remain untouched
+	var otherUserResult RitualExecution
+	if err := db.First(&otherUserResult, "id = ?", "aborted-other-user").Error; err != nil {
+		t.Fatalf("failed to find other-user ritual: %v", err)
+	}
+	if otherUserResult.State != RitualStateAborted {
+		t.Errorf("expected other-user ritual state to remain %s, got %s", RitualStateAborted, otherUserResult.State)
+	}
+}
+
 // TestPromptForAbortedRituals_DismissedStateSkipped verifies that
 // rituals in dismissed state are not re-prompted in the per-ritual loop.
 func TestPromptForAbortedRituals_DismissedStateSkipped(t *testing.T) {

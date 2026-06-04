@@ -53,7 +53,7 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 
 	// Rituals from the ritual runner (all states)
 	if rr := s.GetRitualRunner(); rr != nil {
-		execs, err := rr.ListExecutions(storage.EdictKey{})
+		execs, err := rr.ListExecutions(storage.EdictKey{Username: s.config.Username, Project: s.config.Project})
 		if err == nil {
 			for _, ex := range execs {
 				age := time.Since(ex.CreatedAt)
@@ -98,9 +98,10 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 		}
 	}
 
-	// Recent events from tian_events
+	// Recent events from tian_events (filtered by username/project)
 	var events []storage.TianEvent
-	if err := s.db.Order("created_at DESC").Limit(50).Find(&events).Error; err == nil {
+	if err := s.db.Where("username = ? AND project = ?", s.config.Username, s.config.Project).
+		Order("created_at DESC").Limit(50).Find(&events).Error; err == nil {
 		for _, ev := range events {
 			snap.Events = append(snap.Events, EventEntry{
 				Time:      ev.CreatedAt,
@@ -111,9 +112,9 @@ func (s *Shogunate) TakeSnapshot() Snapshot {
 		}
 	}
 
-	// Pending zhengming (clarification requests)
+	// Pending zhengming (clarification requests, filtered by username/project)
 	var pending []storage.Zhengming
-	if err := s.db.Where("status = ?", storage.ZhengmingPending).
+	if err := s.db.Where("status = ? AND username = ? AND project = ?", storage.ZhengmingPending, s.config.Username, s.config.Project).
 		Order("priority DESC, created_at ASC").Limit(20).Find(&pending).Error; err == nil {
 		for _, z := range pending {
 			var questions []string

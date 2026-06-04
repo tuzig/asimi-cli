@@ -13,8 +13,9 @@ import (
 type PrecedentStore interface {
 	GetQuenchedManifests(key storage.EdictKey) ([]storage.ForgeManifest, error)
 	LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error)
-	RejectManifest(manifestID string) error
-	QueryPrecedentsByPrinciple(principle string, limit int) ([]storage.CensorPrecedent, error)
+	RejectManifest(key storage.EdictKey, manifestID string) error
+	GetPrecedentsForManifest(username, project, manifestID string) ([]storage.CensorPrecedent, error)
+	QueryPrecedentsByPrinciple(username, project, principle string, limit int) ([]storage.CensorPrecedent, error)
 	GrantSeal(key storage.EdictKey, metadata storage.JSON) error
 }
 
@@ -67,7 +68,7 @@ func (t RecordPrecedentTool) Call(ctx context.Context, input string) (string, er
 			return "", fmt.Errorf("failed to log precedent: %w", err)
 		}
 		if !params.Approved {
-			if err := t.Store.RejectManifest(m.ManifestID); err != nil {
+			if err := t.Store.RejectManifest(key, m.ManifestID); err != nil {
 				return "", fmt.Errorf("failed to reject manifest: %w", err)
 			}
 		}
@@ -166,7 +167,9 @@ func (t ListQuenchedManifestsTool) Format(input, result string, err error) strin
 
 // QueryPrecedentsTool searches precedents by principle.
 type QueryPrecedentsTool struct {
-	Store PrecedentStore
+	Store    PrecedentStore
+	Username string
+	Project  string
 }
 
 func (t QueryPrecedentsTool) Name() string { return "query_precedents" }
@@ -190,7 +193,7 @@ func (t QueryPrecedentsTool) Call(ctx context.Context, input string) (string, er
 		params.Limit = 10
 	}
 
-	precedents, err := t.Store.QueryPrecedentsByPrinciple(params.Principle, params.Limit)
+	precedents, err := t.Store.QueryPrecedentsByPrinciple(t.Username, t.Project, params.Principle, params.Limit)
 	if err != nil {
 		return "", err
 	}

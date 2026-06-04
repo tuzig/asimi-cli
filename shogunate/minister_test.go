@@ -184,8 +184,8 @@ func TestSage_ReviewFlow(t *testing.T) {
 	assert.NotEmpty(t, manifestID)
 
 	judge := NewJudge(base, nil)
-	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil)
-	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID)
+	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil, edict.Key())
+	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID, edict.Key())
 
 	// Create sage (no linter - will auto-approve)
 	sage := NewSage(base, nil)
@@ -237,7 +237,7 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	}
 
 	// Check incident was logged
-	incident, err := marshal.GetIncident("sentry-456")
+	incident, err := marshal.GetIncident("sentry-456", "testuser", "testproject")
 	if err != nil {
 		t.Fatalf("Failed to get incident: %v", err)
 	}

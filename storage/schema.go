@@ -8,7 +8,7 @@ import (
 )
 
 // Schema version
-const SchemaVersion = 1
+const SchemaVersion = 3
 
 // Type aliases - use types from internal/config as the single source of truth
 type (
@@ -212,6 +212,8 @@ CREATE TABLE IF NOT EXISTS ritual_executions (
     id TEXT PRIMARY KEY,
     ritual_name TEXT NOT NULL,
     edict_id INTEGER NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
     session_id TEXT,
     current_step INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'pending',
@@ -223,6 +225,7 @@ CREATE TABLE IF NOT EXISTS ritual_executions (
 CREATE INDEX IF NOT EXISTS idx_ritual_executions_edict ON ritual_executions(edict_id);
 CREATE INDEX IF NOT EXISTS idx_ritual_executions_state ON ritual_executions(state);
 CREATE INDEX IF NOT EXISTS idx_ritual_executions_session ON ritual_executions(session_id);
+CREATE INDEX IF NOT EXISTS idx_ritual_executions_user_project ON ritual_executions(username, project);
 
 -- Ritual step states table (added in schema version 3)
 CREATE TABLE IF NOT EXISTS ritual_step_states (
@@ -230,6 +233,8 @@ CREATE TABLE IF NOT EXISTS ritual_step_states (
     execution_id TEXT NOT NULL,
     step_index INTEGER NOT NULL,
     name TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
     session_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     retry_count INTEGER NOT NULL DEFAULT 0,
@@ -238,6 +243,7 @@ CREATE TABLE IF NOT EXISTS ritual_step_states (
 
 CREATE INDEX IF NOT EXISTS idx_ritual_step_states_execution ON ritual_step_states(execution_id);
 CREATE INDEX IF NOT EXISTS idx_ritual_step_states_session ON ritual_step_states(session_id);
+CREATE INDEX IF NOT EXISTS idx_ritual_step_states_user_project ON ritual_step_states(username, project);
 
 -- Schema version table
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -246,4 +252,6 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 
 INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (1, unixepoch());
+INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (2, unixepoch());
+INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (3, unixepoch());
 `

@@ -319,6 +319,8 @@ const (
 type JudgeVerdict struct {
 	VerdictID  string         `gorm:"primaryKey;column:verdict_id"`
 	ManifestID string         `gorm:"column:manifest_id;index"`
+	Username   string         `gorm:"column:username"`
+	Project    string         `gorm:"column:project"`
 	TestSuite  string         `gorm:"column:test_suite"`
 	Outcome    VerdictOutcome `gorm:"column:outcome"`
 	Evidence   JSON           `gorm:"column:evidence;type:json"`
@@ -342,6 +344,8 @@ const (
 type CensorPrecedent struct {
 	PrecedentID   string          `gorm:"primaryKey;column:precedent_id"`
 	ManifestID    string          `gorm:"column:manifest_id;index"`
+	Username      string          `gorm:"column:username;not null;default:''"`
+	Project       string          `gorm:"column:project;not null;default:''"`
 	Principle     string          `gorm:"column:principle"`
 	Ruling        PrecedentRuling `gorm:"column:ruling"`
 	Justification string          `gorm:"column:justification"`
@@ -355,14 +359,15 @@ func (CensorPrecedent) TableName() string {
 
 // MarshalIncident represents a production incident tracked by the Marshal
 type MarshalIncident struct {
-	IncidentID string    `gorm:"primaryKey;column:incident_id"`
-	CommitHash string    `gorm:"column:commit_hash;index"`
-	EdictID    uint      `gorm:"column:edict_id;index"`
-	Username   string    `gorm:"column:username"`
-	Project    string    `gorm:"column:project"`
-	RCASummary string    `gorm:"column:rca_summary"`
-	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt  time.Time `gorm:"column:updated_at;autoUpdateTime"`
+	IncidentID     string    `gorm:"primaryKey;column:incident_id"`
+	CommitHash     string    `gorm:"column:commit_hash;index"`
+	EdictID        uint      `gorm:"column:edict_id;index"`
+	Username       string    `gorm:"column:username"`
+	Project        string    `gorm:"column:project"`
+	HotfixApproved bool      `gorm:"column:hotfix_approved;default:false"`
+	RCASummary     string    `gorm:"column:rca_summary"`
+	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName returns the table name for MarshalIncident

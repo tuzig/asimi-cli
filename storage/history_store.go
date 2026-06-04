@@ -293,27 +293,29 @@ type HistoryEntry struct {
 	Timestamp time.Time // When it was entered
 }
 
-// CleanupOldHistory removes history entries older than configured age
-func (h *HistoryStore) CleanupOldHistory() error {
+// CleanupOldHistory removes history entries older than configured age for a given repo/branch
+func (h *HistoryStore) CleanupOldHistory(host, org, project, branch string) error {
 	if h.cfg == nil || h.cfg.MaxAgeDays <= 0 {
 		return nil
 	}
 
 	cutoffTime := time.Now().AddDate(0, 0, -h.cfg.MaxAgeDays).Unix()
 
-	// Clean prompt history
+	// Clean prompt history scoped to the branch
 	_, err := h.db.conn.Exec(
-		"DELETE FROM prompt_history WHERE timestamp < ?",
-		cutoffTime,
+		`DELETE FROM prompt_history WHERE timestamp < ?
+		 AND branch_id IN (SELECT id FROM branches WHERE repository_id IN (SELECT id FROM repositories WHERE host=? AND org=? AND project=?))`,
+		cutoffTime, host, org, project,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup old prompt history: %w", err)
 	}
 
-	// Clean command history
+	// Clean command history scoped to the branch
 	_, err = h.db.conn.Exec(
-		"DELETE FROM command_history WHERE timestamp < ?",
-		cutoffTime,
+		`DELETE FROM command_history WHERE timestamp < ?
+		 AND branch_id IN (SELECT id FROM branches WHERE repository_id IN (SELECT id FROM repositories WHERE host=? AND org=? AND project=?))`,
+		cutoffTime, host, org, project,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup old command history: %w", err)

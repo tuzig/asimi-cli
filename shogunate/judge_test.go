@@ -33,6 +33,8 @@ func TestAllManifestsQuenched_NoManifests_EdictLevelVerdict(t *testing.T) {
 	verdict := storage.JudgeVerdict{
 		VerdictID:  verdictID,
 		ManifestID: "", // empty = edict-level verdict
+		Username:   key.Username,
+		Project:    key.Project,
 		TestSuite:  "edict",
 		Outcome:    storage.VerdictPassed,
 		Evidence:   storage.JSON{"details": "project-init complete"},

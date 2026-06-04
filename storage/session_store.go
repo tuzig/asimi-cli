@@ -263,8 +263,9 @@ func (s *SessionStore) ListSessions(host, org, project, branch, tabType string, 
 	return sessions, nil
 }
 
-// ListAllSessions lists all sessions across all repositories
-func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
+// ListAllSessions lists sessions, optionally filtered by host/org/project.
+// When all filters are empty, returns all sessions (backward compat).
+func (s *SessionStore) ListAllSessions(limit int, host, org, project string) ([]SessionData, error) {
 	query := `
 		SELECT s.id, s.created_at, s.last_updated, s.first_prompt,
 		       s.provider, s.model, s.working_dir, s.tab_type, r.host, r.org, r.project,
@@ -272,7 +273,34 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 		FROM sessions s
 		JOIN branches b ON s.branch_id = b.id
 		JOIN repositories r ON b.repository_id = r.id
-		LEFT JOIN messages m ON s.id = m.session_id
+		LEFT JOIN messages m ON s.id = m.session_id`
+
+	var args []interface{}
+	if host != "" || org != "" || project != "" {
+		conditions := " WHERE "
+		var preds []string
+		if host != "" {
+			preds = append(preds, "r.host = ?")
+			args = append(args, host)
+		}
+		if org != "" {
+			preds = append(preds, "r.org = ?")
+			args = append(args, org)
+		}
+		if project != "" {
+			preds = append(preds, "r.project = ?")
+			args = append(args, project)
+		}
+		for i, p := range preds {
+			if i > 0 {
+				conditions += " AND "
+			}
+			conditions += p
+		}
+		query += conditions
+	}
+
+	query += `
 		GROUP BY s.id, s.created_at, s.last_updated, s.first_prompt,
 		         s.provider, s.model, s.working_dir, s.tab_type, r.host, r.org, r.project
 		ORDER BY s.last_updated DESC`
@@ -281,7 +309,7 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
-	rows, err := s.db.conn.Query(query)
+	rows, err := s.db.conn.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list all sessions: %w", err)
 	}
@@ -291,7 +319,7 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 	for rows.Next() {
 		var session SessionData
 		var createdAt, lastUpdated int64
-		var host, org, project string
+		var rowHost, rowOrg, rowProject string
 		var messageCount int
 
 		err := rows.Scan(
@@ -303,9 +331,9 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 			&session.Model,
 			&session.WorkingDir,
 			&session.TabType,
-			&host,
-			&org,
-			&project,
+			&rowHost,
+			&rowOrg,
+			&rowProject,
 			&messageCount,
 		)
 		if err != nil {
@@ -314,7 +342,7 @@ func (s *SessionStore) ListAllSessions(limit int) ([]SessionData, error) {
 
 		session.CreatedAt = time.Unix(createdAt, 0)
 		session.LastUpdated = time.Unix(lastUpdated, 0)
-		session.ProjectSlug = fmt.Sprintf("%s/%s/%s", host, org, project)
+		session.ProjectSlug = fmt.Sprintf("%s/%s/%s", rowHost, rowOrg, rowProject)
 		session.MessageCount = messageCount
 		session.Messages = json.RawMessage{} // Empty for list view
 		session.ContextFiles = make(map[string]string)
@@ -348,8 +376,9 @@ func (s *SessionStore) DeleteSession(sessionID string) error {
 	return nil
 }
 
-// CleanupOldSessions deletes sessions older than maxAgeDays or exceeding maxSessions count
-func (s *SessionStore) CleanupOldSessions() error {
+// CleanupOldSessions deletes sessions older than maxAgeDays or exceeding maxSessions count.
+// When branchID is 0, cleans up across all branches (backward compat).
+func (s *SessionStore) CleanupOldSessions(branchID int64) error {
 	if s.cfg == nil {
 		return nil
 	}
@@ -357,63 +386,100 @@ func (s *SessionStore) CleanupOldSessions() error {
 	// Delete sessions older than maxAgeDays
 	if s.cfg.MaxAgeDays > 0 {
 		cutoffTime := time.Now().AddDate(0, 0, -s.cfg.MaxAgeDays).Unix()
-		result, err := s.db.conn.Exec(
-			"DELETE FROM sessions WHERE last_updated < ?",
-			cutoffTime,
-		)
+		query := "DELETE FROM sessions WHERE last_updated < ?"
+		args := []interface{}{cutoffTime}
+		if branchID > 0 {
+			query += " AND branch_id = ?"
+			args = append(args, branchID)
+		}
+		result, err := s.db.conn.Exec(query, args...)
 		if err != nil {
 			return fmt.Errorf("failed to delete old sessions: %w", err)
 		}
 
 		if deleted, _ := result.RowsAffected(); deleted > 0 {
-			slog.Info("Deleted old sessions", "count", deleted, "max_age_days", s.cfg.MaxAgeDays)
+			slog.Info("Deleted old sessions", "count", deleted, "max_age_days", s.cfg.MaxAgeDays, "branch_id", branchID)
 		}
 	}
 
 	// Keep only the most recent maxSessions
 	if s.cfg.MaxSessions > 0 {
-		// For each branch, delete sessions beyond the limit
-		_, err := s.db.conn.Exec(`
-			DELETE FROM sessions
-			WHERE id NOT IN (
-				SELECT id FROM sessions
-				ORDER BY last_updated DESC
-				LIMIT ?
-			)`,
-			s.cfg.MaxSessions,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to limit session count: %w", err)
+		if branchID > 0 {
+			// Scoped to a specific branch: only delete sessions on that branch
+			// that fall outside the most recent maxSessions
+			_, err := s.db.conn.Exec(
+				"DELETE FROM sessions WHERE branch_id = ? AND id NOT IN (SELECT id FROM sessions WHERE branch_id = ? ORDER BY last_updated DESC LIMIT ?)",
+				branchID, branchID, s.cfg.MaxSessions,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to limit session count: %w", err)
+			}
+		} else {
+			// Global: keep only the most recent maxSessions across all branches
+			_, err := s.db.conn.Exec(
+				"DELETE FROM sessions WHERE id NOT IN (SELECT id FROM sessions ORDER BY last_updated DESC LIMIT ?)",
+				s.cfg.MaxSessions,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to limit session count: %w", err)
+			}
 		}
 	}
 
 	return nil
 }
 
-// SearchMessages searches for messages matching a regex pattern
-func (s *SessionStore) SearchMessages(pattern string, limit int) ([]SearchResult, error) {
+// SearchMessages searches for messages matching a regex pattern.
+// host/org/project scope the query; when all empty, searches all sessions.
+func (s *SessionStore) SearchMessages(pattern string, limit int, host, org, project string) ([]SearchResult, error) {
 	// Compile regex
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("invalid regex pattern: %w", err)
 	}
 
-	// Query all messages (we'll filter in Go since SQLite regexp is limited)
+	// Query messages with optional host/org/project scope
 	query := `
 		SELECT m.session_id, m.sequence, m.role, m.content,
 		       s.first_prompt, s.working_dir,
-		       r.org, r.project, b.name
+		       r.host, r.org, r.project, b.name
 		FROM messages m
 		JOIN sessions s ON m.session_id = s.id
 		JOIN branches b ON s.branch_id = b.id
-		JOIN repositories r ON b.repository_id = r.id
-		ORDER BY m.created_at DESC`
+		JOIN repositories r ON b.repository_id = r.id`
+
+	var args []interface{}
+	if host != "" || org != "" || project != "" {
+		conditions := " WHERE "
+		var preds []string
+		if host != "" {
+			preds = append(preds, "r.host = ?")
+			args = append(args, host)
+		}
+		if org != "" {
+			preds = append(preds, "r.org = ?")
+			args = append(args, org)
+		}
+		if project != "" {
+			preds = append(preds, "r.project = ?")
+			args = append(args, project)
+		}
+		for i, p := range preds {
+			if i > 0 {
+				conditions += " AND "
+			}
+			conditions += p
+		}
+		query += conditions
+	}
+
+	query += " ORDER BY m.created_at DESC"
 
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit*10) // Get more, filter, then limit
 	}
 
-	rows, err := s.db.conn.Query(query)
+	rows, err := s.db.conn.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search messages: %w", err)
 	}
@@ -421,12 +487,13 @@ func (s *SessionStore) SearchMessages(pattern string, limit int) ([]SearchResult
 
 	var results []SearchResult
 	for rows.Next() {
-		var sessionID, role, contentJSON, firstPrompt, workingDir, org, project, branch string
+		var sessionID, role, contentJSON, firstPrompt, workingDir, resultHost, resultOrg, resultProject, branch string
 		var sequence int
 
 		err := rows.Scan(
 			&sessionID, &sequence, &role, &contentJSON,
-			&firstPrompt, &workingDir, &org, &project, &branch,
+			&firstPrompt, &workingDir,
+			&resultHost, &resultOrg, &resultProject, &branch,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan message: %w", err)
@@ -452,8 +519,9 @@ func (s *SessionStore) SearchMessages(pattern string, limit int) ([]SearchResult
 				Snippet:     snippet,
 				FirstPrompt: firstPrompt,
 				WorkingDir:  workingDir,
-				Org:         org,
-				Project:     project,
+				Host:        resultHost,
+				Org:         resultOrg,
+				Project:     resultProject,
 				Branch:      branch,
 			})
 
@@ -478,6 +546,7 @@ type SearchResult struct {
 	Snippet     string
 	FirstPrompt string
 	WorkingDir  string
+	Host        string
 	Org         string
 	Project     string
 	Branch      string

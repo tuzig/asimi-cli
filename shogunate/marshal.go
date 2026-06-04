@@ -85,9 +85,10 @@ func (m *Marshal) Tools() []Tool {
 // --- Database Methods ---
 
 // GetManifestByCommit finds a manifest by its git commit hash
-func (m *Marshal) GetManifestByCommit(commitHash string) (*storage.ForgeManifest, error) {
+func (m *Marshal) GetManifestByCommit(commitHash, username, project string) (*storage.ForgeManifest, error) {
 	var manifest storage.ForgeManifest
-	if err := m.db.First(&manifest, "commit_hash = ?", commitHash).Error; err != nil {
+	if err := m.db.Where("commit_hash = ? AND username = ? AND project = ?", commitHash, username, project).
+		First(&manifest).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("manifest not found for commit: %s", commitHash)
 		}
@@ -98,11 +99,20 @@ func (m *Marshal) GetManifestByCommit(commitHash string) (*storage.ForgeManifest
 
 // LogIncident records a production crash incident
 func (m *Marshal) LogIncident(incidentID string, key storage.EdictKey, commitHash, rcaSummary string) error {
+	username := key.Username
+	if username == "" {
+		username = m.username
+	}
+	project := key.Project
+	if project == "" {
+		project = m.project
+	}
+
 	incident := storage.MarshalIncident{
 		IncidentID: incidentID,
 		EdictID:    key.ID,
-		Username:   key.Username,
-		Project:    key.Project,
+		Username:   username,
+		Project:    project,
 		CommitHash: commitHash,
 		RCASummary: rcaSummary,
 	}
@@ -114,9 +124,10 @@ func (m *Marshal) LogIncident(incidentID string, key storage.EdictKey, commitHas
 }
 
 // GetIncident retrieves an incident by ID
-func (m *Marshal) GetIncident(incidentID string) (*storage.MarshalIncident, error) {
+func (m *Marshal) GetIncident(incidentID, username, project string) (*storage.MarshalIncident, error) {
 	var incident storage.MarshalIncident
-	if err := m.db.First(&incident, "incident_id = ?", incidentID).Error; err != nil {
+	if err := m.db.Where("incident_id = ? AND username = ? AND project = ?", incidentID, username, project).
+		First(&incident).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("incident not found: %s", incidentID)
 		}
@@ -126,9 +137,9 @@ func (m *Marshal) GetIncident(incidentID string) (*storage.MarshalIncident, erro
 }
 
 // MarkHotfixApproved approves a hotfix for an incident
-func (m *Marshal) MarkHotfixApproved(incidentID string) error {
+func (m *Marshal) MarkHotfixApproved(incidentID, username, project string) error {
 	result := m.db.Model(&storage.MarshalIncident{}).
-		Where("incident_id = ?", incidentID).
+		Where("incident_id = ? AND username = ? AND project = ?", incidentID, username, project).
 		Update("hotfix_approved", true)
 	if result.Error != nil {
 		return fmt.Errorf("failed to approve hotfix: %w", result.Error)
@@ -140,9 +151,9 @@ func (m *Marshal) MarkHotfixApproved(incidentID string) error {
 }
 
 // GetPendingIncidents returns incidents that need processing (not yet approved)
-func (m *Marshal) GetPendingIncidents() ([]storage.MarshalIncident, error) {
+func (m *Marshal) GetPendingIncidents(username, project string) ([]storage.MarshalIncident, error) {
 	var incidents []storage.MarshalIncident
-	err := m.db.Where("hotfix_approved = ?", false).
+	err := m.db.Where("hotfix_approved = ? AND username = ? AND project = ?", false, username, project).
 		Order("created_at ASC").
 		Find(&incidents).Error
 	if err != nil {
@@ -194,7 +205,7 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 
 	// Try to find the manifest by commit
 	if key.ID == 0 {
-		manifest, err := m.GetManifestByCommit(commitHash)
+		manifest, err := m.GetManifestByCommit(commitHash, m.username, m.project)
 		if err == nil && manifest != nil {
 			key = storage.EdictKey{ID: manifest.EdictID, Username: manifest.Username, Project: manifest.Project}
 		}
@@ -340,7 +351,7 @@ func (t *ResolveIncidentTool) Call(ctx context.Context, input string) (string, e
 
 	// Update the incident with resolution
 	result := t.marshal.db.Model(&storage.MarshalIncident{}).
-		Where("incident_id = ?", params.IncidentID).
+		Where("incident_id = ? AND username = ? AND project = ?", params.IncidentID, t.marshal.username, t.marshal.project).
 		Updates(map[string]interface{}{
 			"rca_summary":     params.Resolution + "\n\nRoot Cause: " + params.RootCause,
 			"hotfix_approved": true,
@@ -396,7 +407,7 @@ func (t *GetIncidentTool) Call(ctx context.Context, input string) (string, error
 		return "", fmt.Errorf("incident_id is required")
 	}
 
-	incident, err := t.marshal.GetIncident(params.IncidentID)
+	incident, err := t.marshal.GetIncident(params.IncidentID, t.marshal.username, t.marshal.project)
 	if err != nil {
 		return "", err
 	}
@@ -447,7 +458,7 @@ func (t *GetManifestByCommitTool) Call(ctx context.Context, input string) (strin
 		return "", fmt.Errorf("commit_hash is required")
 	}
 
-	manifest, err := t.marshal.GetManifestByCommit(params.CommitHash)
+	manifest, err := t.marshal.GetManifestByCommit(params.CommitHash, t.marshal.username, t.marshal.project)
 	if err != nil {
 		return "", err
 	}

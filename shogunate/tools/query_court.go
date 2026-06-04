@@ -44,7 +44,7 @@ func (t QueryCourtTool) Call(ctx context.Context, input string) (string, error) 
 	if params.EdictID != 0 {
 		query = query.Where("id = ? AND username = ? AND project = ?", params.EdictID, t.Username, t.Project)
 	} else if params.Scope != "all" {
-		query = query.Where("status NOT IN ?", []string{"sealed", "cancelled"})
+		query = query.Where("status NOT IN ? AND username = ? AND project = ?", []string{"sealed", "cancelled"}, t.Username, t.Project)
 	}
 	query.Find(&edicts)
 
@@ -82,8 +82,7 @@ func (t QueryCourtTool) Call(ctx context.Context, input string) (string, error) 
 	result["seals"] = sealSummaries
 
 	var zhengming []storage.Zhengming
-	// TODO: Limit this by username & project
-	t.DB.Where("status = ?", storage.ZhengmingPending).
+	t.DB.Where("status = ? AND username = ? AND project = ?", storage.ZhengmingPending, t.Username, t.Project).
 		Order("created_at DESC").Limit(10).Find(&zhengming)
 	if len(zhengming) > 0 {
 		zhSummaries := make([]map[string]interface{}, len(zhengming))

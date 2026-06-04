@@ -153,7 +153,7 @@ func (c *Sage) reviewManifestWithLinter(ctx context.Context, manifest *storage.F
 
 	// Reject manifest if any violations were rejected
 	if hasRejection {
-		if err := c.RejectManifest(manifest.ManifestID); err != nil {
+		if err := c.RejectManifest(storage.EdictKey{Username: manifest.Username, Project: manifest.Project}, manifest.ManifestID); err != nil {
 			return nil, fmt.Errorf("reject manifest: %w", err)
 		}
 		c.logger.Info("manifest rejected by sage",
@@ -205,7 +205,7 @@ func (c *Sage) reviewManifestWithLLM(ctx context.Context, manifest *storage.Forg
 
 	// Reject manifest if not approved
 	if !result.Approved {
-		if err := c.RejectManifest(manifest.ManifestID); err != nil {
+		if err := c.RejectManifest(storage.EdictKey{Username: manifest.Username, Project: manifest.Project}, manifest.ManifestID); err != nil {
 			return nil, fmt.Errorf("reject manifest: %w", err)
 		}
 		c.logger.Info("manifest rejected by sage",

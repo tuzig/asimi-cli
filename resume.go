@@ -211,7 +211,7 @@ func (r *ResumeWindow) LoadSession(sessionID string) tea.Cmd {
 	r.loadingSession = true
 
 	return func() tea.Msg {
-		cfg, err := config.LoadProjectConfig(repo.GetRepoInfo().Root, true)
+		cfg, err := config.LoadProjectConfig(repo.GetRepoInfo().ProjectRoot, true)
 		if err != nil {
 			return sessionResumeErrorMsg{err: fmt.Errorf("failed to load config: %w", err)}
 		}
