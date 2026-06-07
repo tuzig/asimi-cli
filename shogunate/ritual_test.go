@@ -1490,35 +1490,24 @@ func TestRitualTimeoutCancelsStep(t *testing.T) {
 }
 
 // TestRitualMinisterStepExecutesLings verifies that ritual minister steps route
-// through the Task pattern, enabling ling processing. This is the primary test
-// for Edict 324's main purpose: ensuring processTask runs, which calls
-// GetPendingLing() and executeLings().
+// through the Task pattern, enabling proper routing. This is the primary test
+// for Edict 324's main purpose: ensuring processTask runs with the correct
+// EdictKey so the Forge can handle failed verdicts for the right edict.
 //
 // The key verification is that the Task arrives at the minister with the correct
-// EdictKey, enabling Forge's GetPendingLing() to find and execute pending lings.
+// EdictKey, enabling proper result routing and verdict handling.
 func TestRitualMinisterStepRoutesThroughTaskPattern(t *testing.T) {
 	db := setupRitualTestDB(t)
 
-	// Add edicts and lings tables for this test
-	require.NoError(t, db.AutoMigrate(&storage.Edict{}, &storage.Ling{}))
+	// Add edicts table for this test
+	require.NoError(t, db.AutoMigrate(&storage.Edict{}))
 
-	// Create edict with pending ling (simulating strategist output)
+	// Create edict for the test
 	edict := &storage.Edict{SessionID: "test-session", Intent: "Build REST API", Username: "testuser", Project: "testproject"}
 	require.NoError(t, db.Create(edict).Error)
 
-	ling := &storage.Ling{
-		LingID:       "ling-1",
-		EdictID:      edict.ID,
-		Username:     "testuser",
-		Project:      "testproject",
-		Description:  "Create user model with CRUD fields",
-		Dependencies: storage.StringArray{},
-		Status:       storage.LingPending,
-	}
-	require.NoError(t, db.Create(ling).Error)
-
 	ritual := &RitualDef{
-		Name:        "minister-ling-test",
+		Name:        "minister-task-test",
 		Description: "Test that minister steps use Task pattern with EdictKey",
 		Steps: []RitualStep{
 			{Name: "forge-step", Minister: "forge", Task: "do work"},
@@ -1556,7 +1545,7 @@ func TestRitualMinisterStepRoutesThroughTaskPattern(t *testing.T) {
 
 	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
-	exec, err := runner.Start(ctx, "minister-ling-test", testEK(edict.ID), nil, nil)
+	exec, err := runner.Start(ctx, "minister-task-test", testEK(edict.ID), nil, nil)
 	require.NoError(t, err)
 
 	// Run ritual in background and capture the task
@@ -1572,16 +1561,12 @@ func TestRitualMinisterStepRoutesThroughTaskPattern(t *testing.T) {
 		t.Fatal("Timed out waiting for task to arrive at minister")
 	}
 
-	// CRITICAL: Verify the task has the correct EdictKey.
-	// This is the key change from Edict 324 - the EdictKey enables GetPendingLing()
-	// to find pending lings for this edict, which then get executed by executeLings().
-	// Without the EdictKey, processTask cannot look up lings and falls back to
-	// executing task.Work directly.
+	// Verify the task has the correct EdictKey.
+	// The EdictKey enables the ritual engine to route tasks correctly
+	// and ensures the Forge's processTask can handle failed verdicts for the right edict.
 	require.NotNil(t, receivedTask, "task should have been received")
 	assert.Equal(t, edict.Key(), receivedTask.EdictKey,
-		"task must have correct EdictKey so Forge can call GetPendingLing()")
-	assert.NotNil(t, receivedTask.Session,
-		"task must have session for multi-turn conversation")
+		"task must have correct EdictKey for result routing")
 	assert.NotNil(t, receivedTask.Done,
 		"task must have done channel for result routing")
 

@@ -17,7 +17,7 @@ import (
 // This test MUST FAIL before the fix (when Forge hardcodes ChannelID="chancellor")
 // and MUST PASS after the fix (when Forge uses its own ChannelID).
 //
-// The bug: Forge's streamTask() and executeLings() call CreateSessionWithOpts with
+// The bug: Forge's streamTask() called CreateSessionWithOpts with
 // ChannelID="chancellor" instead of ChannelID="forge", causing streaming notifications to
 // route to the Chancellor tab instead of the Forge tab.
 func TestForgeChannelID_Routing(t *testing.T) {
@@ -33,20 +33,6 @@ func TestForgeChannelID_Routing(t *testing.T) {
 	forge := NewForge(base)
 	forge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
-	// Create edict with a ling so Forge executes via executeLings (which also has the bug)
-	edict := &storage.Edict{SessionID: "test-session", Intent: "Test ChannelID routing", Username: "testuser", Project: "testproject"}
-	require.NoError(t, db.Create(edict).Error)
-
-	ling := &storage.Ling{
-		LingID:      "ling-forge-tab",
-		EdictID:     edict.ID,
-		Username:    "testuser",
-		Project:     "testproject",
-		Description: "Test ling for ChannelID verification",
-		Status:      storage.LingPending,
-	}
-	require.NoError(t, db.Create(ling).Error)
-
 	// Collect all streaming notifications
 	var mu sync.Mutex
 	var streamMsgs []StreamChunkMsg
@@ -60,12 +46,12 @@ func TestForgeChannelID_Routing(t *testing.T) {
 		}
 	})
 
-	// Create done channel and task
+	// Create done channel and task (no lings — Forge uses streamTask directly)
 	doneCh := make(chan Result, 1)
 	task := &Task{
 		Ctx:        ctx,
-		EdictKey:   edict.Key(),
-		Work:       "process the ling",
+		EdictKey:   storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+		Work:       "process the task",
 		Scratchpad: "# Test",
 		Done:       doneCh,
 	}
@@ -89,7 +75,7 @@ func TestForgeChannelID_Routing(t *testing.T) {
 }
 
 // TestForgeChannelID_DirectStreamTask verifies ChannelID routing when Forge uses streamTask directly
-// (no pending lings, so it falls back to streamTask instead of executeLings).
+// (no lings, so Forge uses streamTask directly).
 func TestForgeChannelID_DirectStreamTask(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()

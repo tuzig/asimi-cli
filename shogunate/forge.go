@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
@@ -68,32 +66,6 @@ func (f *Forge) Tools() []Tool {
 		toolList = append(toolList, tools.NewRunShellCommand(f.CheckHostCommand, f.runner, f.msgChan, f.RepoInfo().ProjectRoot))
 	}
 	return toolList
-}
-
-// GetPendingLing retrieves all pending ling for an edict
-func (f *Forge) GetPendingLing(key storage.EdictKey) ([]storage.Ling, error) {
-	var ling []storage.Ling
-	err := f.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.LingPending).
-		Order("created_at ASC").
-		Find(&ling).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pending ling: %w", err)
-	}
-	return ling, nil
-}
-
-// MarkLingCompleted marks a ling as completed
-func (f *Forge) MarkLingCompleted(lingID string, key storage.EdictKey) error {
-	result := f.db.Model(&storage.Ling{}).
-		Where("ling_id = ? AND username = ? AND project = ?", lingID, key.Username, key.Project).
-		Update("status", storage.LingDone)
-	if result.Error != nil {
-		return fmt.Errorf("failed to mark ling completed: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("ling not found: %s", lingID)
-	}
-	return nil
 }
 
 // GetFailedVerdicts retrieves all failed verdicts for an edict that need fixing.
@@ -210,35 +182,6 @@ func (f *Forge) GetRejectedManifests(key storage.EdictKey) ([]storage.ForgeManif
 	return manifests, nil
 }
 
-// SaveLingResult persists the tool execution result to the database
-func (f *Forge) SaveLingResult(ling *storage.Ling, output string, err error) error {
-	status := storage.LingDone
-	description := ling.Description
-	if err != nil {
-		description = fmt.Sprintf("%s\nerror: %v", ling.Description, err)
-	} else {
-		description = fmt.Sprintf("%s\nresult: %s", ling.Description, output)
-	}
-	result := f.db.Model(&storage.Ling{}).
-		Where("ling_id = ? AND username = ? AND project = ?", ling.LingID, ling.Username, ling.Project).
-		Updates(map[string]interface{}{
-			"description": description,
-			"status":      status,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("failed to save ling result: %w", result.Error)
-	}
-	return nil
-}
-
-// InsertLing creates a new Ling record
-func (f *Forge) InsertLing(ling *storage.Ling) error {
-	if err := f.db.Create(ling).Error; err != nil {
-		return fmt.Errorf("failed to insert ling: %w", err)
-	}
-	return nil
-}
-
 // --- Execute Logic ---
 
 // Run starts the Forge's processing loop
@@ -284,19 +227,7 @@ func (f *Forge) processTask(ctx context.Context, task *Task) {
 	}
 
 	if f.client != nil {
-		// Get pending lings for this edict
-		pendingLings, err := f.GetPendingLing(task.EdictKey)
-		f.logger.Info("Got lings", "count", len(pendingLings), "edict", task.EdictKey)
-		if err != nil {
-			f.logger.Error("failed to get pending lings", "error", err)
-			taskErr = err
-		} else if len(pendingLings) > 0 {
-			// Execute lings in dependency order
-			output, taskErr = f.executeLings(ctx, task, pendingLings, notify)
-		} else {
-			// Fallback: no lings, execute task.Work directly (backward compatibility)
-			session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
-		}
+		session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
 	} else {
 		output = "forge task acknowledged (no LLM configured)"
 	}
@@ -364,137 +295,6 @@ func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKe
 	return session, output, nil
 }
 
-// executeLings processes lings in dependency order
-func (f *Forge) executeLings(ctx context.Context, task *Task, lings []storage.Ling, notify internal.NotifyFunc) (string, error) {
-	// Build dependency graph and sort topologically
-	sortedLings, err := f.topologicalSort(lings)
-	if err != nil {
-		return "", fmt.Errorf("failed to sort lings: %w", err)
-	}
-
-	var results []string
-	completedLingIDs := make(map[string]bool)
-	inBatch := make(map[string]bool, len(lings))
-	for _, l := range lings {
-		inBatch[l.LingID] = true
-	}
-
-	// TODO: run in parallel those lings we can
-	for _, ling := range sortedLings {
-		// Check if dependencies are satisfied
-		if !f.dependenciesSatisfied(ling, completedLingIDs, inBatch) {
-			f.logger.Warn("ling dependencies not satisfied, skipping",
-				"ling_id", ling.LingID,
-				"dependencies", ling.Dependencies)
-			continue
-		}
-
-		// Execute this ling
-		f.logger.Info("executing ling",
-			"ling_id", ling.LingID,
-			"description", ling.Description)
-
-		// Build work prompt for this specific ling
-		lingWork := fmt.Sprintf("This task is part of a larger change. DON'T build or test the project just do: %s", ling.Description)
-
-		_, output, err := f.streamTask(ctx, lingWork, task.EdictKey, task.Scratchpad, notify, nil, task.ChannelID)
-
-		if err != nil {
-			// Mark ling as blocked/failed
-			f.SaveLingResult(&ling, output, err)
-			return strings.Join(results, "\n"), fmt.Errorf("ling %s failed: %w", ling.LingID, err)
-		}
-
-		// Mark ling as completed
-		if err := f.MarkLingCompleted(ling.LingID, task.EdictKey); err != nil {
-			f.logger.Error("failed to mark ling completed",
-				"ling_id", ling.LingID,
-				"error", err)
-		}
-
-		// Save result
-		if err := f.SaveLingResult(&ling, output, nil); err != nil {
-			f.logger.Error("failed to save ling result",
-				"ling_id", ling.LingID,
-				"error", err)
-		}
-
-		results = append(results, fmt.Sprintf("✓ Ling %s: %s", ling.LingID, ling.Description))
-		completedLingIDs[ling.LingID] = true
-	}
-
-	return strings.Join(results, "\n"), nil
-}
-
-// topologicalSort sorts lings by dependencies (DAG) using Kahn's algorithm
-func (f *Forge) topologicalSort(lings []storage.Ling) ([]storage.Ling, error) {
-	// Build adjacency map
-	lingMap := make(map[string]storage.Ling)
-	inDegree := make(map[string]int)
-	graph := make(map[string][]string)
-
-	for _, ling := range lings {
-		lingMap[ling.LingID] = ling
-		inDegree[ling.LingID] = 0
-	}
-
-	// Build graph: dependency → dependent.
-	// Deps not in lingMap are already completed (filtered out by GetPendingLing's
-	// status=pending predicate on retry) — treat them as satisfied, not as a cycle.
-	for _, ling := range lings {
-		for _, dep := range ling.Dependencies {
-			if _, ok := lingMap[dep]; !ok {
-				continue
-			}
-			graph[dep] = append(graph[dep], ling.LingID)
-			inDegree[ling.LingID]++
-		}
-	}
-
-	// Kahn's algorithm
-	var queue []string
-	for _, ling := range lings {
-		if inDegree[ling.LingID] == 0 {
-			queue = append(queue, ling.LingID)
-		}
-	}
-
-	var sorted []storage.Ling
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		sorted = append(sorted, lingMap[current])
-
-		for _, neighbor := range graph[current] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
-				queue = append(queue, neighbor)
-			}
-		}
-	}
-
-	if len(sorted) != len(lings) {
-		return nil, fmt.Errorf("circular dependency detected in lings")
-	}
-
-	return sorted, nil
-}
-
-// dependenciesSatisfied checks if all dependencies are completed.
-// Deps not present in inBatch were completed in a previous forge attempt
-// (filtered out by GetPendingLing) and are treated as already satisfied.
-func (f *Forge) dependenciesSatisfied(ling storage.Ling, completed map[string]bool, inBatch map[string]bool) bool {
-	for _, dep := range ling.Dependencies {
-		if !inBatch[dep] {
-			continue
-		}
-		if !completed[dep] {
-			return false
-		}
-	}
-	return true
-}
-
 // --- Forge Specialized Tools ---
 
 // CreateManifestTool records a new file change in the forge manifest
@@ -525,21 +325,14 @@ func (t *CreateManifestTool) Call(ctx context.Context, input string) (string, er
 
 	key := storage.EdictKey{ID: params.EdictID, Username: t.forge.username, Project: t.forge.project}
 
-	// Auto-populate ling_id if not provided (use most recent pending ling)
+	// Auto-populate ling_id if not provided.
+	// In the fork-based ritual pattern, ling_id comes from the fork item context
+	// ({{ .item.ling_id }}) via template expansion. When the LLM doesn't pass it
+	// explicitly, we skip auto-population rather than querying pending lings,
+	// since the ling iteration is now handled by the ritual engine's fork.
 	if params.LingID == "" {
-		pendingLings, err := t.forge.GetPendingLing(key)
-		if err != nil {
-			return "", fmt.Errorf("failed to get pending lings for auto-population: %w", err)
-		}
-		slog.Info("Forge got a list of lings per edict", "key", key, "lings", pendingLings)
-		if len(pendingLings) > 0 {
-			params.LingID = pendingLings[0].LingID
-			t.forge.logger.Info("auto-populated ling_id",
-				"ling_id", params.LingID,
-				"file_path", params.FilePath)
-		}
-	} else {
-		slog.Info("Forge is working on ling", "params", params)
+		t.forge.logger.Info("ling_id not provided by LLM, leaving empty",
+			"file_path", params.FilePath)
 	}
 
 	manifestID, err := t.forge.StageManifest(key, params.LingID, params.FilePath, params.FuncName, params.ContentSHA)

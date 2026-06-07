@@ -30,6 +30,7 @@ func TestStepDefRegistry(t *testing.T) {
 		{"the manifests", "manifests", false},
 		{"the verdicts", "verdicts", false},
 		{"the precedents", "precedents", false},
+		{"the edict lings", "lings", false},
 		{"something unknown", "", true},
 	}
 
@@ -769,4 +770,246 @@ func TestGetInfrastructureTemplates_TemplateFilesListSorted(t *testing.T) {
 	copy(sorted, templateFiles)
 	sort.Strings(sorted)
 	assert.Equal(t, sorted, templateFiles, "template_files should be sorted for determinism")
+}
+
+func TestGetLings(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Migrate Ling table
+	require.NoError(t, db.AutoMigrate(&storage.Ling{}, &storage.Edict{}))
+
+	// Create edict
+	edict := &storage.Edict{SessionID: "test-session", Intent: "Test lings", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	// Create lings for the edict
+	lings := []storage.Ling{
+		{LingID: "ling-1", EdictID: edict.ID, Username: "testuser", Project: "testproject", Description: "Phase 1", Status: storage.LingPending},
+		{LingID: "ling-2", EdictID: edict.ID, Username: "testuser", Project: "testproject", Description: "Phase 2", Dependencies: storage.StringArray{"ling-1"}, Status: storage.LingPending},
+	}
+	for i := range lings {
+		require.NoError(t, db.Create(&lings[i]).Error)
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	// Call getLings
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+	result, err := runner.getLings(key)
+	require.NoError(t, err)
+
+	resultList, ok := result.([]map[string]interface{})
+	require.True(t, ok, "result should be []map[string]interface{}")
+	require.Len(t, resultList, 2)
+
+	// Verify first ling
+	assert.Equal(t, "ling-1", resultList[0]["ling_id"])
+	assert.Equal(t, "Phase 1", resultList[0]["description"])
+	assert.Equal(t, "pending", resultList[0]["status"])
+
+	// Verify second ling has dependencies
+	assert.Equal(t, "ling-2", resultList[1]["ling_id"])
+	assert.Equal(t, "Phase 2", resultList[1]["description"])
+	deps, ok := resultList[1]["dependencies"].(storage.StringArray)
+	assert.True(t, ok)
+	assert.Contains(t, deps, "ling-1")
+}
+
+func TestGetLings_NoLings(t *testing.T) {
+	db := setupRitualTestDB(t)
+	require.NoError(t, db.AutoMigrate(&storage.Ling{}, &storage.Edict{}))
+
+	edict := &storage.Edict{SessionID: "test-session", Intent: "No lings", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+	_, err := runner.getLings(key)
+	assert.Error(t, err, "should error when no lings found")
+	assert.Contains(t, err.Error(), "no lings found")
+}
+
+func TestRecordLingCompleted(t *testing.T) {
+	db := setupRitualTestDB(t)
+	require.NoError(t, db.AutoMigrate(&storage.Ling{}, &storage.Edict{}))
+
+	// Create edict
+	edict := &storage.Edict{SessionID: "test-session", Intent: "Test ling completion", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	// Create pending ling
+	ling := &storage.Ling{
+		LingID:   "ling-complete-1",
+		EdictID:  edict.ID,
+		Username: "testuser",
+		Project:  "testproject",
+		Status:   storage.LingPending,
+	}
+	require.NoError(t, db.Create(ling).Error)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	// Create execution with item containing ling_id
+	exec := &RitualExecution{
+		EdictID:  edict.ID,
+		Username: "testuser",
+		Project:  "testproject",
+		Data: storage.JSON{
+			"item": map[string]interface{}{
+				"ling_id":     "ling-complete-1",
+				"description": "Phase 1 work",
+			},
+		},
+	}
+
+	// Call record_ling_completed handler
+	err := runner.runThen(context.Background(), exec, "record_ling_completed")
+	require.NoError(t, err)
+
+	// Verify ling status was updated
+	var updated storage.Ling
+	require.NoError(t, db.First(&updated, "ling_id = ?", "ling-complete-1").Error)
+	assert.Equal(t, storage.LingDone, updated.Status)
+}
+
+func TestRecordLingCompleted_NoLingID(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	// Create execution without item
+	exec := &RitualExecution{
+		EdictID: 1,
+		Data:    storage.JSON{},
+	}
+
+	// Should not error when no item in context
+	err := runner.runThen(context.Background(), exec, "record_ling_completed")
+	assert.NoError(t, err)
+}
+
+func TestRecordLingCompleted_LingNotFound(t *testing.T) {
+	db := setupRitualTestDB(t)
+	require.NoError(t, db.AutoMigrate(&storage.Ling{}, &storage.Edict{}))
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	// Create execution with item containing a ling_id that doesn't exist in DB
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+		Data: storage.JSON{
+			"item": map[string]interface{}{
+				"ling_id":     "nonexistent-ling",
+				"description": "Phase 1 work",
+			},
+		},
+	}
+
+	// Should error when ling not found in database
+	err := runner.runThen(context.Background(), exec, "record_ling_completed")
+	assert.Error(t, err, "should error when ling_id not found in DB")
+	assert.Contains(t, err.Error(), "ling not found")
+}
+
+func TestRecordLingCompleted_EmptyLingID(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	// Create execution with item containing empty ling_id
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+		Data: storage.JSON{
+			"item": map[string]interface{}{
+				"ling_id":     "",
+				"description": "Phase 1 work",
+			},
+		},
+	}
+
+	// Should not error when ling_id is empty — skip silently
+	err := runner.runThen(context.Background(), exec, "record_ling_completed")
+	assert.NoError(t, err, "empty ling_id should be skipped silently")
+}
+
+func TestForkWithGiven_LoadsLingsBeforeFork(t *testing.T) {
+	db := setupRitualTestDB(t)
+	require.NoError(t, db.AutoMigrate(&storage.Ling{}, &storage.Edict{}))
+
+	// Create edict
+	edict := &storage.Edict{SessionID: "test-session", Intent: "Fork with lings test", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(edict).Error)
+
+	// Create lings
+	require.NoError(t, db.Create(&storage.Ling{
+		LingID: "ling-f1", EdictID: edict.ID, Username: "testuser", Project: "testproject",
+		Description: "Fix file A", Status: storage.LingPending,
+	}).Error)
+	require.NoError(t, db.Create(&storage.Ling{
+		LingID: "ling-f2", EdictID: edict.ID, Username: "testuser", Project: "testproject",
+		Description: "Fix file B", Status: storage.LingPending,
+	}).Error)
+
+	ritual := &RitualDef{
+		Name: "fork-lings-test",
+		Steps: []RitualStep{
+			{
+				Name: "implementing",
+				Given: []string{"the edict lings"},
+				Fork: &ForkDef{
+					Over:      "lings",
+					BatchSize: 1,
+				},
+				Work: []RitualStep{
+					{Name: "forge-phase", Minister: "forge", Act: "Implement: {{ .item.description }}"},
+				},
+			},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	forgeM := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 10),
+		result:       "done",
+	}
+	go forgeM.Run(ctx)
+
+	shog := &Shogunate{
+		ministers: map[string]Minister{"forge": forgeM},
+		logger:    slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+
+	exec, err := runner.Start(ctx, "fork-lings-test", ek(edict.ID), nil, nil)
+	require.NoError(t, err)
+
+	err = runner.Run(ctx, exec)
+	require.NoError(t, err)
+
+	// Verify fork results contain both lings
+	forkData, ok := exec.Data["fork"].(map[string]interface{})
+	require.True(t, ok, "expected fork data in exec.Data")
+
+	out, ok := forkData["out"].([]ForkResult)
+	require.True(t, ok, "expected fork out results")
+	assert.Len(t, out, 2, "both lings should be processed")
 }

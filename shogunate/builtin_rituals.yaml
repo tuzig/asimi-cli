@@ -81,25 +81,27 @@
         {{ .edict }}
 
         Break down the work into clear phases with dependencies.
-        Identify risks and architectural decisions.
         Use insert_ling to record the plan's lings.
       on_failure: zhengming
 
-    - name: forging
-      minister: forge
+    - name: implementing
       given:
-        - the manifests
-      act: |
-        Execute the Battle Plan for edict:
-        
-        {{ .edict }}
+        - the edict lings
+      fork:
+        over: lings
+        batch_size: 1
+      work:
+        - name: forge-phase
+          minister: forge
+          act: |
+            Implement this phase of the Battle Plan for edict {{ .edict_id }}:
 
-        Implement changes according to the manifests:
-        
-        {{ .manifests }}
+            {{ .item.description }}
 
-        IMPORTANT - This should be replaced by the lings and not reach the model
-      on_failure: retry
+            Focus on minimal, targeted changes. Don't build or test the project.
+          on_failure: retry
+          then:
+            - the ling is completed
 
     - name: judging
       minister: judge
@@ -107,15 +109,13 @@
         - the manifests
       act: |
         Judge the changes made in the manifests:
-
         {{ .manifests }}
-
         Make sure test coverage was not diminished
       then:
         - the verdicts are passed
         - record the judge's seal
       on_failure: goto
-      on_failure_target: forging
+      on_failure_target: implementing
 
     - name: censoring
       minister: sage
@@ -125,24 +125,21 @@
         - the earth status
       act: |
         Review the code changes in this ritual.
-        Verify it adheres to the Imperial Code (project standards).
-        Use the record_precedent tool to record whether the change was approved and if not, explain the why in the `reasoning` parameter.
+        Verify it adheres to the Imperial Code.
+        Use record_precedent to record the ruling.
+
         ## Earth Status
-        ### Borderlands
         {{ .earth_borderlands }}
-        ### Middle Kingdom
         {{ .earth_middle_kingdom }}
-        ### The capital
         {{ .earth_capital }}
-        ## Forge Manifests
+        ## Manifests
         {{ .manifests }}
         ## Verdicts
         {{ .verdicts }}
-
       then:
         - record the sage's seal
       on_failure: goto
-      on_failure_target: forging
+      on_failure_target: implementing
   then:
     - the edict awaits ruler's seal
 

@@ -799,6 +799,21 @@ func (step *RitualStep) resolveMaxRetries(def *RitualDef) int {
 func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, step RitualStep) (string, error) {
 	execKey := exec.EdictKey()
 
+	// === GIVEN === (runs before fork check so fork steps can load data into exec.Data)
+	if len(step.Given) > 0 {
+		for _, raw := range step.Given {
+			entry, err := r.resolveStepDef(raw)
+			if err != nil {
+				return "", fmt.Errorf("given %q failed: %w", raw, err)
+			}
+			result, err := r.runGivenStep(ctx, exec, entry)
+			if err != nil {
+				return "", fmt.Errorf("given %q failed: %w", raw, err)
+			}
+			storeGivenResult(exec, entry.Key, result)
+		}
+	}
+
 	// Check if this is a fork step
 	if step.Fork != nil {
 		return r.executeForkStep(ctx, exec, step)
@@ -840,21 +855,6 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		"step":         step.Name,
 		"step_index":   exec.CurrentStep,
 	})
-
-	// === GIVEN ===
-	if len(step.Given) > 0 {
-		for _, raw := range step.Given {
-			entry, err := r.resolveStepDef(raw)
-			if err != nil {
-				return "", fmt.Errorf("given %q failed: %w", raw, err)
-			}
-			result, err := r.runGivenStep(ctx, exec, entry)
-			if err != nil {
-				return "", fmt.Errorf("given %q failed: %w", raw, err)
-			}
-			storeGivenResult(exec, entry.Key, result)
-		}
-	}
 
 	// === ACT ===
 	actResult, err := r.executeMinisterStep(ctx, exec, step)
@@ -1143,6 +1143,7 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 		def:        exec.def,
 		stepStates: exec.stepStates,
 		notify:     exec.notify,
+		CurrentStep: exec.CurrentStep,
 	}
 
 	// Copy existing context
@@ -1253,8 +1254,8 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	stepCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 
-	// Route act through Task pattern to enable ling processing.
-	// This ensures processTask runs, which calls GetPendingLing() and executeLings().
+	// Route act through Task pattern to enable minister processing.
+	// This ensures processTask runs, which handles failed verdicts and streams work through the LLM.
 	doneCh := make(chan Result, 1)
 	task := &Task{
 		Ctx:      stepCtx,

@@ -78,8 +78,10 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the infrastructure is staged", "stage_infrastructure", "infrastructure_staged"},
 		{"record the judge's seal", "record_judge_seal", ""},
 		{"record the sage's seal", "record_sage_seal", ""},
+		{"record the ling completed", "record_ling_completed", ""},
 		{"the verdicts are passed", "check_verdicts_passed", ""},
 		{"the unsealed edicts", "get_unsealed_edicts", "unsealed_edicts"},
+		{"the edict lings", "get_lings", "lings"},
 		{"a heaven's snapshot", "get_heaven_snapshot", "heaven_snapshot"},
 		{"Asimi's versions", "check_asimi_version", "asimi_version"},
 	}
@@ -154,6 +156,8 @@ func (r *RitualRunner) runGiven(ctx context.Context, exec *RitualExecution, fn s
 		return r.getProjectMetadata(ctx)
 	case "get_unsealed_edicts":
 		return r.getUnsealedEdicts(ctx, exec)
+	case "get_lings":
+		return r.getLings(givenKey)
 	case "get_heaven_snapshot":
 		return r.getHeavenSnapshot(ctx)
 	case "check_asimi_version":
@@ -178,6 +182,30 @@ func (r *RitualRunner) getUnsealedEdicts(ctx context.Context, exec *RitualExecut
 			"updated_at": e.UpdatedAt,
 			"has_judge":  e.HasJudgeSeal,
 			"has_sage":   e.HasSageSeal,
+		}
+	}
+	return result, nil
+}
+
+func (r *RitualRunner) getLings(key storage.EdictKey) (interface{}, error) {
+	var lings []storage.Ling
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
+		Order("created_at ASC").
+		Find(&lings).Error; err != nil {
+		return nil, fmt.Errorf("failed to get lings: %w", err)
+	}
+	if len(lings) == 0 {
+		return nil, fmt.Errorf("no lings found for edict %d", key.ID)
+	}
+	// Return as JSON-friendly maps for template expansion and fork iteration
+	result := make([]map[string]interface{}, len(lings))
+	for i, l := range lings {
+		result[i] = map[string]interface{}{
+			"ling_id":      l.LingID,
+			"edict_id":     l.EdictID,
+			"description":  l.Description,
+			"dependencies": l.Dependencies,
+			"status":       string(l.Status),
 		}
 	}
 	return result, nil
@@ -910,6 +938,24 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		sealService := storage.NewSealService(r.db)
 		if err := sealService.GrantSeal(thenKey, "sage", storage.JSON{"ritual": exec.RitualName}); err != nil {
 			return fmt.Errorf("failed to record sage's seal: %w", err)
+		}
+		return nil
+	case "record_ling_completed":
+		// Mark the current fork item's ling as completed
+		if item, ok := exec.Data["item"].(map[string]interface{}); ok {
+			lingID, ok := item["ling_id"].(string)
+			if !ok || lingID == "" {
+				return nil // no ling_id in item, skip silently
+			}
+			result := r.db.Model(&storage.Ling{}).
+				Where("ling_id = ? AND username = ? AND project = ?", lingID, thenKey.Username, thenKey.Project).
+				Update("status", storage.LingDone)
+			if result.Error != nil {
+				return fmt.Errorf("failed to mark ling completed: %w", result.Error)
+			}
+			if result.RowsAffected == 0 {
+				return fmt.Errorf("ling not found: %s", lingID)
+			}
 		}
 		return nil
 	case "check_verdicts_passed":

@@ -8,12 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestForge_ExecutesLingNotRawWork verifies that when an edict has pending lings,
-// the forge executes them via executeLings() rather than executing the raw task.Work.
-func TestForge_ExecutesLingNotRawWork(t *testing.T) {
-	t.Skip("requires bifrost mock")
-}
-
 // TestForge_StageManifest_UniqueIDs verifies that StageManifest generates
 // unique IDs even when called multiple times with the same inputs.
 // This prevents UNIQUE constraint violations when the ritual retries.
@@ -51,48 +45,6 @@ func TestForge_StageManifest_UniqueIDs(t *testing.T) {
 	var manifests []storage.ForgeManifest
 	require.NoError(t, db.Where("edict_id = ?", edict.ID).Find(&manifests).Error)
 	assert.Len(t, manifests, 3, "all three manifests should be in the database")
-}
-
-// TestForge_TopologicalSort_MissingDepsTreatedAsDone verifies that when some
-// lings in a DAG reference dependency IDs that are not in the current batch
-// (e.g. because they were completed in a previous forge attempt and filtered
-// out by GetPendingLing's status=pending predicate), topologicalSort treats
-// those deps as already-satisfied rather than reporting a false circular
-// dependency.
-func TestForge_TopologicalSort_MissingDepsTreatedAsDone(t *testing.T) {
-	// Mirrors the user's castle-siege failure:
-	//   d69816 (Phase 1) — completed in a previous attempt, NOT in slice
-	//   165d4c (Phase 2) — blocked by d69816
-	//   c8fc40 (Phase 3) — blocked by d69816
-	//   9df8b9 (Phase 4) — blocked by 165d4c, c8fc40
-	//   0a45db (Phase 5) — blocked by d69816, 165d4c
-	lings := []storage.Ling{
-		{LingID: "165d4c", Dependencies: storage.StringArray{"d69816"}},
-		{LingID: "c8fc40", Dependencies: storage.StringArray{"d69816"}},
-		{LingID: "9df8b9", Dependencies: storage.StringArray{"165d4c", "c8fc40"}},
-		{LingID: "0a45db", Dependencies: storage.StringArray{"d69816", "165d4c"}},
-	}
-
-	base := NewMinisterBase(nil, nil, nil, "u", "p")
-	forge := NewForge(base)
-
-	sorted, err := forge.topologicalSort(lings)
-	require.NoError(t, err, "missing deps should be treated as completed, not as a cycle")
-	require.Len(t, sorted, len(lings))
-
-	// Verify ordering: every ling appears after all of its deps that ARE in the batch.
-	pos := make(map[string]int, len(sorted))
-	for i, l := range sorted {
-		pos[l.LingID] = i
-	}
-	for _, l := range lings {
-		for _, dep := range l.Dependencies {
-			if depPos, ok := pos[dep]; ok {
-				assert.Less(t, depPos, pos[l.LingID],
-					"ling %s should come after its dep %s", l.LingID, dep)
-			}
-		}
-	}
 }
 
 // TestForge_GetFailedVerdicts_QueriesCorrectVerdicts verifies that GetFailedVerdicts
