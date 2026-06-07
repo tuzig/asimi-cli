@@ -479,11 +479,13 @@ func verifyInitWithRetry(model *TUIModel, containerRunner runners.Runner, retryC
 		// Reload configuration on retry attempts to pick up any changes made by the LLM
 		// (e.g., modifications to .agents/asimi.conf, Dockerfile, etc.)
 		slog.Debug("Reloading configuration for retry attempt", "retryCount", retryCount)
-		if reloaded, err := config.LoadProjectConfig(model.status.repoInfo.ProjectRoot, true); err != nil {
-			slog.Warn("Failed to reload config during verifyInit retry", "error", err)
-		} else {
-			model.config = reloaded
-			slog.Debug("Configuration reloaded successfully")
+		if model.status.repoInfo != nil {
+			if reloaded, err := config.LoadProjectConfig(model.status.repoInfo.ProjectRoot, true); err != nil {
+				slog.Warn("Failed to reload config during verifyInit retry", "error", err)
+			} else {
+				model.config = reloaded
+				slog.Debug("Configuration reloaded successfully")
+			}
 		}
 
 		var results []string
@@ -519,6 +521,13 @@ func verifyInitWithRetry(model *TUIModel, containerRunner runners.Runner, retryC
 
 		if !agentsMdExists || !justfileExists {
 			slog.Debug("Required files missing, handling failure")
+			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
+		}
+
+		// Without repoInfo we cannot run build-sandbox, reinitialize the runner,
+		// or stage files — return early with what we have.
+		if model.status.repoInfo == nil {
+			slog.Debug("repoInfo is nil, skipping repo-dependent verification steps")
 			return handleVerificationFailure(model, containerRunner, retryCount, maxRetries, results)
 		}
 

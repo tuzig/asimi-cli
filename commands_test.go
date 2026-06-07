@@ -355,3 +355,61 @@ func TestRunInitGuardrails(t *testing.T) {
 		os.Remove("Justfile")
 	})
 }
+
+func TestVerifyInitWithRetryNilRepoInfo(t *testing.T) {
+	// Verify that verifyInitWithRetry does not panic when model.status.repoInfo is nil.
+	// This can happen when the function is called with a bare TUIModel (e.g., in tests
+	// or before repo detection completes).
+	t.Run("nil repoInfo does not panic", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		originalWd, err := os.Getwd()
+		require.NoError(t, err)
+		err = os.Chdir(tmpDir)
+		require.NoError(t, err)
+		defer os.Chdir(originalWd)
+
+		mockTUI := &TUIModel{}
+
+		// This should not panic even though repoInfo is nil
+		cmd := verifyInit(mockTUI, nil)
+		msg := cmd()
+
+		// Without files present, we expect a startConversationMsg for retry
+		retryMsg, ok := msg.(startConversationMsg)
+		require.True(t, ok, "Expected startConversationMsg for retry, got type: %T", msg)
+		require.Contains(t, retryMsg.prompt, "❌ AGENTS.md was not created")
+		require.Contains(t, retryMsg.prompt, "❌ Justfile was not created")
+	})
+
+	t.Run("nil repoInfo with files present returns failure", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		originalWd, err := os.Getwd()
+		require.NoError(t, err)
+		err = os.Chdir(tmpDir)
+		require.NoError(t, err)
+		defer os.Chdir(originalWd)
+
+		// Create required files so the function proceeds past the file check
+		err = os.WriteFile("AGENTS.md", []byte("# Test"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile("Justfile", []byte("default:\n\techo hello"), 0644)
+		require.NoError(t, err)
+
+		mockTUI := &TUIModel{}
+		cmd := verifyInit(mockTUI, nil)
+		msg := cmd()
+
+		// With nil repoInfo and files present, the function should handle
+		// the missing repoInfo gracefully (return retry or error message)
+		switch m := msg.(type) {
+		case startConversationMsg:
+			// Retry message is expected
+			_ = m
+		case showContextMsg:
+			// Error/context message is also acceptable
+			_ = m
+		default:
+			t.Fatalf("Expected startConversationMsg or showContextMsg, got: %T", msg)
+		}
+	})
+}

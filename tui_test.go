@@ -2153,12 +2153,15 @@ func TestInitCommandE2E(t *testing.T) {
 	runner := runners.NewHostRunner(0, t.TempDir())
 
 	// 3. Create and start Shogunate with a host runner for bash then-steps
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
 	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
 	shog.SetRepoInfo(repo.RepoInfo{
 		ProjectRoot: tmpDir,
 		Slug:        "testorg/ror-demo",
 	})
-	require.NoError(t, shog.Start(context.Background()))
+	require.NoError(t, shog.Start(ctx))
 	t.Cleanup(func() { shog.Stop() })
 
 	// Keep only project-init ritual — clear startup/event-driven rituals
@@ -2284,12 +2287,15 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 		}
 	}()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
 	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
 	shog.SetRepoInfo(repo.RepoInfo{
 		ProjectRoot: tmpDir,
 		Slug:        "testorg/ror-demo",
 	})
-	require.NoError(t, shog.Start(context.Background()))
+	require.NoError(t, shog.Start(ctx))
 	t.Cleanup(func() { shog.Stop() })
 
 	// Keep only project-init ritual — clear before Init() fires
@@ -2326,9 +2332,9 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 		tm.Send(msg)
 	})
 
-	// 5. Wait for LLM to connect (status bar shows ✅ when connected)
+	// 5. Wait for LLM to connect (status bar shows ❓ when connected but unverified)
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
-		return strings.Contains(string(bts), "✅")
+		return strings.Contains(string(bts), "❓")
 	}, teatest.WithCheckInterval(200*time.Millisecond), teatest.WithDuration(15*time.Second))
 
 	// 6. Type :init and press Enter
