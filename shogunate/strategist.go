@@ -25,6 +25,7 @@ CRITICAL RULES:
 - If the Ruler's intent is ambiguous, invoke Zhengming—do not guess
 - Each ling must be atomic, clear, and testable
 - Dependencies must form a directed acyclic graph (no cycles)
+- Dependencies must use exact ling_id values (e.g. '74183c66ba0507ba') as returned by insert_ling. Never use shorthand like '470-1' — the DAG resolver only matches full ling_ids.
 - You have read/write on ling; read-only on edicts and filesystem
 - Break complex tasks ito multiple lings when possible`
 
@@ -257,7 +258,7 @@ type InsertLingTool struct {
 func (t *InsertLingTool) Name() string { return "insert_ling" }
 
 func (t *InsertLingTool) Description() string {
-	return "Creates a new ling (task order) for an edict. The input should be a JSON object with 'edict_id', 'description', and optionally 'dependencies' (array of ling IDs that must complete first)."
+	return "Creates a new ling (task order) for an edict. The input should be a JSON object with 'edict_id', 'description', and optionally 'dependencies' (array of FULL ling IDs, e.g. '74183c66ba0507ba', that must complete first — never use shorthand aliases like '470-1')."
 }
 
 func (t *InsertLingTool) Call(ctx context.Context, input string) (string, error) {
@@ -306,7 +307,7 @@ func (t *InsertLingTool) ParameterSchema() map[string]any {
 			},
 			"dependencies": map[string]any{
 				"type":        "array",
-				"description": "Array of strings containing ling IDs that must complete before this one",
+				"description": "Array of FULL ling IDs (e.g. '74183c66ba0507ba') that must complete before this one. Use the exact ling_id returned by insert_ling — never invent shorthand aliases like '470-1'.",
 				"items":       map[string]any{"type": "string"},
 			},
 		},
