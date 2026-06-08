@@ -314,6 +314,14 @@ func (s *Shogunate) Stop() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	// Close the runner — stops and removes any sandbox containers
+	if s.runner != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.runner.Close(ctx); err != nil {
+			s.logger.Warn("runner close failed", "error", err)
+		}
+	}
 	s.logger.Info("shogunate stopped")
 	return nil
 }

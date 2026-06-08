@@ -101,7 +101,7 @@
             Focus on minimal, targeted changes. Don't build or test the project.
           on_failure: retry
           then:
-            - the ling is completed
+            - record the ling completed
 
     - name: judging
       minister: judge
@@ -347,6 +347,8 @@
 
         Report which files were customized. If the only remaining task is to build the
         sandbox, finish and it will be built automatically.
+        REMEMBER: You are running without a sandbox so minimize shell command as they
+        require ruller approval.
       then:
         - build the sandbox
         - the sandbox is ready
