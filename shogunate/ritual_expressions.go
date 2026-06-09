@@ -590,6 +590,15 @@ func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 		r.logger.Warn("just build-sandbox failed", "exit_code", output.ExitCode, "output", output.Output)
 		return nil, fmt.Errorf("just build-sandbox exited with code %s:\n%s", output.ExitCode, output.Output)
 	}
+
+	// Stop and remove the old container so verifySandboxReady creates a fresh
+	// one from the rebuilt image.
+	if r.runner != nil {
+		if closeErr := r.runner.Close(ctx); closeErr != nil {
+			r.logger.Warn("failed to close old sandbox container after rebuild", "error", closeErr)
+		}
+	}
+
 	return map[string]string{"status": "built", "output": output.Output}, nil
 }
 

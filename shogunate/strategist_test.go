@@ -95,6 +95,69 @@ func TestStrategist_ZhengmingRoutesToChancellor(t *testing.T) {
 	assert.NotNil(t, zhengmingTool.Requester, "Requester must be set")
 }
 
+// TestStrategist_InsertLingTool_DescriptionMentionsFullLingID verifies that
+// InsertLingTool.Description() explicitly instructs the LLM to use full ling IDs
+// and to avoid shorthand aliases. This prevents the DAG resolver from failing
+// when the strategist invents abbreviated dependency references.
+func TestStrategist_InsertLingTool_DescriptionMentionsFullLingID(t *testing.T) {
+	tool := &InsertLingTool{}
+
+	desc := tool.Description()
+
+	// Must mention "FULL ling IDs" to emphasize the constraint
+	assert.Contains(t, desc, "FULL ling IDs",
+		"Description must emphasize FULL ling IDs to prevent shorthand usage")
+
+	// Must include an example of a real ling_id format so the LLM knows what to expect
+	assert.Contains(t, desc, "'74183c66ba0507ba'",
+		"Description must include a concrete full ling_id example")
+
+	// Must explicitly forbid shorthand aliases
+	assert.Contains(t, desc, "never use shorthand",
+		"Description must warn against shorthand aliases")
+}
+
+// TestStrategist_InsertLingTool_ParameterSchemaWarnsAboutShorthand verifies that
+// the dependencies parameter in ParameterSchema explicitly warns against
+// shorthand aliases and instructs use of full ling IDs.
+func TestStrategist_InsertLingTool_ParameterSchemaWarnsAboutShorthand(t *testing.T) {
+	tool := &InsertLingTool{}
+
+	schema := tool.ParameterSchema()
+
+	props := schema["properties"].(map[string]any)
+	deps := props["dependencies"].(map[string]any)
+	desc := deps["description"].(string)
+
+	// Must mention "FULL ling IDs" to emphasize the constraint
+	assert.Contains(t, desc, "FULL ling IDs",
+		"ParameterSchema dependencies description must emphasize FULL ling IDs")
+
+	// Must include a concrete example
+	assert.Contains(t, desc, "'74183c66ba0507ba'",
+		"ParameterSchema dependencies description must include a concrete full ling_id example")
+
+	// Must warn against shorthand aliases
+	assert.Contains(t, desc, "never invent shorthand",
+		"ParameterSchema dependencies description must warn against inventing shorthand aliases")
+}
+
+// TestStrategist_StrategistRoleMentionsFullLingID verifies that the StrategistRole
+// system prompt includes the critical rule about using exact ling_id values.
+func TestStrategist_StrategistRoleMentionsFullLingID(t *testing.T) {
+	// Must mention the rule about exact ling_id values
+	assert.Contains(t, StrategistRole, "exact ling_id",
+		"StrategistRole must instruct use of exact ling_id values for dependencies")
+
+	// Must include an example of a real ling_id format
+	assert.Contains(t, StrategistRole, "'74183c66ba0507ba'",
+		"StrategistRole must include a concrete full ling_id example")
+
+	// Must warn against shorthand
+	assert.Contains(t, StrategistRole, "Never use shorthand",
+		"StrategistRole must warn against shorthand dependency references")
+}
+
 // TestCastleSiege_StrategistTaskCarriesContext verifies the ritual builds
 // the correct Work prompt before dispatching to the strategist.
 func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {

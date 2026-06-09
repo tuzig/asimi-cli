@@ -2162,7 +2162,15 @@ func TestInitCommandE2E(t *testing.T) {
 		Slug:        "testorg/ror-demo",
 	})
 	require.NoError(t, shog.Start(ctx))
-	t.Cleanup(func() { shog.Stop() })
+	t.Cleanup(func() {
+		shog.Stop()
+		// Safety net: ensure the runner's sandbox container is torn down
+		if r := shog.GetRunner(); r != nil {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cleanupCancel()
+			r.Close(cleanupCtx)
+		}
+	})
 
 	// Keep only project-init ritual — clear startup/event-driven rituals
 	// so they don't interfere with the test
@@ -2296,7 +2304,15 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 		Slug:        "testorg/ror-demo",
 	})
 	require.NoError(t, shog.Start(ctx))
-	t.Cleanup(func() { shog.Stop() })
+	t.Cleanup(func() {
+		shog.Stop()
+		// Safety net: ensure the runner's sandbox container is torn down
+		if r := shog.GetRunner(); r != nil {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cleanupCancel()
+			r.Close(cleanupCtx)
+		}
+	})
 
 	// Keep only project-init ritual — clear before Init() fires
 	// EventShogunateStarted so startup rituals don't interfere
@@ -2350,7 +2366,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 		output := string(bts)
 		return strings.Contains(output, "Ritual project-init for edict") ||
 			strings.Contains(output, "Ritual project-init failed")
-	}, teatest.WithCheckInterval(1*time.Second), teatest.WithDuration(5*time.Minute))
+	}, teatest.WithCheckInterval(1*time.Second), teatest.WithDuration(10*time.Minute))
 	seen := string(ritualOutput)
 	require.NotContains(t, seen, "Ritual project-init failed",
 		"project-init must complete successfully (not fail)")

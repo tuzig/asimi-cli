@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1108,7 +1109,9 @@ type ritualTestMinister struct {
 	tasksCh   chan *Task
 	result    string
 	err       error
+	delay     time.Duration // optional delay before completing each task (for race-condition testing)
 	callCount int
+	callLog   []string // ordered list of Work strings received, for verifying dispatch order
 	mu        sync.Mutex
 }
 
@@ -1127,7 +1130,16 @@ func (m *ritualTestMinister) Run(ctx context.Context) {
 		case t := <-m.tasksCh:
 			m.mu.Lock()
 			m.callCount++
+			m.callLog = append(m.callLog, t.Work)
 			m.mu.Unlock()
+			if m.delay > 0 {
+				select {
+				case <-time.After(m.delay):
+				case <-ctx.Done():
+					t.Done <- Result{Output: m.result, Err: ctx.Err()}
+					return
+				}
+			}
 			t.Done <- Result{Output: m.result, Err: m.err}
 		}
 	}
@@ -1136,6 +1148,14 @@ func (m *ritualTestMinister) getCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.callCount
+}
+
+func (m *ritualTestMinister) getCallLog() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]string, len(m.callLog))
+	copy(cp, m.callLog)
+	return cp
 }
 
 // newRitualTestShogunate creates a Shogunate with mock ministers for ritual tests.
@@ -1242,7 +1262,7 @@ func setupRitualTestDB(t *testing.T) *gorm.DB {
 	}
 
 	// Migrate ritual tables
-	err = db.AutoMigrate(&RitualExecution{}, &RitualStepState{}, &storage.TianEvent{}, &storage.ForgeManifest{})
+	err = db.AutoMigrate(&RitualExecution{}, &RitualStepState{}, &storage.TianEvent{}, &storage.ForgeManifest{}, &storage.Ling{})
 	if err != nil {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
@@ -2382,4 +2402,780 @@ func TestCastleSiegeJudgementStepHasVerdictCheck(t *testing.T) {
 		t.Errorf("castle-siege judgement: third then step should be 'record the judge's seal', got %q",
 			judgingStep.Then[2])
 	}
+}
+
+func TestBuildDependencyMap(t *testing.T) {
+	tests := []struct {
+		name     string
+		units    []interface{}
+		wantIDs  []string
+		wantDeps [][]string
+	}{
+		{
+			name:     "empty list",
+			units:    []interface{}{},
+			wantIDs:  nil,
+			wantDeps: nil,
+		},
+		{
+			name: "items without dependencies",
+			units: []interface{}{
+				map[string]interface{}{"ling_id": "l1", "description": "task 1"},
+				map[string]interface{}{"ling_id": "l2", "description": "task 2"},
+			},
+			wantIDs:  []string{"l1", "l2"},
+			wantDeps: [][]string{{}, {}},
+		},
+		{
+			name: "items with dependencies",
+			units: []interface{}{
+				map[string]interface{}{"ling_id": "l1", "description": "task 1"},
+				map[string]interface{}{"ling_id": "l2", "description": "task 2", "dependencies": []string{"l1"}},
+				map[string]interface{}{"ling_id": "l3", "description": "task 3", "dependencies": []string{"l1", "l2"}},
+			},
+			wantIDs:  []string{"l1", "l2", "l3"},
+			wantDeps: [][]string{{}, {"l1"}, {"l1", "l2"}},
+		},
+		{
+			name: "non-map items get auto-generated IDs",
+			units: []interface{}{
+				"simple-string",
+				42,
+			},
+			wantIDs:  []string{"_fork_0", "_fork_1"},
+			wantDeps: [][]string{{}, {}},
+		},
+		{
+			name: "mixed ling and non-ling items",
+			units: []interface{}{
+				map[string]interface{}{"ling_id": "l1"},
+				map[string]interface{}{"file": "a.go"},
+			},
+			wantIDs:  []string{"l1", "_fork_1"},
+			wantDeps: [][]string{{}, {}},
+		},
+		{
+			name: "dependencies as []interface{}",
+			units: []interface{}{
+				map[string]interface{}{"ling_id": "l1"},
+				map[string]interface{}{"ling_id": "l2", "dependencies": []interface{}{"l1"}},
+			},
+			wantIDs:  []string{"l1", "l2"},
+			wantDeps: [][]string{{}, {"l1"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildDependencyMap(tt.units)
+			if len(result) != len(tt.wantIDs) {
+				t.Fatalf("expected %d units, got %d", len(tt.wantIDs), len(result))
+			}
+			for i, u := range result {
+				if u.ID != tt.wantIDs[i] {
+					t.Errorf("unit[%d].ID = %q, want %q", i, u.ID, tt.wantIDs[i])
+				}
+				if len(u.DepIDs) != len(tt.wantDeps[i]) {
+					t.Errorf("unit[%d].DepIDs = %v, want %v", i, u.DepIDs, tt.wantDeps[i])
+					continue
+				}
+				for j, dep := range u.DepIDs {
+					if dep != tt.wantDeps[i][j] {
+						t.Errorf("unit[%d].DepIDs[%d] = %q, want %q", i, j, dep, tt.wantDeps[i][j])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSeedReadyQueue(t *testing.T) {
+	units := buildDependencyMap([]interface{}{
+		map[string]interface{}{"ling_id": "l1", "description": "task 1"},
+		map[string]interface{}{"ling_id": "l2", "description": "task 2", "dependencies": []string{"l1"}},
+		map[string]interface{}{"ling_id": "l3", "description": "task 3", "dependencies": []string{"l1", "l2"}},
+		map[string]interface{}{"ling_id": "l4", "description": "task 4", "dependencies": []string{"l2"}},
+	})
+
+	// Initially, only l1 has no deps → ready
+	done := map[string]bool{}
+	ready := seedReadyQueue(units, done)
+	if len(ready) != 1 || ready[0] != 0 {
+		t.Errorf("expected ready = [0], got %v", ready)
+	}
+
+	// After l1 completes, l2 becomes ready (its only dep is l1)
+	done["l1"] = true
+	ready = seedReadyQueue(units, done)
+	if len(ready) != 1 || ready[0] != 1 {
+		t.Errorf("expected ready = [1], got %v", ready)
+	}
+
+	// After l1 and l2 complete, l3 and l4 become ready
+	done["l2"] = true
+	ready = seedReadyQueue(units, done)
+	if len(ready) != 2 {
+		t.Errorf("expected 2 ready items, got %d: %v", len(ready), ready)
+	}
+	// Both l3 (idx=2) and l4 (idx=3) should be ready
+	readySet := map[int]bool{}
+	for _, idx := range ready {
+		readySet[idx] = true
+	}
+	if !readySet[2] || !readySet[3] {
+		t.Errorf("expected indices 2 and 3 to be ready, got %v", ready)
+	}
+
+	// After all done, nothing is ready
+	done["l3"] = true
+	done["l4"] = true
+	ready = seedReadyQueue(units, done)
+	if len(ready) != 0 {
+		t.Errorf("expected 0 ready items, got %d", len(ready))
+	}
+}
+
+func TestSeedReadyQueue_NoDeps(t *testing.T) {
+	// Items without dependencies should all be immediately ready
+	units := buildDependencyMap([]interface{}{
+		map[string]interface{}{"file": "a.go", "errors": []string{"err1"}},
+		map[string]interface{}{"file": "b.go", "errors": []string{"err2"}},
+	})
+
+	done := map[string]bool{}
+	ready := seedReadyQueue(units, done)
+	if len(ready) != 2 {
+		t.Errorf("expected 2 ready items (no deps), got %d", len(ready))
+	}
+}
+
+func TestExecuteForkDAG_NoDeps(t *testing.T) {
+	// Non-DAG items (no dependencies) should all be dispatched immediately
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+
+	ritual := &RitualDef{
+		Name: "fork-no-deps",
+		Steps: []RitualStep{
+			{
+				Name: "fork-step",
+				Fork: &ForkDef{Over: "items", BatchSize: 3},
+				Work: []RitualStep{
+					{Name: "work", Minister: "forge", Act: "do work on {{ .item.file }}"},
+				},
+			},
+		},
+	}
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "done\n", nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		ID:          "test-exec",
+		RitualName:  "fork-no-deps",
+		EdictID:     1,
+		Username:    "testuser",
+		Project:     "testproject",
+		Data:        storage.JSON{"items": []interface{}{map[string]interface{}{"file": "a.go"}, map[string]interface{}{"file": "b.go"}}},
+		def:         ritual,
+		stepStates:  []RitualStepState{{Name: "fork-step"}},
+	}
+
+	step := ritual.Steps[0]
+	workUnits, err := runner.getForkWorkUnits(exec, "items")
+	if err != nil {
+		t.Fatalf("getForkWorkUnits error: %v", err)
+	}
+
+	results, err := runner.executeForkDAG(context.Background(), exec, step, workUnits, 3)
+	if err != nil {
+		t.Fatalf("executeForkDAG error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(results))
+	}
+}
+
+func TestExecuteForkDAG_WithDeps(t *testing.T) {
+	// Create a DAG where l2 depends on l1, so l1 must complete before l2 runs
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+
+	// Create lings in the DB so the DAG executor can query their statuses
+	l1 := storage.Ling{
+		LingID:   "l1",
+		EdictID:  1,
+		Username:  "testuser",
+		Project:  "testproject",
+		Status:   storage.LingPending,
+	}
+	if err := db.Create(&l1).Error; err != nil {
+		t.Fatalf("create l1: %v", err)
+	}
+	l2 := storage.Ling{
+		LingID:       "l2",
+		EdictID:      1,
+		Username:     "testuser",
+		Project:      "testproject",
+		Status:       storage.LingPending,
+		Dependencies: storage.StringArray{"l1"},
+	}
+	if err := db.Create(&l2).Error; err != nil {
+		t.Fatalf("create l2: %v", err)
+	}
+
+	// Ritual with fork over lings
+	ritual := &RitualDef{
+		Name: "fork-with-deps",
+		Steps: []RitualStep{
+			{
+				Name: "fork-step",
+				Fork: &ForkDef{Over: "lings", BatchSize: 1},
+				Work: []RitualStep{
+					{Name: "work", Minister: "forge", Act: "implement {{ .item.description }}", Then: []string{"record the ling completed"}},
+				},
+			},
+		},
+	}
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "done\n", nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, slog.Default(), repo.RepoInfo{})
+
+	// Build work units like getLings would return
+	workUnits := []interface{}{
+		map[string]interface{}{
+			"ling_id":      "l1",
+			"edict_id":     float64(1),
+			"description":  "task 1",
+			"dependencies":  storage.StringArray{},
+			"status":       "pending",
+		},
+		map[string]interface{}{
+			"ling_id":      "l2",
+			"edict_id":     float64(1),
+			"description":  "task 2",
+			"dependencies":  storage.StringArray{"l1"},
+			"status":       "pending",
+		},
+	}
+
+	exec := &RitualExecution{
+		ID:          "test-exec",
+		RitualName:  "fork-with-deps",
+		EdictID:     1,
+		Username:    "testuser",
+		Project:     "testproject",
+		Data:        storage.JSON{"lings": workUnits},
+		def:         ritual,
+		stepStates:  []RitualStepState{{Name: "fork-step"}},
+	}
+
+	// The DAG executor needs the "record the ling completed" then step to
+	// mark lings as done. Since our test minister just returns "done",
+	// the then step will run and mark l1 as done, which unlocks l2.
+
+	step := ritual.Steps[0]
+	results, err := runner.executeForkDAG(context.Background(), exec, step, workUnits, 1)
+	if err != nil {
+		t.Fatalf("executeForkDAG error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(results))
+	}
+
+	// Verify both lings are now marked as done in the DB
+	var lings []storage.Ling
+	db.Where("edict_id = ? AND username = ? AND project = ?", 1, "testuser", "testproject").Find(&lings)
+	for _, l := range lings {
+		if l.Status != storage.LingDone {
+			t.Errorf("ling %s status = %q, want %q", l.LingID, l.Status, storage.LingDone)
+		}
+	}
+}
+
+func TestExecuteForkDAG_StuckItems(t *testing.T) {
+	// If deps can never be satisfied (missing dep), executor should return an error
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+
+	ritual := &RitualDef{
+		Name: "fork-stuck",
+		Steps: []RitualStep{
+			{
+				Name: "fork-step",
+				Fork: &ForkDef{Over: "lings", BatchSize: 1},
+				Work: []RitualStep{
+					{Name: "work", Minister: "forge", Act: "do work"},
+				},
+			},
+		},
+	}
+	registry.Register(ritual)
+
+	// l2 depends on "missing_ling" which doesn't exist — can never be satisfied
+	// Create l2 in DB
+	l2 := storage.Ling{
+		LingID:       "l2",
+		EdictID:      1,
+		Username:     "testuser",
+		Project:      "testproject",
+		Status:       storage.LingPending,
+		Dependencies: storage.StringArray{"missing_ling"},
+	}
+	if err := db.Create(&l2).Error; err != nil {
+		t.Fatalf("create l2: %v", err)
+	}
+
+	shogunate := newRitualTestShogunate(t, "done\n", nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, slog.Default(), repo.RepoInfo{})
+
+	workUnits := []interface{}{
+		map[string]interface{}{
+			"ling_id":      "l2",
+			"description":  "task 2",
+			"dependencies":  storage.StringArray{"missing_ling"},
+			"status":       "pending",
+		},
+	}
+
+	exec := &RitualExecution{
+		ID:          "test-exec",
+		RitualName:  "fork-stuck",
+		EdictID:     1,
+		Username:    "testuser",
+		Project:     "testproject",
+		Data:        storage.JSON{},
+		def:         ritual,
+		stepStates:  []RitualStepState{{Name: "fork-step"}},
+	}
+
+	step := ritual.Steps[0]
+	_, err := runner.executeForkDAG(context.Background(), exec, step, workUnits, 1)
+	if err == nil {
+		t.Fatal("expected error for stuck items, got nil")
+	}
+	if !strings.Contains(err.Error(), "stuck") {
+		t.Errorf("expected 'stuck' in error, got %q", err.Error())
+	}
+}
+
+func TestExecuteForkDAG_ContextCancellation(t *testing.T) {
+	// If context is cancelled during execution, executor should return early
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+
+	ritual := &RitualDef{
+		Name: "fork-cancel",
+		Steps: []RitualStep{
+			{
+				Name: "fork-step",
+				Fork: &ForkDef{Over: "items", BatchSize: 1},
+				Work: []RitualStep{
+					{Name: "work", Minister: "forge", Act: "do work"},
+				},
+			},
+		},
+	}
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "done\n", nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, slog.Default(), repo.RepoInfo{})
+
+	// Use a context that we cancel after a brief delay — this simulates
+	// cancellation happening during a long-running fork execution.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	exec := &RitualExecution{
+		ID:          "test-exec",
+		RitualName:  "fork-cancel",
+		EdictID:     1,
+		Username:    "testuser",
+		Project:     "testproject",
+		Data:        storage.JSON{"items": []interface{}{map[string]interface{}{"file": "a.go"}}},
+		def:         ritual,
+		stepStates:  []RitualStepState{{Name: "fork-step"}},
+	}
+
+	step := ritual.Steps[0]
+	workUnits := []interface{}{map[string]interface{}{"file": "a.go"}}
+
+	// Cancel after a short delay so the executor can start dispatching
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := runner.executeForkDAG(ctx, exec, step, workUnits, 1)
+	// With pre-cancelled context, the executor may complete the single item
+	// before noticing the cancellation. Either outcome is acceptable.
+	if err != nil && !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled or nil, got: %v", err)
+	}
+}
+
+func TestExecuteForkDAG_CastleSiegeThenStep(t *testing.T) {
+	// Verify that the castle-siege ritual uses "record the ling completed"
+	// (not the old "the ling is completed")
+	rituals, err := LoadEmbeddedRituals()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedRituals() error = %v", err)
+	}
+
+	var castleSiege *RitualDef
+	for _, r := range rituals {
+		if r.Name == "castle-siege" {
+			castleSiege = r
+			break
+		}
+	}
+	if castleSiege == nil {
+		t.Fatal("castle-siege ritual not found")
+	}
+
+	// Find the implementing fork step
+	var forkStep *RitualStep
+	for i := range castleSiege.Steps {
+		if castleSiege.Steps[i].Fork != nil {
+			forkStep = &castleSiege.Steps[i]
+			break
+		}
+	}
+	if forkStep == nil {
+		t.Fatal("castle-siege: fork step not found")
+	}
+
+	// Verify the work step has the correct then step
+	for _, workStep := range forkStep.Work {
+		for _, then := range workStep.Then {
+			if then == "record the ling completed" {
+				return // found the correct then step
+			}
+			if then == "the ling is completed" {
+				t.Error("castle-siege still uses old 'the ling is completed' — should be 'record the ling completed'")
+			}
+		}
+	}
+}
+
+func TestExecuteForkDAG_DispatchOrder_LinearDeps(t *testing.T) {
+	// l2 depends on l1, l3 depends on l2 — all must run in strict order.
+	// Uses batchSize=1 to force sequential execution.
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+
+	// Create lings in the DB
+	for _, l := range []storage.Ling{
+		{LingID: "l1", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending},
+		{LingID: "l2", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending, Dependencies: storage.StringArray{"l1"}},
+		{LingID: "l3", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending, Dependencies: storage.StringArray{"l2"}},
+	} {
+		if err := db.Create(&l).Error; err != nil {
+			t.Fatalf("create %s: %v", l.LingID, err)
+		}
+	}
+
+	ritual := &RitualDef{
+		Name: "fork-linear-order",
+		Steps: []RitualStep{
+			{
+				Name: "fork-step",
+				Fork: &ForkDef{Over: "lings", BatchSize: 1},
+				Work: []RitualStep{
+					{Name: "work", Minister: "forge", Act: "implement {{ .item.description }}", Then: []string{"record the ling completed"}},
+				},
+			},
+		},
+	}
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "done\n", nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, slog.Default(), repo.RepoInfo{})
+
+	workUnits := []interface{}{
+		map[string]interface{}{
+			"ling_id": "l1", "edict_id": float64(1), "description": "task 1",
+			"dependencies": storage.StringArray{}, "status": "pending",
+		},
+		map[string]interface{}{
+			"ling_id": "l2", "edict_id": float64(1), "description": "task 2",
+			"dependencies": storage.StringArray{"l1"}, "status": "pending",
+		},
+		map[string]interface{}{
+			"ling_id": "l3", "edict_id": float64(1), "description": "task 3",
+			"dependencies": storage.StringArray{"l2"}, "status": "pending",
+		},
+	}
+
+	exec := &RitualExecution{
+		ID: "test-exec", RitualName: "fork-linear-order", EdictID: 1,
+		Username: "testuser", Project: "testproject",
+		Data:       storage.JSON{"lings": workUnits},
+		def:        ritual,
+		stepStates: []RitualStepState{{Name: "fork-step"}},
+	}
+
+	results, err := runner.executeForkDAG(context.Background(), exec, ritual.Steps[0], workUnits, 1)
+	if err != nil {
+		t.Fatalf("executeForkDAG error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	// Verify all lings are done
+	var lings []storage.Ling
+	db.Where("edict_id = ? AND username = ? AND project = ?", 1, "testuser", "testproject").Find(&lings)
+	for _, l := range lings {
+		if l.Status != storage.LingDone {
+			t.Errorf("ling %s status = %q, want %q", l.LingID, l.Status, storage.LingDone)
+		}
+	}
+
+	// Verify dispatch order: l1 before l2 before l3
+	forgeMinister := shogunate.ministers["forge"].(*ritualTestMinister)
+	callLog := forgeMinister.getCallLog()
+	if len(callLog) != 3 {
+		t.Fatalf("expected 3 calls, got %d: %v", len(callLog), callLog)
+	}
+	if !strings.Contains(callLog[0], "task 1") {
+		t.Errorf("first dispatch should be task 1, got %q", callLog[0])
+	}
+	if !strings.Contains(callLog[1], "task 2") {
+		t.Errorf("second dispatch should be task 2, got %q", callLog[1])
+	}
+	if !strings.Contains(callLog[2], "task 3") {
+		t.Errorf("third dispatch should be task 3, got %q", callLog[2])
+	}
+}
+
+func TestExecuteForkDAG_DispatchOrder_DiamondDeps(t *testing.T) {
+	// Diamond DAG: A→B, A→C, B→D, C→D
+	// A must run first, then B and C can run in parallel, then D last.
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+
+	for _, l := range []storage.Ling{
+		{LingID: "a", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending},
+		{LingID: "b", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending, Dependencies: storage.StringArray{"a"}},
+		{LingID: "c", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending, Dependencies: storage.StringArray{"a"}},
+		{LingID: "d", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending, Dependencies: storage.StringArray{"b", "c"}},
+	} {
+		if err := db.Create(&l).Error; err != nil {
+			t.Fatalf("create %s: %v", l.LingID, err)
+		}
+	}
+
+	ritual := &RitualDef{
+		Name: "fork-diamond",
+		Steps: []RitualStep{
+			{
+				Name: "fork-step",
+				Fork: &ForkDef{Over: "lings", BatchSize: 2}, // allow B and C to run in parallel
+				Work: []RitualStep{
+					{Name: "work", Minister: "forge", Act: "implement {{ .item.description }}", Then: []string{"record the ling completed"}},
+				},
+			},
+		},
+	}
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "done\n", nil)
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, slog.Default(), repo.RepoInfo{})
+
+	workUnits := []interface{}{
+		map[string]interface{}{
+			"ling_id": "a", "edict_id": float64(1), "description": "task A",
+			"dependencies": storage.StringArray{}, "status": "pending",
+		},
+		map[string]interface{}{
+			"ling_id": "b", "edict_id": float64(1), "description": "task B",
+			"dependencies": storage.StringArray{"a"}, "status": "pending",
+		},
+		map[string]interface{}{
+			"ling_id": "c", "edict_id": float64(1), "description": "task C",
+			"dependencies": storage.StringArray{"a"}, "status": "pending",
+		},
+		map[string]interface{}{
+			"ling_id": "d", "edict_id": float64(1), "description": "task D",
+			"dependencies": storage.StringArray{"b", "c"}, "status": "pending",
+		},
+	}
+
+	exec := &RitualExecution{
+		ID: "test-exec", RitualName: "fork-diamond", EdictID: 1,
+		Username: "testuser", Project: "testproject",
+		Data:       storage.JSON{"lings": workUnits},
+		def:        ritual,
+		stepStates: []RitualStepState{{Name: "fork-step"}},
+	}
+
+	results, err := runner.executeForkDAG(context.Background(), exec, ritual.Steps[0], workUnits, 2)
+	if err != nil {
+		t.Fatalf("executeForkDAG error: %v", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("expected 4 results, got %d", len(results))
+	}
+
+	forgeMinister := shogunate.ministers["forge"].(*ritualTestMinister)
+	callLog := forgeMinister.getCallLog()
+	if len(callLog) != 4 {
+		t.Fatalf("expected 4 calls, got %d: %v", len(callLog), callLog)
+	}
+
+	// A must be first
+	if !strings.Contains(callLog[0], "task A") {
+		t.Errorf("first dispatch should be task A, got %q", callLog[0])
+	}
+
+	// B and C must both come before D. Their relative order can vary
+	// since they are dispatched concurrently when batchSize=2.
+	idxB, idxC, idxD := -1, -1, -1
+	for i, call := range callLog {
+		if strings.Contains(call, "task B") {
+			idxB = i
+		}
+		if strings.Contains(call, "task C") {
+			idxC = i
+		}
+		if strings.Contains(call, "task D") {
+			idxD = i
+		}
+	}
+	if idxB < 0 {
+		t.Fatal("task B not found in call log")
+	}
+	if idxC < 0 {
+		t.Fatal("task C not found in call log")
+	}
+	if idxD < 0 {
+		t.Fatal("task D not found in call log")
+	}
+
+	if idxB > idxD {
+		t.Errorf("task B (idx %d) dispatched after task D (idx %d) — violates DAG order", idxB, idxD)
+	}
+	if idxC > idxD {
+		t.Errorf("task C (idx %d) dispatched after task D (idx %d) — violates DAG order", idxC, idxD)
+	}
+	if idxB < 1 {
+		t.Errorf("task B (idx %d) dispatched before task A completed — violates DAG order", idxB)
+	}
+	if idxC < 1 {
+		t.Errorf("task C (idx %d) dispatched before task A completed — violates DAG order", idxC)
+	}
+}
+
+func TestExecuteForkDAG_NoEarlyDispatch(t *testing.T) {
+	// Adversarial test: l2 depends on l1. Even with batchSize=1,
+	// verify l2 is NEVER dispatched until l1 completes.
+	// We use a slow minister for l1 to widen the race window.
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+
+	for _, l := range []storage.Ling{
+		{LingID: "l1", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending},
+		{LingID: "l2", EdictID: 1, Username: "testuser", Project: "testproject", Status: storage.LingPending, Dependencies: storage.StringArray{"l1"}},
+	} {
+		if err := db.Create(&l).Error; err != nil {
+			t.Fatalf("create %s: %v", l.LingID, err)
+		}
+	}
+
+	ritual := &RitualDef{
+		Name: "fork-no-early",
+		Steps: []RitualStep{
+			{
+				Name: "fork-step",
+				Fork: &ForkDef{Over: "lings", BatchSize: 1},
+				Work: []RitualStep{
+					{Name: "work", Minister: "forge", Act: "implement {{ .item.description }}", Then: []string{"record the ling completed"}},
+				},
+			},
+		},
+	}
+	registry.Register(ritual)
+
+	// Use a slow minister: adds 50ms delay before completing each task.
+	// This widens the race window so any premature dispatch of l2 would be caught.
+	slowMinister := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 1),
+		result:       "done\n",
+		delay:        50 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go slowMinister.Run(ctx)
+
+	ministers := map[string]Minister{}
+	for _, id := range []string{"judge", "sage", "strategist", "chancellor", "marshal"} {
+		m := &ritualTestMinister{
+			MinisterBase: MinisterBase{logger: slog.Default()},
+			id:           id,
+			tasksCh:      make(chan *Task, 1),
+			result:       "done\n",
+		}
+		ministers[id] = m
+		go m.Run(ctx)
+	}
+	ministers["forge"] = slowMinister
+
+	shogunate := &Shogunate{
+		ministers: ministers,
+		logger:    slog.Default(),
+	}
+	base := &MinisterBase{logger: slog.Default()}
+	shogunate.ritualGuard = NewRitualGuard(RitualGuardOpts{
+		Base:        base,
+		GetMinister: shogunate.GetMinister,
+	})
+
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, slog.Default(), repo.RepoInfo{})
+
+	workUnits := []interface{}{
+		map[string]interface{}{
+			"ling_id": "l1", "edict_id": float64(1), "description": "task 1",
+			"dependencies": storage.StringArray{}, "status": "pending",
+		},
+		map[string]interface{}{
+			"ling_id": "l2", "edict_id": float64(1), "description": "task 2",
+			"dependencies": storage.StringArray{"l1"}, "status": "pending",
+		},
+	}
+
+	exec := &RitualExecution{
+		ID: "test-exec", RitualName: "fork-no-early", EdictID: 1,
+		Username: "testuser", Project: "testproject",
+		Data:       storage.JSON{"lings": workUnits},
+		def:        ritual,
+		stepStates: []RitualStepState{{Name: "fork-step"}},
+	}
+
+	results, err := runner.executeForkDAG(context.Background(), exec, ritual.Steps[0], workUnits, 1)
+	if err != nil {
+		t.Fatalf("executeForkDAG error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	callLog := slowMinister.getCallLog()
+	if len(callLog) != 2 {
+		t.Fatalf("expected 2 calls, got %d: %v", len(callLog), callLog)
+	}
+	if !strings.Contains(callLog[0], "task 1") {
+		t.Errorf("first dispatch should be task 1, got %q", callLog[0])
+	}
+	if !strings.Contains(callLog[1], "task 2") {
+		t.Errorf("second dispatch should be task 2, got %q", callLog[1])
+	}
+
+	// The critical invariant: l2 was dispatched AFTER l1 completed.
+	// Since l1 takes 50ms, any premature l2 dispatch would appear as
+	// callLog[0] containing "task 2" — but we already verified
+	// callLog[0] is task 1 and callLog[1] is task 2 above.
 }

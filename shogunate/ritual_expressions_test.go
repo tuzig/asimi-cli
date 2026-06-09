@@ -2,6 +2,7 @@ package shogunate
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1012,4 +1013,84 @@ func TestForkWithGiven_LoadsLingsBeforeFork(t *testing.T) {
 	out, ok := forkData["out"].([]ForkResult)
 	require.True(t, ok, "expected fork out results")
 	assert.Len(t, out, 2, "both lings should be processed")
+}
+
+// closeTrackingRunner wraps a mockCmdRunner and records whether Close was called.
+type closeTrackingRunner struct {
+	mockCmdRunner
+	closeCalled bool
+	closeErr   error
+}
+
+func (r *closeTrackingRunner) Close(ctx context.Context) error {
+	r.closeCalled = true
+	return r.closeErr
+}
+
+func TestBuildSandbox_ClosesOldRunner(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	// Create a Justfile with a no-op build-sandbox so `just build-sandbox` succeeds.
+	justfile := `build-sandbox:
+	@echo "ok"`
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "Justfile"), []byte(justfile), 0o644))
+
+	registry := NewRitualRegistry()
+	mockRunner := &closeTrackingRunner{}
+	runner := NewRitualRunner(registry, nil, nil, nil, mockRunner, slog.Default(), repo.RepoInfo{
+		ProjectRoot: projectRoot,
+	})
+
+	result, err := runner.buildSandbox(context.Background())
+	require.NoError(t, err)
+
+	resultMap := result.(map[string]string)
+	assert.Equal(t, "built", resultMap["status"])
+
+	// The old runner must be closed after a successful build so that
+	// verifySandboxReady creates a fresh container from the new image.
+	assert.True(t, mockRunner.closeCalled, "buildSandbox should call Close on the old runner after successful build")
+}
+
+func TestBuildSandbox_ClosesOldRunnerEvenOnCloseError(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	justfile := `build-sandbox:
+	@echo "ok"`
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "Justfile"), []byte(justfile), 0o644))
+
+	registry := NewRitualRegistry()
+	mockRunner := &closeTrackingRunner{
+		closeErr: fmt.Errorf("container stop failed"),
+	}
+	runner := NewRitualRunner(registry, nil, nil, nil, mockRunner, slog.Default(), repo.RepoInfo{
+		ProjectRoot: projectRoot,
+	})
+
+	result, err := runner.buildSandbox(context.Background())
+	require.NoError(t, err, "buildSandbox should not fail when Close returns an error")
+
+	resultMap := result.(map[string]string)
+	assert.Equal(t, "built", resultMap["status"])
+	assert.True(t, mockRunner.closeCalled, "Close should still be called even if it errors")
+}
+
+func TestBuildSandbox_NilRunner(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	justfile := `build-sandbox:
+	@echo "ok"`
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "Justfile"), []byte(justfile), 0o644))
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, slog.Default(), repo.RepoInfo{
+		ProjectRoot: projectRoot,
+	})
+
+	// Should not panic when r.runner is nil
+	result, err := runner.buildSandbox(context.Background())
+	require.NoError(t, err)
+
+	resultMap := result.(map[string]string)
+	assert.Equal(t, "built", resultMap["status"])
 }
