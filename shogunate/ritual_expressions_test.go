@@ -561,6 +561,156 @@ func TestCheckVerdictsPassed_FailedVerdict(t *testing.T) {
 	}
 }
 
+// TestCheckPrecedentsApproved_AllApproved verifies the handler passes when all precedents are approved
+func TestCheckPrecedentsApproved_AllApproved(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Ensure CensorPrecedent table exists
+	if err := db.AutoMigrate(&storage.CensorPrecedent{}); err != nil {
+		t.Fatalf("Failed to migrate CensorPrecedent: %v", err)
+	}
+
+	// Create a manifest and an approved precedent
+	manifest := storage.ForgeManifest{
+		ManifestID: GenerateID("manifest", "1", "test", "file.go"),
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		FilePath:   "file.go",
+		Status:     storage.ManifestLive,
+	}
+	if err := db.Create(&manifest).Error; err != nil {
+		t.Fatalf("Failed to create manifest: %v", err)
+	}
+
+	precedent := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "1", "test", "file.go"),
+		ManifestID:  manifest.ManifestID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "style",
+		Ruling:      storage.PrecedentApproved,
+	}
+	if err := db.Create(&precedent).Error; err != nil {
+		t.Fatalf("Failed to create precedent: %v", err)
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_precedents_approved")
+	if err != nil {
+		t.Errorf("Expected no error when all precedents approved, got: %v", err)
+	}
+}
+
+// TestCheckPrecedentsApproved_SomeRejected verifies the handler fails when any precedent is rejected
+func TestCheckPrecedentsApproved_SomeRejected(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Ensure CensorPrecedent table exists
+	if err := db.AutoMigrate(&storage.CensorPrecedent{}); err != nil {
+		t.Fatalf("Failed to migrate CensorPrecedent: %v", err)
+	}
+
+	// Create two manifests — one with approved precedent, one with rejected
+	goodManifest := storage.ForgeManifest{
+		ManifestID: GenerateID("manifest", "1", "test", "good.go"),
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		FilePath:   "good.go",
+		Status:     storage.ManifestLive,
+	}
+	badManifest := storage.ForgeManifest{
+		ManifestID: GenerateID("manifest", "1", "test", "bad.go"),
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		FilePath:   "bad.go",
+		Status:     storage.ManifestLive,
+	}
+	if err := db.Create(&goodManifest).Error; err != nil {
+		t.Fatalf("Failed to create good manifest: %v", err)
+	}
+	if err := db.Create(&badManifest).Error; err != nil {
+		t.Fatalf("Failed to create bad manifest: %v", err)
+	}
+
+	approvedPrec := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "1", "test", "good.go"),
+		ManifestID:  goodManifest.ManifestID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "style",
+		Ruling:      storage.PrecedentApproved,
+	}
+	rejectedPrec := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "1", "test", "bad.go"),
+		ManifestID:  badManifest.ManifestID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "security",
+		Ruling:      storage.PrecedentRejected,
+	}
+	if err := db.Create(&approvedPrec).Error; err != nil {
+		t.Fatalf("Failed to create approved precedent: %v", err)
+	}
+	if err := db.Create(&rejectedPrec).Error; err != nil {
+		t.Fatalf("Failed to create rejected precedent: %v", err)
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_precedents_approved")
+	if err == nil {
+		t.Error("Expected error when some precedents are rejected, got nil")
+	}
+	if !strings.Contains(err.Error(), "precedent check failed") {
+		t.Errorf("Expected error to contain 'precedent check failed', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "1 precedent(s) rejected") {
+		t.Errorf("Expected error to mention '1 precedent(s) rejected', got: %v", err)
+	}
+}
+
+// TestCheckPrecedentsApproved_NoPrecedents verifies the handler passes when no precedents exist
+func TestCheckPrecedentsApproved_NoPrecedents(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Ensure CensorPrecedent table exists
+	if err := db.AutoMigrate(&storage.CensorPrecedent{}); err != nil {
+		t.Fatalf("Failed to migrate CensorPrecedent: %v", err)
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_precedents_approved")
+	if err != nil {
+		t.Errorf("Expected no error when no precedents exist, got: %v", err)
+	}
+}
+
 func TestRitualRunner_RepoInfoStoredAndUsed(t *testing.T) {
 	// Verify that the repoInfo passed to NewRitualRunner is stored in r.repoInfo
 	// and used by expressions, not re-fetched via GetRepoInfo().

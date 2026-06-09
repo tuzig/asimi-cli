@@ -58,6 +58,9 @@
 
         ## Verdicts
         {{ .verdicts }}
+      then:
+        - the precedents are approved
+        - record the sage's seal
       on_failure: goto
       on_failure_target: forging
   then:
@@ -137,6 +140,7 @@
         ## Verdicts
         {{ .verdicts }}
       then:
+        - the precedents are approved
         - record the sage's seal
       on_failure: goto
       on_failure_target: implementing

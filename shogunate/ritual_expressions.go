@@ -80,6 +80,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"record the sage's seal", "record_sage_seal", ""},
 		{"record the ling completed", "record_ling_completed", ""},
 		{"the verdicts are passed", "check_verdicts_passed", ""},
+		{"the precedents are approved", "check_precedents_approved", ""},
 		{"the unsealed edicts", "get_unsealed_edicts", "unsealed_edicts"},
 		{"the edict lings", "get_lings", "lings"},
 		{"a heaven's snapshot", "get_heaven_snapshot", "heaven_snapshot"},
@@ -998,6 +999,24 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 				manifestIDs[i] = v.ManifestID
 			}
 			return fmt.Errorf("verdict check failed: %d verdict(s) with failed outcome: %v", len(failedVerdicts), manifestIDs)
+		}
+		return nil
+	case "check_precedents_approved":
+		// Check all censor precedents for this edict - fail if any are rejected
+		var rejectedPrecedents []storage.CensorPrecedent
+		if err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+			Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ? AND censor_precedents.ruling = ?",
+				thenKey.ID, thenKey.Username, thenKey.Project, storage.PrecedentRejected).
+			Find(&rejectedPrecedents).Error; err != nil {
+			return fmt.Errorf("failed to query precedents: %w", err)
+		}
+		if len(rejectedPrecedents) > 0 {
+			// Collect manifest IDs for error reporting
+			manifestIDs := make([]string, len(rejectedPrecedents))
+			for i, p := range rejectedPrecedents {
+				manifestIDs[i] = p.ManifestID
+			}
+			return fmt.Errorf("precedent check failed: %d precedent(s) rejected: %v", len(rejectedPrecedents), manifestIDs)
 		}
 		return nil
 	case "check_asimi_version":
