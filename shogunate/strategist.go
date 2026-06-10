@@ -54,14 +54,22 @@ func (s *Strategist) SystemPrompt() string {
 
 // Tools returns the Strategist's LLM tools for interactive sessions
 func (s *Strategist) Tools() []Tool {
+	if s.toolRegistry != nil {
+		perm, _ := tools.ParsePermissions("r-----rwx")
+		registered := s.toolRegistry.ForPermissions("strategist", perm)
+		result := make([]Tool, len(registered))
+		for i, t := range registered {
+			result[i] = t
+		}
+		return result
+	}
+	// Fallback: legacy tool list when registry is not yet wired
 	toolList := []Tool{
-		// Ling management tools
 		&InsertLingTool{strategist: s},
 		&ListLingTool{strategist: s},
 		&UpdateLingStatusTool{strategist: s},
 		tools.RequestZhengmingTool{MinisterID: "chancellor", Requester: s, WaitForAnswer: s.WaitForZhengming, Username: s.Username(), Project: s.Project()},
 	}
-	// Add read-only file tools
 	for _, t := range tools.GetROTools(s.config.LLM, s.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
 	}

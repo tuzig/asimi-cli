@@ -64,18 +64,25 @@ func (m *Marshal) SystemPrompt() string {
 
 // Tools returns the Marshal's LLM tools for interactive sessions
 func (m *Marshal) Tools() []Tool {
+	if m.toolRegistry != nil {
+		perm, _ := tools.ParsePermissions("r-xr--rw-")
+		registered := m.toolRegistry.ForPermissions("marshal", perm)
+		result := make([]Tool, len(registered))
+		for i, t := range registered {
+			result[i] = t
+		}
+		return result
+	}
+	// Fallback: legacy tool list when registry is not yet wired
 	toolList := []Tool{
-		// Specialized Marshal tools for incident management
 		&CreateIncidentTool{marshal: m},
 		&ResolveIncidentTool{marshal: m},
 		&GetIncidentTool{marshal: m},
 		&GetManifestByCommitTool{marshal: m},
 	}
-	// Add read-only tools (read_file, list_files, grep)
 	for _, t := range tools.GetROTools(m.config.LLM, m.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
 	}
-	// Add shell command tool if runner is available
 	if m.runner != nil {
 		toolList = append(toolList, tools.NewRunShellCommand(m.CheckHostCommand, m.runner, m.msgChan, m.RepoInfo().ProjectRoot))
 	}

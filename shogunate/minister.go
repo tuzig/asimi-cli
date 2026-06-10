@@ -24,6 +24,7 @@ import (
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
@@ -209,18 +210,19 @@ type StreamDoneMsg struct {
 // MinisterBase provides shared functionality for all ministers.
 // Ministers embed this struct to gain database access and session creation capabilities.
 type MinisterBase struct {
-	db         *gorm.DB
-	ministerID string
-	client     LLMProvider // LLM client for chat completions
-	config     *SessionConfig
-	repoInfo   repo.RepoInfo
-	runner     runners.Runner
-	msgChan    chan<- runners.Msg // channel for host-side approval requests
-	logger     *slog.Logger
-	notify     internal.NotifyFunc
-	prompts    chan *Prompt
-	tasks      chan *Task
-	publish    func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
+	db          *gorm.DB
+	ministerID  string
+	client      LLMProvider // LLM client for chat completions
+	config      *SessionConfig
+	repoInfo    repo.RepoInfo
+	runner      runners.Runner
+	msgChan     chan<- runners.Msg // channel for host-side approval requests
+	logger      *slog.Logger
+	notify      internal.NotifyFunc
+	prompts     chan *Prompt
+	tasks       chan *Task
+	publish     func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
+	toolRegistry *tools.ToolRegistry // central tool registry with permission classifications
 
 	zhengmingMu       sync.Mutex
 	onZhengmingRaised func()
@@ -421,6 +423,16 @@ func (m *MinisterBase) CheckHostCommand(cmd string) (runOnHost, needsApproval bo
 // RepoInfo returns the repository information
 func (m *MinisterBase) RepoInfo() repo.RepoInfo {
 	return m.repoInfo
+}
+
+// SetToolRegistry sets the central tool registry for permission-based tool lookup.
+func (m *MinisterBase) SetToolRegistry(registry *tools.ToolRegistry) {
+	m.toolRegistry = registry
+}
+
+// GetToolRegistry returns the central tool registry.
+func (m *MinisterBase) GetToolRegistry() *tools.ToolRegistry {
+	return m.toolRegistry
 }
 
 // CreateSessionOpts holds optional parameters for CreateSession.

@@ -12,8 +12,9 @@ import (
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/types"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
@@ -82,6 +83,10 @@ type Shogunate struct {
 
 	ministers   map[string]Minister
 	ritualGuard *RitualGuard
+
+	// toolRegistry holds the central tool registry with permission classifications.
+	// Ministers use it via ForPermissions() to get their tool sets.
+	toolRegistry *tools.ToolRegistry
 
 	notify        internal.NotifyFunc
 	drainedEvents []DrainedEvent // events recovered from DB at startup
@@ -218,7 +223,159 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	sage.shogunate = s
 	s.ministers["sage"] = sage
 
+	// Build and populate the tool registry with permission classifications.
+	s.toolRegistry = s.buildToolRegistry()
+
 	return s
+}
+
+// buildToolRegistry creates a ToolRegistry, registers all builtin tools with
+// permission classifications, and returns it. Called once during NewShogunate
+// after all ministers are constructed.
+func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
+	registry := tools.NewToolRegistry()
+
+	chancellor, _ := s.GetMinister("chancellor").(*Chancellor)
+	strategist, _ := s.GetMinister("strategist").(*Strategist)
+	forge, _ := s.GetMinister("forge").(*Forge)
+	judge, _ := s.GetMinister("judge").(*Judge)
+	marshal, _ := s.GetMinister("marshal").(*Marshal)
+	sage, _ := s.GetMinister("sage").(*Sage)
+
+	// Determine DBPath for asimisql
+	dbPath := ""
+	if chancellor != nil {
+		dbPath = chancellor.getDBPath()
+	}
+
+	// Determine projectRoot — may be empty at construction time
+	// (set later via SetRepoInfo/ConfigureModel), but file tools
+	// use it for path resolution. Updated in SetRepoInfo below.
+	projectRoot := ""
+
+	// Minister-bound tools — each embeds its minister reference.
+	// These are constructed here, not in the tools package, to avoid
+	// circular imports.
+	var invokeMinisterTool, enactRitualTool tools.Tool
+	if chancellor != nil {
+		invokeMinisterTool = &InvokeMinisterTool{chancellor: chancellor}
+		// enact_ritual is only available when ritual runner is set up
+		if s.GetRitualRunner() != nil {
+			enactRitualTool = &InvokeRitualTool{chancellor: chancellor}
+		}
+	}
+
+	var insertLingTool, listLingTool, updateLingStatusTool tools.Tool
+	if strategist != nil {
+		insertLingTool = &InsertLingTool{strategist: strategist}
+		listLingTool = &ListLingTool{strategist: strategist}
+		updateLingStatusTool = &UpdateLingStatusTool{strategist: strategist}
+	}
+
+	var createManifestTool tools.Tool
+	if forge != nil {
+		createManifestTool = &CreateManifestTool{forge: forge}
+	}
+
+	var recordVerdictTool, listPendingManifestsTool, updateManifestStatusTool tools.Tool
+	if judge != nil {
+		recordVerdictTool = &RecordVerdictTool{judge: judge}
+		listPendingManifestsTool = &ListPendingManifestsTool{judge: judge}
+		updateManifestStatusTool = &UpdateManifestStatusTool{judge: judge}
+	}
+
+	var createIncidentTool, resolveIncidentTool, getIncidentTool, getManifestByCommitTool tools.Tool
+	if marshal != nil {
+		createIncidentTool = &CreateIncidentTool{marshal: marshal}
+		resolveIncidentTool = &ResolveIncidentTool{marshal: marshal}
+		getIncidentTool = &GetIncidentTool{marshal: marshal}
+		getManifestByCommitTool = &GetManifestByCommitTool{marshal: marshal}
+	}
+
+	// EdictManager — Chancellor implements the interface
+	var edictManager tools.EdictManager
+	if chancellor != nil {
+		edictManager = chancellor
+	}
+
+	// ZhengmingRequester — MinisterBase implements the interface via RequestZhengming.
+	// WaitForZhengming is on MinisterBase too.
+	var zhengmingRequester tools.ZhengmingRequester
+	var waitForZhengming func(ctx context.Context, requestID string) (string, error)
+	if chancellor != nil {
+		zhengmingRequester = chancellor
+		waitForZhengming = chancellor.WaitForZhengming
+	}
+
+	// PrecedentStore — Sage implements the interface
+	var precedentStore tools.PrecedentStore
+	var addFailure tools.FailureRecorder
+	if sage != nil {
+		precedentStore = sage
+		addFailure = AddFailure
+	}
+
+	// NotifyFn — lazy getter for the current notify, used by suggest_edict
+	var notifyFn func() func(any)
+	if chancellor != nil {
+		notifyFn = func() func(any) { return s.notify }
+	}
+
+	opts := tools.ToolRegistrationOpts{
+		// Common
+		DB:          s.db,
+		DBPath:      dbPath,
+		ProjectRoot: projectRoot,
+		Runner:      s.runner,
+		Username:    s.config.Username,
+		Project:     s.config.Project,
+
+		// Intent interfaces
+		EdictManager:       edictManager,
+		ZhengmingRequester: zhengmingRequester,
+		WaitForZhengming:   waitForZhengming,
+		PrecedentStore:     precedentStore,
+		AddFailure:         addFailure,
+		NotifyFn:           notifyFn,
+
+		// Minister-bound tools — Heaven
+		ListPendingManifestsTool: listPendingManifestsTool,
+		GetManifestByCommitTool:  getManifestByCommitTool,
+		CreateManifestTool:       createManifestTool,
+		RecordVerdictTool:        recordVerdictTool,
+		UpdateManifestStatusTool: updateManifestStatusTool,
+
+		// Minister-bound tools — Intent
+		InsertLingTool:       insertLingTool,
+		ListLingTool:        listLingTool,
+		UpdateLingStatusTool: updateLingStatusTool,
+		CreateIncidentTool:   createIncidentTool,
+		ResolveIncidentTool: resolveIncidentTool,
+		GetIncidentTool:      getIncidentTool,
+
+		// Private (chancellor only)
+		InvokeMinisterTool: invokeMinisterTool,
+		EnactRitualTool:    enactRitualTool,
+	}
+
+	tools.RegisterBuiltinTools(registry, opts)
+
+	// Propagate registry to all ministers so they can use ForPermissions
+	for _, m := range s.ministers {
+		if base, ok := m.(interface{ SetToolRegistry(*tools.ToolRegistry) }); ok {
+			base.SetToolRegistry(registry)
+		}
+	}
+
+	return registry
+}
+
+// GetToolRegistry returns the central tool registry.
+func (s *Shogunate) GetToolRegistry() *tools.ToolRegistry {
+	if s == nil {
+		return nil
+	}
+	return s.toolRegistry
 }
 
 // SetSessionPersister wires a persister into the shogunate. Sessions

@@ -140,20 +140,26 @@ func (c *Sage) Title() string { return "Sage" }
 // SystemPrompt returns the Sage's system prompt template.
 func (c *Sage) SystemPrompt() string { return SageRole }
 
-// Tools returns the Sage's LLM tools — read-only access plus zhengming and review tools
+// Tools returns the Sage's LLM tools — read-only access plus review tools
 func (c *Sage) Tools() []Tool {
+	if c.toolRegistry != nil {
+		perm, _ := tools.ParsePermissions("r--r--rwx")
+		registered := c.toolRegistry.ForPermissions("sage", perm)
+		result := make([]Tool, len(registered))
+		for i, t := range registered {
+			result[i] = t
+		}
+		return result
+	}
+	// Fallback: legacy tool list when registry is not yet wired
 	toolList := []Tool{
 		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.Username(), Project: c.Project()},
 		tools.ListEdictsTool{DB: c.db, Username: c.Username(), Project: c.Project()},
 		tools.SuggestEdictTool{
 			Requester: c,
-			// Resolve notify at call-time, not at Tools()-construction. In daemon
-			// mode the live notify is installed by shog.Subscribe() and can be
-			// swapped on client reconnect; a snapshot here would silently bypass
-			// the $EDITOR review.
-			NotifyFn: func() func(any) { return c.notify },
-			Username: c.Username(),
-			Project:  c.Project(),
+			NotifyFn:  func() func(any) { return c.notify },
+			Username:  c.Username(),
+			Project:   c.Project(),
 		},
 		tools.QueryCourtTool{DB: c.db, Username: c.Username(), Project: c.Project()},
 		tools.RecordPrecedentTool{
