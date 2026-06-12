@@ -88,6 +88,12 @@ type ClearSchedulerMsg struct {
 	ResultChan chan int `msgpack:"-"`
 }
 
+// SandboxUnhealthyMsg is sent when a stale container is detected, killed, and recreated.
+type SandboxUnhealthyMsg struct {
+	Message       string `msgpack:"message,omitempty"`
+	ContainerName string `msgpack:"container_name,omitempty"`
+}
+
 // CommandDeniedError is returned when a user denies a host command approval request
 type CommandDeniedError struct {
 	Command string

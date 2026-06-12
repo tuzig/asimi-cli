@@ -49,6 +49,9 @@ type commandOutput struct {
 	outputDone bool
 }
 
+// healthcheckTimeout is the maximum time to wait for a healthcheck response.
+const healthcheckTimeout = 5 * time.Second
+
 // NewPodmanRunner creates a new PodmanRunner
 func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, connID uint64, fallback Runner) *PodmanRunner {
 	imageName := cfg.ImageName
@@ -95,6 +98,8 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 		slog.Debug("podman connection established")
 	}
 
+	existingRunning := false
+
 	r.mu.Lock()
 	if !r.containerStarted {
 		r.mu.Unlock()
@@ -106,6 +111,7 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 				slog.Debug("container already running", "containerName", r.containerName)
 				r.mu.Lock()
 				r.containerStarted = true
+				existingRunning = true
 				r.mu.Unlock()
 			} else {
 				slog.Debug("starting existing container", "containerName", r.containerName)
@@ -174,6 +180,47 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 		slog.Debug("container attachment established", "repoInfo", r.repoInfo)
 
+		// Healthcheck: only when reusing an already-running container
+		if existingRunning {
+			if err := r.healthcheck(); err != nil {
+				slog.Info("container unhealthy, force-killing and recreating", "containerName", r.containerName, "error", err)
+
+				// Force-remove the stale container
+				forceTrue := true
+				volumesTrue := true
+				if _, rmErr := containers.Remove(r.conn, r.containerName, &containers.RemoveOptions{Force: &forceTrue, Volumes: &volumesTrue}); rmErr != nil {
+					return fmt.Errorf("failed to remove unhealthy container: %w", rmErr)
+				}
+
+				// Close and nil out pipes
+				if r.stdinPipe != nil {
+					r.stdinPipe.Close()
+					r.stdinPipe = nil
+				}
+				if r.stdoutPipe != nil {
+					r.stdoutPipe.Close()
+					r.stdoutPipe = nil
+				}
+
+				// Reset state so initialize() will recreate
+				r.mu.Lock()
+				r.containerStarted = false
+				r.mu.Unlock()
+
+				// Notify TUI
+				if r.msgChan != nil {
+					r.msgChan <- SandboxUnhealthyMsg{
+						Message:       "🔄 Stale container detected and recreated",
+						ContainerName: r.containerName,
+					}
+				}
+
+				// Re-initialize: will fall into the createContainer path
+				return r.initialize(ctx)
+			}
+			slog.Info("existing container is healthy", "containerName", r.containerName)
+		}
+
 		var rc strings.Builder
 		rc.WriteString("git config --global core.pager cat\n")
 		if r.repoInfo.WorktreePath != "" {
@@ -189,6 +236,52 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 	slog.Debug("initialization complete")
 	return nil
+}
+
+func (r *PodmanRunner) healthcheck() error {
+	// Allocate a command ID
+	r.outputsMu.Lock()
+	id := r.nextCommandID
+	r.nextCommandID++
+	r.outputsMu.Unlock()
+
+	// Register the output entry
+	cmd := &commandOutput{
+		ready: make(chan struct{}),
+	}
+	r.outputsMu.Lock()
+	r.outputs[id] = cmd
+	r.outputsMu.Unlock()
+
+	// Send the probe command through the full pipe
+	command := fmt.Sprintf("__asimi_run %d 'echo __ASIMI_HEALTHY'\n", id)
+	if _, err := r.stdinPipe.Write([]byte(command)); err != nil {
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+		return fmt.Errorf("healthcheck: failed to write probe: %w", err)
+	}
+
+	// Wait for response or timeout
+	select {
+	case <-cmd.ready:
+		r.outputsMu.Lock()
+		exitCode := cmd.exitCode
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+
+		if exitCode != "0" {
+			return fmt.Errorf("healthcheck: probe exited with code %s", exitCode)
+		}
+		slog.Info("healthcheck passed")
+		return nil
+	case <-time.After(healthcheckTimeout):
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+		slog.Info("healthcheck failed: timeout")
+		return fmt.Errorf("healthcheck: container shell not responding after %v", healthcheckTimeout)
+	}
 }
 
 func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context, error) {
