@@ -30,7 +30,7 @@ Located in `commands.go`, this function:
 ### 2. Embedded File Initialization
 
 Two files are written directly from embedded content:
-- **.agents/asimi.conf** - From `dotagents/asimi.conf` embed
+- **.agents/asimi.conf** - From `config.DefaultConfContent()` (embedded in `internal/config/default.conf`)
 - **.agents/sandbox/bashrc** - From `dotagents/sandbox/bashrc` embed
 
 These are always written in clear mode, or if they don't exist.
@@ -297,7 +297,7 @@ Please review the errors and try running ':init' again, or manually fix the issu
 
 - `commands.go` - Command handlers and verification logic
 - `prompts/init.tmpl` - AI prompt template
-- `dotagents/asimi.conf` - Embedded default config
+- `internal/config/default.conf` - Embedded default config
 - `dotagents/sandbox/bashrc` - Embedded bashrc
 - `context.go` - `GetRepoInfo()` for project detection
 - `podman_runner.go` - Container shell runner
