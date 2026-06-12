@@ -370,6 +370,31 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 	return registry
 }
 
+// updateProjectRootTools re-registers file and shell tools with the new project root.
+// Called when SetRepoInfo receives a non-empty ProjectRoot after initial construction.
+func (s *Shogunate) updateProjectRootTools(projectRoot string) {
+	if s == nil || s.toolRegistry == nil || projectRoot == "" {
+		return
+	}
+
+	// Earth/Read — file exploration tools
+	s.toolRegistry.Update(tools.NewReadFileTool(projectRoot))
+	s.toolRegistry.Update(tools.ReadFileTool{ProjectRoot: projectRoot})
+	s.toolRegistry.Update(tools.GlobTool{ProjectRoot: projectRoot})
+	s.toolRegistry.Update(tools.GrepTool{ProjectRoot: projectRoot})
+
+	// Earth/Write — file modification tools
+	s.toolRegistry.Update(tools.WriteFileTool{ProjectRoot: projectRoot})
+	s.toolRegistry.Update(tools.ReplaceTextTool{ProjectRoot: projectRoot})
+
+	// Earth/Execute — shell command execution (needs runner)
+	if s.runner != nil {
+		s.toolRegistry.Update(tools.NewRunShellCommand(nil, s.runner, nil, projectRoot))
+	}
+
+	s.logger.Debug("updated project-root-dependent tools", "projectRoot", projectRoot)
+}
+
 // GetToolRegistry returns the central tool registry.
 func (s *Shogunate) GetToolRegistry() *tools.ToolRegistry {
 	if s == nil {
@@ -460,6 +485,10 @@ func (s *Shogunate) SetRepoInfo(repoInfo repo.RepoInfo) {
 	}
 	if s.ritualGuard != nil {
 		s.ritualGuard.repoInfo = repoInfo
+	}
+	// Update project-root-dependent tools when the root becomes available
+	if repoInfo.ProjectRoot != "" {
+		s.updateProjectRootTools(repoInfo.ProjectRoot)
 	}
 }
 

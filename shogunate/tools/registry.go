@@ -139,6 +139,19 @@ func (r *ToolRegistry) Register(tool Tool, perm Permissions) {
 	r.entries[name] = ToolPermission{Tool: tool, Permissions: perm}
 }
 
+// Update replaces an existing tool registration with a new instance.
+// If the tool is not registered, this is a no-op.
+// This is useful when a tool's configuration changes after initial registration.
+func (r *ToolRegistry) Update(tool Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	name := tool.Name()
+	if existing, ok := r.entries[name]; ok {
+		r.entries[name] = ToolPermission{Tool: tool, Permissions: existing.Permissions}
+	}
+}
+
 // RegisterPrivate adds a tool exclusively for a specific minister.
 // Private tools are returned by ForPermissions in addition to
 // any permission-matched public tools.

@@ -336,6 +336,47 @@ func TestRegisterDuplicatePanics(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ToolRegistry — Update
+// ---------------------------------------------------------------------------
+
+func TestUpdate(t *testing.T) {
+	r := NewToolRegistry()
+	perm, _ := ParsePermissions("r-----rw-")
+	r.Register(mockTool{name: "read_file"}, perm)
+
+	// Update with new instance (same name, different behavior)
+	updatedTool := mockTool{name: "read_file"}
+	r.Update(updatedTool)
+
+	// Verify the tool is still registered
+	tools := r.Tools()
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool after update, got %d", len(tools))
+	}
+	if tools[0].Tool.Name() != "read_file" {
+		t.Errorf("tool name = %q, want %q", tools[0].Tool.Name(), "read_file")
+	}
+	// Permissions should be preserved
+	if tools[0].Permissions != perm {
+		t.Errorf("permissions changed after update")
+	}
+}
+
+func TestUpdateNonExistentNoOp(t *testing.T) {
+	r := NewToolRegistry()
+	perm, _ := ParsePermissions("r-----rw-")
+	r.Register(mockTool{name: "existing"}, perm)
+
+	// Update on non-existent tool should be no-op (no panic)
+	r.Update(mockTool{name: "nonexistent"})
+
+	tools := r.Tools()
+	if len(tools) != 1 {
+		t.Errorf("expected 1 tool after no-op update, got %d", len(tools))
+	}
+}
+
+// ---------------------------------------------------------------------------
 // ToolRegistry — RegisterPrivate
 // ---------------------------------------------------------------------------
 
