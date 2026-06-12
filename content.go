@@ -53,11 +53,45 @@ type TabManager struct {
 	onTabSwitch     func() // Called after tab switch to update TUI state
 }
 
+// tabGreetings maps each minister tab target to a welcome message.
+// Messages are injected as system messages into each tab's ChatComponent
+// at initialization — pure presentation, no daemon coupling.
+var tabGreetings = map[string]string{
+	"chancellor": `Greetings, Ruler and welcome to your Court
+Your court's main function is to harmonize the three realms:
+- **Intent** the ruler's will, TODO comments and docs
+- **Earth** Production code
+- **Heaven** Logs, CI, test results and tests
+For system commands use the ':' prefix, as in ':help'`,
+	"sage": `Greetings, Ruler and welcome to your hunting grounds
+With the sage you can hunt bugs' root cause,
+brew new features and forumlate edicts`,
+	"forge": `Salutations, Ruler and welcome to your Forge 工部
+The forge is where code is changed and the earth is shaped
+It's best to run the forge as part of a ritual,
+but if it's a quick-fix you're after, you're in the right tab`,
+	"judge": `Greetings, Ruler and welcome to your tribunal
+Here we weigh every change against the truth:
+- **Tests** pass or fail — there is no ambiguity
+- **Verdicts** seal the fate of every manifest
+If quality bugs you, you're on the right tab`,
+}
+
+// initTabGreetings seeds each tab's ChatComponent with its minister welcome
+// message. Called once during NewTabManager construction.
+func initTabGreetings(tm *TabManager) {
+	for i := range tm.tabs {
+		if greeting := tabGreetings[tm.tabs[i].Target]; greeting != "" {
+			tm.tabs[i].Content.Chat.AddMarkdownMessage(systemPrefix + greeting)
+		}
+	}
+}
+
 // NewTabManager creates a TabManager with 4 tabs per the Shogunate structure:
 // 宰相 Chancellor (ruling/edicts), 聖人 Sage (exploration),
 // 工部 Forge (builds), 刑部 Judge (tests)
 func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager {
-	return TabManager{
+	tm := TabManager{
 		tabs: []Tab{
 			NewTab("宰相 Chancellor", "chancellor", "chancellor",
 				newContentComponent(w, h, mdEnabled, getStatus)),
@@ -74,6 +108,8 @@ func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager
 		markdownEnabled: mdEnabled,
 		getStatus:       getStatus,
 	}
+	// Seed each tab with its minister welcome greeting
+	return tm
 }
 
 // newContentComponent is a helper to create ContentComponent with status getter

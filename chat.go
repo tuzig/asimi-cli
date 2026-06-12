@@ -945,6 +945,9 @@ func (c *ChatComponent) HandleToolCallAborted(msg runners.ToolCallAbortedMsg) {
 		c.AddMessage(formatted)
 	}
 }
+func (c *ChatComponent) AddMarkdownMessage(message string) {
+	c.AddMessage(c.renderMarkdown(message))
+}
 
 // UpdateLastToolCallEmoji finds the last tool call message containing the given command
 // and updates its emoji. Returns true if a message was found and updated.

@@ -1932,6 +1932,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case storage.EventShogunateStarted:
 			icon = courtPrefix
 			message = "Shogunate dawn at " + time.Now().Format("2 January, 3:04 PM MST")
+			chat.AddMessage(fmt.Sprintf("%s %s", icon, message))
+			initTabGreetings(&m.tabs)
+			return m, nil
 		case storage.EventShogunateReady:
 			icon = courtPrefix
 			message = "READY at " + time.Now().Format("2 January, 3:04 PM MST")
