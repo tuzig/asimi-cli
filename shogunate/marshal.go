@@ -230,7 +230,8 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 				Text:    fmt.Sprintf("Production incident %s requires hotfix approval.\n\nRCA: %s", incidentID, rcaSummary),
 				Options: []string{"Approve hotfix", "Reject hotfix"},
 			}},
-			storage.PriorityUrgent)
+			storage.PriorityUrgent,
+			m.ministerID)
 		if err != nil {
 			return fmt.Errorf("request zhengming: %w", err)
 		}

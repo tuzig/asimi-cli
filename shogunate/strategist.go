@@ -68,7 +68,7 @@ func (s *Strategist) Tools() []Tool {
 		&InsertLingTool{strategist: s},
 		&ListLingTool{strategist: s},
 		&UpdateLingStatusTool{strategist: s},
-		tools.RequestZhengmingTool{MinisterID: "chancellor", Requester: s, WaitForAnswer: s.WaitForZhengming, Username: s.Username(), Project: s.Project()},
+		tools.RequestZhengmingTool{MinisterID: s.ministerID, Requester: s, WaitForAnswer: s.WaitForZhengming, Username: s.Username(), Project: s.Project()},
 	}
 	for _, t := range tools.GetROTools(s.config.LLM, s.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)

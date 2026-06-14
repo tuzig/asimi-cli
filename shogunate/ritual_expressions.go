@@ -407,8 +407,8 @@ func (r *RitualRunner) getEarthStatus(ctx context.Context) (map[string]string, e
 	// Git operations always run on host (not in sandbox)
 	gitRun := func(cmd, desc string) string {
 		output, err := r.runner.Run(ctx, runners.Input{
-			Command:        cmd,
-			Description:    desc,
+			Command:     cmd,
+			Description: desc,
 		})
 		if err == nil {
 			return output.Output
@@ -862,7 +862,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			return fmt.Errorf("minister not found: chancellor")
 		}
 		type zhengmingGate interface {
-			RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+			RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority, string) (string, error)
 		}
 		gate, ok := minister.(zhengmingGate)
 		if !ok {
@@ -877,7 +877,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			Text:    fmt.Sprintf("The %s has completed work on edict %d. Do you approve?", stepName, exec.EdictID),
 			Options: []string{"Approve and proceed", "Let me clarify", "Reject"},
 		}}
-		requestID, err := gate.RequestZhengming(thenKey, questions, storage.PriorityUrgent)
+		requestID, err := gate.RequestZhengming(thenKey, questions, storage.PriorityUrgent, "chancellor")
 		if err != nil {
 			return fmt.Errorf("failed to request zhengming: %w", err)
 		}

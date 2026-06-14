@@ -63,11 +63,12 @@ func (m *capturingMinister) allCapturedText() string {
 	return sb.String()
 }
 
-// TestStrategist_ZhengmingRoutesToChancellor verifies that when the Strategist
-// raises a Zhengming request, the question is routed to the Chancellor's ruling tab.
-// This is critical for UX: the Strategist handles planning but clarification questions
-// should appear in the Chancellor's UI where the Ruler is already engaged.
-func TestStrategist_ZhengmingRoutesToChancellor(t *testing.T) {
+// TestStrategist_ZhengmingRoutesToStrategist verifies that when the Strategist
+// raises a Zhengming request, the question is routed to the Strategist's tab.
+// Before edict 489, all zhengming routed to "chancellor" regardless of caller.
+// Now each minister's request_zhengming carries its own MinisterID so the
+// ZhengmingPendingMsg routes to the correct tab.
+func TestStrategist_ZhengmingRoutesToStrategist(t *testing.T) {
 	db := setupRitualTestDB(t)
 	require.NoError(t, db.AutoMigrate(&storage.Edict{}))
 
@@ -87,9 +88,9 @@ func TestStrategist_ZhengmingRoutesToChancellor(t *testing.T) {
 		}
 	}
 
-	// The MinisterID must be "chancellor" so the question appears in the Chancellor's tab
-	assert.Equal(t, "chancellor", zhengmingTool.MinisterID,
-		"Strategist's Zhengming must route to Chancellor's tab, not Strategist's")
+	// The MinisterID must be "strategist" so the question appears in the Strategist's tab
+	assert.Equal(t, "strategist", zhengmingTool.MinisterID,
+		"Strategist's Zhengming must route to Strategist's tab, not Chancellor's")
 
 	// Requester should be the strategist itself (for answer delivery via DeliverZhengming)
 	assert.NotNil(t, zhengmingTool.Requester, "Requester must be set")

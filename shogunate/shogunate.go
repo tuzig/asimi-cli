@@ -331,12 +331,13 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 		Project:     s.config.Project,
 
 		// Intent interfaces
-		EdictManager:       edictManager,
-		ZhengmingRequester: zhengmingRequester,
-		WaitForZhengming:   waitForZhengming,
-		PrecedentStore:     precedentStore,
-		AddFailure:         addFailure,
-		NotifyFn:           notifyFn,
+		EdictManager:         edictManager,
+		ZhengmingRequester:   zhengmingRequester,
+		WaitForZhengming:     waitForZhengming,
+		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
+		PrecedentStore:       precedentStore,
+		AddFailure:           addFailure,
+		NotifyFn:             notifyFn,
 
 		// Minister-bound tools — Heaven
 		ListPendingManifestsTool: listPendingManifestsTool,
@@ -347,10 +348,10 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 
 		// Minister-bound tools — Intent
 		InsertLingTool:       insertLingTool,
-		ListLingTool:        listLingTool,
+		ListLingTool:         listLingTool,
 		UpdateLingStatusTool: updateLingStatusTool,
 		CreateIncidentTool:   createIncidentTool,
-		ResolveIncidentTool: resolveIncidentTool,
+		ResolveIncidentTool:  resolveIncidentTool,
 		GetIncidentTool:      getIncidentTool,
 
 		// Private (chancellor only)

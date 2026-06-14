@@ -153,6 +153,7 @@ func (c *Sage) Tools() []Tool {
 	}
 	// Fallback: legacy tool list when registry is not yet wired
 	toolList := []Tool{
+		tools.RequestZhengmingTool{MinisterID: c.ID(), Requester: c, WaitForAnswer: c.WaitForZhengming, Username: c.Username(), Project: c.Project()},
 		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.Username(), Project: c.Project()},
 		tools.ListEdictsTool{DB: c.db, Username: c.Username(), Project: c.Project()},
 		tools.SuggestEdictTool{
@@ -635,4 +636,3 @@ func (c *Sage) parseReviewResponse(response string) *ReviewResult {
 
 	return result
 }
-

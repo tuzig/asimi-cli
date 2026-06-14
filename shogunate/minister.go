@@ -39,7 +39,7 @@ var ministerTmpl = template.Must(template.New("minister").Parse(systemBase))
 
 // ZhengmingConn provides clarification request capabilities (behavioral interface)
 type ZhengmingConn interface {
-	RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (requestID string, err error)
+	RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (requestID string, err error)
 	IsZhengmingPending(key storage.EdictKey) (bool, error)
 }
 
@@ -210,19 +210,19 @@ type StreamDoneMsg struct {
 // MinisterBase provides shared functionality for all ministers.
 // Ministers embed this struct to gain database access and session creation capabilities.
 type MinisterBase struct {
-	db          *gorm.DB
-	ministerID  string
-	client      LLMProvider // LLM client for chat completions
-	config      *SessionConfig
-	repoInfo    repo.RepoInfo
-	runner      runners.Runner
-	msgChan     chan<- runners.Msg // channel for host-side approval requests
-	logger      *slog.Logger
-	notify      internal.NotifyFunc
-	prompts     chan *Prompt
-	tasks       chan *Task
-	publish     func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
-	toolRegistry *tools.ToolRegistry // central tool registry with permission classifications
+	db           *gorm.DB
+	ministerID   string
+	client       LLMProvider // LLM client for chat completions
+	config       *SessionConfig
+	repoInfo     repo.RepoInfo
+	runner       runners.Runner
+	msgChan      chan<- runners.Msg // channel for host-side approval requests
+	logger       *slog.Logger
+	notify       internal.NotifyFunc
+	prompts      chan *Prompt
+	tasks        chan *Task
+	publish      func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
+	toolRegistry *tools.ToolRegistry                                                                     // central tool registry with permission classifications
 
 	zhengmingMu       sync.Mutex
 	onZhengmingRaised func()
@@ -677,15 +677,15 @@ func generateIdempotencyKey(parts ...string) string {
 }
 
 // RequestZhengming creates a clarification request
-func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority) (string, error) {
-	requestID := GenerateID("zhengming", fmt.Sprintf("%d", key.ID), m.ministerID, fmt.Sprintf("%v", questions), time.Now().String())
+func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
+	requestID := GenerateID("zhengming", fmt.Sprintf("%d", key.ID), callerMinisterID, fmt.Sprintf("%v", questions), time.Now().String())
 
 	req := storage.Zhengming{
 		RequestID:  requestID,
 		EdictID:    key.ID,
 		Username:   key.Username,
 		Project:    key.Project,
-		MinisterID: m.ministerID,
+		MinisterID: callerMinisterID,
 		Questions:  questions,
 		Priority:   priority,
 		Status:     storage.ZhengmingPending,
@@ -713,7 +713,7 @@ func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.
 		m.notify(ZhengmingPendingMsg{
 			RequestID:  requestID,
 			EdictKey:   key,
-			MinisterID: m.ministerID,
+			MinisterID: callerMinisterID,
 			Questions:  questions,
 			Priority:   priority,
 		})
@@ -722,7 +722,7 @@ func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.
 	// Emit zhengming_requested event
 	m.EmitEvent(key, "zhengming_requested", storage.JSON{
 		"request_id":  requestID,
-		"minister_id": m.ministerID,
+		"minister_id": callerMinisterID,
 		"questions":   questions,
 		"priority":    string(priority),
 	})

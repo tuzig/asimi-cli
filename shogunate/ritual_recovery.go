@@ -176,7 +176,7 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 	}
 
 	type zhengmingRequester interface {
-		RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority) (string, error)
+		RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority, string) (string, error)
 		WaitForZhengming(context.Context, string) (string, error)
 	}
 	requester, ok := chancellor.(zhengmingRequester)
@@ -243,7 +243,7 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 		}
 
 		key := storage.EdictKey{ID: exec.EdictID, Username: exec.Username, Project: exec.Project}
-		requestID, err := requester.RequestZhengming(key, questions, storage.PriorityUrgent)
+		requestID, err := requester.RequestZhengming(key, questions, storage.PriorityUrgent, "chancellor")
 		if err != nil {
 			rg.logger.Warn("failed to request zhengming for aborted ritual", "execution_id", exec.ID, "error", err)
 			continue

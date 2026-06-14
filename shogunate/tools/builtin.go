@@ -33,6 +33,11 @@ type ToolRegistrationOpts struct {
 	ZhengmingRequester ZhengmingRequester
 	WaitForZhengming   func(ctx context.Context, requestID string) (string, error)
 
+	// ZhengmingMinisterIDs lists minister IDs that should get a private
+	// request_zhengming tool with their own MinisterID for correct routing.
+	// Each gets a RegisterPrivate instance; no shared public instance is registered.
+	ZhengmingMinisterIDs []string
+
 	// Intent — PrecedentStore (implements record_precedent, list_quenched_manifests, query_precedents)
 	PrecedentStore PrecedentStore
 
@@ -47,11 +52,11 @@ type ToolRegistrationOpts struct {
 	// constructed here (circular import).
 	//
 	// Heaven tools
-	ListPendingManifestsTool  Tool // list_pending_manifests
-	GetManifestByCommitTool   Tool // get_manifest_by_commit
-	CreateManifestTool        Tool // create_manifest
-	RecordVerdictTool         Tool // record_verdict
-	UpdateManifestStatusTool  Tool // update_manifest_status
+	ListPendingManifestsTool Tool // list_pending_manifests
+	GetManifestByCommitTool  Tool // get_manifest_by_commit
+	CreateManifestTool       Tool // create_manifest
+	RecordVerdictTool        Tool // record_verdict
+	UpdateManifestStatusTool Tool // update_manifest_status
 
 	// Intent tools
 	InsertLingTool       Tool // insert_ling
@@ -192,13 +197,16 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 	}
 
 	// Intent/Execute — zhengming, edict suggestions, precedent recording, doc review
-	if opts.ZhengmingRequester != nil {
-		r.Register(RequestZhengmingTool{
+	// Register per-minister private request_zhengming tools so each carries
+	// the correct MinisterID for routing. No shared public instance.
+	for _, mid := range opts.ZhengmingMinisterIDs {
+		r.RegisterPrivate(mid, RequestZhengmingTool{
+			MinisterID:    mid,
 			Requester:     opts.ZhengmingRequester,
 			WaitForAnswer: opts.WaitForZhengming,
 			Username:      opts.Username,
 			Project:       opts.Project,
-		}, intentExec)
+		})
 	}
 	if opts.ZhengmingRequester != nil && opts.NotifyFn != nil {
 		r.Register(SuggestEdictTool{
