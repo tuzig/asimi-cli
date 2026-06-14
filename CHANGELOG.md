@@ -5,6 +5,70 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0-rc.1] - 2025-07-11
+
+### Added
+
+- **Daemon mode** — `asimi daemon` subcommand serves the Shogunate over a Unix socket with msgpack-RPC, enabling persistent sessions, multi-project support, and TUI reconnection
+- **TUI ↔ Daemon bridge** — bidirectional RPC with `ASIMI_DAEMON=1` auto-start and `ASIMI_DAEMON_SOCKET` for connecting a running TUI to an existing daemon
+- **Shogunate (幕府)** — the six-minister governance system with strategist, forge, judge, censor, sage, and marshal roles, orchestrated by the chancellor
+- **Rituals** — structured workflows (swift-strike, castle-siege, dawn-audience, review-borderlands, fix-lint) with step-level execution, recovery, and zhengming checkpoints
+- **Edict system** — intent-driven work orders with seal chain ascension (judge → sage → ruler), zhengming (正名) clarification flow, and active/blocked/sealed/cancelled status
+- **Fork/Join DAG execution** — parallel minister orchestration with dependency resolution
+- **Tool Registry & Permission System Phase 1** — governable tool access for ministers
+- **Bifrost migration** — replaced langchaingo with Bifrost for LLM provider routing, supporting OpenAI, Anthropic, Bedrock, and Minimax via a unified interface
+- **Platform overlay volumes** — mount host directories into the sandbox with proper isolation
+- **Sandbox isolation hardening** — ping liveness probe, host network support, and improved container lifecycle
+- **Per-tab streaming** — origin-based stream routing with per-tab CTRL-C context cancellation
+- **Tab system** — `gt`/`gT` navigation across chancellor, forge, judge, and shogunate tabs
+- **`:seal` command** — seal chain verification with edict validation and fresh seal chain display
+- **`:export` over the wire** — session export via `GetSessionExport` RPC
+- **SetContext handshake** — multi-project daemon support with per-client project context
+- **Ritual recovery** — resume interrupted rituals with zhengming confirmation
+- **Welcome message** — onboarding greeting on startup
+- **Ruler guide** — documentation for the ruler (user) role in the Shogunate
+- **RPC protocol reference** — docs for the msgpack-RPC wire protocol
+- **Li enforcement** — block destructive git flags (`--no-verify`, `--overwrite-ignore`, `git clean`) in sandbox
+- **Asimi attribution headers** — send identification headers to LLM providers
+- **Environment variable base URLs** — configure LLM provider endpoints via env vars
+
+### Changed
+
+- **Wire protocol migrated to msgpack-RPC** — standard msgpack-RPC for Neovim compatibility, replacing custom streaming
+- **Persistent minister sessions** — ministers reuse conversation context across ritual steps with per-step effort control
+- **Sage tools refactor** — consolidated censor into sage, reducing ministers from 6 to 5
+- **Init workflow** — converted to ritual-native `project-init` with `:init clear` support
+- **Message serialization** — extracted from storage layer to adapter pattern
+- **Shogunate branding** — court-themed chat messages and tab styling
+- **Config loader** — cleaned up and simplified
+- **Stream chunk handling** — folded `StreamReasoningChunkMsg` into `StreamChunkMsg` for unified streaming
+- **Podman bumped to 5.8.2**
+
+### Fixed
+
+- Daemon correctly receives working directory and environment variables from client
+- RPC connection dropping and automatic reconnection
+- Per-client runner isolation — each client uses its own sandbox runner
+- Ritual step output rendering and completion handling
+- Zhengming routing carries caller MinisterID correctly
+- Provider status indicator reflects current state
+- Resuming works on all tabs, not just the active one
+- Bifrost log messages formatting
+- Edict ID assignment on creation
+- Bedrock connection initialization
+- Court status limited to the current project
+- Tool output truncation at proper boundaries
+- Context sanitization and partial tool call cleanup
+- Daemon liveness probing and eviction of wedged daemons
+- Ritual step retry without reloading context
+- Multi-project and multi-user session isolation
+- Read file size limiting for safety
+- Grep tool output correctness
+- Tab name color and stream routing to correct tab
+- `IsClean()` refreshes status cache before checking
+- ANTHROPIC_API_KEY no longer leaks between tests
+- Context canceled errors replaced with user-friendly 'aborted by user' message
+
 ## [0.5.0] - 2025-01-20
 
 ### Added
