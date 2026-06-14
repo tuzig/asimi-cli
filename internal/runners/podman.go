@@ -3,6 +3,7 @@ package runners
 import (
 	"bufio"
 	"context"
+	"crypto/md5"
 	"fmt"
 	"io"
 	"log/slog"
@@ -458,6 +459,20 @@ func (r *PodmanRunner) createContainer(ctx context.Context) error {
 		})
 	}
 
+	for _, relPath := range r.config.PlatformOverlays {
+		overlayDest := filepath.Join(absPath, relPath)
+		volumeName := fmt.Sprintf("asimi-overlay-%s-%s", md5Hash(absPath), sanitizePath(relPath))
+		if _, err := os.Stat(overlayDest); err != nil {
+			slog.Warn("platform overlay host path does not exist", "path", overlayDest, "overlay", relPath)
+		}
+		slog.Debug("adding platform overlay", "volume", volumeName, "destination", overlayDest)
+		mounts = append(mounts, spec.Mount{
+			Type:        "volume",
+			Source:      volumeName,
+			Destination: overlayDest,
+		})
+	}
+
 	s.Mounts = mounts
 
 	slog.Debug("calling CreateWithSpec")
@@ -677,4 +692,23 @@ func (r *PodmanRunner) GetImageName() string {
 // AllowFallback enables or disables fallback to host runner
 func (r *PodmanRunner) AllowFallback(allow bool) {
 	r.allowFallback = allow
+}
+
+// md5Hash returns the hex MD5 hash of s.
+func md5Hash(s string) string {
+	h := md5.Sum([]byte(s))
+	return fmt.Sprintf("%x", h)
+}
+
+// sanitizePath replaces non-alphanumeric characters with underscores.
+func sanitizePath(p string) string {
+	var b strings.Builder
+	for _, r := range p {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }

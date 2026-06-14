@@ -102,6 +102,8 @@ type SandboxConfig struct {
 	AdditionalMounts []Mount `koanf:"additional_mounts"`
 	// PassthroughEnv is a list of host environment variable names to forward into the sandbox
 	PassthroughEnv []string `koanf:"passthrough_env"`
+	// PlatformOverlays are project-relative paths to isolate per-platform using named volumes
+	PlatformOverlays []string `koanf:"platform_overlays"`
 }
 
 // ShogunateConfig holds configuration for the Shogunate.
