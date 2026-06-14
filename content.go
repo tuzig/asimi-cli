@@ -53,16 +53,21 @@ type TabManager struct {
 	onTabSwitch     func() // Called after tab switch to update TUI state
 }
 
+// bt is a backtick character, used inside raw string literals where ` cannot appear.
+const bt = "`"
+
 // tabGreetings maps each minister tab target to a welcome message.
 // Messages are injected as system messages into each tab's ChatComponent
 // at initialization — pure presentation, no daemon coupling.
 var tabGreetings = map[string]string{
-	"chancellor": `Greetings, Ruler and welcome to your Court
-Your court's main function is to harmonize the three realms:
-- **Intent** the ruler's will, TODO comments and docs
-- **Earth** Production code
-- **Heaven** Logs, CI, test results and tests
-For system commands use the ':' prefix, as in ':help'`,
+	"chancellor": "Greetings, Ruler and welcome to your Court\n" +
+		"Your court's main function is to harmonize the three realms:\n\n" +
+		"\t- **Intent** the ruler's will, TODO comments and docs\n" +
+		"\t- **Earth** Production code\n" +
+		"\t- **Heaven** Logs, CI, test results and tests\n\n" +
+		"The UI follows neovim's. For example, " + bt + "gt" + bt + " in NORMAL mode to move tab\n" +
+		"For system commands use the " + bt + ":" + bt + " prefix, as in " + bt + ":help" + bt +"\n" +
+		"For shell commands in the sandbox use " + bt + ":!" + bt + " prefix, as in " + bt + ":!uname" + bt,
 	"sage": `Greetings, Ruler and welcome to your hunting grounds
 With the sage you can hunt bugs' root cause,
 brew new features and forumlate edicts`,
