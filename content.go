@@ -66,7 +66,7 @@ var tabGreetings = map[string]string{
 		"\t- **Earth** Production code\n" +
 		"\t- **Heaven** Logs, CI, test results and tests\n\n" +
 		"The UI follows neovim's. For example, " + bt + "gt" + bt + " in NORMAL mode to move tab\n" +
-		"For system commands use the " + bt + ":" + bt + " prefix, as in " + bt + ":help" + bt +"\n" +
+		"For system commands use the " + bt + ":" + bt + " prefix, as in " + bt + ":help" + bt + "\n" +
 		"For shell commands in the sandbox use " + bt + ":!" + bt + " prefix, as in " + bt + ":!uname" + bt,
 	"sage": `Greetings, Ruler and welcome to your hunting grounds
 With the sage you can hunt bugs' root cause,
