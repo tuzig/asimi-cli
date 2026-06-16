@@ -583,6 +583,7 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 
 	// Verify fork notifications
 	var forkStarted, forkCompleted int
+	var forkItemMsgs []RitualStepMsg
 	for _, msg := range messages {
 		if msg.StepName == "process-all" {
 			switch msg.Status {
@@ -598,6 +599,9 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 				}
 			}
 		}
+		if msg.ForkItem != "" {
+			forkItemMsgs = append(forkItemMsgs, msg)
+		}
 	}
 
 	if forkStarted != 1 {
@@ -606,6 +610,27 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 	// Allow for 1 or 2 completed notifications (one per step execution context)
 	if forkCompleted < 1 {
 		t.Errorf("expected at least 1 fork completed notification, got %d", forkCompleted)
+	}
+
+	// Verify ForkItem is populated on fork work step messages
+	if len(forkItemMsgs) == 0 {
+		t.Error("expected at least one notification with ForkItem set")
+	}
+	for _, msg := range forkItemMsgs {
+		if msg.ForkItem != "1/2" && msg.ForkItem != "2/2" {
+			t.Errorf("expected ForkItem to be '1/2' or '2/2', got %q", msg.ForkItem)
+		}
+	}
+	// Verify all expected ForkItem values are present
+	seen := map[string]bool{}
+	for _, msg := range forkItemMsgs {
+		seen[msg.ForkItem] = true
+	}
+	if !seen["1/2"] {
+		t.Error("expected ForkItem '1/2' in notifications")
+	}
+	if !seen["2/2"] {
+		t.Error("expected ForkItem '2/2' in notifications")
 	}
 }
 

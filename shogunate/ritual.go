@@ -45,6 +45,7 @@ type RitualStepMsg struct {
 	StepName    string `msgpack:"step_name,omitempty"`
 	StepIndex   int    `msgpack:"step_index"`
 	TotalSteps  int    `msgpack:"total_steps"`
+	ForkItem    string `msgpack:"fork_item,omitempty"` // e.g. "1/3" — item index within the fork
 	Status      string `msgpack:"status,omitempty"`
 	Message     string `msgpack:"message,omitempty"`
 }
@@ -452,6 +453,9 @@ type RitualExecution struct {
 	// Recovery tracking (not persisted)
 	PreviousExecutionID string `gorm:"-"` // ID of the aborted execution being recovered
 	RecoveryMode        bool   `gorm:"-"` // True if this execution is a recovery
+
+	// Fork execution context (not persisted)
+	forkItemLabel string // e.g. "1/3" — set by executeForkItem, read by Notify
 }
 
 // TableName returns the table name for RitualExecution
@@ -472,6 +476,9 @@ func (e *RitualExecution) Notify(msg RitualStepMsg) {
 		msg.RitualName = e.RitualName
 		msg.ExecutionID = e.ID
 		msg.EdictID = e.EdictID
+		if e.forkItemLabel != "" {
+			msg.ForkItem = e.forkItemLabel
+		}
 		if e.def != nil {
 			msg.TotalSteps = len(e.def.Steps)
 		}
@@ -1255,7 +1262,7 @@ func (r *RitualRunner) executeForkDAG(ctx context.Context, exec *RitualExecution
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				result := r.executeForkItem(ctx, exec, step, u.Item)
+				result := r.executeForkItem(ctx, exec, step, u.Item, idx, len(units))
 				result._unitIdx = idx
 
 				// Re-query DB after completion
@@ -1338,7 +1345,7 @@ func (r *RitualRunner) markLingInProgress(exec *RitualExecution, unit forkWorkUn
 }
 
 // executeForkItem executes a single fork item
-func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecution, step RitualStep, item interface{}) ForkResult {
+func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecution, step RitualStep, item interface{}, itemIndex, totalItems int) ForkResult {
 	// Create a fork-specific execution context
 	forkExec := &RitualExecution{
 		ID:         exec.ID,
@@ -1351,6 +1358,7 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 		stepStates: exec.stepStates,
 		notify:     exec.notify,
 		CurrentStep: exec.CurrentStep,
+		forkItemLabel: fmt.Sprintf("%d/%d", itemIndex+1, totalItems),
 	}
 
 	// Copy existing context

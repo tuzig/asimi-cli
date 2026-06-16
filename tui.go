@@ -1869,6 +1869,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				// Mark the tab as streaming so CTRL-C can cancel the ritual
 				m.tabs.SetStreamingTabByTab(msg.ChannelID)
+			} else if msg.ForkItem != "" {
+				text = fmt.Sprintf("  ⚙ %s [%s]: %s", msg.StepName, msg.ForkItem, msg.Message)
+				// Re-set streaming flag for each step, since a prior step's
+				// StreamCompleteMsg clears it and would cause chunks to drop.
+				m.tabs.SetStreamingTabByTab(msg.ChannelID)
 			} else {
 				if msg.TotalSteps == 1 {
 					text = fmt.Sprintf("single step: %s", msg.StepName)
