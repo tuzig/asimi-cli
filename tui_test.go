@@ -321,6 +321,92 @@ func TestTUIModelKeyboardInteraction(t *testing.T) {
 		},
 	}
 
+	// Global Tab/Shift+Tab tab navigation for chat view
+	t.Run("Tab advances active tab in chat view", func(t *testing.T) {
+		model := newTestModel(t)
+		require.Equal(t, ViModeInsert, model.Mode)
+		require.Equal(t, ViewChat, model.tabs.Content().GetActiveView())
+
+		before := model.tabs.activeTab
+		newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+		updatedModel, ok := newModel.(TUIModel)
+		require.True(t, ok)
+
+		require.Nil(t, cmd)
+		require.Equal(t, (before+1)%len(model.tabs.tabs), updatedModel.tabs.activeTab)
+	})
+
+	t.Run("Shift+Tab moves to previous tab in chat view", func(t *testing.T) {
+		model := newTestModel(t)
+		require.Equal(t, ViewChat, model.tabs.Content().GetActiveView())
+
+		before := model.tabs.activeTab
+		newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+		updatedModel, ok := newModel.(TUIModel)
+		require.True(t, ok)
+
+		require.Nil(t, cmd)
+		expected := before - 1
+		if expected < 0 {
+			expected = len(model.tabs.tabs) - 1
+		}
+		require.Equal(t, expected, updatedModel.tabs.activeTab)
+	})
+
+	t.Run("Tab with completion dialog keeps tab index unchanged", func(t *testing.T) {
+		model := newTestModel(t)
+		model.showCompletionDialog = true
+		model.completionMode = "command"
+		model.completions.SetOptions([]string{":help", "option2", "option3"})
+		model.completions.Show()
+
+		before := model.tabs.activeTab
+		newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+		updatedModel, ok := newModel.(TUIModel)
+		require.True(t, ok)
+
+		for cmd != nil {
+			msg := cmd()
+			newModel, cmd = updatedModel.Update(msg)
+			updatedModel, ok = newModel.(TUIModel)
+			require.True(t, ok)
+		}
+
+		require.Equal(t, before, updatedModel.tabs.activeTab)
+		require.Equal(t, ViewHelp, updatedModel.tabs.Content().GetActiveView())
+		require.Equal(t, "index", updatedModel.tabs.Content().help.GetTopic())
+	})
+
+	t.Run("Shift+Tab in list view is routed to list navigation", func(t *testing.T) {
+		model := newTestModel(t)
+		cmd := model.tabs.Content().ShowUnifiedModels([]Model{
+			{ID: "model-a", DisplayName: "Model A", Provider: "anthropic", Status: "ready"},
+			{ID: "model-b", DisplayName: "Model B", Provider: "anthropic", Status: "active"},
+			{ID: "model-c", DisplayName: "Model C", Provider: "anthropic", Status: "ready"},
+		}, "model-b")
+		require.NotNil(t, cmd)
+		msg := cmd()
+		newModel, cmd := model.Update(msg)
+		updatedModel, ok := newModel.(TUIModel)
+		require.True(t, ok)
+		require.Nil(t, cmd)
+
+		require.Equal(t, ViewModels, updatedModel.tabs.Content().GetActiveView())
+		require.Equal(t, NavList, updatedModel.tabs.Content().navMode)
+		require.Equal(t, 1, updatedModel.tabs.Content().selectedItem)
+
+		// Tab in a list view should be handled by the list's own navigation:
+		// it does not switch tabs and remains in the models view.
+		before := updatedModel.tabs.activeTab
+		newModel, cmd = updatedModel.Update(tea.KeyMsg{Type: tea.KeyTab})
+		finalModel, ok := newModel.(TUIModel)
+		require.True(t, ok)
+
+		require.Nil(t, cmd)
+		require.Equal(t, ViewModels, finalModel.tabs.Content().GetActiveView())
+		require.Equal(t, before, finalModel.tabs.activeTab)
+	})
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			model := newTestModel(t)

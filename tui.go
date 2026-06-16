@@ -702,6 +702,22 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCompletionDialog(msg)
 	}
 
+	// Global Tab / Shift+Tab tab navigation for chat view
+	if m.tabs.Content().GetActiveView() == ViewChat &&
+		!m.showCompletionDialog &&
+		m.modal == nil &&
+		m.providerModal == nil &&
+		m.codeInputModal == nil {
+		switch keyStr {
+		case "tab":
+			m.tabs.NextTab()
+			return m, nil
+		case "shift+tab":
+			m.tabs.PrevTab()
+			return m, nil
+		}
+	}
+
 	// Handle vi mode key bindings when in normal or visual mode
 	if m.Mode == "normal" || m.Mode == "visual" {
 		return m.handleViNormalMode(msg)
@@ -935,6 +951,8 @@ func (m TUIModel) handleViNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		helpText += "  A       - Insert mode at line end\n"
 		helpText += "  o       - Open new line below\n"
 		helpText += "  O       - Open new line above\n"
+		helpText += "  Tab     - Next tab\n"
+		helpText += "  Shift+Tab - Previous tab\n"
 		helpText += "  gt      - Next tab\n"
 		helpText += "  gT      - Previous tab\n"
 		helpText += "  gg      - Scroll to top\n"
