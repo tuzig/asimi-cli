@@ -34,6 +34,7 @@ const (
 	MessageTypeAIFailure                    // AI response completed with failure
 	MessageTypeThinking                     // AI thinking/reasoning content
 	MessageTypeShell                        // Shell command input/output
+	MessageTypeGreeting                     // Welcome/onboarding messages
 )
 
 // ChatMessage represents a single message with its indent level
@@ -95,10 +96,11 @@ const (
 	treeMidPrefix         = " │ "
 
 	// Shogunate court branding
-	courtPrefix    = "🏯  "  // Court in session
-	edictPrefix    = "📜  "  // Edict received
-	ministerPrefix = "🔱  "  // Minister invoked
-	ritualPrefix   = "⛩️  " // Ritual enacted
+	courtPrefix     = "🏯  "  // Court in session
+	greetingPrefix  = "🏯  "  // Greeting message block
+	edictPrefix     = "📜  "  // Edict received
+	ministerPrefix  = "🔱  "  // Minister invoked
+	ritualPrefix    = "⛩️  " // Ritual enacted
 )
 
 // ChatMsgBuilder builds multi-line messages with tree prefixes.
@@ -624,6 +626,20 @@ func (c *ChatComponent) UpdateContent() {
 			}
 			rendered = prefix + c.renderMarkdown(message)
 
+		case MessageTypeGreeting:
+			builder := NewChatMsgBuilder(greetingPrefix + " ")
+			// Word wrap and split into lines (c.Width-1 for gutter, -6 for prefix)
+			wrapped := wordwrap.String(message, c.Width-7)
+			lines := strings.Split(wrapped, "\n")
+			for i, line := range lines {
+				if i < len(lines)-1 {
+					builder.WriteLn(line)
+				} else {
+					builder.WriteString(line)
+				}
+			}
+			rendered = c.renderMarkdown(builder.String())
+
 		default:
 			// Other messages (system, tool calls, etc.)
 			messageStyle := lipgloss.NewStyle().
@@ -947,6 +963,17 @@ func (c *ChatComponent) HandleToolCallAborted(msg runners.ToolCallAbortedMsg) {
 }
 func (c *ChatComponent) AddMarkdownMessage(message string) {
 	c.AddMessage(c.renderMarkdown(message))
+}
+
+// AddGreetingMessage adds a greeting/onboarding message rendered as a
+// markdown block with the 🏯 prefix, matching AI output rendering style.
+func (c *ChatComponent) AddGreetingMessage(message string) {
+	c.Messages = append(c.Messages, ChatMessage{Content: message, Indent: 0, Type: MessageTypeGreeting})
+	c.UpdateContent()
+	if !c.ScrollLocked {
+		c.AutoScroll = true
+		c.UserScrolled = false
+	}
 }
 
 // UpdateLastToolCallEmoji finds the last tool call message containing the given command

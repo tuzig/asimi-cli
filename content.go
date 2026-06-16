@@ -87,7 +87,7 @@ If quality bugs you, you're on the right tab`,
 func initTabGreetings(tm *TabManager) {
 	for i := range tm.tabs {
 		if greeting := tabGreetings[tm.tabs[i].Target]; greeting != "" {
-			tm.tabs[i].Content.Chat.AddMarkdownMessage(systemPrefix + greeting)
+			tm.tabs[i].Content.Chat.AddGreetingMessage(greeting)
 		}
 	}
 }
