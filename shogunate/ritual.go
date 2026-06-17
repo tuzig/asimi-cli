@@ -36,6 +36,7 @@ var dotagentsBashrc string
 
 //go:embed dotagents/sandbox/asimi_runtime.sh
 var dotagentsAsimiRuntime string
+
 // RitualStepMsg notifies the UI of ritual step progress
 type RitualStepMsg struct {
 	ChannelID   string `msgpack:"channel_id"`
@@ -456,6 +457,8 @@ type RitualExecution struct {
 
 	// Fork execution context (not persisted)
 	forkItemLabel string // e.g. "1/3" — set by executeForkItem, read by Notify
+	forkWorkIndex int    // index of current work step within the fork
+	forkWorkTotal int    // total work steps in the fork
 }
 
 // TableName returns the table name for RitualExecution
@@ -478,8 +481,9 @@ func (e *RitualExecution) Notify(msg RitualStepMsg) {
 		msg.EdictID = e.EdictID
 		if e.forkItemLabel != "" {
 			msg.ForkItem = e.forkItemLabel
-		}
-		if e.def != nil {
+			msg.TotalSteps = e.forkWorkTotal
+			msg.StepIndex = e.forkWorkIndex
+		} else if e.def != nil {
 			msg.TotalSteps = len(e.def.Steps)
 		}
 		e.notify(msg)
@@ -927,10 +931,10 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 
 // ForkResult holds the result of a single fork item execution
 type ForkResult struct {
-	Item      interface{}
-	Output    string
-	Error     error
-	_unitIdx  int // internal: index in workUnits list for DAG tracking
+	Item     interface{}
+	Output   string
+	Error    error
+	_unitIdx int // internal: index in workUnits list for DAG tracking
 }
 
 // executeForkStep executes a fork/join parallel step
@@ -1042,18 +1046,42 @@ func (r *RitualRunner) executeForkStep(ctx context.Context, exec *RitualExecutio
 
 // getForkWorkUnits retrieves the work units from execution context
 func (r *RitualRunner) getForkWorkUnits(exec *RitualExecution, over string) ([]interface{}, error) {
+	var keys []string
+	if exec.Data != nil {
+		for k := range exec.Data {
+			keys = append(keys, k)
+		}
+	}
+	r.logger.Debug("resolving fork work units",
+		"ritual", exec.RitualName,
+		"step_index", exec.CurrentStep,
+		"over", over,
+		"data_keys", keys)
+
 	// Look directly in exec.Data
 	if exec.Data != nil {
 		if val, ok := exec.Data[over]; ok {
+			r.logger.Debug("found fork work units in exec.Data",
+				"ritual", exec.RitualName,
+				"over", over,
+				"type", fmt.Sprintf("%T", val))
 			return r.toInterfaceSlice(val)
 		}
 		// Also check step_results
 		if stepResults, ok := exec.Data["step_results"].(map[string]interface{}); ok {
 			if val, ok := stepResults[over]; ok {
+				r.logger.Debug("found fork work units in step_results",
+					"ritual", exec.RitualName,
+					"over", over,
+					"type", fmt.Sprintf("%T", val))
 				return r.toInterfaceSlice(val)
 			}
 		}
 	}
+	r.logger.Warn("fork work units key not found in context",
+		"ritual", exec.RitualName,
+		"over", over,
+		"data_keys", keys)
 	return nil, fmt.Errorf("work units key %q not found in context", over)
 }
 
@@ -1061,14 +1089,20 @@ func (r *RitualRunner) getForkWorkUnits(exec *RitualExecution, over string) ([]i
 func (r *RitualRunner) toInterfaceSlice(val interface{}) ([]interface{}, error) {
 	switch v := val.(type) {
 	case []interface{}:
+		r.logger.Debug("converted work units from []interface{}",
+			"count", len(v))
 		return v, nil
 	case []map[string]interface{}:
 		result := make([]interface{}, len(v))
 		for i, m := range v {
 			result[i] = m
 		}
+		r.logger.Debug("converted work units from []map[string]interface{}",
+			"count", len(result))
 		return result, nil
 	default:
+		r.logger.Debug("converting work units via JSON",
+			"type", fmt.Sprintf("%T", val))
 		// Try to convert via JSON marshaling
 		data, err := json.Marshal(val)
 		if err != nil {
@@ -1078,6 +1112,8 @@ func (r *RitualRunner) toInterfaceSlice(val interface{}) ([]interface{}, error) 
 		if err := json.Unmarshal(data, &result); err != nil {
 			return nil, fmt.Errorf("cannot unmarshal work units: %w", err)
 		}
+		r.logger.Debug("converted work units via JSON",
+			"count", len(result))
 		return result, nil
 	}
 }
@@ -1157,6 +1193,9 @@ func (r *RitualRunner) executeForkDAG(ctx context.Context, exec *RitualExecution
 	units := buildDependencyMap(workUnits)
 
 	if len(units) == 0 {
+		r.logger.Debug("fork DAG has no work units",
+			"ritual", exec.RitualName,
+			"step", step.Name)
 		return nil, nil
 	}
 
@@ -1164,11 +1203,22 @@ func (r *RitualRunner) executeForkDAG(ctx context.Context, exec *RitualExecution
 	idSet := make(map[string]bool, len(units))
 	for _, u := range units {
 		idSet[u.ID] = true
+		r.logger.Debug("fork DAG unit",
+			"ritual", exec.RitualName,
+			"step", step.Name,
+			"unit_id", u.ID,
+			"dependencies", u.DepIDs)
 	}
 
 	// Track completed items by ID. Seed with lings already done from DB.
 	done := make(map[string]bool)
+	doneBefore := len(done)
 	r.queryDoneLings(exec, idSet, done)
+	r.logger.Debug("fork DAG seeded done lings from DB",
+		"ritual", exec.RitualName,
+		"step", step.Name,
+		"already_done", len(done)-doneBefore,
+		"total_units", len(units))
 
 	// Track which indices have been dispatched
 	dispatched := make(map[int]bool)
@@ -1212,10 +1262,23 @@ func (r *RitualRunner) executeForkDAG(ctx context.Context, exec *RitualExecution
 			mu.Lock()
 			results = append(results, res)
 			mu.Unlock()
+			unitID := ""
 			if res._unitIdx >= 0 && res._unitIdx < len(units) {
-				done[units[res._unitIdx].ID] = true
+				unitID = units[res._unitIdx].ID
+				done[unitID] = true
 			}
 			running--
+			errStr := ""
+			if res.Error != nil {
+				errStr = res.Error.Error()
+			}
+			r.logger.Debug("fork DAG collected unit result",
+				"ritual", exec.RitualName,
+				"step", step.Name,
+				"unit_id", unitID,
+				"unit_index", res._unitIdx,
+				"error", errStr,
+				"running", running)
 			// Re-query DB in case "record the ling completed" marked other lings done
 			r.queryDoneLings(exec, idSet, done)
 		case <-ctx.Done():
@@ -1235,10 +1298,23 @@ func (r *RitualRunner) executeForkDAG(ctx context.Context, exec *RitualExecution
 				mu.Lock()
 				results = append(results, res)
 				mu.Unlock()
+				unitID := ""
 				if res._unitIdx >= 0 && res._unitIdx < len(units) {
-					done[units[res._unitIdx].ID] = true
+					unitID = units[res._unitIdx].ID
+					done[unitID] = true
 				}
 				running--
+				errStr := ""
+				if res.Error != nil {
+					errStr = res.Error.Error()
+				}
+				r.logger.Debug("fork DAG unit finished before dispatch",
+					"ritual", exec.RitualName,
+					"step", step.Name,
+					"unit_id", unitID,
+					"unit_index", res._unitIdx,
+					"error", errStr,
+					"running", running)
 				r.queryDoneLings(exec, idSet, done)
 				// Now acquire the freed slot
 				select {
@@ -1256,6 +1332,14 @@ func (r *RitualRunner) executeForkDAG(ctx context.Context, exec *RitualExecution
 			running++
 			unit := units[idx]
 			r.markLingInProgress(exec, unit)
+			r.logger.Debug("fork DAG dispatching unit",
+				"ritual", exec.RitualName,
+				"step", step.Name,
+				"unit_id", unit.ID,
+				"unit_index", idx,
+				"dependencies", unit.DepIDs,
+				"running", running,
+				"batch_size", batchSize)
 
 			wg.Add(1)
 			go func(u forkWorkUnit, idx int) {
@@ -1282,6 +1366,12 @@ func (r *RitualRunner) executeForkDAG(ctx context.Context, exec *RitualExecution
 				}
 			}
 			if len(blocked) > 0 {
+				r.logger.Warn("fork DAG stuck with unsatisfied dependencies",
+					"ritual", exec.RitualName,
+					"step", step.Name,
+					"blocked_count", len(blocked),
+					"blocked_units", blocked,
+					"done_count", len(done))
 				return results, fmt.Errorf("fork stuck: %d item(s) with unsatisfied dependencies: %v", len(blocked), blocked)
 			}
 			break // All done
@@ -1346,18 +1436,31 @@ func (r *RitualRunner) markLingInProgress(exec *RitualExecution, unit forkWorkUn
 
 // executeForkItem executes a single fork item
 func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecution, step RitualStep, item interface{}, itemIndex, totalItems int) ForkResult {
+	itemID := ""
+	if m, ok := item.(map[string]interface{}); ok {
+		if id, ok := m["ling_id"].(string); ok {
+			itemID = id
+		}
+	}
+	r.logger.Debug("fork item starting",
+		"ritual", exec.RitualName,
+		"step", step.Name,
+		"item_id", itemID,
+		"item_index", itemIndex,
+		"total_items", totalItems)
+
 	// Create a fork-specific execution context
 	forkExec := &RitualExecution{
-		ID:         exec.ID,
-		RitualName: exec.RitualName,
-		EdictID:    exec.EdictID,
-		Username:   exec.Username,
-		Project:    exec.Project,
-		Data:       storage.JSON{},
-		def:        exec.def,
-		stepStates: exec.stepStates,
-		notify:     exec.notify,
-		CurrentStep: exec.CurrentStep,
+		ID:            exec.ID,
+		RitualName:    exec.RitualName,
+		EdictID:       exec.EdictID,
+		Username:      exec.Username,
+		Project:       exec.Project,
+		Data:          storage.JSON{},
+		def:           exec.def,
+		stepStates:    exec.stepStates,
+		notify:        exec.notify,
+		CurrentStep:   exec.CurrentStep,
 		forkItemLabel: fmt.Sprintf("%d/%d", itemIndex+1, totalItems),
 	}
 
@@ -1378,7 +1481,12 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 	result := ForkResult{Item: item}
 
 	// Execute each work step
-	for _, workStep := range step.Work {
+	for i, workStep := range step.Work {
+		// Track position within the fork's work list so Notify can override
+		// StepIndex/TotalSteps to reflect the fork item context.
+		forkExec.forkWorkIndex = i
+		forkExec.forkWorkTotal = len(step.Work)
+
 		// Create a temporary step state for this work item
 		workStepState := RitualStepState{
 			ExecutionID: exec.ID,
@@ -1402,6 +1510,18 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 		}
 		result.Output = output
 	}
+
+	errStr := ""
+	if result.Error != nil {
+		errStr = result.Error.Error()
+	}
+	r.logger.Debug("fork item completed",
+		"ritual", exec.RitualName,
+		"step", step.Name,
+		"item_id", itemID,
+		"item_index", itemIndex,
+		"total_items", totalItems,
+		"error", errStr)
 
 	return result
 }
@@ -1456,6 +1576,8 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		exec.stepStates[exec.CurrentStep].Session = actSession
 	}
 	actSession.SetNotify(notify, "chancellor")
+	actSession.SetInRitual(true)
+	defer actSession.SetInRitual(false)
 	effort := step.Effort
 	if effort == "" {
 		effort = "medium"

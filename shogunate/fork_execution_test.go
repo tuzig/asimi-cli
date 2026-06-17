@@ -612,13 +612,20 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 		t.Errorf("expected at least 1 fork completed notification, got %d", forkCompleted)
 	}
 
-	// Verify ForkItem is populated on fork work step messages
+	// Verify ForkItem is populated on fork work step messages and that
+	// StepIndex/TotalSteps reflect the work step's position within the fork.
 	if len(forkItemMsgs) == 0 {
 		t.Error("expected at least one notification with ForkItem set")
 	}
 	for _, msg := range forkItemMsgs {
 		if msg.ForkItem != "1/2" && msg.ForkItem != "2/2" {
 			t.Errorf("expected ForkItem to be '1/2' or '2/2', got %q", msg.ForkItem)
+		}
+		if msg.TotalSteps != 1 {
+			t.Errorf("expected TotalSteps to be 1 within single-work-step fork, got %d", msg.TotalSteps)
+		}
+		if msg.StepIndex != 0 {
+			t.Errorf("expected StepIndex to be 0 within single-work-step fork, got %d", msg.StepIndex)
 		}
 	}
 	// Verify all expected ForkItem values are present
