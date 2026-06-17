@@ -1576,8 +1576,6 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		exec.stepStates[exec.CurrentStep].Session = actSession
 	}
 	actSession.SetNotify(notify, "chancellor")
-	actSession.SetInRitual(true)
-	defer actSession.SetInRitual(false)
 	effort := step.Effort
 	if effort == "" {
 		effort = "medium"

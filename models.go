@@ -852,15 +852,6 @@ func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots 
 				prefix = "▶ "
 			}
 
-			// Truncate intent for display (first line only, max 50 chars)
-			intent := edict.Intent
-			if nl := strings.Index(intent, "\n"); nl != -1 {
-				intent = intent[:nl]
-			}
-			if len(intent) > 50 {
-				intent = intent[:47] + "..."
-			}
-
 			// Judge seal: 刑 when present, spaces when absent
 			judge := "  "
 			if edict.HasJudgeSeal {
@@ -873,18 +864,21 @@ func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots 
 				sage = "聖"
 			}
 
-			// Format: "▶ [  3] 刑 聖 Fix the login bug..."
-			line := fmt.Sprintf("%s[%3d] %s %s %s",
-				prefix, edict.ID,
-				judge,
-				sage,
-				intent)
+			// Line prefix: "▶ [  3] 刑 聖 "
+			linePrefix := fmt.Sprintf("%s[%3d] %s %s ", prefix, edict.ID, judge, sage)
+			intentWidth := s.Width - lipgloss.Width(linePrefix)
+			if intentWidth < 0 {
+				intentWidth = 0
+			}
 
-			style := lipgloss.NewStyle()
+			// Clip intent at the component boundary, leaving newlines to Lipgloss's inline mode.
+			intent := lipgloss.NewStyle().Inline(true).MaxWidth(intentWidth).Render(" " + edict.Intent)
+
+			style := lipgloss.NewStyle().Inline(true).MaxWidth(s.Width)
 			if isSelected {
 				style = style.Foreground(lipgloss.Color("62")).Bold(true)
 			}
-			sb.WriteString(style.Render(line) + "\n")
+			sb.WriteString(style.Render(linePrefix+intent) + "\n")
 		},
 	}
 
