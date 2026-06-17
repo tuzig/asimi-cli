@@ -96,11 +96,11 @@ const (
 	treeMidPrefix         = " │ "
 
 	// Shogunate court branding
-	courtPrefix     = "🏯  "  // Court in session
-	greetingPrefix  = "🏯  "  // Greeting message block
-	edictPrefix     = "📜  "  // Edict received
-	ministerPrefix  = "🔱  "  // Minister invoked
-	ritualPrefix    = "⛩️  " // Ritual enacted
+	courtPrefix    = "🏯  "  // Court in session
+	greetingPrefix = "🏯  "  // Greeting message block
+	edictPrefix    = "📜  "  // Edict received
+	ministerPrefix = "🔱  "  // Minister invoked
+	ritualPrefix   = "⛩️  " // Ritual enacted
 )
 
 // ChatMsgBuilder builds multi-line messages with tree prefixes.

@@ -5,13 +5,7 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- Tab and Shift+Tab keyboard shortcuts for navigating between TUI tabs (e498)
-
-## [0.6.0-rc.1] - 2025-07-11
+## [0.6.0] - 2025-07-17
 
 ### Added
 
@@ -25,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bifrost migration** — replaced langchaingo with Bifrost for LLM provider routing, supporting OpenAI, Anthropic, Bedrock, and Minimax via a unified interface
 - **Platform overlay volumes** — mount host directories into the sandbox with proper isolation
 - **Sandbox isolation hardening** — ping liveness probe, host network support, and improved container lifecycle
+- Tab and Shift+Tab keyboard shortcuts for navigating between TUI tabs (e498)
 - **Per-tab streaming** — origin-based stream routing with per-tab CTRL-C context cancellation
 - **Tab system** — `gt`/`gT` navigation across chancellor, forge, judge, and shogunate tabs
 - **`:seal` command** — seal chain verification with edict validation and fresh seal chain display

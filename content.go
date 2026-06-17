@@ -65,12 +65,14 @@ var tabGreetings = map[string]string{
 		"\t- **Intent** the ruler's will, TODO comments and docs\n" +
 		"\t- **Earth** Production code\n" +
 		"\t- **Heaven** Logs, CI, test results and tests\n\n" +
-		"The UI follows neovim's. For example, " + bt + "gt" + bt + " in NORMAL mode to move tab\n" +
+		"The UI follows vi's and support INSERT, NORMAL, SCROLL modes" +
 		"For system commands use the " + bt + ":" + bt + " prefix, as in " + bt + ":help" + bt + "\n" +
-		"For shell commands in the sandbox use " + bt + ":!" + bt + " prefix, as in " + bt + ":!uname" + bt,
+		"For shell commands in the sandbox use " + bt + ":!" + bt + " prefix, as in " + bt + ":!uname" + bt +
+		"Use shift-TAB & TAB to go back a minister or forth.",
 	"sage": `Greetings, Ruler and welcome to your hunting grounds
 With the sage you can hunt bugs' root cause,
-brew new features and forumlate edicts`,
+brew new features and formulate edicts,
+edicts that enact rituals that resolve them.`,
 	"forge": `Salutations, Ruler and welcome to your Forge 工部
 The forge is where code is changed and the earth is shaped
 It's best to run the forge as part of a ritual,

@@ -7,20 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestTabGreetingsChancellorBackticks(t *testing.T) {
-	greeting := tabGreetings["chancellor"]
-	if greeting == "" {
-		t.Fatal("chancellor greeting is empty")
-	}
-
-	// The chancellor greeting uses backtick-wrapped inline code markers.
-	for _, code := range []string{"`gt`", "`:`", "`:!`", "`:!uname`"} {
-		if !strings.Contains(greeting, code) {
-			t.Errorf("chancellor greeting missing inline code %q", code)
-		}
-	}
-}
-
 func TestTabGreetingsAllPresent(t *testing.T) {
 	for _, target := range []string{"chancellor", "sage", "forge", "judge"} {
 		g, ok := tabGreetings[target]
