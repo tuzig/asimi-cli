@@ -25,6 +25,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
+	"github.com/afittestide/asimi/internal/shogunateapi"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -2960,4 +2961,127 @@ func TestSetContextParams_UsesRepoInfoProjectRootWhenAvailable(t *testing.T) {
 	assert.Equal(t, projectRoot, params.ProjectRoot)
 	assert.Equal(t, "feature", params.Branch)
 	assert.Equal(t, "sub", params.WorktreePath)
+}
+
+// --- mockShogunateClient records PublishEvent calls for test assertions ---
+
+type mockShogunateClient struct {
+	shogunateapi.Client // embed to satisfy interface; nil receivers panic on unused methods
+	publishedEvents     []publishedEvent
+	edictKeyFn          func(uint) storage.EdictKey
+}
+
+type publishedEvent struct {
+	key       storage.EdictKey
+	eventType storage.ShogunateEvent
+	payload   storage.JSON
+}
+
+func (m *mockShogunateClient) EdictKey(edictID uint) storage.EdictKey {
+	if m.edictKeyFn != nil {
+		return m.edictKeyFn(edictID)
+	}
+	return storage.EdictKey{ID: edictID, Username: "test", Project: "test"}
+}
+
+func (m *mockShogunateClient) PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
+	m.publishedEvents = append(m.publishedEvents, publishedEvent{key: key, eventType: eventType, payload: payload})
+	return key.ID
+}
+
+// --- Tests for pendingRitualEnact YESNO flow ---
+
+func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	// Simulate the state set by EventEdictCreated handler
+	model.pendingRitualEnact = &pendingRitualEnact{edictID: 42, intent: "Fix the bug"}
+
+	// User answers "yes"
+	msg := yesNoResponseMsg{answer: true}
+	newModel, _ := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// PublishEvent should have been called with EventRitualEnacted
+	require.Len(t, mock.publishedEvents, 1, "expected one PublishEvent call")
+	assert.Equal(t, storage.EventRitualEnacted, mock.publishedEvents[0].eventType)
+	assert.Equal(t, uint(42), mock.publishedEvents[0].key.ID)
+	assert.Equal(t, "swift-strike", mock.publishedEvents[0].payload["ritual_name"])
+	assert.Equal(t, uint(42), mock.publishedEvents[0].payload["edict_id"])
+
+	// pendingRitualEnact should be cleared
+	assert.Nil(t, updated.pendingRitualEnact)
+}
+
+func TestPendingRitualEnact_NoDoesNotPublishEvent(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	model.pendingRitualEnact = &pendingRitualEnact{edictID: 7, intent: "Some task"}
+
+	// User answers "no"
+	msg := yesNoResponseMsg{answer: false}
+	newModel, _ := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// No event should be published
+	assert.Empty(t, mock.publishedEvents)
+
+	// pendingRitualEnact should be cleared
+	assert.Nil(t, updated.pendingRitualEnact)
+}
+
+func TestPendingRitualEnact_EscClearsPendingState(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	model.pendingRitualEnact = &pendingRitualEnact{edictID: 5, intent: "Do something"}
+
+	// Esc also sends answer:false via the CommandLine component
+	msg := yesNoResponseMsg{answer: false}
+	newModel, _ := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	assert.Empty(t, mock.publishedEvents)
+	assert.Nil(t, updated.pendingRitualEnact)
+}
+
+func TestEventEdictCreated_EntersYesNoMode(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	// Simulate EventEdictCreated notification
+	eventMsg := shogunate.EventNotificationMsg{
+		ChannelID: "chancellor",
+		EventType: storage.EventEdictCreated,
+		EdictKey:  storage.EdictKey{ID: 13, Username: "test", Project: "test"},
+		Payload: map[string]interface{}{
+			"intent": "Add new feature",
+			"id":     uint(13),
+		},
+	}
+
+	newModel, cmd := model.handleCustomMessages(eventMsg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// YESNO mode should be entered
+	assert.True(t, updated.commandLine.IsInYesNoMode(), "expected command line to be in yes/no mode")
+	assert.Contains(t, updated.commandLine.yesNoQuestion, "swift-strike")
+	assert.Contains(t, updated.commandLine.yesNoQuestion, "13")
+
+	// pendingRitualEnact should be set
+	require.NotNil(t, updated.pendingRitualEnact)
+	assert.Equal(t, uint(13), updated.pendingRitualEnact.edictID)
+
+	// A command should be returned (mode change)
+	assert.NotNil(t, cmd)
 }

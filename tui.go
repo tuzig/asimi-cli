@@ -84,6 +84,8 @@ type TUIModel struct {
 
 	// Host command approval state
 	pendingHostApproval *runners.ApprovalRequestMsg
+	// Ritual enactment confirmation state
+	pendingRitualEnact *pendingRitualEnact
 	// Seal override confirmation state
 	pendingSealOverride *pendingSealOverride
 	repoInfo            *repo.RepoInfo
@@ -133,6 +135,12 @@ type editorResultMsg struct {
 	OrigBytes  []byte
 	OrigMtime  time.Time
 	Err        error
+}
+
+// pendingRitualEnact tracks state when waiting for Ruler confirmation to enact swift-strike
+type pendingRitualEnact struct {
+	edictID uint
+	intent  string
 }
 
 // pendingSealOverride tracks state when waiting for Ruler confirmation to seal without prerequisites
@@ -1948,6 +1956,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.AddToRawHistory("EVENT_NOTIFICATION",
 			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictKey.ID, msg.Message))
 
+		var cmds []tea.Cmd
+
 		// Use appropriate icon based on event type
 		icon := "📋"   // Default
 		message := "" // What about msg.Message ?
@@ -1972,6 +1982,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				intent = intent[:57] + "..."
 			}
 			message = fmt.Sprintf("Edict %d Created:\n    %s", id, intent)
+			// Prompt the ruler to enact swift-strike
+			m.pendingRitualEnact = &pendingRitualEnact{edictID: id, intent: intent}
+			cmds = append(cmds, m.commandLine.EnterYesNoMode(fmt.Sprintf("Enact swift-strike for edict %d?", id)))
 		case storage.EventEdictSealed:
 			icon = "✅"
 			message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", msg.EdictKey.ID)
@@ -2018,6 +2031,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if message != "" {
 			// TODO: refactor to the bubbletea way and return a function with the next line
 			chat.AddMessage(fmt.Sprintf("%s %s", icon, message))
+		}
+		if len(cmds) > 0 {
+			return m, tea.Batch(cmds...)
 		}
 		return m, nil
 
@@ -2229,6 +2245,23 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case yesNoResponseMsg:
+		// Check if this is a response to a ritual enactment request
+		if m.pendingRitualEnact != nil {
+			if msg.answer {
+				// User confirmed - enact swift-strike
+				key := m.shogunate.EdictKey(m.pendingRitualEnact.edictID)
+				payload := storage.JSON{
+					"ritual_name": "swift-strike",
+					"edict_id":    m.pendingRitualEnact.edictID,
+					"inputs":      map[string]interface{}{},
+				}
+				m.shogunate.PublishEvent(key, storage.EventRitualEnacted, payload)
+			}
+			// No explicit "declined" message needed; the 📜 notification already shows
+			m.pendingRitualEnact = nil
+			return m, nil
+		}
+
 		// Check if this is a response to a seal override request
 		if m.pendingSealOverride != nil {
 			if msg.answer {

@@ -565,9 +565,6 @@ func (c *Chancellor) SetShogunate(s *Shogunate) {
 
 // SubscribeToEvents registers the Chancellor's event handlers directly with the RitualGuard.
 func (c *Chancellor) SubscribeToEvents(rg *RitualGuard) {
-	rg.Subscribe(storage.EventEdictCreated, func(e Event) {
-		c.handleEdictCreated(c.shogunate.ctx, e.EdictKey)
-	})
 	rg.Subscribe(storage.EventRitualCompleted, func(e Event) {
 		c.handleRitualCompleted(c.shogunate.ctx, e.EdictKey, e.Payload)
 	})
@@ -841,31 +838,6 @@ func (c *Chancellor) processTask(ctx context.Context, task *Task) {
 		default:
 			c.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
 		}
-	}
-}
-
-// handleEdictCreated sends the new edict to the chancellor LLM to choose and enact the appropriate ritual.
-func (c *Chancellor) handleEdictCreated(ctx context.Context, key storage.EdictKey) {
-	c.logger.Info("handling edict created", "edict_id", key.ID)
-
-	edict, err := c.GetEdict(key)
-	if err != nil {
-		c.logger.Error("failed to get edict", "edict_id", key.ID, "error", err)
-		return
-	}
-
-	work := fmt.Sprintf("A new edict was create: %d. Based on the intent that follows chose the appropriate ritual and enact it: %s", key.ID, edict.Intent)
-	task := &Task{
-		Ctx:      ctx,
-		EdictKey: key,
-		Work:     work,
-		Done:     make(chan Result, 1),
-	}
-
-	select {
-	case c.tasks <- task:
-	default:
-		c.logger.Warn("chancellor task channel full", "edict_id", key.ID)
 	}
 }
 
