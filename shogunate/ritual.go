@@ -1585,9 +1585,92 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	// Build work prompt with ritual context and previous step results
 	prompt := r.buildWorkPrompt(exec, act)
 
-	// Execute the Act with streaming, with a step timeout
-	stepCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	// Step timeout with pause/resume for zhengming waits.
+	// When the minister raises zhengming (asks the Ruler a question), the
+	// step timer is paused so the 15-minute deadline doesn't expire while
+	// waiting for an answer. When the answer arrives, the timer resumes.
+	const stepTimeout = 15 * time.Minute
+	stepTimer := time.NewTimer(stepTimeout)
+	defer stepTimer.Stop()
+
+	var timerMu sync.Mutex
+	var remaining time.Duration = stepTimeout
+	var paused bool
+	var timerStart time.Time // when the timer was last started/reset
+
+	// Initialize timerStart to now
+	timerStart = time.Now()
+
+	pauseTimer := func() {
+		timerMu.Lock()
+		defer timerMu.Unlock()
+		if paused {
+			return
+		}
+		// Stop the timer and compute remaining time
+		if stepTimer.Stop() {
+			// Timer hadn't fired yet; compute remaining from elapsed
+			elapsed := time.Since(timerStart)
+			remaining = stepTimeout - elapsed
+			if remaining < 0 {
+				remaining = 0
+			}
+		} else {
+			// Timer already fired; drain channel and mark remaining as 0
+			select {
+			case <-stepTimer.C:
+			default:
+			}
+			remaining = 0
+		}
+		paused = true
+		r.logger.Debug("step timer paused for zhengming", "step", step.Name, "remaining", remaining)
+	}
+
+	resumeTimer := func() {
+		timerMu.Lock()
+		defer timerMu.Unlock()
+		if !paused {
+			return
+		}
+		// Restart the timer with the remaining duration
+		if remaining > 0 {
+			stepTimer.Reset(remaining)
+			timerStart = time.Now()
+		} else {
+			// No time left; fire immediately
+			stepTimer.Reset(0)
+		}
+		paused = false
+		r.logger.Debug("step timer resumed after zhengming", "step", step.Name, "remaining", remaining)
+	}
+
+	// Wire zhengming callbacks on the minister (if it supports them).
+	// Access MinisterBase methods through the promoted interface.
+	type zhengmingPauser interface {
+		SetOnZhengmingRaised(func())
+		SetOnZhengmingResolved(func())
+	}
+	if mb, ok := minister.(zhengmingPauser); ok {
+		mb.SetOnZhengmingRaised(pauseTimer)
+		mb.SetOnZhengmingResolved(resumeTimer)
+		// Clear callbacks after the step to avoid stale references
+		defer mb.SetOnZhengmingRaised(nil)
+		defer mb.SetOnZhengmingResolved(nil)
+	}
+
+	// Create step context that cancels when the timer expires
+	stepCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	go func() {
+		select {
+		case <-stepTimer.C:
+			cancel()
+		case <-stepCtx.Done():
+			// Step completed or parent context cancelled
+		}
+	}()
 
 	// Route act through Task pattern to enable minister processing.
 	// This ensures processTask runs, which handles failed verdicts and streams work through the LLM.

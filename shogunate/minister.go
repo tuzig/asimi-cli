@@ -224,8 +224,9 @@ type MinisterBase struct {
 	publish      func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
 	toolRegistry *tools.ToolRegistry                                                                     // central tool registry with permission classifications
 
-	zhengmingMu       sync.Mutex
-	onZhengmingRaised func()
+	zhengmingMu         sync.Mutex
+	onZhengmingRaised   func()
+	onZhengmingResolved func()
 
 	pendingZhengming   map[string]chan ZhengmingAnswer
 	pendingZhengmingMu sync.Mutex
@@ -657,6 +658,14 @@ func (m *MinisterBase) SetOnZhengmingRaised(cb func()) {
 	m.onZhengmingRaised = cb
 }
 
+// SetOnZhengmingResolved sets a callback invoked when AnswerZhengming is called.
+// The ritual runner uses this to resume the step timeout after an answer is delivered.
+func (m *MinisterBase) SetOnZhengmingResolved(cb func()) {
+	m.zhengmingMu.Lock()
+	defer m.zhengmingMu.Unlock()
+	m.onZhengmingResolved = cb
+}
+
 // GenerateID creates a unique ID using SHA256.
 // Exported for use by session.go envelope pattern.
 func GenerateID(parts ...string) string {
@@ -803,6 +812,15 @@ func (m *MinisterBase) AnswerZhengming(requestID, answer string) error {
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("zhengming request not found: %s", requestID)
 	}
+
+	// Notify ritual runner so it can resume the step timeout
+	m.zhengmingMu.Lock()
+	cb := m.onZhengmingResolved
+	m.zhengmingMu.Unlock()
+	if cb != nil {
+		cb()
+	}
+
 	return nil
 }
 
