@@ -8,7 +8,7 @@ import (
 	"os/user"
 	"strconv"
 
-	pathrslite "github.com/cyphar/filepath-securejoin/pathrs-lite"
+	securejoin "github.com/cyphar/filepath-securejoin"
 	libcontainerUser "github.com/moby/sys/user"
 	"github.com/sirupsen/logrus"
 	drivers "go.podman.io/storage/drivers"
@@ -331,11 +331,11 @@ func getAutoUserNSIDMappings(
 
 // Securely open (read-only) a file in a container mount.
 func secureOpen(containerMount, file string) (*os.File, error) {
-	tmpFile, err := pathrslite.OpenInRoot(containerMount, file)
+	tmpFile, err := securejoin.OpenInRoot(containerMount, file)
 	if err != nil {
 		return nil, err
 	}
 	defer tmpFile.Close()
 
-	return pathrslite.Reopen(tmpFile, unix.O_RDONLY)
+	return securejoin.Reopen(tmpFile, unix.O_RDONLY)
 }

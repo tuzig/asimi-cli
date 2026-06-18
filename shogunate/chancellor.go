@@ -72,8 +72,8 @@ func (c *Chancellor) Scratchpad() string {
 
 	b.WriteString("\n# Critical Rules\n")
 	b.WriteString("- Size the edict (S, M, L, XL) and invoke the appropriate ritual\n")
-	b.WriteString("- Use swift-strike for small, focused changes\n")
-	b.WriteString("- Use castle-siege for medium sized changes that require planning\n")
+	b.WriteString("- Use swift-strike for all code changes\n")
+	b.WriteString("- castle-siege is reserved for explicit ruler invocation only — do not auto-select it\n")
 	b.WriteString("- Use invoke_minister for ad-hoc tasks not covered by rituals\n")
 	b.WriteString("- When ambiguity threatens progress, invoke Zhengming immediately\n")
 	b.WriteString("- Never guess at requirements—always clarify\n")

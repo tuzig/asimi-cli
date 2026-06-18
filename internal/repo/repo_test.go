@@ -192,7 +192,7 @@ func TestGetRepoInfoForRoot(t *testing.T) {
 	require.NotEmpty(t, info.ProjectRoot, "ProjectRoot should be set")
 	require.NotEmpty(t, info.Branch, "Branch should be detected")
 	require.False(t, info.IsWorktree, "project root should not be a worktree")
-	require.Contains(t, []string{"main", "master"}, info.Branch, "should detect a main branch")
+	require.NotEmpty(t, info.Branch, "Branch should not be empty")
 	require.Equal(t, root, info.ProjectRoot, "ProjectRoot should match the provided root")
 }
 

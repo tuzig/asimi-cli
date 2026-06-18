@@ -806,6 +806,18 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	if !strings.Contains(prompt, "The Castle Siege (L)") {
 		t.Errorf("Expected ritual description in system prompt, got:\n%s", prompt)
 	}
+
+	// Verify castle-siege is NOT auto-selected
+	if !strings.Contains(prompt, "Use swift-strike for all code changes") {
+		t.Errorf("Expected 'Use swift-strike for all code changes' in system prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "castle-siege is reserved for explicit ruler invocation only") {
+		t.Errorf("Expected 'castle-siege is reserved for explicit ruler invocation only' in system prompt, got:\n%s", prompt)
+	}
+	// Verify old auto-selection guidance is gone
+	if strings.Contains(prompt, "Use castle-siege for medium sized changes") {
+		t.Errorf("Old auto-selection guidance for castle-siege should be removed, got:\n%s", prompt)
+	}
 }
 
 // TestChancellor_GetDBPath tests that getDBPath correctly extracts the database path from gorm.DB
