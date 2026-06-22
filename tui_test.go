@@ -24,8 +24,8 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -1592,6 +1592,29 @@ func TestStreamInterruptedMsg_StopsWaiting(t *testing.T) {
 	require.True(t, ok)
 
 	require.False(t, updatedModel.waitingForResponse, "StreamInterruptedMsg should stop waiting for response")
+}
+
+// TestStreamInterruptedMsg_ShowsAbortedInChat verifies that StreamInterruptedMsg
+// adds exactly one "🛠️ ABORTED" chat line. Combined with the ritual.go fix
+// (which removes the duplicate RitualStepMsg{Status:"aborted"} on context
+// cancellation), this ensures no doubled "🛠️ ABORTED ABORTED" output.
+func TestStreamInterruptedMsg_ShowsAbortedInChat(t *testing.T) {
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	msgCountBefore := len(model.tabs.Content().Chat.Messages)
+
+	newModel, _ := model.handleCustomMessages(shogunate.StreamInterruptedMsg{
+		ChannelID:      channelID,
+		PartialContent: "",
+	})
+	updatedModel := newModel.(TUIModel)
+
+	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
+	assert.Equal(t, msgCountBefore+1, msgCountAfter, "StreamInterruptedMsg should add exactly one chat message")
+
+	lastMsg := updatedModel.tabs.Content().Chat.Messages[len(updatedModel.tabs.Content().Chat.Messages)-1]
+	assert.Contains(t, lastMsg.Content, "ABORTED", "StreamInterruptedMsg should add ABORTED message")
 }
 
 // TestStreamErrorMsg_StopsWaiting tests that stream error stops waiting

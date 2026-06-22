@@ -1509,6 +1509,83 @@ func TestRitualTimeoutCancelsStep(t *testing.T) {
 	}
 }
 
+// TestRitualContextCancelledNoAbortNotification verifies that when a ritual
+// step's context is cancelled, the ritual runner does NOT emit a
+// RitualStepMsg{Status:"aborted"} notification. The session layer already
+// sends StreamInterruptedMsg which surfaces as 🛠️ ABORTED in the TUI;
+// a duplicate from the ritual layer would produce "🛠️ ABORTED ABORTED".
+func TestRitualContextCancelledNoAbortNotification(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name:        "cancel-notif-test",
+		Description: "Test that ctx cancellation doesn't emit aborted notification",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	// Minister that blocks until context is cancelled
+	slowMinister := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 1),
+		delay:        2 * time.Second, // long enough for us to cancel
+		result:       "",
+		err:          nil,
+	}
+
+	ministers := map[string]Minister{"forge": slowMinister}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go slowMinister.Run(ctx)
+
+	shogunate := &Shogunate{
+		ministers: ministers,
+		logger:    slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, nil, repo.RepoInfo{})
+
+	// Collect all notifications
+	var notifications []RitualStepMsg
+	var mu sync.Mutex
+	notify := func(msg any) {
+		if rsm, ok := msg.(RitualStepMsg); ok {
+			mu.Lock()
+			notifications = append(notifications, rsm)
+			mu.Unlock()
+		}
+	}
+
+	exec, err := runner.Start(ctx, "cancel-notif-test", testEK(12), nil, notify)
+	require.NoError(t, err)
+
+	// Cancel context shortly after starting — simulates user pressing Ctrl-C
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	err = runner.Run(ctx, exec)
+	require.Error(t, err, "expected error from context cancellation")
+
+	// Verify state is aborted
+	require.Equal(t, RitualStateAborted, exec.State, "ritual state should be aborted")
+
+	// Verify no RitualStepMsg{Status:"aborted"} was emitted
+	mu.Lock()
+	defer mu.Unlock()
+	for _, n := range notifications {
+		assert.NotEqual(t, "aborted", n.Status,
+			"RitualStepMsg{Status:'aborted'} should not be emitted on ctx cancellation — "+
+				"StreamInterruptedMsg from the session layer already shows the abort")
+	}
+}
+
 // TestRitualMinisterStepExecutesLings verifies that ritual minister steps route
 // through the Task pattern, enabling proper routing. This is the primary test
 // for Edict 324's main purpose: ensuring processTask runs with the correct

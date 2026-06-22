@@ -657,14 +657,10 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			exec.stepStates[exec.CurrentStep].Message = err.Error()
 			exec.stepStates[exec.CurrentStep].Output = result
 
-			// Context cancelled (user interrupt) — abort without cascading events
+			// Context cancelled (user interrupt) — the session layer already
+			// sent StreamInterruptedMsg which surfaces as 🛠️ ABORTED in the
+			// TUI. 
 			if ctx.Err() != nil {
-				exec.Notify(RitualStepMsg{
-					StepName:  step.Name,
-					StepIndex: exec.CurrentStep,
-					Status:    "aborted",
-					Message:   "aborted by user",
-				})
 				exec.State = RitualStateAborted
 				r.saveExecution(exec)
 				return err
