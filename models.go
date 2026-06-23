@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -22,9 +21,8 @@ type Model struct {
 	DisplayName string // Human-readable name
 	Provider    string // Provider key (e.g., "anthropic", "openai", "googleai")
 	Description string // Optional description
-	Status      string // "active" (currently selected), "ready" (key found), "login_required", "login"
-	// TODO: if not nil, it should be called on selecting the model
-	OnSelect tea.Cmd
+	Status      string // "active" (currently selected), "ready" (key found), "login_required"
+	OnSelect    tea.Cmd
 }
 
 // AnthropicModel represents a model from the Anthropic API
@@ -85,63 +83,78 @@ type OllamaModelsResponse struct {
 	Models []OllamaModel `json:"models"`
 }
 
-// ProviderInfo holds information about a provider's authentication status
-type ProviderInfo struct {
-	Name      string
-	HasAPIKey bool
-	HasOAuth  bool
-}
-
-// checkProviderAuth checks if a provider has valid authentication
-func checkProviderAuth(provider string) ProviderInfo {
-	info := ProviderInfo{Name: provider}
-
-	// Check for API key in environment
+// checkProviderAuth checks if a provider has an API key configured (env var or keyring)
+func checkProviderAuth(provider string) bool {
+	// Check environment variable
 	switch provider {
 	case "anthropic":
 		if os.Getenv("ANTHROPIC_API_KEY") != "" {
-			info.HasAPIKey = true
+			return true
 		}
 	case "openai":
 		if os.Getenv("OPENAI_API_KEY") != "" {
-			info.HasAPIKey = true
+			return true
 		}
 	case "googleai":
 		if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
-			info.HasAPIKey = true
+			return true
+		}
+	case "openrouter":
+		if os.Getenv("OPENROUTER_API_KEY") != "" {
+			return true
 		}
 	}
 
-	// Check for API key in keyring
-	if !info.HasAPIKey {
-		apiKey, err := GetAPIKeyFromKeyring(provider)
-		if err == nil && apiKey != "" {
-			info.HasAPIKey = true
-		}
+	// Check keyring
+	apiKey, err := GetAPIKeyFromKeyring(provider)
+	if err == nil && apiKey != "" {
+		return true
 	}
 
-	// Check for OAuth token
-	tokenData, err := GetOauthToken(provider)
-	if err == nil && tokenData != nil && !shogunate.IsTokenExpired(tokenData) {
-		info.HasOAuth = true
-	}
-
-	return info
+	return false
 }
 
-// fetchAllModels aggregates models from all providers
+// providerEnvVar returns the primary environment variable name for a provider
+func providerEnvVar(provider string) string {
+	switch provider {
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	case "googleai":
+		return "GEMINI_API_KEY"
+	case "openrouter":
+		return "OPENROUTER_API_KEY"
+	default:
+		return strings.ToUpper(provider) + "_API_KEY"
+	}
+}
+
+// providerDisplayName returns a human-readable provider name
+func providerDisplayName(provider string) string {
+	switch provider {
+	case "anthropic":
+		return "Anthropic"
+	case "openai":
+		return "OpenAI"
+	case "googleai":
+		return "Google AI"
+	case "openrouter":
+		return "OpenRouter"
+	default:
+		return provider
+	}
+}
+
+// fetchAllModels aggregates models from all providers that have API keys configured
 func fetchAllModels(config *Config) []Model {
 	var allModels []Model
 	currentProvider := config.LLM.Provider
 	currentModel := config.LLM.Model
-
-	// Check auth status for each provider
-	anthropicAuth := checkProviderAuth("anthropic")
 	ollamaAvailable := checkOllamaAvailable()
 
-	// Fetch Anthropic models & login option
-	addLogin := false
-	if anthropicAuth.HasAPIKey || anthropicAuth.HasOAuth {
+	// Fetch Anthropic models if key is configured
+	if checkProviderAuth("anthropic") {
 		anthropicModels, err := fetchAnthropicModels(config)
 		if err == nil && len(anthropicModels) > 0 {
 			for _, m := range anthropicModels {
@@ -161,108 +174,95 @@ func fetchAllModels(config *Config) []Model {
 				})
 			}
 		} else if err != nil {
-			// TODO:
 			slog.Warn("failed to fetch Anthropic models", "error", err)
 			allModels = append(allModels, Model{
 				Provider:    "anthropic",
 				Status:      "error",
 				Description: err.Error(),
 			})
-			addLogin = true
 		}
-	} else {
-		addLogin = true
-	}
-	if addLogin {
-		// Add login option for Anthropic
-		slog.Debug("Addign login option")
-		allModels = append(allModels, Model{
-			ID:          "login",
-			DisplayName: "Login to Anthropic",
-			Provider:    "anthropic",
-			Description: "Use Claude Pro/Max account",
-			Status:      "login",
-			OnSelect: func() tea.Msg {
-				slog.Debug("Login selected line")
-				return providerSelectedMsg{provider: &Provider{
-					Name:        "Anthropic (Claude)",
-					Description: "Claude Pro/Max",
-					Key:         "anthropic",
-				}}
-			},
-		})
-		// Add help option for learning about model configuration
-		// TODO: ensure this is the right place for this.
-		allModels = append(allModels, Model{
-			ID:          "help",
-			DisplayName: "Learn about model configuration",
-			Provider:    "help",
-			Description: "API keys, environment variables, and more",
-			Status:      "login",
-			OnSelect: func() tea.Msg {
-				slog.Debug("Help models selected")
-				return showHelpMsg{topic: "models"}
-			},
-		})
 	}
 
-	if config.LLM.ExperimentalModels {
-		openaiAuth := checkProviderAuth("openai")
-		googleAuth := checkProviderAuth("googleai")
-		if openaiAuth.HasAPIKey || openaiAuth.HasOAuth {
-			openaiModels, err := fetchOpenAIModels(config)
-			if err == nil && len(openaiModels) > 0 {
-				for _, m := range openaiModels {
-					status := "ready"
-					if currentProvider == "openai" && m.ID == currentModel {
-						status = "active"
-					}
-					allModels = append(allModels, Model{
-						ID:          m.ID,
-						DisplayName: m.ID, // OpenAI API doesn't provide display names
-						Provider:    "openai",
-						Status:      status,
-					})
+	// Fetch OpenAI models if key is configured
+	if checkProviderAuth("openai") {
+		openaiModels, err := fetchOpenAIModels(config)
+		if err == nil && len(openaiModels) > 0 {
+			for _, m := range openaiModels {
+				status := "ready"
+				if currentProvider == "openai" && m.ID == currentModel {
+					status = "active"
 				}
-			} else if err != nil {
-				slog.Warn("failed to fetch OpenAI models", "error", err)
 				allModels = append(allModels, Model{
+					ID:          m.ID,
+					DisplayName: m.ID,
 					Provider:    "openai",
-					Status:      "error",
-					Description: err.Error(),
+					Status:      status,
 				})
 			}
+		} else if err != nil {
+			slog.Warn("failed to fetch OpenAI models", "error", err)
+			allModels = append(allModels, Model{
+				Provider:    "openai",
+				Status:      "error",
+				Description: err.Error(),
+			})
 		}
+	}
 
-		// Fetch Google AI models
-		if googleAuth.HasAPIKey || googleAuth.HasOAuth {
-			googleModels, err := fetchGoogleModels(config)
-			if err == nil && len(googleModels) > 0 {
-				for _, m := range googleModels {
-					status := "ready"
-					if currentProvider == "googleai" && m.Name == currentModel {
-						status = "active"
-					}
-					displayName := m.DisplayName
-					if displayName == "" {
-						displayName = m.Name
-					}
-					allModels = append(allModels, Model{
-						ID:          m.Name,
-						DisplayName: displayName,
-						Provider:    "googleai",
-						Description: m.Description,
-						Status:      status,
-					})
+	// Fetch Google AI models if key is configured
+	if checkProviderAuth("googleai") {
+		googleModels, err := fetchGoogleModels(config)
+		if err == nil && len(googleModels) > 0 {
+			for _, m := range googleModels {
+				status := "ready"
+				if currentProvider == "googleai" && m.Name == currentModel {
+					status = "active"
 				}
-			} else if err != nil {
-				slog.Warn("failed to fetch Google AI models", "error", err)
+				displayName := m.DisplayName
+				if displayName == "" {
+					displayName = m.Name
+				}
 				allModels = append(allModels, Model{
+					ID:          m.Name,
+					DisplayName: displayName,
 					Provider:    "googleai",
-					Status:      "error",
-					Description: err.Error(),
+					Description: m.Description,
+					Status:      status,
 				})
 			}
+		} else if err != nil {
+			slog.Warn("failed to fetch Google AI models", "error", err)
+			allModels = append(allModels, Model{
+				Provider:    "googleai",
+				Status:      "error",
+				Description: err.Error(),
+			})
+		}
+	}
+
+	// Fetch OpenRouter models if key is configured
+	if checkProviderAuth("openrouter") {
+		openrouterModels, err := fetchOpenRouterModels(config)
+		if err == nil && len(openrouterModels) > 0 {
+			for _, m := range openrouterModels {
+				status := "ready"
+				if currentProvider == "openrouter" && m.ID == currentModel {
+					status = "active"
+				}
+				allModels = append(allModels, Model{
+					ID:          m.ID,
+					DisplayName: m.ID,
+					Provider:    "openrouter",
+					Status:      status,
+				})
+			}
+		} else if err != nil {
+			slog.Warn("failed to fetch OpenRouter models", "error", err)
+			allModels = append(allModels, Model{
+				Provider:    "openrouter",
+				Status:      "error",
+				Description: err.Error(),
+			})
 		}
 	}
 
@@ -292,18 +292,38 @@ func fetchAllModels(config *Config) []Model {
 		}
 	}
 
+	// Emit login_required entries for providers without auth
+	knownProviders := []string{"openai", "anthropic", "googleai", "openrouter"}
+	for _, p := range knownProviders {
+		if checkProviderAuth(p) {
+			continue
+		}
+		if p == "openai" {
+			allModels = append(allModels, Model{
+				ID:          "codex-login",
+				DisplayName: "Login with OpenAI (Codex OAuth)",
+				Provider:    "openai",
+				Status:      "login_required",
+			})
+		} else {
+			allModels = append(allModels, Model{
+				ID:          p + "-apikey",
+				DisplayName: "Set API key for " + providerDisplayName(p) + " (env var)",
+				Provider:    p,
+				Status:      "login_required",
+			})
+		}
+	}
+
 	// Sort models: active first, then ready, then error, then login_required
-	// Within each status, sort by provider then by display name
 	sort.Slice(allModels, func(i, j int) bool {
-		statusPriority := map[string]int{"active": 0, "login": 1, "ready": 2, "help": 3, "error": 4, "login_required": 5}
+		statusPriority := map[string]int{"active": 0, "ready": 1, "error": 2, "login_required": 3}
 		if statusPriority[allModels[i].Status] != statusPriority[allModels[j].Status] {
 			return statusPriority[allModels[i].Status] < statusPriority[allModels[j].Status]
 		}
-		// Then by provider
 		if allModels[i].Provider != allModels[j].Provider {
 			return allModels[i].Provider < allModels[j].Provider
 		}
-		// Then by display name
 		return allModels[i].DisplayName < allModels[j].DisplayName
 	})
 
@@ -312,66 +332,32 @@ func fetchAllModels(config *Config) []Model {
 
 // fetchAnthropicModels fetches available models from the Anthropic API
 func fetchAnthropicModels(config *Config) ([]AnthropicModel, error) {
-	// Don't use config.LLM.AuthToken or config.LLM.APIKey as they might be for a different provider
-	// Instead, fetch Anthropic-specific credentials directly
-	var authToken, apiKey string
+	var apiKey string
 
-	// Try OAuth tokens first
-	slog.Debug("Fetching Anthropic credentials")
-	tokenData, err := GetOauthToken("anthropic")
-	if err == nil && tokenData != nil {
-		if !shogunate.IsTokenExpired(tokenData) {
-			// Token is still valid - use it
-			authToken = tokenData.AccessToken
-			slog.Debug("Using valid OAuth token for Anthropic")
-		} else {
-			// Token expired - try to refresh for Anthropic
-			auth := &AuthAnthropic{}
-			newAccessToken, refreshErr := auth.access()
-			if refreshErr == nil {
-				authToken = newAccessToken
-				slog.Debug("Refreshed OAuth token for Anthropic")
-			}
-		}
+	// Try API key from keyring first
+	apiKey, err := GetAPIKeyFromKeyring("anthropic")
+	if err != nil {
+		apiKey = ""
 	}
-
-	// If no OAuth token, try API key from keyring
-	if authToken == "" {
-		apiKey, err = GetAPIKeyFromKeyring("anthropic")
-		if err != nil {
-			apiKey = ""
-		}
-		if apiKey != "" {
-			slog.Debug("Using API key from keyring for Anthropic")
-		}
+	if apiKey != "" {
+		slog.Debug("Using API key from keyring for Anthropic")
 	}
 
 	// If still no credentials, try environment variable
-	if authToken == "" && apiKey == "" {
+	if apiKey == "" {
 		apiKey = os.Getenv("ANTHROPIC_API_KEY")
 		if apiKey != "" {
 			slog.Debug("Using API key from environment for Anthropic")
 		}
 	}
 
-	if authToken == "" && apiKey == "" {
-		return nil, fmt.Errorf("no authentication configured for anthropic provider")
+	if apiKey == "" {
+		return nil, fmt.Errorf("no API key configured for anthropic provider")
 	}
 
-	// Create HTTP client with appropriate authentication
-	client := &http.Client{}
-	if authToken != "" {
-		// Use OAuth authentication
-		client.Transport = &authTransport{
-			token:  authToken,
-			config: config,
-			base:   http.DefaultTransport,
-		}
-	} else {
-		// Use API key authentication
-		client.Transport = &apiKeyTransport{
-			base: http.DefaultTransport,
-		}
+	// Create HTTP client with API key authentication
+	client := &http.Client{
+		Transport: &apiKeyTransport{base: http.DefaultTransport},
 	}
 
 	// Determine base URL
@@ -414,8 +400,6 @@ func fetchAnthropicModels(config *Config) ([]AnthropicModel, error) {
 
 // fetchOpenAIModels fetches available models from the OpenAI API
 func fetchOpenAIModels(config *Config) ([]OpenAIModel, error) {
-	// Don't use config.LLM.APIKey as it might be for a different provider
-	// Fetch OpenAI-specific credentials directly
 	var apiKey string
 
 	// Try environment variable first
@@ -486,8 +470,6 @@ func fetchOpenAIModels(config *Config) ([]OpenAIModel, error) {
 
 // fetchGoogleModels fetches available models from the Google AI API
 func fetchGoogleModels(config *Config) ([]GoogleModel, error) {
-	// Don't use config.LLM.APIKey as it might be for a different provider
-	// Fetch Google AI-specific credentials directly
 	var apiKey string
 
 	// Try environment variables first (both GEMINI_API_KEY and GOOGLE_API_KEY)
@@ -539,7 +521,6 @@ func fetchGoogleModels(config *Config) ([]GoogleModel, error) {
 	for _, m := range modelsResponse.Models {
 		for _, method := range m.SupportedGenerationMethods {
 			if method == "generateContent" {
-				// Extract model name from full path (e.g., "models/gemini-pro" -> "gemini-pro")
 				name := m.Name
 				if strings.HasPrefix(name, "models/") {
 					name = strings.TrimPrefix(name, "models/")
@@ -559,6 +540,73 @@ func fetchGoogleModels(config *Config) ([]GoogleModel, error) {
 	return chatModels, nil
 }
 
+// fetchOpenRouterModels fetches available models from the OpenRouter API
+func fetchOpenRouterModels(config *Config) ([]OpenAIModel, error) {
+	var apiKey string
+
+	// Try environment variable first
+	apiKey = os.Getenv("OPENROUTER_API_KEY")
+	if apiKey != "" {
+		slog.Debug("Using API key from environment for OpenRouter")
+	}
+
+	// If no env var, try keyring
+	if apiKey == "" {
+		var err error
+		apiKey, err = GetAPIKeyFromKeyring("openrouter")
+		if err != nil || apiKey == "" {
+			return nil, fmt.Errorf("no API key configured for OpenRouter")
+		}
+		slog.Debug("Using API key from keyring for OpenRouter")
+	}
+
+	// Determine base URL
+	baseURL := "https://openrouter.ai/api/v1"
+	if envBaseURL := os.Getenv("OPENROUTER_BASE_URL"); envBaseURL != "" {
+		baseURL = strings.TrimSuffix(envBaseURL, "/")
+	}
+
+	req, err := http.NewRequest("GET", baseURL+"/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("HTTP-Referer", "https://github.com/afittestide/asimi")
+	req.Header.Set("X-Title", "asimi")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch models: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	var modelsResponse OpenAIModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Filter to chat models — skip embedding/image models
+	var chatModels []OpenAIModel
+	for _, m := range modelsResponse.Data {
+		if strings.Contains(m.ID, "embedding") || strings.Contains(m.ID, "tts") || strings.Contains(m.ID, "dall-e") {
+			continue
+		}
+		chatModels = append(chatModels, m)
+	}
+
+	sort.Slice(chatModels, func(i, j int) bool {
+		return chatModels[i].ID < chatModels[j].ID
+	})
+
+	return chatModels, nil
+}
+
 // getOllamaBaseURL returns the Ollama API base URL
 func getOllamaBaseURL() string {
 	if envURL := os.Getenv("OLLAMA_HOST"); envURL != "" {
@@ -571,7 +619,7 @@ func getOllamaBaseURL() string {
 func checkOllamaAvailable() bool {
 	baseURL := getOllamaBaseURL()
 	client := &http.Client{
-		Timeout: 2 * time.Second, // Quick timeout for local service check
+		Timeout: 2 * time.Second,
 	}
 
 	resp, err := client.Get(baseURL + "/api/tags")
@@ -587,13 +635,11 @@ func checkOllamaAvailable() bool {
 func fetchOllamaModels(config *Config) ([]OllamaModel, error) {
 	baseURL := getOllamaBaseURL()
 
-	// Create request
 	req, err := http.NewRequest("GET", baseURL+"/api/tags", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Make request
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -605,13 +651,11 @@ func fetchOllamaModels(config *Config) ([]OllamaModel, error) {
 		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
-	// Parse response
 	var modelsResponse OllamaModelsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&modelsResponse); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Sort by name for consistent ordering
 	sort.Slice(modelsResponse.Models, func(i, j int) bool {
 		return modelsResponse.Models[i].Name < modelsResponse.Models[j].Name
 	})
@@ -620,10 +664,15 @@ func fetchOllamaModels(config *Config) ([]OllamaModel, error) {
 }
 
 // ModelsWindow is a component for displaying unified model selection across all providers
-// Navigation is handled by ContentComponent
 type ModelsWindow struct {
 	SelectWindow[Model]
 	currentModel string
+
+	// Search state
+	searchPattern  string // current search pattern (empty = no active search)
+	searchDirection int   // 1 = forward (/), -1 = backward (?)
+	matchIndices   []int  // indices into Items that match the pattern
+	matchCursor    int    // current position in matchIndices
 }
 
 // NewModelsWindow creates a new models window
@@ -647,7 +696,6 @@ func (m *ModelsWindow) SetModels(models []Model, currentModel string) {
 
 // SetError sets error state
 func (m *ModelsWindow) SetError(err string) {
-	// SelectWindow expects error interface
 	if err == "" {
 		m.SelectWindow.SetError(nil)
 	} else {
@@ -657,19 +705,145 @@ func (m *ModelsWindow) SetError(err string) {
 
 // GetInitialSelection returns the index of the current model (or first selectable)
 func (m *ModelsWindow) GetInitialSelection() int {
-	// First, try to find the active model
 	for i, model := range m.Items {
 		if model.Status == "active" {
 			return i
 		}
 	}
-	// Fall back to first selectable item
 	return m.FirstSelectableIndex(IsModelSelectable)
 }
 
 // GetSelectedModel returns the model at the given index
 func (m *ModelsWindow) GetSelectedModel(index int) *Model {
 	return m.GetSelectedItem(index)
+}
+
+// Search computes match indices for the given pattern and returns the index to jump to.
+// direction: 1 = forward (/), -1 = backward (?)
+// currentItem: the currently selected item index
+// Returns -1 if no matches found.
+func (m *ModelsWindow) Search(pattern string, direction int, currentItem int) int {
+	if pattern == "" {
+		m.searchPattern = ""
+		m.searchDirection = 0
+		m.matchIndices = nil
+		m.matchCursor = 0
+		return currentItem
+	}
+
+	m.searchPattern = pattern
+	m.searchDirection = direction
+	lowerPattern := strings.ToLower(pattern)
+	m.matchIndices = m.matchIndices[:0]
+
+	for i, model := range m.Items {
+		if strings.Contains(strings.ToLower(model.ID), lowerPattern) ||
+			strings.Contains(strings.ToLower(model.DisplayName), lowerPattern) {
+			m.matchIndices = append(m.matchIndices, i)
+		}
+	}
+
+	if len(m.matchIndices) == 0 {
+		m.matchCursor = 0
+		return -1
+	}
+
+	// Find the first match in the desired direction, with wrap-around
+	if direction > 0 {
+		// Forward: first match at or after currentItem+1, wrap around
+		for _, idx := range m.matchIndices {
+			if idx > currentItem {
+				m.matchCursor = findMatchCursor(m.matchIndices, idx)
+				return idx
+			}
+		}
+		// Wrap around to first match
+		m.matchCursor = 0
+		return m.matchIndices[0]
+	}
+
+	// Backward: first match at or before currentItem-1, wrap around
+	for i := len(m.matchIndices) - 1; i >= 0; i-- {
+		if m.matchIndices[i] < currentItem {
+			m.matchCursor = i
+			return m.matchIndices[i]
+		}
+	}
+	// Wrap around to last match
+	m.matchCursor = len(m.matchIndices) - 1
+	return m.matchIndices[len(m.matchIndices)-1]
+}
+
+// NextMatch moves through existing matchIndices and returns the next/previous match.
+// direction: 1 = next match in search direction, -1 = opposite direction
+// Returns -1 if no matches exist.
+func (m *ModelsWindow) NextMatch(currentItem int, direction int) int {
+	if len(m.matchIndices) == 0 {
+		return -1
+	}
+
+	// Find the current cursor position based on currentItem
+	m.matchCursor = findMatchCursor(m.matchIndices, currentItem)
+
+	if direction > 0 {
+		m.matchCursor++
+		if m.matchCursor >= len(m.matchIndices) {
+			m.matchCursor = 0
+		}
+	} else {
+		m.matchCursor--
+		if m.matchCursor < 0 {
+			m.matchCursor = len(m.matchIndices) - 1
+		}
+	}
+
+	return m.matchIndices[m.matchCursor]
+}
+
+// findMatchCursor returns the position of idx in matchIndices, or the nearest
+// lower position if idx is not in the list.
+func findMatchCursor(matchIndices []int, idx int) int {
+	for i, mi := range matchIndices {
+		if mi == idx {
+			return i
+		}
+	}
+	// Not found — find the largest index < idx
+	result := 0
+	for i, mi := range matchIndices {
+		if mi < idx {
+			result = i
+		} else {
+			break
+		}
+	}
+	return result
+}
+
+// MatchCount returns the number of matches from the last search
+func (m *ModelsWindow) MatchCount() int {
+	return len(m.matchIndices)
+}
+
+// CurrentMatchNumber returns the 1-based position of matchCursor in matchIndices
+func (m *ModelsWindow) CurrentMatchNumber() int {
+	if len(m.matchIndices) == 0 {
+		return 0
+	}
+	return m.matchCursor + 1
+}
+
+// HasSearch returns true if there's an active search pattern
+func (m *ModelsWindow) HasSearch() bool {
+	return m.searchPattern != ""
+}
+
+// ClearSearch resets search state
+func (m *ModelsWindow) ClearSearch() {
+	m.searchPattern = ""
+	m.searchDirection = 0
+	m.matchIndices = nil
+	m.matchCursor = 0
 }
 
 // getProviderIcon returns an icon for the provider
@@ -683,8 +857,8 @@ func getProviderIcon(provider string) string {
 		return "🔷"
 	case "ollama":
 		return "🦙"
-	case "help":
-		return "📖"
+	case "openrouter":
+		return "🔀"
 	default:
 		return "  "
 	}
@@ -696,40 +870,37 @@ func getStatusIcon(status string) string {
 	case "active":
 		return "✓"
 	case "ready":
-		return "●"
-	case "login":
-		return "🔑"
+		return ""
 	case "login_required":
 		return "🔒"
 	case "error":
 		return "⚠"
 	default:
-		return " "
+		return ""
 	}
 }
 
 // IsModelSelectable returns whether a model can be selected
-// Error items are not selectable
 func IsModelSelectable(model Model) bool {
 	return model.Status != "error"
 }
 
 // RenderList renders the models list with the given selection
-// Always renders exactly visibleSlots lines to maintain consistent height
 func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int) string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		// TODO: use globalTheme
 		Foreground(lipgloss.Color("#F952F9")).
 		Background(lipgloss.Color("#000000")).
 		Padding(0, 1)
 
-	// Helper for grouping
 	isFirst := true
 	lastProvider := ""
 
 	config := RenderConfig[Model]{
 		ConstructTitle: func(selectedIndex, totalItems int) string {
+			if m.HasSearch() {
+				return titleStyle.Render(fmt.Sprintf("Select a model [%3d/%3d]  search %q [%d/%d]:", selectedIndex+1, totalItems, m.searchPattern, m.CurrentMatchNumber(), m.MatchCount()))
+			}
 			return titleStyle.Render(fmt.Sprintf("Select a model [%3d/%3d]:", selectedIndex+1, totalItems))
 		},
 		OnLoading: func(sb *strings.Builder) {
@@ -745,26 +916,20 @@ func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 		OnEmpty: func(sb *strings.Builder) {
 			sb.WriteString("No models available\n")
 			sb.WriteString("\n")
-			sb.WriteString("Configure API keys via environment variables or :login\n")
+			sb.WriteString("Select a provider below to login\n")
 		},
 		RenderItem: func(i int, model Model, isSelected bool, sb *strings.Builder) {
-			// Add provider header if provider changed
-			if !isFirst {
-				if model.Provider != lastProvider {
-					sb.WriteString("\n")
-				}
+			if !isFirst && model.Provider != lastProvider {
+				sb.WriteString("\n")
 			}
-
 			isFirst = false
 			lastProvider = model.Provider
 
-			// Error items are not selectable - no selection prefix
 			prefix := "  "
 			if model.Status == "error" {
-				// Error items show error message, not selectable
 				providerIcon := getProviderIcon(model.Provider)
 				statusIcon := getStatusIcon(model.Status)
-				style := lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // Red/orange for errors
+				style := lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 				line := fmt.Sprintf("%s%s %s %s", prefix, providerIcon, statusIcon, model.Description)
 				sb.WriteString(style.Render(line) + "\n")
 				return
@@ -774,7 +939,6 @@ func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 				prefix = "▶ "
 			}
 
-			// Build the line with provider icon, status, and model name
 			providerIcon := getProviderIcon(model.Provider)
 			statusIcon := getStatusIcon(model.Status)
 
@@ -783,16 +947,17 @@ func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 				displayText = model.ID
 			}
 
-			// Style based on selection and status
 			style := lipgloss.NewStyle()
 			if isSelected {
 				style = style.Foreground(lipgloss.Color("62")).Bold(true)
 			} else if model.Status == "login_required" {
-				style = style.Foreground(lipgloss.Color("240")) // Dimmed
+				style = style.Foreground(lipgloss.Color("240"))
 			}
 
-			// Format: "▶ 🅰️  ✓ Claude 3.5 Sonnet"
-			line := fmt.Sprintf("%s%s %s %s", prefix, providerIcon, statusIcon, displayText)
+			line := fmt.Sprintf("%s%s %s", prefix, providerIcon, displayText)
+			if statusIcon != "" {
+				line = fmt.Sprintf("%s%s %s %s", prefix, providerIcon, statusIcon, displayText)
+			}
 			sb.WriteString(style.Render(line) + "\n")
 		},
 		IsSelectable: func(model Model) bool {
@@ -852,26 +1017,22 @@ func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots 
 				prefix = "▶ "
 			}
 
-			// Judge seal: 刑 when present, spaces when absent
 			judge := "  "
 			if edict.HasJudgeSeal {
 				judge = "刑"
 			}
 
-			// Sage seal: 聖 when present, spaces when absent
 			sage := "  "
 			if edict.HasSageSeal {
 				sage = "聖"
 			}
 
-			// Line prefix: "▶ [  3] 刑 聖 "
 			linePrefix := fmt.Sprintf("%s[%3d] %s %s ", prefix, edict.ID, judge, sage)
 			intentWidth := s.Width - lipgloss.Width(linePrefix)
 			if intentWidth < 0 {
 				intentWidth = 0
 			}
 
-			// Clip intent at the component boundary, leaving newlines to Lipgloss's inline mode.
 			intent := lipgloss.NewStyle().Inline(true).MaxWidth(intentWidth).Render(" " + edict.Intent)
 
 			style := lipgloss.NewStyle().Inline(true).MaxWidth(s.Width)
@@ -898,16 +1059,30 @@ type showModelSelectionMsg struct{}
 
 // Command handler - now works with all providers
 func handleModelsCommand(model *TUIModel, args []string) tea.Cmd {
-	// Immediately show the models view with loading state
 	showModelsCmd := model.tabs.Content().ShowUnifiedModels([]Model{}, model.config.LLM.Model)
 	model.tabs.Content().models.SetLoading(true)
 
-	// Fetch models in the background
 	loadCmd := func() tea.Msg {
 		models := fetchAllModels(model.config)
+
+		// Set OnSelect for login_required entries
+		for i := range models {
+			m := &models[i]
+			if m.Status != "login_required" {
+				continue
+			}
+			if m.Provider == "openai" {
+				m.OnSelect = model.performCodexLogin()
+			} else {
+				envVar := providerEnvVar(m.Provider)
+				name := providerDisplayName(m.Provider)
+				msg := fmt.Sprintf("Set %s environment variable to use %s models", envVar, name)
+				m.OnSelect = func() tea.Msg { return showSystemMsg(msg) }
+			}
+		}
+
 		return modelsLoadedMsg{models: models}
 	}
 
-	// Return both commands - show view immediately, then load data
 	return tea.Batch(showModelsCmd, loadCmd)
 }

@@ -180,6 +180,7 @@ type Session struct {
 	// Loop detection
 	lastToolCallKey         string
 	toolCallRepetitionCount int
+	toolCallLoopHits        int
 
 	// MessageCount is the number of messages (used for display in session listings)
 	MessageCount int `json:"message_count,omitempty"`
@@ -511,6 +512,7 @@ func (s *Session) RollbackTo(snapshot int) {
 	// Reset tool loop detection state when rolling back
 	s.lastToolCallKey = ""
 	s.toolCallRepetitionCount = 0
+	s.toolCallLoopHits = 0
 }
 
 // Rollback discards all messages except the system prompt, keeping token counts updated
@@ -527,6 +529,7 @@ func (s *Session) ClearHistory() {
 	}
 	s.lastToolCallKey = ""
 	s.toolCallRepetitionCount = 0
+	s.toolCallLoopHits = 0
 	s.updateTokenCounts()
 	s.startTime = time.Now()
 	s.ClearContext()
@@ -584,10 +587,11 @@ var openRouterContextSizes = map[string]int{
 	"deepseek/deepseek-r1":         128_000,
 	"minimax/minimax-m2.5":         1_000_000,
 	"minimax/minimax-m2.7":         1_000_000,
+	"z-ai/glm-5.2":                 1_000_000,
 	"mistralai/mistral-large-2512": 128_000,
 	"mistralai/devstral-2512:free": 128_000,
 	"moonshotai/kimi-k2-thinking":  128_000,
-	"moonshotai/kimi-k2.6":  262_000,
+	"moonshotai/kimi-k2.6":         262_000,
 	"qwen/qwen3.5-397b-a17b":       128_000,
 }
 
@@ -855,6 +859,7 @@ func (s *Session) CompactHistory(ctx context.Context, compactPrompt string) (str
 
 	s.lastToolCallKey = ""
 	s.toolCallRepetitionCount = 0
+	s.toolCallLoopHits = 0
 	s.updateTokenCounts()
 
 	return summary, nil
@@ -1016,6 +1021,11 @@ func (s *Session) sanitizeMessages() {
 func (s *Session) prepareUserMessage(prompt string, contextFiles map[string]string) {
 	// Before adding a new user message, remove any unmatched tool calls
 	s.sanitizeMessages()
+
+	// Reset loop detection for new user prompt
+	s.toolCallRepetitionCount = 0
+	s.lastToolCallKey = ""
+	s.toolCallLoopHits = 0
 
 	fullPrompt := buildPromptWithContext(prompt, contextFiles)
 	s.messages = append(s.messages, schemas.ChatMessage{
@@ -1293,6 +1303,9 @@ func (s *Session) checkToolCallLoop(name, argsJSON string) bool {
 
 	if s.toolCallRepetitionCount >= toolCallLoopThreshold {
 		slog.Warn("tool call loop detected", "tool", name, "count", s.toolCallRepetitionCount)
+		s.toolCallRepetitionCount = 0
+		s.lastToolCallKey = ""
+		s.toolCallLoopHits++
 		return true
 	}
 
@@ -1421,10 +1434,10 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []schemas.Chat
 		if s.checkToolCallLoop(name, argsJSON) {
 			toolMessages = append(toolMessages, schemas.ChatMessage{
 				Role:            schemas.ChatMessageRoleTool,
-				Content:         textContent(fmt.Sprintf("error: tool call loop detected after %d attempts, please try a different approach", s.toolCallRepetitionCount)),
+				Content:         textContent(fmt.Sprintf("error: tool call loop detected (intervention #%d), please try a different approach", s.toolCallLoopHits)),
 				ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: tc.ID},
 			})
-			return toolMessages, true
+			return toolMessages, false
 		}
 
 		tool, ok := s.toolCatalog[name]
@@ -1551,6 +1564,14 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 				s.notify(StreamCompleteMsg{ChannelID: s.channelID})
 			}
 			return finalText, nil
+		}
+
+		if s.toolCallLoopHits >= 3 {
+			err := fmt.Errorf("tool call loop persisted after %d interventions", s.toolCallLoopHits)
+			if s.notify != nil {
+				s.notify(StreamErrorMsg{ChannelID: s.channelID, Err: err})
+			}
+			return "", err
 		}
 
 		if len(toolMessages) > 0 {

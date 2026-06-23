@@ -71,8 +71,7 @@ var tabGreetings = map[string]string{
 		"Use shift-TAB & TAB to go back a minister or forth.",
 	"sage": `Greetings, Ruler and welcome to your hunting grounds
 With the sage you can hunt bugs' root cause,
-brew new features and formulate edicts,
-edicts that enact rituals that resolve them.`,
+brew new features and formulate edicts.`,
 	"forge": `Salutations, Ruler and welcome to your Forge 工部
 The forge is where code is changed and the earth is shaped
 It's best to run the forge as part of a ritual,
@@ -605,6 +604,7 @@ func (c *ContentComponent) ShowUnifiedModels(models []Model, currentModel string
 	c.navMode = NavList
 	c.activeList = &c.models.SelectWindow
 	c.models.SetModels(models, currentModel)
+	c.models.ClearSearch()
 	c.selectedItem = c.models.GetInitialSelection()
 	c.scrollOffset = 0
 	c.onSelect = func(index int) tea.Cmd {
@@ -621,7 +621,7 @@ func (c *ContentComponent) ShowUnifiedModels(models []Model, currentModel string
 	}
 
 	return func() tea.Msg {
-		return ChangeModeMsg{NewMode: "select"}
+		return ChangeModeMsg{NewMode: "models"}
 	}
 }
 
@@ -861,6 +861,32 @@ func (c *ContentComponent) handleListNavigation(msg tea.KeyMsg) tea.Cmd {
 		scrollInfoCmd = c.getScrollInfoCmd()
 	case "enter":
 		return c.handleListSelect()
+	case "n":
+		// Next match in current search direction
+		if c.activeView == ViewModels && c.models.HasSearch() {
+			newIndex := c.models.NextMatch(c.selectedItem, c.models.searchDirection)
+			if newIndex >= 0 {
+				c.selectedItem = newIndex
+				if c.selectedItem >= c.scrollOffset+visibleSlots {
+					c.scrollOffset = c.selectedItem - visibleSlots + 1
+				} else if c.selectedItem < c.scrollOffset {
+					c.scrollOffset = c.selectedItem
+				}
+			}
+		}
+	case "N":
+		// Previous match (opposite direction)
+		if c.activeView == ViewModels && c.models.HasSearch() {
+			newIndex := c.models.NextMatch(c.selectedItem, -c.models.searchDirection)
+			if newIndex >= 0 {
+				c.selectedItem = newIndex
+				if c.selectedItem >= c.scrollOffset+visibleSlots {
+					c.scrollOffset = c.selectedItem - visibleSlots + 1
+				} else if c.selectedItem < c.scrollOffset {
+					c.scrollOffset = c.selectedItem
+				}
+			}
+		}
 	}
 
 	return scrollInfoCmd

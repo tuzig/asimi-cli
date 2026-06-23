@@ -82,6 +82,24 @@ func TestLLMInitSuccess_FiresShogunateStartedEvent(t *testing.T) {
 	t.Skip("Skipped due to health check bug - expects payload data not provided. Implementation verified manually.")
 }
 
+// TestLLMInitSuccess_DoesNotShowModelSelection verifies that the llmInitSuccessMsg
+// handler does NOT trigger a showModelSelectionMsg, which would pop up model
+// selection at startup. Models are loaded on demand when the user runs :models.
+func TestLLMInitSuccess_DoesNotShowModelSelection(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+
+	newModel, cmd := model.Update(llmInitSuccessMsg{})
+
+	// llmInitSuccessMsg should NOT trigger model selection pop-up
+	// Models are loaded on demand when the user runs :models
+	if cmd != nil {
+		msg := cmd()
+		_, ok := msg.(showModelSelectionMsg)
+		require.False(t, ok, "llmInitSuccessMsg should not produce showModelSelectionMsg")
+	}
+	_ = newModel
+}
+
 // TestLLMInitError_AddsMessageToChancellorTab tests that LLM initialization errors
 // are properly displayed in the Chancellor tab with helpful guidance.
 // See: tui.go:llmInitErrorMsg handler (line 2307)

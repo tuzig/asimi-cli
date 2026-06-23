@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/afittestide/asimi/internal/keyring"
 	"github.com/afittestide/asimi/internal/utils"
@@ -149,14 +148,6 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 
 	// Fallback: keyring-backed path for in-process mode (providers not in the map).
 
-	token, err := keyring.GetOauthToken(providerStr)
-	if err == nil && token != nil && token.AccessToken != "" {
-		enabled := true
-		return []schemas.Key{
-			{ID: providerStr + "_oauth", Name: providerStr + " OAuth Token", Value: schemas.EnvVar{Val: token.AccessToken}, Models: []string{}, Weight: 1.0, Enabled: &enabled},
-		}, nil
-	}
-
 	// Bedrock via keyring: only if AWS keys were injected into the map or
 	// discovered through keyring. Env-var-only Bedrock is the client's
 	// responsibility when using NewAccountWithKeys.
@@ -239,10 +230,4 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	}, nil
 }
 
-// IsTokenExpired checks if the token has expired (with 5-minute buffer)
-func IsTokenExpired(data *keyring.TokenData) bool {
-	if data == nil {
-		return true
-	}
-	return time.Now().After(data.Expiry.Add(-5 * time.Minute))
-}
+

@@ -4,9 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
-	"time"
 
-	"github.com/afittestide/asimi/internal/keyring"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -470,50 +468,5 @@ func TestGetConfigForProvider_WithKeysMap(t *testing.T) {
 	}
 	if cfg.NetworkConfig.BaseURL != "https://custom.api.com" {
 		t.Errorf("expected base URL 'https://custom.api.com', got %q", cfg.NetworkConfig.BaseURL)
-	}
-}
-
-// TestIsTokenExpired tests token expiration logic
-func TestIsTokenExpired(t *testing.T) {
-	tests := []struct {
-		name     string
-		data     *keyring.TokenData
-		expected bool
-	}{
-		{
-			name:     "nil token",
-			data:     nil,
-			expected: true,
-		},
-		{
-			name: "future token",
-			data: &keyring.TokenData{
-				Expiry: time.Now().Add(1 * time.Hour),
-			},
-			expected: false,
-		},
-		{
-			name: "expired token",
-			data: &keyring.TokenData{
-				Expiry: time.Now().Add(-1 * time.Hour),
-			},
-			expected: true,
-		},
-		{
-			name: "token expiring soon (within 5 min buffer)",
-			data: &keyring.TokenData{
-				Expiry: time.Now().Add(3 * time.Minute),
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsTokenExpired(tt.data)
-			if result != tt.expected {
-				t.Errorf("IsTokenExpired() = %v, want %v", result, tt.expected)
-			}
-		})
 	}
 }

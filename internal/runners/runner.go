@@ -116,7 +116,7 @@ func (e PodmanUnavailableError) Error() string {
 type SandboxMissingError struct{}
 
 func (e SandboxMissingError) Error() string {
-	return "Sandbox container image is missing. Did you run `:init` ?"
+	return "Sandbox container image is missing.\nDid you run `:init` ?"
 }
 
 // SandboxFallbackError is returned when a command fell back to the

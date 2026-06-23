@@ -129,8 +129,7 @@
 │    :new             - New session                                        │
 │    :resume          - Resume session                                     │
 │    :quit            - Quit                                               │
-│    :login           - Login to provider                                  │
-│    :models          - Select model                                       │
+│    :models          - Select model / login                                │
 │    :context         - Show context info                                  │
 │    :export          - Export conversation                                │
 │    :init            - Initialize project                                 │
@@ -160,8 +159,7 @@
 │                                                                          │
 │  Configuration                                                           │
 │                                                                          │
-│    :login            - Login with OAuth provider selection               │
-│    :models           - Select AI model                                   │
+│    :models           - Select AI model / login                            │
 │                                                                          │
 │  Information                                                             │
 │                                                                          │

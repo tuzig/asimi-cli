@@ -29,6 +29,13 @@ type (
 	navigateHistoryMsg    struct{ direction int } // For completion or history
 	yesNoResponseMsg      struct{ answer bool }   // true for yes, false for no
 	inputResponseMsg      struct{ text string }   // response from free text input mode
+
+	// Search messages
+	searchExecutedMsg  struct {
+		pattern   string
+		direction int
+	}
+	searchCancelledMsg struct{}
 )
 
 // Mode management - single unified message for all mode changes
@@ -45,6 +52,7 @@ const (
 	CommandLineToast
 	CommandLineYesNo
 	CommandLineInput
+	CommandLineSearch // vi-style search input (/ or ?)
 )
 
 // CommandLineComponent manages the bottom command line
@@ -69,6 +77,10 @@ type CommandLineComponent struct {
 	// Free text input support
 	inputPrompt    string          // The prompt message to display
 	inputTextInput textinput.Model // Text input for free text mode
+
+	// Search support
+	searchDirection int             // 1 = forward (/), -1 = backward (?)
+	searchTextInput textinput.Model // Text input for search pattern
 }
 
 // NewCommandLineComponent creates a new command line component
@@ -81,11 +93,16 @@ func NewCommandLineComponent() *CommandLineComponent {
 	inputTi.Prompt = "> "
 	inputTi.Focus()
 
+	searchTi := textinput.New()
+	searchTi.Prompt = ""
+	searchTi.Focus()
+
 	return &CommandLineComponent{
 		mode:           CommandLineIdle,
 		toasts:         make([]Toast, 0),
 		textInput:      ti,
 		inputTextInput: inputTi,
+		searchTextInput: searchTi,
 		history:        make([]string, 0),
 		historyCursor:  0,
 		historySaved:   false,
@@ -210,6 +227,42 @@ func (cl *CommandLineComponent) IsInInputMode() bool {
 	return cl.mode == CommandLineInput
 }
 
+// EnterSearchMode enters vi-style search mode with the given direction
+func (cl *CommandLineComponent) EnterSearchMode(direction int) tea.Cmd {
+	cl.mode = CommandLineSearch
+	cl.searchDirection = direction
+	cl.searchTextInput.SetValue("")
+	cl.searchTextInput.Focus()
+	return func() tea.Msg {
+		return ChangeModeMsg{NewMode: "search"}
+	}
+}
+
+// ExitSearchMode exits search mode and returns to models view
+func (cl *CommandLineComponent) ExitSearchMode() tea.Cmd {
+	cl.mode = CommandLineIdle
+	cl.searchTextInput.SetValue("")
+	cl.searchTextInput.Blur()
+	return func() tea.Msg {
+		return ChangeModeMsg{NewMode: "models"}
+	}
+}
+
+// IsInSearchMode returns true if in search mode
+func (cl *CommandLineComponent) IsInSearchMode() bool {
+	return cl.mode == CommandLineSearch
+}
+
+// GetSearchPattern returns the current search text input value
+func (cl *CommandLineComponent) GetSearchPattern() string {
+	return cl.searchTextInput.Value()
+}
+
+// GetSearchDirection returns the current search direction (1=forward, -1=backward)
+func (cl *CommandLineComponent) GetSearchDirection() int {
+	return cl.searchDirection
+}
+
 // SetCommand sets the current command being entered
 func (cl *CommandLineComponent) SetCommand(cmd string) {
 	cl.textInput.SetValue(cmd)
@@ -280,6 +333,18 @@ func (cl *CommandLineComponent) View() string {
 			Width(cl.width)
 		displayText := cl.inputPrompt + " " + cl.inputTextInput.View()
 		return promptStyle.Render(displayText)
+	}
+
+	// Priority 2.6: Show search input if in search mode
+	if cl.mode == CommandLineSearch {
+		prefix := "/"
+		if cl.searchDirection < 0 {
+			prefix = "?"
+		}
+		searchStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")).
+			Width(cl.width)
+		return searchStyle.Render(prefix + cl.searchTextInput.View())
 	}
 
 	// Priority 3: Show toast if active
@@ -453,6 +518,39 @@ func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			// Let textinput handle character input
 			var cmd tea.Cmd
 			cl.inputTextInput, cmd = cl.inputTextInput.Update(msg)
+			return cmd, true
+		}
+	}
+
+	// Handle search mode (vi-style / and ? search)
+	if cl.IsInSearchMode() {
+		keyStr := msg.String()
+		switch keyStr {
+		case "enter":
+			pattern := cl.searchTextInput.Value()
+			direction := cl.searchDirection
+			return tea.Batch(
+				cl.ExitSearchMode(),
+				func() tea.Msg { return searchExecutedMsg{pattern: pattern, direction: direction} },
+			), true
+		case "esc":
+			return tea.Batch(
+				cl.ExitSearchMode(),
+				func() tea.Msg { return searchCancelledMsg{} },
+			), true
+		case "backspace", "ctrl+h":
+			if cl.searchTextInput.Value() == "" {
+				return tea.Batch(
+					cl.ExitSearchMode(),
+					func() tea.Msg { return searchCancelledMsg{} },
+				), true
+			}
+			var cmd tea.Cmd
+			cl.searchTextInput, cmd = cl.searchTextInput.Update(msg)
+			return cmd, true
+		default:
+			var cmd tea.Cmd
+			cl.searchTextInput, cmd = cl.searchTextInput.Update(msg)
 			return cmd, true
 		}
 	}

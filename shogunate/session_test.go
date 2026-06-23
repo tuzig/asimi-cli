@@ -258,7 +258,10 @@ func TestSession_CheckToolCallLoop(t *testing.T) {
 
 	// Third identical call - now it's a loop (threshold is 3)
 	assert.True(t, sess.checkToolCallLoop("read_file", args))
-	assert.Equal(t, 3, sess.toolCallRepetitionCount)
+	// After loop detection, counters are reset for fresh attempt
+	assert.Equal(t, 0, sess.toolCallRepetitionCount)
+	assert.Equal(t, "", sess.lastToolCallKey)
+	assert.Equal(t, 1, sess.toolCallLoopHits)
 }
 
 func TestSession_CheckToolCallLoop_DifferentCalls(t *testing.T) {
@@ -764,10 +767,17 @@ func TestSession_ProcessToolCalls_LoopDetected(t *testing.T) {
 	sess.processToolCalls(context.Background(), []schemas.ChatAssistantMessageToolCall{toolCall})
 	messages, shouldReturn := sess.processToolCalls(context.Background(), []schemas.ChatAssistantMessageToolCall{toolCall})
 
-	assert.True(t, shouldReturn)
+	// Loop detection now returns false (not true) to let the outer turn loop continue
+	assert.False(t, shouldReturn)
 	require.NotEmpty(t, messages)
 	content := msgContentStr(messages[0])
 	assert.Contains(t, content, "loop detected")
+
+	// Counter resets after loop detection
+	assert.Equal(t, 0, sess.toolCallRepetitionCount)
+	assert.Equal(t, "", sess.lastToolCallKey)
+	// Loop hits counter incremented
+	assert.Equal(t, 1, sess.toolCallLoopHits)
 }
 
 func TestSession_ProcessToolCalls_SkipsEmptyName(t *testing.T) {
@@ -1277,6 +1287,30 @@ func TestSession_Rollback_ResetsLoopDetection(t *testing.T) {
 
 	assert.Equal(t, 0, sess.toolCallRepetitionCount, "loop repetition count should be reset")
 	assert.Empty(t, sess.lastToolCallKey, "last tool call key should be reset")
+	assert.Equal(t, 0, sess.toolCallLoopHits, "loop hits should be reset")
+}
+
+// TestSession_ClearHistory_ResetsLoopDetection verifies that ClearHistory resets loop detection state.
+func TestSession_ClearHistory_ResetsLoopDetection(t *testing.T) {
+	t.Parallel()
+
+	sess, err := NewSession(nil, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	// Trigger loop detection to set state
+	args := `{"path":"test.txt"}`
+	sess.checkToolCallLoop("read_file", args)
+	sess.checkToolCallLoop("read_file", args)
+	sess.checkToolCallLoop("read_file", args) // triggers loop detection → toolCallLoopHits = 1
+
+	require.Equal(t, 1, sess.toolCallLoopHits)
+	require.Equal(t, 0, sess.toolCallRepetitionCount) // reset by checkToolCallLoop after loop detected
+
+	sess.ClearHistory()
+
+	assert.Equal(t, 0, sess.toolCallRepetitionCount, "loop repetition count should be reset after ClearHistory")
+	assert.Empty(t, sess.lastToolCallKey, "last tool call key should be reset after ClearHistory")
+	assert.Equal(t, 0, sess.toolCallLoopHits, "loop hits should be reset after ClearHistory")
 }
 
 // TestSession_Rollback_Idempotent verifies that calling Rollback multiple times is safe.
@@ -1683,4 +1717,60 @@ func TestNewSession_WorkingDirFromConfig(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, projectDir, sess.WorkingDir, "WorkingDir should use config, not os.Getwd()")
 	})
+}
+
+func TestSession_ToolCallLoopHits_TripleIntervention(t *testing.T) {
+	t.Parallel()
+
+	tool := &mockTool{name: "loop_tool", output: "result"}
+	sess, err := NewSession(nil, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	toolCall := schemas.ChatAssistantMessageToolCall{
+		ID:   strPtr("tc1"),
+		Type: strPtr("function"),
+		Function: schemas.ChatAssistantMessageToolCallFunction{
+			Name:      strPtr("loop_tool"),
+			Arguments: `{"same":"args"}`,
+		},
+	}
+
+	// Trigger loop detection 3 separate times
+	for i := 0; i < 3; i++ {
+		// Need 3 identical calls to trigger one loop detection
+		for j := 0; j < 3; j++ {
+			sess.processToolCalls(context.Background(), []schemas.ChatAssistantMessageToolCall{toolCall})
+		}
+	}
+
+	assert.Equal(t, 3, sess.toolCallLoopHits, "should have 3 loop interventions")
+}
+
+func TestSession_ToolCallLoopHits_ResetsOnPrepareUserMessage(t *testing.T) {
+	t.Parallel()
+
+	tool := &mockTool{name: "loop_tool", output: "result"}
+	sess, err := NewSession(nil, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	toolCall := schemas.ChatAssistantMessageToolCall{
+		ID:   strPtr("tc1"),
+		Type: strPtr("function"),
+		Function: schemas.ChatAssistantMessageToolCallFunction{
+			Name:      strPtr("loop_tool"),
+			Arguments: `{"same":"args"}`,
+		},
+	}
+
+	// Trigger loop detection
+	for j := 0; j < 3; j++ {
+		sess.processToolCalls(context.Background(), []schemas.ChatAssistantMessageToolCall{toolCall})
+	}
+	assert.Equal(t, 1, sess.toolCallLoopHits)
+
+	// prepareUserMessage should reset toolCallLoopHits
+	sess.prepareUserMessage("new prompt", nil)
+	assert.Equal(t, 0, sess.toolCallLoopHits, "loop hits should be reset on new user message")
+	assert.Equal(t, 0, sess.toolCallRepetitionCount, "repetition count should be reset on new user message")
+	assert.Equal(t, "", sess.lastToolCallKey, "last tool call key should be reset on new user message")
 }

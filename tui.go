@@ -37,8 +37,6 @@ type TUIModel struct {
 	completions    CompletionDialog
 	commandLine    *CommandLineComponent
 	modal          *BaseModal
-	providerModal  *ProviderSelectionModal
-	codeInputModal *CodeInputModal
 
 	// UI Flags & State
 	Mode                 string // Current UI mode for status display
@@ -178,8 +176,6 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 		completions:    NewCompletionDialog(),
 		commandLine:    NewCommandLineComponent(),
 		modal:          nil,
-		providerModal:  nil,
-		codeInputModal: nil,
 
 		// UI Flags
 		Mode:                 ViModeInsert, // Start in insert mode
@@ -593,7 +589,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle command line input when in command mode or yes/no mode - MUST be before other handlers
-	if m.commandLine.IsInCommandMode() || m.commandLine.IsInYesNoMode() || m.commandLine.IsInInputMode() {
+	if m.commandLine.IsInCommandMode() || m.commandLine.IsInYesNoMode() || m.commandLine.IsInInputMode() || m.commandLine.IsInSearchMode() {
 		cmd, handled := m.commandLine.HandleKey(msg)
 		if handled {
 			// Component handled the key
@@ -609,19 +605,22 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.prompt().Blur()
 			return m, m.commandLine.EnterCommandMode("")
 		}
+		// Vi-style search in models view
+		if m.tabs.Content().GetActiveView() == ViewModels {
+			if keyStr == "/" {
+				m.prompt().Blur()
+				return m, m.commandLine.EnterSearchMode(1) // forward
+			}
+			if keyStr == "?" {
+				m.prompt().Blur()
+				return m, m.commandLine.EnterSearchMode(-1) // backward
+			}
+		}
 		cmd = m.tabs.UpdateContent(msg)
 		// If view switched back to chat, restore focus to prompt
 		if m.tabs.Content().GetActiveView() == ViewChat {
 			m.prompt().Focus()
 		}
-		return m, cmd
-	}
-	if m.codeInputModal != nil {
-		m.codeInputModal, cmd = m.codeInputModal.Update(msg)
-		return m, cmd
-	}
-	if m.providerModal != nil {
-		m.providerModal, cmd = m.providerModal.Update(msg)
 		return m, cmd
 	}
 
@@ -713,9 +712,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Global Tab / Shift+Tab tab navigation for chat view
 	if m.tabs.Content().GetActiveView() == ViewChat &&
 		!m.showCompletionDialog &&
-		m.modal == nil &&
-		m.providerModal == nil &&
-		m.codeInputModal == nil {
+		m.modal == nil {
 		switch keyStr {
 		case "tab":
 			m.tabs.NextTab()
@@ -2255,6 +2252,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 					"edict_id":    m.pendingRitualEnact.edictID,
 					"inputs":      map[string]interface{}{},
 				}
+				slog.Info("Got user confiramtion, sending an even to enact ritual", )
 				m.shogunate.PublishEvent(key, storage.EventRitualEnacted, payload)
 			}
 			// No explicit "declined" message needed; the 📜 notification already shows
@@ -2338,61 +2336,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 
-	case providerSelectedMsg:
-		m.providerModal = nil
-		provider := msg.provider.Key
-
-		// Handle Anthropic specially - show code input modal immediately
-		// TODO: move to performOAuthLogin
-		if provider == "anthropic" {
-			auth := &AuthAnthropic{}
-			authURL, verifier, err := auth.authorize()
-			if err != nil {
-				slog.Warn("Anthropic Auth failed", "error", err)
-				m.commandLine.AddToast("Authorization failed", "error", 4000)
-				return m, nil
-			}
-
-			// Open browser
-			if err := openBrowser(authURL); err != nil {
-				m.commandLine.AddToast("Failed to open browser", "warning", 3000)
-			}
-
-			// Show code input modal
-			m.codeInputModal = NewCodeInputModal(authURL, verifier)
-			m.config.LLM.Provider = provider
-			m.config.LLM.Model = "claude-3-5-sonnet-latest"
-			m.commandLine.AddToast("Logged in", "success", 3000)
-		} else {
-			// Other providers use the standard OAuth flow
-			return m, m.performOAuthLogin(provider)
-		}
-
 	case showOauthFailed:
 		m.tabs.Content().Chat.AddToRawHistory("OAUTH_ERROR", msg.err)
 		errToast := fmt.Sprintf("OAuth failed: %s", msg.err)
 		m.commandLine.AddToast(errToast, "error", 4000)
 		m.tabs.Content().Chat.AddMessage(errToast)
 		m.sessionActive = false
-
-	case modalCancelledMsg:
-		m.providerModal = nil
-		m.codeInputModal = nil
-		// Return to chat view
-		m.commandLine.AddToast("Cancelled", "info", 2000)
-		return m, m.tabs.Content().ShowChat()
-
-	case authCodeEnteredMsg:
-		m.codeInputModal = nil
-		return m, m.completeAnthropicOAuth(msg.code, msg.verifier)
-
-	case urlCopiedToClipboardMsg:
-		if msg.err != nil {
-			m.commandLine.AddToast("Failed to copy URL to clipboard: "+msg.err.Error(), "error", 3000)
-		} else {
-			m.commandLine.AddToast("URL copied to clipboard", "success", 3000)
-		}
-		return m, m.codeInputModal.textInput.Focus()
 
 	case modelSelectedMsg:
 		if msg.onSelect != nil {
@@ -2407,13 +2356,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Load API key for the new provider if needed
 		if msg.model.Provider != oldProvider {
-			// Clear existing auth tokens when switching providers
-			m.config.LLM.AuthToken = ""
-			m.config.LLM.RefreshToken = ""
+			// Clear existing API key when switching providers
 			m.config.LLM.APIKey = ""
 
 			// Credentials will be loaded by getModelClient() from keyring
-			// No need to load them here - getModelClient handles expiration and refresh
 		}
 
 		// Save config and reinitialize session
@@ -2446,6 +2392,29 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case modelsLoadErrorMsg:
 		m.tabs.Content().SetModelsError(msg.error)
+
+	case searchExecutedMsg:
+		c := m.tabs.Content()
+		newIndex := c.models.Search(msg.pattern, msg.direction, c.selectedItem)
+		if newIndex < 0 {
+			m.commandLine.AddToast("Pattern not found", "warning", 3*time.Second)
+		} else {
+			c.selectedItem = newIndex
+			visibleSlots := c.models.GetVisibleSlots()
+			if c.selectedItem < c.scrollOffset {
+				c.scrollOffset = c.selectedItem
+			} else if c.selectedItem >= c.scrollOffset+visibleSlots {
+				c.scrollOffset = c.selectedItem - visibleSlots + 1
+			}
+			total := c.models.MatchCount()
+			cur := c.models.CurrentMatchNumber()
+			m.commandLine.AddToast(fmt.Sprintf("Match %d/%d: %q", cur, total, msg.pattern), "info", 3*time.Second)
+		}
+		return m, nil
+
+	case searchCancelledMsg:
+		// No-op, stay in models view
+		return m, nil
 
 	case sessionsLoadedMsg:
 		return m, m.tabs.Content().ShowResume(msg.sessions)
@@ -2505,7 +2474,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prompt().Blur()
 		case "learning":
 			m.prompt().EnterViLearningMode()
-		case "select", "resume", "models", "help":
+		case "search":
+			m.prompt().Blur()
+			m.prompt().Style = m.prompt().Style.BorderForeground(globalTheme.PromptOffBorder)
+		case "models":
+			m.prompt().Blur()
+			m.prompt().TextArea.Placeholder = "j/k navigate | /? search | n/N next match | Enter to select | ESC to abort"
+			m.prompt().Style = m.prompt().Style.BorderForeground(globalTheme.PromptOffBorder)
+		case "select", "resume", "help":
 			// These modes don't need prompt updates, just placeholder changes
 			m.prompt().Blur()
 			m.prompt().TextArea.Placeholder = "j/k, CTRL-D/U to navigate | Enter to select | ESC to abort"
@@ -2627,6 +2603,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"latest_version":  latest.Version,
 			"has_update":      hasUpdate,
 			"current_version": utils.AsimiVersion})
+
+		return m, nil
 
 	case llmInitErrorMsg:
 		// LLM initialization failed - show persistent message in Chancellor tab
@@ -2820,8 +2798,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Restore focus to prompt if no modals are active and view is chat
-	if m.providerModal == nil && m.codeInputModal == nil &&
-		!m.commandLine.IsInCommandMode() &&
+	if !m.commandLine.IsInCommandMode() &&
 		m.tabs.Content().GetActiveView() == ViewChat {
 		m.prompt().Focus()
 	}
@@ -3046,17 +3023,6 @@ func (m TUIModel) View() string {
 	}
 
 	// Note: m.modal (BaseModal) is now rendered in composeBaseView above the prompt
-	// Only apply centered overlays for OAuth modals here
-
-	if m.providerModal != nil {
-		view = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.providerModal.Render())
-	}
-
-	if m.codeInputModal != nil {
-		// Place the modal centered, leaving room for commandLineView at the bottom
-		modalView := lipgloss.Place(m.width, m.height-1, lipgloss.Center, lipgloss.Center, m.codeInputModal.Render())
-		view = lipgloss.JoinVertical(lipgloss.Left, modalView, commandLineView)
-	}
 
 	return view
 }

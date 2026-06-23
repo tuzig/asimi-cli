@@ -13,6 +13,4 @@ type SetContextParams struct {
 	WorktreePath string            `msgpack:"worktree_path"`
 	Branch       string            `msgpack:"branch"`
 	APIKeys      map[string]string `msgpack:"api_keys,omitempty"`
-	AuthToken    string            `msgpack:"auth_token,omitempty"`
-	RefreshToken string            `msgpack:"refresh_token,omitempty"`
 }

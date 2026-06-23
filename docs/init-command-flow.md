@@ -22,7 +22,7 @@ The init command can be triggered via:
 ### 1. Entry Point: `handleInitCommand`
 
 Located in `commands.go`, this function:
-- Validates that a session exists (requires `:login` first)
+- Validates that a session exists (requires `:models` to login first)
 - Checks for `clear` argument to determine mode
 - Creates `.agents/sandbox` directory structure
 - In clear mode: removes all infrastructure files first
@@ -276,7 +276,7 @@ Once initialized:
 
 ## Error Handling
 
-**No Session**: "No model connection. Use :login to configure a provider and start chatting."
+**No Session**: "No model connection. Use :models to login and configure a provider to start chatting."
 
 **Directory Creation Fails**: "Error creating .agents directory: {error}"
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -352,35 +351,6 @@ func main() {
 	slog.Debug("[TIMING] Total execution time", "duration", time.Since(startTime))
 }
 
-// authTransport is used by models.go for list_models
-type authTransport struct {
-	token  string
-	config *Config
-	base   http.RoundTripper
-}
-
-func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.config != nil && refreshOAuthToken(t.config) {
-		t.token = t.config.LLM.AuthToken
-	}
-	r := req.Clone(req.Context())
-	if t.token != "" {
-		r.Header.Set("Authorization", "Bearer "+t.token)
-	}
-	r.Header.Set("anthropic-beta", "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
-	r.Header.Del("x-api-key")
-	r.Header.Del("X-Api-Key")
-	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
-		if parsedURL, err := url.Parse(baseURL + "/v1/messages"); err == nil {
-			r.URL = parsedURL
-		}
-	}
-	if t.base == nil {
-		t.base = http.DefaultTransport
-	}
-	return t.base.RoundTrip(r)
-}
-
 // apiKeyTransport is used by models.go for list_models
 type apiKeyTransport struct {
 	base http.RoundTripper
@@ -395,5 +365,4 @@ func (t *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r)
 }
 
-var _ = (http.RoundTripper)(&authTransport{})
 var _ = (http.RoundTripper)(&apiKeyTransport{})

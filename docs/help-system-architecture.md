@@ -223,7 +223,6 @@ TUIModel.View()
         │   ├─► Viewport (scrollable content)
         │   └─► Footer (navigation hints)
         │
-        ├─► providerModal.Render() (if active)
         ├─► codeInputModal.Render() (if active)
         ├─► modelSelectionModal.Render() (if active)
         └─► sessionModal.Render() (if active)
