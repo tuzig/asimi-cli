@@ -622,6 +622,11 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCtrlZ()
 	}
 
+	// Dismiss the welcome screen on any keypress
+	if !m.sessionActive {
+		m.sessionActive = true
+	}
+
 	// Handle command line input when in command mode or yes/no mode - MUST be before other handlers
 	if m.commandLine.IsInCommandMode() || m.commandLine.IsInYesNoMode() || m.commandLine.IsInInputMode() || m.commandLine.IsInSearchMode() {
 		cmd, handled := m.commandLine.HandleKey(msg)

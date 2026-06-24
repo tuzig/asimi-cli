@@ -3192,6 +3192,57 @@ func TestRenderMainContent_ChatViewWhenSessionActive(t *testing.T) {
 	assert.NotContains(t, content, "Safe, Fast & Opinionated Coding Agent")
 }
 
+// TestWelcomeScreen_DismissedOnAnyKey verifies that pressing any key
+// dismisses the welcome screen by setting sessionActive to true.
+func TestWelcomeScreen_DismissedOnAnyKey(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyType
+	}{
+		{"letter key", tea.KeyRunes},
+		{"enter key", tea.KeyEnter},
+		{"space key", tea.KeySpace},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+			model.width = 80
+			model.height = 24
+			model.sessionActive = false
+
+			var msg tea.KeyMsg
+			switch tt.key {
+			case tea.KeyRunes:
+				msg = tea.KeyMsg{Type: tt.key, Runes: []rune{'a'}}
+			default:
+				msg = tea.KeyMsg{Type: tt.key}
+			}
+
+			newModel, _ := model.Update(msg)
+			updated, ok := newModel.(TUIModel)
+			require.True(t, ok)
+			assert.True(t, updated.sessionActive,
+				"Welcome screen should be dismissed after keypress")
+		})
+	}
+}
+
+// TestWelcomeScreen_NotDismissedOnCtrlC verifies that Ctrl+C does not
+// dismiss the welcome screen (it's handled before the dismiss logic).
+func TestWelcomeScreen_NotDismissedOnCtrlC(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	model.width = 80
+	model.height = 24
+	model.sessionActive = false
+
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	// Ctrl+C should not dismiss the welcome screen — it has its own handler
+	assert.False(t, updated.sessionActive,
+		"Ctrl+C should not dismiss the welcome screen")
+}
+
 // TestOnboardingPrompt_ShownWhenConfigCreated verifies that onboardingPromptMsg
 // triggers the YES/NO prompt when configCreated is true.
 func TestOnboardingPrompt_ShownWhenConfigCreated(t *testing.T) {
