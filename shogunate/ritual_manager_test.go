@@ -402,6 +402,32 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 		t.Errorf("expected EventType EventStepCompleted, got %s", notifications[0].EventType)
 	}
 	mu.Unlock()
+
+	// Test EventRitualAborted notification
+	notifications = nil
+	rg.DispatchEvent(Event{
+		Type:     storage.EventRitualAborted,
+		EdictKey: storage.EdictKey{ID: 5},
+		Payload: map[string]interface{}{
+			"ritual": "swift-strike",
+			"reason": "edict cancelled",
+		},
+	})
+
+	time.Sleep(10 * time.Millisecond)
+
+	mu.Lock()
+	if len(notifications) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notifications))
+	}
+	if notifications[0].EventType != storage.EventRitualAborted {
+		t.Errorf("expected EventType EventRitualAborted, got %s", notifications[0].EventType)
+	}
+	expected := "Ritual swift-strike aborted: edict cancelled"
+	if notifications[0].Message != expected {
+		t.Errorf("expected message %q, got %q", expected, notifications[0].Message)
+	}
+	mu.Unlock()
 }
 
 // TestAbortStaleRitualsOnStart verifies that startRitual aborts stale running

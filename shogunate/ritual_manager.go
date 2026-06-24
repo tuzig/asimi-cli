@@ -317,6 +317,11 @@ func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg 
 			msg.Message = fmt.Sprintf("Zhengming answered for edict %d", edictID)
 		}
 
+	case storage.EventRitualAborted:
+		ritual, _ := event.Payload["ritual"].(string)
+		reason, _ := event.Payload["reason"].(string)
+		msg.Message = fmt.Sprintf("Ritual %s aborted: %s", ritual, reason)
+
 	case storage.EventEdictCancelled:
 		msg.Message = fmt.Sprintf("Edict %d cancelled", edictID)
 	}
