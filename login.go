@@ -227,17 +227,25 @@ func (m *TUIModel) performCodexLogin() tea.Cmd {
 	}
 }
 
-func openBrowser(url string) error {
+func browserCommand(url string) (*exec.Cmd, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		return exec.Command("open", url).Start()
+		return exec.Command("open", url), nil
 	case "linux":
-		return exec.Command("xdg-open", url).Start()
+		return exec.Command("xdg-open", url), nil
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url), nil
 	default:
-		return fmt.Errorf("unsupported OS for auto-open browser")
+		return nil, fmt.Errorf("unsupported OS for auto-open browser")
 	}
+}
+
+func openBrowser(url string) error {
+	cmd, err := browserCommand(url)
+	if err != nil {
+		return err
+	}
+	return cmd.Start()
 }
 
 func randomString(n int) string {

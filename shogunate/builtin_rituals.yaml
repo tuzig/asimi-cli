@@ -150,8 +150,8 @@
 - name: dawn-audience
   description: "Startup ritual - Chancellor reports court status on Shogunate boot, then requests zhengming"
   max_retries: 2
-  triggers:
-    - event: shogunate_started
+  # triggers:
+  #  - event: shogunate_started
   steps:
     - name: ping-model
       effort: low

@@ -18,12 +18,12 @@ func TestCodexConstants(t *testing.T) {
 	assert.Equal(t, 1455, codexCallbackPort)
 }
 
-// TestOpenBrowser tests the openBrowser function
-func TestOpenBrowser(t *testing.T) {
-	// Just verify it doesn't panic — actual browser opening is not testable
-	err := openBrowser("https://example.com")
-	// On CI without a display, this may error, which is fine
-	_ = err
+// TestBrowserCommand tests the browserCommand function without opening a real browser
+func TestBrowserCommand(t *testing.T) {
+	cmd, err := browserCommand("https://example.com")
+	assert.NoError(t, err)
+	assert.NotNil(t, cmd)
+	assert.NotEmpty(t, cmd.Path)
 }
 
 // TestRandomString tests the randomString helper
