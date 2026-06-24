@@ -31,12 +31,12 @@ type TUIModel struct {
 	theme         *Theme // Add theme here
 
 	// UI Components
-	status         StatusComponent
-	prompts        map[string]*PromptComponent
-	tabs           TabManager
-	completions    CompletionDialog
-	commandLine    *CommandLineComponent
-	modal          *BaseModal
+	status      StatusComponent
+	prompts     map[string]*PromptComponent
+	tabs        TabManager
+	completions CompletionDialog
+	commandLine *CommandLineComponent
+	modal       *BaseModal
 
 	// UI Flags & State
 	Mode                 string // Current UI mode for status display
@@ -89,7 +89,9 @@ type TUIModel struct {
 	pendingSealOverride *pendingSealOverride
 	// Onboarding model selection confirmation state
 	pendingOnboarding bool
-	repoInfo           *repo.RepoInfo
+	// Pending API key input: set when user selects a login_required non-OpenAI provider
+	pendingAPIKeyProvider string
+	repoInfo              *repo.RepoInfo
 
 	// Debounced render tick: prevents stacking multiple 50ms tick commands
 	renderTickPending bool
@@ -174,11 +176,11 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 
 		repoInfo: repoInfo,
 		// Initialize components
-		status:         status,
-		prompts:        prompts,
-		completions:    NewCompletionDialog(),
-		commandLine:    NewCommandLineComponent(),
-		modal:          nil,
+		status:      status,
+		prompts:     prompts,
+		completions: NewCompletionDialog(),
+		commandLine: NewCommandLineComponent(),
+		modal:       nil,
 
 		// UI Flags
 		Mode:                 ViModeInsert, // Start in insert mode
@@ -411,30 +413,37 @@ func (m *TUIModel) setContextParams() types.SetContextParams {
 	}
 }
 
-// collectAPIKeys gathers API keys from environment variables for all
-// supported providers. This runs in the TUI process and passes keys to
-// the daemon via SetContext, since the daemon no longer reads env vars directly.
+// collectAPIKeys gathers API keys from environment variables and the OS keyring
+// for all supported providers. Environment variables take precedence over keyring.
+// This runs in the TUI process and passes keys to the daemon via SetContext,
+// since the daemon no longer reads env vars directly.
 func collectAPIKeys() map[string]string {
 	keys := make(map[string]string)
 
-	// Standard provider API keys
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+	// Standard provider API keys — env var first, then keyring fallback.
+	// The map uses Bifrost provider strings ("gemini" for Google AI).
+	if key := getAPIKeyForProvider("anthropic", "ANTHROPIC_API_KEY"); key != "" {
 		keys["anthropic"] = key
 	}
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+	if key := getAPIKeyForProvider("openai", "OPENAI_API_KEY"); key != "" {
 		keys["openai"] = key
 	}
-	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
+	if key := getAPIKeyForProvider("openrouter", "OPENROUTER_API_KEY"); key != "" {
 		keys["openrouter"] = key
 	}
-	if key := os.Getenv("GEMINI_API_KEY"); key != "" {
-		keys["gemini"] = key
+	// Google: env vars first, then keyring. Keyring stores under "googleai"
+	// (matching the model selection UI), but the map uses "gemini" (Bifrost).
+	geminiKey := os.Getenv("GEMINI_API_KEY")
+	if geminiKey == "" {
+		geminiKey = os.Getenv("GOOGLE_API_KEY")
 	}
-	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
-		// Also check GOOGLE_API_KEY as an alternative for Gemini
-		if _, ok := keys["gemini"]; !ok {
-			keys["gemini"] = key
+	if geminiKey == "" {
+		if krKey, err := GetAPIKeyFromKeyring("googleai"); err == nil {
+			geminiKey = krKey
 		}
+	}
+	if geminiKey != "" {
+		keys["gemini"] = geminiKey
 	}
 
 	// AWS credentials for Bedrock
@@ -449,6 +458,19 @@ func collectAPIKeys() map[string]string {
 	}
 
 	return keys
+}
+
+// getAPIKeyForProvider checks the environment variable first, then the keyring.
+// provider is the keyring key name (e.g., "anthropic", "openai", "openrouter").
+// envVar is the environment variable name to check first.
+func getAPIKeyForProvider(provider, envVar string) string {
+	if key := os.Getenv(envVar); key != "" {
+		return key
+	}
+	if key, err := GetAPIKeyFromKeyring(provider); err == nil && key != "" {
+		return key
+	}
+	return ""
 }
 
 func (m *TUIModel) saveSession() {
@@ -2299,9 +2321,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				payload := storage.JSON{
 					"ritual_name": "swift-strike",
 					"edict_id":    m.pendingRitualEnact.edictID,
-					"inputs":      map[string]interface{}{},
+					"inputs": map[string]interface{}{
+						"edict_id": fmt.Sprintf("%d", m.pendingRitualEnact.edictID),
+					},
 				}
-				slog.Info("Got user confiramtion, sending an even to enact ritual", )
+				slog.Info("Got user confiramtion, sending an even to enact ritual")
 				m.shogunate.PublishEvent(key, storage.EventRitualEnacted, payload)
 			}
 			// No explicit "declined" message needed; the 📜 notification already shows
@@ -2352,8 +2376,19 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case inputResponseMsg:
+		// Handle API key input if pending
+		if m.pendingAPIKeyProvider != "" {
+			provider := m.pendingAPIKeyProvider
+			m.pendingAPIKeyProvider = ""
+			return m, handleAPIKeyInput(&m, provider, msg.text)
+		}
 		// Handle free text input responses
 		return m, handleProjectNameInput(&m, msg.text)
+
+	case apiKeyPromptMsg:
+		m.pendingAPIKeyProvider = msg.provider
+		prompt := fmt.Sprintf("Enter your %s API key:", providerDisplayName(msg.provider))
+		return m, m.commandLine.EnterInputMode(prompt)
 
 	case runners.ApprovalRequestMsg:
 		// Store the pending approval request
@@ -2437,6 +2472,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case showModelSelectionMsg:
 		// Trigger model selection after login completes
+		return m, handleModelsCommand(&m, nil)
+
+	case apiKeySavedMsg:
+		m.commandLine.AddToast(fmt.Sprintf("API key saved for %s", providerDisplayName(msg.provider)), "success", 3000)
 		return m, handleModelsCommand(&m, nil)
 
 	case modelsLoadErrorMsg:

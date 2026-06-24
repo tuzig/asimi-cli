@@ -308,7 +308,7 @@ func fetchAllModels(config *Config) []Model {
 		} else {
 			allModels = append(allModels, Model{
 				ID:          p + "-apikey",
-				DisplayName: "Set API key for " + providerDisplayName(p) + " (env var)",
+				DisplayName: "Set API key for " + providerDisplayName(p),
 				Provider:    p,
 				Status:      "login_required",
 			})
@@ -669,10 +669,10 @@ type ModelsWindow struct {
 	currentModel string
 
 	// Search state
-	searchPattern  string // current search pattern (empty = no active search)
-	searchDirection int   // 1 = forward (/), -1 = backward (?)
-	matchIndices   []int  // indices into Items that match the pattern
-	matchCursor    int    // current position in matchIndices
+	searchPattern   string // current search pattern (empty = no active search)
+	searchDirection int    // 1 = forward (/), -1 = backward (?)
+	matchIndices    []int  // indices into Items that match the pattern
+	matchCursor     int    // current position in matchIndices
 }
 
 // NewModelsWindow creates a new models window
@@ -1074,10 +1074,7 @@ func handleModelsCommand(model *TUIModel, args []string) tea.Cmd {
 			if m.Provider == "openai" {
 				m.OnSelect = model.performCodexLogin()
 			} else {
-				envVar := providerEnvVar(m.Provider)
-				name := providerDisplayName(m.Provider)
-				msg := fmt.Sprintf("Set %s environment variable to use %s models", envVar, name)
-				m.OnSelect = func() tea.Msg { return showSystemMsg(msg) }
+				m.OnSelect = func() tea.Msg { return apiKeyPromptMsg{provider: m.Provider} }
 			}
 		}
 

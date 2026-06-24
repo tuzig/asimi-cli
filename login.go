@@ -57,7 +57,7 @@ func (m *BaseModal) Render() string {
 		Background(lipgloss.Color("62")).
 		Foreground(lipgloss.Color("230")).
 		Padding(0, 1).
-		Width(m.Width-2)
+		Width(m.Width - 2)
 
 	title := titleStyle.Render(m.Title)
 	content := lipgloss.NewStyle().
@@ -73,11 +73,11 @@ func (m *BaseModal) Render() string {
 // --- Codex OAuth (OpenAI) ---
 
 const (
-	codexClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
-	codexAuthURL     = "https://auth.openai.com/oauth/authorize"
-	codexTokenURL    = "https://auth.openai.com/oauth/token"
-	codexRedirectURI = "http://localhost:1455/callback"
-	codexScope       = "openid profile email offline_access api.connectors.read api.connectors.invoke"
+	codexClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexAuthURL      = "https://auth.openai.com/oauth/authorize"
+	codexTokenURL     = "https://auth.openai.com/oauth/token"
+	codexRedirectURI  = "http://localhost:1455/callback"
+	codexScope        = "openid profile email offline_access api.connectors.read api.connectors.invoke"
 	codexCallbackPort = 1455
 )
 

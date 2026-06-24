@@ -23,15 +23,17 @@ type Toast struct {
 type (
 	commandReadyMsg       struct{ command string }
 	commandCancelledMsg   struct{}
-	commandTextChangedMsg struct{}                // Signals completion update needed
-	navigateCompletionMsg struct{ direction int } // -1 for up, +1 for down
-	acceptCompletionMsg   struct{}                // Tab pressed
-	navigateHistoryMsg    struct{ direction int } // For completion or history
-	yesNoResponseMsg      struct{ answer bool }   // true for yes, false for no
-	inputResponseMsg      struct{ text string }   // response from free text input mode
+	commandTextChangedMsg struct{}                  // Signals completion update needed
+	navigateCompletionMsg struct{ direction int }   // -1 for up, +1 for down
+	acceptCompletionMsg   struct{}                  // Tab pressed
+	navigateHistoryMsg    struct{ direction int }   // For completion or history
+	yesNoResponseMsg      struct{ answer bool }     // true for yes, false for no
+	inputResponseMsg      struct{ text string }     // response from free text input mode
+	apiKeyPromptMsg       struct{ provider string } // request API key input for a provider
+	apiKeySavedMsg        struct{ provider string } // API key saved to keyring for a provider
 
 	// Search messages
-	searchExecutedMsg  struct {
+	searchExecutedMsg struct {
 		pattern   string
 		direction int
 	}
@@ -98,15 +100,15 @@ func NewCommandLineComponent() *CommandLineComponent {
 	searchTi.Focus()
 
 	return &CommandLineComponent{
-		mode:           CommandLineIdle,
-		toasts:         make([]Toast, 0),
-		textInput:      ti,
-		inputTextInput: inputTi,
+		mode:            CommandLineIdle,
+		toasts:          make([]Toast, 0),
+		textInput:       ti,
+		inputTextInput:  inputTi,
 		searchTextInput: searchTi,
-		history:        make([]string, 0),
-		historyCursor:  0,
-		historySaved:   false,
-		historyPending: "",
+		history:         make([]string, 0),
+		historyCursor:   0,
+		historySaved:    false,
+		historyPending:  "",
 		toastStyle: lipgloss.NewStyle().
 			Background(lipgloss.Color("62")).
 			Foreground(lipgloss.Color("230")).

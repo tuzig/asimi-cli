@@ -409,6 +409,24 @@ func clearAsimiFiles(model *TUIModel) []string {
 	return errors
 }
 
+// handleAPIKeyInput saves an API key to the keyring and config, then refreshes models.
+func handleAPIKeyInput(model *TUIModel, provider, apiKey string) tea.Cmd {
+	if apiKey == "" {
+		// User cancelled (Esc)
+		return func() tea.Msg { return showModelSelectionMsg{} }
+	}
+
+	// Save to keyring and update config
+	if err := UpdateUserLLMAuth(provider, apiKey, ""); err != nil {
+		slog.Warn("Failed to save API key", "provider", provider, "error", err)
+		return func() tea.Msg {
+			return showContextMsg{content: fmt.Sprintf("%sFailed to save API key for %s: %v", systemPrefix, providerDisplayName(provider), err)}
+		}
+	}
+
+	return func() tea.Msg { return apiKeySavedMsg{provider: provider} }
+}
+
 // handleProjectNameInput handles the user's project name input
 func handleProjectNameInput(model *TUIModel, projectName string) tea.Cmd {
 	if projectName == "" {

@@ -164,7 +164,14 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 		return []schemas.Key{}, nil
 	}
 
-	apiKey, err := keyring.GetAPIKey(providerStr)
+	// Resolve the Bifrost provider string to the keyring key name.
+	// The keyring stores Google AI keys under "googleai", but Bifrost uses "gemini".
+	krProvider := providerStr
+	if providerStr == "gemini" {
+		krProvider = "googleai"
+	}
+
+	apiKey, err := keyring.GetAPIKey(krProvider)
 	if err == nil && apiKey != "" {
 		enabled := true
 		return []schemas.Key{

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -826,10 +825,7 @@ func TestHandleModelsCommand_SetsOnSelectForLoginRequired(t *testing.T) {
 			if m.Provider == "openai" {
 				m.OnSelect = model.performCodexLogin()
 			} else {
-				envVar := providerEnvVar(m.Provider)
-				name := providerDisplayName(m.Provider)
-				msg := fmt.Sprintf("Set %s environment variable to use %s models", envVar, name)
-				m.OnSelect = func() tea.Msg { return showSystemMsg(msg) }
+				m.OnSelect = func() tea.Msg { return apiKeyPromptMsg{provider: m.Provider} }
 			}
 		}
 

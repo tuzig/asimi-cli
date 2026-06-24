@@ -3053,6 +3053,11 @@ func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
 	assert.Equal(t, "swift-strike", mock.publishedEvents[0].payload["ritual_name"])
 	assert.Equal(t, uint(42), mock.publishedEvents[0].payload["edict_id"])
 
+	// inputs must contain edict_id — the ritual validates it as required
+	inputs, ok := mock.publishedEvents[0].payload["inputs"].(map[string]interface{})
+	require.True(t, ok, "expected inputs map in payload")
+	assert.Equal(t, "42", inputs["edict_id"], "inputs must contain edict_id for ritual validation")
+
 	// pendingRitualEnact should be cleared
 	assert.Nil(t, updated.pendingRitualEnact)
 }
@@ -3208,6 +3213,210 @@ func TestOnboardingPrompt_ShownWhenConfigCreated(t *testing.T) {
 	assert.Equal(t, "yesno", msg.(ChangeModeMsg).NewMode)
 }
 
+func TestCollectAPIKeys_FromEnvVars(t *testing.T) {
+	// Save and restore env vars
+	saveAndRestore := func(key, val string) func() {
+		orig := os.Getenv(key)
+		if val != "" {
+			os.Setenv(key, val)
+		} else {
+			os.Unsetenv(key)
+		}
+		return func() {
+			if orig != "" {
+				os.Setenv(key, orig)
+			} else {
+				os.Unsetenv(key)
+			}
+		}
+	}
+
+	// Clean keyring for test providers
+	for _, p := range []string{"anthropic", "openai", "openrouter", "googleai"} {
+		DeleteAPIKeyFromKeyring(p)
+	}
+
+	cleanup := saveAndRestore("ANTHROPIC_API_KEY", "test-anthropic-key")
+	defer cleanup()
+	cleanup2 := saveAndRestore("OPENROUTER_API_KEY", "test-openrouter-key")
+	defer cleanup2()
+	cleanup3 := saveAndRestore("GEMINI_API_KEY", "")
+	defer cleanup3()
+	cleanup4 := saveAndRestore("GOOGLE_API_KEY", "")
+	defer cleanup4()
+	cleanup5 := saveAndRestore("OPENAI_API_KEY", "")
+	defer cleanup5()
+
+	keys := collectAPIKeys()
+	assert.Equal(t, "test-anthropic-key", keys["anthropic"])
+	assert.Equal(t, "test-openrouter-key", keys["openrouter"])
+	assert.Equal(t, "", keys["openai"])
+	assert.Equal(t, "", keys["gemini"])
+}
+
+func TestCollectAPIKeys_FromKeyring(t *testing.T) {
+	// Skip if keyring is not available (e.g., CI without dbus)
+	if err := SaveAPIKeyToKeyring("test-availability", "probe"); err != nil {
+		t.Skipf("keyring not available: %v", err)
+	}
+	DeleteAPIKeyFromKeyring("test-availability")
+
+	// Clean env vars
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("OPENAI_API_KEY")
+	os.Unsetenv("OPENROUTER_API_KEY")
+	os.Unsetenv("GEMINI_API_KEY")
+	os.Unsetenv("GOOGLE_API_KEY")
+
+	// Save keys to keyring
+	require.NoError(t, SaveAPIKeyToKeyring("anthropic", "kr-anthropic-key"))
+	require.NoError(t, SaveAPIKeyToKeyring("googleai", "kr-google-key"))
+	defer DeleteAPIKeyFromKeyring("anthropic")
+	defer DeleteAPIKeyFromKeyring("googleai")
+
+	keys := collectAPIKeys()
+	assert.Equal(t, "kr-anthropic-key", keys["anthropic"])
+	assert.Equal(t, "kr-google-key", keys["gemini"], "keyring 'googleai' should map to 'gemini' in keys map")
+}
+
+func TestCollectAPIKeys_EnvVarTakesPrecedence(t *testing.T) {
+	// Skip if keyring is not available (e.g., CI without dbus)
+	if err := SaveAPIKeyToKeyring("test-availability", "probe"); err != nil {
+		t.Skipf("keyring not available: %v", err)
+	}
+	DeleteAPIKeyFromKeyring("test-availability")
+
+	// Save key to keyring
+	require.NoError(t, SaveAPIKeyToKeyring("anthropic", "kr-key"))
+	defer DeleteAPIKeyFromKeyring("anthropic")
+
+	// Also set env var
+	os.Setenv("ANTHROPIC_API_KEY", "env-key")
+	defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+	keys := collectAPIKeys()
+	assert.Equal(t, "env-key", keys["anthropic"], "env var should take precedence over keyring")
+}
+
+// --- Tests for in-app API key input flow ---
+
+// TestHandleAPIKeyInput_CancelReturnsModelSelection verifies that when the user
+// cancels (empty apiKey), handleAPIKeyInput returns showModelSelectionMsg.
+func TestHandleAPIKeyInput_CancelReturnsModelSelection(t *testing.T) {
+	model := newTestModel(t)
+
+	cmd := handleAPIKeyInput(model, "anthropic", "")
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	_, ok := msg.(showModelSelectionMsg)
+	assert.True(t, ok, "expected showModelSelectionMsg on cancel")
+}
+
+// TestHandleAPIKeyInput_SuccessReturnsAPIKeySavedMsg verifies that when the user
+// provides a key, handleAPIKeyInput saves it and returns apiKeySavedMsg.
+func TestHandleAPIKeyInput_SuccessReturnsAPIKeySavedMsg(t *testing.T) {
+	DeleteAPIKeyFromKeyring("anthropic")
+	defer DeleteAPIKeyFromKeyring("anthropic")
+
+	model := newTestModel(t)
+
+	cmd := handleAPIKeyInput(model, "anthropic", "sk-test-key")
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	saved, ok := msg.(apiKeySavedMsg)
+	require.True(t, ok, "expected apiKeySavedMsg on success")
+	assert.Equal(t, "anthropic", saved.provider)
+}
+
+// TestAPIKeyPromptMsg_EntersInputModeAndSetsProvider verifies that apiKeyPromptMsg
+// sets pendingAPIKeyProvider and enters input mode with the correct prompt.
+func TestAPIKeyPromptMsg_EntersInputModeAndSetsProvider(t *testing.T) {
+	model := newTestModel(t)
+
+	msg := apiKeyPromptMsg{provider: "openrouter"}
+	newModel, cmd := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	assert.Equal(t, "openrouter", updated.pendingAPIKeyProvider,
+		"pendingAPIKeyProvider should be set to the provider")
+	assert.True(t, updated.commandLine.IsInInputMode(),
+		"command line should be in input mode")
+	assert.Contains(t, updated.commandLine.inputPrompt, "OpenRouter",
+		"prompt should contain the provider display name")
+	assert.NotNil(t, cmd, "expected a command to be returned")
+}
+
+// TestInputResponseMsg_RoutesToAPIKeyInput verifies that when pendingAPIKeyProvider
+// is set, inputResponseMsg is routed to handleAPIKeyInput (not handleProjectNameInput).
+func TestInputResponseMsg_RoutesToAPIKeyInput(t *testing.T) {
+	DeleteAPIKeyFromKeyring("anthropic")
+	defer DeleteAPIKeyFromKeyring("anthropic")
+
+	model := newTestModel(t)
+	model.pendingAPIKeyProvider = "anthropic"
+
+	msg := inputResponseMsg{text: "sk-via-input"}
+	newModel, cmd := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// pendingAPIKeyProvider should be cleared
+	assert.Equal(t, "", updated.pendingAPIKeyProvider,
+		"pendingAPIKeyProvider should be cleared after handling")
+
+	// The command should produce apiKeySavedMsg (UpdateUserLLMAuth falls back to
+	// file storage when keyring is unavailable, so this works in any environment)
+	require.NotNil(t, cmd)
+	result := cmd()
+	saved, ok := result.(apiKeySavedMsg)
+	require.True(t, ok, "expected apiKeySavedMsg from handleAPIKeyInput")
+	assert.Equal(t, "anthropic", saved.provider)
+}
+
+// TestInputResponseMsg_RoutesToProjectNameWhenNoAPIKeyPending verifies that when
+// pendingAPIKeyProvider is NOT set, inputResponseMsg falls through to
+// handleProjectNameInput (the default behavior).
+func TestInputResponseMsg_RoutesToProjectNameWhenNoAPIKeyPending(t *testing.T) {
+	model := newTestModel(t)
+	model.pendingAPIKeyProvider = ""
+
+	// handleProjectNameInput with empty text returns a showContextMsg
+	msg := inputResponseMsg{text: ""}
+	newModel, cmd := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	assert.Equal(t, "", updated.pendingAPIKeyProvider,
+		"pendingAPIKeyProvider should remain empty")
+
+	require.NotNil(t, cmd)
+	result := cmd()
+	_, ok = result.(showContextMsg)
+	assert.True(t, ok, "expected showContextMsg from handleProjectNameInput on empty input")
+}
+
+// TestAPIKeySavedMsg_ShowsToastAndRefreshesModels verifies that apiKeySavedMsg
+// shows a success toast and triggers model refresh.
+func TestAPIKeySavedMsg_ShowsToastAndRefreshesModels(t *testing.T) {
+	model := newTestModel(t)
+
+	msg := apiKeySavedMsg{provider: "anthropic"}
+	newModel, cmd := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// A success toast should have been added
+	require.Len(t, updated.commandLine.toasts, 1, "expected one toast")
+	assert.Equal(t, "success", updated.commandLine.toasts[0].Type)
+	assert.Contains(t, updated.commandLine.toasts[0].Message, "Anthropic")
+
+	// A command should be returned (to refresh models)
+	assert.NotNil(t, cmd, "expected a command to refresh models")
+}
+
 // TestOnboardingPrompt_ShownWhenProviderEmpty verifies that onboardingPromptMsg
 // triggers when provider is empty even without configCreated.
 func TestOnboardingPrompt_ShownWhenProviderEmpty(t *testing.T) {
@@ -3313,7 +3522,6 @@ func TestSessionStartGuard_EnterKeyShowsYesNo(t *testing.T) {
 	assert.Equal(t, "yesno", msg.(ChangeModeMsg).NewMode)
 }
 
-// TestSessionStartGuard_SubmitPromptShowsYesNo verifies that SubmitPromptMsg
 // without a configured model shows the YES/NO onboarding prompt.
 func TestSessionStartGuard_SubmitPromptShowsYesNo(t *testing.T) {
 	cfg := mockConfig()
