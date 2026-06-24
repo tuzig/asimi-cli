@@ -3126,3 +3126,212 @@ func TestEventEdictCreated_EntersYesNoMode(t *testing.T) {
 	// A command should be returned (mode change)
 	assert.NotNil(t, cmd)
 }
+
+// TestRenderHomeView_ShowsOnboardingSubtitle verifies the birthday subtitle
+// is replaced with a concise description.
+func TestRenderHomeView_ShowsOnboardingSubtitle(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	model.width = 80
+	model.height = 24
+
+	view := model.renderHomeView(80, 24)
+	require.NotEmpty(t, view)
+	assert.Contains(t, view, "A vi-inspired, terminal-based AI coding agent")
+	assert.NotContains(t, view, "Happy 50th Birthday")
+}
+
+// TestRenderHomeView_ModelsHintUpdated verifies the :models hint is a call to action.
+func TestRenderHomeView_ModelsHintUpdated(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	model.width = 80
+	model.height = 24
+
+	view := model.renderHomeView(80, 24)
+	assert.Contains(t, view, "Select your model and provider")
+	assert.Contains(t, view, ":models")
+}
+
+// TestRenderHomeView_InitHintUpdated verifies the :init hint is a call to action.
+func TestRenderHomeView_InitHintUpdated(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	model.width = 80
+	model.height = 24
+
+	view := model.renderHomeView(80, 24)
+	assert.Contains(t, view, "Generate project infrastructure files")
+	assert.Contains(t, view, ":init")
+}
+
+// TestRenderMainContent_HomeViewWhenNoSession verifies that the home view
+// is shown when sessionActive is false.
+func TestRenderMainContent_HomeViewWhenNoSession(t *testing.T) {
+	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	model.width = 80
+	model.height = 24
+	model.sessionActive = false
+
+	content := model.renderMainContent(0)
+	assert.Contains(t, content, "Asimi")
+}
+
+// TestRenderMainContent_ChatViewWhenSessionActive verifies that the chat view
+// is shown when sessionActive is true.
+func TestRenderMainContent_ChatViewWhenSessionActive(t *testing.T) {
+	model := newTestModel(t)
+	model.width = 80
+	model.height = 24
+	model.sessionActive = true
+
+	content := model.renderMainContent(0)
+	// Chat view should not contain the home view title
+	assert.NotContains(t, content, "Safe, Fast & Opinionated Coding Agent")
+}
+
+// TestOnboardingPrompt_ShownWhenConfigCreated verifies that onboardingPromptMsg
+// triggers the YES/NO prompt when configCreated is true.
+func TestOnboardingPrompt_ShownWhenConfigCreated(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.configCreated = true
+
+	newModel, cmd := model.handleCustomMessages(onboardingPromptMsg{})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.True(t, updated.pendingOnboarding)
+	require.NotNil(t, cmd)
+
+	// The command should change mode to yesno
+	msg := cmd()
+	_, ok = msg.(ChangeModeMsg)
+	require.True(t, ok, "Expected ChangeModeMsg for yesno mode")
+	assert.Equal(t, "yesno", msg.(ChangeModeMsg).NewMode)
+}
+
+// TestOnboardingPrompt_ShownWhenProviderEmpty verifies that onboardingPromptMsg
+// triggers when provider is empty even without configCreated.
+func TestOnboardingPrompt_ShownWhenProviderEmpty(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.configCreated = false
+
+	newModel, cmd := model.handleCustomMessages(onboardingPromptMsg{})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.True(t, updated.pendingOnboarding)
+	require.NotNil(t, cmd)
+}
+
+// TestOnboardingPrompt_NotShownWhenConfigured verifies the prompt is skipped
+// when a model is already configured.
+func TestOnboardingPrompt_NotShownWhenConfigured(t *testing.T) {
+	cfg := mockConfig()
+	// mockConfig has Provider="fake", Model="mock-model"
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+
+	newModel, cmd := model.handleCustomMessages(onboardingPromptMsg{})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.False(t, updated.pendingOnboarding)
+	assert.Nil(t, cmd)
+}
+
+// TestOnboardingPrompt_NotShownWhenDeclined verifies the prompt is skipped
+// when the user already declined.
+func TestOnboardingPrompt_NotShownWhenDeclined(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.onboardingDeclined = true
+
+	newModel, cmd := model.handleCustomMessages(onboardingPromptMsg{})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.False(t, updated.pendingOnboarding)
+	assert.Nil(t, cmd)
+}
+
+// TestOnboardingYesNo_YesTriggersModelsCommand verifies that answering YES
+// to the onboarding prompt triggers model selection.
+func TestOnboardingYesNo_YesTriggersModelsCommand(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.pendingOnboarding = true
+
+	newModel, _ := model.handleCustomMessages(yesNoResponseMsg{answer: true})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.False(t, updated.pendingOnboarding, "pendingOnboarding should be cleared after YES")
+	// Models view should be active
+	assert.Equal(t, ViewModels, updated.tabs.Content().GetActiveView())
+}
+
+// TestOnboardingYesNo_NoQuits verifies that answering NO to the onboarding
+// prompt quits the program.
+func TestOnboardingYesNo_NoQuits(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.pendingOnboarding = true
+
+	newModel, cmd := model.handleCustomMessages(yesNoResponseMsg{answer: false})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.False(t, updated.pendingOnboarding, "pendingOnboarding should be cleared after NO")
+	assert.True(t, updated.onboardingDeclined, "onboardingDeclined should be set after NO")
+
+	// The command should be a tea.Quit
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, isQuit := msg.(tea.QuitMsg)
+	assert.True(t, isQuit, "Expected tea.QuitMsg when user declines onboarding")
+}
+
+// TestSessionStartGuard_EnterKeyShowsYesNo verifies that pressing Enter
+// without a configured model shows the YES/NO onboarding prompt instead of starting a session.
+func TestSessionStartGuard_EnterKeyShowsYesNo(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = ""
+	cfg.LLM.Model = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.prompt().SetValue("hello world")
+
+	newModel, cmd := model.handleEnterKey()
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	// Should not start a session
+	assert.False(t, updated.sessionActive)
+	// Should have set pendingOnboarding
+	assert.True(t, updated.pendingOnboarding, "pendingOnboarding should be set")
+	// Should return a command that enters yes/no mode
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, ok = msg.(ChangeModeMsg)
+	require.True(t, ok, "Expected ChangeModeMsg for yesno mode")
+	assert.Equal(t, "yesno", msg.(ChangeModeMsg).NewMode)
+}
+
+// TestSessionStartGuard_SubmitPromptShowsYesNo verifies that SubmitPromptMsg
+// without a configured model shows the YES/NO onboarding prompt.
+func TestSessionStartGuard_SubmitPromptShowsYesNo(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = ""
+	cfg.LLM.Model = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+
+	newModel, cmd := model.handleCustomMessages(SubmitPromptMsg{Prompt: "hello"})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	// Should not start a session
+	assert.False(t, updated.sessionActive)
+	// Should have set pendingOnboarding
+	assert.True(t, updated.pendingOnboarding, "pendingOnboarding should be set")
+	// Should return a command that enters yes/no mode
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, ok = msg.(ChangeModeMsg)
+	require.True(t, ok, "Expected ChangeModeMsg for yesno mode")
+	assert.Equal(t, "yesno", msg.(ChangeModeMsg).NewMode)
+}

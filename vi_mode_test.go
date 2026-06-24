@@ -226,7 +226,7 @@ func TestViModeHistoryNavigationWithKJ(t *testing.T) {
 }
 
 func TestViNormalModeEnterSubmitsPrompt(t *testing.T) {
-	config := &Config{}
+	config := mockConfig()
 	ri := &repo.RepoInfo{}
 	model := NewTUIModel(config, ri, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true // Ensure chat view is active

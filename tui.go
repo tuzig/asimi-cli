@@ -46,6 +46,7 @@ type TUIModel struct {
 	rawMode              bool // Toggle between chat and raw session view
 	updateAvailable      bool // True when a newer version is available
 	configCreated        bool // True when config file was created on first run
+	onboardingDeclined   bool // True when user declined model selection onboarding
 
 	streamCompleteCallback func(*TUIModel) tea.Cmd // Optional callback to run after stream completes
 
@@ -86,7 +87,9 @@ type TUIModel struct {
 	pendingRitualEnact *pendingRitualEnact
 	// Seal override confirmation state
 	pendingSealOverride *pendingSealOverride
-	repoInfo            *repo.RepoInfo
+	// Onboarding model selection confirmation state
+	pendingOnboarding bool
+	repoInfo           *repo.RepoInfo
 
 	// Debounced render tick: prevents stacking multiple 50ms tick commands
 	renderTickPending bool
@@ -485,11 +488,14 @@ func (m *TUIModel) shutdown() {
 	}
 }
 
+// onboardingPromptMsg triggers the YES/NO model selection prompt on the home view.
+type onboardingPromptMsg struct{}
+
 // Init implements bubbletea.Model. It asks the shogunate to build its
 // Bifrost client (daemon-side in daemon mode, inline otherwise).
 func (m TUIModel) Init() tea.Cmd {
 	tick := tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
-	return tea.Batch(func() tea.Msg {
+	llmInit := func() tea.Msg {
 		if m.shogunate == nil {
 			return llmInitErrorMsg{err: fmt.Errorf("shogunate not initialised")}
 		}
@@ -499,7 +505,13 @@ func (m TUIModel) Init() tea.Cmd {
 		}
 		slog.Info("LLM client connected")
 		return llmInitSuccessMsg{}
-	}, tick)
+	}
+
+	// On first run or unconfigured, show the onboarding prompt shortly after startup
+	if m.configCreated || (m.config != nil && m.config.LLM.Provider == "") {
+		return tea.Batch(llmInit, tick, func() tea.Msg { return onboardingPromptMsg{} })
+	}
+	return tea.Batch(llmInit, tick)
 }
 
 // Update implements bubbletea.Model
@@ -1382,6 +1394,14 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Guard: block session start if no model is configured — show YES/NO
+	// prompt (same as startup onboarding) instead of a toast
+	if m.config == nil || m.config.LLM.Provider == "" || m.config.LLM.Model == "" {
+		m.pendingOnboarding = true
+		return m, m.commandLine.EnterYesNoMode(
+			"No model is configured. Would you like to select one now?")
+	}
+
 	// Handle learning mode - append to agents file
 	if m.Mode == "learning" {
 		// Remove the leading "#" and trim whitespace
@@ -1620,6 +1640,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SubmitPromptMsg:
 		var cmds []tea.Cmd
 		content := msg.Prompt
+
+		// Guard: block session start if no model is configured — show YES/NO
+		// prompt (same as startup onboarding) instead of a toast
+		if m.config == nil || m.config.LLM.Provider == "" || m.config.LLM.Model == "" {
+			m.pendingOnboarding = true
+			return m, m.commandLine.EnterYesNoMode(
+				"No model is configured. Would you like to select one now?")
+		}
 
 		// This logic is adapted from handleEnterKey
 		m.commandLine.ClearToasts()
@@ -2241,7 +2269,28 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateAvailable = true
 		return m, nil
 
+	case onboardingPromptMsg:
+		// Show YES/NO prompt on home view when unconfigured (first run or empty provider)
+		if m.onboardingDeclined || (m.config != nil && m.config.LLM.Provider != "") {
+			return m, nil
+		}
+		m.pendingOnboarding = true
+		return m, m.commandLine.EnterYesNoMode(
+			"No model is configured. Would you like to select one now?")
+
 	case yesNoResponseMsg:
+		// Check if this is a response to the onboarding model selection prompt
+		if m.pendingOnboarding {
+			m.pendingOnboarding = false
+			if msg.answer {
+				return m, handleModelsCommand(&m, nil)
+			}
+			// User declined — quit with a clear message
+			m.onboardingDeclined = true
+			fmt.Fprintln(os.Stderr, "Asimi needs a model and provider to function. Run `asimi` again and select a model, or edit ~/.config/asimi/asimi.conf manually.")
+			return m, tea.Quit
+		}
+
 		// Check if this is a response to a ritual enactment request
 		if m.pendingRitualEnact != nil {
 			if msg.answer {
@@ -3047,10 +3096,8 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	switch {
 	case m.rawMode:
 		return m.renderRawSessionView(m.width, contentHeight)
-		/* TOOO: get some data, like version and update available from renderHomeView
-		case !m.sessionActive:
-			return m.renderHomeView(m.width, contentHeight)
-		*/
+	case !m.sessionActive:
+		return m.renderHomeView(m.width, contentHeight)
 	default:
 		// Use content component which handles chat view
 		return m.tabs.Content().View()
@@ -3129,7 +3176,7 @@ func (m TUIModel) renderHomeView(width, height int) string {
 		Align(lipgloss.Center).
 		Width(width)
 
-	subtitle := subtitleStyle.Render("🎂  Happy 50th Birthday to visual mode  🎂")
+	subtitle := subtitleStyle.Render("A vi-inspired, terminal-based AI coding agent")
 
 	// Create a version display in muted color
 	versionStyle := lipgloss.NewStyle().
@@ -3146,8 +3193,8 @@ func (m TUIModel) renderHomeView(width, height int) string {
 		"▶ Press `CTRL-C` to stop the model, twice to exit",
 		"▶ Press `ESC` to switch modes",
 		"▶ Press `!` in COMMAND to run in the sandbox's shell",
-		"▶ Type `:model` to setup the model",
-		"▶ Type `:init` to generate project's infrastructure file",
+		"▶ Select your model and provider — type :models",
+		"▶ Generate project infrastructure files — type :init",
 		"     e.g, ⌨️ ESC:!uname -aENTER⌨️",
 	}
 
