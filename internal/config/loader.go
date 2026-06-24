@@ -163,10 +163,12 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 		return nil, fmt.Errorf("failed to get user home directory: %w", err)
 	}
 	userConfigPath := filepath.Join(homeDir, ".config", "asimi", "asimi.conf")
-	if err := k.Load(file.Provider(userConfigPath), koanftoml.Parser()); err != nil {
-		// Missing user config is common on first run; downgrade to Debug
-		// so it doesn't pollute normal startup output.
-		slog.Debug("Failed to load user config", "path", userConfigPath, "error", err)
+	if _, statErr := os.Stat(userConfigPath); statErr == nil {
+		if err := k.Load(file.Provider(userConfigPath), koanftoml.Parser()); err != nil {
+			return nil, fmt.Errorf("failed to load config from %s: %w", userConfigPath, err)
+		}
+	} else if !os.IsNotExist(statErr) {
+		slog.Warn("Unable to stat user config", "path", userConfigPath, "error", statErr)
 	}
 
 	// 2. Project-level config (skip if projectRoot is empty)
@@ -174,7 +176,7 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 		projectConfigPath := filepath.Join(projectRoot, ".agents", "asimi.conf")
 		if _, statErr := os.Stat(projectConfigPath); statErr == nil {
 			if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
-				slog.Debug("Failed to load project config", "path", projectConfigPath, "error", err)
+				return nil, fmt.Errorf("Failed to load config from %s: %w", projectConfigPath,  err)
 			}
 		} else if !os.IsNotExist(statErr) {
 			slog.Warn("Unable to stat project config", "path", projectConfigPath, "error", statErr)

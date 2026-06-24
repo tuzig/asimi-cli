@@ -1170,3 +1170,64 @@ func TestDefaultConfContent_ReferencesCorrectPaths(t *testing.T) {
 	assert.NotContains(t, content, "asimi.toml",
 		"comment must not reference stale asimi.toml filename")
 }
+
+// =============================================================================
+// LoadProjectConfig: missing vs malformed config
+// =============================================================================
+
+func TestLoadProjectConfig_MissingUserConfig_UsesDefaults(t *testing.T) {
+	// No user config file exists — should return defaults without error.
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	cfg, err := LoadProjectConfig("", false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// Defaults should be present
+	assert.True(t, cfg.Session.Enabled)
+	assert.Equal(t, 300, cfg.LLM.RequestTimeoutSeconds)
+}
+
+func TestLoadProjectConfig_MalformedUserConfig_ReturnsError(t *testing.T) {
+	// A broken user config (duplicate TOML key) must return an error,
+	// not silently fall back to defaults.
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	malformed := `[llm]
+provider = "openai"
+provider = "anthropic"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(malformed), 0o644))
+
+	_, err := LoadProjectConfig("", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "asimi.conf")
+}
+
+func TestLoadProjectConfig_MalformedProjectConfig_ReturnsError(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	projectDir := t.TempDir()
+	agentsDir := filepath.Join(projectDir, ".agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+	malformed := `[llm]
+provider = "openai"
+provider = "anthropic"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(malformed), 0o644))
+
+	_, err := LoadProjectConfig(projectDir, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "asimi.conf")
+}
