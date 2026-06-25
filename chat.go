@@ -570,13 +570,13 @@ func (c *ChatComponent) UpdateContent() {
 		case MessageTypeShell:
 			// Shell command input styling
 			messageStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#F952F9"))
+				Foreground(globalTheme.PromptBorder)
 			rendered = messageStyle.Render(fmt.Sprintf("$ %s", message))
 
 		case MessageTypeThinking:
 			// Thinking/reasoning content styling
 			thinkingStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#6A9955")) // Muted green for thoughts
+				Foreground(globalTheme.ThinkingColor)
 			builder := NewChatMsgBuilder("💭   ")
 			// Word wrap and split into lines (c.Width-1 for gutter, -6 for prefix)
 			wrapped := wordwrap.String(message, c.Width-7)
@@ -593,7 +593,7 @@ func (c *ChatComponent) UpdateContent() {
 		case MessageTypeUser:
 			// User message styling
 			messageStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#F952F9")) // Terminal7 prompt border
+				Foreground(globalTheme.PromptBorder)
 
 			wrapWidth := c.Width - 1 // -1 for gutter
 			const indentSpaces = 0
@@ -643,7 +643,7 @@ func (c *ChatComponent) UpdateContent() {
 		default:
 			// Other messages (system, tool calls, etc.)
 			messageStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#01FAFA")) // Terminal7 text color
+				Foreground(globalTheme.TextColor)
 			rendered = messageStyle.Render(wordwrap.String(message, c.Width-1)) // -1 for gutter
 		}
 

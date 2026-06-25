@@ -53,23 +53,23 @@ func (h *HelpWindow) renderHelpContent(topic string) string {
 	// Style definitions
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F4DB53")).
+		Foreground(globalTheme.ChatBorder).
 		MarginTop(1).
 		MarginBottom(1)
 
 	subheaderStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#01FAFA")).
+		Foreground(globalTheme.TextColor).
 		MarginTop(1)
 
 	codeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#F952F9")).
-		Background(lipgloss.Color("#1a1a1a")).
+		Foreground(globalTheme.PromptBorder).
+		Background(globalTheme.CodeBackground).
 		Padding(0, 1)
 
 	keyStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F952F9"))
+		Foreground(globalTheme.PromptBorder)
 
 	// Get help content based on topic
 	content := h.getHelpTopic(topic)

@@ -889,8 +889,8 @@ func IsModelSelectable(model Model) bool {
 func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int) string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F952F9")).
-		Background(lipgloss.Color("#000000")).
+		Foreground(globalTheme.PromptBorder).
+		Background(globalTheme.PaneBackground).
 		Padding(0, 1)
 
 	isFirst := true
@@ -929,7 +929,7 @@ func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 			if model.Status == "error" {
 				providerIcon := getProviderIcon(model.Provider)
 				statusIcon := getStatusIcon(model.Status)
-				style := lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+				style := lipgloss.NewStyle().Foreground(globalTheme.Error)
 				line := fmt.Sprintf("%s%s %s %s", prefix, providerIcon, statusIcon, model.Description)
 				sb.WriteString(style.Render(line) + "\n")
 				return
@@ -949,9 +949,9 @@ func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 
 			style := lipgloss.NewStyle()
 			if isSelected {
-				style = style.Foreground(lipgloss.Color("62")).Bold(true)
+				style = style.Foreground(globalTheme.SuccessColor).Bold(true)
 			} else if model.Status == "login_required" {
-				style = style.Foreground(lipgloss.Color("240"))
+				style = style.Foreground(globalTheme.DimTextColor)
 			}
 
 			line := fmt.Sprintf("%s%s %s", prefix, providerIcon, displayText)
@@ -1000,8 +1000,8 @@ func NewSealSelectWindow() SealSelectWindow {
 func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int) string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F952F9")).
-		Background(lipgloss.Color("#000000")).
+		Foreground(globalTheme.PromptBorder).
+		Background(globalTheme.PaneBackground).
 		Padding(0, 1)
 
 	config := RenderConfig[storage.ActiveEdict]{
@@ -1037,7 +1037,7 @@ func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots 
 
 			style := lipgloss.NewStyle().Inline(true).MaxWidth(s.Width)
 			if isSelected {
-				style = style.Foreground(lipgloss.Color("62")).Bold(true)
+				style = style.Foreground(globalTheme.SuccessColor).Bold(true)
 			}
 			sb.WriteString(style.Render(linePrefix+intent) + "\n")
 		},

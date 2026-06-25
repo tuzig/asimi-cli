@@ -44,7 +44,7 @@ func NewBaseModal(title, content string, width, height int) *BaseModal {
 		Height:  height,
 		Style: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
+			BorderForeground(globalTheme.SuccessColor).
 			Width(width).
 			Height(height).
 			Align(lipgloss.Center, lipgloss.Center),
@@ -54,8 +54,8 @@ func NewBaseModal(title, content string, width, height int) *BaseModal {
 // Render renders the modal
 func (m *BaseModal) Render() string {
 	titleStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("62")).
-		Foreground(lipgloss.Color("230")).
+		Background(globalTheme.SuccessColor).
+		Foreground(globalTheme.ToastTextColor).
 		Padding(0, 1).
 		Width(m.Width - 2)
 

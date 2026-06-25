@@ -151,8 +151,8 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F952F9")).
-		Background(lipgloss.Color("#000000")).
+		Foreground(globalTheme.PromptBorder).
+		Background(globalTheme.PaneBackground).
 		Padding(0, 1)
 
 	config := RenderConfig[shogunate.Session]{
@@ -196,7 +196,7 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 
 			lineStyle := lipgloss.NewStyle()
 			if isSelected {
-				lineStyle = lineStyle.Foreground(lipgloss.Color("62")).Bold(true)
+				lineStyle = lineStyle.Foreground(globalTheme.SuccessColor).Bold(true)
 			}
 
 			sb.WriteString(lineStyle.Render(line.String()) + "\n")

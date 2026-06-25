@@ -583,6 +583,7 @@ var openRouterContextSizes = map[string]int{
 	"openai/gpt-4.1-mini":          1_000_000,
 	"google/gemini-2.5-flash":      1_000_000,
 	"google/gemini-2.5-pro":        1_000_000,
+	"deepseek/deepseek-v4-pro":     1_000_000,
 	"deepseek/deepseek-v3.2":       128_000,
 	"deepseek/deepseek-r1":         128_000,
 	"minimax/minimax-m2.5":         1_000_000,

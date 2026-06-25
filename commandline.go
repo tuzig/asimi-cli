@@ -110,8 +110,8 @@ func NewCommandLineComponent() *CommandLineComponent {
 		historySaved:    false,
 		historyPending:  "",
 		toastStyle: lipgloss.NewStyle().
-			Background(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("230")).
+			Background(globalTheme.SuccessColor).
+			Foreground(globalTheme.ToastTextColor).
 			Padding(0, 1).
 			MaxWidth(50),
 	}
@@ -323,7 +323,7 @@ func (cl *CommandLineComponent) View() string {
 	// Priority 2: Show command if in command mode
 	if cl.mode == CommandLineCommand {
 		cmdStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).
+			Foreground(globalTheme.ToastTextColor).
 			Width(cl.width)
 		return cmdStyle.Render(cl.textInput.View())
 	}
@@ -344,7 +344,7 @@ func (cl *CommandLineComponent) View() string {
 			prefix = "?"
 		}
 		searchStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).
+			Foreground(globalTheme.ToastTextColor).
 			Width(cl.width)
 		return searchStyle.Render(prefix + cl.searchTextInput.View())
 	}

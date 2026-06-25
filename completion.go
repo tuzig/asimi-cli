@@ -32,12 +32,12 @@ func NewCompletionDialog() CompletionDialog {
 		Offset:    0,
 		Style: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
-			Background(lipgloss.Color("235")).
-			Foreground(lipgloss.Color("230")),
+			BorderForeground(globalTheme.SuccessColor).
+			Background(globalTheme.ModalBackground).
+			Foreground(globalTheme.ToastTextColor),
 		SelectedItemStyle: lipgloss.NewStyle().
-			Background(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("230")),
+			Background(globalTheme.SuccessColor).
+			Foreground(globalTheme.ToastTextColor),
 		ScrollMargin: 4,
 	}
 }

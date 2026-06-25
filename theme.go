@@ -23,6 +23,16 @@ type Theme struct {
 	PromptOnBorder  lipgloss.Color // Border color when focused on prompt (INSERT/COMMAND/LEARNING modes)
 	PromptOffBorder lipgloss.Color // Border color when focused away from prompt (NORMAL/VISUAL modes)
 
+	// Semantic colors
+	SuccessColor    lipgloss.Color // Success / positive indicators (green)
+	InfoColor       lipgloss.Color // Informational highlights (blue)
+	ThinkingColor   lipgloss.Color // Thinking / reasoning content (muted green)
+	DimTextColor    lipgloss.Color // Dimmed / secondary text
+	TabFill         lipgloss.Color // Tab bar fill background
+	CodeBackground  lipgloss.Color // Code block background
+	ToastTextColor  lipgloss.Color // Text on toasts / colored backgrounds
+	ModalBackground lipgloss.Color // Modal / completion menu background
+
 	// Legacy colors for compatibility
 	PrimaryColor   lipgloss.Color
 	SecondaryColor lipgloss.Color
@@ -72,6 +82,16 @@ func NewTheme() *Theme {
 		// Prompt focus indicators
 		PromptOnBorder:  promptOnBorder,
 		PromptOffBorder: promptOffBorder,
+
+		// Semantic colors
+		SuccessColor:    lipgloss.Color("#00FF00"),
+		InfoColor:       lipgloss.Color("#00BFFF"),
+		ThinkingColor:   lipgloss.Color("#6A9955"),
+		DimTextColor:    lipgloss.Color("#666666"),
+		TabFill:         lipgloss.Color("#333333"),
+		CodeBackground:  lipgloss.Color("#1a1a1a"),
+		ToastTextColor:  lipgloss.Color("230"),
+		ModalBackground: lipgloss.Color("235"),
 
 		// Legacy colors for compatibility
 		PrimaryColor:   promptBorder,

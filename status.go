@@ -315,9 +315,7 @@ func (s StatusComponent) renderLeftSection() string {
 	if s.repoInfo != nil && s.repoInfo.IsMain {
 		bs = lipgloss.NewStyle().Foreground(globalTheme.Warning)
 	} else {
-		// Use a green color for non-main branches
-		// TODO use globalTheme for the color
-		bs = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00"))
+		bs = lipgloss.NewStyle().Foreground(globalTheme.SuccessColor)
 	}
 
 	parts = append(parts, "🌴 "+bs.Render(branch))
@@ -328,7 +326,7 @@ func (s StatusComponent) renderLeftSection() string {
 		deleted := s.repoInfo.LinesDeleted
 		if added > 0 || deleted > 0 {
 			addedStyle := lipgloss.NewStyle().Foreground(globalTheme.Error)
-			deletedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00"))
+			deletedStyle := lipgloss.NewStyle().Foreground(globalTheme.SuccessColor)
 
 			var diffParts []string
 			if added > 0 {

@@ -256,8 +256,8 @@ func (s *SelectWindow[T]) Render(selectedIndex, scrollOffset int, config RenderC
 	// Title Style (Common)
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F952F9")).
-		Background(lipgloss.Color("#000000")).
+		Foreground(globalTheme.PromptBorder).
+		Background(globalTheme.PaneBackground).
 		Padding(0, 1)
 
 	totalItems := len(s.Items)

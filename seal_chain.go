@@ -8,14 +8,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Styles shared by the seal chain renderer
-var (
-	activeStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4DB53"))
-	labelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-)
-
 // renderSealChain displays the seal chain status for an edict
 func renderSealChain(seals []storage.Seal, w int) string {
+	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(globalTheme.ChatBorder)
+	labelStyle := lipgloss.NewStyle().Foreground(globalTheme.DimTextColor)
 	var b strings.Builder
 
 	// Define required seals in order
