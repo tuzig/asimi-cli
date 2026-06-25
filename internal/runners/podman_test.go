@@ -204,7 +204,7 @@ func TestHealthcheckTimeout(t *testing.T) {
 	// healthcheck should time out since no response is written to stdoutWriter
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.healthcheck()
+		done <- runner.healthcheck(context.Background())
 	}()
 
 	select {
@@ -244,7 +244,7 @@ func TestHealthcheckSuccess(t *testing.T) {
 		fmt.Fprintf(stdoutWriter, "__ASIMI_STDOUT_START:1\n__ASIMI_STDOUT_END:1:0\n")
 	}()
 
-	err := runner.healthcheck()
+	err := runner.healthcheck(context.Background())
 	require.NoError(t, err)
 }
 

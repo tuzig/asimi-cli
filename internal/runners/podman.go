@@ -183,7 +183,7 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 		// Healthcheck: only when reusing an already-running container
 		if existingRunning {
-			if err := r.healthcheck(); err != nil {
+			if err := r.healthcheck(ctx); err != nil {
 				slog.Info("container unhealthy, force-killing and recreating", "containerName", r.containerName, "error", err)
 
 				// Force-remove the stale container
@@ -230,8 +230,21 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 			rc.WriteString(fmt.Sprintf("cd %s\n", r.repoInfo.ProjectRoot))
 		}
 		slog.Debug("navigating to path in the container", "path", r.repoInfo.WorktreePath)
-		if _, err := r.stdinPipe.Write([]byte(rc.String())); err != nil {
-			slog.Error("failed to navigate to worktree", "error", err)
+
+		// Protect the rc-commands write with context — the io.Pipe write can block
+		// if the containers.Attach goroutine is hung
+		writeDone := make(chan error, 1)
+		go func() {
+			_, err := r.stdinPipe.Write([]byte(rc.String()))
+			writeDone <- err
+		}()
+		select {
+		case err := <-writeDone:
+			if err != nil {
+				slog.Error("failed to navigate to worktree", "error", err)
+			}
+		case <-ctx.Done():
+			slog.Error("context cancelled during rc-commands write", "error", ctx.Err())
 		}
 	}
 
@@ -239,7 +252,7 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 	return nil
 }
 
-func (r *PodmanRunner) healthcheck() error {
+func (r *PodmanRunner) healthcheck(ctx context.Context) error {
 	// Allocate a command ID
 	r.outputsMu.Lock()
 	id := r.nextCommandID
@@ -254,13 +267,33 @@ func (r *PodmanRunner) healthcheck() error {
 	r.outputs[id] = cmd
 	r.outputsMu.Unlock()
 
-	// Send the probe command through the full pipe
+	// Send the probe command through the full pipe, but protect the write with context
 	command := fmt.Sprintf("__asimi_run %d 'echo __ASIMI_HEALTHY'\n", id)
-	if _, err := r.stdinPipe.Write([]byte(command)); err != nil {
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := r.stdinPipe.Write([]byte(command))
+		writeDone <- err
+	}()
+
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			r.outputsMu.Lock()
+			delete(r.outputs, id)
+			r.outputsMu.Unlock()
+			return fmt.Errorf("healthcheck: failed to write probe: %w", err)
+		}
+	case <-ctx.Done():
 		r.outputsMu.Lock()
 		delete(r.outputs, id)
 		r.outputsMu.Unlock()
-		return fmt.Errorf("healthcheck: failed to write probe: %w", err)
+		return fmt.Errorf("healthcheck: context cancelled during write: %w", ctx.Err())
+	case <-time.After(healthcheckTimeout):
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+		return fmt.Errorf("healthcheck: write timeout after %v", healthcheckTimeout)
 	}
 
 	// Wait for response or timeout
@@ -276,6 +309,11 @@ func (r *PodmanRunner) healthcheck() error {
 		}
 		slog.Info("healthcheck passed")
 		return nil
+	case <-ctx.Done():
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+		return fmt.Errorf("healthcheck: context cancelled: %w", ctx.Err())
 	case <-time.After(healthcheckTimeout):
 		r.outputsMu.Lock()
 		delete(r.outputs, id)
@@ -522,23 +560,52 @@ func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
 	slog.Debug("wrapped command", "command", command)
 
 	slog.Debug("writing command to stdin")
-	_, err := r.stdinPipe.Write([]byte(command))
-	if err != nil {
-		slog.Error("failed to write to stdin", "error", err)
-		r.outputsMu.Lock()
-		delete(r.outputs, id)
-		r.outputsMu.Unlock()
-		return Output{}, fmt.Errorf("failed to write command to persistent session: %w", err)
-	}
-	slog.Debug("command written to stdin successfully")
 
-	timeoutMinutes := 2
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := r.stdinPipe.Write([]byte(command))
+		writeDone <- err
+	}()
+
+	timeoutMinutes := 10
 	if r.config.TimeoutMinutes > 0 {
 		timeoutMinutes = r.config.TimeoutMinutes
 	}
 	timeout := time.Duration(timeoutMinutes) * time.Minute
 	slog.Debug("using timeout", "timeout", timeout)
 
+	// Wait for write to complete (or timeout/context cancellation)
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			slog.Error("failed to write to stdin", "error", err)
+			r.outputsMu.Lock()
+			delete(r.outputs, id)
+			r.outputsMu.Unlock()
+			return Output{}, fmt.Errorf("failed to write command to persistent session: %w", err)
+		}
+		slog.Debug("command written to stdin successfully")
+	case <-ctx.Done():
+		slog.Debug("context cancelled during write", "id", id, "cmd", input.Command)
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+		return Output{
+			Output:   "Command cancelled",
+			ExitCode: "130",
+		}, ctx.Err()
+	case <-time.After(timeout):
+		slog.Warn("timeout during write", "id", id, "cmd", input.Command, "timeout", timeout)
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+		return Output{
+			Output:   fmt.Sprintf("Command timed out after %v", timeout),
+			ExitCode: "124",
+		}, nil
+	}
+
+	// Wait for command output
 	select {
 	case <-cmd.ready:
 		slog.Debug("command output ready", "id", id)
