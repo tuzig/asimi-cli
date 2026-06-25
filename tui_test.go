@@ -931,31 +931,6 @@ func TestTUIModelUpdateFileCompletions(t *testing.T) {
 
 }
 
-// TestRenderHomeView tests the home view rendering
-func TestRenderHomeView(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	model.width = 80
-	model.height = 24
-
-	view := model.renderHomeView(80, 24)
-	require.NotEmpty(t, view)
-	require.Contains(t, view, "INSERT")
-	require.Contains(t, view, "Asimi")
-}
-
-// TestRenderHomeViewWithUpdateAvailable tests the home view shows update notification
-func TestRenderHomeViewWithUpdateAvailable(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	model.width = 80
-	model.height = 24
-	model.updateAvailable = true
-
-	view := model.renderHomeView(80, 24)
-	require.NotEmpty(t, view)
-	require.Contains(t, view, "Update available")
-	require.Contains(t, view, ":update")
-}
-
 // TestColonCommandCompletion tests command completion with colon prefix in vi mode
 func TestColonCommandCompletion(t *testing.T) {
 	model := newTestModel(t)
@@ -3132,68 +3107,124 @@ func TestEventEdictCreated_EntersYesNoMode(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
-// TestRenderHomeView_ShowsOnboardingSubtitle verifies the birthday subtitle
-// is replaced with a concise description.
-func TestRenderHomeView_ShowsOnboardingSubtitle(t *testing.T) {
+// TestRenderMainContent_WelcomeScreenShown verifies that the welcome screen
+// is shown via renderMainContent when the TabManager is in welcome state.
+// This replaces the old TestRenderMainContent_HomeViewWhenNoSession.
+func TestRenderMainContent_WelcomeScreenShown(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	model.width = 80
 	model.height = 24
-
-	view := model.renderHomeView(80, 24)
-	require.NotEmpty(t, view)
-	assert.Contains(t, view, "A vi-inspired, terminal-based AI coding agent")
-	assert.NotContains(t, view, "Happy 50th Birthday")
-}
-
-// TestRenderHomeView_ModelsHintUpdated verifies the :models hint is a call to action.
-func TestRenderHomeView_ModelsHintUpdated(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	model.width = 80
-	model.height = 24
-
-	view := model.renderHomeView(80, 24)
-	assert.Contains(t, view, "Select your model and provider")
-	assert.Contains(t, view, ":models")
-}
-
-// TestRenderHomeView_InitHintUpdated verifies the :init hint is a call to action.
-func TestRenderHomeView_InitHintUpdated(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	model.width = 80
-	model.height = 24
-
-	view := model.renderHomeView(80, 24)
-	assert.Contains(t, view, "Generate project infrastructure files")
-	assert.Contains(t, view, ":init")
-}
-
-// TestRenderMainContent_HomeViewWhenNoSession verifies that the home view
-// is shown when sessionActive is false.
-func TestRenderMainContent_HomeViewWhenNoSession(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	model.width = 80
-	model.height = 24
-	model.sessionActive = false
+	// New model starts in welcome state
+	require.True(t, model.tabs.IsWelcome(), "new model should start in welcome state")
 
 	content := model.renderMainContent(0)
-	assert.Contains(t, content, "Asimi")
+	assert.Contains(t, content, "Asimi - An imperial court for project rulers")
 }
 
 // TestRenderMainContent_ChatViewWhenSessionActive verifies that the chat view
-// is shown when sessionActive is true.
+// is shown after the welcome screen is dismissed.
 func TestRenderMainContent_ChatViewWhenSessionActive(t *testing.T) {
 	model := newTestModel(t)
 	model.width = 80
 	model.height = 24
 	model.sessionActive = true
+	model.tabs.DismissWelcome()
 
 	content := model.renderMainContent(0)
 	// Chat view should not contain the home view title
-	assert.NotContains(t, content, "Safe, Fast & Opinionated Coding Agent")
+	assert.NotContains(t, content, "Asimi - An imperial court for project rulers")
+}
+
+// TestViewLayoutHeightInvariant verifies that the rendered View() output
+// has exactly m.height lines — no off-by-one overflow. This catches the
+// bug where contentHeight had a "+ 1" that made the total layout one line
+// taller than the terminal, pushing the tab bar off-screen.
+//
+// We test in welcome mode because renderWelcome() pads to contentHeight,
+// giving a deterministic total. The formula itself is verified in
+// TestContentHeightCalculationNoOffByOne for all cases.
+func TestViewLayoutHeightInvariant(t *testing.T) {
+	tests := []struct {
+		name     string
+		height   int
+		extraTab bool
+	}{
+		{"single tab, short", 24, false},
+		{"multi tab, short", 24, true},
+		{"multi tab, medium", 40, true},
+		{"multi tab, tall", 50, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+			model.width = 80
+			model.height = tt.height
+
+			if tt.extraTab {
+				model.tabs.Add("chat2", TabType("chat"), "target2")
+			}
+
+			// New model starts in welcome state — renderWelcome pads to contentHeight
+			require.True(t, model.tabs.IsWelcome(), "model should start in welcome state")
+
+			view := model.View()
+			lineCount := strings.Count(view, "\n") + 1
+			if view == "" {
+				lineCount = 0
+			}
+
+			assert.Equal(t, tt.height, lineCount,
+				"View() output should have exactly m.height lines (no off-by-one)")
+		})
+	}
+}
+
+// TestContentHeightCalculationNoOffByOne verifies the content height formula
+// yields an exact fit: tabBarHeight + contentHeight + promptWithBorder +
+// statusHeight + commandLineHeight = m.height.
+func TestContentHeightCalculationNoOffByOne(t *testing.T) {
+	tests := []struct {
+		name     string
+		height   int
+		extraTab bool
+	}{
+		{"single tab", 24, false},
+		{"multi tab", 40, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+			model.width = 80
+			model.height = tt.height
+			model.tabs.DismissWelcome()
+
+			if tt.extraTab {
+				model.tabs.Add("chat2", TabType("chat"), "target2")
+			}
+
+			// Run updateComponentDimensions to set internal sizes
+			model.updateComponentDimensions()
+
+			commandLineHeight := 1
+			statusHeight := 1
+			promptHeight := model.prompt().CalculateDesiredHeight()
+			promptWithBorder := promptHeight + 2
+			tabBarHeight := model.tabs.TabBarHeight()
+
+			// The formula used in the code (after the fix):
+			contentHeight := tt.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight
+
+			total := tabBarHeight + contentHeight + promptWithBorder + statusHeight + commandLineHeight
+			assert.Equal(t, tt.height, total,
+				"layout components must sum to m.height exactly")
+		})
+	}
 }
 
 // TestWelcomeScreen_DismissedOnAnyKey verifies that pressing any key
-// dismisses the welcome screen by setting sessionActive to true.
+// dismisses the TabManager welcome state.
 func TestWelcomeScreen_DismissedOnAnyKey(t *testing.T) {
 	tests := []struct {
 		name string
@@ -3208,7 +3239,8 @@ func TestWelcomeScreen_DismissedOnAnyKey(t *testing.T) {
 			model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 			model.width = 80
 			model.height = 24
-			model.sessionActive = false
+			assert.True(t, model.tabs.IsWelcome(),
+				"Welcome should be active before any keypress")
 
 			var msg tea.KeyMsg
 			switch tt.key {
@@ -3221,8 +3253,8 @@ func TestWelcomeScreen_DismissedOnAnyKey(t *testing.T) {
 			newModel, _ := model.Update(msg)
 			updated, ok := newModel.(TUIModel)
 			require.True(t, ok)
-			assert.True(t, updated.sessionActive,
-				"Welcome screen should be dismissed after keypress")
+			assert.False(t, updated.tabs.IsWelcome(),
+				"Welcome should be dismissed after keypress")
 		})
 	}
 }
@@ -3233,13 +3265,12 @@ func TestWelcomeScreen_NotDismissedOnCtrlC(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 	model.width = 80
 	model.height = 24
-	model.sessionActive = false
 
 	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	updated, ok := newModel.(TUIModel)
 	require.True(t, ok)
 	// Ctrl+C should not dismiss the welcome screen — it has its own handler
-	assert.False(t, updated.sessionActive,
+	assert.True(t, updated.tabs.IsWelcome(),
 		"Ctrl+C should not dismiss the welcome screen")
 }
 

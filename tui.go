@@ -205,6 +205,9 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 
 	// Initialize tab system with default Chancellor tab
 	model.tabs = NewTabManager(80, 18, markdownEnabled, func() string { return model.Mode })
+	// Wire welcome screen notification callbacks
+	model.tabs.getUpdateAvail = func() bool { return model.updateAvailable }
+	model.tabs.getConfigCreated = func() bool { return model.configCreated }
 	// Set up tab switch callback to update context percent in status
 	model.tabs.onTabSwitch = func() {
 		if state, ok := model.currentSessionState(); ok {
@@ -623,8 +626,8 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Dismiss the welcome screen on any keypress
-	if !m.sessionActive {
-		m.sessionActive = true
+	if m.tabs.IsWelcome() {
+		m.tabs.DismissWelcome()
 	}
 
 	// Handle command line input when in command mode or yes/no mode - MUST be before other handlers
@@ -3043,7 +3046,7 @@ func (m *TUIModel) updateComponentDimensions() {
 
 	// Calculate chat height (account for tab bar when multiple tabs)
 	tabBarHeight := m.tabs.TabBarHeight()
-	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1
+	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
@@ -3097,7 +3100,7 @@ func (m TUIModel) View() string {
 	commandLineHeight := 1
 	statusHeight := 1
 	tabBarHeight := m.tabs.TabBarHeight()
-	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1
+	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
@@ -3126,7 +3129,7 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	statusHeight := 1
 	promptWithBorder := m.prompt().Height + 2
 	tabBarHeight := m.tabs.TabBarHeight()
-	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight + 1 - modalHeight
+	contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight - modalHeight
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
@@ -3140,8 +3143,8 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	switch {
 	case m.rawMode:
 		return m.renderRawSessionView(m.width, contentHeight)
-	case !m.sessionActive:
-		return m.renderHomeView(m.width, contentHeight)
+	case m.tabs.IsWelcome():
+		return m.tabs.renderWelcome(m.width, contentHeight)
 	default:
 		// Use content component which handles chat view
 		return m.tabs.Content().View()
@@ -3203,103 +3206,13 @@ func (m TUIModel) overlayCompletionDialog(baseView, promptView, commandLineView 
 	return strings.Join(lines, "\n")
 }
 
-// renderHomeView renders the home view when no session is active
-func (m TUIModel) renderHomeView(width, height int) string {
-	// Create a stylish welcome message
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#F952F9")). // Terminal7 prompt border
-		Align(lipgloss.Center).
-		Width(width)
-
-	title := titleStyle.Render("Asimi - Safe, Fast & Opinionated Coding Agent")
-
-	// Create a subtitle
-	subtitleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
-		Align(lipgloss.Center).
-		Width(width)
-
-	subtitle := subtitleStyle.Render("A vi-inspired, terminal-based AI coding agent")
-
-	// Create a version display in muted color
-	versionStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666666")). // Muted gray color
-		Align(lipgloss.Center).
-		Width(width)
-
-	versionDisplay := versionStyle.Render("Version: " + utils.AsimiVersion)
-
-	// Create a list of helpful commands
-	commands := []string{
-		"▶ Mode base UI, starting in INSERT",
-		"▶ Press `CTRL-B` for SCROLL mode",
-		"▶ Press `CTRL-C` to stop the model, twice to exit",
-		"▶ Press `ESC` to switch modes",
-		"▶ Press `!` in COMMAND to run in the sandbox's shell",
-		"▶ Select your model and provider — type :models",
-		"▶ Generate project infrastructure files — type :init",
-		"     e.g, ⌨️ ESC:!uname -aENTER⌨️",
-	}
-
-	// Style for commands
-	commandStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#F4DB53")). // Terminal7 warning/chat border
-		PaddingLeft(2)
-
-	// Render commands
-	var commandViews []string
-	for _, command := range commands {
-		commandViews = append(commandViews, commandStyle.Render(command))
-	}
-
-	// Build content parts in order: commands, notification, title, subtitle
-	var contentParts []string
-	contentParts = append(contentParts, lipgloss.JoinVertical(
-		lipgloss.Left, commandViews...))
-
-	// Add notification if available (centered)
-	if m.updateAvailable {
-		updateStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#00FF00")). // Bright green for visibility
-			Align(lipgloss.Center).
-			Width(width)
-		contentParts = append(contentParts, "",
-			updateStyle.Render("🚀 Update available! Run :update to install the latest version"))
-	}
-	if m.configCreated {
-		configStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#00BFFF")). // Deep sky blue for visibility
-			Align(lipgloss.Center).
-			Width(width)
-		contentParts = append(contentParts, "",
-			configStyle.Render("📝 User's config file created at ~/.config/asimi/asimi.conf"))
-	}
-
-	// Add title, subtitle, and version at the top (prepend)
-	contentParts = append([]string{title, "", subtitle, "", versionDisplay, ""}, contentParts...)
-
-	content := lipgloss.JoinVertical(lipgloss.Center, contentParts...)
-
-	// Create a container that centers the content
-	container := lipgloss.NewStyle().
-		Width(width).
-		Height(height).
-		Align(lipgloss.Center, lipgloss.Center).
-		Render(content)
-
-	return container
-}
-
 // renderRawSessionView renders the raw session view showing complete unfiltered history
 func (m TUIModel) renderRawSessionView(width, height int) string {
 	rawHistory := m.tabs.Content().Chat.GetRawHistory()
 	if len(rawHistory) == 0 {
 		// Show empty state
 		emptyStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#004444")). // Terminal7 text-error
+			Foreground(globalTheme.TextError).
 			Align(lipgloss.Center).
 			Width(width)
 
@@ -3317,7 +3230,7 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 	// Create title
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F4DB53")). // Terminal7 warning/chat border
+		Foreground(globalTheme.ChatBorder).
 		Align(lipgloss.Center).
 		Width(width)
 
@@ -3325,7 +3238,7 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 
 	// Style for raw history entries
 	entryStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#01FAFA")). // Terminal7 text color
+		Foreground(globalTheme.TextColor).
 		PaddingLeft(1).
 		Width(width - 2)
 

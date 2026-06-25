@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -44,13 +45,16 @@ func NewTab(label string, tabType TabType, target string, content ContentCompone
 
 // TabManager manages multiple tabs, each wrapping a ContentComponent
 type TabManager struct {
-	tabs            []Tab
-	activeTab       int
-	pendingG        bool
-	width, height   int
-	markdownEnabled bool
-	getStatus       func() string
-	onTabSwitch     func() // Called after tab switch to update TUI state
+	tabs             []Tab
+	activeTab        int
+	pendingG         bool
+	width, height    int
+	markdownEnabled  bool
+	getStatus        func() string
+	onTabSwitch      func()      // Called after tab switch to update TUI state
+	showWelcome      bool        // True until the user presses any key; shows welcome screen
+	getUpdateAvail   func() bool // Returns whether an update is available
+	getConfigCreated func() bool // Returns whether config was created on first run
 }
 
 // bt is a backtick character, used inside raw string literals where ` cannot appear.
@@ -113,6 +117,7 @@ func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager
 		height:          h,
 		markdownEnabled: mdEnabled,
 		getStatus:       getStatus,
+		showWelcome:     true,
 	}
 	// Seed each tab with its minister welcome greeting
 	return tm
@@ -125,9 +130,104 @@ func newContentComponent(w, h int, mdEnabled bool, getStatus func() string) Cont
 	return c
 }
 
-// Content returns a pointer to the active tab's ContentComponent
+// Content returns a pointer to the active tab's ContentComponent.
+// In welcome state, callers should use RenderWelcome instead.
 func (tm *TabManager) Content() *ContentComponent {
 	return &tm.tabs[tm.activeTab].Content
+}
+
+// IsWelcome returns true when the TabManager is showing the welcome screen.
+func (tm *TabManager) IsWelcome() bool {
+	return tm.showWelcome
+}
+
+// DismissWelcome hides the welcome screen and ensures the default tab
+// (Chancellor, index 0) is active.
+func (tm *TabManager) DismissWelcome() {
+	tm.showWelcome = false
+	tm.activeTab = 0
+}
+
+// renderWelcome renders the welcome screen shown before the user starts interacting.
+func (tm *TabManager) renderWelcome(width, height int) string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(globalTheme.PromptBorder).
+		Align(lipgloss.Center).
+		Width(width)
+
+	title := titleStyle.Render("Asimi - An imperial court for project rulers")
+
+	subtitleStyle := lipgloss.NewStyle().
+		Foreground(globalTheme.TextColor).
+		Align(lipgloss.Center).
+		Width(width)
+
+	subtitle := subtitleStyle.Render("🎂  Happy 50th Birthday to visual mode  🎂")
+
+	versionStyle := lipgloss.NewStyle().
+		Foreground(globalTheme.DimTextColor).
+		Align(lipgloss.Center).
+		Width(width)
+
+	versionDisplay := versionStyle.Render("Version: " + utils.AsimiVersion)
+
+	commands := []string{
+		"▶ Mode base UI, starting in INSERT",
+		"▶ Press `CTRL-B` for SCROLL mode",
+		"▶ Press `CTRL-C` to stop the model, twice to exit",
+		"▶ Press `ESC` to switch modes",
+		"▶ Press `TAB` to switch modes",
+		"▶ Key `:` for COMMAND mode",
+		"▶ Type `!` in COMMAND for the sandbox's shell",
+		"▶ Select your model and provider — type :models",
+		"▶ Generate project infrastructure files — type :init",
+		"     e.g, ⌨️ ESC:!uname -aENTER⌨️",
+	}
+
+	commandStyle := lipgloss.NewStyle().
+		Foreground(globalTheme.ChatBorder).
+		PaddingLeft(2)
+
+	var commandViews []string
+	for _, command := range commands {
+		commandViews = append(commandViews, commandStyle.Render(command))
+	}
+
+	var contentParts []string
+	contentParts = append(contentParts, lipgloss.JoinVertical(
+		lipgloss.Left, commandViews...))
+
+	if tm.getUpdateAvail != nil && tm.getUpdateAvail() {
+		updateStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(globalTheme.SuccessColor).
+			Align(lipgloss.Center).
+			Width(width)
+		contentParts = append(contentParts, "",
+			updateStyle.Render("🚀 Update available! Run :update to install the latest version"))
+	}
+	if tm.getConfigCreated != nil && tm.getConfigCreated() {
+		configStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(globalTheme.InfoColor).
+			Align(lipgloss.Center).
+			Width(width)
+		contentParts = append(contentParts, "",
+			configStyle.Render("📝 User's config file created at ~/.config/asimi/asimi.conf"))
+	}
+
+	contentParts = append([]string{title, "", subtitle, "", versionDisplay, ""}, contentParts...)
+
+	content := lipgloss.JoinVertical(lipgloss.Center, contentParts...)
+
+	container := lipgloss.NewStyle().
+		Width(width).
+		Height(height).
+		Align(lipgloss.Center, lipgloss.Center).
+		Render(content)
+
+	return container
 }
 
 // StreamingChat returns the ChatComponent receiving stream data.
@@ -310,16 +410,17 @@ func (tm *TabManager) PrevTab() {
 	tm.SwitchTo(prev)
 }
 
-// RenderTabBar renders the tab bar; returns "" for single tab
+// RenderTabBar renders the tab bar; returns "" for single tab.
+// In welcome state, all tabs render in the inactive style.
 func (tm *TabManager) RenderTabBar(width int) string {
 	if len(tm.tabs) <= 1 {
 		return ""
 	}
-	fillBg := lipgloss.Color("#333333")
+	fillBg := globalTheme.TabFill
 	var parts []string
 	for i, tab := range tm.tabs {
 		label := tab.Label
-		if i == tm.activeTab {
+		if i == tm.activeTab && !tm.showWelcome {
 			// Active tab: bold, bright foreground, stands out from the fill
 			style := lipgloss.NewStyle().
 				Bold(true).
@@ -330,7 +431,7 @@ func (tm *TabManager) RenderTabBar(width int) string {
 		} else {
 			// Inactive tab: dimmer text on the same grey fill
 			style := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#999999")).
+				Foreground(globalTheme.DimTextColor).
 				Background(fillBg).
 				Padding(0, 1)
 			parts = append(parts, style.Render(label))
@@ -931,8 +1032,8 @@ func (c *ContentComponent) renderHelpView() string {
 	// Title bar
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F952F9")).
-		Background(lipgloss.Color("#000000")).
+		Foreground(globalTheme.PromptBorder).
+		Background(globalTheme.PaneBackground).
 		Padding(0, 1)
 
 	title := titleStyle.Render(fmt.Sprintf(" Help: %s ", c.help.GetTopic()))

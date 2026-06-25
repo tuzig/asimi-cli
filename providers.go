@@ -97,21 +97,7 @@ func ProvideConfig(logger *slog.Logger, repoInfo repo.RepoInfo) (*Config, error)
 
 	cfg, err := config.LoadProjectConfig(repoInfo.ProjectRoot, true)
 	if err != nil {
-		logger.Info("using default configuration due to load failure")
-		logger.Debug("Warning: Using defaults due to config load failure", "error", err)
-		// Continue with default config
-		cfg = &Config{
-			Logging: LoggingConfig{
-				Level:  "info",
-				Format: "text",
-			},
-			LLM: LLMConfig{
-				Provider: "openai",
-				Model:    "gpt-3.5-turbo",
-				APIKey:   "",
-				BaseURL:  "",
-			},
-		}
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 	// Override from CLI flag
 	if cli.NoCleanup {

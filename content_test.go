@@ -89,3 +89,93 @@ func TestAddGreetingMessage_RespectsScrollLock(t *testing.T) {
 	assert.False(t, chat.AutoScroll, "AddGreetingMessage should not change AutoScroll when scroll-locked")
 	assert.True(t, chat.UserScrolled, "AddGreetingMessage should not reset UserScrolled when scroll-locked")
 }
+
+// --- Welcome screen tests ---
+
+func TestTabManager_WelcomeDefaultTrue(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	assert.True(t, tm.IsWelcome(), "new TabManager should start in welcome state")
+}
+
+func TestTabManager_DismissWelcome(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	assert.True(t, tm.IsWelcome())
+
+	tm.DismissWelcome()
+	assert.False(t, tm.IsWelcome(), "welcome should be dismissed after DismissWelcome")
+	assert.Equal(t, 0, tm.activeTab, "active tab should be 0 after dismiss")
+}
+
+func TestTabManager_RenderWelcome(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+
+	view := tm.renderWelcome(80, 24)
+	assert.NotEmpty(t, view)
+	assert.Contains(t, view, "Asimi")
+	assert.Contains(t, view, "INSERT")
+}
+
+func TestTabManager_RenderWelcome_ModelsHint(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+
+	view := tm.renderWelcome(80, 24)
+	assert.Contains(t, view, "Select your model and provider")
+	assert.Contains(t, view, ":models")
+}
+
+func TestTabManager_RenderWelcome_InitHint(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+
+	view := tm.renderWelcome(80, 24)
+	assert.Contains(t, view, "Generate project infrastructure files")
+	assert.Contains(t, view, ":init")
+}
+
+func TestTabManager_RenderWelcome_UpdateAvailable(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm.getUpdateAvail = func() bool { return true }
+
+	view := tm.renderWelcome(80, 24)
+	assert.Contains(t, view, "Update available")
+	assert.Contains(t, view, ":update")
+}
+
+func TestTabManager_RenderWelcome_NoUpdateWhenFalse(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm.getUpdateAvail = func() bool { return false }
+
+	view := tm.renderWelcome(80, 24)
+	assert.NotContains(t, view, "Update available")
+}
+
+func TestTabManager_RenderWelcome_ConfigCreated(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm.getConfigCreated = func() bool { return true }
+
+	view := tm.renderWelcome(80, 24)
+	assert.Contains(t, view, "config file created")
+}
+
+func TestTabManager_RenderTabBar_NoActiveInWelcome(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	assert.True(t, tm.IsWelcome())
+
+	bar := tm.RenderTabBar(80)
+	assert.NotEmpty(t, bar)
+	// In welcome state, no tab should be bold (active)
+	// We can't easily assert style, but verify the labels are present
+	assert.Contains(t, bar, "Chancellor")
+	assert.Contains(t, bar, "Sage")
+	assert.Contains(t, bar, "Forge")
+	assert.Contains(t, bar, "Judge")
+}
+
+func TestTabManager_RenderTabBar_ActiveAfterDismiss(t *testing.T) {
+	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm.DismissWelcome()
+
+	bar := tm.RenderTabBar(80)
+	assert.NotEmpty(t, bar)
+	assert.Contains(t, bar, "Chancellor")
+	//TODO: need to asser it's color is highlighted
+}

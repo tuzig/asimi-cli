@@ -1231,3 +1231,19 @@ provider = "anthropic"
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "asimi.conf")
 }
+
+// TestDefaultConf_ProviderIsEmpty verifies that the embedded default.conf
+// template has provider commented out as empty string, matching DefaultConfig()
+// which leaves Provider as "". This prevents user confusion: the old template
+// had #provider = "anthropic" which didn't match the runtime default.
+func TestDefaultConf_ProviderIsEmpty(t *testing.T) {
+	content := DefaultConfContent()
+
+	// The provider line should be commented out with an empty value
+	assert.Contains(t, content, `# provider = `,
+		"default.conf must have provider = \"\" (matching DefaultConfig), not a hardcoded provider name")
+
+	// Must NOT contain the old contradictory default
+	assert.NotContains(t, content, `#provider = "anthropic"`,
+		"default.conf must not default provider to anthropic — DefaultConfig leaves it empty")
+}
