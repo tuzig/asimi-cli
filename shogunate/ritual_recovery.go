@@ -63,10 +63,10 @@ func (r *RitualRunner) recoverFromPreviousExec(ctx context.Context, ritualName s
 
 	// If dismissed, user explicitly chose to skip — abort this invocation
 	if previousExec.State == RitualStateDismissed {
-		r.logger.Info("ritual dismissed by user",
+		r.logger.Info("ritual dismissed by user, starting fresh",
 			"ritual", ritualName,
 			"previous_execution_id", previousExec.ID)
-		return recoveryResult{}, fmt.Errorf("ritual dismissed by user")
+		return recoveryResult{}, nil
 	}
 
 	// If state is "recovering", user already approved — apply recovery data directly

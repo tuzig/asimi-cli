@@ -66,9 +66,9 @@ const bt = "`"
 var tabGreetings = map[string]string{
 	"chancellor": "Greetings, Ruler and welcome to your Court\n" +
 		"Your court's main function is to harmonize the three realms:\n\n" +
-		"\t- **Intent** the ruler's will, TODO comments and docs\n" +
-		"\t- **Earth** Production code\n" +
-		"\t- **Heaven** Logs, CI, test results and tests\n\n" +
+		"\t- **Intent**: the ruler's edicts, TODO comments and docs\n" +
+		"\t- **Earth**: the repo\n" +
+		"\t- **Heaven**: Logs, CI, test results and tests\n\n" +
 		"The UI follows vi's and support INSERT, NORMAL, SCROLL modes" +
 		"For system commands use the " + bt + ":" + bt + " prefix, as in " + bt + ":help" + bt + "\n" +
 		"For shell commands in the sandbox use " + bt + ":!" + bt + " prefix, as in " + bt + ":!uname" + bt +

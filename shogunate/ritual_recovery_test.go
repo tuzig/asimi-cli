@@ -918,9 +918,9 @@ func TestRitualStateDismissed_ConstantValue(t *testing.T) {
 	}
 }
 
-// TestRitualStart_DismissedStateReturnsError verifies that Start() returns
-// an error when the previous execution has state "dismissed".
-func TestRitualStart_DismissedStateReturnsError(t *testing.T) {
+// TestRitualStart_DismissedStateReturnsError verifies that Start() starts
+// a fresh execution when the previous execution has state "dismissed".
+func TestRitualStart_DismissedStateStartsFresh(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
@@ -969,12 +969,18 @@ func TestRitualStart_DismissedStateReturnsError(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	_, err = runner.Start(ctx, "test-dismissed-start", edictKey, map[string]string{}, nil)
-	if err == nil {
-		t.Fatal("expected error for dismissed ritual, got nil")
+	exec, err := runner.Start(ctx, "test-dismissed-start", edictKey, map[string]string{}, nil)
+	if err != nil {
+		t.Fatalf("expected dismissed ritual to start fresh, got error: %v", err)
 	}
-	if err.Error() != "ritual dismissed by user" {
-		t.Errorf("expected error 'ritual dismissed by user', got %q", err.Error())
+	if exec == nil {
+		t.Fatal("expected a new execution, got nil")
+	}
+	if exec.State != RitualStatePending {
+		t.Errorf("expected fresh execution with state pending, got %q", exec.State)
+	}
+	if exec.PreviousExecutionID != "" {
+		t.Errorf("expected fresh execution with no previous ID, got %q", exec.PreviousExecutionID)
 	}
 }
 
