@@ -843,6 +843,12 @@ func (s *Shogunate) Subscribe(ctx context.Context) <-chan any {
 					if !ok {
 						return
 					}
+					// ClearSchedulerMsg is an in-process request/reply — handle it here
+					if clearMsg, ok := msg.(runners.ClearSchedulerMsg); ok {
+						count := s.clearAllSchedulers()
+						clearMsg.ResultChan <- count
+						continue // do NOT forward to out
+					}
 					select {
 					case out <- msg:
 					case <-ctx.Done():
@@ -854,6 +860,23 @@ func (s *Shogunate) Subscribe(ctx context.Context) <-chan any {
 	}
 
 	return out
+}
+
+// clearAllSchedulers iterates all ministers with sessions and calls
+// scheduler.ClearQueue() on each, returning the total aborted count.
+func (s *Shogunate) clearAllSchedulers() int {
+	total := 0
+	for _, m := range s.ministers {
+		if m == nil {
+			continue
+		}
+		sess := m.GetSession()
+		if sess == nil || sess.scheduler == nil {
+			continue
+		}
+		total += sess.scheduler.ClearQueue()
+	}
+	return total
 }
 
 // GetRitualRegistry returns the ritual registry

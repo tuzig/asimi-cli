@@ -130,31 +130,30 @@ func TestCoreToolScheduler_ClearQueue(t *testing.T) {
 	fastResult2 := scheduler.Schedule(context.Background(), fastTool, "fast-input-2")
 	fastResult3 := scheduler.Schedule(context.Background(), fastTool, "fast-input-3")
 
-	// Clear the queue - this should abort the queued tool calls but not the executing one
+	// Clear the queue - this should abort all calls: the active slow tool + 3 queued fast tools
 	abortedCount := scheduler.ClearQueue()
 
-	// Verify that 3 calls were aborted (the queued ones)
-	assert.Equal(t, 3, abortedCount, "should have aborted 3 queued tool calls")
+	// Verify that 4 calls were aborted (active + queued)
+	assert.Equal(t, 4, abortedCount, "should have aborted 1 active + 3 queued tool calls")
 
-	// Check that aborted calls received the SandboxRestartedError
-	for _, result := range []<-chan ToolCallResult{fastResult1, fastResult2, fastResult3} {
+	// Check that all aborted calls received the SandboxRestartedError
+	for _, result := range []<-chan ToolCallResult{fastResult1, fastResult2, fastResult3, slowResult} {
 		res := <-result
 		assert.Error(t, res.Error)
 		_, ok := res.Error.(SandboxRestartedError)
 		assert.True(t, ok, "error should be SandboxRestartedError")
 	}
 
-	// Verify notifications were sent for each aborted call
-	assert.Equal(t, 3, len(abortedCalls), "should have received 3 aborted notifications")
-	for _, aborted := range abortedCalls {
-		assert.Equal(t, "fast-tool", aborted.ToolName)
-		assert.Equal(t, string(StatusAborted), aborted.Status)
-	}
+	// Verify notifications were sent for each aborted call (including the active slow one)
+	assert.Equal(t, 4, len(abortedCalls), "should have received 4 aborted notifications")
 
-	// The slow tool should still complete normally
-	slowRes := <-slowResult
-	assert.NoError(t, slowRes.Error)
-	assert.Equal(t, "done", slowRes.Output)
+	toolNames := make(map[string]int)
+	for _, aborted := range abortedCalls {
+		assert.Equal(t, string(StatusAborted), aborted.Status)
+		toolNames[aborted.ToolName]++
+	}
+	assert.Equal(t, 1, toolNames["slow-tool"], "should have 1 aborted slow-tool notification")
+	assert.Equal(t, 3, toolNames["fast-tool"], "should have 3 aborted fast-tool notifications")
 }
 
 func TestCoreToolScheduler_ClearQueue_EmptyQueue(t *testing.T) {

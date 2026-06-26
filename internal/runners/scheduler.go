@@ -54,6 +54,7 @@ type CoreToolScheduler struct {
 	mu          sync.Mutex
 	toolCalls   map[string]*ToolCall
 	queue       []*ToolCall
+	activeCall  *ToolCall // currently executing call, nil when idle
 	isBusy      bool
 	resultChans map[string]chan ToolCallResult
 	// TODO: refator to a channel
@@ -124,6 +125,7 @@ func (s *CoreToolScheduler) processQueue() {
 
 	call := s.queue[0]
 	s.queue = s.queue[1:]
+	s.activeCall = call
 
 	call.Status = StatusExecuting
 	if s.notify != nil {
@@ -190,6 +192,7 @@ func (s *CoreToolScheduler) processQueue() {
 		}
 
 		s.isBusy = false
+		s.activeCall = nil
 		s.processQueue()
 	}()
 }
@@ -201,14 +204,18 @@ func (e SandboxRestartedError) Error() string {
 	return "sandbox restarted - tool call aborted"
 }
 
-// ClearQueue aborts all pending tool calls in the queue. This should be called
+// ClearQueue aborts all pending and in-flight tool calls. This should be called
 // when the sandbox needs to be reinitialized (e.g., after a timeout).
 // It returns an error for all pending operations and notifies the UI.
 func (s *CoreToolScheduler) ClearQueue() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Count queued items plus the active call (if any)
 	abortedCount := len(s.queue)
+	if s.activeCall != nil {
+		abortedCount++
+	}
 	if abortedCount == 0 {
 		slog.Debug("scheduler.clear_queue", "aborted", 0)
 		return 0
@@ -217,6 +224,32 @@ func (s *CoreToolScheduler) ClearQueue() int {
 	slog.Info("scheduler.clear_queue", "aborting", abortedCount)
 
 	abortErr := SandboxRestartedError{}
+
+	// Abort the currently executing call (if any)
+	if s.activeCall != nil {
+		s.activeCall.Status = StatusAborted
+		s.activeCall.Error = abortErr
+
+		if s.notify != nil {
+			s.notify(ToolCallAbortedMsg{
+				ChannelID: s.channelID,
+				CallID:    s.activeCall.ID,
+				ToolName:  s.activeCall.Tool.Name(),
+				Input:     s.activeCall.Input,
+				Status:    string(StatusAborted),
+				Reason:    abortErr.Error(),
+				Formatted: s.activeCall.Tool.Format(s.activeCall.Input, "", abortErr),
+			})
+		}
+
+		if resultChan, exists := s.resultChans[s.activeCall.ID]; exists {
+			resultChan <- ToolCallResult{Error: abortErr}
+			close(resultChan)
+			delete(s.resultChans, s.activeCall.ID)
+		}
+		s.activeCall = nil
+		s.isBusy = false
+	}
 
 	// Abort all queued tool calls
 	for _, call := range s.queue {
