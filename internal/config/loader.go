@@ -3,6 +3,7 @@ package config
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,14 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	koanf "github.com/knadh/koanf/v2"
 )
+
+// tomlDiagnostic is satisfied by TOML parse errors that carry
+// a rich human-readable diagnostic (e.g. with line numbers).
+// We use an interface assertion instead of importing the
+// concrete type to avoid a second TOML parser dependency.
+type tomlDiagnostic interface {
+	String() string
+}
 
 //go:embed default.conf
 var defaultConfContent string
@@ -165,6 +174,10 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 	userConfigPath := filepath.Join(homeDir, ".config", "asimi", "asimi.conf")
 	if _, statErr := os.Stat(userConfigPath); statErr == nil {
 		if err := k.Load(file.Provider(userConfigPath), koanftoml.Parser()); err != nil {
+			var diag tomlDiagnostic
+			if errors.As(err, &diag) {
+				return nil, fmt.Errorf("failed to parse %s:\n%s", userConfigPath, diag.String())
+			}
 			return nil, fmt.Errorf("failed to load config from %s: %w", userConfigPath, err)
 		}
 	} else if !os.IsNotExist(statErr) {
@@ -176,7 +189,11 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 		projectConfigPath := filepath.Join(projectRoot, ".agents", "asimi.conf")
 		if _, statErr := os.Stat(projectConfigPath); statErr == nil {
 			if err := k.Load(file.Provider(projectConfigPath), koanftoml.Parser()); err != nil {
-				return nil, fmt.Errorf("Failed to load config from %s: %w", projectConfigPath,  err)
+				var diag tomlDiagnostic
+				if errors.As(err, &diag) {
+					return nil, fmt.Errorf("failed to parse %s:\n%s", projectConfigPath, diag.String())
+				}
+				return nil, fmt.Errorf("failed to load config from %s: %w", projectConfigPath, err)
 			}
 		} else if !os.IsNotExist(statErr) {
 			slog.Warn("Unable to stat project config", "path", projectConfigPath, "error", statErr)
@@ -200,6 +217,30 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// ValidateConfigFile parses a config file and returns a rich diagnostic
+// on TOML syntax errors. Returns nil if the file doesn't exist (missing
+// config is OK) or if it parses successfully. This is intended as a
+// pre-flight check before FX DI starts, so the user sees a clean error
+// instead of FX stack noise.
+func ValidateConfigFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read %s: %w", path, err)
+	}
+	_, err = koanftoml.Parser().Unmarshal(data)
+	if err != nil {
+		var diag tomlDiagnostic
+		if errors.As(err, &diag) {
+			return fmt.Errorf("failed to parse %s:\n%s", path, diag.String())
+		}
+		return fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+	return nil
 }
 
 // SaveConfig saves the current config to the user-level config file (~/.config/asimi/asimi.conf).

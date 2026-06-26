@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
@@ -95,9 +96,9 @@ func runInteractiveMode() error {
 	var tuiModel *TUIModel
 	var fxOptions []fx.Option
 
-	if !cli.Debug {
-		fxOptions = append(fxOptions, fx.NopLogger)
-	}
+	// Always silence the fx logger — its PROVIDE/RUNNING output is noise,
+	// even in debug mode. We use slog for all application logging.
+	fxOptions = append(fxOptions, fx.NopLogger)
 
 	// Add core providers
 	fxOptions = append(fxOptions,
@@ -230,7 +231,32 @@ type compactErrorMsg struct {
 // updateAvailableMsg is sent when a newer version is available
 type updateAvailableMsg struct{}
 
+// validateConfigs checks user and project TOML configs before FX DI
+// starts. A broken config produces an unreadable FX dependency-chain
+// error; catching it here gives the user a clean diagnostic.
+func validateConfigs() error {
+	_, userCfgPath, _ := config.UserConfigPath()
+	if err := config.ValidateConfigFile(userCfgPath); err != nil {
+		return err
+	}
+	if projectRoot, err := os.Getwd(); err == nil {
+		projectCfgPath := filepath.Join(projectRoot, ".agents", "asimi.conf")
+		if err := config.ValidateConfigFile(projectCfgPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func main() {
+	// Validate configs before any dispatch so the user sees clean
+	// TOML errors instead of FX dependency-chain noise. Do this
+	// once here — both the TUI and the daemon need it.
+	if err := validateConfigs(); err != nil {
+		fmt.Fprintln(os.Stderr, "asimi:", err)
+		os.Exit(1)
+	}
+
 	// Subcommand dispatch. A proper kong refactor can come later;
 	// today a leading `daemon` arg is enough to branch cleanly.
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {

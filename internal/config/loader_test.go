@@ -1247,3 +1247,73 @@ func TestDefaultConf_ProviderIsEmpty(t *testing.T) {
 	assert.NotContains(t, content, `#provider = "anthropic"`,
 		"default.conf must not default provider to anthropic — DefaultConfig leaves it empty")
 }
+
+// =============================================================================
+// ValidateConfigFile Tests
+// =============================================================================
+
+func TestValidateConfigFile_ValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "valid.conf")
+	require.NoError(t, os.WriteFile(path, []byte(`[llm]
+provider = "openai"
+model = "gpt-4"
+`), 0o644))
+
+	err := ValidateConfigFile(path)
+	assert.NoError(t, err)
+}
+
+func TestValidateConfigFile_FileDoesNotExist(t *testing.T) {
+	err := ValidateConfigFile("/nonexistent/path/to/config.conf")
+	assert.NoError(t, err, "missing config file should not be an error")
+}
+
+func TestValidateConfigFile_SyntaxError_RichDiagnostic(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "bad.conf")
+
+	// Unclosed quoted string — a classic TOML syntax error
+	malformed := `[llm]
+provider = "anthropic
+model = "claude-sonnet-4"
+`
+	require.NoError(t, os.WriteFile(path, []byte(malformed), 0o644))
+
+	err := ValidateConfigFile(path)
+	require.Error(t, err)
+
+	errStr := err.Error()
+	// Must include the file path
+	assert.Contains(t, errStr, path)
+	// Must include context from the rich diagnostic (pelletier's DecodeError.String()
+	// includes line numbers with pipe characters, e.g. "1| [llm]" or "2| provider")
+	assert.Contains(t, errStr, "|")
+	// Must NOT be the terse message alone (no line numbers / context)
+	assert.NotEqual(t, errStr, "failed to parse "+path+": toml: basic strings cannot have new lines")
+}
+
+func TestValidateConfigFile_DuplicateKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "dup.conf")
+	malformed := `[llm]
+provider = "openai"
+provider = "anthropic"
+`
+	require.NoError(t, os.WriteFile(path, []byte(malformed), 0o644))
+
+	err := ValidateConfigFile(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), path)
+	// pelletier's go-toml catches duplicate keys
+	assert.Contains(t, err.Error(), "provider")
+}
+
+func TestValidateConfigFile_EmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "empty.conf")
+	require.NoError(t, os.WriteFile(path, []byte(""), 0o644))
+
+	err := ValidateConfigFile(path)
+	assert.NoError(t, err, "empty config file should be valid")
+}

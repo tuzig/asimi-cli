@@ -37,6 +37,8 @@ func runDaemonMode() error {
 
 	var shared *DaemonShared
 	fxOptions := []fx.Option{
+		// Always silence the fx logger — its PROVIDE/RUNNING output is noise.
+		fx.NopLogger,
 		fx.Provide(
 			ProvideLogger,
 			ProvideRepoInfo,
@@ -47,10 +49,6 @@ func runDaemonMode() error {
 		),
 		fx.Populate(&shared),
 	}
-	if !cli.Debug {
-		fxOptions = append(fxOptions, fx.NopLogger)
-	}
-
 	app := fx.New(fxOptions...)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

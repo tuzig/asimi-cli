@@ -177,7 +177,7 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 		"▶ Press `CTRL-B` for SCROLL mode",
 		"▶ Press `CTRL-C` to stop the model, twice to exit",
 		"▶ Press `ESC` to switch modes",
-		"▶ Press `TAB` to switch modes",
+		"▶ Press `TAB` to switch ministers",
 		"▶ Key `:` for COMMAND mode",
 		"▶ Type `!` in COMMAND for the sandbox's shell",
 		"▶ Select your model and provider — type :models",
