@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/storage"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -412,4 +415,150 @@ func TestVerifyInitWithRetryNilRepoInfo(t *testing.T) {
 			t.Fatalf("Expected startConversationMsg or showContextMsg, got: %T", msg)
 		}
 	})
+}
+
+// TestHandleInitCommand_AutoDerivesSlug tests that handleInitCommand auto-derives
+// the project slug from repoInfo when config.Shogunate.Project is empty.
+func TestHandleInitCommand_AutoDerivesSlug(t *testing.T) {
+	skipIfNotCI(t)
+	tmpDir := t.TempDir()
+
+	mock := &mockShogunateClient{}
+	mockTUI := &TUIModel{
+		config: &Config{
+			Shogunate: config.ShogunateConfig{
+				Project: "", // empty — should trigger auto-derivation
+			},
+		},
+		status: StatusComponent{
+			repoInfo: &repo.RepoInfo{
+				ProjectRoot: tmpDir,
+				Slug:        "owner/myrepo",
+			},
+		},
+		shogunate: mock,
+	}
+
+	cmd := handleInitCommand(mockTUI, []string{})
+	// createInitEdict returns nil (no tea.Cmd) but publishes an event
+	require.Nil(t, cmd, "createInitEdict returns nil cmd")
+
+	// The command chain calls createInitEdict → CreateEdictSilent → raiseShogunateEvent
+	// Verify the event was published
+	require.Len(t, mock.publishedEvents, 1, "expected EventRitualEnacted to be published")
+	assert.Equal(t, storage.EventRitualEnacted, mock.publishedEvents[0].eventType)
+	assert.Equal(t, "project-init", mock.publishedEvents[0].payload["ritual_name"])
+
+	// Verify the project name was saved to .agents/asimi.conf
+	confPath := filepath.Join(tmpDir, ".agents", "asimi.conf")
+	data, err := os.ReadFile(confPath)
+	require.NoError(t, err, "config file should exist")
+	require.Contains(t, string(data), "owner/myrepo",
+		"config should contain the auto-derived slug")
+}
+
+// TestHandleInitCommand_NoSlugReturnsError tests that handleInitCommand returns
+// an error message when both config.Shogunate.Project and repoInfo.Slug are empty.
+func TestHandleInitCommand_NoSlugReturnsError(t *testing.T) {
+	skipIfNotCI(t)
+	tmpDir := t.TempDir()
+
+	mock := &mockShogunateClient{}
+	mockTUI := &TUIModel{
+		config: &Config{
+			Shogunate: config.ShogunateConfig{
+				Project: "",
+			},
+		},
+		status: StatusComponent{
+			repoInfo: &repo.RepoInfo{
+				ProjectRoot: tmpDir,
+				Slug:        "", // no slug — no git remote
+			},
+		},
+		shogunate: mock,
+	}
+
+	cmd := handleInitCommand(mockTUI, []string{})
+	require.NotNil(t, cmd)
+	msg := cmd()
+
+	sysMsg, ok := msg.(showContextMsg)
+	require.True(t, ok, "Expected showContextMsg when no slug, got %T", msg)
+	assert.Contains(t, sysMsg.content, "No git remote found")
+
+	// No events should have been published
+	assert.Empty(t, mock.publishedEvents)
+}
+
+// TestHandleInitCommand_ProjectAlreadySet tests that handleInitCommand proceeds
+// directly to createInitEdict when config.Shogunate.Project is already set.
+func TestHandleInitCommand_ProjectAlreadySet(t *testing.T) {
+	skipIfNotCI(t)
+	tmpDir := t.TempDir()
+
+	mock := &mockShogunateClient{}
+	mockTUI := &TUIModel{
+		config: &Config{
+			Shogunate: config.ShogunateConfig{
+				Project: "existing/project",
+			},
+		},
+		status: StatusComponent{
+			repoInfo: &repo.RepoInfo{
+				ProjectRoot: tmpDir,
+				Slug:        "should/not/be/used",
+			},
+		},
+		shogunate: mock,
+	}
+
+	cmd := handleInitCommand(mockTUI, []string{})
+	// createInitEdict returns nil (no tea.Cmd) but publishes an event
+	require.Nil(t, cmd, "createInitEdict returns nil cmd")
+
+	// Verify the event was published
+	require.Len(t, mock.publishedEvents, 1, "expected EventRitualEnacted to be published")
+	assert.Equal(t, storage.EventRitualEnacted, mock.publishedEvents[0].eventType)
+
+	// Config file should NOT have been created (saveProjectNameAndInit was skipped)
+	_, err := os.Stat(filepath.Join(tmpDir, ".agents", "asimi.conf"))
+	assert.True(t, os.IsNotExist(err), "config file should not exist when project already set")
+}
+
+// TestSaveProjectNameAndInit tests the saveProjectNameAndInit helper directly.
+func TestSaveProjectNameAndInit(t *testing.T) {
+	skipIfNotCI(t)
+	tmpDir := t.TempDir()
+
+	mock := &mockShogunateClient{}
+	mockTUI := &TUIModel{
+		config: &Config{
+			Shogunate: config.ShogunateConfig{
+				Project: "",
+			},
+		},
+		status: StatusComponent{
+			repoInfo: &repo.RepoInfo{
+				ProjectRoot: tmpDir,
+			},
+		},
+		shogunate: mock,
+	}
+
+	cmd := saveProjectNameAndInit(mockTUI, "test-org/test-repo")
+
+	// Verify config file was created with the project name
+	confPath := filepath.Join(tmpDir, ".agents", "asimi.conf")
+	data, err := os.ReadFile(confPath)
+	require.NoError(t, err, "config file should exist")
+	assert.Contains(t, string(data), "test-org/test-repo")
+
+	// Verify event was published (createInitEdict runs)
+	require.Len(t, mock.publishedEvents, 1)
+	assert.Equal(t, storage.EventRitualEnacted, mock.publishedEvents[0].eventType)
+	assert.Equal(t, "project-init", mock.publishedEvents[0].payload["ritual_name"])
+
+	// cmd is nil from createInitEdict
+	assert.Nil(t, cmd)
 }

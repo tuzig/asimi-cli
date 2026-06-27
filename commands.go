@@ -364,8 +364,14 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 
 	// Check if project name is already set in config
 	if model.config.Shogunate.Project == "" {
-		// Project name is missing - prompt user for it
-		return model.commandLine.EnterInputMode("Enter project name (e.g., owner/repo):")
+		// Auto-derive slug from git remote
+		slug := model.status.repoInfo.Slug
+		if slug == "" {
+			return func() tea.Msg {
+				return showContextMsg{content: "No git remote found. Please set up a git remote origin before running :init."}
+			}
+		}
+		return saveProjectNameAndInit(model, slug)
 	}
 
 	// Project name exists, proceed with creating the edict
@@ -427,15 +433,9 @@ func handleAPIKeyInput(model *TUIModel, provider, apiKey string) tea.Cmd {
 	return func() tea.Msg { return apiKeySavedMsg{provider: provider} }
 }
 
-// handleProjectNameInput handles the user's project name input
-func handleProjectNameInput(model *TUIModel, projectName string) tea.Cmd {
-	if projectName == "" {
-		// User cancelled, abort the init
-		return func() tea.Msg {
-			return showContextMsg{content: "Project initialization cancelled."}
-		}
-	}
-
+// saveProjectNameAndInit seeds the project config with the given project name,
+// reloads the config, and creates the init edict.
+func saveProjectNameAndInit(model *TUIModel, projectName string) tea.Cmd {
 	// Seed .agents/asimi.conf from the embedded default template before writing
 	// the project name. Without this, SetProjectConfig would create a stub file
 	// containing only the [shogunate] section, and the ritual's template-seeding

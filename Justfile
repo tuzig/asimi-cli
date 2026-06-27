@@ -1,4 +1,4 @@
-PROJECT_NAME := "afittestide/asimi-cli"
+PROJECT_NAME := `git config --get remote.origin.url | sed -E 's/.*[:\/]([^\/]+)\/([^\/]+)\.git$/\1\/\2/'`
 
 # List all available recipes
 default:

@@ -2390,8 +2390,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingAPIKeyProvider = ""
 			return m, handleAPIKeyInput(&m, provider, msg.text)
 		}
-		// Handle free text input responses
-		return m, handleProjectNameInput(&m, msg.text)
 
 	case apiKeyPromptMsg:
 		m.pendingAPIKeyProvider = msg.provider

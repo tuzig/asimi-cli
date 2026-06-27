@@ -891,7 +891,7 @@ func TestGetInfrastructureTemplates_SlugSubstitution(t *testing.T) {
 	// Check Justfile has the slug substituted
 	justfileContent, err := os.ReadFile(filepath.Join(projectRoot, "Justfile"))
 	require.NoError(t, err)
-	assert.Contains(t, string(justfileContent), `PROJECT_NAME := "myorg/myrepo"`)
+	assert.Contains(t, string(justfileContent), "PROJECT_NAME := `git")
 
 	// Check asimi.conf has slug-based image name
 	confContent, err := os.ReadFile(filepath.Join(projectRoot, ".agents", "asimi.conf"))

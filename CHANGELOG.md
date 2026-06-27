@@ -5,6 +5,31 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [UNRELEASED]
+
+### Added
+
+- **API keyring storage** — API keys are now stored securely in the OS keyring (e518)
+- **Welcome screen** — dismissible on any key press, with restored home page
+- **Ritual aborted message** — clear feedback when a ritual is aborted (e517)
+- **Improved models command** — better model selection UX
+
+### Changed
+
+- **Swift-strike ritual routing** — replaced LLM-based ritual routing with a direct YESNO swift-strike prompt for edict enactment (e503)
+- **Theme-based colors** — TUI now uses the theme system for consistent coloring
+- **Aborted message styling** — improved messaging for aborted operations (e499)
+
+### Fixed
+
+- **Shell runner hangs** — resolved multiple shell runner deadlock issues (e528)
+- **Config error reporting** — clearer error messages for configuration problems
+- **Dismissed ritual handling** — dismissed rituals no longer cause issues
+- **Double ABORTED message** — removed duplicate aborted notifications
+- **In-ritual zhengming timeout** — removed premature timeout during zhengming flow (e502)
+- **Tests opening browser** — tests no longer trigger browser launches
+- **Welcome screen rendering** — fixed visual issues on the welcome screen
+
 ## [0.6.0] - 2025-07-17
 
 ### Added

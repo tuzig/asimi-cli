@@ -3005,6 +3005,10 @@ func (m *mockShogunateClient) PublishEvent(key storage.EdictKey, eventType stora
 	return key.ID
 }
 
+func (m *mockShogunateClient) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
+	return &storage.Edict{ID: 1, Intent: intent, IssueRef: issueRef}, nil
+}
+
 // --- Tests for pendingRitualEnact YESNO flow ---
 
 func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
@@ -3432,7 +3436,7 @@ func TestAPIKeyPromptMsg_EntersInputModeAndSetsProvider(t *testing.T) {
 }
 
 // TestInputResponseMsg_RoutesToAPIKeyInput verifies that when pendingAPIKeyProvider
-// is set, inputResponseMsg is routed to handleAPIKeyInput (not handleProjectNameInput).
+// is set, inputResponseMsg is routed to handleAPIKeyInput.
 func TestInputResponseMsg_RoutesToAPIKeyInput(t *testing.T) {
 	DeleteAPIKeyFromKeyring("anthropic")
 	defer DeleteAPIKeyFromKeyring("anthropic")
@@ -3458,14 +3462,12 @@ func TestInputResponseMsg_RoutesToAPIKeyInput(t *testing.T) {
 	assert.Equal(t, "anthropic", saved.provider)
 }
 
-// TestInputResponseMsg_RoutesToProjectNameWhenNoAPIKeyPending verifies that when
-// pendingAPIKeyProvider is NOT set, inputResponseMsg falls through to
-// handleProjectNameInput (the default behavior).
-func TestInputResponseMsg_RoutesToProjectNameWhenNoAPIKeyPending(t *testing.T) {
+// TestInputResponseMsg_NoOpWhenNoAPIKeyPending verifies that when
+// pendingAPIKeyProvider is NOT set, inputResponseMsg is a no-op.
+func TestInputResponseMsg_NoOpWhenNoAPIKeyPending(t *testing.T) {
 	model := newTestModel(t)
 	model.pendingAPIKeyProvider = ""
 
-	// handleProjectNameInput with empty text returns a showContextMsg
 	msg := inputResponseMsg{text: ""}
 	newModel, cmd := model.handleCustomMessages(msg)
 	updated, ok := newModel.(TUIModel)
@@ -3474,10 +3476,7 @@ func TestInputResponseMsg_RoutesToProjectNameWhenNoAPIKeyPending(t *testing.T) {
 	assert.Equal(t, "", updated.pendingAPIKeyProvider,
 		"pendingAPIKeyProvider should remain empty")
 
-	require.NotNil(t, cmd)
-	result := cmd()
-	_, ok = result.(showContextMsg)
-	assert.True(t, ok, "expected showContextMsg from handleProjectNameInput on empty input")
+	assert.Nil(t, cmd, "expected no command when no input mode is pending")
 }
 
 // TestAPIKeySavedMsg_ShowsToastAndRefreshesModels verifies that apiKeySavedMsg

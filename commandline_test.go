@@ -25,7 +25,7 @@ func TestEnterInputMode(t *testing.T) {
 	}
 
 	// Enter input mode
-	cmd := cl.EnterInputMode("Enter project name:")
+	cmd := cl.EnterInputMode("Enter a value:")
 
 	// Should be in input mode
 	if !cl.IsInInputMode() {
@@ -47,7 +47,7 @@ func TestEnterInputMode(t *testing.T) {
 
 	// View should show the prompt
 	view := cl.View()
-	if !strings.Contains(view, "Enter project name:") {
+	if !strings.Contains(view, "Enter a value:") {
 		t.Error("View should contain the input prompt")
 	}
 }
@@ -263,14 +263,14 @@ func TestInputModeViewWithText(t *testing.T) {
 	cl := NewCommandLineComponent()
 	cl.SetWidth(80)
 
-	cl.EnterInputMode("Enter project name (e.g., owner/repo):")
+	cl.EnterInputMode("Enter a value (e.g., owner/repo):")
 
 	// Enter some text
 	cl.inputTextInput.SetValue("daonb/myapp")
 
 	// View should show prompt and text
 	view := cl.View()
-	if !strings.Contains(view, "Enter project name") {
+	if !strings.Contains(view, "Enter a value") {
 		t.Error("View should contain the input prompt")
 	}
 	if !strings.Contains(view, "daonb/myapp") {
@@ -303,11 +303,11 @@ func TestInputModePromptPreserved(t *testing.T) {
 	cl := NewCommandLineComponent()
 	cl.SetWidth(80)
 
-	cl.EnterInputMode("Enter project name:")
+	cl.EnterInputMode("Enter a value:")
 
 	// View should show the prompt
 	view := cl.View()
-	if !strings.Contains(view, "Enter project name:") {
+	if !strings.Contains(view, "Enter a value:") {
 		t.Error("View should contain the input prompt")
 	}
 
@@ -316,7 +316,7 @@ func TestInputModePromptPreserved(t *testing.T) {
 
 	// View should still show the prompt
 	view = cl.View()
-	if !strings.Contains(view, "Enter project name:") {
+	if !strings.Contains(view, "Enter a value:") {
 		t.Error("View should still contain the input prompt after typing")
 	}
 }
@@ -399,7 +399,7 @@ func TestInputModePromptStoredCorrectly(t *testing.T) {
 	}
 
 	// Enter input mode with a specific prompt
-	expectedPrompt := "Enter project name (e.g., owner/repo):"
+	expectedPrompt := "Enter a value (e.g., owner/repo):"
 	cl.EnterInputMode(expectedPrompt)
 
 	// Verify the prompt is stored
