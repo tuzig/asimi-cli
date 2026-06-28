@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/keyring"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +18,12 @@ func TestMain(m *testing.M) {
 
 	// Update the global keyringService variable
 	keyringService = getKeyringService()
+
+	// Unless explicitly testing the real keyring, use the in-memory mock
+	// to avoid macOS Keychain Access prompts during tests.
+	if os.Getenv("ASIMI_TEST_KEYRING") != "1" {
+		keyring.MockKeyring()
+	}
 
 	defer func() {
 		os.Setenv("ASIMI_KEYRING_SERVICE", original)

@@ -31,6 +31,12 @@ type TokenData struct {
 	Provider     string    `json:"provider"`
 }
 
+// MockKeyring replaces the OS keyring with an in-memory mock.
+// This should only be called from tests to avoid triggering OS keychain prompts.
+func MockKeyring() {
+	gokeyring.MockInit()
+}
+
 // SaveToken stores OAuth tokens in the OS keyring
 func SaveToken(provider, accessToken, refreshToken string, expiry time.Time) error {
 	if accessToken == "" {
