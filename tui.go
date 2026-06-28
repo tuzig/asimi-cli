@@ -371,6 +371,23 @@ func (m *TUIModel) switchModel() tea.Cmd {
 		if m.shogunate == nil {
 			return llmInitErrorMsg{err: fmt.Errorf("shogunate not initialised")}
 		}
+		// If using OpenAI OAuth credentials, check if the token needs refresh
+		if m.config.LLM.Provider == "openai" {
+			if key, err := GetAPIKeyFromKeyring("openai"); err == nil && key != "" {
+				if cred, ok := parseCodexOAuthCredential(key); ok {
+					if time.Now().Unix() >= cred.ExpiresAt {
+						refreshed, err := refreshCodexToken()
+						if err != nil {
+							slog.Warn("failed to refresh Codex token during model switch", "error", err)
+						} else {
+							m.config.LLM.APIKey = refreshed
+						}
+					} else {
+						m.config.LLM.APIKey = cred.AccessToken
+					}
+				}
+			}
+		}
 		slog.Info("switching LLM model", "provider", m.config.LLM.Provider, "model", m.config.LLM.Model)
 		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
 			return llmInitErrorMsg{err: err}
@@ -407,12 +424,13 @@ func (m *TUIModel) setContextParams() types.SetContextParams {
 		username = m.config.Shogunate.Username
 	}
 	return types.SetContextParams{
-		Project:      project,
-		Username:     username,
-		ProjectRoot:  projectRoot,
-		WorktreePath: worktreePath,
-		Branch:       branch,
-		APIKeys:      collectAPIKeys(),
+		Project:        project,
+		Username:       username,
+		ProjectRoot:    projectRoot,
+		WorktreePath:   worktreePath,
+		Branch:         branch,
+		APIKeys:        collectAPIKeys(),
+		CodexAccountID: getCodexAccountID(),
 	}
 }
 
@@ -429,7 +447,14 @@ func collectAPIKeys() map[string]string {
 		keys["anthropic"] = key
 	}
 	if key := getAPIKeyForProvider("openai", "OPENAI_API_KEY"); key != "" {
-		keys["openai"] = key
+		// If the keyring value is a JSON OAuth credential, extract just the
+		// access token for the API key map. The account ID is handled
+		// separately via getCodexAccountID().
+		if cred, ok := parseCodexOAuthCredential(key); ok {
+			keys["openai"] = cred.AccessToken
+		} else {
+			keys["openai"] = key
+		}
 	}
 	if key := getAPIKeyForProvider("openrouter", "OPENROUTER_API_KEY"); key != "" {
 		keys["openrouter"] = key
@@ -472,6 +497,23 @@ func getAPIKeyForProvider(provider, envVar string) string {
 	}
 	if key, err := GetAPIKeyFromKeyring(provider); err == nil && key != "" {
 		return key
+	}
+	return ""
+}
+
+// getCodexAccountID extracts the Codex account ID from the OpenAI keyring
+// credential if it's an OAuth JSON blob. Returns empty string for plain API keys.
+func getCodexAccountID() string {
+	// Env var API key takes precedence — no account ID for plain keys
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		return ""
+	}
+	raw, err := GetAPIKeyFromKeyring("openai")
+	if err != nil || raw == "" {
+		return ""
+	}
+	if cred, ok := parseCodexOAuthCredential(raw); ok {
+		return cred.AccountID
 	}
 	return ""
 }

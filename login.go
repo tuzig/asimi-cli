@@ -75,19 +75,43 @@ func (m *BaseModal) Render() string {
 const (
 	codexClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
 	codexAuthURL      = "https://auth.openai.com/oauth/authorize"
-	codexTokenURL     = "https://auth.openai.com/oauth/token"
-	codexRedirectURI  = "http://localhost:1455/callback"
-	codexScope        = "openid profile email offline_access api.connectors.read api.connectors.invoke"
+	codexRedirectURI  = "http://localhost:1455/auth/callback"
+	codexScope        = "openid profile email offline_access"
 	codexCallbackPort = 1455
 )
 
+// codexTokenURL is the OAuth token endpoint. It's a var (not a const) so
+// tests can override it to point at a mock server.
+var codexTokenURL = "https://auth.openai.com/oauth/token"
+
+// codexCallbackHost is the loopback address the OAuth callback server binds to.
+// Configurable via ASIMI_CODEX_CALLBACK_HOST for testing.
+var codexCallbackHost = func() string {
+	if h := os.Getenv("ASIMI_CODEX_CALLBACK_HOST"); h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}()
+
+// codexCallbackPath is the URL path the OAuth callback server listens on.
+const codexCallbackPath = "/auth/callback"
+
 // codexTokenResponse represents the token response from the Codex OAuth flow
 type codexTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	IDToken     string `json:"id_token"`
-	Scope       string `json:"scope"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int64  `json:"expires_in"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
+	Scope        string `json:"scope"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
+
+// codexOAuthCredential stores the full OAuth credential in the keyring as JSON.
+type codexOAuthCredential struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresAt    int64  `json:"expires_at"` // unix timestamp
+	AccountID    string `json:"account_id"`
 }
 
 // performCodexLogin runs the Codex-style OpenAI OAuth browser login flow.
@@ -118,7 +142,7 @@ func (m *TUIModel) performCodexLogin() tea.Cmd {
 		u.RawQuery = q.Encode()
 
 		// Start loopback server on port 1455
-		ln, err := net.Listen("tcp", "127.0.0.1:"+fmt.Sprint(codexCallbackPort))
+		ln, err := net.Listen("tcp", codexCallbackHost+":"+fmt.Sprint(codexCallbackPort))
 		if err != nil {
 			return showOauthFailed{fmt.Sprintf("failed to start callback server on port %d: %v", codexCallbackPort, err)}
 		}
@@ -126,7 +150,7 @@ func (m *TUIModel) performCodexLogin() tea.Cmd {
 		// Channel to receive the authorization code
 		codeCh := make(chan string, 1)
 		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/callback" {
+			if r.URL.Path != codexCallbackPath {
 				http.NotFound(w, r)
 				return
 			}
@@ -199,8 +223,26 @@ func (m *TUIModel) performCodexLogin() tea.Cmd {
 			return showOauthFailed{"OAuth response did not contain an access token"}
 		}
 
-		// Store the access token as an API key in keyring
-		if err := SaveAPIKeyToKeyring("openai", tok.AccessToken); err != nil {
+		// Extract account ID from JWT
+		accountID, err := extractCodexAccountID(tok.AccessToken)
+		if err != nil {
+			slog.Warn("failed to extract account ID from JWT", "error", err)
+		}
+
+		// Build full OAuth credential for keyring storage
+		cred := codexOAuthCredential{
+			AccessToken:  tok.AccessToken,
+			RefreshToken: tok.RefreshToken,
+			ExpiresAt:    time.Now().Unix() + tok.ExpiresIn,
+			AccountID:    accountID,
+		}
+		jsonCred, err := json.Marshal(cred)
+		if err != nil {
+			return showOauthFailed{fmt.Sprintf("failed to serialize credential: %v", err)}
+		}
+
+		// Store the full OAuth credential as JSON in keyring
+		if err := SaveAPIKeyToKeyring("openai", string(jsonCred)); err != nil {
 			slog.Warn("Failed to save API key to keyring, falling back to file storage", "error", err)
 			// Fall back to file storage
 			if err := UpdateUserLLMAuth("openai", tok.AccessToken, "codex-mini-latest"); err != nil {
@@ -254,6 +296,181 @@ func randomString(n int) string {
 		return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
 	}
 	return base64.RawURLEncoding.EncodeToString(b)[:n]
+}
+
+// extractCodexAccountID extracts the chatgpt_account_id from the JWT
+// access token's payload. The account ID is nested under the
+// "https://api.openai.com/auth" claim.
+func extractCodexAccountID(accessToken string) (string, error) {
+	parts := strings.Split(accessToken, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid JWT: expected 3 parts, got %d", len(parts))
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("failed to base64-decode JWT payload: %w", err)
+	}
+
+	var claims map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", fmt.Errorf("failed to parse JWT payload as JSON: %w", err)
+	}
+
+	authRaw, ok := claims["https://api.openai.com/auth"]
+	if !ok {
+		return "", fmt.Errorf("JWT payload missing https://api.openai.com/auth claim")
+	}
+
+	var authClaims struct {
+		ChatGPTAccountID string `json:"chatgpt_account_id"`
+	}
+	if err := json.Unmarshal(authRaw, &authClaims); err != nil {
+		return "", fmt.Errorf("failed to parse auth claim: %w", err)
+	}
+
+	if authClaims.ChatGPTAccountID == "" {
+		return "", fmt.Errorf("JWT auth claim missing chatgpt_account_id")
+	}
+
+	return authClaims.ChatGPTAccountID, nil
+}
+
+// parseCodexOAuthCredential attempts to deserialize a keyring value as a
+// codexOAuthCredential JSON blob. Returns the credential and true if the
+// value is a JSON OAuth credential; returns false for plain-string API keys.
+func parseCodexOAuthCredential(raw string) (codexOAuthCredential, bool) {
+	if !strings.HasPrefix(strings.TrimSpace(raw), "{") {
+		return codexOAuthCredential{}, false
+	}
+	var cred codexOAuthCredential
+	if err := json.Unmarshal([]byte(raw), &cred); err != nil {
+		return codexOAuthCredential{}, false
+	}
+	return cred, cred.AccessToken != ""
+}
+
+// refreshCodexToken refreshes an expired Codex OAuth access token using the
+// stored refresh token. It reads the credential from keyring, checks expiry,
+// and if expired, POSTs a refresh request to the token endpoint. The new
+// credential (with updated access token, refresh token, expiry, and account
+// ID) is stored back in the keyring. Returns the new access token.
+func refreshCodexToken() (string, error) {
+	raw, err := GetAPIKeyFromKeyring("openai")
+	if err != nil {
+		return "", fmt.Errorf("failed to read OAuth credential from keyring: %w", err)
+	}
+
+	cred, ok := parseCodexOAuthCredential(raw)
+	if !ok {
+		return "", fmt.Errorf("no OAuth credential found in keyring for openai")
+	}
+
+	// Token still valid — no refresh needed
+	if time.Now().Unix() < cred.ExpiresAt {
+		return cred.AccessToken, nil
+	}
+
+	if cred.RefreshToken == "" {
+		return "", fmt.Errorf("OAuth credential has no refresh token")
+	}
+
+	// POST refresh request
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", cred.RefreshToken)
+	form.Set("client_id", codexClientID)
+
+	req, err := http.NewRequest("POST", codexTokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("failed to create refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("token refresh returned status %d", resp.StatusCode)
+	}
+
+	var tok codexTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+		return "", fmt.Errorf("failed to decode refresh response: %w", err)
+	}
+
+	if tok.AccessToken == "" {
+		return "", fmt.Errorf("refresh response did not contain an access token")
+	}
+
+	// Re-extract account ID from new JWT
+	accountID, err := extractCodexAccountID(tok.AccessToken)
+	if err != nil {
+		slog.Warn("failed to extract account ID from refreshed JWT", "error", err)
+		accountID = cred.AccountID // fallback to old account ID
+	}
+
+	// Build updated credential
+	newCred := codexOAuthCredential{
+		AccessToken:  tok.AccessToken,
+		RefreshToken: tok.RefreshToken,
+		ExpiresAt:    time.Now().Unix() + tok.ExpiresIn,
+		AccountID:    accountID,
+	}
+
+	// Fall back to old refresh token if the response omitted one
+	if newCred.RefreshToken == "" {
+		newCred.RefreshToken = cred.RefreshToken
+	}
+
+	jsonCred, err := json.Marshal(newCred)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize refreshed credential: %w", err)
+	}
+
+	if err := SaveAPIKeyToKeyring("openai", string(jsonCred)); err != nil {
+		slog.Warn("failed to store refreshed credential in keyring", "error", err)
+	}
+
+	return newCred.AccessToken, nil
+}
+
+// getEffectiveAPIKey returns the effective API key for a provider, handling
+// OAuth token refresh transparently. For the "openai" provider, if the
+// keyring value is a JSON OAuth credential and the token is expired, it
+// calls refreshCodexToken() and returns the refreshed access token.
+// For non-OAuth credentials (plain strings), it returns them directly.
+func getEffectiveAPIKey(provider string) string {
+	// Check environment variable first
+	envKey := providerEnvVar(provider)
+	if key := os.Getenv(envKey); key != "" {
+		return key
+	}
+
+	raw, err := GetAPIKeyFromKeyring(provider)
+	if err != nil || raw == "" {
+		return ""
+	}
+
+	// Check if it's a JSON OAuth credential
+	if cred, ok := parseCodexOAuthCredential(raw); ok {
+		// If expired, attempt refresh
+		if time.Now().Unix() >= cred.ExpiresAt {
+			refreshed, err := refreshCodexToken()
+			if err != nil {
+				slog.Warn("failed to refresh OAuth token", "provider", provider, "error", err)
+				return cred.AccessToken // return stale token as last resort
+			}
+			return refreshed
+		}
+		return cred.AccessToken
+	}
+
+	// Plain string API key
+	return raw
 }
 
 // UpdateUserLLMAuth updates or creates ~/.config/asimi/asimi.conf with the given LLM auth settings.

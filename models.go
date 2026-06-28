@@ -108,6 +108,12 @@ func checkProviderAuth(provider string) bool {
 	// Check keyring
 	apiKey, err := GetAPIKeyFromKeyring(provider)
 	if err == nil && apiKey != "" {
+		// For openai, the keyring value may be a JSON OAuth credential
+		if provider == "openai" {
+			if _, ok := parseCodexOAuthCredential(apiKey); ok {
+				return true
+			}
+		}
 		return true
 	}
 
