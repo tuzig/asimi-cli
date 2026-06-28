@@ -85,7 +85,7 @@ func (t RecordPrecedentTool) Call(ctx context.Context, input string) (string, er
 			return "", fmt.Errorf("failed to grant seal: %w", err)
 		}
 	}
-	return fmt.Sprintf("Recorded precedent (%s) for edict %d: %s", status, key.ID, params.Reasoning), nil
+	return fmt.Sprintf("Recorded precedent (%s) for edict %d", status, key.ID), nil
 }
 
 func (t RecordPrecedentTool) ParameterSchema() map[string]any {

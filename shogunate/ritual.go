@@ -729,12 +729,15 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			continue
 		}
 
-		exec.Notify(RitualStepMsg{
-			StepName:  step.Name,
-			StepIndex: exec.CurrentStep,
-			Status:    "completed",
-			Message:   result,
-		})
+		// Fork steps send their own "completed" notification with a summary,
+		// so skip the duplicate here.
+		if step.Fork == nil {
+			exec.Notify(RitualStepMsg{
+				StepName:  step.Name,
+				StepIndex: exec.CurrentStep,
+				Status:    "completed",
+			})
+		}
 		// Emit step_completed Tian event
 		r.emitEvent(execKey, storage.EventStepCompleted, storage.JSON{
 			"ritual":       exec.RitualName,
