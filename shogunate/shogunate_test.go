@@ -66,6 +66,22 @@ func TestSetContext_NilShogunate(t *testing.T) {
 	assert.EqualError(t, err, "shogunate not initialised")
 }
 
+// TestShogunate_ConnDone_NeverClosed verifies that the in-process Shogunate's
+// ConnDone returns a channel that is never closed (edict 552).
+func TestShogunate_ConnDone_NeverClosed(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, nil)
+
+	done := s.ConnDone()
+	select {
+	case <-done:
+		t.Fatal("ConnDone should return a never-closed channel for in-process mode")
+	default:
+		// Good — channel is open and never closes
+	}
+}
+
 // runGit runs a git command in the given directory, failing the test on error.
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()

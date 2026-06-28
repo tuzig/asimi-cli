@@ -598,4 +598,18 @@ func (rc *ReconnectingClient) SetContext(ctx context.Context, params types.SetCo
 	return err
 }
 
+// ConnDone returns a channel that is closed when the current underlying
+// connection drops. Callers should re-call ConnDone after a reconnect
+// to get the new connection's channel. Returns a never-closed channel
+// if there is no current connection.
+func (rc *ReconnectingClient) ConnDone() <-chan struct{} {
+	rc.mu.RLock()
+	conn := rc.conn
+	rc.mu.RUnlock()
+	if conn == nil {
+		return make(chan struct{})
+	}
+	return conn.Done()
+}
+
 var _ shogunateapi.Client = (*ReconnectingClient)(nil)

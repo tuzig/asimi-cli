@@ -1291,3 +1291,11 @@ func (s *Shogunate) GetSessionExport(tabTarget string) (*SessionExport, error) {
 		LastUpdated:  sess.LastUpdated,
 	}, nil
 }
+
+// connDoneNever is a channel that is never closed. Returned by ConnDone
+// for in-process implementations where the connection never drops.
+var connDoneNever = make(chan struct{})
+
+// ConnDone returns a channel that is never closed for the in-process
+// Shogunate — there is no transport that can drop.
+func (s *Shogunate) ConnDone() <-chan struct{} { return connDoneNever }

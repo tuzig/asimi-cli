@@ -61,4 +61,10 @@ func (l *LoopbackShogunate) CancellableStreamCtx(channelID string) context.Conte
 	return l.Local.CancellableStreamCtx(channelID)
 }
 
+// ConnDone delegates to the underlying Conn's Done channel so the TUI
+// can detect connection drops in loopback/daemon-socket mode.
+func (l *LoopbackShogunate) ConnDone() <-chan struct{} {
+	return l.conn.Done()
+}
+
 var _ shogunateapi.Client = (*LoopbackShogunate)(nil)

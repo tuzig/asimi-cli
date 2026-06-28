@@ -528,3 +528,74 @@ func TestReconnectingClient_SetContextIsFactoryResponsibility(t *testing.T) {
 
 // Verify that storage.EdictKey is imported (used by read-only method tests).
 var _ storage.EdictKey
+
+// --- ConnDone tests (edict 552) ---
+
+func TestReconnectingClient_ConnDone_NilConn(t *testing.T) {
+	rc := &ReconnectingClient{}
+	done := rc.ConnDone()
+	select {
+	case <-done:
+		t.Fatal("ConnDone with nil conn should return a never-closed channel")
+	default:
+		// Good — channel is open
+	}
+}
+
+func TestReconnectingClient_ConnDone_LiveConn(t *testing.T) {
+	pa, _ := net.Pipe()
+	conn := New(pa, Options{})
+	go func() { _ = conn.Serve() }()
+
+	rc := &ReconnectingClient{}
+	rc.mu.Lock()
+	rc.conn = conn
+	rc.client = NewShogunateClient(conn)
+	rc.mu.Unlock()
+
+	done := rc.ConnDone()
+	select {
+	case <-done:
+		t.Fatal("ConnDone on a live conn should not fire")
+	default:
+		// Good — channel is open
+	}
+
+	conn.Close()
+	time.Sleep(20 * time.Millisecond)
+
+	done = rc.ConnDone()
+	select {
+	case <-done:
+		// Good — channel is closed after conn.Close()
+	default:
+		t.Fatal("ConnDone should fire after conn is closed")
+	}
+}
+
+func TestLoopbackShogunate_ConnDone(t *testing.T) {
+	pa, _ := net.Pipe()
+	conn := New(pa, Options{})
+	go func() { _ = conn.Serve() }()
+
+	lb := NewLoopbackShogunate(conn, nil)
+	done := lb.ConnDone()
+
+	select {
+	case <-done:
+		t.Fatal("ConnDone on live loopback conn should not fire")
+	default:
+		// Good
+	}
+
+	conn.Close()
+	time.Sleep(20 * time.Millisecond)
+
+	done = lb.ConnDone()
+	select {
+	case <-done:
+		// Good — channel is closed
+	default:
+		t.Fatal("ConnDone should fire after loopback conn is closed")
+	}
+}

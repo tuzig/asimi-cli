@@ -99,6 +99,12 @@ type Client interface {
 	// Subscribe returns a channel that carries every TUI-bound notification:
 	// streaming chunks, shogunate events, and runner messages.
 	Subscribe(ctx context.Context) <-chan any
+
+	// ConnDone returns a channel that is closed when the underlying
+	// transport connection drops. For in-process implementations it
+	// returns a channel that is never closed. The TUI watches it to
+	// detect mid-stream connection drops and trigger auto-retry.
+	ConnDone() <-chan struct{}
 }
 
 var _ Client = (*shogunate.Shogunate)(nil)

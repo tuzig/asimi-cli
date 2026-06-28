@@ -95,6 +95,19 @@ type TUIModel struct {
 
 	// Debounced render tick: prevents stacking multiple 50ms tick commands
 	renderTickPending bool
+
+	// Connection drop recovery state. When the transport drops during an
+	// active stream, each streaming tab's prompt is saved here for
+	// auto-retry after reconnect.
+	connDropPendingRetry map[string]pendingRetry
+}
+
+// pendingRetry stores the prompt text and context files from a stream
+// that was in-flight when the connection dropped, so the TUI can
+// re-submit it after reconnect.
+type pendingRetry struct {
+	prompt       string
+	contextFiles map[string]string
 }
 
 // prompt returns the PromptComponent for the active tab, creating one if needed.
@@ -119,6 +132,18 @@ type promptHistoryEntry struct {
 }
 
 type tickMsg struct{}
+
+// connectionLostMsg is sent when the underlying RPC connection drops.
+// The TUI uses it to detect mid-stream drops and trigger auto-retry.
+type connectionLostMsg struct{}
+
+// connectionRestoredMsg is sent after the RPC connection is re-established
+// following a drop. The TUI uses it to re-submit pending prompts.
+type connectionRestoredMsg struct{}
+
+// connectionReconnectFailedMsg is sent when the connection drops and the
+// ReconnectingClient fails to reconnect within the timeout window.
+type connectionReconnectFailedMsg struct{}
 
 // chatRenderTickMsg is produced by a debounce tick to flush dirty chat content.
 // Only one tick is pending at a time (guarded by TUIModel.renderTickPending).
@@ -201,6 +226,7 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 		waitingForResponse:       false,
 		persistentPromptHistory:  promptHistory,
 		persistentCommandHistory: commandHistory,
+		connDropPendingRetry:     make(map[string]pendingRetry),
 	}
 
 	// Initialize tab system with default Chancellor tab
@@ -576,9 +602,9 @@ func (m TUIModel) Init() tea.Cmd {
 
 	// On first run or unconfigured, show the onboarding prompt shortly after startup
 	if m.configCreated || (m.config != nil && m.config.LLM.Provider == "") {
-		return tea.Batch(llmInit, tick, func() tea.Msg { return onboardingPromptMsg{} })
+		return tea.Batch(llmInit, tick, func() tea.Msg { return onboardingPromptMsg{} }, watchConnDrop(m.shogunate))
 	}
-	return tea.Batch(llmInit, tick)
+	return tea.Batch(llmInit, tick, watchConnDrop(m.shogunate))
 }
 
 // Update implements bubbletea.Model
@@ -1352,6 +1378,72 @@ func (m *TUIModel) stopWaitingForResponse() {
 	m.status.ResetStreamRate()
 }
 
+// connErrorStrings are the raw Go error strings from rpc.ErrPeerDisconnected
+// and rpc.ErrClosed. We match by string because StreamErrorMsg.Err crosses
+// the wire as a plain string (reconstructed via errors.New), losing the
+// original error type.
+var connErrorStrings = map[string]bool{
+	"rpc: peer disconnected": true,
+	"rpc: conn closed":       true,
+}
+
+// isConnError returns true if err is a connection-level failure
+// (rpc.ErrPeerDisconnected or rpc.ErrClosed), matched by string content.
+func isConnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return connErrorStrings[err.Error()]
+}
+
+// friendlyConnError converts a raw RPC connection error string into a
+// user-friendly message.
+func friendlyConnError(err error) string {
+	switch err.Error() {
+	case "rpc: peer disconnected":
+		return "Connection lost"
+	case "rpc: conn closed":
+		return "Connection lost"
+	default:
+		return err.Error()
+	}
+}
+
+// watchConnDrop returns a tea.Cmd that blocks on the shogunate's ConnDone
+// channel and emits a connectionLostMsg when it fires, then polls for
+// reconnect and emits connectionRestoredMsg. In loopback/in-process
+// mode the channel never fires, so the goroutine idles.
+func watchConnDrop(shog shogunateapi.Client) tea.Cmd {
+	if shog == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		done := shog.ConnDone()
+		<-done
+		slog.Debug("tui: connection dropped, watching for reconnect")
+		// Poll for reconnect: ConnDone returns a new channel after
+		// reconnect completes (ReconnectingClient swaps conn). When
+		// the new channel is already closed (shouldn't happen), or
+		// when we detect it's still open, we wait for it to fire.
+		// We poll at 200ms intervals — reconnect has backoff up to 5s.
+		for i := 0; i < 150; i++ { // 30s max
+			time.Sleep(200 * time.Millisecond)
+			newDone := shog.ConnDone()
+			select {
+			case <-newDone:
+				// Still down, keep polling
+				continue
+			default:
+				// Reconnected
+				slog.Debug("tui: connection restored")
+				return connectionRestoredMsg{}
+			}
+		}
+		// Timed out waiting for reconnect
+		return connectionReconnectFailedMsg{}
+	}
+}
+
 // submitToShogunate sends a prompt to the appropriate minister based on active tab
 // and returns a command that listens for streaming responses.
 func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, contextFiles map[string]string) tea.Cmd {
@@ -1870,24 +1962,35 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repoInfo.RefreshDiff()
 
 	case shogunate.StreamErrorMsg:
-		fullError := fmt.Sprintf("Model Error: %v", msg.Err)
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.Err))
 		slog.Error("shogunate.StreamErrorMsg", "error", msg.Err)
+
+		connErr := isConnError(msg.Err)
+
 		// Show partial content as a dimmed block if any was accumulated
 		if strings.TrimSpace(msg.PartialContent) != "" {
 			dimStyle := lipgloss.NewStyle().Foreground(globalTheme.DimTextColor)
 			chat.AddMessage(dimStyle.Render(msg.PartialContent))
 		}
-		// Add full error message to chat for visibility
-		chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
-		chat.AddMessage(fmt.Sprintf("%s[This is an upstream provider error. You can retry or switch models.]", systemPrefix))
-		// Toast will be automatically truncated by commandline component if needed
-		m.commandLine.AddToast(fullError, "error", time.Second*5)
-		m.status.SetError() // Update status icon to show error
-		// Session already stopped — just reset UI state, don't re-cancel ctx.
-		m.clearStreamingTab(msg.ChannelID)
-		m.repoInfo.RefreshDiff()
+
+		if connErr {
+			friendlyErr := friendlyConnError(msg.Err)
+			chat.AddMessage(fmt.Sprintf("\n%s⚠️  %s", systemPrefix, friendlyErr))
+			chat.AddMessage(fmt.Sprintf("%s[Reconnecting… Your last message will be retried.]", systemPrefix))
+			m.commandLine.AddToast(friendlyErr+" — Reconnecting…", "warning", time.Second*5)
+			// Reset status but don't show error icon for connection drops
+			m.clearStreamingTab(msg.ChannelID)
+			m.repoInfo.RefreshDiff()
+		} else {
+			fullError := fmt.Sprintf("Model Error: %v", msg.Err)
+			chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
+			chat.AddMessage(fmt.Sprintf("%s[This is an upstream provider error. You can retry or switch models.]", systemPrefix))
+			m.commandLine.AddToast(fullError, "error", time.Second*5)
+			m.status.SetError()
+			m.clearStreamingTab(msg.ChannelID)
+			m.repoInfo.RefreshDiff()
+		}
 
 		/* TODO: Add the message bellow
 		case streamMaxTurnsExceededMsg:
@@ -2937,6 +3040,23 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prompt().Focus()
 		return m, nil
 
+	case connectionLostMsg:
+		return m.handleConnectionLost()
+
+	case connectionRestoredMsg:
+		return m.handleConnectionRestored()
+
+	case connectionReconnectFailedMsg:
+		// Reconnect failed — show error and clear pending retries
+		for tabTarget := range m.connDropPendingRetry {
+			chat := m.tabs.ChatByTab(tabTarget)
+			chat.AddMessage(fmt.Sprintf("%s❌ Connection lost — unable to reconnect. Please restart the daemon.", systemPrefix))
+		}
+		m.connDropPendingRetry = nil
+		m.commandLine.AddToast("Unable to reconnect. Please restart the daemon.", "error", time.Second*10)
+		m.status.SetError()
+		return m, nil
+
 	}
 
 	// Restore focus to prompt if no modals are active and view is chat
@@ -3342,6 +3462,10 @@ func (m *TUIModel) stopStreamingTab(tabTarget string) {
 	if !m.tabs.AnyStreaming() {
 		m.stopWaitingForResponse()
 	}
+	// Clear pending retry for this tab — user cancelled
+	if m.connDropPendingRetry != nil {
+		delete(m.connDropPendingRetry, tabTarget)
+	}
 }
 
 // clearStreamingTab resets UI streaming state for a tab without touching its
@@ -3358,6 +3482,93 @@ func (m *TUIModel) clearStreamingTab(tabTarget string) {
 func (m *TUIModel) stopStreaming() {
 	m.tabs.CancelAllTabs()
 	m.stopWaitingForResponse()
+	// Clear pending connection-drop retries — user cancelled
+	m.connDropPendingRetry = nil
+}
+
+// handleConnectionLost is called when the RPC connection drops. It saves
+// the prompt text and context files from every actively streaming tab
+// for auto-retry after reconnect, resets streaming state, shows a toast,
+// and starts watching for reconnect.
+func (m TUIModel) handleConnectionLost() (tea.Model, tea.Cmd) {
+	if m.connDropPendingRetry == nil {
+		m.connDropPendingRetry = make(map[string]pendingRetry)
+	}
+
+	// Save the last prompt for each streaming tab. We pull from
+	// sessionPromptHistory — the most recent entry is the in-flight one.
+	for i := range m.tabs.tabs {
+		tab := &m.tabs.tabs[i]
+		if !tab.Streaming {
+			continue
+		}
+
+		// Find the last prompt submitted for this tab. The sessionPromptHistory
+		// is tab-agnostic (appended in handleEnterKey), so we use the last entry.
+		if len(m.sessionPromptHistory) > 0 {
+			last := m.sessionPromptHistory[len(m.sessionPromptHistory)-1]
+			// Gather context files from the current session state
+			var ctxFiles map[string]string
+			if state, ok := m.currentSessionState(); ok {
+				ctxFiles = state.ContextFiles
+			}
+			m.connDropPendingRetry[tab.Target] = pendingRetry{
+				prompt:       last.Prompt,
+				contextFiles: ctxFiles,
+			}
+			slog.Debug("connection lost: saved prompt for retry", "tab", tab.Target, "prompt_len", len(last.Prompt))
+		}
+
+		chat := m.tabs.ChatByTab(tab.Target)
+		chat.AddMessage(fmt.Sprintf("%s⚠️  Connection lost", systemPrefix))
+		chat.AddMessage(fmt.Sprintf("%s[Reconnecting… Your message will be retried.]", systemPrefix))
+		chat.AddToRawHistory("CONN_LOST", "connection dropped during stream")
+	}
+
+	m.tabs.CancelAllTabs()
+	m.stopWaitingForResponse()
+	m.commandLine.AddToast("Connection lost — Reconnecting…", "warning", time.Second*5)
+
+	// Start watching for reconnect
+	return m, watchConnDrop(m.shogunate)
+}
+
+// handleConnectionRestored is called after the RPC connection is re-established.
+// It re-submits the prompt for each tab that was streaming when the connection
+// dropped.
+func (m TUIModel) handleConnectionRestored() (tea.Model, tea.Cmd) {
+	if len(m.connDropPendingRetry) == 0 {
+		// No pending retries — nothing to do
+		return m, nil
+	}
+
+	var cmds []tea.Cmd
+	for tabTarget, retry := range m.connDropPendingRetry {
+		chat := m.tabs.ChatByTab(tabTarget)
+		chat.AddMessage(fmt.Sprintf("%s✓ Reconnected — retrying your message…", systemPrefix))
+
+		ctx := context.Background()
+		if tab := m.tabs.TabByTarget(tabTarget); tab != nil {
+			ctx = tab.Ctx
+		}
+		cmd := m.submitToShogunate(ctx, retry.prompt, retry.contextFiles)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	// Clear pending retries
+	m.connDropPendingRetry = nil
+
+	// Restart waiting indicator
+	if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
+		cmds = append(cmds, waitCmd)
+	}
+
+	if len(cmds) > 0 {
+		return m, tea.Batch(cmds...)
+	}
+	return m, nil
 }
 
 // handleAnsweringComplete closes the zhengming waiter and updates the DB.

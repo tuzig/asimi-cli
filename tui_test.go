@@ -1687,6 +1687,268 @@ func TestStreamErrorMsg_NoPartialContent(t *testing.T) {
 		"StreamErrorMsg without PartialContent should add 2 messages: error, hint")
 }
 
+// --- Connection error classification tests (edict 552) ---
+
+func TestStreamErrorMsg_ConnError_ShowsConnectionLost(t *testing.T) {
+	if globalTheme == nil {
+		globalTheme = NewTheme()
+	}
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	msgCountBefore := len(model.tabs.Content().Chat.Messages)
+
+	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+		ChannelID: channelID,
+		Err:       errors.New("rpc: peer disconnected"),
+	})
+	updatedModel := newModel.(TUIModel)
+
+	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
+	// Should add: "Connection lost" + hint = 2 messages
+	assert.Equal(t, msgCountBefore+2, msgCountAfter,
+		"connection StreamErrorMsg should add 2 messages: error, hint")
+
+	// Should NOT contain "Model Error"
+	for _, m := range updatedModel.tabs.Content().Chat.Messages[msgCountBefore:] {
+		assert.NotContains(t, m.Content, "Model Error",
+			"connection error should not be labeled as Model Error")
+	}
+
+	// Should contain "Connection lost"
+	foundConnLost := false
+	for _, m := range updatedModel.tabs.Content().Chat.Messages[msgCountBefore:] {
+		if strings.Contains(m.Content, "Connection lost") {
+			foundConnLost = true
+			break
+		}
+	}
+	assert.True(t, foundConnLost, "should show 'Connection lost' for rpc error")
+}
+
+func TestStreamErrorMsg_ConnError_Closed_ShowsConnectionLost(t *testing.T) {
+	if globalTheme == nil {
+		globalTheme = NewTheme()
+	}
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+		ChannelID: channelID,
+		Err:       errors.New("rpc: conn closed"),
+	})
+	updatedModel := newModel.(TUIModel)
+
+	// Should NOT contain "Model Error" or "upstream provider error"
+	for _, m := range updatedModel.tabs.Content().Chat.Messages {
+		assert.NotContains(t, m.Content, "Model Error")
+		assert.NotContains(t, m.Content, "upstream provider error")
+	}
+}
+
+func TestStreamErrorMsg_ConnError_WithPartialContent(t *testing.T) {
+	if globalTheme == nil {
+		globalTheme = NewTheme()
+	}
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	msgCountBefore := len(model.tabs.Content().Chat.Messages)
+
+	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+		ChannelID:      channelID,
+		Err:            errors.New("rpc: peer disconnected"),
+		PartialContent: "Partial text before drop",
+	})
+	updatedModel := newModel.(TUIModel)
+
+	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
+	// Should add: dimmed partial + "Connection lost" + hint = 3
+	assert.Equal(t, msgCountBefore+3, msgCountAfter,
+		"connection StreamErrorMsg with PartialContent should add 3 messages")
+
+	messages := updatedModel.tabs.Content().Chat.Messages
+	foundPartial := false
+	foundConnLost := false
+	foundRetryHint := false
+	for _, m := range messages[msgCountBefore:] {
+		if strings.Contains(m.Content, "Partial text before drop") {
+			foundPartial = true
+		}
+		if strings.Contains(m.Content, "Connection lost") {
+			foundConnLost = true
+		}
+		if strings.Contains(m.Content, "Reconnecting") {
+			foundRetryHint = true
+		}
+	}
+	assert.True(t, foundPartial, "partial content should appear in chat")
+	assert.True(t, foundConnLost, "should show Connection lost")
+	assert.True(t, foundRetryHint, "should show reconnecting hint")
+}
+
+func TestStreamErrorMsg_ModelError_StillShowsModelError(t *testing.T) {
+	if globalTheme == nil {
+		globalTheme = NewTheme()
+	}
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+		ChannelID: channelID,
+		Err:       errors.New("LLM generation failed: stop_reason=error"),
+	})
+	updatedModel := newModel.(TUIModel)
+
+	// Genuine model error should still show "Model Error"
+	foundModelError := false
+	foundUpstreamHint := false
+	for _, m := range updatedModel.tabs.Content().Chat.Messages {
+		if strings.Contains(m.Content, "Model Error") {
+			foundModelError = true
+		}
+		if strings.Contains(m.Content, "upstream provider error") {
+			foundUpstreamHint = true
+		}
+	}
+	assert.True(t, foundModelError, "genuine model error should show 'Model Error'")
+	assert.True(t, foundUpstreamHint, "genuine model error should show upstream hint")
+}
+
+// --- Connection drop detection tests (edict 552) ---
+
+func TestConnectionLostMsg_SavesPendingRetry(t *testing.T) {
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	// Simulate a prompt in flight: add to sessionPromptHistory and mark streaming
+	model.sessionPromptHistory = append(model.sessionPromptHistory, promptHistoryEntry{
+		Prompt:          "test prompt for retry",
+		SessionSnapshot: 0,
+		ChatSnapshot:    0,
+	})
+	model.tabs.SetStreamingTabByTab(channelID)
+	model.startWaitingForResponse()
+
+	// Fire connectionLostMsg
+	newModel, _ := model.handleCustomMessages(connectionLostMsg{})
+	updatedModel := newModel.(TUIModel)
+
+	// Should have saved the prompt for retry
+	require.NotNil(t, updatedModel.connDropPendingRetry)
+	retry, ok := updatedModel.connDropPendingRetry[channelID]
+	require.True(t, ok, "should have pending retry for the streaming tab")
+	assert.Equal(t, "test prompt for retry", retry.prompt)
+
+	// Should have stopped waiting
+	assert.False(t, updatedModel.waitingForResponse)
+
+	// Should have cleared streaming
+	assert.False(t, updatedModel.tabs.ActiveTab().Streaming)
+}
+
+func TestConnectionRestoredMsg_RetriesPendingPrompt(t *testing.T) {
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	// Simulate a pending retry from a connection drop
+	model.connDropPendingRetry = map[string]pendingRetry{
+		channelID: {
+			prompt:       "retry me please",
+			contextFiles: nil,
+		},
+	}
+
+	// Fire connectionRestoredMsg
+	newModel, _ := model.handleCustomMessages(connectionRestoredMsg{})
+	updatedModel := newModel.(TUIModel)
+
+	// Should have cleared pending retries
+	assert.Nil(t, updatedModel.connDropPendingRetry)
+
+	// Should have added "Reconnected — retrying your message…" to chat
+	foundReconnected := false
+	for _, m := range updatedModel.tabs.Content().Chat.Messages {
+		if strings.Contains(m.Content, "Reconnected") {
+			foundReconnected = true
+			break
+		}
+	}
+	assert.True(t, foundReconnected, "should show reconnected message")
+}
+
+func TestConnectionReconnectFailedMsg_ShowsError(t *testing.T) {
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	// Simulate a pending retry
+	model.connDropPendingRetry = map[string]pendingRetry{
+		channelID: {prompt: "lost prompt"},
+	}
+
+	// Fire connectionReconnectFailedMsg
+	newModel, _ := model.handleCustomMessages(connectionReconnectFailedMsg{})
+	updatedModel := newModel.(TUIModel)
+
+	// Should have cleared pending retries
+	assert.Nil(t, updatedModel.connDropPendingRetry)
+
+	// Should show "unable to reconnect" message
+	foundUnable := false
+	for _, m := range updatedModel.tabs.Content().Chat.Messages {
+		if strings.Contains(m.Content, "unable to reconnect") {
+			foundUnable = true
+			break
+		}
+	}
+	assert.True(t, foundUnable, "should show unable to reconnect message")
+}
+
+// TestStopStreamingTab_ClearsPendingRetry verifies that when the user
+// cancels a tab (Ctrl+C) during reconnect, the pending retry for that
+// tab is cleared so auto-retry won't fire after reconnect.
+func TestStopStreamingTab_ClearsPendingRetry(t *testing.T) {
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	model.connDropPendingRetry = map[string]pendingRetry{
+		channelID: {prompt: "should be cancelled"},
+	}
+
+	model.stopStreamingTab(channelID)
+
+	// Pending retry for that tab should be gone
+	_, exists := model.connDropPendingRetry[channelID]
+	assert.False(t, exists, "pending retry should be cleared on tab cancel")
+}
+
+// TestStopStreaming_ClearsAllPendingRetries verifies that global
+// stopStreaming clears all pending retries.
+func TestStopStreaming_ClearsAllPendingRetries(t *testing.T) {
+	model := newTestModel(t)
+	model.connDropPendingRetry = map[string]pendingRetry{
+		"chancellor": {prompt: "retry 1"},
+		"forge":      {prompt: "retry 2"},
+	}
+
+	model.stopStreaming()
+
+	assert.Nil(t, model.connDropPendingRetry, "all pending retries should be cleared on global stop")
+}
+
+func TestIsConnError(t *testing.T) {
+	assert.True(t, isConnError(errors.New("rpc: peer disconnected")))
+	assert.True(t, isConnError(errors.New("rpc: conn closed")))
+	assert.False(t, isConnError(errors.New("some other error")))
+	assert.False(t, isConnError(nil))
+}
+
+func TestFriendlyConnError(t *testing.T) {
+	assert.Equal(t, "Connection lost", friendlyConnError(errors.New("rpc: peer disconnected")))
+	assert.Equal(t, "Connection lost", friendlyConnError(errors.New("rpc: conn closed")))
+	assert.Equal(t, "something else", friendlyConnError(errors.New("something else")))
+}
+
 // TestRitualStepMsg_CompletedWithMessage tests that a completed ritual step
 // with a Message displays the checkmark and message as a new line.
 func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
