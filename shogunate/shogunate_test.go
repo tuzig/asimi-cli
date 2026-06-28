@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +64,16 @@ func TestSetContext_NilShogunate(t *testing.T) {
 	var s *Shogunate
 	err := s.SetContext(context.Background(), types.SetContextParams{})
 	assert.EqualError(t, err, "shogunate not initialised")
+}
+
+// runGit runs a git command in the given directory, failing the test on error.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
 }
 
 func TestSetContext_InvalidProjectRoot(t *testing.T) {
@@ -203,6 +215,77 @@ func TestSetContext_PropagatesRepoInfo(t *testing.T) {
 	// completed without error, ConfigureModel was called successfully.
 	chancellor := s.GetMinister("chancellor")
 	assert.NotNil(t, chancellor)
+}
+
+func TestSetContext_EmptyProjectDerivesSlugFromGitRemote(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, nil)
+
+	// Create a temp git repo with a remote so GetRepoInfoForRoot can
+	// derive a slug (owner/repo).
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+
+	// Initialize a git repo with a remote origin URL
+	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "remote", "add", "origin", "https://github.com/testorg/testrepo.git")
+	runGit(t, tmpDir, "config", "user.email", "test@test.com")
+	runGit(t, tmpDir, "config", "user.name", "Test")
+
+	err := s.SetContext(context.Background(), types.SetContextParams{
+		ProjectRoot: tmpDir,
+		// Project is intentionally empty — slug should be derived from git remote
+		Project:  "",
+		Username: "test-user",
+		APIKeys:  map[string]string{"openai": "sk-test"},
+	})
+	require.NoError(t, err)
+
+	// The chancellor's MinisterBase should have received the repoInfo
+	// with a non-empty slug derived from the git remote.
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+	if base, ok := chancellor.(interface{ RepoInfo() repo.RepoInfo }); ok {
+		ri := base.RepoInfo()
+		assert.NotEmpty(t, ri.Slug, "slug should be derived from git remote when Project is empty")
+		assert.Equal(t, "testorg/testrepo", ri.Slug)
+	}
+}
+
+func TestSetContext_NonEmptyProjectUsesExplicitSlug(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, nil)
+
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+
+	err := s.SetContext(context.Background(), types.SetContextParams{
+		ProjectRoot: tmpDir,
+		Project:     "my-org/my-repo",
+		Username:    "test-user",
+		APIKeys:     map[string]string{"openai": "sk-test"},
+	})
+	require.NoError(t, err)
+
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+	if base, ok := chancellor.(interface{ RepoInfo() repo.RepoInfo }); ok {
+		ri := base.RepoInfo()
+		assert.Equal(t, "my-org/my-repo", ri.Slug)
+	}
+}
+
+func TestGetSandboxImageName_EmptyWhenNoRunner(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	rg := NewRitualGuard(RitualGuardOpts{Base: base})
+
+	imageName := rg.getSandboxImageName()
+	assert.Empty(t, imageName, "getSandboxImageName should return empty string when no PodmanRunner is available")
 }
 
 func TestConfigureModel_ReloadsRitualsWhenProjectRootBecomesAvailable(t *testing.T) {

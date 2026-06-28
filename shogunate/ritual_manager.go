@@ -411,7 +411,11 @@ func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 
 	// Check 3: Sandbox - Verify sandbox image exists using actual runner image name
 	imageName := rg.getSandboxImageName()
-	if !runners.IsPodmanAvailable(imageName) {
+	if imageName == "" {
+		result.SandboxOK = false
+		result.Remediation["sandbox"] = "No sandbox runner available; run `just build-sandbox` to create the image"
+		fail("✗ Sandbox image not available (no PodmanRunner configured)")
+	} else if !runners.IsPodmanAvailable(imageName) {
 		result.SandboxOK = false
 		result.Remediation["sandbox"] = "Run `just build-sandbox` to create the image"
 		fail(fmt.Sprintf("Sandbox image not found: %s", imageName))
@@ -464,8 +468,10 @@ func (rg *RitualGuard) getSandboxImageName() string {
 			return podmanRunner.GetImageName()
 		}
 	}
-	// Fallback to default image name
-	return "localhost/asimi/sandbox:latest"
+	// No runner or no PodmanRunner — return empty so callers know
+	// the image name is not available (e.g., health check can skip
+	// the sandbox verification rather than checking a bogus name).
+	return ""
 }
 
 // --- Ritual management ---

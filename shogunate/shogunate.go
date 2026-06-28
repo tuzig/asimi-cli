@@ -597,11 +597,20 @@ func (s *Shogunate) SetContext(ctx context.Context, params types.SetContextParam
 		return fmt.Errorf("load project config: %w", err)
 	}
 
+	// When params.Project is empty (e.g., during init before config
+	// exists), derive the slug from the git remote so the sandbox image
+	// name is always correctly derived. This mirrors what loopback.go
+	// does — it passes repoInfo.Slug from repo.GetRepoInfo().
+	slug := params.Project
+	if slug == "" && params.ProjectRoot != "" {
+		slug = repo.GetRepoInfoForRoot(params.ProjectRoot).Slug
+	}
+
 	repoInfo := repo.RepoInfo{
 		ProjectRoot:  params.ProjectRoot,
 		WorktreePath: params.WorktreePath,
 		Branch:       params.Branch,
-		Slug:         params.Project,
+		Slug:         slug,
 	}
 
 	// Init Bifrost with the APIKeys provided by the client.
