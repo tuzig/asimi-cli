@@ -2,9 +2,9 @@
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/afittestide/asimi-cli/ci.yml?branch=main&label=tests)](https://github.com/afittestide/asimi-cli/actions/workflows/ci.yml?query=branch%3Amain)
 
-> A safe, opinionated coding agent
+> A safe, fast, imperial court to help you rule your project
 
-Asimi is an opinionated, safe & fast coding agent for the terminal
+Asimi is based on 
 
 ![Asimi Demo](demo.gif)
 
@@ -14,9 +14,9 @@ Asimi is an opinionated, safe & fast coding agent for the terminal
 - 🎨 **vi mimicry** - Asimi is based on the fittest dev tool and its reincarnations vim and neovim
 - 🤖 **Multiple AI Providers** - Support for Ollama, Claude Pro/Max and OpenAI API v1 compatible services
 - 🧹 **Less Clutter** - Asimi's special files are under `.agents` directory and TOML is used for .conf
-- 🔧 **Fast Shell** - Asimi's shell runs in a container and is >100 times faster than the others
 - 📊 **Context Awareness** - Smart token counting and context visualization
 - 🎯 **Session Management** - Save and resume your coding sessions
+- **Rituals** - workflows defined in yaml for harcoded guardrails
 
 ## 🚀 Quick Start
 
@@ -30,13 +30,11 @@ Then, choose your installer flavor:
 
 ### One-liner (Recommended)
 
+The script below downloads the right binary for your system and copies it.
+If you prefer to do it yourself, see below.
+
 ```bash
 curl -fsSL https://asimi.dev/installer | bash
-```
-
-Or with wget:
-```bash
-wget -qO- https://asimi.dev/installer | bash
 ```
 
 **Options:**
@@ -188,6 +186,22 @@ To develop Asimi itself:
    ```bash
    just test
    ```
+
+### Loopback Mode (Testing)
+
+By default, Asimi autostarts a daemon process for RPC communication between
+the TUI and the shogunate. In rare cases — debugging RPC issues, running in
+environments where spawning a daemon is undesirable — contributors can set
+`ASIMI_LOOPBACK=1` to use an in-process `net.Pipe` loopback instead of a
+real daemon socket. This routes all wire-safe calls and notifications
+through the MessagePack RPC codec in-process — same code path, no external
+process.
+
+```bash
+ASIMI_LOOPBACK=1 just run
+```
+
+> **Note:** Loopback mode is a testing escape-hatch, not a production mode.
 
 ## Principles
 

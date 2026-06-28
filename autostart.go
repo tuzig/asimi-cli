@@ -179,7 +179,7 @@ func spawnDaemonAndWait(ctx context.Context, socketPath string) error {
 // no live socket is found. Symmetrical to installDaemonSocket but
 // responsible for starting the daemon.
 //
-// Opt-in via ASIMI_DAEMON=1.
+// This is now the default wire mode for the TUI.
 func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Program), error) {
 	if model == nil || model.shogunate == nil {
 		return nil, fmt.Errorf("installDaemonAutostart: tui model or shogunate is nil")

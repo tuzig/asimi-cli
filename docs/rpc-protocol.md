@@ -243,14 +243,13 @@ tables are fully compatible.
 ## 8. Environment variables
 
 The TUI picks its transport mode from env vars; precedence in
-`runInteractiveMode`:
+`runInteractiveMode`. The default is now autostart daemon:
 
 | Var                    | Value    | Effect                                                                  |
 | ---------------------- | -------- | ----------------------------------------------------------------------- |
 | `ASIMI_DAEMON_SOCKET`  | `/path`  | Connect to this specific live daemon. Fails fast if socket is dead.     |
-| `ASIMI_DAEMON`         | `1`      | Autostart: dial default socket, spawn `asimi daemon` on miss, wait ≤10s |
-| `ASIMI_LOOPBACK`       | `1`      | In-process net.Pipe loopback — every call through the codec, no socket  |
-| *(none)*               | —        | Fully in-process, no RPC                                                |
+| `ASIMI_LOOPBACK`       | `1`      | In-process net.Pipe loopback — every call through the codec, no socket. Testing escape-hatch. |
+| *(none)*               | —        | Autostart daemon: dial default socket, spawn `asimi daemon` on miss, wait ≤10s. |
 
 The daemon subprocess honours **`ASIMI_READY_FD`** (set by the TUI
 autostart path): an fd number the daemon writes `0x01` to once its

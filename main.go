@@ -128,11 +128,10 @@ func runInteractiveMode() error {
 	if err := app.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start fx app: %w", err)
 	}
-	// Opt-in wire modes. Precedence:
+	// Wire modes. Precedence:
 	//   ASIMI_DAEMON_SOCKET=/path — connect to a specific running daemon
-	//   ASIMI_DAEMON=1            — autostart default daemon if needed
-	//   ASIMI_LOOPBACK=1          — in-process net.Pipe loopback
-	//   default                   — fully in-process, no RPC
+	//   ASIMI_LOOPBACK=1          — in-process net.Pipe loopback (testing)
+	//   default                   — autostart daemon (spawn if needed)
 	var onProgramReady func(*tea.Program)
 	if sock := os.Getenv("ASIMI_DAEMON_SOCKET"); sock != "" {
 		hook, err := installDaemonSocket(ctx, tuiModel, sock)
@@ -140,16 +139,16 @@ func runInteractiveMode() error {
 			return fmt.Errorf("daemon socket: %w", err)
 		}
 		onProgramReady = hook
-	} else if os.Getenv("ASIMI_DAEMON") != "" {
-		hook, err := installDaemonAutostart(ctx, tuiModel)
-		if err != nil {
-			return fmt.Errorf("daemon autostart: %w", err)
-		}
-		onProgramReady = hook
 	} else if os.Getenv("ASIMI_LOOPBACK") != "" {
 		hook, err := installRPCLoopback(ctx, tuiModel)
 		if err != nil {
 			return fmt.Errorf("loopback: %w", err)
+		}
+		onProgramReady = hook
+	} else {
+		hook, err := installDaemonAutostart(ctx, tuiModel)
+		if err != nil {
+			return fmt.Errorf("daemon autostart: %w", err)
 		}
 		onProgramReady = hook
 	}

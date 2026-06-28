@@ -18,7 +18,7 @@ run:
     pkill -9 asimi || true
     rm -f asimi.log asimi-daemon.log
     go build .
-    ASIMI_DAEMON=1 ./asimi --debug
+    ./asimi --debug
 
 # Run all tests (skips git-altering tests locally)
 test:
