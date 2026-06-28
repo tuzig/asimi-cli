@@ -561,7 +561,7 @@ func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
 			out, fallbackErr := r.fallback.Run(ctx, input)
 			return out, SandboxFallbackError{Err: err, FallbackErr: fallbackErr}
 		}
-		return Output{}, SandboxMissingError{}
+		return Output{}, SandboxMissingError{ImageName: r.imageName, ProjectRoot: r.repoInfo.ProjectRoot}
 	}
 
 	r.outputsMu.Lock()

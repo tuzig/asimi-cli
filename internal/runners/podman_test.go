@@ -409,3 +409,30 @@ func TestHealthcheckConcurrentNilRace(t *testing.T) {
 		t.Fatal("healthcheck did not complete within expected timeout")
 	}
 }
+
+func TestSandboxMissingErrorNoAgentsDir(t *testing.T) {
+	// ProjectRoot without .agents/ → user hasn't run :init
+	err := SandboxMissingError{
+		ImageName:   "localhost/asimi/sandbox/test/project:latest",
+		ProjectRoot: t.TempDir(),
+	}
+	msg := err.Error()
+	assert.Contains(t, msg, "Sandbox container image is missing.")
+	assert.Contains(t, msg, "Did you run `:init` ?")
+	assert.NotContains(t, msg, "build-sandbox")
+}
+
+func TestSandboxMissingErrorWithAgentsDir(t *testing.T) {
+	// ProjectRoot with .agents/ → user ran :init but image is missing
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(dir+"/.agents", 0o755))
+
+	err := SandboxMissingError{
+		ImageName:   "localhost/asimi/sandbox/test/project:latest",
+		ProjectRoot: dir,
+	}
+	msg := err.Error()
+	assert.Contains(t, msg, "Sandbox container image 'localhost/asimi/sandbox/test/project:latest' is missing.")
+	assert.Contains(t, msg, "Did you run `just build-sandbox` ?")
+	assert.NotContains(t, msg, ":init")
+}

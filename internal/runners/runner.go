@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/afittestide/asimi/internal/config"
@@ -112,10 +113,18 @@ func (e PodmanUnavailableError) Error() string {
 	return e.Reason
 }
 
-// SandboxMissingError is returned when the sandbox image is missing
-type SandboxMissingError struct{}
+// SandboxMissingError is returned when the sandbox image is missing.
+// It is contextual: if .agents/ exists under ProjectRoot the user has
+// already run :init and the issue is a missing image build.
+type SandboxMissingError struct {
+	ImageName   string
+	ProjectRoot string
+}
 
 func (e SandboxMissingError) Error() string {
+	if _, err := os.Stat(filepath.Join(e.ProjectRoot, ".agents")); err == nil {
+		return fmt.Sprintf("Sandbox container image '%s' is missing.\nDid you run `just build-sandbox` ?", e.ImageName)
+	}
 	return "Sandbox container image is missing.\nDid you run `:init` ?"
 }
 
