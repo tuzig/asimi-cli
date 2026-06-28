@@ -231,11 +231,21 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 		}
 		slog.Debug("navigating to path in the container", "path", r.repoInfo.WorktreePath)
 
+		// Capture stdinPipe under lock so the write goroutine uses a stable reference
+		r.mu.Lock()
+		stdinPipe := r.stdinPipe
+		r.mu.Unlock()
+
+		if stdinPipe == nil {
+			slog.Error("stdinPipe is nil, cannot send rc-commands")
+			return fmt.Errorf("stdinPipe is nil during initialization")
+		}
+
 		// Protect the rc-commands write with context — the io.Pipe write can block
 		// if the containers.Attach goroutine is hung
 		writeDone := make(chan error, 1)
 		go func() {
-			_, err := r.stdinPipe.Write([]byte(rc.String()))
+			_, err := stdinPipe.Write([]byte(rc.String()))
 			writeDone <- err
 		}()
 		select {
@@ -270,9 +280,21 @@ func (r *PodmanRunner) healthcheck(ctx context.Context) error {
 	// Send the probe command through the full pipe, but protect the write with context
 	command := fmt.Sprintf("__asimi_run %d 'echo __ASIMI_HEALTHY'\n", id)
 
+	// Capture stdinPipe under lock so the write goroutine uses a stable reference
+	r.mu.Lock()
+	stdinPipe := r.stdinPipe
+	r.mu.Unlock()
+
+	if stdinPipe == nil {
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+		return fmt.Errorf("healthcheck: stdinPipe is nil")
+	}
+
 	writeDone := make(chan error, 1)
 	go func() {
-		_, err := r.stdinPipe.Write([]byte(command))
+		_, err := stdinPipe.Write([]byte(command))
 		writeDone <- err
 	}()
 
@@ -561,9 +583,21 @@ func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
 
 	slog.Debug("writing command to stdin")
 
+	// Capture stdinPipe under lock so the write goroutine uses a stable reference
+	r.mu.Lock()
+	stdinPipe := r.stdinPipe
+	r.mu.Unlock()
+
+	if stdinPipe == nil {
+		r.outputsMu.Lock()
+		delete(r.outputs, id)
+		r.outputsMu.Unlock()
+		return Output{}, fmt.Errorf("failed to write command: stdinPipe is nil")
+	}
+
 	writeDone := make(chan error, 1)
 	go func() {
-		_, err := r.stdinPipe.Write([]byte(command))
+		_, err := stdinPipe.Write([]byte(command))
 		writeDone <- err
 	}()
 

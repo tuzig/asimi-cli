@@ -363,3 +363,49 @@ func TestPodmanRunnerHealthcheckRecovery(t *testing.T) {
 		t.Log("no SandboxUnhealthyMsg received (container may have been stopped rather than wedged)")
 	}
 }
+
+// TestHealthcheckNilStdinPipe verifies that healthcheck returns an error
+// instead of panicking when stdinPipe is nil (race with Restart()/Close()).
+func TestHealthcheckNilStdinPipe(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/nil"}, 0, nil)
+	runner.outputs = make(map[int]*commandOutput)
+
+	// stdinPipe is nil by default — healthcheck should return an error, not panic
+	err := runner.healthcheck(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stdinPipe is nil")
+}
+
+// TestHealthcheckConcurrentNilRace verifies that healthcheck does not panic
+// when stdinPipe is concurrently set to nil (simulating Restart() or Close()).
+func TestHealthcheckConcurrentNilRace(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/race"}, 0, nil)
+	runner.outputs = make(map[int]*commandOutput)
+
+	stdinReader, stdinWriter := io.Pipe()
+	defer stdinReader.Close()
+
+	runner.stdinPipe = stdinWriter
+
+	// Drain stdin so writes don't block forever
+	go io.Copy(io.Discard, stdinReader)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.healthcheck(context.Background())
+	}()
+
+	// Simulate Restart()/Close() niling the pipe concurrently
+	time.Sleep(1 * time.Millisecond)
+	runner.mu.Lock()
+	runner.stdinPipe = nil
+	runner.mu.Unlock()
+
+	// healthcheck should either time out or get a write error — but not panic
+	select {
+	case err := <-done:
+		_ = err // either nil or error is fine; the point is no panic
+	case <-time.After(7 * time.Second):
+		t.Fatal("healthcheck did not complete within expected timeout")
+	}
+}

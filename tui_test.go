@@ -1627,6 +1627,66 @@ func TestStreamErrorMsg_StopsWaiting(t *testing.T) {
 	require.False(t, updatedModel.waitingForResponse)
 }
 
+func TestStreamErrorMsg_ShowsPartialContent(t *testing.T) {
+	if globalTheme == nil {
+		globalTheme = NewTheme()
+	}
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	msgCountBefore := len(model.tabs.Content().Chat.Messages)
+
+	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+		ChannelID:      channelID,
+		Err:            errors.New("upstream blew up"),
+		PartialContent: "Partial text before failure",
+	})
+	updatedModel := newModel.(TUIModel)
+
+	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
+	// Should add: dimmed partial + error message + hint line = 3
+	assert.Equal(t, msgCountBefore+3, msgCountAfter,
+		"StreamErrorMsg with PartialContent should add 3 messages: partial, error, hint")
+
+	messages := updatedModel.tabs.Content().Chat.Messages
+	// Find the partial content message (it's rendered with lipgloss styling)
+	foundPartial := false
+	foundError := false
+	foundHint := false
+	for _, m := range messages[msgCountBefore:] {
+		if strings.Contains(m.Content, "Partial text before failure") {
+			foundPartial = true
+		}
+		if strings.Contains(m.Content, "upstream blew up") {
+			foundError = true
+		}
+		if strings.Contains(m.Content, "upstream provider error") {
+			foundHint = true
+		}
+	}
+	assert.True(t, foundPartial, "partial content should appear in chat")
+	assert.True(t, foundError, "error message should appear in chat")
+	assert.True(t, foundHint, "hint line should appear in chat")
+}
+
+func TestStreamErrorMsg_NoPartialContent(t *testing.T) {
+	model := newTestModel(t)
+	channelID := model.tabs.ActiveTab().Target
+
+	msgCountBefore := len(model.tabs.Content().Chat.Messages)
+
+	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+		ChannelID: channelID,
+		Err:       errors.New("no partial here"),
+	})
+	updatedModel := newModel.(TUIModel)
+
+	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
+	// Without partial content: only error + hint = 2
+	assert.Equal(t, msgCountBefore+2, msgCountAfter,
+		"StreamErrorMsg without PartialContent should add 2 messages: error, hint")
+}
+
 // TestRitualStepMsg_CompletedWithMessage tests that a completed ritual step
 // with a Message displays the checkmark and message as a new line.
 func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
