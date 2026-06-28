@@ -659,6 +659,58 @@ func TestSession_AskWithStreaming_LLMError(t *testing.T) {
 	assert.Contains(t, err.Error(), "rate limited")
 }
 
+func TestSession_AskWithStreaming_StopReasonError(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	mockLLM.SetStreamingChunks([]mocks.StreamingChunk{
+		{Content: "Partial response before failure"},
+		{Content: "", FinishReason: "error"},
+	})
+
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "You are a helpful assistant", "test-channel")
+	require.NoError(t, err)
+	sess.Provider = "openrouter"
+	sess.Model = "test-model"
+
+	var capturedMsg StreamErrorMsg
+	sess.SetNotify(func(msg any) {
+		if m, ok := msg.(StreamErrorMsg); ok {
+			capturedMsg = m
+		}
+	}, "test-channel")
+
+	ctx := context.Background()
+	content, err := sess.AskWithStreaming(ctx, "Hello", nil)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "openrouter/test-model")
+	assert.Contains(t, err.Error(), "stop_reason=error")
+	// Partial content should be returned, not empty string
+	assert.Contains(t, content, "Partial response before failure")
+	// Notification should carry partial content
+	assert.Contains(t, capturedMsg.PartialContent, "Partial response before failure")
+}
+
+func TestSession_AskWithStreaming_StopReasonContentFilter(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	mockLLM.SetStreamingChunks([]mocks.StreamingChunk{
+		{Content: "Some content"},
+		{Content: "", FinishReason: "content_filter"},
+	})
+
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "You are a helpful assistant", "test-channel")
+	require.NoError(t, err)
+	sess.Provider = "openai"
+	sess.Model = "gpt-4"
+
+	ctx := context.Background()
+	content, err := sess.AskWithStreaming(ctx, "Hello", nil)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "openai/gpt-4")
+	assert.Contains(t, err.Error(), "stop_reason=content_filter")
+	assert.Contains(t, content, "Some content")
+}
+
 func TestSession_GenerateLLMResponse_EmptyChoices(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 

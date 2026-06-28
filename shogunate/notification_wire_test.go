@@ -89,3 +89,28 @@ func TestStreamErrorMsgRoundTripNilErr(t *testing.T) {
 		t.Fatalf("got %+v", out)
 	}
 }
+
+func TestStreamErrorMsgRoundTripWithPartialContent(t *testing.T) {
+	in := StreamErrorMsg{
+		ChannelID:      "ruling",
+		Err:            errors.New("upstream failed"),
+		PartialContent: "partial text before error",
+	}
+	b, err := msgpack.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out StreamErrorMsg
+	if err := msgpack.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.ChannelID != in.ChannelID {
+		t.Fatalf("channel: %q want %q", out.ChannelID, in.ChannelID)
+	}
+	if out.Err == nil || out.Err.Error() != in.Err.Error() {
+		t.Fatalf("err: %v want %v", out.Err, in.Err)
+	}
+	if out.PartialContent != in.PartialContent {
+		t.Fatalf("partial_content: %q want %q", out.PartialContent, in.PartialContent)
+	}
+}

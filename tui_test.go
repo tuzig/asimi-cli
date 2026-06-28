@@ -3402,6 +3402,9 @@ func TestHandleAPIKeyInput_CancelReturnsModelSelection(t *testing.T) {
 // TestHandleAPIKeyInput_SuccessReturnsAPIKeySavedMsg verifies that when the user
 // provides a key, handleAPIKeyInput saves it and returns apiKeySavedMsg.
 func TestHandleAPIKeyInput_SuccessReturnsAPIKeySavedMsg(t *testing.T) {
+	// Isolate HOME so UpdateUserLLMAuth never touches the real config file.
+	t.Setenv("HOME", t.TempDir())
+
 	DeleteAPIKeyFromKeyring("anthropic")
 	defer DeleteAPIKeyFromKeyring("anthropic")
 
@@ -3438,6 +3441,9 @@ func TestAPIKeyPromptMsg_EntersInputModeAndSetsProvider(t *testing.T) {
 // TestInputResponseMsg_RoutesToAPIKeyInput verifies that when pendingAPIKeyProvider
 // is set, inputResponseMsg is routed to handleAPIKeyInput.
 func TestInputResponseMsg_RoutesToAPIKeyInput(t *testing.T) {
+	// Isolate HOME so UpdateUserLLMAuth never touches the real config file.
+	t.Setenv("HOME", t.TempDir())
+
 	DeleteAPIKeyFromKeyring("anthropic")
 	defer DeleteAPIKeyFromKeyring("anthropic")
 

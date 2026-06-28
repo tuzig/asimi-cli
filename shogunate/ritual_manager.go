@@ -170,6 +170,18 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 		}
 		if err := rg.ritualRunner.Run(ctx, exec); err != nil {
 			rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
+			rg.notify(RitualStepMsg{
+				RitualName:  ritualName,
+				ExecutionID: exec.ID,
+				EdictID:     key.ID,
+				Status:      "ritual_failed",
+				Message:     err.Error(),
+			})
+			rg.ritualRunner.emitEvent(key, storage.EventRitualFailed, storage.JSON{
+				"ritual":       ritualName,
+				"execution_id": exec.ID,
+				"error":        err.Error(),
+			})
 		}
 	}()
 }

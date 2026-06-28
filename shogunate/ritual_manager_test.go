@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -247,6 +248,83 @@ func TestShutdown(t *testing.T) {
 		// success
 	case <-time.After(2 * time.Second):
 		t.Fatal("RitualGuard.Run did not exit after context cancel")
+	}
+}
+
+func TestStartRitualFailureNotifies(t *testing.T) {
+	db := setupEventTestDB(t)
+
+	// Ritual with a background given step that will fail
+	ritual := &RitualDef{
+		Name:       "start-fail-test",
+		Background: []string{"!false"},
+		Steps: []RitualStep{
+			{Name: "work", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "boom\n", ExitCode: "1"},
+		},
+	}
+	rg := &RitualGuard{
+		MinisterBase:   base,
+		ritualRegistry: registry,
+		ritualRunner: NewRitualRunner(
+			registry,
+			func(id string) Minister { return nil },
+			nil, // publishEvent — emitEvent falls back to DB persistence
+			db, mockRunner, slog.Default(), repo.RepoInfo{},
+		),
+		streamingCtx: func() context.Context { return context.Background() },
+	}
+
+	var notified []RitualStepMsg
+	var mu sync.Mutex
+	rg.SetNotify(func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			mu.Lock()
+			notified = append(notified, stepMsg)
+			mu.Unlock()
+		}
+	})
+
+	key := storage.EdictKey{ID: 99, Username: "testuser", Project: "testproject"}
+	rg.startRitual("start-fail-test", key, nil)
+
+	// Wait for the goroutine to complete
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify ritual_failed notification was sent
+	mu.Lock()
+	defer mu.Unlock()
+	var failedMsg *RitualStepMsg
+	for i := range notified {
+		if notified[i].Status == "ritual_failed" {
+			failedMsg = &notified[i]
+			break
+		}
+	}
+	if failedMsg == nil {
+		t.Fatalf("expected a ritual_failed notification from startRitual, got: %+v", notified)
+	}
+	if failedMsg.RitualName != "start-fail-test" {
+		t.Errorf("expected RitualName 'start-fail-test', got %q", failedMsg.RitualName)
+	}
+	if failedMsg.EdictID != 99 {
+		t.Errorf("expected EdictID 99, got %d", failedMsg.EdictID)
+	}
+
+	// Verify EventRitualFailed was persisted to DB
+	var events []storage.TianEvent
+	db.Where("event_type = ?", storage.EventRitualFailed).Find(&events)
+	if len(events) < 1 {
+		t.Fatalf("expected at least 1 EventRitualFailed in DB, got %d", len(events))
 	}
 }
 

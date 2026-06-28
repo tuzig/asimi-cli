@@ -617,6 +617,17 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		if err != nil {
 			exec.State = RitualStateFailed
 			r.saveExecution(exec)
+			exec.Notify(RitualStepMsg{
+				StepName: raw,
+				Status:   "ritual_failed",
+				Message:  err.Error(),
+			})
+			r.emitEvent(execKey, storage.EventRitualFailed, storage.JSON{
+				"ritual":       exec.RitualName,
+				"execution_id": exec.ID,
+				"step":         raw,
+				"error":        err.Error(),
+			})
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
 		exec.Notify(RitualStepMsg{
@@ -628,6 +639,17 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		if err != nil {
 			exec.State = RitualStateFailed
 			r.saveExecution(exec)
+			exec.Notify(RitualStepMsg{
+				StepName: entry.Key,
+				Status:   "ritual_failed",
+				Message:  err.Error(),
+			})
+			r.emitEvent(execKey, storage.EventRitualFailed, storage.JSON{
+				"ritual":       exec.RitualName,
+				"execution_id": exec.ID,
+				"step":         entry.Key,
+				"error":        err.Error(),
+			})
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
 		exec.Notify(RitualStepMsg{

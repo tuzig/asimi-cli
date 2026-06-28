@@ -1874,8 +1874,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.Err))
 		slog.Error("shogunate.StreamErrorMsg", "error", msg.Err)
+		// Show partial content as a dimmed block if any was accumulated
+		if strings.TrimSpace(msg.PartialContent) != "" {
+			dimStyle := lipgloss.NewStyle().Foreground(globalTheme.DimTextColor)
+			chat.AddMessage(dimStyle.Render(msg.PartialContent))
+		}
 		// Add full error message to chat for visibility
 		chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
+		chat.AddMessage(fmt.Sprintf("%s[This is an upstream provider error. You can retry or switch models.]", systemPrefix))
 		// Toast will be automatically truncated by commandline component if needed
 		m.commandLine.AddToast(fullError, "error", time.Second*5)
 		m.status.SetError() // Update status icon to show error

@@ -97,19 +97,25 @@ type StreamInterruptedMsg struct {
 
 // StreamErrorMsg signals an error during streaming. Err crosses the wire
 // as a string; decoded values reconstruct a simple errors.New error.
+// PartialContent carries any text accumulated before the failure.
 type StreamErrorMsg struct {
-	ChannelID string `msgpack:"-"`
-	Err       error  `msgpack:"-"`
+	ChannelID      string `msgpack:"-"`
+	Err            error  `msgpack:"-"`
+	PartialContent string `msgpack:"-"`
 }
 
 type streamErrorMsgWire struct {
-	ChannelID string `msgpack:"channel_id"`
-	Err       string `msgpack:"err,omitempty"`
+	ChannelID      string `msgpack:"channel_id"`
+	Err            string `msgpack:"err,omitempty"`
+	PartialContent string `msgpack:"partial_content,omitempty"`
 }
 
 // MarshalMsgpack encodes StreamErrorMsg with Err as a plain string.
 func (s StreamErrorMsg) MarshalMsgpack() ([]byte, error) {
-	w := streamErrorMsgWire{ChannelID: s.ChannelID}
+	w := streamErrorMsgWire{
+		ChannelID:      s.ChannelID,
+		PartialContent: s.PartialContent,
+	}
 	if s.Err != nil {
 		w.Err = s.Err.Error()
 	}
@@ -123,6 +129,7 @@ func (s *StreamErrorMsg) UnmarshalMsgpack(b []byte) error {
 		return err
 	}
 	s.ChannelID = w.ChannelID
+	s.PartialContent = w.PartialContent
 	if w.Err != "" {
 		s.Err = errors.New(w.Err)
 	}
@@ -1528,12 +1535,17 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 
 		// Check if LLM returned an error stop reason
 		if choice.StopReason == "error" || choice.StopReason == "content_filter" {
-			err := fmt.Errorf("LLM generation failed: stop_reason=%s", choice.StopReason)
-			slog.Warn("LLM returned error stop reason", "stop_reason", choice.StopReason)
+			err := fmt.Errorf("LLM generation error (%s/%s): stop_reason=%s", s.Provider, s.Model, choice.StopReason)
+			slog.Error("LLM returned error stop reason",
+				"provider", s.Provider,
+				"model", s.Model,
+				"stop_reason", choice.StopReason,
+				"content_length", len(responseContent),
+			)
 			if s.notify != nil {
-				s.notify(StreamErrorMsg{ChannelID: s.channelID, Err: err})
+				s.notify(StreamErrorMsg{ChannelID: s.channelID, Err: err, PartialContent: responseContent})
 			}
-			return "", err
+			return responseContent, err
 		}
 
 		if strings.TrimSpace(responseContent) != "" {

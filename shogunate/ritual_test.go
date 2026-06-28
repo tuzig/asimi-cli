@@ -1053,7 +1053,7 @@ func TestBackgroundGiven(t *testing.T) {
 			{Output: "background-data\n", ExitCode: "0"}, // background given
 		},
 	}
-	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, mockRunner, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, shogunate.GetMinister, nil, db, mockRunner, nil, repo.RepoInfo{})
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -1099,6 +1099,72 @@ func TestBackgroundGiven(t *testing.T) {
 	}
 	if cmdDone != 1 {
 		t.Errorf("expected 1 cmd_done message for background, got %d", cmdDone)
+	}
+}
+
+func TestBackgroundGivenFailureNotifies(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name:       "bg-fail-test",
+		Background: []string{"!false"},
+		Steps: []RitualStep{
+			{Name: "work", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "step-done\n", nil)
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "boom\n", ExitCode: "1"}, // background given fails
+		},
+	}
+	runner := NewRitualRunner(registry, shogunate.GetMinister, nil, db, mockRunner, nil, repo.RepoInfo{})
+
+	var messages []RitualStepMsg
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			messages = append(messages, stepMsg)
+		}
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "bg-fail-test", testEK(42), nil, notify)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err == nil {
+		t.Fatal("expected Run to return an error for background failure")
+	}
+
+	// Verify ritual_failed notification was emitted
+	var failedMsg *RitualStepMsg
+	for i := range messages {
+		if messages[i].Status == "ritual_failed" {
+			failedMsg = &messages[i]
+			break
+		}
+	}
+	if failedMsg == nil {
+		t.Fatalf("expected a ritual_failed notification, got messages: %+v", messages)
+	}
+	if failedMsg.StepName != "false" {
+		t.Errorf("expected StepName 'false', got %q", failedMsg.StepName)
+	}
+
+	// Verify EventRitualFailed was persisted to DB
+	var events []storage.TianEvent
+	db.Where("event_type = ?", storage.EventRitualFailed).Find(&events)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 EventRitualFailed in DB, got %d", len(events))
+	}
+	if events[0].EdictID != 42 {
+		t.Errorf("expected edict_id 42, got %d", events[0].EdictID)
 	}
 }
 
