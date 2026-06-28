@@ -357,6 +357,6 @@ internal/rpc/
 internal/shogunateapi/
   client.go       The Client interface (single source of truth)
 daemon.go         `asimi daemon` subcommand
-autostart.go      ASIMI_DAEMON=1 autostart
+autostart.go      autostart
 loopback.go       ASIMI_LOOPBACK / ASIMI_DAEMON_SOCKET wiring
 ```

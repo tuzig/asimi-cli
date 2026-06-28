@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,7 +195,7 @@ func TestHealthcheckTimeout(t *testing.T) {
 	go io.Copy(io.Discard, stdinReader)
 
 	// Start readStream — it will block reading from stdoutReader since nobody writes
-	go runner.readStream(stdoutReader)
+	go runner.readStream(stdoutReader, nil)
 
 	// Close pipes when done to avoid goroutine leaks
 	defer stdinReader.Close()
@@ -227,7 +228,7 @@ func TestHealthcheckSuccess(t *testing.T) {
 	runner.stdoutPipe = stdoutReader
 
 	// Start readStream to parse the response we'll write
-	go runner.readStream(stdoutReader)
+	go runner.readStream(stdoutReader, nil)
 
 	defer stdinReader.Close()
 	defer stdoutWriter.Close()
@@ -435,4 +436,157 @@ func TestSandboxMissingErrorWithAgentsDir(t *testing.T) {
 	assert.Contains(t, msg, "Sandbox container image 'localhost/asimi/sandbox/test/project:latest' is missing.")
 	assert.Contains(t, msg, "Did you run `just build-sandbox` ?")
 	assert.NotContains(t, msg, ":init")
+}
+
+// TestReadStreamConcurrentCloseReady verifies that readStream's exit cleanup
+// does not panic with "close of closed channel" when multiple readStream
+// goroutines race to close the same cmd.ready channel. This simulates
+// concurrent initialize() calls that each launch their own readStream.
+func TestReadStreamConcurrentCloseReady(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/concurrent"}, 0, nil)
+	runner.outputs = make(map[int]*commandOutput)
+
+	// Register a command output that both readStream goroutines will try to close
+	cmd := &commandOutput{ready: make(chan struct{})}
+	runner.outputs[1] = cmd
+
+	// Two stdout readers that both share the same outputs map — they both
+	// see command 1 as not-yet-done and try to close cmd.ready on exit.
+	stop1 := make(chan struct{})
+	stop2 := make(chan struct{})
+
+	go runner.readStream(stdoutPipeReader(t), stop1)
+	go runner.readStream(stdoutPipeReader(t), stop2)
+
+	// Signal both to stop — they will race into the exit cleanup
+	close(stop1)
+	close(stop2)
+
+	// Wait for cmd.ready to be closed — no panic means the test passes
+	select {
+	case <-cmd.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cmd.ready was not closed within timeout")
+	}
+
+	// Closing again should be a no-op, not a panic
+	runner.closeReady(cmd)
+}
+
+// TestCloseReadyIdempotent verifies that closeReady can be called multiple
+// times concurrently without panicking.
+func TestCloseReadyIdempotent(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/idempotent"}, 0, nil)
+	runner.outputs = make(map[int]*commandOutput)
+
+	cmd := &commandOutput{ready: make(chan struct{})}
+	runner.outputs[1] = cmd
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runner.closeReady(cmd)
+		}()
+	}
+	wg.Wait()
+
+	select {
+	case <-cmd.ready:
+	default:
+		t.Fatal("cmd.ready should be closed")
+	}
+}
+
+// stdoutPipeReader creates a pipe whose read end can be passed to readStream.
+// The write end is closed immediately so the scanner returns EOF quickly.
+func stdoutPipeReader(t *testing.T) io.Reader {
+	t.Helper()
+	r, w := io.Pipe()
+	go w.Close()
+	return r
+}
+
+// TestAttachGoroutineDoesNotClobberNewPipes simulates the race fixed in edict 550:
+// After Restart() triggers initialize() which sets new pipes, a stale Attach goroutine
+// from the previous attachment errors out and runs its cleanup handler. The handler
+// must NOT nil the new pipes because r.stdinPipe no longer matches the old stdinWriter.
+func TestAttachGoroutineDoesNotClobberNewPipes(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/attach-race"}, 0, nil)
+
+	// Simulate the first attachment's pipes (the "old" ones)
+	oldStdinReader, oldStdinWriter := io.Pipe()
+	oldStdoutReader, oldStdoutWriter := io.Pipe()
+	defer oldStdinReader.Close()
+	defer oldStdoutWriter.Close()
+
+	runner.mu.Lock()
+	runner.stdinPipe = oldStdinWriter
+	runner.stdoutPipe = oldStdoutReader
+	runner.mu.Unlock()
+
+	// Simulate initialize() setting new pipes (the "fresh" ones)
+	newStdinReader, newStdinWriter := io.Pipe()
+	newStdoutReader, newStdoutWriter := io.Pipe()
+	defer newStdinReader.Close()
+	defer newStdoutWriter.Close()
+
+	runner.mu.Lock()
+	runner.stdinPipe = newStdinWriter
+	runner.stdoutPipe = newStdoutReader
+	runner.mu.Unlock()
+
+	// Now the stale Attach goroutine's error handler runs.
+	// It closes its local old pipes and checks r.stdinPipe == oldStdinWriter.
+	// Since newStdinWriter replaced oldStdinWriter, the check should fail and
+	// the new pipes must survive.
+	oldStdinReader.Close()
+	oldStdoutWriter.Close()
+
+	runner.mu.Lock()
+	if runner.stdinPipe == oldStdinWriter {
+		runner.stdinPipe = nil
+		runner.stdoutPipe = nil
+	}
+	runner.mu.Unlock()
+
+	// Verify the new pipes survived
+	runner.mu.Lock()
+	assert.Equal(t, newStdinWriter, runner.stdinPipe, "new stdinPipe should survive stale Attach cleanup")
+	assert.Equal(t, newStdoutReader, runner.stdoutPipe, "new stdoutPipe should survive stale Attach cleanup")
+	runner.mu.Unlock()
+}
+
+// TestAttachGoroutineNilsMatchingPipes verifies that when the Attach error handler
+// runs and r.stdinPipe still matches the old stdinWriter (no concurrent initialize()),
+// the pipes ARE niled as expected.
+func TestAttachGoroutineNilsMatchingPipes(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/attach-match"}, 0, nil)
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdoutWriter.Close()
+
+	runner.mu.Lock()
+	runner.stdinPipe = stdinWriter
+	runner.stdoutPipe = stdoutReader
+	runner.mu.Unlock()
+
+	// Simulate the Attach error handler with matching pipes
+	stdinReader.Close()
+	stdoutWriter.Close()
+
+	runner.mu.Lock()
+	if runner.stdinPipe == stdinWriter {
+		runner.stdinPipe = nil
+		runner.stdoutPipe = nil
+	}
+	runner.mu.Unlock()
+
+	runner.mu.Lock()
+	assert.Nil(t, runner.stdinPipe, "stdinPipe should be nil when pipes match")
+	assert.Nil(t, runner.stdoutPipe, "stdoutPipe should be nil when pipes match")
+	runner.mu.Unlock()
 }

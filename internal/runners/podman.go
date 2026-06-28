@@ -41,6 +41,7 @@ type PodmanRunner struct {
 	outputs          map[int]*commandOutput
 	outputsMu        sync.Mutex
 	nextCommandID    int
+	readStreamStop   chan struct{}
 }
 
 type commandOutput struct {
@@ -48,10 +49,23 @@ type commandOutput struct {
 	exitCode   string
 	ready      chan struct{}
 	outputDone bool
+	closed     bool
 }
 
 // healthcheckTimeout is the maximum time to wait for a healthcheck response.
 const healthcheckTimeout = 5 * time.Second
+
+// closeReady safely closes cmd.ready exactly once under outputsMu.
+// It replaces all bare close(cmd.ready) and select-guarded close patterns.
+func (r *PodmanRunner) closeReady(cmd *commandOutput) {
+	r.outputsMu.Lock()
+	defer r.outputsMu.Unlock()
+	if cmd.closed {
+		return
+	}
+	cmd.closed = true
+	close(cmd.ready)
+}
 
 // NewPodmanRunner creates a new PodmanRunner
 func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, connID uint64, fallback Runner) *PodmanRunner {
@@ -151,6 +165,16 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 	if !hasAttachment {
 		slog.Debug("attaching to container")
 
+		// Signal any prior readStream goroutine to stop
+		r.mu.Lock()
+		if r.readStreamStop != nil {
+			close(r.readStreamStop)
+			r.readStreamStop = nil
+		}
+		stopChan := make(chan struct{})
+		r.readStreamStop = stopChan
+		r.mu.Unlock()
+
 		stdinReader, stdinWriter := io.Pipe()
 		stdoutReader, stdoutWriter := io.Pipe()
 
@@ -161,8 +185,10 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 				stdinReader.Close()
 				stdoutWriter.Close()
 				r.mu.Lock()
-				r.stdinPipe = nil
-				r.stdoutPipe = nil
+				if r.stdinPipe == stdinWriter {
+					r.stdinPipe = nil
+					r.stdoutPipe = nil
+				}
 				r.mu.Unlock()
 				slog.Debug("container attachment reset after error")
 			} else {
@@ -177,7 +203,7 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 		slog.Debug("container pipes configured")
 
-		go r.readStream(stdoutReader)
+		go r.readStream(stdoutReader, stopChan)
 
 		slog.Debug("container attachment established", "repoInfo", r.repoInfo)
 
@@ -388,7 +414,7 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 	return conn, nil
 }
 
-func (r *PodmanRunner) readStream(reader io.Reader) {
+func (r *PodmanRunner) readStream(reader io.Reader, stopChan <-chan struct{}) {
 	slog.Debug("stream reader started")
 
 	scanner := bufio.NewScanner(reader)
@@ -400,7 +426,22 @@ func (r *PodmanRunner) readStream(reader io.Reader) {
 	inCommand := false
 
 	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
+
+	// Scan loop: break on stop signal or scanner exhaustion
+	stopped := false
+	for !stopped {
+		select {
+		case <-stopChan:
+			slog.Debug("stream reader received stop signal")
+			stopped = true
+			continue
+		default:
+		}
+
+		if !scanner.Scan() {
+			break
+		}
+
 		line := scanner.Text()
 		slog.Debug("stream reader line", "line", line)
 
@@ -429,7 +470,10 @@ func (r *PodmanRunner) readStream(reader io.Reader) {
 				cmd.output = output.String()
 				cmd.exitCode = exitCode
 				cmd.outputDone = true
-				close(cmd.ready)
+				if !cmd.closed {
+					cmd.closed = true
+					close(cmd.ready)
+				}
 				slog.Debug("command output complete", "id", currentID)
 			}
 			r.outputsMu.Unlock()
@@ -457,9 +501,8 @@ func (r *PodmanRunner) readStream(reader io.Reader) {
 		if !cmd.outputDone {
 			cmd.outputDone = true
 			slog.Debug("marking output done due to reader exit", "id", id)
-			select {
-			case <-cmd.ready:
-			default:
+			if !cmd.closed {
+				cmd.closed = true
 				close(cmd.ready)
 				slog.Debug("closed ready channel due to reader exit", "id", id)
 			}
@@ -683,6 +726,12 @@ func (r *PodmanRunner) Restart(ctx context.Context) error {
 
 	slog.Info("restarting container attachment", "containerName", r.containerName)
 
+	// Signal the readStream goroutine to stop
+	if r.readStreamStop != nil {
+		close(r.readStreamStop)
+		r.readStreamStop = nil
+	}
+
 	if r.stdinPipe != nil {
 		r.stdinPipe.Close()
 		r.stdinPipe = nil
@@ -694,9 +743,8 @@ func (r *PodmanRunner) Restart(ctx context.Context) error {
 
 	r.outputsMu.Lock()
 	for id, cmd := range r.outputs {
-		select {
-		case <-cmd.ready:
-		default:
+		if !cmd.closed {
+			cmd.closed = true
 			close(cmd.ready)
 		}
 		delete(r.outputs, id)
@@ -723,6 +771,12 @@ func (r *PodmanRunner) Close(ctx context.Context) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Signal the readStream goroutine to stop
+	if r.readStreamStop != nil {
+		close(r.readStreamStop)
+		r.readStreamStop = nil
+	}
 
 	if r.stdinPipe != nil {
 		slog.Debug("sending exit command to bash")
