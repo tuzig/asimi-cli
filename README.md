@@ -93,33 +93,25 @@ The sandbox can be configured in `.agents/asimi.conf` (project-level) or `~/.con
 
 
 ```toml
-[run_shell_command]
+[sandbox]
 # Regex patterns for commands to run on the host (requires user approval)
 run_on_host = ['^gh\s', '^podman\s']
 # Regex patterns for commands to run on the host WITHOUT approval (safe, read-only)
 safe_run_on_host = ['^gh\s+(issue|pr)\s+(view|list)', '^git\s+status']
 
-[container]
 # Custom container image name (default: localhost/asimi/sandbox/<project-name>:latest)
 image_name = "localhost/my-custom-sandbox:latest"
 
 # Additional mount points for the container
 # Useful for mounting secrets, caches, or other project directories
-[[container.additional_mounts]]
+[[sandbox.additional_mounts]]
 source = "/path/to/host/dir"
 destination = "/path/in/container"
 
-[[container.additional_mounts]]
+[[sandbox.additional_mounts]]
 source = "/another/host/path"
 destination = "/another/container/path"
 ```
-
-**Environment Variables:**
-
-You can also configure the sandbox using environment variables:
-
-- `ASIMI_CONTAINER_IMAGE_NAME` - Override the container image name
-- `ASIMI_CONTAINER_ADDITIONAL_MOUNTS` - JSON string of additional mounts (e.g., `[{"source":"/host","destination":"/container"}]`)
 
 
 ## ⌨️ vi FTW
@@ -285,13 +277,6 @@ After first run the user's file is loaded with all the defaults.
 
 ### Environment Variables
 
-#### General Configuration
-
-All configuration options can be set via environment variables using the `ASIMI_` prefix. The variable name should match the config path with underscores instead of dots. For example:
-- `ASIMI_LLM_PROVIDER=anthropic` sets `llm.provider`
-- `ASIMI_LLM_MODEL=claude-sonnet-4-20250514` sets `llm.model`
-- `ASIMI_UI_MARKDOWN_ENABLED=true` sets `ui.markdown_enabled`
-
 #### System Variables
 
 - **`EDITOR`** - Preferred text editor for `:export` commands (default: system default)
@@ -326,12 +311,7 @@ For custom OAuth setups, you can override the default OAuth endpoints:
 - `OPENAI_TOKEN_URL` - Token URL
 - `OPENAI_OAUTH_SCOPES` - Comma-separated list of scopes (optional)
 
-**Anthropic:**
-- `ANTHROPIC_CLIENT_ID` - OAuth client ID
-- `ANTHROPIC_CLIENT_SECRET` - OAuth client secret
-- `ANTHROPIC_AUTH_URL` - Authorization URL
-- `ANTHROPIC_TOKEN_URL` - Token URL
-- `ANTHROPIC_OAUTH_SCOPES` - Comma-separated list of scopes (optional)
+**Anthropic:** Not yet implemented. Anthropic OAuth env vars are not currently supported.
 
 #### Development & Testing
 

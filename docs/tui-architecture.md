@@ -1,18 +1,20 @@
 # TUI Architecture Documentation
 
-This document describes the architecture of the Terminal User Interface (TUI) for Claude Code, focusing on three major refactorings that established clean component boundaries and message-passing patterns.
+This document describes the architecture of the Terminal User Interface (TUI) for **Asimi**, focusing on the component boundaries, message-passing patterns, and the multi-tab structure that mirrors the Shogunate's minister system.
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Component Architecture](#component-architecture)
-3. [Mode Management System](#mode-management-system)
-   - [SELECT Mode Unification](#select-mode-unification)
-4. [Command Line Component](#command-line-component)
-5. [Mouse Event Handling](#mouse-event-handling)
-6. [Dynamic Prompt Height](#dynamic-prompt-height)
-7. [Message Flow Patterns](#message-flow-patterns)
-8. [Future Improvements](#future-improvements)
+2. [Tab Manager](#tab-manager)
+3. [Component Architecture](#component-architecture)
+4. [Mode Management System](#mode-management-system)
+5. [Command Line Component](#command-line-component)
+6. [List Navigation & Selection](#list-navigation--selection)
+7. [Mouse Event Handling](#mouse-event-handling)
+8. [Dynamic Prompt Height](#dynamic-prompt-height)
+9. [Message Flow Patterns](#message-flow-patterns)
+10. [Streaming AI Responses](#streaming-ai-responses)
+11. [Files Reference](#files-reference)
 
 ---
 
@@ -22,14 +24,15 @@ This document describes the architecture of the Terminal User Interface (TUI) fo
 
 ```
 ┌─────────────────────────────────────────┐
+│  TAB BAR (1 line, only if multiple tabs)│  ← TabManager.RenderTabBar()
+├─────────────────────────────────────────┤
 │                                         │
 │         CONTENT AREA                    │  ← Mouse wheel works here
-│         (Chat/Help/Models/Resume)       │
+│         (Chat/Help/Models/Resume/Seal)  │
 │                                         │
-│         Height = screen - prompt - 4    │  ← Dynamic based on prompt height
+│  Height = screen - prompt - status -    │  ← Dynamic based on prompt height
+│           cmdline - tabbar - modal      │
 │                                         │
-├─────────────────────────────────────────┤
-│         EMPTY LINE                      │
 ├─────────────────────────────────────────┤
 │  ┌───────────────────────────────────┐  │
 │  │    PROMPT AREA                    │  │  ← Mouse wheel ignored here
@@ -46,8 +49,13 @@ This document describes the architecture of the Terminal User Interface (TUI) fo
 ```go
 commandLineHeight := 1
 statusHeight := 1
-promptWithBorder := m.prompt.Height + 2
-contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1 - modalHeight
+promptWithBorder := promptHeight + 2
+tabBarHeight := m.tabs.TabBarHeight()  // 1 if multiple tabs, 0 otherwise
+modalHeight := lipgloss.Height(m.modal.Render())  // 0 if no modal
+contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight - modalHeight
+if contentHeight < 0 {
+    contentHeight = 0
+}
 ```
 
 The TUI follows the [Bubbletea](https://github.com/charmbracelet/bubbletea) architecture pattern:
@@ -65,6 +73,58 @@ The TUI follows the [Bubbletea](https://github.com/charmbracelet/bubbletea) arch
 
 ---
 
+## Tab Manager
+
+The `TabManager` (`content.go`) is a core architectural component that manages multiple tabs, each representing a minister in the Shogunate. Every tab has its own `ContentComponent` (with its own chat buffer), streaming state, and cancellable context.
+
+### Structure
+
+```go
+type Tab struct {
+    Label     string
+    Type      TabType
+    Target    string             // minister ID, edict ID, or ritual run ID
+    Content   ContentComponent   // Own content buffer per tab
+    EdictID   uint               // Current edict ID for this tab
+    Streaming bool               // True when this tab is actively receiving stream data
+    Ctx       context.Context    // per-tab context, flows to rituals for ruling tab
+    Cancel    context.CancelFunc // per-tab streaming cancellation
+}
+```
+
+### Default Tabs
+
+The `NewTabManager` creates 4 default tabs mirroring the Shogunate's ministers:
+
+| Index | Label           | Target      | Minister  |
+|-------|-----------------|-------------|-----------|
+| 0     | 宰相 Chancellor  | chancellor  | Prime Minister |
+| 1     | 聖人 Sage       | sage        | Sage      |
+| 2     | 工部 Forge      | forge       | Ministry of Works |
+| 3     | 刑部 Judge      | judge       | Ministry of Justice |
+
+### Key Operations
+
+- **SwitchTo(index)** — Switch active tab, calls `onTabSwitch` callback
+- **NextTab() / PrevTab()** — Wrap-around navigation (bound to `gt`/`gT` in normal mode)
+- **Add(label, type, target)** — Create a new tab and switch to it
+- **Close()** — Close active tab (refuses if last tab or currently streaming)
+- **StreamingChat()** — Returns the chat component of the active streaming tab (falls back to any streaming tab, then active tab)
+- **StreamingChatByTab(tabID)** — Returns the chat component for a specific streaming tab
+- **FlushDirtyChats()** — Calls `UpdateContent` on every dirty chat (used by the debounce tick to flush all streaming tabs)
+- **CancelTabByID(tabID)** — Cancels streaming on a specific tab and creates a fresh context
+- **CancelAllTabs()** — Cancels all streaming; Chancellor gets a fresh context for future rituals
+
+### Tab Greetings
+
+Each tab is seeded with a minister-specific welcome message via `initTabGreetings()` at construction time. These are injected as `MessageTypeGreeting` into each tab's `ChatComponent`.
+
+### Welcome Screen
+
+Before the user presses any key, a welcome screen is shown (`renderWelcome()`). It displays version info, key shortcuts, and optional update/config notifications. Any keypress dismisses it.
+
+---
+
 ## Component Architecture
 
 ### TUIModel (tui.go)
@@ -73,13 +133,25 @@ The main model that coordinates all components:
 
 ```go
 type TUIModel struct {
-    Mode           string              // Current UI mode (single source of truth)
-    prompt         *PromptComponent    // User input
-    content        *ContentComponent   // Chat/Help/Models/Resume views
-    commandLine    *CommandLineComponent // Command line input
-    status         *StatusComponent    // Status bar
-    completion     *CompletionComponent // Completion dialog
-    // ... other fields
+    config        *Config
+    width, height int
+    theme         *Theme
+
+    // UI Components
+    status      StatusComponent
+    prompts     map[string]*PromptComponent  // per-tab prompt components
+    tabs        TabManager                    // manages all content tabs
+    completions CompletionDialog
+    commandLine *CommandLineComponent
+    modal       *BaseModal
+
+    // UI Flags & State
+    Mode                 string  // Current UI mode for status display
+    showCompletionDialog bool
+    completionMode       string  // "file" or "command"
+    sessionActive        bool
+    rawMode              bool    // Toggle between chat and raw session view
+    // ... service fields, history, approval state, etc.
 }
 ```
 
@@ -98,41 +170,45 @@ Each component is self-contained and follows these patterns:
 3. **Exposes minimal API** for coordination
 4. **Doesn't know about other components**
 
+### Component Access
+
+The prompt for the active tab is accessed via the `prompt()` method (not a field), which lazily creates a `PromptComponent` if one doesn't exist for the active tab's label:
+
+```go
+func (m *TUIModel) prompt() *PromptComponent {
+    label := m.tabs.ActiveTab().Label
+    p, ok := m.prompts[label]
+    if !ok {
+        np := NewPromptComponent(m.width, 5)
+        if m.config != nil && m.config.UI.PromptExpandedHeight > 0 {
+            np.SetExpandedHeight(m.config.UI.PromptExpandedHeight)
+        }
+        p = &np
+        m.prompts[label] = p
+    }
+    return p
+}
+```
+
+The active tab's content is accessed via `m.tabs.Content()` which returns a `*ContentComponent`.
+
 ---
 
 ## Mode Management System
 
-### Problem
+### Single Source of Truth
 
-Previously, `TUIModel.View()` had to poll multiple components to determine what mode to display:
-
-```go
-// OLD - Scattered, coupled logic
-if m.commandLine.IsInCommandMode() {
-    m.status.SetViMode(viEnabled, "COMMAND", "")
-} else if activeView != ViewChat {
-    m.status.SetViMode(viEnabled, viewName, "")
-} else {
-    m.status.SetViMode(viEnabled, viMode, viPending)
-}
-```
-
-This violated separation of concerns and created tight coupling.
-
-### Solution: Centralized Mode Management
-
-**Core Concept:**
-- **Single Source of Truth**: `TUIModel.Mode string` field
-- **Single Message**: `ChangeModeMsg{NewMode: "insert"}` for ALL mode changes
-- **Centralized Handler**: Updates `m.Mode` and status component in one place
-- **Components Send Messages**: When they change state
-- **View() Just Renders**: No polling, no logic
+- **`TUIModel.Mode string`** field is the only place tracking mode
+- **`ChangeModeMsg{NewMode: "..."}`** is the single message for ALL mode changes
+- The centralized handler in `handleCustomMessages` updates `m.Mode`, `m.status.SetMode(newMode)`, and applies mode-specific side effects
 
 ### The Message
 
 ```go
 type ChangeModeMsg struct {
-    NewMode string // "insert", "normal", "visual", "command", "help", "select", "scroll"
+    NewMode string // "insert", "normal", "visual", "command", "help", "models",
+                   // "select", "resume", "scroll", "yesno", "input", "search",
+                   // "learning", "replace"
 }
 ```
 
@@ -140,216 +216,135 @@ type ChangeModeMsg struct {
 
 ```go
 case ChangeModeMsg:
-    wasScroll := m.Mode == "scroll"
-    m.Mode = msg.NewMode
-    isScroll := m.Mode == "scroll"
-    if wasScroll && !isScroll {
-        m.content.Chat.SetScrollLock(false)
-    } else if !wasScroll && isScroll {
-        m.content.Chat.SetScrollLock(true)
+    oldMode := m.Mode
+    newMode := msg.NewMode
+    m.Mode = newMode
+    m.status.SetMode(newMode)
+
+    if newMode != "command" && newMode != "yesno" && newMode != "input" {
+        m.commandLine.Blur()
     }
-    m.status.SetMode(m.Mode)
-    if m.Mode == "select" {
-        m.commandLine.AddToast(" :quit to close | j/k to navigate | Enter to select ", "success", 3000)
-        m.prompt.TextArea.Placeholder = "j/k to navigate | Enter to select | :quit to close"
-    } else if m.Mode == "insert" {
-        m.prompt.TextArea.Placeholder = PlaceholderDefault
+
+    // Handle scroll lock state changes
+    if oldMode == "scroll" && newMode != "scroll" {
+        m.tabs.Content().Chat.SetScrollLock(false)
+    } else if oldMode != "scroll" && newMode == "scroll" {
+        m.tabs.Content().Chat.SetScrollLock(true)
+    }
+
+    // Update prompt component based on new mode
+    switch newMode {
+    case "insert":
+        m.prompt().EnterViInsertMode()
+    case "normal":
+        m.prompt().EnterViNormalMode()
+    case "visual":
+        m.prompt().ViCurrentMode = ViModeVisual
+        m.prompt().TextArea.KeyMap = m.prompt().viNormalKeyMap
+        m.prompt().TextArea.Placeholder = "Visual selection mode"
+        m.prompt().Style = m.prompt().Style.BorderForeground(globalTheme.PromptOffBorder)
+    case "scroll":
+        m.prompt().Blur()
+        m.prompt().EnterViScrollMode()
+    case "command":
+        m.prompt().EnterViCommandLineMode()
+    case "yesno":
+        m.prompt().Style = m.prompt().Style.BorderForeground(globalTheme.PromptOffBorder)
+    case "input":
+        m.prompt().Blur()
+    case "learning":
+        m.prompt().EnterViLearningMode()
+    case "search":
+        m.prompt().Blur()
+        m.prompt().Style = m.prompt().Style.BorderForeground(globalTheme.PromptOffBorder)
+    case "models":
+        m.prompt().Blur()
+        m.prompt().TextArea.Placeholder = "j/k navigate | /? search | n/N next match | Enter to select | ESC to abort"
+        m.prompt().Style = m.prompt().Style.BorderForeground(globalTheme.PromptOffBorder)
+    case "select", "resume", "help":
+        m.prompt().Blur()
+        m.prompt().TextArea.Placeholder = "j/k, CTRL-D/U to navigate | Enter to select | ESC to abort"
+        m.prompt().Style = m.prompt().Style.BorderForeground(globalTheme.PromptOffBorder)
     }
     return m, nil
 ```
 
-**Special Modes:**
+### Supported Modes
 
-- `scroll` - Dedicated chat-navigation mode entered with `Ctrl-B`. It locks the viewport in place (no auto-scroll), minimizes the prompt to 2 lines to maximize content visibility, and provides vi-style paging:
+| Mode        | Display     | Description |
+|-------------|-------------|-------------|
+| `insert`    | `<INSERT>`  | Default text input mode |
+| `normal`    | `<NORMAL>`  | Vi-style navigation |
+| `visual`    | `<VISUAL>`  | Visual selection |
+| `command`   | `<COMMAND>` | Command line input (`:`) |
+| `help`      | `<HELP>`    | Help viewer |
+| `models`    | `<MODELS>`   | Model selection with search support |
+| `select`    | `<SELECT>`  | Unified list selection (resume, seal) |
+| `scroll`    | `<SCROLL>`  | Chat history navigation |
+| `yesno`     | `<YESNO>`   | Yes/no prompt |
+| `input`     | `<INPUT>`   | Free text input prompt |
+| `search`    | `<SEARCH>`  | Vi-style search (`/` or `?`) |
+| `learning`  | `<LEARNING>` | Learning note input |
+| `replace`   | `<REPLACE>` | Replace mode |
+
+### Special Modes
+
+- **`scroll`** — Dedicated chat-navigation mode entered with `Ctrl-B`. Locks the viewport (no auto-scroll), minimizes the prompt to 2 lines, and provides vi-style paging:
   - `Ctrl-F` / `Ctrl-B` - Page down/up
   - `Ctrl-D` / `Ctrl-U` - Half page down/up
   - `j` / `k` / `↓` / `↑` - Scroll one line down/up
   - `G` - Jump to bottom
   - `:` - Enter command mode without snapping back
   - `Esc` / `i` - Return to insert mode
-  
-  The placeholder text in scroll mode shows: "j/k to scroll | CTRL-f/b & d/u as in vi | i/:/ESC to exit"
 
-- `select` - Unified list selection mode used for both models and resume views. Provides consistent navigation:
-  - `j` / `k` / `↓` / `↑` - Navigate up/down
+  Placeholder: `"j/k to scroll | CTRL-f/b & d/u as in vi | i/:/ESC to exit"`
+
+- **`models`** — Model selection with built-in search:
+  - `j` / `k` / `↓` / `↑` - Navigate
+  - `Ctrl-D` / `Ctrl-U` - Half page down/up
+  - `g` / `G` - Jump to top/bottom
+  - `/` / `?` - Forward/backward search
+  - `n` / `N` - Next/previous search match
+  - `Enter` - Select model
+  - `Esc` - Return to chat
+
+- **`select`** — Unified list selection for resume and seal views:
+  - `j` / `k` / `↓` / `↑` - Navigate
   - `Ctrl-D` / `Ctrl-U` - Half page down/up
   - `g` / `G` - Jump to top/bottom
   - `Enter` - Select item
-  - `:quit` / `Esc` - Return to chat
-
-### Component Integration
-
-Components return `ChangeModeMsg` when their state changes:
-
-```go
-// CommandLineComponent
-func (cl *CommandLineComponent) EnterCommandMode(initialText string) tea.Cmd {
-    cl.mode = CommandLineCommand
-    // ... setup ...
-    return func() tea.Msg {
-        return ChangeModeMsg{NewMode: "command"}
-    }
-}
-
-// ContentComponent
-func (c *ContentComponent) ShowHelp(topic string) tea.Cmd {
-    c.activeView = ViewHelp
-    // ... setup ...
-    return func() tea.Msg {
-        return ChangeModeMsg{NewMode: "help"}
-    }
-}
-
-func (c *ContentComponent) ShowModels(models []AnthropicModel, currentModel string) tea.Cmd {
-    c.activeView = ViewModels
-    // ... setup ...
-    return func() tea.Msg {
-        return ChangeModeMsg{NewMode: "select"}
-    }
-}
-
-func (c *ContentComponent) ShowResume(sessions []Session) tea.Cmd {
-    c.activeView = ViewResume
-    // ... setup ...
-    return func() tea.Msg {
-        return ChangeModeMsg{NewMode: "select"}
-    }
-}
-
-// TUI vi mode changes
-case "i":
-    m.prompt.EnterViInsertMode()
-    return m, func() tea.Msg { return ChangeModeMsg{NewMode: "insert"} }
-```
-
-### Message Flow Example
-
-```
-User presses ':'
-  ↓
-TUI calls m.commandLine.EnterCommandMode("")
-  ↓
-Returns ChangeModeMsg{NewMode: "command"}
-  ↓
-TUI receives message in handleCustomMessages
-  ↓
-Sets m.Mode = "command"
-  ↓
-Maps to displayMode = "COMMAND"
-  ↓
-Calls m.status.SetViMode(viEnabled, "COMMAND", viPending)
-  ↓
-View() renders with updated status
-```
-
-### Supported Modes
-
-- `"insert"` → `<INSERT>`
-- `"normal"` → `<NORMAL>`
-- `"visual"` → `<VISUAL>`
-- `"command"` → `<COMMAND>`
-- `"help"` → `<HELP>`
-- `"select"` → `<SELECT>` (used for both models and resume views)
-- `"scroll"` → `<SCROLL>`
-- `"learning"` → (maps to itself)
+  - `Esc` - Return to chat
 
 ### Benefits
 
-✅ **Single Source of Truth** - `m.Mode` is the only place tracking mode  
-✅ **Single Message** - `ChangeModeMsg` for ALL mode changes  
-✅ **Centralized Logic** - One handler updates everything  
-✅ **No Polling** - View() doesn't check component state  
-✅ **Flexible** - Easy to add modes (just strings)  
-✅ **Testable** - Verify mode changes via messages  
-✅ **Decoupled** - Components don't know about status  
-✅ **Consistent** - Same pattern everywhere  
-
-### SELECT Mode Unification
-
-#### Problem
-
-Previously, the TUI had separate `MODELS` and `RESUME` modes for list selection interfaces. Both modes were essentially identical:
-- Same navigation patterns (j/k, Ctrl-D/U, g/G)
-- Same selection behavior (Enter to select)
-- Same exit behavior (Esc/:quit to return to chat)
-- Same visual presentation (title bar + scrollable list)
-
-Having two separate modes added unnecessary complexity to mode management logic, status bar display, and documentation.
-
-#### Solution: Unified SELECT Mode
-
-Both modes were merged into a single `SELECT` mode that handles all list selection interfaces.
-
-**Implementation Changes:**
-
-```go
-// content.go - Both methods now return the same mode
-func (c *ContentComponent) ShowModels(...) tea.Cmd {
-    c.activeView = ViewModels
-    // ... setup ...
-    return func() tea.Msg {
-        return ChangeModeMsg{NewMode: "select"}
-    }
-}
-
-func (c *ContentComponent) ShowResume(...) tea.Cmd {
-    c.activeView = ViewResume
-    // ... setup ...
-    return func() tea.Msg {
-        return ChangeModeMsg{NewMode: "select"}
-    }
-}
-```
-
-**Mode Handler:**
-
-```go
-case ChangeModeMsg:
-    // ...
-    if m.Mode == "select" {
-        m.commandLine.AddToast(" :quit to close | j/k to navigate | Enter to select ", "success", 3000)
-        m.prompt.TextArea.Placeholder = "j/k to navigate | Enter to select | :quit to close"
-    }
-    // ...
-```
-
-**View Differentiation:**
-
-The content component uses `c.activeView` (ViewModels/ViewResume) to distinguish between different selection views when needed. The title bar still shows context-specific information:
-- "Select Model" for model selection
-- "Choose a session to resume [1/10]:" for session selection
-
-#### Benefits
-
-✅ **Simpler Mode Management** - One mode instead of two  
-✅ **Consistent User Experience** - Same behavior for all list selections  
-✅ **Less Code** - Fewer conditional branches  
-✅ **Easier to Extend** - Adding new selection views (e.g., "select provider", "select workspace") is trivial  
-✅ **Better Documentation** - Clearer mental model for users  
-✅ **Maintainability** - Less code to maintain and test  
-
-#### Future Selection Interfaces
-
-This pattern makes it easy to add new selection interfaces:
-
-1. **Provider Selection** - `:provider` command to switch between Anthropic/OpenAI/etc.
-2. **Workspace Selection** - `:workspace` command to switch between different project contexts
-3. **Theme Selection** - `:theme` command to choose color schemes
-4. **History Search** - `:search` command to search through conversation history
-
-All would use the same `SELECT` mode with consistent navigation.
+- **Single Source of Truth** — `m.Mode` is the only place tracking mode
+- **Single Message** — `ChangeModeMsg` for ALL mode changes
+- **Centralized Logic** — One handler updates everything
+- **No Polling** — View() doesn't check component state
+- **Flexible** — Easy to add modes (just strings)
+- **Testable** — Verify mode changes via messages
+- **Decoupled** — Components don't know about status
 
 ---
 
 ## Command Line Component
 
-### Problem
+### Component Self-Management
 
-Previously, `TUIModel.handleCommandLineInput()` handled all keyboard input for the command line (266 lines), which violated separation of concerns.
+The `CommandLineComponent` (`commandline.go`) handles its own input and communicates via messages. It supports multiple sub-modes:
 
-### Solution: Component Self-Management
+```go
+type CommandLineMode int
 
-The `CommandLineComponent` now handles its own input and communicates via messages.
+const (
+    CommandLineIdle CommandLineMode = iota
+    CommandLineCommand   // : commands
+    CommandLineToast    // Toast notifications
+    CommandLineYesNo    // Yes/no prompts
+    CommandLineInput    // Free text input
+    CommandLineSearch    // Vi-style search (/ or ?)
+)
+```
 
 ### Component Messages
 
@@ -359,177 +354,151 @@ type (
     commandCancelledMsg   struct{}                   // User pressed ESC
     commandTextChangedMsg struct{}                   // Text changed, update completions
     navigateCompletionMsg struct{ direction int }    // Navigate completion list
-    navigateHistoryMsg    struct{ direction int }    // Navigate history
     acceptCompletionMsg   struct{}                   // Accept selected completion
+    navigateHistoryMsg    struct{ direction int }    // Navigate history
+    yesNoResponseMsg      struct{ answer bool }     // true for yes, false for no
+    inputResponseMsg      struct{ text string }     // Response from free text input
+    apiKeyPromptMsg       struct{ provider string } // Request API key input
+    apiKeySavedMsg        struct{ provider string } // API key saved to keyring
+    searchExecutedMsg     struct {
+        pattern   string
+        direction int
+    }
+    searchCancelledMsg struct{}
 )
 ```
 
 ### HandleKey Method
 
-The component handles its own keyboard input:
-
 ```go
 func (cl *CommandLineComponent) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool)
 ```
 
-**Handles:**
-- Basic editing (backspace, delete, cursor movement, space, typing)
-- Enter (returns `commandReadyMsg`)
-- ESC (returns `commandCancelledMsg` + `ChangeModeMsg`)
-- Up/Down/Tab (returns navigation messages)
+The method dispatches based on the current sub-mode:
 
-**Returns:**
-- `tea.Cmd` - Command to execute (message for TUI)
-- `bool` - Whether the key was handled
+1. **YesNo mode**: `y`/`Y` → yes, `n`/`N` → no, `enter` confirms, `esc` cancels
+2. **Input mode**: `enter` submits text, `esc` cancels, other keys go to textinput
+3. **Search mode**: `enter` executes search, `esc`/empty-backspace cancels, other keys go to textinput
+4. **Command mode**: `enter` executes, `esc` cancels, `up`/`down` navigate history, `tab` accepts completion, `ctrl+n`/`ctrl+p` navigate completions
+
+Returns `(tea.Cmd, bool)` — the command to execute and whether the key was handled.
 
 ### TUI Integration
 
 ```go
-if m.commandLine.IsInCommandMode() {
+if m.commandLine.IsInCommandMode() || m.commandLine.IsInYesNoMode() ||
+   m.commandLine.IsInInputMode() || m.commandLine.IsInSearchMode() {
     cmd, handled := m.commandLine.HandleKey(msg)
     if handled {
-        return m, cmd  // Process returned message
+        return m, cmd
     }
-    // Fallback (shouldn't happen)
+    return m, nil
 }
 ```
 
-### Message Handlers
+---
 
-**`commandReadyMsg`**:
-- Saves to persistent history
-- Parses and executes command using `FindCommand()` (vim-style partial matching)
-- Hides completions
-- Restores focus
+## List Navigation & Selection
 
-**`commandCancelledMsg`**:
-- Hides completions
-- Restores focus to prompt
+### ListNavigator Interface
 
-**`commandTextChangedMsg`**:
-- Updates command line completions via `updateCommandLineCompletions()`
+All selectable list views implement the `ListNavigator` interface (`select_window.go`):
 
-**`navigateCompletionMsg`**:
-- Navigates completion dialog up/down
-
-**`acceptCompletionMsg`**:
-- Accepts selected completion
-
-### Architecture Evolution
-
-#### Before (Monolithic)
-```
-TUIModel.handleKeyMsg()
-    └── TUIModel.handleCommandLineInput()  [handles everything - 266 lines]
-            ├── Editing (backspace, delete, cursor)
-            ├── History navigation
-            ├── Completion navigation
-            └── Command execution
+```go
+type ListNavigator interface {
+    GetItemCount() int
+    GetVisibleSlots() int
+    NavNext(current int) int
+    NavPrev(current int) int
+    NavFirst() int
+    NavLast() int
+    NavNearest(index int) int // find nearest selectable to index
+}
 ```
 
-#### After (Component-Based)
-```
-TUIModel.handleKeyMsg()
-    └── CommandLineComponent.HandleKey()  [handles ALL keys]
-            ├── Returns commandReadyMsg → TUIModel.handleCustomMessages()
-            ├── Returns commandCancelledMsg → TUIModel.handleCustomMessages()
-            ├── Returns commandTextChangedMsg → TUIModel.handleCustomMessages()
-            ├── Returns navigateCompletionMsg → TUIModel.handleCustomMessages()
-            ├── Returns navigateHistoryMsg → TUIModel.handleCustomMessages()
-            └── Returns acceptCompletionMsg → TUIModel.handleCustomMessages()
-```
+### SelectWindow — Generic Component
 
-### Benefits
+`SelectWindow[T any]` is a generic, reusable list component that implements `ListNavigator`. It supports:
+- Selectable item filtering (skip non-selectable items during navigation)
+- Scrolling with configurable visible slots
+- Custom rendering via `RenderConfig[T]`
 
-✅ **Complete Separation** - Component handles ALL its own input  
-✅ **Clean Message Passing** - Uses bubbletea pattern throughout  
-✅ **Reduced Code** - Removed 266 lines from TUI  
-✅ **Better Encapsulation** - All command line logic in one place  
-✅ **Easier Testing** - Component can be tested independently  
-✅ **Maintainability** - Clear responsibilities  
+### Views Using List Navigation
+
+The `ContentComponent` (`content.go`) uses `activeList ListNavigator` to delegate navigation. Each view sets up its list and `onSelect` callback:
+
+| View         | Mode     | List Source                   | On Select |
+|--------------|----------|-------------------------------|-----------|
+| `ViewModels` | `models`  | `c.models.SelectWindow`       | Selects model, returns `modelSelectedMsg` |
+| `ViewResume` | `select`  | `c.resume.SelectWindow`      | Loads session |
+| `ViewSeal`    | `select`  | `c.sealSelect.SelectWindow`   | Returns `sealSelectedMsg` with edict ID |
+
+### Navigation Keys (List Mode)
+
+- `j` / `↓` — Next item
+- `k` / `↑` — Previous item
+- `Ctrl-D` — Half page down
+- `Ctrl-U` — Half page up
+- `g` / `home` — First item
+- `G` / `end` — Last item
+- `Enter` — Select item
+- `n` / `N` — Next/previous search match (models view only)
 
 ---
 
 ## Mouse Event Handling
 
-### Problem
-
-Mouse wheel events were being processed twice, causing duplicate scrolling and potentially affecting areas outside the content window:
-
-1. **Duplicate Processing**: Events were handled by both `content.Update(msg)` and `handleMouseMsg()`
-2. **No Position Checking**: Events were processed regardless of mouse cursor position
-3. **Unintended Side Effects**: Mouse wheel could affect prompt history navigation
-
-### Solution: Position-Aware Single Processing
-
-The mouse event handling now follows these principles:
-
-1. **Position Checking**: Only process events within the content area
-2. **Single Handler**: Events are processed exactly once
-3. **Component Delegation**: Content component handles its own scrolling
-
 ### Implementation
 
-**Position Checking** (`tui.go`):
+Mouse events are handled in `TUIModel.Update()`:
+
 ```go
 case tea.MouseMsg:
-    // Only handle mouse events if they're within the content area
-    // Content area is from top of screen to just above the prompt
-    contentHeight := m.height - 6 // Subtract prompt, status, command line, etc.
-    if msg.Y < contentHeight {
-        // Mouse is in content area - let content component handle it
-        var contentCmd tea.Cmd
-        m.content, contentCmd = m.content.Update(msg)
-        return m, contentCmd
+    // Handle mouse wheel scrolling - switch to SCROLL mode when scrolling up
+    if msg.Type == tea.MouseWheelUp && m.Mode != "scroll" && m.tabs.Content().GetActiveView() == ViewChat {
+        // Only enter scroll mode if we're not already at the top
+        if !m.tabs.Content().Chat.Viewport.AtTop() {
+            contentCmd := m.tabs.UpdateContent(msg)
+            enterScrollCmd := func() tea.Msg { return ChangeModeMsg{NewMode: "scroll"} }
+            return m, tea.Batch(contentCmd, enterScrollCmd)
+        }
     }
-    // Mouse is outside content area - ignore it
-    return m, nil
-```
-
-**Content Height Calculation**:
-```go
-contentHeight := m.height - 6
-
-// Breakdown:
-// - Command line: 1 line
-// - Status line: 1 line
-// - Prompt (with borders): ~2-3 lines
-// - Empty line: 1 line
-// = 6 lines reserved for UI chrome
+    contentCmd := m.tabs.UpdateContent(msg)
+    return m, contentCmd
 ```
 
 ### Event Flow
 
 ```
-Mouse Wheel Event (Y position)
+Mouse Wheel Event
        ↓
    TUI Update()
        ↓
-   Check: msg.Y < contentHeight?
+   Is MouseWheelUp AND not in scroll mode AND in chat view?
        ↓
-       ├─→ YES (in content area)
+       ├─→ YES AND viewport not at top
        │        ↓
-       │   content.Update(msg)
+       │   Batch: content.Update(msg) + ChangeModeMsg{NewMode: "scroll"}
        │        ↓
-       │   Chat.Update(msg)
-       │        ↓
-       │   Viewport.ScrollUp/Down()  ← Single scroll ✓
+       │   Chat scrolls + enters scroll mode
        │
-       └─→ NO (outside content area)
+       └─→ NO (all other cases)
                 ↓
-           Ignore event  ← No scrolling ✓
+           content.Update(msg)
+                ↓
+           Chat handles scrolling (wheel up/down, touch drag)
 ```
 
 ### Component Responsibilities
 
 **TUIModel** (`tui.go`):
-- Checks mouse event position
-- Routes events to content component only if in content area
-- Ignores events outside content area
+- Detects scroll-up over chat to auto-enter scroll mode
+- Routes all mouse events to the active tab's content component
+- Does NOT do position-based Y checking — delegates to content component
 
 **ContentComponent** (`content.go`):
 - Receives mouse events from TUI
-- Delegates to active view (chat, help, models, resume)
+- Delegates to active view (chat handles its own; help view scrolls viewport)
 - Handles view-specific mouse behavior
 
 **ChatComponent** (`chat.go`):
@@ -541,90 +510,49 @@ Mouse Wheel Event (Y position)
 **PromptComponent** (`prompt.go`):
 - Does NOT handle mouse events
 - Only responds to keyboard input
-- History navigation via up/down arrow keys
-
-### Supported Mouse Events
-
-**In Content Area**:
-- `MouseWheelUp` - Scroll content up
-- `MouseWheelDown` - Scroll content down
-- `MouseLeft` + `MouseActionPress` - Start touch drag
-- `MouseMotion` - Touch drag scrolling
-- `MouseLeft` + `MouseActionRelease` - End touch drag
-
-**Outside Content Area**:
-- All mouse events are ignored
-
-### Benefits
-
-✅ **No Duplicate Scrolling** - Each mouse event processed exactly once  
-✅ **Position Awareness** - Events only affect area under cursor  
-✅ **Clean Separation** - Each component handles its own input  
-✅ **Predictable Behavior** - Users get expected scrolling  
-✅ **No Side Effects** - Prompt history navigation unaffected  
-✅ **Touch Support** - Drag scrolling works in content area  
-
-### Testing Scenarios
-
-**Scenario 1: Scroll in Chat Area**
-```
-User: Scrolls mouse wheel over chat messages
-Expected: Chat scrolls smoothly
-Result: ✓ Works correctly
-```
-
-**Scenario 2: Scroll over Prompt**
-```
-User: Scrolls mouse wheel over prompt input
-Expected: Nothing happens
-Result: ✓ Works correctly (event ignored)
-```
-
-**Scenario 3: Keyboard History Navigation**
-```
-User: Presses up/down arrows in prompt
-Expected: Navigate through prompt history
-Result: ✓ Works correctly (unaffected by mouse fix)
-```
-
-**Scenario 4: Touch Drag Scrolling**
-```
-User: Drags finger/mouse in chat area
-Expected: Chat scrolls based on drag distance
-Result: ✓ Works correctly (handled by chat component)
-```
 
 ---
 
 ## Dynamic Prompt Height
 
-### Problem
+### Behavior
 
-The prompt input area had a fixed height, which wasted vertical space for single-line inputs and didn't provide enough room for multiline inputs. Users composing longer messages or code snippets couldn't see their full input without scrolling within the prompt.
+The prompt dynamically adjusts its height based on content:
 
-### Solution: Dynamic Height Based on Content
-
-The prompt now dynamically adjusts its height based on content:
-
-- **Minimum (2 lines)**: Empty prompt or single-line content
-- **Expanded (PromptExpandedHeight, default 10)**: When content spans multiple lines (including wrapped text)
+- **Minimum (2 lines)**: Empty prompt, single-line content, or scroll mode
+- **Expanded (`ExpandedHeight`, default 10)**: When content spans multiple lines (including wrapped text)
 - **Maximum (50% of screen)**: Hard cap to ensure content area remains usable
+- **Answering mode**: Sized to fit title + question + options + "Edit"/"Chat" buttons
 
 ### Height Calculation Logic
 
 ```go
 func (p *PromptComponent) CalculateDesiredHeight() int {
-    value := p.TextArea.Value()
+    // Scroll mode always minimizes to 2 lines
+    if p.ViCurrentMode == ViModeScroll {
+        return 2
+    }
 
-    // Return to minimum height when:
-    // 1. Prompt is cleared (empty)
-    // 2. In scroll mode (maximize content visibility)
-    if value == "" || p.ViCurrentMode == ViModeScroll {
+    // In answering mode, size for: title + question + options + Other... + padding
+    if p.answering != nil && p.answering.Current < len(p.answering.Questions) {
+        q := p.answering.Questions[p.answering.Current]
+        h := 3 + len(q.Options) + 1 + 1
+        if p.MaxHeight > 0 && h > p.MaxHeight {
+            return p.MaxHeight
+        }
+        return h
+    }
+
+    value := p.TextArea.Value()
+    if value == "" {
         return 2
     }
 
     // Calculate visual lines (accounting for word wrap)
-    textWidth := p.Width - 4 // Account for borders and cursor
+    textWidth := p.Width - 4
+    if textWidth <= 0 {
+        textWidth = 1
+    }
     visualLines := 0
     for _, line := range strings.Split(value, "\n") {
         if len(line) == 0 {
@@ -634,13 +562,14 @@ func (p *PromptComponent) CalculateDesiredHeight() int {
         }
     }
 
-    // Single visual line: minimum height
     if visualLines <= 1 {
         return 2
     }
 
-    // Multiline: expand to configured height (capped at MaxHeight)
     expandedHeight := p.ExpandedHeight
+    if expandedHeight <= 0 {
+        expandedHeight = 10
+    }
     if p.MaxHeight > 0 && expandedHeight > p.MaxHeight {
         return p.MaxHeight
     }
@@ -650,9 +579,8 @@ func (p *PromptComponent) CalculateDesiredHeight() int {
 
 ### Configuration
 
-The expanded height can be customized via configuration:
-
 ```go
+// internal/config/types.go
 type UIConfig struct {
     MarkdownEnabled      bool          `koanf:"markdown_enabled"`
     CtrlCDebounceTime    time.Duration `koanf:"ctrl_c_debounce_time"`
@@ -661,8 +589,8 @@ type UIConfig struct {
 }
 ```
 
-**Usage in config file:**
 ```yaml
+# asimi.conf
 ui:
   prompt_expanded_height: 15  # Grow to 15 lines instead of default 10
 ```
@@ -673,29 +601,22 @@ The `View()` method recalculates prompt height before each render:
 
 ```go
 func (m TUIModel) View() string {
-    // Update prompt dimensions based on content
-    m.prompt.SetScreenHeight(m.height)
-    promptHeight := m.prompt.CalculateDesiredHeight()
-    m.prompt.SetHeight(promptHeight)
+    // ...
+    m.prompt().SetScreenHeight(m.height)
+    m.prompt().SetWidth(m.width - 2)
+    promptHeight := m.prompt().CalculateDesiredHeight()
+    m.prompt().SetHeight(promptHeight)
+    promptWithBorder := promptHeight + 2
 
-    // Recalculate content height based on new prompt height
     commandLineHeight := 1
     statusHeight := 1
-    promptWithBorder := promptHeight + 2
-    contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder + 1
-    m.content.SetSize(m.width-2, contentHeight)
-    
-    // ... rest of rendering
-}
-```
-
-### Scroll Mode Optimization
-
-When entering scroll mode (`Ctrl-B`), the prompt automatically shrinks to 2 lines to maximize the content viewing area. This is particularly useful when reviewing long chat histories:
-
-```go
-if p.ViCurrentMode == ViModeScroll {
-    return 2  // Minimize prompt in scroll mode
+    tabBarHeight := m.tabs.TabBarHeight()
+    contentHeight := m.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight
+    if contentHeight < 0 {
+        contentHeight = 0
+    }
+    m.tabs.SetSize(m.width-2, contentHeight)
+    // ...
 }
 ```
 
@@ -705,43 +626,11 @@ if p.ViCurrentMode == ViModeScroll {
 |--------------|--------------|------------------|
 | Empty | 0 | 2 lines |
 | Single line "hello" | 1 | 2 lines |
-| "line1\nline2" | 2 | PromptExpandedHeight |
-| Long wrapped text | 2+ | PromptExpandedHeight |
+| "line1\nline2" | 2 | ExpandedHeight (10) |
+| Long wrapped text | 2+ | ExpandedHeight (10) |
 | Any content in scroll mode | N/A | 2 lines |
 | Multiline (small screen) | 2+ | MaxHeight (50% of screen) |
-
-### Benefits
-
-✅ **Space Efficiency** - Minimal height for simple inputs  
-✅ **Multiline Editing** - Comfortable editing for longer inputs  
-✅ **Word Wrap Awareness** - Accounts for wrapped lines, not just explicit newlines  
-✅ **Scroll Mode Integration** - Maximizes content area when browsing  
-✅ **Configurable** - Users can customize expanded height  
-✅ **Screen-Aware** - Respects maximum height constraints  
-✅ **Dynamic Content Area** - Content area automatically adjusts  
-
-### Testing
-
-```go
-func TestPromptHeightGrowsTo10LinesForMultilineInput(t *testing.T) {
-    prompt := NewPromptComponent(80, 5)
-    prompt.SetScreenHeight(40)
-
-    tests := []struct {
-        name           string
-        value          string
-        mode           string
-        expectedHeight int
-    }{
-        {"empty prompt returns 2 lines", "", ViModeInsert, 2},
-        {"single line returns 2 lines", "Hello", ViModeInsert, 2},
-        {"two lines grows to 10", "Line 1\nLine 2", ViModeInsert, 10},
-        {"scroll mode returns 2 lines", "Line 1\nLine 2", ViModeScroll, 2},
-        {"wrapped text grows to 10", "Very long line...", ViModeInsert, 10},
-    }
-    // ...
-}
-```
+| Answering mode | N/A | 3 + options + 2 |
 
 ---
 
@@ -801,156 +690,85 @@ case "esc":
 Methods return commands that can be chained:
 
 ```go
-// Before
-m.content.ShowHelp(msg.topic)
-return m, nil
-
-// After
-return m, m.content.ShowHelp(msg.topic)  // Returns ChangeModeMsg
+return m, m.tabs.Content().ShowHelp(msg.topic)  // Returns ChangeModeMsg
 ```
 
 ---
 
-### Pattern 5: Streaming AI Responses
+## Streaming AI Responses
 
-The TUI handles streaming responses from the AI through specialized message types. This includes both regular content and "extended thinking" (reasoning) content.
+The TUI handles streaming responses from the AI through the Shogunate's message types. Streaming chunks are routed to the correct tab based on `ChannelID`.
 
-**Message Types:**
+### Message Types
 
-- `streamChunkMsg` - Regular AI response content chunks
-- `streamReasoningChunkMsg` - Thinking/reasoning content (from models with extended thinking)
-- `streamCompleteMsg` - Marks the end of a streaming response
+- `shogunate.StreamStartMsg` — Streaming has started; sets the tab as streaming, captures edict ID
+- `shogunate.StreamChunkMsg` — Content chunk with optional `Text` and `Reasoning` fields
+- `shogunate.StreamCompleteMsg` — Marks the end of a streaming response
 
-**Message Flow:**
+### Message Flow
 
 ```
 AI starts response
        ↓
-   streamReasoningChunkMsg (if thinking enabled)
+   shogunate.StreamStartMsg
+       → SetStreamingTabByTab(channelID)
+       → Clear error state
        ↓
-   <thinking> tags wrap reasoning content
+   shogunate.StreamChunkMsg (repeated)
+       → Route to correct tab via ChatByTab(channelID)
+       → If msg.Reasoning != "": chat.AddThinkingChunk(reasoning)
+       → If msg.Text != "": chat.AddAIChunk(text)
+       → Update stream rate on status component
+       → Mark chat as contentDirty
+       → Schedule 50ms debounce tick if not already pending
        ↓
-   streamChunkMsg (regular response content)
+   chatRenderTickMsg (debounce)
+       → FlushDirtyChats() — calls UpdateContent on every dirty tab
        ↓
-   "Asimi: " prefix added to message
-       ↓
-   streamCompleteMsg
-       ↓
-   FinalizeLastAIMessage() - adds SUCCESS/FAILURE prefix
+   shogunate.StreamCompleteMsg
+       → ClearStreamingByTab(channelID)
+       → FinalizeLastAIMessage() — marks as SUCCESS or FAILURE
+       → Run streamCompleteCallback if set
+       → Save session, refresh diff
 ```
 
-**Optimizations:**
+### Debounced Rendering
 
-1. **Empty Reasoning Skip**: Empty reasoning chunks (whitespace only) are skipped to avoid unnecessary message creation and rendering.
+Chat content is not re-rendered on every chunk. Instead:
+1. Each chunk sets `chat.contentDirty = true`
+2. A 50ms debounce tick is scheduled (only one at a time, guarded by `renderTickPending`)
+3. When the tick fires, `FlushDirtyChats()` calls `UpdateContent()` on every dirty chat across all tabs
 
-2. **Empty Content Skip**: When rendering messages with `<thinking>` tags, if both the thinking content and regular content are empty, the message is skipped entirely.
+This prevents UI stalls when the AI streams content rapidly and ensures non-active tabs get flushed too.
 
-**Rendering:**
+### Rendering
 
-The `ChatComponent.UpdateContent()` method handles rendering of thinking blocks:
+The `ChatComponent.UpdateContent()` method handles rendering based on message type:
 
-- Content wrapped in `<thinking>...</thinking>` tags is extracted and rendered with a special "thinking" style
-- Regular content following thinking tags is rendered normally with markdown
-- Messages with the `Asimi:` prefix receive appropriate styling (success/failure/normal)
+| MessageType | Rendering |
+|-------------|-----------|
+| `MessageTypeThinking` | 💭 prefix, dimmed thinking color, word-wrapped |
+| `MessageTypeAI` | 🎏 prefix, markdown rendered (streaming, not finalized) |
+| `MessageTypeAISuccess` | 🐉 prefix, markdown rendered |
+| `MessageTypeAIFailure` | 🦐 prefix, markdown rendered |
+| `MessageTypeUser` | 👑 prefix, prompt border color |
+| `MessageTypeShell` | `$` prefix, prompt border color |
+| `MessageTypeGreeting` | Greeting prefix, word-wrapped |
+| `MessageTypeSystem` | System/tool call output |
 
----
-
-## Future Improvements
-
-### Mode Management
-- Add mode transition validation (e.g., can't go from help → command directly)
-- Track mode history for undo/debugging
-- Add mode change hooks for logging/analytics
-- Make mode changes async if needed
-- Add mode-specific state (e.g., help topic, selected model)
-
-### Command Line Component
-- Extract completion handling to a separate component
-- Make history navigation a reusable component
-- Add more unit tests for `CommandLineComponent.HandleKey()`
-
-### Prompt Component
-- Animate height transitions for smoother UX
-- Add user preference for "always expanded" mode
-- Consider different expanded heights for different content types
-
-### General Architecture
-- Consider extracting more components (e.g., StatusComponent could handle its own updates)
-- Add component lifecycle hooks (Init, Cleanup)
-- Implement component-level error handling
-- Add telemetry/metrics for component interactions
+`FinalizeLastAIMessage()` converts the last `MessageTypeAI` message to either `MessageTypeAISuccess` or `MessageTypeAIFailure` based on whether the response contains a failure token.
 
 ---
 
 ## Files Reference
 
 ### Core Files
-- `tui.go` - Main TUI model and coordination logic
-- `commandline.go` - Command line component
-- `content.go` - Content view component (chat/help/models/resume)
-- `prompt.go` - User input prompt component (with dynamic height)
-- `status.go` - Status bar component
-- `config.go` - Configuration including `UIConfig.PromptExpandedHeight`
-
-### Key Changes Made
-
-**prompt.go**:
-- Added `ExpandedHeight` field (configurable, default 10)
-- Added `SetExpandedHeight()` method
-- Updated `CalculateDesiredHeight()` for dynamic sizing:
-  - Returns 2 for empty/single-line/scroll-mode
-  - Returns `ExpandedHeight` for multiline (capped at `MaxHeight`)
-  - Accounts for word-wrapped lines
-
-**config.go**:
-- Added `PromptExpandedHeight int` to `UIConfig`
-- Default value: 10 (configurable via `PromptExpandedHeight`)
-
-**tui.go**:
-- Added `Mode` field to `TUIModel`
-- Added centralized `ChangeModeMsg` handler
-- Updated `View()` to recalculate prompt height dynamically
-- Updated `renderMainContent()` for dynamic content height
-- Applies config `PromptExpandedHeight` on initialization
-
-**commandline.go**:
-- Added message types (`ChangeModeMsg`, `commandReadyMsg`, etc.)
-- Added `HandleKey()` method
-- Updated `EnterCommandMode()` and `ExitCommandMode()` to return messages
-
-**content.go**:
-- Updated `ShowChat()`, `ShowHelp()`, `ShowModels()`, `ShowResume()` to return `ChangeModeMsg`
-- Updated exit handlers to return commands
-- Updated selection handlers to batch commands
-
----
-
-## Testing
-
-All refactorings maintain backward compatibility:
-
-✅ All existing tests pass  
-✅ No behavior changes for users  
-✅ Mode display works correctly for all states  
-✅ Completion dialog works in command line mode  
-✅ History navigation works correctly  
-✅ Vim-style partial command matching integrated  
-✅ Prompt height grows to PromptExpandedHeight for multiline input  
-✅ Prompt shrinks when cleared or in scroll mode  
-✅ Dynamic content height adjusts with prompt size  
-
----
-
-## Summary
-
-These refactorings established a clean, maintainable architecture:
-
-1. **Mode Management**: Single source of truth with centralized message handling
-2. **SELECT Mode Unification**: Merged MODELS and RESUME modes into a single, extensible SELECT mode
-3. **Component Boundaries**: Each component handles its own input and state
-4. **Message Passing**: Clean communication via bubbletea messages
-5. **No Polling**: View() just renders, no logic
-6. **Dynamic Prompt Height**: Prompt grows for multiline input, shrinks in scroll mode
-7. **Testability**: Components can be tested in isolation
-
-The result is a more maintainable, extensible, and testable codebase that follows bubbletea best practices.
+- `tui.go` — Main TUI model, coordination logic, `View()`, `handleKeyMsg()`, `handleCustomMessages()`
+- `content.go` — `TabManager`, `Tab`, `ContentComponent`, and all view rendering
+- `commandline.go` — `CommandLineComponent` with command/yesno/input/search sub-modes
+- `prompt.go` — `PromptComponent` with vi modes and dynamic height
+- `status.go` — `StatusComponent` with mode display, branch info, stream rate
+- `chat.go` — `ChatComponent` with message types, streaming, markdown rendering
+- `select_window.go` — `ListNavigator` interface, generic `SelectWindow[T]` component
+- `completion.go` — `CompletionDialog` for file/command completions
+- `internal/config/types.go` — `UIConfig` including `PromptExpandedHeight`

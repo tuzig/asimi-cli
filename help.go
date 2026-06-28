@@ -314,10 +314,6 @@ COMMAND-LINE mode, then type the command and press Enter.
 
 ## History
 
-  :clear-history    - Clear all prompt history
-
-## Export
-
   :export [type]    - Export conversation to file and open in $EDITOR
                       Types: conversation (default), full
 
@@ -645,7 +641,6 @@ Asimi counts tokens for:
 2. Start fresh sessions for new tasks
 3. Reference files only when needed
 4. Export important conversations before starting new sessions
-5. Use :clear-history to reset prompt history (doesn't affect context)
 `
 
 const helpModels = `# Model Selection and LLM Configuration
@@ -704,8 +699,7 @@ Custom host:
 
 ### OAuth Tokens (Advanced)
   ANTHROPIC_OAUTH_TOKEN - Override stored OAuth token
-  ANTHROPIC_CLIENT_ID   - Custom OAuth client ID
-  ANTHROPIC_CLIENT_SECRET - Custom OAuth client secret
+  # Note: ANTHROPIC_CLIENT_ID, ANTHROPIC_CLIENT_SECRET, etc. are not yet implemented
 
 ## Configuration File
 
@@ -734,8 +728,9 @@ To switch between providers:
   2. Select a model from a different provider
   3. Asimi will automatically switch providers
 
-Or configure directly:
-  ASIMI_LLM_PROVIDER=openai asimi
+Or configure directly in ~/.config/asimi/asimi.conf:
+  [llm]
+  provider = "openai"
 
 ## Custom Endpoints
 
@@ -808,9 +803,9 @@ Asimi looks for configuration in this order:
 [llm]
 provider = "anthropic"           # AI provider
 model = "claude-sonnet-4-20250514"  # Model name
-vi_mode = true                   # Enable vi mode (default: true)
-max_output_tokens = 4096         # Max tokens in responses
 max_turns = 50                   # Max conversation turns
+max_thinking_tokens = 10000      # Max thinking tokens for extended reasoning
+max_tool_output = 50000          # Max tool output size in bytes
 
 [session]
 enabled = true                   # Enable session persistence
@@ -825,17 +820,14 @@ Supported providers:
   - anthropic      (Claude models)
   - openai         (GPT models)
   - googleai       (Gemini models)
-  - qwen           (Qwen models)
   - ollama         (Local models)
+  - azure          (Azure OpenAI)
+  - gemini         (Google Gemini)
+  - openrouter     (OpenRouter)
+  - bedrock        (AWS Bedrock)
+  - custom         (Custom OpenAI-compatible endpoint)
 
 ## Environment Variables
-
-### General Configuration
-All config options can be set via ASIMI_* environment variables.
-Examples:
-  ASIMI_LLM_PROVIDER=anthropic
-  ASIMI_LLM_MODEL=claude-sonnet-4-20250514
-  ASIMI_UI_MARKDOWN_ENABLED=true
 
 ### System
   EDITOR                    - Text editor for :export
@@ -860,28 +852,13 @@ Examples:
   OPENAI_AUTH_URL           - OpenAI OAuth authorization URL
   OPENAI_TOKEN_URL          - OpenAI OAuth token URL
   OPENAI_OAUTH_SCOPES       - OpenAI OAuth scopes (optional)
-  
-  ANTHROPIC_CLIENT_ID       - Anthropic OAuth client ID
-  ANTHROPIC_CLIENT_SECRET   - Anthropic OAuth client secret
-  ANTHROPIC_AUTH_URL        - Anthropic OAuth authorization URL
-  ANTHROPIC_TOKEN_URL       - Anthropic OAuth token URL
-  ANTHROPIC_OAUTH_SCOPES    - Anthropic OAuth scopes (optional)
+
+  # Note: Anthropic OAuth env vars (ANTHROPIC_CLIENT_ID, etc.) are not yet implemented
 
 ### Development
   ASIMI_KEYRING_SERVICE     - Override keyring service name
   ASIMI_SKIP_GIT_STATUS     - Skip git status checks
   ASIMI_VERSION             - Override version string
-
-## Vi Mode
-
-Vi mode is enabled by default. To disable:
-
-In config file:
-  [llm]
-  vi_mode = false
-
-Or with environment variable:
-  ASIMI_LLM_VI_MODE=false asimi
 
 ## Logging
 
@@ -895,9 +872,9 @@ Logs are automatically rotated.
 [llm]
 provider = "anthropic"
 model = "claude-sonnet-4-20250514"
-vi_mode = true
-max_output_tokens = 8192
 max_turns = 100
+max_thinking_tokens = 10000
+max_tool_output = 50000
 
 [session]
 enabled = true

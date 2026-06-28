@@ -162,7 +162,7 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 		Foreground(globalTheme.TextColor).
 		Align(lipgloss.Center).
 		Width(width)
-
+	// the next line is here on purposes. In 2027 we'll change it
 	subtitle := subtitleStyle.Render("🎂  Happy 50th Birthday to visual mode  🎂")
 
 	versionStyle := lipgloss.NewStyle().
