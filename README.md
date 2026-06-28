@@ -77,7 +77,7 @@ Asimi uses it instead of docker because it's more secure - on linux it doesn't r
 
 The sandbox is based on `.agents/sandbox/Dockerfile` which is created by the `init` command. 
 To build the image run `just build-sandbox` for an image named as in:
-`asimi-sandbox-afittestide-asimi-cli`. 
+`localhost/asimi/sandbox/afittestide/asimi-cli:latest`.
 Asimi will launch a container based on this image the first time the model calls the shell tool.
 The container will stay up as long as the program is running. 
 Once the program exits, the container is shutdown and removed.
@@ -100,7 +100,7 @@ run_on_host = ['^gh\s', '^podman\s']
 safe_run_on_host = ['^gh\s+(issue|pr)\s+(view|list)', '^git\s+status']
 
 [container]
-# Custom container image name (default: asimi-sandbox-<project-name>:latest)
+# Custom container image name (default: localhost/asimi/sandbox/<project-name>:latest)
 image_name = "localhost/my-custom-sandbox:latest"
 
 # Additional mount points for the container

@@ -81,7 +81,7 @@ type Mount struct {
 
 // SandboxConfig holds configuration for the sandboxed execution environment
 type SandboxConfig struct {
-	// ImageName is the container image name (default: asimi-sandbox-<project>:latest)
+	// ImageName is the container image name (default: localhost/asimi/sandbox/<project>:latest)
 	ImageName string `koanf:"image_name"`
 	// TimeoutMinutes is the timeout for shell commands in minutes (default: 10)
 	TimeoutMinutes int `koanf:"timeout_minutes"`

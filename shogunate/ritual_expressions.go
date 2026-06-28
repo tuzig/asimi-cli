@@ -535,7 +535,7 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 	justfile := strings.Replace(dotagentsJustfile, `PROJECT_NAME := "CHANGE_ME"`,
 		fmt.Sprintf(`PROJECT_NAME := "%s"`, slug), 1)
 	asimiConf := strings.Replace(config.DefaultConfContent(), `image_name = ""`,
-		fmt.Sprintf(`image_name = "localhost/asimi-sandbox-%s:latest"`, slug), 1)
+		fmt.Sprintf(`image_name = "localhost/asimi/sandbox/%s:latest"`, slug), 1)
 	asimiConf = strings.Replace(asimiConf, `project = ""`,
 		fmt.Sprintf(`project = "%s"`, slug), 1)
 

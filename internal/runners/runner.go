@@ -137,7 +137,7 @@ func InitShellRunner(config *Config, repoInfo repo.RepoInfo) Runner {
 	// Resolve image name using same default as NewPodmanRunner
 	imageName := config.ImageName
 	if imageName == "" {
-		imageName = fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
+		imageName = fmt.Sprintf("localhost/asimi/sandbox/%s:latest", repoInfo.Slug)
 	}
 
 	// Auto-detect and assign shell runner

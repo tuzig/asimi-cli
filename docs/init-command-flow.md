@@ -51,7 +51,7 @@ If all files exist and not in clear mode, initialization is skipped with a messa
 From `GetRepoInfo().Slug`:
 - Full slug example: `github.com/owner/repo`
 - Extracted project name: `repo` (last segment after `/`)
-- Used for container naming: `asimi-sandbox-repo:latest`
+- Used for container naming: `localhost/asimi/sandbox/repo:latest`
 
 ### 5. Template Preparation
 
@@ -108,7 +108,7 @@ The AI agent (via the template prompt) is instructed to:
 
    **.agents/asimi.conf:**
    - `[run_shell_command]` section at top
-   - `image_name = "localhost/asimi-sandbox-{{.ProjectName}}:latest"`
+   - `image_name = "localhost/asimi/sandbox/{{.ProjectName}}:latest"`
    - Ensures project-specific container is used
 
    **.agents/sandbox/Dockerfile:**
@@ -247,7 +247,7 @@ After init completes, the project has:
 **Local Configuration** (`.agents/asimi.conf`):
 ```toml
 [run_shell_command]
-image_name = "localhost/asimi-sandbox-{project-name}:latest"
+image_name = "localhost/asimi/sandbox/{project-name}:latest"
 ```
 
 **Build Recipe** (Justfile):
@@ -257,7 +257,7 @@ PROJECT_NAME := "{project-slug}"
 build-sandbox:
     podman machine init --disk-size 30 || true
     podman machine start || true
-    podman build -t localhost/asimi-sandbox-{{PROJECT_NAME}}:latest -f .agents/sandbox/Dockerfile .
+    podman build -t localhost/asimi/sandbox/{{PROJECT_NAME}}:latest -f .agents/sandbox/Dockerfile .
 ```
 
 This ensures:

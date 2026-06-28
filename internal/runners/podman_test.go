@@ -28,7 +28,7 @@ func TestNewPodmanRunner(t *testing.T) {
 
 	runner := NewPodmanRunner(config, repoInfo, 1, hostRunner)
 	require.NotNil(t, runner)
-	assert.Equal(t, "localhost/asimi-sandbox-test/project:latest", runner.imageName)
+	assert.Equal(t, "localhost/asimi/sandbox/test/project:latest", runner.imageName)
 	assert.Equal(t, "asimi-shell-test-project-1", runner.containerName)
 	assert.True(t, runner.allowFallback)
 	assert.Equal(t, "podman", runner.RunnerType())

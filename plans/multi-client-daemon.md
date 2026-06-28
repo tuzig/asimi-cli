@@ -68,7 +68,7 @@ Change `NewPodmanRunner` signature to accept `connID`:
 func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, connID uint64, fallback Runner) *PodmanRunner {
     imageName := cfg.ImageName
     if imageName == "" {
-        imageName = fmt.Sprintf("localhost/asimi-sandbox-%s:latest", repoInfo.Slug)
+        imageName = fmt.Sprintf("localhost/asimi/sandbox/%s:latest", repoInfo.Slug)
     }
 
     containerName := fmt.Sprintf("asimi-shell-%s-%d", repoInfo.Slug, connID)

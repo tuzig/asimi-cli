@@ -465,7 +465,7 @@ func (rg *RitualGuard) getSandboxImageName() string {
 		}
 	}
 	// Fallback to default image name
-	return "localhost/asimi-sandbox:latest"
+	return "localhost/asimi/sandbox:latest"
 }
 
 // --- Ritual management ---

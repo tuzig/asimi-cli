@@ -8,7 +8,7 @@ import (
 )
 
 // IsPodmanAvailable checks if podman daemon is running AND the specified sandbox image exists.
-// Pass the full image name (e.g., "localhost/asimi-sandbox-myproject:latest").
+// Pass the full image name (e.g., "localhost/asimi/sandbox/myproject:latest").
 func IsPodmanAvailable(imageName string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

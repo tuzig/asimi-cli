@@ -30,11 +30,11 @@ Your goal is to analyze the project structure and ensure these files exist and a
 build-sandbox:
     podman machine init --disk-size 30 >/dev/null 2>&1 || true
     podman machine start >/dev/null 2>&1 || true
-    podman build -t localhost/asimi-sandbox-{{`{{PROJECT_NAME}}`}}:latest -f .agents/sandbox/Dockerfile .
+    podman build -t localhost/asimi/sandbox/{{`{{PROJECT_NAME}}`}}:latest -f .agents/sandbox/Dockerfile .
 
 # Clean up the sandbox container
 clean-sandbox:
-    podman rmi localhost/asimi-sandbox-{{`{{PROJECT_NAME}}`}}:latest
+    podman rmi localhost/asimi/sandbox/{{`{{PROJECT_NAME}}`}}:latest
 ```
 
 2. **{{.AgentsFile}}** - A concise guide containing:
@@ -50,7 +50,7 @@ clean-sandbox:
    - Start with the [run_shell_command] section. Add at the top of the section:
      ```toml
      # Container image name to use for sandboxed shell execution
-     image_name = "localhost/asimi-sandbox-{{.ProjectName}}:latest"
+     image_name = "localhost/asimi/sandbox/{{.ProjectName}}:latest"
      ```
    - This ensures the correct container image is used for this project
 

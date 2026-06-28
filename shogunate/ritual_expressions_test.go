@@ -896,7 +896,7 @@ func TestGetInfrastructureTemplates_SlugSubstitution(t *testing.T) {
 	// Check asimi.conf has slug-based image name
 	confContent, err := os.ReadFile(filepath.Join(projectRoot, ".agents", "asimi.conf"))
 	require.NoError(t, err)
-	assert.Contains(t, string(confContent), `image_name = "localhost/asimi-sandbox-myorg/myrepo:latest"`)
+	assert.Contains(t, string(confContent), `image_name = "localhost/asimi/sandbox/myorg/myrepo:latest"`)
 	assert.Contains(t, string(confContent), `project = "myorg/myrepo"`)
 }
 
