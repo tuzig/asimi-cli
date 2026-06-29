@@ -216,6 +216,9 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 		networkConfig.BaseURL = a.baseURL
 	} else if baseURL := getBaseURLFromEnv(string(provider)); baseURL != "" {
 		networkConfig.BaseURL = baseURL
+		slog.Debug("base URL from env", "provider", provider, "base_url", networkConfig.BaseURL)
+	} else {
+		slog.Debug("base URL using provider default", "provider", provider)
 	}
 
 	// Identify asimi to every provider. Bifrost's SetExtraHeaders only sets

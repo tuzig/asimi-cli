@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/afittestide/asimi/internal/keyring"
 )
 
 func TestHasAWSEnvCredentials(t *testing.T) {
@@ -245,6 +246,10 @@ func TestNewAccountWithKeys_EmptyValueInMap_ReturnsNoKeys(t *testing.T) {
 }
 
 func TestNewAccountWithKeys_NilMap_FallsThroughToKeyring(t *testing.T) {
+	// Use in-memory mock keyring so the test doesn't pick up real keys
+	// stored on the developer's machine (env-dependent failure).
+	keyring.MockKeyring()
+
 	// Nil map should behave like NewAccount — full keyring fallback path
 	account := NewAccountWithKeys(30, 60, 3, "", nil)
 

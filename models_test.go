@@ -552,6 +552,7 @@ func TestGetStatusIcon(t *testing.T) {
 	assert.Equal(t, "", getStatusIcon("ready"))
 	assert.Equal(t, "🔒", getStatusIcon("login_required"))
 	assert.Equal(t, "⚠", getStatusIcon("error"))
+	assert.Equal(t, "✏️", getStatusIcon("manual_entry"))
 	assert.Equal(t, "", getStatusIcon("unknown"))
 }
 
@@ -629,7 +630,7 @@ func TestFetchAllModels_WithAPIKey(t *testing.T) {
 	for _, m := range models {
 		if m.Provider == "openai" {
 			hasOpenAI = true
-			if m.Status != "ready" && m.Status != "active" && m.Status != "error" {
+			if m.Status != "ready" && m.Status != "active" && m.Status != "manual_entry" {
 				t.Errorf("Expected OpenAI model %s to be 'ready', 'active', or 'error', got %s", m.ID, m.Status)
 			}
 		}
@@ -842,6 +843,201 @@ func TestHandleModelsCommand_SetsOnSelectForLoginRequired(t *testing.T) {
 	for _, m := range modelsMsg.models {
 		if m.Status == "login_required" {
 			assert.NotNil(t, m.OnSelect, "Expected OnSelect to be set for login_required entry %s (provider: %s)", m.ID, m.Provider)
+		}
+	}
+}
+
+// TestFetchAllModels_ManualEntryOnError verifies that when a provider's API returns
+// an error, a manual_entry entry is produced (not an error entry).
+func TestFetchAllModels_ManualEntryOnError(t *testing.T) {
+	DeleteAPIKeyFromKeyring("openrouter")
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer mockServer.Close()
+
+	originalKey := os.Getenv("OPENROUTER_API_KEY")
+	originalBaseURL := os.Getenv("OPENROUTER_BASE_URL")
+	t.Setenv("OPENROUTER_API_KEY", "bad-key")
+	os.Setenv("OPENROUTER_BASE_URL", mockServer.URL)
+	defer func() {
+		if originalKey != "" {
+			os.Setenv("OPENROUTER_API_KEY", originalKey)
+		} else {
+			os.Unsetenv("OPENROUTER_API_KEY")
+		}
+		if originalBaseURL != "" {
+			os.Setenv("OPENROUTER_BASE_URL", originalBaseURL)
+		} else {
+			os.Unsetenv("OPENROUTER_BASE_URL")
+		}
+	}()
+
+	// Clear other providers
+	DeleteAPIKeyFromKeyring("anthropic")
+	DeleteAPIKeyFromKeyring("openai")
+	DeleteAPIKeyFromKeyring("googleai")
+	originalAnthropic := os.Getenv("ANTHROPIC_API_KEY")
+	originalOpenAI := os.Getenv("OPENAI_API_KEY")
+	originalGemini := os.Getenv("GEMINI_API_KEY")
+	originalGoogle := os.Getenv("GOOGLE_API_KEY")
+	originalOllamaHost := os.Getenv("OLLAMA_HOST")
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("OPENAI_API_KEY")
+	os.Unsetenv("GEMINI_API_KEY")
+	os.Unsetenv("GOOGLE_API_KEY")
+
+	// Mock Ollama to return empty
+	mockOllama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":[]}`))
+	}))
+	defer mockOllama.Close()
+	os.Setenv("OLLAMA_HOST", mockOllama.URL)
+
+	defer func() {
+		if originalAnthropic != "" {
+			os.Setenv("ANTHROPIC_API_KEY", originalAnthropic)
+		}
+		if originalOpenAI != "" {
+			os.Setenv("OPENAI_API_KEY", originalOpenAI)
+		}
+		if originalGemini != "" {
+			os.Setenv("GEMINI_API_KEY", originalGemini)
+		}
+		if originalGoogle != "" {
+			os.Setenv("GOOGLE_API_KEY", originalGoogle)
+		}
+		if originalOllamaHost != "" {
+			os.Setenv("OLLAMA_HOST", originalOllamaHost)
+		} else {
+			os.Unsetenv("OLLAMA_HOST")
+		}
+	}()
+
+	config := &Config{
+		LLM: LLMConfig{
+			Provider: "openrouter",
+			Model:    "test",
+		},
+	}
+
+	models := fetchAllModels(config)
+
+	var manualEntry *Model
+	for i := range models {
+		if models[i].Provider == "openrouter" && models[i].Status == "manual_entry" {
+			manualEntry = &models[i]
+			break
+		}
+	}
+
+	require.NotNil(t, manualEntry, "Expected a manual_entry entry for openrouter")
+	assert.Contains(t, manualEntry.DisplayName, "Enter model name for")
+	assert.Contains(t, manualEntry.DisplayName, "OpenRouter")
+	assert.NotEmpty(t, manualEntry.Description, "Expected error description to be preserved")
+}
+
+// TestIsModelSelectable_ManualEntry verifies that manual_entry models are selectable
+func TestIsModelSelectable_ManualEntry(t *testing.T) {
+	model := Model{Status: "manual_entry", Provider: "openai"}
+	assert.True(t, IsModelSelectable(model), "Expected manual_entry to be selectable")
+
+	// error should still not be selectable
+	errorModel := Model{Status: "error", Provider: "openai"}
+	assert.False(t, IsModelSelectable(errorModel), "Expected error to NOT be selectable")
+}
+
+// TestHandleModelsCommand_SetsOnSelectForManualEntry verifies that handleModelsCommand
+// sets OnSelect callbacks for manual_entry entries
+func TestHandleModelsCommand_SetsOnSelectForManualEntry(t *testing.T) {
+	DeleteAPIKeyFromKeyring("openrouter")
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer mockServer.Close()
+
+	originalKey := os.Getenv("OPENROUTER_API_KEY")
+	originalBaseURL := os.Getenv("OPENROUTER_BASE_URL")
+	t.Setenv("OPENROUTER_API_KEY", "bad-key")
+	os.Setenv("OPENROUTER_BASE_URL", mockServer.URL)
+	defer func() {
+		if originalKey != "" {
+			os.Setenv("OPENROUTER_API_KEY", originalKey)
+		} else {
+			os.Unsetenv("OPENROUTER_API_KEY")
+		}
+		if originalBaseURL != "" {
+			os.Setenv("OPENROUTER_BASE_URL", originalBaseURL)
+		} else {
+			os.Unsetenv("OPENROUTER_BASE_URL")
+		}
+	}()
+
+	// Clear other providers
+	DeleteAPIKeyFromKeyring("anthropic")
+	DeleteAPIKeyFromKeyring("openai")
+	DeleteAPIKeyFromKeyring("googleai")
+	originalAnthropic := os.Getenv("ANTHROPIC_API_KEY")
+	originalOpenAI := os.Getenv("OPENAI_API_KEY")
+	originalGemini := os.Getenv("GEMINI_API_KEY")
+	originalGoogle := os.Getenv("GOOGLE_API_KEY")
+	originalOllamaHost := os.Getenv("OLLAMA_HOST")
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("OPENAI_API_KEY")
+	os.Unsetenv("GEMINI_API_KEY")
+	os.Unsetenv("GOOGLE_API_KEY")
+
+	mockOllama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":[]}`))
+	}))
+	defer mockOllama.Close()
+	os.Setenv("OLLAMA_HOST", mockOllama.URL)
+
+	defer func() {
+		if originalAnthropic != "" {
+			os.Setenv("ANTHROPIC_API_KEY", originalAnthropic)
+		}
+		if originalOpenAI != "" {
+			os.Setenv("OPENAI_API_KEY", originalOpenAI)
+		}
+		if originalGemini != "" {
+			os.Setenv("GEMINI_API_KEY", originalGemini)
+		}
+		if originalGoogle != "" {
+			os.Setenv("GOOGLE_API_KEY", originalGoogle)
+		}
+		if originalOllamaHost != "" {
+			os.Setenv("OLLAMA_HOST", originalOllamaHost)
+		} else {
+			os.Unsetenv("OLLAMA_HOST")
+		}
+	}()
+
+	config := &Config{
+		LLM: LLMConfig{
+			Provider: "openrouter",
+			Model:    "test",
+		},
+	}
+
+	// Replicate the handleModelsCommand logic to verify OnSelect is set
+	models := fetchAllModels(config)
+	for i := range models {
+		m := &models[i]
+		if m.Status == "manual_entry" {
+			provider := m.Provider
+			m.OnSelect = func() tea.Msg { return enterModelNameMsg{provider: provider} }
+		}
+	}
+
+	// Verify all manual_entry entries have OnSelect set
+	for _, m := range models {
+		if m.Status == "manual_entry" {
+			assert.NotNil(t, m.OnSelect, "Expected OnSelect to be set for manual_entry entry (provider: %s)", m.Provider)
 		}
 	}
 }

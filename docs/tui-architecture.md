@@ -20,6 +20,8 @@ This document describes the architecture of the Terminal User Interface (TUI) fo
 
 ## Overview
 
+Asimi tries to follow vi, vim & neovim as closely as possible.
+
 ### Screen Layout
 
 ```

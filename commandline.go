@@ -31,6 +31,7 @@ type (
 	inputResponseMsg      struct{ text string }     // response from free text input mode
 	apiKeyPromptMsg       struct{ provider string } // request API key input for a provider
 	apiKeySavedMsg        struct{ provider string } // API key saved to keyring for a provider
+	enterModelNameMsg     struct{ provider string } // request manual model name entry for a provider
 
 	// Search messages
 	searchExecutedMsg struct {

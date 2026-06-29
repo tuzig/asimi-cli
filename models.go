@@ -21,7 +21,7 @@ type Model struct {
 	DisplayName string // Human-readable name
 	Provider    string // Provider key (e.g., "anthropic", "openai", "googleai")
 	Description string // Optional description
-	Status      string // "active" (currently selected), "ready" (key found), "login_required"
+	Status      string // "active" (currently selected), "ready" (key found), "login_required", "manual_entry"
 	OnSelect    tea.Cmd
 }
 
@@ -182,8 +182,9 @@ func fetchAllModels(config *Config) []Model {
 		} else if err != nil {
 			slog.Warn("failed to fetch Anthropic models", "error", err)
 			allModels = append(allModels, Model{
+				DisplayName: "Enter model name for " + providerDisplayName("anthropic"),
 				Provider:    "anthropic",
-				Status:      "error",
+				Status:      "manual_entry",
 				Description: err.Error(),
 			})
 		}
@@ -208,8 +209,9 @@ func fetchAllModels(config *Config) []Model {
 		} else if err != nil {
 			slog.Warn("failed to fetch OpenAI models", "error", err)
 			allModels = append(allModels, Model{
+				DisplayName: "Enter model name for " + providerDisplayName("openai"),
 				Provider:    "openai",
-				Status:      "error",
+				Status:      "manual_entry",
 				Description: err.Error(),
 			})
 		}
@@ -239,8 +241,9 @@ func fetchAllModels(config *Config) []Model {
 		} else if err != nil {
 			slog.Warn("failed to fetch Google AI models", "error", err)
 			allModels = append(allModels, Model{
+				DisplayName: "Enter model name for " + providerDisplayName("googleai"),
 				Provider:    "googleai",
-				Status:      "error",
+				Status:      "manual_entry",
 				Description: err.Error(),
 			})
 		}
@@ -265,8 +268,9 @@ func fetchAllModels(config *Config) []Model {
 		} else if err != nil {
 			slog.Warn("failed to fetch OpenRouter models", "error", err)
 			allModels = append(allModels, Model{
+				DisplayName: "Enter model name for " + providerDisplayName("openrouter"),
 				Provider:    "openrouter",
-				Status:      "error",
+				Status:      "manual_entry",
 				Description: err.Error(),
 			})
 		}
@@ -291,8 +295,9 @@ func fetchAllModels(config *Config) []Model {
 		} else if err != nil {
 			slog.Warn("failed to fetch Ollama models", "error", err)
 			allModels = append(allModels, Model{
+				DisplayName: "Enter model name for " + providerDisplayName("ollama"),
 				Provider:    "ollama",
-				Status:      "error",
+				Status:      "manual_entry",
 				Description: err.Error(),
 			})
 		}
@@ -323,7 +328,7 @@ func fetchAllModels(config *Config) []Model {
 
 	// Sort models: active first, then ready, then error, then login_required
 	sort.Slice(allModels, func(i, j int) bool {
-		statusPriority := map[string]int{"active": 0, "ready": 1, "error": 2, "login_required": 3}
+		statusPriority := map[string]int{"active": 0, "ready": 1, "manual_entry": 2, "error": 3, "login_required": 4}
 		if statusPriority[allModels[i].Status] != statusPriority[allModels[j].Status] {
 			return statusPriority[allModels[i].Status] < statusPriority[allModels[j].Status]
 		}
@@ -881,6 +886,8 @@ func getStatusIcon(status string) string {
 		return "🔒"
 	case "error":
 		return "⚠"
+	case "manual_entry":
+		return "✏️"
 	default:
 		return ""
 	}
@@ -956,7 +963,7 @@ func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 			style := lipgloss.NewStyle()
 			if isSelected {
 				style = style.Foreground(globalTheme.SuccessColor).Bold(true)
-			} else if model.Status == "login_required" {
+			} else if model.Status == "login_required" || model.Status == "manual_entry" {
 				style = style.Foreground(globalTheme.DimTextColor)
 			}
 
@@ -1074,6 +1081,11 @@ func handleModelsCommand(model *TUIModel, args []string) tea.Cmd {
 		// Set OnSelect for login_required entries
 		for i := range models {
 			m := &models[i]
+			if m.Status == "manual_entry" {
+				provider := m.Provider
+				m.OnSelect = func() tea.Msg { return enterModelNameMsg{provider: provider} }
+				continue
+			}
 			if m.Status != "login_required" {
 				continue
 			}

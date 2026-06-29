@@ -91,6 +91,8 @@ type TUIModel struct {
 	pendingOnboarding bool
 	// Pending API key input: set when user selects a login_required non-OpenAI provider
 	pendingAPIKeyProvider string
+	// Pending model name entry: set when user selects a manual_entry model
+	pendingModelNameProvider string
 	repoInfo              *repo.RepoInfo
 
 	// Debounced render tick: prevents stacking multiple 50ms tick commands
@@ -2542,9 +2544,26 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, handleAPIKeyInput(&m, provider, msg.text)
 		}
 
+		// Handle manual model name entry if pending
+		if m.pendingModelNameProvider != "" {
+			provider := m.pendingModelNameProvider
+			m.pendingModelNameProvider = ""
+			if msg.text == "" {
+				return m, nil
+			}
+			return m, func() tea.Msg {
+				return modelSelectedMsg{model: &Model{ID: msg.text, Provider: provider, Status: "active"}}
+			}
+		}
+
 	case apiKeyPromptMsg:
 		m.pendingAPIKeyProvider = msg.provider
 		prompt := fmt.Sprintf("Enter your %s API key:", providerDisplayName(msg.provider))
+		return m, m.commandLine.EnterInputMode(prompt)
+
+	case enterModelNameMsg:
+		m.pendingModelNameProvider = msg.provider
+		prompt := fmt.Sprintf("Enter model name for %s:", providerDisplayName(msg.provider))
 		return m, m.commandLine.EnterInputMode(prompt)
 
 	case runners.ApprovalRequestMsg:
@@ -3578,9 +3597,6 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 		return
 	}
 	answer := strings.Join(msg.Answers, "; ")
-	if answer == "[chat]" {
-		return
-	}
 	slog.Debug("handleAnsweringComplete: calling HandleZhengmingResponse",
 		"request_id", msg.RequestID,
 		"answer", answer,
