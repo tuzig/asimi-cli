@@ -7,4 +7,4 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install -y libgpgme-dev btrfs-progs libbtrfs-dev
+        sudo apt-get install -y libgpgme-dev btrfs-progs libbtrfs-dev just
