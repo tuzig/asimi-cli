@@ -1,4 +1,4 @@
-FROM CHANGE_ME
+FROM <a debian 13 "trixie" base> 
 
 # Install common development tools
 RUN apt-get update && apt-get install -y --no-install-recommends \

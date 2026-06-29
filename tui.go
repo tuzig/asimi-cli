@@ -3335,9 +3335,10 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	case m.rawMode:
 		return m.renderRawSessionView(m.width, contentHeight)
 	case m.tabs.IsWelcome():
-		return m.tabs.renderWelcome(m.width, contentHeight)
+		return m.tabs.renderWelcome(m.width, contentHeight-1)
 	default:
 		// Use content component which handles chat view
+		// TODO: why doesn't it accept height?
 		return m.tabs.Content().View()
 	}
 }
