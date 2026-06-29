@@ -3301,18 +3301,52 @@ func TestSetContextParams_UsesRepoInfoProjectRootWhenAvailable(t *testing.T) {
 	assert.Equal(t, "sub", params.WorktreePath)
 }
 
+func TestSetContextParams_FallsBackToRepoInfoSlugWhenConfigProjectEmpty(t *testing.T) {
+	// mockConfig() has no Shogunate.Project, so Project should come from repoInfo.Slug
+	r := &repo.RepoInfo{Slug: "owner/repo"}
+	m := NewTUIModel(mockConfig(), r, nil, nil, nil, nil, nil, nil)
+	params := m.setContextParams()
+	assert.Equal(t, "owner/repo", params.Project,
+		"Project should fall back to repoInfo.Slug when config.Shogunate.Project is empty")
+}
+
+func TestSetContextParams_ConfigProjectTakesPrecedenceOverRepoInfoSlug(t *testing.T) {
+	// When config sets a project, it wins over repoInfo.Slug
+	cfg := mockConfig()
+	cfg.Shogunate.Project = "configured/project"
+	r := &repo.RepoInfo{Slug: "owner/repo"}
+	m := NewTUIModel(cfg, r, nil, nil, nil, nil, nil, nil)
+	params := m.setContextParams()
+	assert.Equal(t, "configured/project", params.Project,
+		"config.Shogunate.Project should take precedence over repoInfo.Slug")
+}
+
+func TestSetContextParams_ProjectEmptyWhenNeitherConfigNorRepoInfoProvides(t *testing.T) {
+	// When both config.Project and repoInfo are nil/empty, Project stays empty
+	m := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	params := m.setContextParams()
+	assert.Empty(t, params.Project,
+		"Project should be empty when neither config nor repoInfo provides it")
+}
+
 // --- mockShogunateClient records PublishEvent calls for test assertions ---
 
 type mockShogunateClient struct {
 	shogunateapi.Client // embed to satisfy interface; nil receivers panic on unused methods
 	publishedEvents     []publishedEvent
 	edictKeyFn          func(uint) storage.EdictKey
+	zhengmingResponses  []zhengmingResponse
 }
 
 type publishedEvent struct {
 	key       storage.EdictKey
 	eventType storage.ShogunateEvent
 	payload   storage.JSON
+}
+
+type zhengmingResponse struct {
+	requestID string
+	answer    string
 }
 
 func (m *mockShogunateClient) EdictKey(edictID uint) storage.EdictKey {
@@ -3329,6 +3363,11 @@ func (m *mockShogunateClient) PublishEvent(key storage.EdictKey, eventType stora
 
 func (m *mockShogunateClient) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
 	return &storage.Edict{ID: 1, Intent: intent, IssueRef: issueRef}, nil
+}
+
+func (m *mockShogunateClient) HandleZhengmingResponse(_ context.Context, requestID, answer string) error {
+	m.zhengmingResponses = append(m.zhengmingResponses, zhengmingResponse{requestID: requestID, answer: answer})
+	return nil
 }
 
 // --- Tests for pendingRitualEnact YESNO flow ---
@@ -3807,6 +3846,70 @@ func TestInputResponseMsg_NoOpWhenNoAPIKeyPending(t *testing.T) {
 	assert.Nil(t, cmd, "expected no command when no input mode is pending")
 }
 
+// TestEnterModelNameMsg_EntersInputModeAndSetsProvider verifies that enterModelNameMsg
+// sets pendingModelNameProvider and enters input mode with the correct prompt.
+func TestEnterModelNameMsg_EntersInputModeAndSetsProvider(t *testing.T) {
+	model := newTestModel(t)
+
+	msg := enterModelNameMsg{provider: "openrouter"}
+	newModel, cmd := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	assert.Equal(t, "openrouter", updated.pendingModelNameProvider,
+		"pendingModelNameProvider should be set to the provider")
+	assert.True(t, updated.commandLine.IsInInputMode(),
+		"command line should be in input mode")
+	assert.Contains(t, updated.commandLine.inputPrompt, "OpenRouter",
+		"prompt should contain the provider display name")
+	assert.NotNil(t, cmd, "expected a command to be returned")
+}
+
+// TestInputResponseMsg_RoutesToModelNameEntry verifies that when pendingModelNameProvider
+// is set, inputResponseMsg emits modelSelectedMsg with the entered text as model ID.
+func TestInputResponseMsg_RoutesToModelNameEntry(t *testing.T) {
+	model := newTestModel(t)
+	model.pendingModelNameProvider = "openrouter"
+
+	msg := inputResponseMsg{text: "anthropic/claude-3.5-sonnet"}
+	newModel, cmd := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// pendingModelNameProvider should be cleared
+	assert.Equal(t, "", updated.pendingModelNameProvider,
+		"pendingModelNameProvider should be cleared after handling")
+
+	// The command should produce modelSelectedMsg
+	require.NotNil(t, cmd)
+	result := cmd()
+	selected, ok := result.(modelSelectedMsg)
+	require.True(t, ok, "expected modelSelectedMsg from input handler")
+	require.NotNil(t, selected.model, "model should not be nil")
+	assert.Equal(t, "anthropic/claude-3.5-sonnet", selected.model.ID,
+		"model ID should match entered text")
+	assert.Equal(t, "openrouter", selected.model.Provider,
+		"provider should match pending provider")
+	assert.Equal(t, "active", selected.model.Status,
+		"status should be active")
+}
+
+// TestInputResponseMsg_ModelNameEmptyIsNoOp verifies that when pendingModelNameProvider
+// is set but the user enters empty text (cancellation), no modelSelectedMsg is emitted.
+func TestInputResponseMsg_ModelNameEmptyIsNoOp(t *testing.T) {
+	model := newTestModel(t)
+	model.pendingModelNameProvider = "openrouter"
+
+	msg := inputResponseMsg{text: ""}
+	newModel, cmd := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	assert.Equal(t, "", updated.pendingModelNameProvider,
+		"pendingModelNameProvider should be cleared after handling")
+	assert.Nil(t, cmd, "expected no command when input is empty (cancelled)")
+}
+
 // TestAPIKeySavedMsg_ShowsToastAndRefreshesModels verifies that apiKeySavedMsg
 // shows a success toast and triggers model refresh.
 func TestAPIKeySavedMsg_ShowsToastAndRefreshesModels(t *testing.T) {
@@ -3951,4 +4054,20 @@ func TestSessionStartGuard_SubmitPromptShowsYesNo(t *testing.T) {
 	_, ok = msg.(ChangeModeMsg)
 	require.True(t, ok, "Expected ChangeModeMsg for yesno mode")
 	assert.Equal(t, "yesno", msg.(ChangeModeMsg).NewMode)
+}
+
+func TestHandleAnsweringComplete_ChatAnswerDeliveredToShogunate(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	model.handleAnsweringComplete(AnsweredMsg{
+		RequestID: "req-chat-1",
+		Answers:   []string{"[chat]"},
+	})
+
+	require.Len(t, mock.zhengmingResponses, 1, "HandleZhengmingResponse should be called for [chat] answer")
+	resp := mock.zhengmingResponses[0]
+	assert.Equal(t, "req-chat-1", resp.requestID)
+	assert.Equal(t, "[chat]", resp.answer)
 }

@@ -93,7 +93,7 @@ type TUIModel struct {
 	pendingAPIKeyProvider string
 	// Pending model name entry: set when user selects a manual_entry model
 	pendingModelNameProvider string
-	repoInfo              *repo.RepoInfo
+	repoInfo                 *repo.RepoInfo
 
 	// Debounced render tick: prevents stacking multiple 50ms tick commands
 	renderTickPending bool
@@ -450,6 +450,12 @@ func (m *TUIModel) setContextParams() types.SetContextParams {
 	if m.config != nil {
 		project = m.config.Shogunate.Project
 		username = m.config.Shogunate.Username
+	}
+	// Fall back to repoInfo.Slug (from git remote) when config doesn't set it.
+	// This mirrors ProvideShogunate (providers.go) and ensures the daemon
+	// receives the correct slug for sandbox image naming.
+	if project == "" && m.repoInfo != nil {
+		project = m.repoInfo.Slug
 	}
 	return types.SetContextParams{
 		Project:        project,
