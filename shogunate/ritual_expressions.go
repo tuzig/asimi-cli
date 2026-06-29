@@ -80,7 +80,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"record the sage's seal", "record_sage_seal", ""},
 		{"record the ling completed", "record_ling_completed", ""},
 		{"the verdicts are passed", "check_verdicts_passed", ""},
-		{"the precedents are approved", "check_precedents_approved", ""},
+		{"the precedent is approved", "check_precedent_approved", ""},
 		{"the unsealed edicts", "get_unsealed_edicts", "unsealed_edicts"},
 		{"the edict lings", "get_lings", "lings"},
 		{"a heaven's snapshot", "get_heaven_snapshot", "heaven_snapshot"},
@@ -984,12 +984,21 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			return fmt.Errorf("verdict check failed: %d manifest(s) rejected: %v", len(rejected), rejected)
 		}
 
-		// Also check JudgeVerdict outcomes - fail if any verdict is failed
+		// Check JudgeVerdict outcomes using latest-wins per manifest:
+		// For each manifest, only the most recent verdict (by created_at) matters.
+		// Fail only if the latest verdict for any manifest is failed.
 		var failedVerdicts []storage.JudgeVerdict
-		if err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = judge_verdicts.manifest_id").
-			Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ? AND judge_verdicts.outcome = ?",
-				thenKey.ID, thenKey.Username, thenKey.Project, storage.VerdictFailed).
-			Find(&failedVerdicts).Error; err != nil {
+		if err := r.db.Raw(`
+			SELECT jv.* FROM judge_verdicts jv
+			JOIN forge_manifests fm ON fm.manifest_id = jv.manifest_id
+			WHERE fm.edict_id = ? AND fm.username = ? AND fm.project = ?
+			  AND jv.created_at = (
+			    SELECT MAX(jv2.created_at) FROM judge_verdicts jv2
+			    WHERE jv2.manifest_id = jv.manifest_id
+			  )
+			  AND jv.outcome = ?`,
+			thenKey.ID, thenKey.Username, thenKey.Project, storage.VerdictFailed).
+			Scan(&failedVerdicts).Error; err != nil {
 			return fmt.Errorf("failed to query verdicts: %w", err)
 		}
 		if len(failedVerdicts) > 0 {
@@ -1001,13 +1010,22 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			return fmt.Errorf("verdict check failed: %d verdict(s) with failed outcome: %v", len(failedVerdicts), manifestIDs)
 		}
 		return nil
-	case "check_precedents_approved":
-		// Check all censor precedents for this edict - fail if any are rejected
+	case "check_precedent_approved":
+		// Check censor precedents using latest-wins per manifest:
+		// For each manifest, only the most recent precedent (by created_at) matters.
+		// Fail only if the latest precedent for any manifest is rejected.
 		var rejectedPrecedents []storage.CensorPrecedent
-		if err := r.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
-			Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ? AND censor_precedents.ruling = ?",
-				thenKey.ID, thenKey.Username, thenKey.Project, storage.PrecedentRejected).
-			Find(&rejectedPrecedents).Error; err != nil {
+		if err := r.db.Raw(`
+			SELECT cp.* FROM censor_precedents cp
+			JOIN forge_manifests fm ON fm.manifest_id = cp.manifest_id
+			WHERE fm.edict_id = ? AND fm.username = ? AND fm.project = ?
+			  AND cp.created_at = (
+			    SELECT MAX(cp2.created_at) FROM censor_precedents cp2
+			    WHERE cp2.manifest_id = cp.manifest_id
+			  )
+			  AND cp.ruling = ?`,
+			thenKey.ID, thenKey.Username, thenKey.Project, storage.PrecedentRejected).
+			Scan(&rejectedPrecedents).Error; err != nil {
 			return fmt.Errorf("failed to query precedents: %w", err)
 		}
 		if len(rejectedPrecedents) > 0 {

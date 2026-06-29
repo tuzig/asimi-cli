@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
@@ -561,8 +562,8 @@ func TestCheckVerdictsPassed_FailedVerdict(t *testing.T) {
 	}
 }
 
-// TestCheckPrecedentsApproved_AllApproved verifies the handler passes when all precedents are approved
-func TestCheckPrecedentsApproved_AllApproved(t *testing.T) {
+// TestCheckPrecedentApproved_AllApproved verifies the handler passes when all precedents are approved
+func TestCheckPrecedentApproved_AllApproved(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	// Ensure CensorPrecedent table exists
@@ -604,14 +605,14 @@ func TestCheckPrecedentsApproved_AllApproved(t *testing.T) {
 		Project:  "testproject",
 	}
 
-	err := runner.runThen(context.Background(), exec, "check_precedents_approved")
+	err := runner.runThen(context.Background(), exec, "check_precedent_approved")
 	if err != nil {
 		t.Errorf("Expected no error when all precedents approved, got: %v", err)
 	}
 }
 
-// TestCheckPrecedentsApproved_SomeRejected verifies the handler fails when any precedent is rejected
-func TestCheckPrecedentsApproved_SomeRejected(t *testing.T) {
+// TestCheckPrecedentApproved_SomeRejected verifies the handler fails when any precedent is rejected
+func TestCheckPrecedentApproved_SomeRejected(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	// Ensure CensorPrecedent table exists
@@ -675,7 +676,7 @@ func TestCheckPrecedentsApproved_SomeRejected(t *testing.T) {
 		Project:  "testproject",
 	}
 
-	err := runner.runThen(context.Background(), exec, "check_precedents_approved")
+	err := runner.runThen(context.Background(), exec, "check_precedent_approved")
 	if err == nil {
 		t.Error("Expected error when some precedents are rejected, got nil")
 	}
@@ -687,8 +688,8 @@ func TestCheckPrecedentsApproved_SomeRejected(t *testing.T) {
 	}
 }
 
-// TestCheckPrecedentsApproved_NoPrecedents verifies the handler passes when no precedents exist
-func TestCheckPrecedentsApproved_NoPrecedents(t *testing.T) {
+// TestCheckPrecedentApproved_NoPrecedents verifies the handler passes when no precedents exist
+func TestCheckPrecedentApproved_NoPrecedents(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	// Ensure CensorPrecedent table exists
@@ -705,9 +706,201 @@ func TestCheckPrecedentsApproved_NoPrecedents(t *testing.T) {
 		Project:  "testproject",
 	}
 
-	err := runner.runThen(context.Background(), exec, "check_precedents_approved")
+	err := runner.runThen(context.Background(), exec, "check_precedent_approved")
 	if err != nil {
 		t.Errorf("Expected no error when no precedents exist, got: %v", err)
+	}
+}
+
+// TestCheckPrecedentApproved_RejectedThenApproved verifies latest-wins: an approved
+// precedent after a rejected one should pass.
+func TestCheckPrecedentApproved_RejectedThenApproved(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.CensorPrecedent{}); err != nil {
+		t.Fatalf("Failed to migrate CensorPrecedent: %v", err)
+	}
+
+	manifest := storage.ForgeManifest{
+		ManifestID: GenerateID("manifest", "1", "test", "file.go"),
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		FilePath:   "file.go",
+		Status:     storage.ManifestLive,
+	}
+	if err := db.Create(&manifest).Error; err != nil {
+		t.Fatalf("Failed to create manifest: %v", err)
+	}
+
+	// Old rejected precedent
+	rejectedPrec := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "1", "test", "file.go"),
+		ManifestID:  manifest.ManifestID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "style",
+		Ruling:      storage.PrecedentRejected,
+	}
+	if err := db.Create(&rejectedPrec).Error; err != nil {
+		t.Fatalf("Failed to create rejected precedent: %v", err)
+	}
+
+	// Newer approved precedent — manually set created_at to be later
+	approvedPrec := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "2", "test", "file.go"),
+		ManifestID:  manifest.ManifestID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "style",
+		Ruling:      storage.PrecedentApproved,
+	}
+	if err := db.Create(&approvedPrec).Error; err != nil {
+		t.Fatalf("Failed to create approved precedent: %v", err)
+	}
+	// Ensure approvedPrec has a later created_at
+	approvedPrec.CreatedAt = rejectedPrec.CreatedAt.Add(time.Minute)
+	db.Model(&storage.CensorPrecedent{}).Where("precedent_id = ?", approvedPrec.PrecedentID).Update("created_at", approvedPrec.CreatedAt)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_precedent_approved")
+	if err != nil {
+		t.Errorf("Expected no error when latest precedent is approved, got: %v", err)
+	}
+}
+
+// TestCheckPrecedentApproved_RejectedIsLatest verifies that when the latest precedent
+// is rejected, the check fails even if there's an older approved one.
+func TestCheckPrecedentApproved_RejectedIsLatest(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.CensorPrecedent{}); err != nil {
+		t.Fatalf("Failed to migrate CensorPrecedent: %v", err)
+	}
+
+	manifest := storage.ForgeManifest{
+		ManifestID: GenerateID("manifest", "1", "test", "file.go"),
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		FilePath:   "file.go",
+		Status:     storage.ManifestLive,
+	}
+	if err := db.Create(&manifest).Error; err != nil {
+		t.Fatalf("Failed to create manifest: %v", err)
+	}
+
+	// Old approved precedent
+	approvedPrec := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "1", "test", "file.go"),
+		ManifestID:  manifest.ManifestID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "style",
+		Ruling:      storage.PrecedentApproved,
+	}
+	if err := db.Create(&approvedPrec).Error; err != nil {
+		t.Fatalf("Failed to create approved precedent: %v", err)
+	}
+
+	// Newer rejected precedent
+	rejectedPrec := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "2", "test", "file.go"),
+		ManifestID:  manifest.ManifestID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "style",
+		Ruling:      storage.PrecedentRejected,
+	}
+	if err := db.Create(&rejectedPrec).Error; err != nil {
+		t.Fatalf("Failed to create rejected precedent: %v", err)
+	}
+	rejectedPrec.CreatedAt = approvedPrec.CreatedAt.Add(time.Minute)
+	db.Model(&storage.CensorPrecedent{}).Where("precedent_id = ?", rejectedPrec.PrecedentID).Update("created_at", rejectedPrec.CreatedAt)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_precedent_approved")
+	if err == nil {
+		t.Error("Expected error when latest precedent is rejected, got nil")
+	}
+	if !strings.Contains(err.Error(), "precedent check failed") {
+		t.Errorf("Expected error to contain 'precedent check failed', got: %v", err)
+	}
+}
+
+// TestCheckVerdictsPassed_FailedThenPassed verifies latest-wins: a passed
+// verdict after a failed one should pass.
+func TestCheckVerdictsPassed_FailedThenPassed(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.JudgeVerdict{}); err != nil {
+		t.Fatalf("Failed to migrate JudgeVerdict: %v", err)
+	}
+
+	manifest := storage.ForgeManifest{
+		ManifestID: GenerateID("manifest", "1", "test", "file.go"),
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		FilePath:   "file.go",
+		Status:     storage.ManifestQuenched,
+	}
+	if err := db.Create(&manifest).Error; err != nil {
+		t.Fatalf("Failed to create manifest: %v", err)
+	}
+
+	// Old failed verdict
+	failedVerdict := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", "1", "test", "file.go"),
+		ManifestID: manifest.ManifestID,
+		TestSuite:  "unit",
+		Outcome:    storage.VerdictFailed,
+	}
+	if err := db.Create(&failedVerdict).Error; err != nil {
+		t.Fatalf("Failed to create failed verdict: %v", err)
+	}
+
+	// Newer passed verdict
+	passedVerdict := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", "2", "test", "file.go"),
+		ManifestID: manifest.ManifestID,
+		TestSuite:  "unit",
+		Outcome:    storage.VerdictPassed,
+	}
+	if err := db.Create(&passedVerdict).Error; err != nil {
+		t.Fatalf("Failed to create passed verdict: %v", err)
+	}
+	passedVerdict.CreatedAt = failedVerdict.CreatedAt.Add(time.Minute)
+	db.Model(&storage.JudgeVerdict{}).Where("verdict_id = ?", passedVerdict.VerdictID).Update("created_at", passedVerdict.CreatedAt)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_verdicts_passed")
+	if err != nil {
+		t.Errorf("Expected no error when latest verdict is passed, got: %v", err)
 	}
 }
 
@@ -1243,4 +1436,67 @@ func TestBuildSandbox_NilRunner(t *testing.T) {
 
 	resultMap := result.(map[string]string)
 	assert.Equal(t, "built", resultMap["status"])
+}
+
+// TestCheckVerdictsPassed_PassedThenFailed verifies latest-wins: a failed
+// verdict after a passed one should fail.
+func TestCheckVerdictsPassed_PassedThenFailed(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.JudgeVerdict{}); err != nil {
+		t.Fatalf("Failed to migrate JudgeVerdict: %v", err)
+	}
+
+	manifest := storage.ForgeManifest{
+		ManifestID: GenerateID("manifest", "1", "test", "file.go"),
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		FilePath:   "file.go",
+		Status:     storage.ManifestQuenched,
+	}
+	if err := db.Create(&manifest).Error; err != nil {
+		t.Fatalf("Failed to create manifest: %v", err)
+	}
+
+	// Old passed verdict
+	passedVerdict := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", "1", "test", "file.go"),
+		ManifestID: manifest.ManifestID,
+		TestSuite:  "unit",
+		Outcome:    storage.VerdictPassed,
+	}
+	if err := db.Create(&passedVerdict).Error; err != nil {
+		t.Fatalf("Failed to create passed verdict: %v", err)
+	}
+
+	// Newer failed verdict
+	failedVerdict := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", "2", "test", "file.go"),
+		ManifestID: manifest.ManifestID,
+		TestSuite:  "unit",
+		Outcome:    storage.VerdictFailed,
+	}
+	if err := db.Create(&failedVerdict).Error; err != nil {
+		t.Fatalf("Failed to create failed verdict: %v", err)
+	}
+	failedVerdict.CreatedAt = passedVerdict.CreatedAt.Add(time.Minute)
+	db.Model(&storage.JudgeVerdict{}).Where("verdict_id = ?", failedVerdict.VerdictID).Update("created_at", failedVerdict.CreatedAt)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_verdicts_passed")
+	if err == nil {
+		t.Error("Expected error when latest verdict is failed, got nil")
+	}
+	if !strings.Contains(err.Error(), "verdict check failed") {
+		t.Errorf("Expected error to contain 'verdict check failed', got: %v", err)
+	}
 }
