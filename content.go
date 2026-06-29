@@ -224,6 +224,7 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 	container := lipgloss.NewStyle().
 		Width(width).
 		Height(height).
+		MaxHeight(height). // Truncate when content overflows allocated height
 		Align(lipgloss.Center, lipgloss.Center).
 		Render(content)
 

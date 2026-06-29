@@ -3526,6 +3526,10 @@ func TestViewLayoutHeightInvariant(t *testing.T) {
 		{"multi tab, short", 24, true},
 		{"multi tab, medium", 40, true},
 		{"multi tab, tall", 50, true},
+		// Small heights where welcome content (~16 lines) overflows contentHeight
+		{"single tab, tiny", 10, false},
+		{"multi tab, tiny", 12, true},
+		{"multi tab, very short", 15, true},
 	}
 
 	for _, tt := range tests {
@@ -3548,7 +3552,16 @@ func TestViewLayoutHeightInvariant(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.height, lineCount,
-				"View() output should have exactly m.height lines (no off-by-one)")
+				"View() output should have exactly m.height lines (no overflow)")
+
+			// For multi-tab models, the tab bar text must be present — not scrolled off
+			if tt.extraTab {
+				tabBar := model.tabs.RenderTabBar(80)
+				require.NotEmpty(t, tabBar, "multi-tab should produce a tab bar")
+				// The first tab label should appear somewhere in the view
+				assert.Contains(t, view, "Chancellor",
+					"tab bar text should be present in View() output (not scrolled off)")
+			}
 		})
 	}
 }
