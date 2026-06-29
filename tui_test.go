@@ -2006,7 +2006,7 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	// Count messages before
 	msgCountBefore := len(startedModel.tabs.Content().Chat.Messages)
 
-	// Send "completed" without a Message (e.g., check-sandbox which uses cmd_running/cmd_done)
+	// Send "completed" without a Message (e.g., check-sandbox which uses ToolCallScheduledMsg)
 	completedMsg := shogunate.RitualStepMsg{
 		ChannelID:  "chancellor",
 		RitualName: "dawn-audience",

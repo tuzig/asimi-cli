@@ -90,8 +90,6 @@ const (
 	sealPrefix            = "🥂  "
 	systemPrefix          = "🛠️  "
 	checkPrefix           = "✓"
-	cmdRunningPrefix      = "⚡"
-	cmdDonePrefix         = "✓"
 	treeFinalPrefix       = " ╰ "
 	treeMidPrefix         = " │ "
 

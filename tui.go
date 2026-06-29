@@ -2144,10 +2144,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			chat.AppendToLastMessage(" ABORTED")
 		case "retrying":
 			chat.AppendToLastMessage(" retrying")
-		case "cmd_running":
-			chat.AddMessage(fmt.Sprintf("%s Running: %s", cmdRunningPrefix, msg.Message))
-		case "cmd_done":
-			chat.AddMessage(fmt.Sprintf("%s %s done", cmdDonePrefix, msg.Message))
 		case "ritual_completed":
 			text := fmt.Sprintf("%sRitual %s for edict %d completed in %s",
 				ritualPrefix, msg.RitualName, msg.EdictID, msg.Message)

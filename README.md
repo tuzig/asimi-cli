@@ -4,7 +4,8 @@
 
 > A safe, fast, imperial court to help you rule your project
 
-Asimi is based on 
+Asimi is an opinionated coding agent that focuses on the human in the loop.
+
 
 ![Asimi Demo](demo.gif)
 

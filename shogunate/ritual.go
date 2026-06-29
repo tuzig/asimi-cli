@@ -490,6 +490,14 @@ func (e *RitualExecution) Notify(msg RitualStepMsg) {
 	}
 }
 
+// notifyAny sends an arbitrary message via the notify function.
+// If no notify function is set, this is a no-op.
+func (e *RitualExecution) notifyAny(msg any) {
+	if e.notify != nil {
+		e.notify(msg)
+	}
+}
+
 // RitualStepState tracks the state of a step within an execution
 type RitualStepState struct {
 	ID          uint   `gorm:"primaryKey;autoIncrement"`
@@ -630,15 +638,26 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			})
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
-		exec.Notify(RitualStepMsg{
-			StepName: entry.Key,
-			Status:   "cmd_running",
-			Message:  raw,
+		callID := GenerateID("ritualcmd", exec.ID, entry.Key, raw)
+		exec.notifyAny(runners.ToolCallScheduledMsg{
+			ChannelID: "chancellor",
+			CallID:    callID,
+			ToolName:  entry.Key,
+			Input:     raw,
+			Formatted: raw,
 		})
 		result, err := r.runGivenStep(ctx, exec, entry)
 		if err != nil {
 			exec.State = RitualStateFailed
 			r.saveExecution(exec)
+			exec.notifyAny(runners.ToolCallErrorMsg{
+				ChannelID: "chancellor",
+				CallID:    callID,
+				ToolName:  entry.Key,
+				Input:     raw,
+				Error:     err.Error(),
+				Formatted: raw,
+			})
 			exec.Notify(RitualStepMsg{
 				StepName: entry.Key,
 				Status:   "ritual_failed",
@@ -652,10 +671,13 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			})
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
-		exec.Notify(RitualStepMsg{
-			StepName: entry.Key,
-			Status:   "cmd_done",
-			Message:  raw,
+		exec.notifyAny(runners.ToolCallSuccessMsg{
+			ChannelID: "chancellor",
+			CallID:    callID,
+			ToolName:  entry.Key,
+			Input:     raw,
+			Result:    "",
+			Formatted: raw,
 		})
 		storeGivenResult(exec, entry.Key, result)
 	}
@@ -907,10 +929,13 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		if err != nil {
 			return actResult, fmt.Errorf("then %q failed: %w", raw, err)
 		}
-		exec.Notify(RitualStepMsg{
-			StepName: entry.Key,
-			Status:   "cmd_running",
-			Message:  raw,
+		callID := GenerateID("ritualcmd", exec.ID, entry.Key, raw)
+		exec.notifyAny(runners.ToolCallScheduledMsg{
+			ChannelID: "chancellor",
+			CallID:    callID,
+			ToolName:  entry.Key,
+			Input:     raw,
+			Formatted: raw,
 		})
 		if err := r.runThenStep(ctx, exec, entry); errors.Is(err, ErrZhengmingPending) {
 			// Block until the ruler answers the zhengming
@@ -927,12 +952,23 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 				return actResult, fmt.Errorf("then %q zhengming rejected by ruler", raw)
 			}
 		} else if err != nil {
+			exec.notifyAny(runners.ToolCallErrorMsg{
+				ChannelID: "chancellor",
+				CallID:    callID,
+				ToolName:  entry.Key,
+				Input:     raw,
+				Error:     err.Error(),
+				Formatted: raw,
+			})
 			return actResult, err
 		}
-		exec.Notify(RitualStepMsg{
-			StepName: entry.Key,
-			Status:   "cmd_done",
-			Message:  raw,
+		exec.notifyAny(runners.ToolCallSuccessMsg{
+			ChannelID: "chancellor",
+			CallID:    callID,
+			ToolName:  entry.Key,
+			Input:     raw,
+			Result:    "",
+			Formatted: raw,
 		})
 	}
 
