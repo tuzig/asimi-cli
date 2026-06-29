@@ -2185,3 +2185,172 @@ func TestPromptForAbortedRituals_DismissedStateSkipped(t *testing.T) {
 		t.Errorf("expected state %s, got %s", RitualStateDismissed, exec.State)
 	}
 }
+
+// --- Bug fix tests for edict 567 ---
+
+// TestRecoverFromPreviousExec_Step0MarksCompleted verifies that when the
+// previous "recovering" execution has firstIncompleteStep == 0 (no steps
+// to preserve), the previous execution is still marked as completed,
+// preventing zombie state.
+func TestRecoverFromPreviousExec_Step0MarksCompleted(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.Edict{}); err != nil {
+		t.Fatalf("failed to migrate edict table: %v", err)
+	}
+
+	edict := storage.Edict{Intent: "Test step0 zombie", Username: "testuser", Project: "testproject"}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+	edictKey := edict.Key()
+
+	ritual := &RitualDef{
+		Name: "test-step0-zombie",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Act: "Do step 1"},
+			{Name: "step2", Minister: "judge", Act: "Do step 2"},
+		},
+	}
+
+	// Create a previous "recovering" execution where step 0 is incomplete
+	recoveringExecID := "ritual-recovering-step0"
+	err := db.Create(&RitualExecution{
+		ID:          recoveringExecID,
+		RitualName:  "test-step0-zombie",
+		EdictID:     edict.ID,
+		Username:    "testuser",
+		Project:     "testproject",
+		CurrentStep: 0,
+		State:       RitualStateRecovering,
+		Data:        storage.JSON{"inputs": map[string]interface{}{"edict_id": edict.ID}},
+	}).Error
+	if err != nil {
+		t.Fatalf("failed to create recovering execution: %v", err)
+	}
+
+	// Step 0 has empty message → firstIncompleteStep == 0
+	db.Create(&RitualStepState{
+		ExecutionID: recoveringExecID,
+		StepIndex:   0,
+		Name:        "step1",
+		Message:     "",
+		RetryCount:  0,
+	})
+
+	registry := NewRitualRegistry()
+	if err := registry.Register(ritual); err != nil {
+		t.Fatalf("failed to register ritual: %v", err)
+	}
+
+	runner := NewRitualRunner(
+		registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{},
+	)
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "test-step0-zombie", edictKey, map[string]string{}, nil)
+	if err != nil {
+		t.Fatalf("failed to start ritual: %v", err)
+	}
+
+	// Fresh start: no recovery mode
+	if exec.RecoveryMode {
+		t.Error("expected RecoveryMode to be false when firstIncompleteStep == 0")
+	}
+	if exec.CurrentStep != 0 {
+		t.Errorf("expected CurrentStep 0, got %d", exec.CurrentStep)
+	}
+
+	// Key assertion: previous "recovering" execution must be marked completed
+	var prevExec RitualExecution
+	if err := db.First(&prevExec, "id = ?", recoveringExecID).Error; err != nil {
+		t.Fatalf("failed to query previous execution: %v", err)
+	}
+	if prevExec.State != RitualStateCompleted {
+		t.Errorf("expected previous execution state %q, got %q (zombie state)",
+			RitualStateCompleted, prevExec.State)
+	}
+}
+
+// TestPromptForAbortedRituals_RecoverRetriggersRitual verifies that when the
+// user chooses "Recover from step N", promptForAbortedRituals calls
+// startRitual to re-launch the ritual after setting the recovering state.
+func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
+	db := setupRecoveryTestDB(t)
+
+	edict := storage.Edict{Intent: "Test retrigger", Username: "testuser", Project: "testproject"}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	abortedExecID := "aborted-retrigger"
+	abortedExec := &RitualExecution{
+		ID: abortedExecID, RitualName: "test-retrigger", EdictID: edict.ID,
+		Username: "testuser", Project: "testproject", State: RitualStateAborted, CurrentStep: 2,
+		Data: storage.JSON{"inputs": map[string]interface{}{"key1": "val1", "key2": "42"}},
+	}
+	if err := db.Save(abortedExec).Error; err != nil {
+		t.Fatalf("failed to create aborted ritual: %v", err)
+	}
+
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: "completed"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Message: ""})
+
+	chancellor := newMockChancellor(
+		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
+			return "req-retrigger", nil
+		},
+		func(ctx context.Context, requestID string) (string, error) {
+			return "Recover from step 1", nil
+		},
+	)
+
+	// We need a RitualGuard with a registered ritual so startRitual can find it.
+	ritual := &RitualDef{
+		Name: "test-retrigger",
+		Steps: []RitualStep{
+			{Name: "step0", Minister: "forge", Act: "Do step 0"},
+			{Name: "step1", Minister: "forge", Act: "Do step 1"},
+		},
+	}
+
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	rg := NewRitualGuard(RitualGuardOpts{
+		Base:         base,
+		GetMinister:  func(id string) Minister { if id == "chancellor" { return chancellor }; return nil },
+		StreamingCtx: func() context.Context { return context.Background() },
+	})
+	rg.ritualRegistry.Register(ritual)
+	// Set a no-op notify so startRitual doesn't panic on failure
+	rg.SetNotify(func(msg interface{}) {})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rg.promptForAbortedRituals(ctx)
+
+	// Verify the exec state was set to recovering
+	var exec RitualExecution
+	if err := db.First(&exec, "id = ?", abortedExecID).Error; err != nil {
+		t.Fatalf("failed to find ritual: %v", err)
+	}
+	if exec.State != RitualStateRecovering {
+		t.Errorf("expected state %s, got %s", RitualStateRecovering, exec.State)
+	}
+
+	// Give the goroutine from startRitual time to run
+	// It will call Start() which calls recoverFromPreviousExec, which should
+	// find the "recovering" state, mark it completed, and resume from step 1.
+	// Wait for the ritual to be processed.
+	time.Sleep(200 * time.Millisecond)
+
+	// The previous "recovering" execution should now be completed (recovered)
+	var execAfter RitualExecution
+	if err := db.First(&execAfter, "id = ?", abortedExecID).Error; err != nil {
+		t.Fatalf("failed to find ritual after: %v", err)
+	}
+	if execAfter.State != RitualStateCompleted {
+		t.Errorf("expected state %s after recovery, got %s (ritual may not have been re-triggered)",
+			RitualStateCompleted, execAfter.State)
+	}
+}

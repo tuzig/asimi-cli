@@ -74,6 +74,12 @@ func (r *RitualRunner) recoverFromPreviousExec(ctx context.Context, ritualName s
 		var stepStates []RitualStepState
 		if err := r.db.Where("execution_id = ?", previousExec.ID).Order("step_index").Find(&stepStates).Error; err == nil {
 			firstIncompleteStep := findFirstIncompleteStep(stepStates, len(def.Steps))
+
+			// Mark the previous "recovering" execution as completed to prevent
+			// zombie state, regardless of which step we resume from.
+			previousExec.State = RitualStateCompleted
+			r.db.Save(previousExec)
+
 			if firstIncompleteStep > 0 && firstIncompleteStep < len(def.Steps) {
 				r.logger.Info("resuming ritual from incomplete step",
 					"ritual", ritualName,
@@ -85,9 +91,6 @@ func (r *RitualRunner) recoverFromPreviousExec(ctx context.Context, ritualName s
 				exec.CurrentStep = firstIncompleteStep
 				exec.Data = previousExec.Data
 
-				// Mark the previous "recovering" execution as completed to prevent zombie state
-				previousExec.State = RitualStateCompleted
-				r.db.Save(previousExec)
 				r.logger.Info("marked previous recovering execution as completed",
 					"previous_execution_id", previousExec.ID)
 
@@ -96,6 +99,12 @@ func (r *RitualRunner) recoverFromPreviousExec(ctx context.Context, ritualName s
 					fromStep:            firstIncompleteStep,
 				}, nil
 			}
+
+			// firstIncompleteStep == 0 (or -1): start fresh from step 0, but
+			// the previous recovering execution was already marked completed above.
+			r.logger.Info("previous recovering execution has no steps to preserve, starting fresh",
+				"ritual", ritualName,
+				"previous_execution_id", previousExec.ID)
 		}
 	}
 
@@ -269,6 +278,18 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 			rg.logger.Info("set ritual to recovering",
 				"execution_id", exec.ID,
 				"from_step", stepIdx)
+
+			// Re-trigger the ritual so recoverFromPreviousExec picks up the
+			// "recovering" state and resumes execution.
+			inputs := map[string]string{}
+			if rawInputs, ok := exec.Data["inputs"]; ok {
+				if m, ok := rawInputs.(map[string]interface{}); ok {
+					for k, v := range m {
+						inputs[k] = fmt.Sprintf("%v", v)
+					}
+				}
+			}
+			rg.startRitual(exec.RitualName, exec.EdictKey(), inputs)
 
 		case answer == "Mark as completed":
 			exec.State = RitualStateCompleted
