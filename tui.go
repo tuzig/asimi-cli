@@ -2205,11 +2205,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				minister = "Unknown"
 			}
 			if minister == "ruler" {
-				message = fmt.Sprintf("Ruler sealed edict %d", msg.EdictKey.ID)
-			} else {
-				message = fmt.Sprintf("Minister %s sealed edict %d", minister, msg.EdictKey.ID)
+				// Ruler's seal is final — show an ephemeral toast instead of
+				// a lingering chat message.
+				m.commandLine.AddToast(
+					fmt.Sprintf("%s Edict %d sealed", sealPrefix, msg.EdictKey.ID),
+					"success", 4*time.Second,
+				)
+				return m, nil
 			}
-			// Re-query seals to show fresh seal chain with Ruler's seal
+			message = fmt.Sprintf("Minister %s sealed edict %d", minister, msg.EdictKey.ID)
+			// Re-query seals to show fresh seal chain with the minister's seal
 			updatedSeals, err := m.shogunate.GetEdictSeals(msg.EdictKey)
 			if err != nil {
 				message += fmt.Sprintf("\n  (failed to refresh seal chain: %v)", err)
@@ -3331,7 +3336,7 @@ func (m TUIModel) renderMainContent(modalHeight int) string {
 	case m.rawMode:
 		return m.renderRawSessionView(m.width, contentHeight)
 	case m.tabs.IsWelcome():
-		return m.tabs.renderWelcome(m.width, contentHeight-1)
+		return m.tabs.renderWelcome(m.width, contentHeight)
 	default:
 		// Use content component which handles chat view
 		// TODO: why doesn't it accept height?

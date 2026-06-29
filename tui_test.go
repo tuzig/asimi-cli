@@ -3336,6 +3336,7 @@ type mockShogunateClient struct {
 	publishedEvents     []publishedEvent
 	edictKeyFn          func(uint) storage.EdictKey
 	zhengmingResponses  []zhengmingResponse
+	sealsFn             func() ([]storage.Seal, error)
 }
 
 type publishedEvent struct {
@@ -3368,6 +3369,13 @@ func (m *mockShogunateClient) CreateEdictSilent(issueRef, intent string) (*stora
 func (m *mockShogunateClient) HandleZhengmingResponse(_ context.Context, requestID, answer string) error {
 	m.zhengmingResponses = append(m.zhengmingResponses, zhengmingResponse{requestID: requestID, answer: answer})
 	return nil
+}
+
+func (m *mockShogunateClient) GetEdictSeals(_ storage.EdictKey) ([]storage.Seal, error) {
+	if m.sealsFn != nil {
+		return m.sealsFn()
+	}
+	return nil, nil
 }
 
 // --- Tests for pendingRitualEnact YESNO flow ---
@@ -3584,6 +3592,45 @@ func TestContentHeightCalculationNoOffByOne(t *testing.T) {
 			total := tabBarHeight + contentHeight + promptWithBorder + statusHeight + commandLineHeight
 			assert.Equal(t, tt.height, total,
 				"layout components must sum to m.height exactly")
+		})
+	}
+}
+
+// TestChatViewFillsContentHeight verifies that the chat view's rendered
+// height matches the content height exactly — no off-by-one that leaves
+// a blank line. Chat has no title line (unlike help/models/resume), so
+// it must receive the full content height from ContentComponent.SetSize.
+func TestChatViewFillsContentHeight(t *testing.T) {
+	tests := []struct {
+		name   string
+		height int
+	}{
+		{"short", 24},
+		{"medium", 40},
+		{"tall", 50},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := newTestModel(t)
+			model.width = 80
+			model.height = tt.height
+			model.sessionActive = true
+			model.tabs.DismissWelcome()
+			require.Equal(t, ViewChat, model.tabs.Content().GetActiveView())
+
+			model.updateComponentDimensions()
+
+			content := model.tabs.Content()
+			commandLineHeight := 1
+			statusHeight := 1
+			promptWithBorder := model.prompt().Height + 2
+			tabBarHeight := model.tabs.TabBarHeight()
+			expectedContentHeight := tt.height - commandLineHeight - statusHeight - promptWithBorder - tabBarHeight
+
+			// Chat must get the full content height, not contentHeight-1
+			assert.Equal(t, expectedContentHeight, content.Chat.Height,
+				"Chat height should match content height exactly (no title line to subtract)")
 		})
 	}
 }
@@ -4070,4 +4117,77 @@ func TestHandleAnsweringComplete_ChatAnswerDeliveredToShogunate(t *testing.T) {
 	resp := mock.zhengmingResponses[0]
 	assert.Equal(t, "req-chat-1", resp.requestID)
 	assert.Equal(t, "[chat]", resp.answer)
+}
+
+func TestEventSealGranted_RulerShowsToast(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	eventMsg := shogunate.EventNotificationMsg{
+		ChannelID: "chancellor",
+		EventType: storage.EventSealGranted,
+		EdictKey:  storage.EdictKey{ID: 7, Username: "test", Project: "test"},
+		Payload: map[string]interface{}{
+			"minister_id": "ruler",
+		},
+	}
+
+	newModel, _ := model.handleCustomMessages(eventMsg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Toast should be shown
+	require.Len(t, updated.commandLine.toasts, 1, "expected one toast for ruler seal")
+	toast := updated.commandLine.toasts[0]
+	assert.Equal(t, "success", toast.Type)
+	assert.Contains(t, toast.Message, "Edict 7 sealed")
+	assert.Contains(t, toast.Message, sealPrefix)
+
+	// Chat should NOT contain the seal message
+	chat := updated.tabs.ChatByTab("chancellor")
+	for _, m := range chat.Messages {
+		assert.NotContains(t, m.Content, "Ruler sealed edict 7",
+			"ruler seal should not be added to chat")
+	}
+}
+
+func TestEventSealGranted_NonRulerAddsChatMessage(t *testing.T) {
+	mock := &mockShogunateClient{
+		sealsFn: func() ([]storage.Seal, error) {
+			return []storage.Seal{
+				{MinisterID: "judge", SealID: "s1"},
+			}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	eventMsg := shogunate.EventNotificationMsg{
+		ChannelID: "chancellor",
+		EventType: storage.EventSealGranted,
+		EdictKey:  storage.EdictKey{ID: 7, Username: "test", Project: "test"},
+		Payload: map[string]interface{}{
+			"minister_id": "judge",
+		},
+	}
+
+	newModel, _ := model.handleCustomMessages(eventMsg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// No toast for non-ruler seals
+	assert.Empty(t, updated.commandLine.toasts, "no toast expected for non-ruler seal")
+
+	// Chat should contain the seal message with seal chain
+	chat := updated.tabs.ChatByTab("chancellor")
+	require.NotEmpty(t, chat.Messages, "expected a chat message for judge seal")
+	found := false
+	for _, m := range chat.Messages {
+		if strings.Contains(m.Content, "Minister judge sealed edict 7") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected chat message about judge sealing edict 7")
 }

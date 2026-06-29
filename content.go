@@ -638,13 +638,14 @@ func (c *ContentComponent) SetSize(width, height int) {
 	c.width = width
 	c.height = height
 	c.viewport.Width = width
-	c.viewport.Height = height
-	h := height - 1
-	c.Chat.SetSize(width, h)
-	c.help.SetSize(width, h)
-	c.models.SetSize(width, h)
-	c.resume.SetSize(width, h)
-	c.sealSelect.SetSize(width, h)
+	c.viewport.Height = height - 1
+	// Help, models, resume, and sealSelect each render a title line,
+	// so they get height-1. Chat has no title line and needs the full height.
+	c.Chat.SetSize(width, height)
+	c.help.SetSize(width, height-1)
+	c.models.SetSize(width, height-1)
+	c.resume.SetSize(width, height-1)
+	c.sealSelect.SetSize(width, height-1)
 }
 
 // GetActiveView returns the current view type
@@ -1046,7 +1047,7 @@ func (c *ContentComponent) renderHelpView() string {
 
 	// Ensure the view fills the full height
 	return lipgloss.NewStyle().
-		// Height(c.height).
+		Height(c.height).
 		Render(content)
 }
 
@@ -1055,10 +1056,9 @@ func (c *ContentComponent) renderModelsView() string {
 	content := c.models.RenderList(c.selectedItem, c.scrollOffset, c.models.GetVisibleSlots())
 
 	// Apply height constraint to prevent overflow clipping from the top
-	// Use height-1 to account for the title line
 	return lipgloss.NewStyle().
-		Height(c.height - 1).
-		MaxHeight(c.height - 1).
+		Height(c.height).
+		MaxHeight(c.height).
 		Render(content)
 }
 
@@ -1067,10 +1067,9 @@ func (c *ContentComponent) renderResumeView() string {
 	content := c.resume.RenderList(c.selectedItem, c.scrollOffset, c.resume.GetVisibleSlots())
 
 	// Apply height constraint to prevent overflow clipping from the top
-	// Use height-1 to account for the title line
 	return lipgloss.NewStyle().
-		Height(c.height - 1).
-		MaxHeight(c.height - 1).
+		Height(c.height).
+		MaxHeight(c.height).
 		Render(content)
 }
 
@@ -1079,9 +1078,8 @@ func (c *ContentComponent) renderSealView() string {
 	content := c.sealSelect.RenderList(c.selectedItem, c.scrollOffset, c.sealSelect.GetVisibleSlots())
 
 	// Apply height constraint to prevent overflow clipping from the top
-	// Use height-1 to account for the title line
 	return lipgloss.NewStyle().
-		Height(c.height - 1).
-		MaxHeight(c.height - 1).
+		Height(c.height).
+		MaxHeight(c.height).
 		Render(content)
 }
