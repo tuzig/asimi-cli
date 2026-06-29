@@ -563,7 +563,12 @@ func (t *ListPendingManifestsTool) Format(input, result string, err error) strin
 	if err != nil {
 		return fmt.Sprintf("List Pending Manifests: Error: %v\n", err)
 	}
-	return fmt.Sprintf("List Pending Manifests: %s\n", result)
+	var manifests []json.RawMessage
+	if json.Unmarshal([]byte(result), &manifests) == nil {
+		return fmt.Sprintf("Listed %d pending manifests\n", len(manifests))
+	}
+	t.judge.logger.Error("list_pending_manifests: expected JSON array from Call, got non-JSON result", "result", result)
+	return result + "\n"
 }
 
 // UpdateManifestStatusTool updates a manifest's status after judgment

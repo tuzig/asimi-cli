@@ -175,3 +175,32 @@ func TestRecordVerdictTool_EdictLevelFailed(t *testing.T) {
 	assert.NoError(t, err, "Edict-level verdict should be created")
 	assert.Equal(t, storage.VerdictFailed, verdict.Outcome)
 }
+
+// TestListPendingManifestsTool_Format tests the Format method of ListPendingManifestsTool
+// for the three cases: error, no manifests, and N manifests.
+func TestListPendingManifestsTool_Format(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	judge := NewJudge(base, nil)
+	tool := &ListPendingManifestsTool{judge: judge}
+
+	// Error case
+	out := tool.Format(`{"edict_id":1}`, "", fmt.Errorf("db error"))
+	assert.Contains(t, out, "Error")
+	assert.Contains(t, out, "db error")
+
+	// No manifests — Call returns "No pending manifests found" (not JSON);
+	// Format logs an error and returns the full text for debugging.
+	out = tool.Format(`{"edict_id":1}`, "No pending manifests found", nil)
+	assert.Equal(t, "No pending manifests found\n", out)
+
+	// One manifest — Call returns a JSON array
+	jsonResult := `[{"manifest_id":"m1"}]`
+	out = tool.Format(`{"edict_id":1}`, jsonResult, nil)
+	assert.Equal(t, "Listed 1 pending manifests\n", out)
+
+	// Multiple manifests
+	jsonResult = `[{"manifest_id":"m1"},{"manifest_id":"m2"},{"manifest_id":"m3"}]`
+	out = tool.Format(`{"edict_id":1}`, jsonResult, nil)
+	assert.Equal(t, "Listed 3 pending manifests\n", out)
+}
