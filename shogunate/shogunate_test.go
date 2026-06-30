@@ -3,6 +3,7 @@ package shogunate
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/types"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +37,17 @@ func setupShogunateTestDB(t *testing.T) *gorm.DB {
 	sqlDB, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 
+	// Enable WAL mode and busy_timeout for better concurrency — the ritual
+	// guard runs concurrently and performs writes, so without these PRAGMAs
+	// SQLite returns "database is locked" errors.
+	conn, err := sqlDB.Conn(context.Background())
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "PRAGMA journal_mode = WAL")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "PRAGMA busy_timeout = 5000")
+	require.NoError(t, err)
+	conn.Close()
+
 	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -53,6 +66,8 @@ func setupShogunateTestDB(t *testing.T) *gorm.DB {
 		&storage.MarshalIncident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
+		&RitualExecution{},
+		&RitualStepState{},
 	)
 	require.NoError(t, err)
 
@@ -623,3 +638,211 @@ func (t *blockingTool) Format(input, result string, err error) string {
 	return result
 }
 func (t *blockingTool) ParameterSchema() map[string]any { return nil }
+
+// ---------------------------------------------------------------------------
+// Zhengming answer event-handler tests (edict 574)
+// ---------------------------------------------------------------------------
+
+// TestZhengmingAnswered_ChatDoesNotCreateEdict is the regression test for the
+// bug fixed in edict 574: the "Chat" sentinel (AnswerChat) — emitted when
+// the Ruler dismisses a zhengming prompt — was not recognized by the
+// zhengming_answered event handler and fell through to the catch-all path
+// that created a bogus edict with "Chat" as its intent.
+//
+// This test publishes a zhengming_answered event with AnswerChat and verifies
+// no edict is created.
+func TestZhengmingAnswered_ChatDoesNotCreateEdict(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	// Start the ritual guard event loop so dispatched events reach subscribers
+	go s.ritualGuard.Run(ctx)
+
+	// Publish a zhengming_answered event with AnswerChat
+	s.PublishEvent(storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project},
+		storage.EventZhengmingAnswered, storage.JSON{
+			"request_id": "test-chat-1",
+			"answer":     tools.AnswerChat,
+		})
+
+	// Give the event loop time to process
+	time.Sleep(100 * time.Millisecond)
+
+	// No edict with intent "Chat" should exist
+	var edicts []storage.Edict
+	err := db.Where("intent = ?", tools.AnswerChat).Find(&edicts).Error
+	require.NoError(t, err)
+	assert.Empty(t, edicts, "no edict should be created for Chat answer")
+}
+
+// TestZhengmingAnswered_RejectDoesNotCreateEdict verifies that AnswerReject
+// is handled as a rejection, not a catch-all edict creation.
+func TestZhengmingAnswered_RejectDoesNotCreateEdict(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	go s.ritualGuard.Run(ctx)
+
+	s.PublishEvent(storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project},
+		storage.EventZhengmingAnswered, storage.JSON{
+			"request_id": "test-reject-1",
+			"answer":     tools.AnswerReject,
+		})
+
+	time.Sleep(100 * time.Millisecond)
+
+	var edicts []storage.Edict
+	err := db.Where("intent = ?", tools.AnswerReject).Find(&edicts).Error
+	require.NoError(t, err)
+	assert.Empty(t, edicts, "no edict should be created for Reject answer")
+}
+
+// TestZhengmingAnswered_ApproveEdictCreatesEdict verifies that AnswerApproveEdict
+// triggers edict creation from the stored zhengming suggestion.
+func TestZhengmingAnswered_ApproveEdictCreatesEdict(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	go s.ritualGuard.Run(ctx)
+
+	// Store a zhengming request with a suggestion
+	req := storage.Zhengming{
+		RequestID:  "test-approve-1",
+		EdictID:    0,
+		Username:   cfg.Username,
+		Project:    cfg.Project,
+		MinisterID: "sage",
+		Questions: storage.ZhengmingQuestions{{
+			Text:    "Refactor the zhengming constants",
+			Summary: "refactor constants",
+			Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
+		}},
+		Status:   storage.ZhengmingPending,
+		Priority: storage.PriorityNormal,
+	}
+	require.NoError(t, db.Create(&req).Error)
+
+	s.PublishEvent(storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project},
+		storage.EventZhengmingAnswered, storage.JSON{
+			"request_id": "test-approve-1",
+			"answer":     tools.AnswerApproveEdict,
+		})
+
+	// Poll for the edict to appear (async handler: CreateEdict + db.Save for summary)
+	var edict storage.Edict
+	require.Eventually(t, func() bool {
+		return db.Where("intent = ?", "Refactor the zhengming constants").First(&edict).Error == nil
+	}, 2*time.Second, 50*time.Millisecond, "edict should be created from the approved suggestion")
+	assert.Equal(t, "Refactor the zhengming constants", edict.Intent)
+
+	// Summary is set via a separate db.Save call after CreateEdict, which may
+	// race with our read. Poll for it.
+	require.Eventually(t, func() bool {
+		var fresh storage.Edict
+		if db.First(&fresh, edict.ID).Error != nil {
+			return false
+		}
+		return fresh.Summary == "refactor constants"
+	}, 2*time.Second, 50*time.Millisecond, "edict summary should be set to the suggestion summary")
+}
+
+// TestZhengmingAnswered_AnswerConstants verifies that the constant values
+// haven't drifted from their expected string sentinels. This guards against
+// accidental renames that would break the TUI ↔ shogunate contract.
+func TestZhengmingAnswered_AnswerConstants(t *testing.T) {
+	assert.Equal(t, "Chat", tools.AnswerChat)
+	assert.Equal(t, "Approve edict", tools.AnswerApproveEdict)
+	assert.Equal(t, "Reject", tools.AnswerReject)
+	assert.Equal(t, "Approve and proceed", tools.AnswerApproveAndProceed)
+	assert.Equal(t, "Let me clarify", tools.AnswerLetMeClarify)
+}
+
+// TestZhengmingAnswered_NonSentinelAnswerWithEdictID0CreatesEdict verifies that
+// a system-ritual answer (edict_id=0, non-sentinel answer) still creates an
+// edict — this is the legitimate catch-all path that should NOT be broken
+// by the bug fix.
+func TestZhengmingAnswered_NonSentinelAnswerWithEdictID0CreatesEdict(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	go s.ritualGuard.Run(ctx)
+
+	customAnswer := "Let's build a new feature"
+	s.PublishEvent(storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project},
+		storage.EventZhengmingAnswered, storage.JSON{
+			"request_id": "test-custom-1",
+			"answer":     customAnswer,
+		})
+
+	time.Sleep(100 * time.Millisecond)
+
+	var edicts []storage.Edict
+	err := db.Where("intent = ?", customAnswer).Find(&edicts).Error
+	require.NoError(t, err)
+	assert.Len(t, edicts, 1, "a non-sentinel answer with edict_id=0 should create an edict")
+}
+
+// TestZhengmingAnswered_ChatAndNonSentinelIsolation verifies that when a
+// Chat answer and a legitimate answer are both processed, only the
+// legitimate answer creates an edict. Events are published sequentially to
+// avoid SQLite write-lock contention.
+func TestZhengmingAnswered_ChatAndNonSentinelIsolation(t *testing.T) {
+	db := setupShogunateTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	go s.ritualGuard.Run(ctx)
+
+	// Publish Chat first
+	s.PublishEvent(storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project},
+		storage.EventZhengmingAnswered, storage.JSON{
+			"request_id": "isolation-chat",
+			"answer":     tools.AnswerChat,
+		})
+	time.Sleep(100 * time.Millisecond)
+
+	// Then publish a legitimate answer
+	legitAnswer := "Build the database migration tool"
+	s.PublishEvent(storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project},
+		storage.EventZhengmingAnswered, storage.JSON{
+			"request_id": "isolation-legit",
+			"answer":     legitAnswer,
+		})
+	time.Sleep(150 * time.Millisecond)
+
+	// Chat should NOT have created an edict
+	var chatEdicts []storage.Edict
+	err := db.Where("intent = ?", tools.AnswerChat).Find(&chatEdicts).Error
+	require.NoError(t, err)
+	assert.Empty(t, chatEdicts, "no edict should be created for Chat answer")
+
+	// The legitimate answer SHOULD have created an edict
+	var legitEdicts []storage.Edict
+	err = db.Where("intent = ?", legitAnswer).Find(&legitEdicts).Error
+	require.NoError(t, err)
+	assert.Len(t, legitEdicts, 1, "one edict should be created from the legitimate answer")
+}

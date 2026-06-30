@@ -22,6 +22,8 @@ run:
 
 # Run all tests (skips git-altering tests locally)
 test:
+    #!/usr/bin/env bash
+    set -o pipefail
     go test -timeout 1m ./... | tee test.out
 
 # Run all tests including git-altering tests (CI mode)

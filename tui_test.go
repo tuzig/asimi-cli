@@ -1987,7 +1987,7 @@ func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
 }
 
 // TestRitualStepMsg_CompletedWithoutMessage tests that a completed ritual step
-// without a Message appends the checkmark to the last message (the "started" line).
+// without a Message adds a "Completed" line with the step and ritual name.
 func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	model := newTestModel(t)
 
@@ -2020,13 +2020,13 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
-	// No new message should be added; the checkmark is appended to the "started" line
+	// A new message should be added for the completed step
 	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
-	assert.Equal(t, msgCountBefore, msgCountAfter)
+	assert.Equal(t, msgCountBefore+1, msgCountAfter)
 
-	// The last message should now contain the checkmark
+	// The last message should contain the "Completed" line
 	lastMsg := updatedModel.tabs.Content().Chat.Messages[len(updatedModel.tabs.Content().Chat.Messages)-1]
-	assert.Contains(t, lastMsg.Content, "✓")
+	assert.Contains(t, lastMsg.Content, "Completed: check-sandbox of dawn-audience")
 }
 
 // TestSessionResume_ResetsHistoryState tests that resuming a session resets history state
@@ -4123,13 +4123,13 @@ func TestHandleAnsweringComplete_ChatAnswerDeliveredToShogunate(t *testing.T) {
 
 	model.handleAnsweringComplete(AnsweredMsg{
 		RequestID: "req-chat-1",
-		Answers:   []string{"[chat]"},
+		Answers:   []string{tools.AnswerChat},
 	})
 
 	require.Len(t, mock.zhengmingResponses, 1, "HandleZhengmingResponse should be called for [chat] answer")
 	resp := mock.zhengmingResponses[0]
 	assert.Equal(t, "req-chat-1", resp.requestID)
-	assert.Equal(t, "[chat]", resp.answer)
+	assert.Equal(t, tools.AnswerChat, resp.answer)
 }
 
 func TestEventSealGranted_RulerShowsToast(t *testing.T) {

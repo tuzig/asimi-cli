@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/afittestide/asimi/shogunate/tools"
 )
 
 // TestPromptHeightGrowsTo10LinesForMultilineInput tests that prompt grows to 10 lines
@@ -309,7 +311,7 @@ func TestAnsweringModeEditOption(t *testing.T) {
 			{
 				Text:     "What would you like to do?",
 				Summary:  "What to do?",
-				Options:  []string{"Accept", "Reject"},
+				Options:  []string{"Accept", tools.AnswerReject},
 				Selected: 0,
 			},
 		},

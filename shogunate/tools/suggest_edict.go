@@ -112,7 +112,7 @@ func (t SuggestEdictTool) Call(ctx context.Context, input string) (string, error
 	questions := storage.ZhengmingQuestions{{
 		Text:    questionText,
 		Summary: params.Summary,
-		Options: []string{"Approve edict", "Reject"},
+		Options: []string{AnswerApproveEdict, AnswerReject},
 	}}
 
 	key := storage.EdictKey{

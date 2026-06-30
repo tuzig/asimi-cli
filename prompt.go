@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -809,7 +810,7 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 			// "Chat" selected — reject zhengming and return to chat
 			requestID := a.RequestID
 			return p, func() tea.Msg {
-				return AnsweredMsg{RequestID: requestID, Answers: []string{"[chat]"}}
+				return AnsweredMsg{RequestID: requestID, Answers: []string{tools.AnswerChat}}
 			}
 		}
 		return p.advanceAnswer(q.Options[q.Selected])

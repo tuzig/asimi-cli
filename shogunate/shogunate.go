@@ -172,7 +172,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 
 		// 2. Handle "Approve edict" for suggestion-based edict creation
-		if answer == "Approve edict" {
+		if answer == tools.AnswerApproveEdict {
 			var req storage.Zhengming
 			if err := s.db.First(&req, "request_id = ?", requestID).Error; err == nil {
 				if len(req.Questions) > 0 {
@@ -186,8 +186,9 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 					if err != nil {
 						s.logger.Warn("failed to create edict from zhengming approval", "error", err)
 					} else if summary != "" {
-						edict.Summary = summary
-						s.db.Save(edict)
+						if saveErr := s.db.Model(edict).Update("summary", summary).Error; saveErr != nil {
+							s.logger.Warn("failed to save edict summary", "edict_id", edict.ID, "error", saveErr)
+						}
 					}
 				}
 			}
@@ -195,7 +196,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		}
 
 		// 2b. Handle rejection — user dismissed the suggestion
-		if answer == "Reject" || answer == "Dismiss suggestion" {
+		if answer == tools.AnswerReject || answer == tools.AnswerChat {
 			s.logger.Info("zhengming suggestion rejected", "request_id", requestID)
 			return
 		}

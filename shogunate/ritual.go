@@ -18,6 +18,7 @@ import (
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
@@ -794,7 +795,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 				r.logger.Warn("ritual-level then zhengming wait failed", "raw", raw, "error", waitErr)
 				continue
 			}
-			if answer.Answer == "Reject" {
+			if answer.Answer == tools.AnswerReject {
 				r.logger.Warn("ritual-level then zhengming rejected", "raw", raw)
 			}
 		} else if err != nil {
@@ -948,7 +949,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			if waitErr != nil {
 				return actResult, fmt.Errorf("then %q zhengming wait failed: %w", raw, waitErr)
 			}
-			if answer.Answer == "Reject" {
+			if answer.Answer == tools.AnswerReject {
 				return actResult, fmt.Errorf("then %q zhengming rejected by ruler", raw)
 			}
 		} else if err != nil {

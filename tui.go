@@ -2287,7 +2287,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnsweringCancelMsg:
 		m.prompt().ExitAnsweringMode()
-		go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: []string{shogunate.AnswerChat}})
+		go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: []string{tools.AnswerChat}})
 		return m, nil
 
 	case AnsweringEditMsg:

@@ -15,6 +15,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 )
 
@@ -875,7 +876,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		}
 		questions := storage.ZhengmingQuestions{{
 			Text:    fmt.Sprintf("The %s has completed work on edict %d. Do you approve?", stepName, exec.EdictID),
-			Options: []string{"Approve and proceed", "Let me clarify", "Reject"},
+			Options: []string{tools.AnswerApproveAndProceed, tools.AnswerLetMeClarify, tools.AnswerReject},
 		}}
 		requestID, err := gate.RequestZhengming(thenKey, questions, storage.PriorityUrgent, "chancellor")
 		if err != nil {
