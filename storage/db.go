@@ -46,6 +46,12 @@ func InitDB(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
 
+	// Set busy_timeout so SQLite waits for locks instead of failing instantly
+	if _, err := conn.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to set busy_timeout: %w", err)
+	}
+
 	db := &DB{
 		conn: conn,
 		path: dbPath,
@@ -101,6 +107,10 @@ func (db *DB) runMigrations(currentVersion int) error {
 		case 3:
 			if err := db.migrateV2toV3(); err != nil {
 				return fmt.Errorf("migration v2→v3 failed: %w", err)
+			}
+		case 4:
+			if err := db.migrateV3toV4(); err != nil {
+				return fmt.Errorf("migration v3→v4 failed: %w", err)
 			}
 		default:
 			return fmt.Errorf("unknown migration version: %d", v)
@@ -165,6 +175,29 @@ func (db *DB) migrateV2toV3() error {
 		return fmt.Errorf("record version 3: %w", err)
 	}
 	slog.Debug("migrated schema v2→v3: added username/project to censor_precedents")
+	return nil
+}
+
+// migrateV3toV4 adds a unique index on messages(session_id, sequence) so
+// that INSERT OR IGNORE works correctly for incremental upsert saves.
+// Also drops the redundant non-unique index on the same columns.
+func (db *DB) migrateV3toV4() error {
+	migrations := []string{
+		`DROP INDEX IF EXISTS idx_messages_session`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, sequence)`,
+	}
+	for _, m := range migrations {
+		if _, err := db.conn.Exec(m); err != nil {
+			return fmt.Errorf("exec %q: %w", m, err)
+		}
+	}
+	if _, err := db.conn.Exec(
+		"INSERT INTO schema_version (version, applied_at) VALUES (?, unixepoch())",
+		4,
+	); err != nil {
+		return fmt.Errorf("record version 4: %w", err)
+	}
+	slog.Debug("migrated schema v3→v4: unique index on messages(session_id, sequence)")
 	return nil
 }
 

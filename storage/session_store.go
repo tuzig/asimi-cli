@@ -24,7 +24,11 @@ func NewSessionStore(db *DB, cfg *SessionConfig) *SessionStore {
 	}
 }
 
-// SaveSession saves or updates a session with all its messages
+// SaveSession saves or updates a session with all its messages.
+// Uses incremental upsert: only messages with index >= PersistedMsgCount
+// are inserted, and existing messages are never deleted. This prevents
+// data loss when a save fails (SQLITE_BUSY) and a later save with fewer
+// in-memory messages succeeds.
 func (s *SessionStore) SaveSession(session *SessionData, host, org, project, branch string) error {
 	// Start transaction
 	tx, err := s.db.conn.Begin()
@@ -48,11 +52,22 @@ func (s *SessionStore) SaveSession(session *SessionData, host, org, project, bra
 	// Update last updated timestamp
 	session.LastUpdated = time.Now()
 
-	// Insert or replace session metadata
+	// Insert or update session metadata.
+	// Use ON CONFLICT DO UPDATE instead of INSERT OR REPLACE to avoid
+	// deleting the session row (which would cascade-delete all messages).
 	_, err = tx.Exec(`
-		INSERT OR REPLACE INTO sessions
+		INSERT INTO sessions
 		(id, branch_id, created_at, last_updated, first_prompt, provider, model, working_dir, tab_type)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			branch_id = excluded.branch_id,
+			created_at = excluded.created_at,
+			last_updated = excluded.last_updated,
+			first_prompt = excluded.first_prompt,
+			provider = excluded.provider,
+			model = excluded.model,
+			working_dir = excluded.working_dir,
+			tab_type = excluded.tab_type`,
 		session.ID,
 		branchID,
 		session.CreatedAt.Unix(),
@@ -67,30 +82,29 @@ func (s *SessionStore) SaveSession(session *SessionData, host, org, project, bra
 		return fmt.Errorf("failed to save session: %w", err)
 	}
 
-	// Delete existing messages for this session
-	_, err = tx.Exec("DELETE FROM messages WHERE session_id = ?", session.ID)
-	if err != nil {
-		return fmt.Errorf("failed to delete old messages: %w", err)
-	}
-
-	// Serialize messages to JSON
-	// Storage passes bytes through; adapter owns serialization
+	// Serialize messages to JSON (json.RawMessage.Marshal returns itself)
 	messagesJSON, err := json.Marshal(session.Messages)
 	if err != nil {
 		return fmt.Errorf("failed to marshal messages: %w", err)
 	}
 	session.Messages = messagesJSON
 
-	// Insert individual messages for backward compatibility
+	// Incremental upsert: only insert messages with index >= PersistedMsgCount.
+	// Use INSERT OR IGNORE to skip any that might already exist (e.g., from
+	// a partially committed prior save).
 	var rawMsgs []interface{}
+	msgCount := session.PersistedMsgCount
 	if err := json.Unmarshal(messagesJSON, &rawMsgs); err == nil && rawMsgs != nil {
 		for i, msgData := range rawMsgs {
+			if i < session.PersistedMsgCount {
+				continue // already persisted
+			}
 			msgJSON, err := json.Marshal(msgData)
 			if err != nil {
 				return fmt.Errorf("failed to marshal message %d: %w", i, err)
 			}
 			_, err = tx.Exec(`
-				INSERT INTO messages (session_id, sequence, role, content, created_at)
+				INSERT OR IGNORE INTO messages (session_id, sequence, role, content, created_at)
 				VALUES (?, ?, ?, ?, ?)`,
 				session.ID, i, "", string(msgJSON), time.Now().Unix(),
 			)
@@ -98,12 +112,16 @@ func (s *SessionStore) SaveSession(session *SessionData, host, org, project, bra
 				return fmt.Errorf("failed to insert message %d: %w", i, err)
 			}
 		}
+		msgCount = len(rawMsgs)
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	// Update PersistedMsgCount only after successful commit
+	session.PersistedMsgCount = msgCount
 
 	slog.Debug("Session saved", "id", session.ID, "messages", len(session.Messages))
 	return nil

@@ -8,7 +8,7 @@ import (
 )
 
 // Schema version
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Type aliases - use types from internal/config as the single source of truth
 type (
@@ -34,18 +34,25 @@ type DBSession struct {
 // Note: The main Session type in the main package includes runtime fields
 // like llm, toolCatalog, etc. that are not persisted
 type SessionData struct {
-	ID           string
-	CreatedAt    time.Time
-	LastUpdated  time.Time
-	FirstPrompt  string
-	Provider     string
-	Model        string
-	WorkingDir   string
-	ProjectSlug  string
-	TabType      string
-	Messages     json.RawMessage // JSON-encoded message array, agnostic to type
+	ID          string
+	CreatedAt   time.Time
+	LastUpdated time.Time
+	FirstPrompt string
+	Provider    string
+	Model       string
+	WorkingDir  string
+	ProjectSlug string
+	TabType     string
+	// Messages: JSON-encoded message array, agnostic to type
+	Messages     json.RawMessage
 	ContextFiles map[string]string
 	MessageCount int // Number of messages (for list views, avoids loading full messages)
+
+	// PersistedMsgCount tracks how many messages have been successfully
+	// persisted to the DB. Only messages with index >= this value are
+	// inserted on the next SaveSession call, preventing the DELETE-then-
+	// INSERT clobber that loses history when a save fails mid-way.
+	PersistedMsgCount int `json:"-"`
 }
 
 // Repository represents a Git repository (host/org/project)
@@ -148,7 +155,7 @@ CREATE TABLE IF NOT EXISTS messages (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, sequence);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at DESC);
 
 -- Prompt history table
@@ -254,4 +261,5 @@ CREATE TABLE IF NOT EXISTS schema_version (
 INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (1, unixepoch());
 INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (2, unixepoch());
 INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (3, unixepoch());
+INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (4, unixepoch());
 `

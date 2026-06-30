@@ -359,8 +359,23 @@ func (tm *TabManager) SwitchTo(index int) {
 // Add creates a new tab and switches to it
 func (tm *TabManager) Add(label string, tabType TabType, target string) {
 	newContent := newContentComponent(tm.width, tm.height, tm.markdownEnabled, tm.getStatus)
+	// Wire loadSessionFn into dynamically-added tabs too
+	for i := range tm.tabs {
+		if tm.tabs[i].Content.loadSessionFn != nil {
+			newContent.loadSessionFn = tm.tabs[i].Content.loadSessionFn
+			break
+		}
+	}
 	tm.tabs = append(tm.tabs, NewTab(label, tabType, target, newContent))
 	tm.SwitchTo(len(tm.tabs) - 1)
+}
+
+// SetLoadSessionFn wires a session-loading function into every tab's
+// ContentComponent so :resume uses the shared session store.
+func (tm *TabManager) SetLoadSessionFn(fn func(sessionID string) tea.Cmd) {
+	for i := range tm.tabs {
+		tm.tabs[i].Content.loadSessionFn = fn
+	}
 }
 
 // Close closes the active tab if safe to do so
@@ -616,6 +631,10 @@ type ContentComponent struct {
 	viewport     viewport.Model          // For text navigation
 	selectedItem int                     // For list navigation
 	scrollOffset int                     // For list navigation
+
+	// loadSessionFn loads a session by ID for :resume. Set by TUIModel
+	// to share the daemon's DB connection instead of opening a new one.
+	loadSessionFn func(sessionID string) tea.Cmd
 }
 
 // NewContentComponent creates a new content component
@@ -741,7 +760,10 @@ func (c *ContentComponent) ShowResume(sessions []shogunate.Session) tea.Cmd {
 		if session == nil {
 			return nil
 		}
-		return c.resume.LoadSession(session.ID)
+		if c.loadSessionFn != nil {
+			return c.loadSessionFn(session.ID)
+		}
+		return c.resume.LoadSession(session.ID, nil)
 	}
 
 	return func() tea.Msg {

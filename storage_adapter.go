@@ -13,6 +13,7 @@ import (
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
+	"modernc.org/sqlite"
 )
 
 // parseProjectSlug parses a project slug into host, org and project
@@ -178,6 +179,10 @@ type SessionStore struct {
 	stopChan    chan struct{}
 	closeOnce   sync.Once
 	wg          sync.WaitGroup // Track in-flight saves
+
+	// saveHook, if non-nil, replaces saveSessionSync in saveWithRetry.
+	// Used only in tests to simulate transient SQLITE_BUSY errors.
+	saveHook func(*shogunate.Session) error
 }
 
 // NewSessionStore creates a new session store using SQLite
@@ -221,22 +226,62 @@ func (s *SessionStore) saveWorker() {
 	for {
 		select {
 		case session := <-s.saveChan:
-			if err := s.saveSessionSync(session); err != nil {
-				slog.Warn("failed to save session", "error", err)
-			}
+			s.saveWithRetry(session)
 			s.wg.Done() // Mark this save as complete
 		case <-s.stopChan:
 			// Drain remaining saves
 			for len(s.saveChan) > 0 {
 				session := <-s.saveChan
-				if err := s.saveSessionSync(session); err != nil {
-					slog.Warn("failed to save session", "error", err)
-				}
+				s.saveWithRetry(session)
 				s.wg.Done()
 			}
 			return
 		}
 	}
+}
+
+// saveWithRetry calls saveSessionSync with exponential backoff on SQLITE_BUSY.
+// Backoff schedule: 50ms, 200ms, 500ms (3 retries).
+func (s *SessionStore) saveWithRetry(session *shogunate.Session) {
+	backoffs := []time.Duration{50 * time.Millisecond, 200 * time.Millisecond, 500 * time.Millisecond}
+
+	saveFn := s.saveSessionSync
+	if s.saveHook != nil {
+		saveFn = s.saveHook
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= len(backoffs); attempt++ {
+		err := saveFn(session)
+		if err == nil {
+			return
+		}
+		lastErr = err
+		if !isSQLiteBusy(err) {
+			break
+		}
+		if attempt < len(backoffs) {
+			slog.Warn("session save busy, retrying",
+				"error", err, "attempt", attempt+1, "backoff", backoffs[attempt])
+			time.Sleep(backoffs[attempt])
+		}
+	}
+	slog.Warn("failed to save session after retries", "error", lastErr)
+}
+
+// isSQLiteBusy returns true if the error is a SQLITE_BUSY or SQLITE_LOCKED error.
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	if se, ok := err.(*sqlite.Error); ok {
+		code := se.Code()
+		// SQLITE_BUSY = 5, SQLITE_LOCKED = 6
+		return code == 5 || code == 6
+	}
+	// Fallback: check error string for drivers that wrap the error
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "SQLITE_LOCKED")
 }
 
 // SaveSession saves a session asynchronously
@@ -293,20 +338,27 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 
 	// Convert main.Session to storage.SessionData
 	storageSession := &storage.SessionData{
-		ID:           session.ID,
-		CreatedAt:    session.CreatedAt,
-		LastUpdated:  session.LastUpdated,
-		FirstPrompt:  session.FirstPrompt,
-		Provider:     session.Provider,
-		Model:        session.Model,
-		WorkingDir:   session.WorkingDir,
-		ProjectSlug:  session.ProjectSlug,
-		TabType:      session.TabType,
-		Messages:     messagesJSON,
-		ContextFiles: session.ContextFiles,
+		ID:                session.ID,
+		CreatedAt:         session.CreatedAt,
+		LastUpdated:       session.LastUpdated,
+		FirstPrompt:       session.FirstPrompt,
+		Provider:          session.Provider,
+		Model:             session.Model,
+		WorkingDir:        session.WorkingDir,
+		ProjectSlug:       session.ProjectSlug,
+		TabType:           session.TabType,
+		Messages:          messagesJSON,
+		ContextFiles:      session.ContextFiles,
+		PersistedMsgCount: session.PersistedMsgCount,
 	}
 
-	return s.store.SaveSession(storageSession, s.Host, s.Org, s.Project, s.Branch)
+	if err := s.store.SaveSession(storageSession, s.Host, s.Org, s.Project, s.Branch); err != nil {
+		return err
+	}
+
+	// Update the in-memory session's persisted count on success
+	session.PersistedMsgCount = storageSession.PersistedMsgCount
+	return nil
 }
 
 // LoadSession loads a session by ID
@@ -332,16 +384,17 @@ func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 
 	// Convert storage.SessionData to shogunate.Session
 	session := &shogunate.Session{
-		ID:           storageSession.ID,
-		CreatedAt:    storageSession.CreatedAt,
-		LastUpdated:  storageSession.LastUpdated,
-		FirstPrompt:  storageSession.FirstPrompt,
-		Provider:     storageSession.Provider,
-		Model:        storageSession.Model,
-		WorkingDir:   storageSession.WorkingDir,
-		ProjectSlug:  storageSession.ProjectSlug,
-		TabType:      storageSession.TabType,
-		ContextFiles: storageSession.ContextFiles,
+		ID:                storageSession.ID,
+		CreatedAt:         storageSession.CreatedAt,
+		LastUpdated:       storageSession.LastUpdated,
+		FirstPrompt:       storageSession.FirstPrompt,
+		Provider:          storageSession.Provider,
+		Model:             storageSession.Model,
+		WorkingDir:        storageSession.WorkingDir,
+		ProjectSlug:       storageSession.ProjectSlug,
+		TabType:           storageSession.TabType,
+		ContextFiles:      storageSession.ContextFiles,
+		PersistedMsgCount: len(messages),
 	}
 	session.SetMessages(messages)
 

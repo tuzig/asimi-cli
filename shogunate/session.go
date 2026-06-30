@@ -192,6 +192,12 @@ type Session struct {
 	// MessageCount is the number of messages (used for display in session listings)
 	MessageCount int `json:"message_count,omitempty"`
 
+	// PersistedMsgCount tracks how many messages have been persisted to DB.
+	// Used by the incremental upsert save strategy to avoid re-inserting
+	// messages that are already stored, and to prevent data loss when a
+	// save fails mid-way.
+	PersistedMsgCount int `json:"-"`
+
 	// Context files - dynamically added via @ references
 	ContextFiles map[string]string `json:"context_files"`
 

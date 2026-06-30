@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -379,4 +380,202 @@ func TestCleanupOldSessions_BranchScoping(t *testing.T) {
 	allSessions, err := store.ListAllSessions(0, "", "", "")
 	require.NoError(t, err)
 	require.Len(t, allSessions, 2)
+}
+
+// TestInitDB_BusyTimeout verifies that the busy_timeout PRAGMA is set after InitDB
+func TestInitDB_BusyTimeout(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "busy_timeout_test_*.db")
+	require.NoError(t, err)
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	db, err := InitDB(tmpFile.Name())
+	require.NoError(t, err)
+	defer db.Close()
+
+	var timeout int
+	err = db.conn.QueryRow("PRAGMA busy_timeout").Scan(&timeout)
+	require.NoError(t, err)
+	require.Equal(t, 5000, timeout, "busy_timeout should be 5000ms")
+}
+
+// TestSaveSession_IncrementalUpsert verifies that incremental upsert only adds
+// new messages and never deletes existing ones.
+func TestSaveSession_IncrementalUpsert(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "incremental_test_*.db")
+	require.NoError(t, err)
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	db, err := InitDB(tmpFile.Name())
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewSessionStore(db, &SessionConfig{Enabled: true})
+
+	// Save a session with 3 messages
+	msgs := json.RawMessage(`[{"role":"user","content":"msg1"},{"role":"assistant","content":"msg2"},{"role":"user","content":"msg3"}]`)
+	session := &SessionData{
+		ID:          "test-incremental",
+		FirstPrompt: "test",
+		Model:       "m",
+		Provider:    "p",
+		WorkingDir:  "/tmp",
+		TabType:     "ruling",
+		Messages:    msgs,
+	}
+	err = store.SaveSession(session, "github.com", "test", "repo", "main")
+	require.NoError(t, err)
+
+	// Verify 3 messages were saved
+	var count int
+	err = db.conn.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ?", session.ID).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 3, count)
+
+	// Now save again with 5 messages (2 new ones). PersistedMsgCount should be 3.
+	msgs5 := json.RawMessage(`[{"role":"user","content":"msg1"},{"role":"assistant","content":"msg2"},{"role":"user","content":"msg3"},{"role":"assistant","content":"msg4"},{"role":"user","content":"msg5"}]`)
+	session.Messages = msgs5
+	err = store.SaveSession(session, "github.com", "test", "repo", "main")
+	require.NoError(t, err)
+
+	// Verify 5 messages now (3 original + 2 new, no deletion)
+	err = db.conn.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ?", session.ID).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 5, count, "should have 5 messages after incremental upsert")
+
+	// Verify PersistedMsgCount was updated
+	require.Equal(t, 5, session.PersistedMsgCount)
+}
+
+// TestSaveSession_FailedIntermediatePreservesState verifies that a failed
+// save doesn't lose previously saved messages. We simulate this by saving
+// with a reduced message list after a successful save — the existing
+// messages should not be deleted.
+func TestSaveSession_FailedIntermediatePreservesState(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "failed_intermediate_*.db")
+	require.NoError(t, err)
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	db, err := InitDB(tmpFile.Name())
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewSessionStore(db, &SessionConfig{Enabled: true})
+
+	// Save a session with 5 messages
+	msgs5 := json.RawMessage(`[{"role":"user","content":"msg1"},{"role":"assistant","content":"msg2"},{"role":"user","content":"msg3"},{"role":"assistant","content":"msg4"},{"role":"user","content":"msg5"}]`)
+	session := &SessionData{
+		ID:          "test-failed-intermediate",
+		FirstPrompt: "test",
+		Model:       "m",
+		Provider:    "p",
+		WorkingDir:  "/tmp",
+		TabType:     "ruling",
+		Messages:    msgs5,
+	}
+	err = store.SaveSession(session, "github.com", "test", "repo", "main")
+	require.NoError(t, err)
+	require.Equal(t, 5, session.PersistedMsgCount)
+
+	// Simulate a scenario where the in-memory history was reduced (e.g., context compaction)
+	// and a save is attempted. With the old DELETE-then-INSERT, this would overwrite
+	// the full history. With incremental upsert, the 5 original messages are preserved.
+	msgs3 := json.RawMessage(`[{"role":"user","content":"msg1"},{"role":"assistant","content":"msg2"},{"role":"user","content":"msg3"}]`)
+	session.Messages = msgs3
+	// PersistedMsgCount is still 5, so no new messages to insert
+	err = store.SaveSession(session, "github.com", "test", "repo", "main")
+	require.NoError(t, err)
+
+	// Verify all 5 original messages are still in the DB
+	var count int
+	err = db.conn.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ?", session.ID).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 5, count, "all 5 original messages should be preserved")
+
+	// Verify the messages are correct by loading the session
+	loaded, _, _, _, _, err := store.LoadSession(session.ID)
+	require.NoError(t, err)
+
+	var loadedMsgs []interface{}
+	err = json.Unmarshal(loaded.Messages, &loadedMsgs)
+	require.NoError(t, err)
+	require.Len(t, loadedMsgs, 5)
+}
+
+// TestSchemaMigration_V3toV4 verifies that a v3 database is migrated to v4
+// with the unique index on messages(session_id, sequence).
+func TestSchemaMigration_V3toV4(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "migration_v4_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	// Create a fresh DB (which will be at SchemaVersion 4)
+	db, err := InitDB(dbPath)
+	require.NoError(t, err)
+
+	// Verify schema version is 4
+	version, err := db.getSchemaVersion()
+	require.NoError(t, err)
+	require.Equal(t, SchemaVersion, version)
+	require.Equal(t, 4, version)
+
+	// Verify the unique index exists
+	var idxCount int
+	err = db.conn.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_session_seq'",
+	).Scan(&idxCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, idxCount, "unique index idx_messages_session_seq should exist")
+
+	// Verify the old non-unique index was dropped
+	var oldIdxCount int
+	err = db.conn.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_session'",
+	).Scan(&oldIdxCount)
+	require.NoError(t, err)
+	require.Equal(t, 0, oldIdxCount, "old non-unique index idx_messages_session should not exist")
+
+	db.Close()
+
+	// Now test migration from a v3 database by manually downgrading
+	dbPath2 := filepath.Join(tmpDir, "test_v3.db")
+	db2, err := InitDB(dbPath2)
+	require.NoError(t, err)
+
+	// Downgrade to v3 by removing the v4 version record and dropping the unique index
+	_, err = db2.conn.Exec("DELETE FROM schema_version WHERE version = 4")
+	require.NoError(t, err)
+	_, err = db2.conn.Exec("DROP INDEX IF EXISTS idx_messages_session_seq")
+	require.NoError(t, err)
+	// Recreate the old non-unique index to simulate v3 state
+	_, err = db2.conn.Exec("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, sequence)")
+	require.NoError(t, err)
+	db2.Close()
+
+	// Reopen — should trigger migration from v3 to v4
+	db2, err = InitDB(dbPath2)
+	require.NoError(t, err)
+	defer db2.Close()
+
+	version, err = db2.getSchemaVersion()
+	require.NoError(t, err)
+	require.Equal(t, 4, version, "should have migrated to v4")
+
+	// Verify unique index exists after migration
+	err = db2.conn.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_session_seq'",
+	).Scan(&idxCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, idxCount, "unique index should exist after migration")
+
+	// Verify old index was dropped during migration
+	err = db2.conn.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_session'",
+	).Scan(&oldIdxCount)
+	require.NoError(t, err)
+	require.Equal(t, 0, oldIdxCount, "old non-unique index should be dropped after migration")
 }
