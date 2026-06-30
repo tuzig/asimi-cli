@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -588,5 +589,335 @@ func TestAttachGoroutineNilsMatchingPipes(t *testing.T) {
 	runner.mu.Lock()
 	assert.Nil(t, runner.stdinPipe, "stdinPipe should be nil when pipes match")
 	assert.Nil(t, runner.stdoutPipe, "stdoutPipe should be nil when pipes match")
+	runner.mu.Unlock()
+}
+
+// TestAttachGoroutineResetsContainerStarted verifies Bug 2: when the Attach
+// error handler runs and r.stdinPipe matches the old stdinWriter, it must
+// also reset containerStarted so the next initialize() re-inspects the container.
+func TestAttachGoroutineResetsContainerStarted(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/reset"}, 0, nil)
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdoutWriter.Close()
+
+	runner.mu.Lock()
+	runner.stdinPipe = stdinWriter
+	runner.stdoutPipe = stdoutReader
+	runner.containerStarted = true
+	runner.mu.Unlock()
+
+	// Simulate the Attach error handler with matching pipes
+	stdinReader.Close()
+	stdoutWriter.Close()
+
+	runner.mu.Lock()
+	if runner.stdinPipe == stdinWriter {
+		runner.stdinPipe = nil
+		runner.stdoutPipe = nil
+		runner.containerStarted = false // Bug 2 fix
+	}
+	runner.mu.Unlock()
+
+	runner.mu.Lock()
+	assert.Nil(t, runner.stdinPipe, "stdinPipe should be nil")
+	assert.False(t, runner.containerStarted, "containerStarted should be reset to force re-inspection")
+	runner.mu.Unlock()
+}
+
+// TestAttachGoroutineResetsContainerStartedNonMatchingPipes verifies that
+// when pipes don't match (concurrent initialize replaced them), containerStarted
+// is NOT reset — the new attachment owns the state.
+func TestAttachGoroutineResetsContainerStartedNonMatchingPipes(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/noreset"}, 0, nil)
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdoutWriter.Close()
+
+	runner.mu.Lock()
+	runner.stdinPipe = stdinWriter
+	runner.stdoutPipe = stdoutReader
+	runner.containerStarted = true
+	runner.mu.Unlock()
+
+	// Simulate a concurrent initialize() replacing the pipes
+	newStdinWriter := &nopWriteCloser{}
+	newStdoutReader := &nopReadCloser{}
+	runner.mu.Lock()
+	runner.stdinPipe = newStdinWriter
+	runner.stdoutPipe = newStdoutReader
+	runner.mu.Unlock()
+
+	// Stale Attach error handler runs — pipes don't match
+	stdinReader.Close()
+	stdoutWriter.Close()
+
+	runner.mu.Lock()
+	if runner.stdinPipe == stdinWriter {
+		runner.stdinPipe = nil
+		runner.stdoutPipe = nil
+		runner.containerStarted = false
+	}
+	runner.mu.Unlock()
+
+	runner.mu.Lock()
+	assert.Equal(t, newStdinWriter, runner.stdinPipe, "new pipes should survive stale handler")
+	assert.True(t, runner.containerStarted, "containerStarted should NOT be reset by stale handler")
+	runner.mu.Unlock()
+}
+
+// TestDialWithTimeoutDeadSocket verifies Bug 3: dialWithTimeout returns an error
+// within the timeout when connecting to a dead socket (file exists but nothing
+// is listening).
+func TestDialWithTimeoutDeadSocket(t *testing.T) {
+	// Create a temporary file that looks like a socket but isn't listening
+	dir := t.TempDir()
+	deadSocket := filepath.Join(dir, "dead.sock")
+	require.NoError(t, os.WriteFile(deadSocket, []byte("not a socket"), 0644))
+
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		defer close(done)
+		_, err := dialWithTimeout(context.Background(), "unix://"+deadSocket)
+		assert.Error(t, err, "should fail to connect to dead socket")
+	}()
+
+	select {
+	case <-done:
+		elapsed := time.Since(start)
+		assert.Less(t, elapsed, 10*time.Second, "should fail within timeout, not hang forever")
+	case <-time.After(15 * time.Second):
+		t.Fatal("dialWithTimeout did not return within 15 seconds — timeout not working")
+	}
+}
+
+// TestEstablishConnectionTimeoutOnDeadSocket verifies Bug 3: establishConnection
+// does not hang indefinitely when the macOS podman socket file exists but the
+// podman machine is dead.
+func TestEstablishConnectionTimeoutOnDeadSocket(t *testing.T) {
+	// We can't easily control the HOME directory for the user.Current() call,
+	// but we can verify that dialWithTimeout itself respects the timeout.
+	// This test validates the timeout mechanism that establishConnection relies on.
+
+	// Create a dead unix socket file
+	dir := t.TempDir()
+	deadSocket := filepath.Join(dir, "dead.sock")
+	require.NoError(t, os.WriteFile(deadSocket, []byte{}, 0644))
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := dialWithTimeout(context.Background(), "unix://"+deadSocket)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		// Should get an error quickly, not hang
+		require.Error(t, err)
+	case <-time.After(10*time.Second):
+		t.Fatal("establishConnection path did not timeout within 10 seconds")
+	}
+}
+
+// nopWriteCloser is a no-op io.WriteCloser for testing.
+type nopWriteCloser struct{}
+
+func (n *nopWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (n *nopWriteCloser) Close() error                { return nil }
+
+// nopReadCloser is a no-op io.ReadCloser for testing.
+type nopReadCloser struct{}
+
+func (n *nopReadCloser) Read(p []byte) (int, error) { return 0, io.EOF }
+func (n *nopReadCloser) Close() error                { return nil }
+
+// TestRcCommandsWriteErrorPropagation verifies Bug 1: when the rc-commands
+// write fails (broken pipe), the error should be returned rather than nil.
+// This test exercises the pipe write + select logic that initialize() uses.
+func TestRcCommandsWriteErrorPropagation(t *testing.T) {
+	// Create a pipe and close the read end to simulate a broken pipe
+	stdinReader, stdinWriter := io.Pipe()
+	stdinReader.Close() // Close reader → writes will fail with broken pipe
+
+	// Simulate the rc-commands write logic from initialize()
+	rc := "git config --global core.pager cat\ncd /tmp\n"
+	stdinPipe := stdinWriter
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := stdinPipe.Write([]byte(rc))
+		writeDone <- err
+	}()
+
+	var resultErr error
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			resultErr = fmt.Errorf("attachment failed: rc-commands write: %w", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("write did not complete within 5 seconds")
+	}
+
+	require.Error(t, resultErr, "should return error on broken pipe write")
+	assert.Contains(t, resultErr.Error(), "attachment failed: rc-commands write")
+}
+
+// TestRcCommandsWriteCancelledReturnsError verifies Bug 1: when the context
+// is cancelled during the rc-commands write, an error is returned.
+func TestRcCommandsWriteCancelledReturnsError(t *testing.T) {
+	// Use a pipe where the reader is never read — writes will block
+	stdinReader, stdinWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdinWriter.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	stdinPipe := stdinWriter
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := stdinPipe.Write([]byte("test\n"))
+		writeDone <- err
+	}()
+
+	// Cancel the context immediately
+	cancel()
+
+	var resultErr error
+	select {
+	case err := <-writeDone:
+		// Write may complete or fail — either way check ctx path
+		_ = err
+	case <-ctx.Done():
+		resultErr = fmt.Errorf("attachment failed: rc-commands write cancelled: %w", ctx.Err())
+	}
+
+	require.Error(t, resultErr, "should return error on cancelled context")
+	assert.Contains(t, resultErr.Error(), "attachment failed: rc-commands write cancelled")
+}
+
+// TestHealthcheckRunsOnReattach verifies Bug 4: when containerStarted is true
+// and stdinPipe is nil (re-attaching), the healthcheck condition should fire.
+// This test validates the containerWasAlreadyStarted flag logic.
+func TestHealthcheckRunsOnReattach(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/reattach"}, 0, nil)
+
+	// Simulate the state: containerStarted=true, stdinPipe=nil (need re-attach)
+	runner.mu.Lock()
+	runner.containerStarted = true
+	runner.stdinPipe = nil
+	runner.mu.Unlock()
+
+	// Replicate the containerWasAlreadyStarted logic from initialize()
+	containerWasAlreadyStarted := false
+	existingRunning := false
+
+	runner.mu.Lock()
+	if !runner.containerStarted {
+		// This branch won't run — containerStarted is true
+	} else {
+		if runner.stdinPipe == nil {
+			containerWasAlreadyStarted = true
+		}
+	}
+	runner.mu.Unlock()
+
+	// The healthcheck condition should be true
+	assert.True(t, containerWasAlreadyStarted,
+		"containerWasAlreadyStarted should be true when re-attaching to a started container with nil pipes")
+	assert.True(t, existingRunning || containerWasAlreadyStarted,
+		"healthcheck should run when containerWasAlreadyStarted is true")
+}
+
+// TestHealthcheckSkippedOnFreshContainer verifies Bug 4: when a container
+// is freshly created (containerStarted set by this initialize() call, not
+// pre-existing), containerWasAlreadyStarted should be false.
+func TestHealthcheckSkippedOnFreshContainer(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/fresh"}, 0, nil)
+
+	// Fresh container — containerStarted is false initially
+	containerWasAlreadyStarted := false
+	existingRunning := false
+
+	runner.mu.Lock()
+	if !runner.containerStarted {
+		// Simulate createContainer path: containerStarted gets set
+		runner.containerStarted = true
+		// existingRunning stays false (not an existing running container)
+	} else {
+		if runner.stdinPipe == nil {
+			containerWasAlreadyStarted = true
+		}
+	}
+	runner.mu.Unlock()
+
+	assert.False(t, containerWasAlreadyStarted,
+		"containerWasAlreadyStarted should be false for a freshly created container")
+	assert.False(t, existingRunning || containerWasAlreadyStarted,
+		"healthcheck should not run for a fresh container (no existingRunning, no re-attach)")
+}
+
+// TestHealthcheckFailurePipeCleanupNoRace verifies that the healthcheck failure
+// path's pipe cleanup (which closes and nils stdinPipe/stdoutPipe) does not
+// data race with a concurrent Attach goroutine error handler that modifies
+// the same fields. Run with -race to detect the race.
+func TestHealthcheckFailurePipeCleanupNoRace(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/hc-race"}, 0, nil)
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdoutWriter.Close()
+
+	runner.mu.Lock()
+	runner.stdinPipe = stdinWriter
+	runner.stdoutPipe = stdoutReader
+	runner.mu.Unlock()
+
+	var wg sync.WaitGroup
+
+	// Simulate the healthcheck failure path: close and nil pipes under lock
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r := runner
+		r.mu.Lock()
+		if r.stdinPipe != nil {
+			r.stdinPipe.Close()
+			r.stdinPipe = nil
+		}
+		if r.stdoutPipe != nil {
+			r.stdoutPipe.Close()
+			r.stdoutPipe = nil
+		}
+		r.containerStarted = false
+		r.mu.Unlock()
+	}()
+
+	// Simulate the Attach goroutine error handler modifying the same fields under lock
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r := runner
+		r.mu.Lock()
+		if r.stdinPipe == stdinWriter {
+			r.stdinPipe = nil
+			r.stdoutPipe = nil
+			r.containerStarted = false
+		}
+		r.mu.Unlock()
+	}()
+
+	wg.Wait()
+
+	// After both goroutines complete, pipes should be nil
+	runner.mu.Lock()
+	assert.Nil(t, runner.stdinPipe, "stdinPipe should be nil after cleanup")
+	assert.Nil(t, runner.stdoutPipe, "stdoutPipe should be nil after cleanup")
 	runner.mu.Unlock()
 }

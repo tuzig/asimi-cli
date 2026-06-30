@@ -115,6 +115,9 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 	existingRunning := false
 
+	// Track this so we run a healthcheck to verify the container is actually alive.
+	containerWasAlreadyStarted := false
+
 	r.mu.Lock()
 	if !r.containerStarted {
 		r.mu.Unlock()
@@ -154,6 +157,11 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 			}
 		}
 	} else {
+		// containerStarted is true but we may be re-attaching (stdinPipe was nil).
+		// If so, we need to healthcheck to verify the container is actually alive.
+		if r.stdinPipe == nil {
+			containerWasAlreadyStarted = true
+		}
 		r.mu.Unlock()
 		slog.Debug("container already started, skipping checks", "containerName", r.containerName)
 	}
@@ -188,6 +196,7 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 				if r.stdinPipe == stdinWriter {
 					r.stdinPipe = nil
 					r.stdoutPipe = nil
+					r.containerStarted = false // Force re-inspection on next initialize()
 				}
 				r.mu.Unlock()
 				slog.Debug("container attachment reset after error")
@@ -207,8 +216,9 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 		slog.Debug("container attachment established", "repoInfo", r.repoInfo)
 
-		// Healthcheck: only when reusing an already-running container
-		if existingRunning {
+		// Healthcheck: when reusing an already-running container OR re-attaching
+		// to a container we believe was already started (but pipes were nil).
+		if existingRunning || containerWasAlreadyStarted {
 			if err := r.healthcheck(ctx); err != nil {
 				slog.Info("container unhealthy, force-killing and recreating", "containerName", r.containerName, "error", err)
 
@@ -219,7 +229,9 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 					return fmt.Errorf("failed to remove unhealthy container: %w", rmErr)
 				}
 
-				// Close and nil out pipes
+				// Close and nil out pipes under lock to avoid data race
+				// with the Attach goroutine's error handler
+				r.mu.Lock()
 				if r.stdinPipe != nil {
 					r.stdinPipe.Close()
 					r.stdinPipe = nil
@@ -228,9 +240,6 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 					r.stdoutPipe.Close()
 					r.stdoutPipe = nil
 				}
-
-				// Reset state so initialize() will recreate
-				r.mu.Lock()
 				r.containerStarted = false
 				r.mu.Unlock()
 
@@ -278,9 +287,11 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 		case err := <-writeDone:
 			if err != nil {
 				slog.Error("failed to navigate to worktree", "error", err)
+				return fmt.Errorf("attachment failed: rc-commands write: %w", err)
 			}
 		case <-ctx.Done():
 			slog.Error("context cancelled during rc-commands write", "error", ctx.Err())
+			return fmt.Errorf("attachment failed: rc-commands write cancelled: %w", ctx.Err())
 		}
 	}
 
@@ -371,6 +382,8 @@ func (r *PodmanRunner) healthcheck(ctx context.Context) error {
 	}
 }
 
+const connectionDialTimeout = 5 * time.Second
+
 func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context, error) {
 	slog.Debug("attempting to establish podman connection")
 
@@ -382,7 +395,9 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 	macOSSocket := filepath.Join(currentUser.HomeDir, ".local/share/containers/podman/machine/podman.sock")
 	slog.Debug("trying macOS podman socket", "socket", macOSSocket)
 	if _, err := os.Stat(macOSSocket); err == nil {
-		conn, err := bindings.NewConnection(ctx, "unix://"+macOSSocket)
+		// The socket file may exist even when the podman machine is dead,
+		// causing NewConnection to block indefinitely. Apply a dial timeout.
+		conn, err := dialWithTimeout(ctx, "unix://"+macOSSocket)
 		if err == nil {
 			slog.Debug("successfully connected via macOS socket")
 			return conn, nil
@@ -391,27 +406,37 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 	}
 
 	slog.Debug("trying default podman connection")
-	conn, err := bindings.NewConnection(ctx, "")
-	if err == nil {
+	if conn, err := dialWithTimeout(ctx, ""); err == nil {
 		slog.Debug("successfully connected via default connection")
 		return conn, nil
+	} else {
+		slog.Debug("failed to connect via default connection", "error", err)
 	}
-	slog.Debug("failed to connect via default connection", "error", err)
 
 	userSocket := fmt.Sprintf("unix:///run/user/%s/podman/podman.sock", currentUser.Uid)
 	slog.Debug("trying user socket", "socket", userSocket)
-	conn, err = bindings.NewConnection(ctx, userSocket)
-	if err != nil {
-		slog.Debug("trying system socket")
-		conn, err = bindings.NewConnection(ctx, "unix:///var/run/podman/podman.sock")
-		if err != nil {
-			slog.Debug("failed to connect via system socket", "error", err)
-			return nil, err
-		}
+	if conn, err := dialWithTimeout(ctx, userSocket); err == nil {
+		slog.Debug("successfully connected via user socket")
+		return conn, nil
 	}
 
-	slog.Debug("successfully connected via user/system socket")
+	slog.Debug("trying system socket")
+	conn, err := dialWithTimeout(ctx, "unix:///var/run/podman/podman.sock")
+	if err != nil {
+		slog.Debug("failed to connect via system socket", "error", err)
+		return nil, err
+	}
+
+	slog.Debug("successfully connected via system socket")
 	return conn, nil
+}
+
+// dialWithTimeout wraps bindings.NewConnection with a dial timeout so that
+// a dead socket file (e.g. podman machine stopped) doesn't block forever.
+func dialWithTimeout(ctx context.Context, socket string) (context.Context, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, connectionDialTimeout)
+	defer cancel()
+	return bindings.NewConnection(dialCtx, socket)
 }
 
 func (r *PodmanRunner) readStream(reader io.Reader, stopChan <-chan struct{}) {
