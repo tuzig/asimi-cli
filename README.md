@@ -4,8 +4,17 @@
 
 > A safe, fast, imperial court to help you rule your project
 
-Asimi is an opinionated coding agent that focuses on the human in the loop.
+Asimi is an opinionated multi-model coding agent with a new type of interface - a government.
+With Asimi you're the ruler of your project and your intent is formulated and implemented by
+a small government of 4 ministers.
 
+For the fittest government system we've adopted and simplified the court of the three departments and six ministries system from Imperial China (三省六部). It's a system that's been used for over a millennium and its principles are still relevant.
+Here are those that are key for Asimi:
+- Wu-Wei as the goal - Always seeking the simplest solution
+- Rectification of names - Naming is hard and your ministers grok that
+- Separation of powers - No minister is fully trusted e.g., if the forge fakes a test, the judge will catch it.
+- Rituals - Asimi replaces the artistic rituals with workflows that weave prompts, setup and guardrails.
+- The ruler can be wrong
 
 ![Asimi Demo](demo.gif)
 
@@ -15,9 +24,10 @@ Asimi is an opinionated coding agent that focuses on the human in the loop.
 - 🎨 **vi mimicry** - Asimi is based on the fittest dev tool and its reincarnations vim and neovim
 - 🤖 **Multiple AI Providers** - Support for Ollama, Claude Pro/Max and OpenAI API v1 compatible services
 - 🧹 **Less Clutter** - Asimi's special files are under `.agents` directory and TOML is used for .conf
-- 📊 **Context Awareness** - Smart token counting and context visualization
+- **Long Term Memory** - Asimi uses sqlite to store the court records
+- 📊 **Context Awareness** - token counting and context visualization
 - 🎯 **Session Management** - Save and resume your coding sessions
-- **Rituals** - workflows defined in yaml for harcoded guardrails
+- **Rituals** - workflows defined in yaml for hardcoded guardrails
 
 ## 🚀 Quick Start
 
@@ -136,16 +146,14 @@ Asimi mimics the vi/vim/neovim interface and extends the traditional modes:
 
 ## 🗺️ Roadmap
 
-Asimi is just starting out. It's been used to develop itself since version 0.1.0, well over a month now and it rarely breaks 🪬🪬🪬
+Here is what's on the drawing board:
 
-| Feature | Description |
-|---------|-------------|
-| [#56 - MCP Support](https://github.com/afittestide/asimi-cli/issues/56) | Model Context Protocol integration |
-| [#110 - Streaming Improvements](https://github.com/afittestide/asimi-cli/issues/110) | Better streaming response handling |
-| [#24 - Sub-agents & Roles](https://github.com/afittestide/asimi-cli/issues/24) | Task delegation with orchestrator role |
-| [#8 - Git Integration](https://github.com/afittestide/asimi-cli/issues/8) | `:branch` command and tighter git workflows |
-| A few directories | While flat is better than nested, there comes a time for dirs|
-> 💡 Have a feature request? [Open an issue](https://github.com/afittestide/asimi-cli/issues/new)!
+- Ministers are written in yaml and the user can change them - .agents/ministers.yaml 
+- Upgrade ministers to do multi-tasking
+- Improved ministers and workflow to follow more closely the imperial gov
+- Deep git integration
+- Ruler seal interface - reviewing and commenting on code changes
+- 3-realm based permission system to connect tools with ministers
 
 ## 🛠️ Development
 

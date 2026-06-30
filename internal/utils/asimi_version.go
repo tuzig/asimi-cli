@@ -14,7 +14,7 @@ const (
 	githubRepo  = "asimi-cli"
 )
 
-var AsimiVersion = "0.6.0" // Update this before each release
+var AsimiVersion = "0.7.0-rc.1" // Update this before each release
 
 // GetAsimiSlug gets the slug for asimi's repo
 func GetAsimiSlug() string {
