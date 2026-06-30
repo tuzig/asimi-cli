@@ -505,6 +505,7 @@ type RitualStepState struct {
 	ExecutionID string `gorm:"column:execution_id;index"`
 	StepIndex   int    `gorm:"column:step_index"`
 	Name        string `gorm:"column:name"`
+	Status      string `gorm:"column:status"` // "pending", "completed", "failed"
 	SessionID   string `gorm:"column:session_id"`
 	RetryCount  int    `gorm:"column:retry_count"`
 	Message     string `gorm:"column:message"`
@@ -562,6 +563,7 @@ func (r *RitualRunner) Start(ctx context.Context, ritualName string, key storage
 			ExecutionID: exec.ID,
 			StepIndex:   i,
 			Name:        step.Name,
+			Status:      "pending",
 		}
 	}
 
@@ -699,6 +701,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		step := exec.def.Steps[exec.CurrentStep]
 		result, err := r.executeStep(ctx, exec, step)
 		if err != nil {
+			exec.stepStates[exec.CurrentStep].Status = "failed"
 			exec.stepStates[exec.CurrentStep].Message = err.Error()
 			exec.stepStates[exec.CurrentStep].Output = result
 
@@ -770,6 +773,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		})
 
 		// Update step state
+		exec.stepStates[exec.CurrentStep].Status = "completed"
 		exec.stepStates[exec.CurrentStep].Message = result
 
 		// Move to next step (considering dependencies)
@@ -1600,6 +1604,7 @@ func (r *RitualRunner) executeForkItem(ctx context.Context, exec *RitualExecutio
 			ExecutionID: exec.ID,
 			StepIndex:   exec.CurrentStep,
 			Name:        workStep.Name,
+			Status:      "pending",
 		}
 
 		// Execute the work step

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -670,57 +669,31 @@ func TestAttachGoroutineResetsContainerStartedNonMatchingPipes(t *testing.T) {
 	runner.mu.Unlock()
 }
 
-// TestDialWithTimeoutDeadSocket verifies Bug 3: dialWithTimeout returns an error
-// within the timeout when connecting to a dead socket (file exists but nothing
-// is listening).
-func TestDialWithTimeoutDeadSocket(t *testing.T) {
-	// Create a temporary file that looks like a socket but isn't listening
-	dir := t.TempDir()
-	deadSocket := filepath.Join(dir, "dead.sock")
-	require.NoError(t, os.WriteFile(deadSocket, []byte("not a socket"), 0644))
-
-	done := make(chan struct{})
-	start := time.Now()
-	go func() {
-		defer close(done)
-		_, err := dialWithTimeout(context.Background(), "unix://"+deadSocket)
-		assert.Error(t, err, "should fail to connect to dead socket")
-	}()
-
-	select {
-	case <-done:
-		elapsed := time.Since(start)
-		assert.Less(t, elapsed, 10*time.Second, "should fail within timeout, not hang forever")
-	case <-time.After(15 * time.Second):
-		t.Fatal("dialWithTimeout did not return within 15 seconds — timeout not working")
+// TestEstablishConnectionContextNotCanceled is the regression test for Edict 586:
+// the connection context returned by establishConnection must NOT be canceled
+// after the function returns. The old dialWithTimeout used context.WithTimeout
+// with defer cancel(), which canceled the context — and all children — the
+// moment the function returned, killing every subsequent API call.
+//
+// This test calls establishConnection against a live podman socket if
+// available; if podman is not running it is skipped.
+func TestEstablishConnectionContextNotCanceled(t *testing.T) {
+	if os.Getenv("container") != "" {
+		t.Skip("Skipping Podman test when running inside a container")
 	}
-}
 
-// TestEstablishConnectionTimeoutOnDeadSocket verifies Bug 3: establishConnection
-// does not hang indefinitely when the macOS podman socket file exists but the
-// podman machine is dead.
-func TestEstablishConnectionTimeoutOnDeadSocket(t *testing.T) {
-	// We can't easily control the HOME directory for the user.Current() call,
-	// but we can verify that dialWithTimeout itself respects the timeout.
-	// This test validates the timeout mechanism that establishConnection relies on.
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/ctx"}, 0, nil)
 
-	// Create a dead unix socket file
-	dir := t.TempDir()
-	deadSocket := filepath.Join(dir, "dead.sock")
-	require.NoError(t, os.WriteFile(deadSocket, []byte{}, 0644))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := dialWithTimeout(context.Background(), "unix://"+deadSocket)
-		done <- err
-	}()
+	conn, err := runner.establishConnection(ctx)
+	if err != nil {
+		t.Skipf("podman not available, skipping: %v", err)
+	}
 
-	select {
-	case err := <-done:
-		// Should get an error quickly, not hang
-		require.Error(t, err)
-	case <-time.After(10*time.Second):
-		t.Fatal("establishConnection path did not timeout within 10 seconds")
+	if err := conn.Err(); err != nil {
+		t.Fatalf("connection context is already canceled after establishConnection returned: %v", err)
 	}
 }
 

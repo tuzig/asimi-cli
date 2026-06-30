@@ -382,8 +382,6 @@ func (r *PodmanRunner) healthcheck(ctx context.Context) error {
 	}
 }
 
-const connectionDialTimeout = 5 * time.Second
-
 func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context, error) {
 	slog.Debug("attempting to establish podman connection")
 
@@ -395,9 +393,7 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 	macOSSocket := filepath.Join(currentUser.HomeDir, ".local/share/containers/podman/machine/podman.sock")
 	slog.Debug("trying macOS podman socket", "socket", macOSSocket)
 	if _, err := os.Stat(macOSSocket); err == nil {
-		// The socket file may exist even when the podman machine is dead,
-		// causing NewConnection to block indefinitely. Apply a dial timeout.
-		conn, err := dialWithTimeout(ctx, "unix://"+macOSSocket)
+		conn, err := bindings.NewConnection(ctx, "unix://"+macOSSocket)
 		if err == nil {
 			slog.Debug("successfully connected via macOS socket")
 			return conn, nil
@@ -406,7 +402,7 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 	}
 
 	slog.Debug("trying default podman connection")
-	if conn, err := dialWithTimeout(ctx, ""); err == nil {
+	if conn, err := bindings.NewConnection(ctx, ""); err == nil {
 		slog.Debug("successfully connected via default connection")
 		return conn, nil
 	} else {
@@ -415,13 +411,13 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 
 	userSocket := fmt.Sprintf("unix:///run/user/%s/podman/podman.sock", currentUser.Uid)
 	slog.Debug("trying user socket", "socket", userSocket)
-	if conn, err := dialWithTimeout(ctx, userSocket); err == nil {
+	if conn, err := bindings.NewConnection(ctx, userSocket); err == nil {
 		slog.Debug("successfully connected via user socket")
 		return conn, nil
 	}
 
 	slog.Debug("trying system socket")
-	conn, err := dialWithTimeout(ctx, "unix:///var/run/podman/podman.sock")
+	conn, err := bindings.NewConnection(ctx, "unix:///var/run/podman/podman.sock")
 	if err != nil {
 		slog.Debug("failed to connect via system socket", "error", err)
 		return nil, err
@@ -429,14 +425,6 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 
 	slog.Debug("successfully connected via system socket")
 	return conn, nil
-}
-
-// dialWithTimeout wraps bindings.NewConnection with a dial timeout so that
-// a dead socket file (e.g. podman machine stopped) doesn't block forever.
-func dialWithTimeout(ctx context.Context, socket string) (context.Context, error) {
-	dialCtx, cancel := context.WithTimeout(ctx, connectionDialTimeout)
-	defer cancel()
-	return bindings.NewConnection(dialCtx, socket)
 }
 
 func (r *PodmanRunner) readStream(reader io.Reader, stopChan <-chan struct{}) {

@@ -11,18 +11,12 @@ import (
 
 // findFirstIncompleteStep returns the 0-based index of the first incomplete step,
 // or -1 if all steps are complete. A step is considered incomplete if:
-//   - its message is empty (never executed)
+//   - its Status is not "completed" (never executed or failed)
 //   - it has a retry count > 0 (failed and retried)
 //   - its message contains error patterns: "context canceled", "timeout", "aborted"
-//   - the step index is beyond the recorded stepStates (never reached)
-func findFirstIncompleteStep(stepStates []RitualStepState, totalSteps int) int {
-	for i := 0; i < totalSteps; i++ {
-		if i >= len(stepStates) {
-			// Step was never reached
-			return i
-		}
-		ss := stepStates[i]
-		if ss.Message == "" || ss.RetryCount > 0 {
+func findFirstIncompleteStep(stepStates []RitualStepState) int {
+	for i, ss := range stepStates {
+		if ss.Status != "completed" || ss.RetryCount > 0 {
 			return i
 		}
 		if strings.Contains(ss.Message, "context canceled") ||
@@ -73,7 +67,7 @@ func (r *RitualRunner) recoverFromPreviousExec(ctx context.Context, ritualName s
 	if previousExec.State == RitualStateRecovering {
 		var stepStates []RitualStepState
 		if err := r.db.Where("execution_id = ?", previousExec.ID).Order("step_index").Find(&stepStates).Error; err == nil {
-			firstIncompleteStep := findFirstIncompleteStep(stepStates, len(def.Steps))
+			firstIncompleteStep := findFirstIncompleteStep(stepStates)
 
 			// Mark the previous "recovering" execution as completed to prevent
 			// zombie state, regardless of which step we resume from.
@@ -217,7 +211,7 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 		// Determine first incomplete step
 		var stepStates []RitualStepState
 		rg.db.Where("execution_id = ?", exec.ID).Order("step_index").Find(&stepStates)
-		incompleteStep := findFirstIncompleteStep(stepStates, exec.CurrentStep+1)
+		incompleteStep := findFirstIncompleteStep(stepStates)
 
 		// Build description text, preferring summary over intent
 		description := edict.Summary

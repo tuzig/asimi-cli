@@ -163,6 +163,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		ExecutionID: abortedExecID,
 		StepIndex:   0,
 		Name:        "step1",
+		Status:      "completed",
 		Message:     "Step 1 completed successfully",
 		RetryCount:  0,
 	}).Error
@@ -174,6 +175,7 @@ func TestRitualRecoveryDetection(t *testing.T) {
 		ExecutionID: abortedExecID,
 		StepIndex:   1,
 		Name:        "step2",
+		Status:      "pending",
 		Message:     "", // Incomplete
 		RetryCount:  0,
 	}).Error
@@ -341,6 +343,7 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 		ExecutionID: abortedExecID,
 		StepIndex:   0,
 		Name:        "step1",
+		Status:      "completed",
 		Message:     "Step 1 completed",
 		RetryCount:  0,
 	}).Error
@@ -352,6 +355,7 @@ func TestRitualRecoveryAllStepsComplete(t *testing.T) {
 		ExecutionID: abortedExecID,
 		StepIndex:   1,
 		Name:        "step2",
+		Status:      "completed",
 		Message:     "Step 2 completed",
 		RetryCount:  0,
 	}).Error
@@ -447,6 +451,7 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 		ExecutionID: abortedExecID,
 		StepIndex:   0,
 		Name:        "step1",
+		Status:      "completed",
 		Message:     "Step 1 completed",
 		RetryCount:  0,
 	}).Error
@@ -458,6 +463,7 @@ func TestRitualRecoveryWithRetry(t *testing.T) {
 		ExecutionID: abortedExecID,
 		StepIndex:   1,
 		Name:        "step2",
+		Status:      "failed",
 		Message:     "Step 2 failed",
 		RetryCount:  2, // Has retries - considered incomplete
 	}).Error
@@ -551,6 +557,7 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 		ExecutionID: abortedExecID,
 		StepIndex:   0,
 		Name:        "step1",
+		Status:      "completed",
 		Message:     "Step 1 completed",
 		RetryCount:  0,
 	}).Error
@@ -600,124 +607,90 @@ func TestRitualRecoveryLogMessage(t *testing.T) {
 
 func TestFindFirstIncompleteStep(t *testing.T) {
 	tests := []struct {
-		name       string
-		states     []RitualStepState
-		totalSteps int
-		want       int
+		name   string
+		states []RitualStepState
+		want   int
 	}{
 		{
-			name:       "all steps complete returns -1",
-			states:     []RitualStepState{{Message: "ok"}, {Message: "done"}},
-			totalSteps: 2,
-			want:       -1,
+			name:   "all steps complete returns -1",
+			states: []RitualStepState{{Status: "completed", Message: "ok"}, {Status: "completed", Message: "done"}},
+			want:   -1,
 		},
 		{
-			name:       "empty message on step 0",
-			states:     []RitualStepState{{Message: ""}, {Message: "done"}},
-			totalSteps: 2,
-			want:       0,
+			name:   "completed step 0 with empty message, pending step 1",
+			states: []RitualStepState{{Status: "completed", Message: ""}, {Status: "pending"}},
+			want:   1,
 		},
 		{
-			name:       "empty message on step 1",
-			states:     []RitualStepState{{Message: "ok"}, {Message: ""}},
-			totalSteps: 2,
-			want:       1,
+			name:   "pending status on step 0",
+			states: []RitualStepState{{Status: "pending"}, {Status: "completed", Message: "done"}},
+			want:   0,
 		},
 		{
-			name:       "retry count > 0 on step 0",
-			states:     []RitualStepState{{Message: "failed", RetryCount: 1}, {Message: "ok"}},
-			totalSteps: 2,
-			want:       0,
+			name:   "failed status on step 0",
+			states: []RitualStepState{{Status: "failed", Message: "error"}, {Status: "completed", Message: "ok"}},
+			want:   0,
 		},
 		{
-			name:       "retry count > 0 on step 2",
-			states:     []RitualStepState{{Message: "ok"}, {Message: "ok"}, {Message: "failed", RetryCount: 3}},
-			totalSteps: 3,
-			want:       2,
+			name:   "retry count > 0 on step 0 despite completed status",
+			states: []RitualStepState{{Status: "completed", Message: "failed", RetryCount: 1}, {Status: "completed", Message: "ok"}},
+			want:   0,
 		},
 		{
-			name:       "context canceled message",
-			states:     []RitualStepState{{Message: "ok"}, {Message: "context canceled"}},
-			totalSteps: 2,
-			want:       1,
+			name:   "retry count > 0 on step 2",
+			states: []RitualStepState{{Status: "completed", Message: "ok"}, {Status: "completed", Message: "ok"}, {Status: "completed", Message: "failed", RetryCount: 3}},
+			want:   2,
 		},
 		{
-			name:       "context canceled embedded in longer message",
-			states:     []RitualStepState{{Message: "step failed: context canceled by upstream"}},
-			totalSteps: 1,
-			want:       0,
+			name:   "context canceled message",
+			states: []RitualStepState{{Status: "completed", Message: "ok"}, {Status: "completed", Message: "context canceled"}},
+			want:   1,
 		},
 		{
-			name:       "timeout message",
-			states:     []RitualStepState{{Message: "ok"}, {Message: "timeout waiting for response"}},
-			totalSteps: 2,
-			want:       1,
+			name:   "context canceled embedded in longer message",
+			states: []RitualStepState{{Status: "completed", Message: "step failed: context canceled by upstream"}},
+			want:   0,
 		},
 		{
-			name:       "timeout as standalone message",
-			states:     []RitualStepState{{Message: "timeout"}},
-			totalSteps: 2,
-			want:       0,
+			name:   "timeout message",
+			states: []RitualStepState{{Status: "completed", Message: "ok"}, {Status: "completed", Message: "timeout waiting for response"}},
+			want:   1,
 		},
 		{
-			name:       "aborted message",
-			states:     []RitualStepState{{Message: "ok"}, {Message: "step was aborted mid-execution"}},
-			totalSteps: 3,
-			want:       1,
+			name:   "timeout as standalone message",
+			states: []RitualStepState{{Status: "completed", Message: "timeout"}},
+			want:   0,
 		},
 		{
-			name:       "aborted as standalone message",
-			states:     []RitualStepState{{Message: "aborted"}},
-			totalSteps: 1,
-			want:       0,
+			name:   "aborted message",
+			states: []RitualStepState{{Status: "completed", Message: "ok"}, {Status: "completed", Message: "step was aborted mid-execution"}},
+			want:   1,
 		},
 		{
-			name:       "step never reached when totalSteps exceeds len stepStates",
-			states:     []RitualStepState{{Message: "ok"}},
-			totalSteps: 4,
-			want:       1,
+			name:   "aborted as standalone message",
+			states: []RitualStepState{{Status: "completed", Message: "aborted"}},
+			want:   0,
 		},
 		{
-			name:       "all steps never reached with empty states",
-			states:     []RitualStepState{},
-			totalSteps: 3,
-			want:       0,
+			name:   "empty states returns -1",
+			states: []RitualStepState{},
+			want:   -1,
 		},
 		{
-			name:       "zero total steps returns -1",
-			states:     []RitualStepState{},
-			totalSteps: 0,
-			want:       -1,
+			name:   "mixed: step0 completed, step1 pending (incomplete)",
+			states: []RitualStepState{{Status: "completed", Message: "ok"}, {Status: "pending", Message: ""}},
+			want:   1,
 		},
 		{
-			name:       "mixed: step0 ok, step1 retry, step2 empty",
-			states:     []RitualStepState{{Message: "ok"}, {Message: "failed", RetryCount: 2}, {Message: ""}},
-			totalSteps: 3,
-			want:       1,
-		},
-		{
-			name:       "mixed: step0 ok, step1 context canceled, step2 never reached",
-			states:     []RitualStepState{{Message: "ok"}, {Message: "context canceled"}},
-			totalSteps: 3,
-			want:       1,
-		},
-		{
-			name:       "retry count takes priority over non-empty message",
-			states:     []RitualStepState{{Message: "completed", RetryCount: 1}},
-			totalSteps: 1,
-			want:       0,
-		},
-		{
-			name:       "empty message takes priority over later error patterns",
-			states:     []RitualStepState{{Message: ""}, {Message: "context canceled"}},
-			totalSteps: 2,
-			want:       0,
+			name:   "retry count takes priority over completed status",
+			states: []RitualStepState{{Status: "completed", Message: "completed", RetryCount: 1}},
+			want:   0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := findFirstIncompleteStep(tt.states, tt.totalSteps)
+			got := findFirstIncompleteStep(tt.states)
 			if got != tt.want {
 				t.Errorf("findFirstIncompleteStep() = %d, want %d", got, tt.want)
 			}
@@ -775,6 +748,7 @@ func TestRitualRecoveryRecoveringMarksCompleted(t *testing.T) {
 		ExecutionID: recoveringExecID,
 		StepIndex:   0,
 		Name:        "step1",
+		Status:      "completed",
 		Message:     "Step 1 completed",
 		RetryCount:  0,
 	})
@@ -782,6 +756,7 @@ func TestRitualRecoveryRecoveringMarksCompleted(t *testing.T) {
 		ExecutionID: recoveringExecID,
 		StepIndex:   1,
 		Name:        "step2",
+		Status:      "pending",
 		Message:     "",
 		RetryCount:  0,
 	})
@@ -861,8 +836,8 @@ func TestSkipZhengmingPrompt_RecoveringState(t *testing.T) {
 		t.Fatalf("failed to create recovering execution: %v", err)
 	}
 
-	db.Create(&RitualStepState{ExecutionID: recoveringExecID, StepIndex: 0, Name: "step1", Message: "Step 1 completed successfully", RetryCount: 0})
-	db.Create(&RitualStepState{ExecutionID: recoveringExecID, StepIndex: 1, Name: "step2", Message: "", RetryCount: 0})
+	db.Create(&RitualStepState{ExecutionID: recoveringExecID, StepIndex: 0, Name: "step1", Status: "completed", Message: "Step 1 completed successfully", RetryCount: 0})
+	db.Create(&RitualStepState{ExecutionID: recoveringExecID, StepIndex: 1, Name: "step2", Status: "pending", Message: "", RetryCount: 0})
 
 	registry := NewRitualRegistry()
 	if err := registry.Register(ritual); err != nil {
@@ -1154,8 +1129,8 @@ func TestPromptForAbortedRituals_RecoverAnswer(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: "completed"})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Message: ""})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "completed"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "pending", Message: ""})
 
 	var requestedQuestions storage.ZhengmingQuestions
 	chancellor := newMockChancellor(
@@ -1218,8 +1193,8 @@ func TestPromptForAbortedRituals_MarkAsCompletedAnswer(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: "ok"})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Message: ""})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "ok"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "pending", Message: ""})
 
 	chancellor := newMockChancellor(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
@@ -1270,8 +1245,8 @@ func TestPromptForAbortedRituals_PassAnswer(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: "ok"})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Message: ""})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "ok"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "pending", Message: ""})
 
 	chancellor := newMockChancellor(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
@@ -1476,9 +1451,9 @@ func TestPromptForAbortedRituals_IncompleteStepDetection(t *testing.T) {
 	}
 
 	// Step 0: completed. Step 1: has retry (incomplete). Step 2: context canceled (incomplete).
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: "ok"})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Message: "failed", RetryCount: 2})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 2, Name: "step2", Message: "context canceled"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "ok"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "failed", Message: "failed", RetryCount: 2})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 2, Name: "step2", Status: "completed", Message: "context canceled"})
 
 	var capturedStepIdx int
 	chancellor := newMockChancellor(
@@ -1534,7 +1509,7 @@ func TestPromptForAbortedRituals_EdictDescriptionTruncation(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: ""})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "pending", Message: ""})
 
 	var capturedText string
 	chancellor := newMockChancellor(
@@ -1586,7 +1561,7 @@ func TestPromptForAbortedRituals_UsesSummaryOverIntent(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: ""})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "pending", Message: ""})
 
 	var capturedText string
 	chancellor := newMockChancellor(
@@ -1922,9 +1897,9 @@ func TestPromptForAbortedRituals_EmptyMessageStepIncomplete(t *testing.T) {
 	}
 
 	// Step 0 and 1 completed, step 2 has empty message (never executed)
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: "ok"})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Message: "ok"})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 2, Name: "step2", Message: ""})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "ok"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "completed", Message: "ok"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 2, Name: "step2", Status: "pending", Message: ""})
 
 	var capturedStepIdx int
 	chancellor := newMockChancellor(
@@ -1980,8 +1955,8 @@ func TestPromptForAbortedRituals_AbortedMessageStepIncomplete(t *testing.T) {
 	}
 
 	// Step 0 completed, step 1 has "aborted" message
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: "ok"})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Message: "step was aborted mid-execution"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "ok"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "completed", Message: "step was aborted mid-execution"})
 
 	var capturedStepIdx int
 	chancellor := newMockChancellor(
@@ -2229,11 +2204,12 @@ func TestRecoverFromPreviousExec_Step0MarksCompleted(t *testing.T) {
 		t.Fatalf("failed to create recovering execution: %v", err)
 	}
 
-	// Step 0 has empty message → firstIncompleteStep == 0
+	// Step 0 has pending status → firstIncompleteStep == 0
 	db.Create(&RitualStepState{
 		ExecutionID: recoveringExecID,
 		StepIndex:   0,
 		Name:        "step1",
+		Status:      "pending",
 		Message:     "",
 		RetryCount:  0,
 	})
@@ -2293,8 +2269,8 @@ func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Message: "completed"})
-	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Message: ""})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "completed"})
+	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "pending", Message: ""})
 
 	chancellor := newMockChancellor(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {

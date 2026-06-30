@@ -799,6 +799,7 @@ func TestRecoveryZhengmingHasPassOption(t *testing.T) {
 			ExecutionID: abortedExec.ID,
 			StepIndex:   i,
 			Name:        fmt.Sprintf("step-%d", i),
+			Status:      "completed",
 			Message:     "completed",
 		}
 		if err := db.Save(&stepState).Error; err != nil {
