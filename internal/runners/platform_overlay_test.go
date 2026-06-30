@@ -3,12 +3,15 @@ package runners
 import (
 	"crypto/md5"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/containers/podman/v5/pkg/specgen"
 )
 
 func TestMd5Hash(t *testing.T) {
@@ -76,7 +79,7 @@ func TestOverlayVolumeName(t *testing.T) {
 	assert.NotEqual(t, volumeName, volumeNameOther, "different project roots must yield different volume names")
 }
 
-func TestOverlayMountOrder(t *testing.T) {
+func TestOverlayNamedVolumes(t *testing.T) {
 	absPath := "/home/user/projects/myapp"
 
 	// Build mounts in the same order as createContainer
@@ -88,30 +91,216 @@ func TestOverlayMountOrder(t *testing.T) {
 		},
 	}
 
-	// AdditionalMounts (none in this test, but the slot is after bind mount)
+	// PlatformOverlays: node_modules is a directory, yarn.lock is a file
+	// Directory overlays become NamedVolumes on s.Volumes
+	// File overlays become bind mounts on the mounts slice
+	dirOverlay := "node_modules"
+	fileOverlay := "yarn.lock"
 
-	// PlatformOverlays
-	overlays := []string{"node_modules", "yarn.lock"}
-	for _, relPath := range overlays {
-		overlayDest := filepath.Join(absPath, relPath)
-		volumeName := fmt.Sprintf("asimi-overlay-%s-%s", md5Hash(absPath), sanitizePath(relPath))
-		mounts = append(mounts, spec.Mount{
-			Type:        "volume",
-			Source:      volumeName,
-			Destination: overlayDest,
-		})
-	}
+	var namedVolumes []*specgen.NamedVolume
+	var fileMounts []spec.Mount
+
+	// Directory overlay → NamedVolume
+	dirDest := filepath.Join(absPath, dirOverlay)
+	dirVolumeName := fmt.Sprintf("asimi-overlay-%s-%s", md5Hash(absPath), sanitizePath(dirOverlay))
+	namedVolumes = append(namedVolumes, &specgen.NamedVolume{
+		Name: dirVolumeName,
+		Dest: dirDest,
+	})
+
+	// File overlay → bind mount
+	fileDest := filepath.Join(absPath, fileOverlay)
+	overlayDataDir, err := overlayFileDir(absPath)
+	assert.NoError(t, err)
+	overlayFilePath := filepath.Join(overlayDataDir, sanitizePath(fileOverlay))
+	fileMounts = append(fileMounts, spec.Mount{
+		Type:        "bind",
+		Source:      overlayFilePath,
+		Destination: fileDest,
+	})
+	mounts = append(mounts, fileMounts...)
 
 	// First mount must be the bind mount for the project root
 	assert.Equal(t, "bind", mounts[0].Type, "first mount must be bind type")
 	assert.Equal(t, absPath, mounts[0].Destination, "first mount must be project root")
 
-	// Overlay mounts must come after the bind mount
-	assert.Equal(t, len(overlays)+1, len(mounts), "total mounts = 1 bind + N overlays")
-	for i, relPath := range overlays {
-		m := mounts[i+1]
-		assert.Equal(t, "volume", m.Type, "overlay mount %d must be volume type", i)
-		assert.Equal(t, filepath.Join(absPath, relPath), m.Destination, "overlay mount %d destination", i)
-		assert.True(t, strings.HasPrefix(m.Source, "asimi-overlay-"), "overlay mount %d source must have asimi-overlay- prefix", i)
+	// Directory overlay must be a NamedVolume
+	assert.Equal(t, 1, len(namedVolumes), "one named volume for directory overlay")
+	assert.Equal(t, dirDest, namedVolumes[0].Dest, "named volume dest must match directory overlay")
+	assert.True(t, strings.HasPrefix(namedVolumes[0].Name, "asimi-overlay-"), "named volume must have asimi-overlay- prefix")
+
+	// File overlay must be a bind mount appended to mounts
+	assert.Equal(t, 2, len(mounts), "mounts must have project root + file overlay bind mount")
+	assert.Equal(t, "bind", mounts[1].Type, "file overlay must be bind type")
+	assert.Equal(t, fileDest, mounts[1].Destination, "file overlay mount dest must match")
+	assert.Equal(t, overlayFilePath, mounts[1].Source, "file overlay mount source must be the overlay file path")
+}
+
+func TestDirectoryOverlayUsesNamedVolume(t *testing.T) {
+	// Create a temp project root with a directory overlay
+	tmpDir := t.TempDir()
+	absPath, err := filepath.Abs(tmpDir)
+	assert.NoError(t, err)
+
+	overlayDir := "node_modules"
+	overlayDest := filepath.Join(absPath, overlayDir)
+	assert.NoError(t, os.MkdirAll(overlayDest, 0755))
+
+	// Simulate the createContainer overlay logic for a directory
+	info, err := os.Stat(overlayDest)
+	assert.NoError(t, err)
+	assert.True(t, info.IsDir(), "overlay must be a directory")
+
+	var namedVolumes []*specgen.NamedVolume
+	var mounts []spec.Mount
+
+	volumeName := fmt.Sprintf("asimi-overlay-%s-%s", md5Hash(absPath), sanitizePath(overlayDir))
+	namedVolumes = append(namedVolumes, &specgen.NamedVolume{
+		Name: volumeName,
+		Dest: overlayDest,
+	})
+
+	// Directory overlay should produce a NamedVolume, not a bind mount
+	assert.Equal(t, 1, len(namedVolumes), "should have one named volume")
+	assert.Equal(t, 0, len(mounts), "should have no bind mounts for directory overlay")
+	assert.Equal(t, volumeName, namedVolumes[0].Name)
+	assert.Equal(t, overlayDest, namedVolumes[0].Dest)
+}
+
+func TestFileOverlayUsesBindMount(t *testing.T) {
+	// Create a temp project root with a file overlay
+	tmpDir := t.TempDir()
+	absPath, err := filepath.Abs(tmpDir)
+	assert.NoError(t, err)
+
+	overlayFile := "yarn.lock"
+	overlayDest := filepath.Join(absPath, overlayFile)
+	assert.NoError(t, os.WriteFile(overlayDest, []byte("host content"), 0644))
+
+	// Simulate the createContainer overlay logic for a file
+	info, err := os.Stat(overlayDest)
+	assert.NoError(t, err)
+	assert.False(t, info.IsDir(), "overlay must be a file")
+
+	overlayDataDir, err := overlayFileDir(absPath)
+	assert.NoError(t, err)
+
+	overlayFilePath := filepath.Join(overlayDataDir, sanitizePath(overlayFile))
+	if _, err := os.Stat(overlayFilePath); err != nil {
+		assert.NoError(t, os.WriteFile(overlayFilePath, nil, 0644))
 	}
+
+	mounts := []spec.Mount{
+		{
+			Type:        "bind",
+			Source:      absPath,
+			Destination: absPath,
+		},
+	}
+
+	mounts = append(mounts, spec.Mount{
+		Type:        "bind",
+		Source:      overlayFilePath,
+		Destination: overlayDest,
+	})
+
+	// File overlay should produce a bind mount, not a NamedVolume
+	assert.Equal(t, 2, len(mounts), "should have project root + file overlay bind mount")
+	assert.Equal(t, "bind", mounts[1].Type, "file overlay must be bind type")
+	assert.Equal(t, overlayDest, mounts[1].Destination, "file overlay dest must match")
+	assert.Equal(t, overlayFilePath, mounts[1].Source, "file overlay source must be overlay file path")
+
+	// The overlay file must exist
+	info, err = os.Stat(overlayFilePath)
+	assert.NoError(t, err, "overlay file must exist")
+	assert.False(t, info.IsDir(), "overlay file must be a regular file")
+}
+
+func TestFileOverlayNotCopiedFromHost(t *testing.T) {
+	// Create a temp project root with a file overlay that has host content
+	tmpDir := t.TempDir()
+	absPath, err := filepath.Abs(tmpDir)
+	assert.NoError(t, err)
+
+	overlayFile := "yarn.lock"
+	overlayDest := filepath.Join(absPath, overlayFile)
+	hostContent := []byte("this is host yarn.lock content that should NOT be copied")
+	assert.NoError(t, os.WriteFile(overlayDest, hostContent, 0644))
+
+	// Simulate the createContainer file overlay logic
+	overlayDataDir, err := overlayFileDir(absPath)
+	assert.NoError(t, err)
+
+	overlayFilePath := filepath.Join(overlayDataDir, sanitizePath(overlayFile))
+	// Create empty file (not a copy)
+	assert.NoError(t, os.WriteFile(overlayFilePath, nil, 0644))
+
+	// The overlay file must be empty (0 bytes), not a copy of the host file
+	info, err := os.Stat(overlayFilePath)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), info.Size(), "overlay file must be empty, not copied from host")
+
+	// Double-check the host file still has content (untouched)
+	hostInfo, err := os.Stat(overlayDest)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(len(hostContent)), hostInfo.Size(), "host file must still have its original content")
+}
+
+func TestOverlayFileDir(t *testing.T) {
+	absPath := "/some/abs/path/to/project"
+
+	dir, err := overlayFileDir(absPath)
+	assert.NoError(t, err)
+
+	homeDir, err := os.UserHomeDir()
+	assert.NoError(t, err)
+
+	expected := filepath.Join(homeDir, ".local", "share", "asimi", "overlays", md5Hash(absPath))
+	assert.Equal(t, expected, dir, "overlayFileDir should return the correct path")
+
+	// Directory must exist
+	info, err := os.Stat(dir)
+	assert.NoError(t, err)
+	assert.True(t, info.IsDir(), "overlay data directory must exist and be a directory")
+
+	// Cleanup
+	os.RemoveAll(dir)
+}
+
+func TestMissingOverlaySkipped(t *testing.T) {
+	// Verify that when os.Stat fails on the overlay destination, it is skipped
+	// rather than creating a volume or mount for a non-existent path.
+	tmpDir := t.TempDir()
+	absPath, err := filepath.Abs(tmpDir)
+	assert.NoError(t, err)
+
+	missingOverlay := "does_not_exist"
+	overlayDest := filepath.Join(absPath, missingOverlay)
+
+	_, err = os.Stat(overlayDest)
+	assert.Error(t, err, "overlay path must not exist")
+
+	// Simulate the createContainer overlay logic for a missing path
+	var namedVolumes []*specgen.NamedVolume
+	var mounts []spec.Mount
+
+	info, statErr := os.Stat(overlayDest)
+	if statErr != nil {
+		// skip — this is the behavior in createContainer
+	} else if info.IsDir() {
+		namedVolumes = append(namedVolumes, &specgen.NamedVolume{
+			Name: fmt.Sprintf("asimi-overlay-%s-%s", md5Hash(absPath), sanitizePath(missingOverlay)),
+			Dest: overlayDest,
+		})
+	} else {
+		mounts = append(mounts, spec.Mount{
+			Type:        "bind",
+			Source:      overlayDest,
+			Destination: overlayDest,
+		})
+	}
+
+	// Missing overlay should produce neither named volumes nor bind mounts
+	assert.Equal(t, 0, len(namedVolumes), "no named volumes for missing overlay")
+	assert.Equal(t, 0, len(mounts), "no bind mounts for missing overlay")
 }

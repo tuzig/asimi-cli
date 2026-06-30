@@ -564,16 +564,36 @@ func (r *PodmanRunner) createContainer(ctx context.Context) error {
 
 	for _, relPath := range r.config.PlatformOverlays {
 		overlayDest := filepath.Join(absPath, relPath)
-		volumeName := fmt.Sprintf("asimi-overlay-%s-%s", md5Hash(absPath), sanitizePath(relPath))
-		if _, err := os.Stat(overlayDest); err != nil {
+		info, err := os.Stat(overlayDest)
+		if err != nil {
 			slog.Warn("platform overlay host path does not exist", "path", overlayDest, "overlay", relPath)
+			continue
 		}
-		slog.Debug("adding platform overlay", "volume", volumeName, "destination", overlayDest)
-		mounts = append(mounts, spec.Mount{
-			Type:        "volume",
-			Source:      volumeName,
-			Destination: overlayDest,
-		})
+		if info.IsDir() {
+			volumeName := fmt.Sprintf("asimi-overlay-%s-%s", md5Hash(absPath), sanitizePath(relPath))
+			slog.Debug("adding directory overlay as named volume", "volume", volumeName, "destination", overlayDest)
+			s.Volumes = append(s.Volumes, &specgen.NamedVolume{
+				Name: volumeName,
+				Dest: overlayDest,
+			})
+		} else {
+			overlayDataDir, err := overlayFileDir(absPath)
+			if err != nil {
+				return fmt.Errorf("failed to create overlay data directory: %w", err)
+			}
+			overlayFilePath := filepath.Join(overlayDataDir, sanitizePath(relPath))
+			if _, err := os.Stat(overlayFilePath); err != nil {
+				if err := os.WriteFile(overlayFilePath, nil, 0644); err != nil {
+					return fmt.Errorf("failed to create overlay file: %w", err)
+				}
+			}
+			slog.Debug("adding file overlay as bind mount", "source", overlayFilePath, "destination", overlayDest)
+			mounts = append(mounts, spec.Mount{
+				Type:        "bind",
+				Source:      overlayFilePath,
+				Destination: overlayDest,
+			})
+		}
 	}
 
 	s.Mounts = mounts
@@ -853,6 +873,19 @@ func (r *PodmanRunner) AllowFallback(allow bool) {
 func md5Hash(s string) string {
 	h := md5.Sum([]byte(s))
 	return fmt.Sprintf("%x", h)
+}
+
+// overlayFileDir computes and creates the per-platform data directory for file overlays.
+func overlayFileDir(absPath string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	}
+	dir := filepath.Join(homeDir, ".local", "share", "asimi", "overlays", md5Hash(absPath))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create overlay data directory: %w", err)
+	}
+	return dir, nil
 }
 
 // sanitizePath replaces non-alphanumeric characters with underscores.
