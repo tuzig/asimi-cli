@@ -1316,6 +1316,270 @@ func TestThenStepFailureEmitsToolCallErrorMsg(t *testing.T) {
 	}
 }
 
+func TestStepLevelGivenEmitsToolCallMessages(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "step-given-test",
+		Steps: []RitualStep{
+			{
+				Name:    "work",
+				Minister: "forge",
+				Task:    "do work",
+				Given:   []string{"!echo step-given-data"},
+			},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "step-done\n", nil)
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "step-given-data\n", ExitCode: "0"}, // step-level given
+		},
+	}
+	runner := NewRitualRunner(registry, shogunate.GetMinister, nil, db, mockRunner, nil, repo.RepoInfo{})
+
+	var messages []any
+	notify := func(msg any) {
+		messages = append(messages, msg)
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "step-given-test", testEK(11), nil, notify)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	// Verify ToolCallScheduledMsg and ToolCallSuccessMsg were emitted for the step-level given
+	var scheduled *runners.ToolCallScheduledMsg
+	var success *runners.ToolCallSuccessMsg
+	for i := range messages {
+		switch m := messages[i].(type) {
+		case runners.ToolCallScheduledMsg:
+			scheduled = &m
+		case runners.ToolCallSuccessMsg:
+			success = &m
+		}
+	}
+	if scheduled == nil {
+		t.Fatalf("expected a ToolCallScheduledMsg for step-level given, got messages: %+v", messages)
+	}
+	if scheduled.Input != "!echo step-given-data" {
+		t.Errorf("expected ToolCallScheduledMsg Input '!echo step-given-data', got %q", scheduled.Input)
+	}
+	if scheduled.ToolName != "echo" {
+		t.Errorf("expected ToolCallScheduledMsg ToolName 'echo', got %q", scheduled.ToolName)
+	}
+	if success == nil {
+		t.Fatalf("expected a ToolCallSuccessMsg for step-level given, got messages: %+v", messages)
+	}
+	if success.Input != "!echo step-given-data" {
+		t.Errorf("expected ToolCallSuccessMsg Input '!echo step-given-data', got %q", success.Input)
+	}
+	if scheduled.CallID != success.CallID {
+		t.Errorf("expected scheduled and success to share CallID, got %q and %q", scheduled.CallID, success.CallID)
+	}
+}
+
+func TestRitualLevelThenEmitsToolCallMessages(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "ritual-then-test",
+		Then: []string{"!echo ritual-then-output"},
+		Steps: []RitualStep{
+			{Name: "work", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "step-done\n", nil)
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "ritual-then-output\n", ExitCode: "0"}, // ritual-level then
+		},
+	}
+	runner := NewRitualRunner(registry, shogunate.GetMinister, nil, db, mockRunner, nil, repo.RepoInfo{})
+
+	var messages []any
+	notify := func(msg any) {
+		messages = append(messages, msg)
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "ritual-then-test", testEK(12), nil, notify)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	// Verify ToolCallScheduledMsg and ToolCallSuccessMsg were emitted for the ritual-level then
+	var scheduled *runners.ToolCallScheduledMsg
+	var success *runners.ToolCallSuccessMsg
+	for i := range messages {
+		switch m := messages[i].(type) {
+		case runners.ToolCallScheduledMsg:
+			scheduled = &m
+		case runners.ToolCallSuccessMsg:
+			success = &m
+		}
+	}
+	if scheduled == nil {
+		t.Fatalf("expected a ToolCallScheduledMsg for ritual-level then, got messages: %+v", messages)
+	}
+	if scheduled.Input != "!echo ritual-then-output" {
+		t.Errorf("expected ToolCallScheduledMsg Input '!echo ritual-then-output', got %q", scheduled.Input)
+	}
+	if scheduled.ToolName != "echo" {
+		t.Errorf("expected ToolCallScheduledMsg ToolName 'echo', got %q", scheduled.ToolName)
+	}
+	if success == nil {
+		t.Fatalf("expected a ToolCallSuccessMsg for ritual-level then, got messages: %+v", messages)
+	}
+	if success.Input != "!echo ritual-then-output" {
+		t.Errorf("expected ToolCallSuccessMsg Input '!echo ritual-then-output', got %q", success.Input)
+	}
+	if scheduled.CallID != success.CallID {
+		t.Errorf("expected scheduled and success to share CallID, got %q and %q", scheduled.CallID, success.CallID)
+	}
+}
+
+func TestStepLevelGivenFailureEmitsToolCallErrorMsg(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "step-given-fail-test",
+		Steps: []RitualStep{
+			{
+				Name:    "work",
+				Minister: "forge",
+				Task:    "do work",
+				Given:   []string{"!false"},
+			},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "step-done\n", nil)
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "boom\n", ExitCode: "1"},
+		},
+	}
+	runner := NewRitualRunner(registry, shogunate.GetMinister, nil, db, mockRunner, nil, repo.RepoInfo{})
+
+	var messages []any
+	notify := func(msg any) {
+		messages = append(messages, msg)
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "step-given-fail-test", testEK(13), nil, notify)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	_ = runner.Run(ctx, exec) // expected to return error
+
+	var errMsg *runners.ToolCallErrorMsg
+	var scheduled *runners.ToolCallScheduledMsg
+	for i := range messages {
+		switch m := messages[i].(type) {
+		case runners.ToolCallErrorMsg:
+			errMsg = &m
+		case runners.ToolCallScheduledMsg:
+			scheduled = &m
+		}
+	}
+	if scheduled == nil {
+		t.Fatalf("expected a ToolCallScheduledMsg for step-level given, got messages: %+v", messages)
+	}
+	if errMsg == nil {
+		t.Fatalf("expected a ToolCallErrorMsg for failed step-level given, got messages: %+v", messages)
+	}
+	if errMsg.ToolName != "false" {
+		t.Errorf("expected ToolCallErrorMsg ToolName 'false', got %q", errMsg.ToolName)
+	}
+	if scheduled.CallID != errMsg.CallID {
+		t.Errorf("expected scheduled and error to share CallID, got %q and %q", scheduled.CallID, errMsg.CallID)
+	}
+}
+
+func TestRitualLevelThenFailureEmitsToolCallErrorMsg(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "ritual-then-fail-test",
+		Then: []string{"!false"},
+		Steps: []RitualStep{
+			{Name: "work", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	shogunate := newRitualTestShogunate(t, "step-done\n", nil)
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "boom\n", ExitCode: "1"},
+		},
+	}
+	runner := NewRitualRunner(registry, shogunate.GetMinister, nil, db, mockRunner, nil, repo.RepoInfo{})
+
+	var messages []any
+	notify := func(msg any) {
+		messages = append(messages, msg)
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "ritual-then-fail-test", testEK(14), nil, notify)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	_ = runner.Run(ctx, exec) // ritual-level then failure does not abort; it logs and continues
+
+	var errMsg *runners.ToolCallErrorMsg
+	var scheduled *runners.ToolCallScheduledMsg
+	for i := range messages {
+		switch m := messages[i].(type) {
+		case runners.ToolCallErrorMsg:
+			errMsg = &m
+		case runners.ToolCallScheduledMsg:
+			scheduled = &m
+		}
+	}
+	if scheduled == nil {
+		t.Fatalf("expected a ToolCallScheduledMsg for ritual-level then, got messages: %+v", messages)
+	}
+	if errMsg == nil {
+		t.Fatalf("expected a ToolCallErrorMsg for failed ritual-level then, got messages: %+v", messages)
+	}
+	if errMsg.ToolName != "false" {
+		t.Errorf("expected ToolCallErrorMsg ToolName 'false', got %q", errMsg.ToolName)
+	}
+	if scheduled.CallID != errMsg.CallID {
+		t.Errorf("expected scheduled and error to share CallID, got %q and %q", scheduled.CallID, errMsg.CallID)
+	}
+}
+
 // ritualTestMinister is a Minister that auto-completes tasks with a configured result.
 type ritualTestMinister struct {
 	MinisterBase

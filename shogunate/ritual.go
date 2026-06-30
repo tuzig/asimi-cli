@@ -784,6 +784,14 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			r.logger.Warn("ritual-level then failed to resolve", "raw", raw, "error", err)
 			continue
 		}
+		callID := GenerateID("ritualcmd", exec.ID, entry.Key, raw)
+		exec.notifyAny(runners.ToolCallScheduledMsg{
+			ChannelID: "chancellor",
+			CallID:    callID,
+			ToolName:  entry.Key,
+			Input:     raw,
+			Formatted: raw,
+		})
 		if err := r.runThenStep(ctx, exec, entry); errors.Is(err, ErrZhengmingPending) {
 			requestID, ok := exec.Data["pending_zhengming"].(string)
 			if !ok || requestID == "" {
@@ -797,10 +805,28 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			}
 			if answer.Answer == tools.AnswerReject {
 				r.logger.Warn("ritual-level then zhengming rejected", "raw", raw)
+				continue
 			}
 		} else if err != nil {
+			exec.notifyAny(runners.ToolCallErrorMsg{
+				ChannelID: "chancellor",
+				CallID:    callID,
+				ToolName:  entry.Key,
+				Input:     raw,
+				Error:     err.Error(),
+				Formatted: raw,
+			})
 			r.logger.Warn("ritual-level then step failed", "raw", raw, "error", err)
+			continue
 		}
+		exec.notifyAny(runners.ToolCallSuccessMsg{
+			ChannelID: "chancellor",
+			CallID:    callID,
+			ToolName:  entry.Key,
+			Input:     raw,
+			Result:    "",
+			Formatted: raw,
+		})
 	}
 
 	exec.State = RitualStateCompleted
@@ -861,10 +887,34 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			if err != nil {
 				return "", fmt.Errorf("given %q failed: %w", raw, err)
 			}
+			callID := GenerateID("ritualcmd", exec.ID, entry.Key, raw)
+			exec.notifyAny(runners.ToolCallScheduledMsg{
+				ChannelID: "chancellor",
+				CallID:    callID,
+				ToolName:  entry.Key,
+				Input:     raw,
+				Formatted: raw,
+			})
 			result, err := r.runGivenStep(ctx, exec, entry)
 			if err != nil {
+				exec.notifyAny(runners.ToolCallErrorMsg{
+					ChannelID: "chancellor",
+					CallID:    callID,
+					ToolName:  entry.Key,
+					Input:     raw,
+					Error:     err.Error(),
+					Formatted: raw,
+				})
 				return "", fmt.Errorf("given %q failed: %w", raw, err)
 			}
+			exec.notifyAny(runners.ToolCallSuccessMsg{
+				ChannelID: "chancellor",
+				CallID:    callID,
+				ToolName:  entry.Key,
+				Input:     raw,
+				Result:    "",
+				Formatted: raw,
+			})
 			storeGivenResult(exec, entry.Key, result)
 		}
 	}
