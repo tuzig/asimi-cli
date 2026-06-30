@@ -6,8 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/internal/config"
-	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
@@ -206,41 +204,18 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 	return r.Render(selectedIndex, scrollOffset, config)
 }
 
-// LoadSession loads a session by ID
-func (r *ResumeWindow) LoadSession(sessionID string) tea.Cmd {
+// LoadSession loads a session by ID using the provided session store.
+// This avoids opening a second DB connection that would contend with the
+// daemon's saves.
+func (r *ResumeWindow) LoadSession(sessionID string, store *SessionStore) tea.Cmd {
 	r.loadingSession = true
 
 	return func() tea.Msg {
-		cfg, err := config.LoadProjectConfig(repo.GetRepoInfo().ProjectRoot, true)
-		if err != nil {
-			return sessionResumeErrorMsg{err: fmt.Errorf("failed to load config: %w", err)}
+		if store == nil {
+			return sessionResumeErrorMsg{err: fmt.Errorf("session store not initialized")}
 		}
 
-		// Initialize storage
-		db, err := storage.InitDB(cfg.Storage.DatabasePath)
-		if err != nil {
-			return sessionResumeErrorMsg{err: fmt.Errorf("failed to initialize storage: %w", err)}
-		}
-		defer db.Close()
-
-		maxSessions := 50
-		maxAgeDays := 30
-		if cfg.Session.MaxSessions > 0 {
-			maxSessions = cfg.Session.MaxSessions
-		}
-		if cfg.Session.MaxAgeDays > 0 {
-			maxAgeDays = cfg.Session.MaxAgeDays
-		}
-
-		repoInfo := repo.GetRepoInfo()
-		store, err := NewSessionStore(db, repoInfo, maxSessions, maxAgeDays)
-		if err != nil {
-			return sessionResumeErrorMsg{err: fmt.Errorf("failed to create session store: %w", err)}
-		}
-		// No defer store.Close() needed as main.SessionStore does not have it.
-
-		// Load the session
-		mainSession, err := store.LoadSession(sessionID) // Load main.Session directly
+		mainSession, err := store.LoadSession(sessionID)
 		if err != nil {
 			return sessionResumeErrorMsg{err: fmt.Errorf("failed to load session: %w", err)}
 		}
