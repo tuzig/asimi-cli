@@ -60,10 +60,12 @@ bootstrap:
     go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
     go install golang.org/x/tools/cmd/goimports@latest
 
-# Build the sandbox container
-build-sandbox:
+# Init and start the podman machine 
+init-podman:
     podman machine init --disk-size 30 >/dev/null 2>&1 || true
     podman machine start >/dev/null 2>&1 || true
+# Build the sandbox container
+build-sandbox: init-podman
     podman build -t localhost/asimi/sandbox/{{PROJECT_NAME}}:latest -f .agents/sandbox/Dockerfile .
 
 # Clean up the sandbox container

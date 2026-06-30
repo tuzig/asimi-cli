@@ -233,6 +233,10 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 
 	// Initialize tab system with default Chancellor tab
 	model.tabs = NewTabManager(80, 18, markdownEnabled, func() string { return model.Mode })
+	// Wire loadSessionFn so :resume reuses the shared session store
+	model.tabs.SetLoadSessionFn(func(sessionID string) tea.Cmd {
+		return model.tabs.Content().resume.LoadSession(sessionID, model.sessionStore)
+	})
 	// Wire welcome screen notification callbacks
 	model.tabs.getUpdateAvail = func() bool { return model.updateAvailable }
 	model.tabs.getConfigCreated = func() bool { return model.configCreated }
@@ -2136,14 +2140,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Message != "" {
 				chat.AddMessage(fmt.Sprintf("  %s %s", checkPrefix, msg.Message))
 			} else {
-				chat.AppendToLastMessage(" " + checkPrefix)
+				chat.AddMessage(fmt.Sprintf("  Completed: %s of %s", msg.StepName, msg.RitualName))
 			}
 		case "failed":
-			chat.AppendToLastMessage(" - X")
+			chat.AddMessage(fmt.Sprintf("  Failed: %s of %s", msg.StepName, msg.RitualName))
 		case "aborted":
-			chat.AppendToLastMessage(" ABORTED")
+			chat.AddMessage(fmt.Sprintf("  Aborted: %s of %s", msg.StepName, msg.RitualName))
 		case "retrying":
-			chat.AppendToLastMessage(" retrying")
+			chat.AddMessage(fmt.Sprintf("  Retrying: %s of %s", msg.StepName, msg.RitualName))
 		case "ritual_completed":
 			text := fmt.Sprintf("%sRitual %s for edict %d completed in %s",
 				ritualPrefix, msg.RitualName, msg.EdictID, msg.Message)
@@ -2283,7 +2287,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnsweringCancelMsg:
 		m.prompt().ExitAnsweringMode()
-		go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: []string{"[chat]"}})
+		go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: []string{shogunate.AnswerChat}})
 		return m, nil
 
 	case AnsweringEditMsg:
