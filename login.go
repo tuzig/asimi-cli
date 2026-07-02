@@ -540,6 +540,43 @@ func updateAPIKeyInFile(provider, apiKey, model string) error {
 	return os.WriteFile(cfgPath, []byte(content), 0o600)
 }
 
+// handleLoginCommand shows a provider selection list for authentication.
+// openai triggers the Codex OAuth flow; other providers prompt for an API key.
+func handleLoginCommand(model *TUIModel, args []string) tea.Cmd {
+	providers := []Model{
+		{
+			ID:          "codex-login",
+			DisplayName: "Login with OpenAI (Codex OAuth)",
+			Provider:    "openai",
+			Status:      "login_required",
+			OnSelect:    model.performCodexLogin(),
+		},
+		{
+			ID:          "anthropic-apikey",
+			DisplayName: "Set API key for " + providerDisplayName("anthropic"),
+			Provider:    "anthropic",
+			Status:      "login_required",
+			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "anthropic"} },
+		},
+		{
+			ID:          "googleai-apikey",
+			DisplayName: "Set API key for " + providerDisplayName("googleai"),
+			Provider:    "googleai",
+			Status:      "login_required",
+			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "googleai"} },
+		},
+		{
+			ID:          "openrouter-apikey",
+			DisplayName: "Set API key for " + providerDisplayName("openrouter"),
+			Provider:    "openrouter",
+			Status:      "login_required",
+			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "openrouter"} },
+		},
+	}
+
+	return model.tabs.Content().ShowUnifiedModels(providers, "")
+}
+
 // handleLogoutCommand handles the :logout command
 func handleLogoutCommand(model *TUIModel, args []string) tea.Cmd {
 	return func() tea.Msg {
@@ -581,7 +618,7 @@ func handleLogoutCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 
 		msg.WriteLn("")
-		msg.WriteLn("Use :models to login.")
+		msg.WriteLn("Use :login to authenticate.")
 
 		return showContextMsg{content: msg.String()}
 	}

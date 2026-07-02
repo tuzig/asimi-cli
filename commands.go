@@ -77,6 +77,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("1", "Jump to the beginning of the chat history", handleScrollTopCommand)
 	registry.RegisterCommand("update", "Check for and install updates", handleUpdateCommand)
 	registry.RegisterCommand("logout", "Logout from current provider and clear credentials", handleLogoutCommand)
+	registry.RegisterCommand("login", "Authenticate with an AI provider", handleLoginCommand)
 	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [hunting|<minister>|ritual <run_id>])", handleTabNewCommand)
 	registry.RegisterCommand("tabclose", "Close the current tab", handleTabCloseCommand)
 	registry.RegisterCommand("seal", "Grant Ruler's seal to an edict (usage: :seal [edict_id] | :seal to select)", handleSealCommand)

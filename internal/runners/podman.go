@@ -94,6 +94,28 @@ func (r *PodmanRunner) SetMessageChannel(msgChan chan<- Msg) {
 	r.msgChan = msgChan
 }
 
+// teardownAttachment closes and nils stdinPipe/stdoutPipe, stops the
+// readStream goroutine, and resets containerStarted — everything needed
+// so initialize() can re-attach from a clean state on recursion.
+func (r *PodmanRunner) teardownAttachment() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.readStreamStop != nil {
+		close(r.readStreamStop)
+		r.readStreamStop = nil
+	}
+	if r.stdinPipe != nil {
+		r.stdinPipe.Close()
+		r.stdinPipe = nil
+	}
+	if r.stdoutPipe != nil {
+		r.stdoutPipe.Close()
+		r.stdoutPipe = nil
+	}
+	r.containerStarted = false
+}
+
 func (r *PodmanRunner) initialize(ctx context.Context) error {
 	slog.Debug("initializing podman shell runner")
 
@@ -157,8 +179,24 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 			}
 		}
 	} else {
-		// containerStarted is true but we may be re-attaching (stdinPipe was nil).
-		// If so, we need to healthcheck to verify the container is actually alive.
+		// Even if we have an active attachment, the container may have been
+		// stopped externally (e.g., podman stop). Verify it's still running.
+		r.mu.Unlock()
+
+		inspectData, err := containers.Inspect(r.conn, r.containerName, nil)
+		if err != nil {
+			slog.Info("container inspect failed on fast path, resetting", "error", err)
+			r.teardownAttachment()
+			return r.initialize(ctx)
+		}
+		if !inspectData.State.Running {
+			slog.Info("container stopped externally, resetting for re-creation", "containerName", r.containerName)
+			r.teardownAttachment()
+			return r.initialize(ctx)
+		}
+
+		// Container is running. Check if we need to re-attach.
+		r.mu.Lock()
 		if r.stdinPipe == nil {
 			containerWasAlreadyStarted = true
 		}

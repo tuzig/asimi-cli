@@ -2499,6 +2499,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				slog.Info("Got user confiramtion, sending an even to enact ritual")
 				m.shogunate.PublishEvent(key, storage.EventRitualEnacted, payload)
+				m.commandLine.AddToast("Ritual enact, check the Chancellor for its progress", "success", 4*time.Second)
 			}
 			// No explicit "declined" message needed; the 📜 notification already shows
 			m.pendingRitualEnact = nil

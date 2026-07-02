@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
+	"github.com/containers/podman/v5/pkg/bindings"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -893,4 +897,253 @@ func TestHealthcheckFailurePipeCleanupNoRace(t *testing.T) {
 	assert.Nil(t, runner.stdinPipe, "stdinPipe should be nil after cleanup")
 	assert.Nil(t, runner.stdoutPipe, "stdoutPipe should be nil after cleanup")
 	runner.mu.Unlock()
+}
+
+// mockPodmanServer is a minimal HTTP test server that emulates the subset of
+// the podman REST API needed by initialize(): /_ping, /containers/{name}/json
+// (Inspect), /containers/{name}/start (Start), /containers/create (Create),
+// and /containers/{name}/attach (Attach upgrade).
+type mockPodmanServer struct {
+	server      *http.Server
+	inspectResp string // JSON body for Inspect; empty = 404 error
+	inspectCode int    // HTTP status for Inspect
+	startCount  int
+	createCount int
+	attachCount int
+	mu          sync.Mutex
+}
+
+// mockInspectJSON returns a complete inspect JSON response with the given
+// running status. The Config.Tty field is required by containers.Attach
+// which internally calls Inspect.
+func mockInspectJSON(running bool) string {
+	status := "running"
+	if !running {
+		status = "exited"
+	}
+	return fmt.Sprintf(`{"State":{"Running":%v,"Status":%q},"Config":{"Tty":true}}`, running, status)
+}
+
+func newMockPodmanServer(inspectResp string, inspectCode int) *mockPodmanServer {
+	m := &mockPodmanServer{inspectResp: inspectResp, inspectCode: inspectCode}
+
+	mux := http.NewServeMux()
+
+	// Catch-all handler — podman bindings construct URLs like
+	// /v{ver}/libpod/containers/{name}/{action} and /v{ver}/libpod/containers/create
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// /_ping — must return 200 with Libpod-API-Version header
+		// The full path is /v{ver}/libpod/_ping
+		if strings.HasSuffix(path, "/_ping") || path == "/_ping" {
+			w.Header().Set("Libpod-API-Version", "5.8.4")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Parse: /v{ver}/libpod/containers/{name}/{action}
+		// or:    /v{ver}/libpod/containers/create
+		parts := strings.Split(path, "/")
+		// Expected: ["", "v5.x.x", "libpod", "containers", "{name|create}", "{action}"]
+		if len(parts) < 5 || parts[3] != "containers" {
+			http.NotFound(w, r)
+			return
+		}
+
+		// /containers/create
+		if parts[4] == "create" {
+			m.mu.Lock()
+			m.createCount++
+			m.inspectResp = mockInspectJSON(true)
+			m.inspectCode = http.StatusOK
+			m.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"Id":"mock-container-id","Warnings":[]}`)
+			return
+		}
+
+		// Need at least 6 parts for /containers/{name}/{action}
+		if len(parts) < 6 {
+			http.NotFound(w, r)
+			return
+		}
+
+		switch parts[5] {
+		case "json":
+			// Inspect
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.inspectCode != 0 && m.inspectCode != http.StatusOK {
+				w.WriteHeader(m.inspectCode)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, m.inspectResp)
+
+		case "start":
+			m.mu.Lock()
+			m.startCount++
+			// Container is now running
+			m.inspectResp = mockInspectJSON(true)
+			m.inspectCode = http.StatusOK
+			m.mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "{}")
+
+		case "attach":
+			m.mu.Lock()
+			m.attachCount++
+			m.mu.Unlock()
+			// Return 101 Switching Protocols. The Attach code will hijack
+			// the connection; we just keep it open briefly then close.
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				http.Error(w, "not a hijacker", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Connection", "Upgrade")
+			w.Header().Set("Upgrade", "tcp")
+			w.WriteHeader(http.StatusSwitchingProtocols)
+			conn, _, _ := hj.Hijack()
+			if conn != nil {
+				conn.Close()
+			}
+
+		case "delete":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "[]")
+
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	m.server = &http.Server{Handler: mux}
+	return m
+}
+
+func (m *mockPodmanServer) start(t *testing.T) string {
+	t.Helper()
+	addr := "127.0.0.1:0"
+	ln, err := net.Listen("tcp", addr)
+	require.NoError(t, err)
+	go m.server.Serve(ln)
+	return ln.Addr().String()
+}
+
+func (m *mockPodmanServer) close() {
+	m.server.Close()
+}
+
+// makeConnCtx creates a podman connection context pointing at the mock server.
+func makeConnCtx(t *testing.T, host string) context.Context {
+	t.Helper()
+	uri := "tcp://" + host
+	connCtx, err := bindings.NewConnection(context.Background(), uri)
+	require.NoError(t, err, "failed to connect to mock podman server")
+	return connCtx
+}
+
+// TestFastPathDetectsStoppedContainer verifies Edict 589: when containerStarted==true
+// and stdinPipe!=nil, initialize() inspects the container. If it's stopped,
+// containerStarted is reset, stale pipes are closed/nil'd, and initialize()
+// recurses to start the container and re-attach.
+func TestFastPathDetectsStoppedContainer(t *testing.T) {
+	// Container exists but is not running → fast path inspect sees Running=false
+	mock := newMockPodmanServer(mockInspectJSON(false), http.StatusOK)
+	defer mock.close()
+
+	host := mock.start(t)
+	connCtx := makeConnCtx(t, host)
+
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/fastpath-stopped"}, 0, nil)
+	runner.conn = connCtx
+	runner.containerStarted = true
+	stalePipe := &nopWriteCloser{}
+	runner.stdinPipe = stalePipe // non-nil: fast path condition
+
+	err := runner.initialize(context.Background())
+	require.NoError(t, err)
+
+	// After recursion, container should be started with fresh pipes
+	runner.mu.Lock()
+	assert.True(t, runner.containerStarted, "containerStarted should be true after re-init")
+	assert.NotEqual(t, stalePipe, runner.stdinPipe, "stale stdinPipe should have been replaced by a new pipe")
+	runner.mu.Unlock()
+
+	// Start was called to start the stopped container
+	mock.mu.Lock()
+	assert.Greater(t, mock.startCount, 0, "Start should have been called to start the stopped container")
+	// Attach was called to re-attach after the container was started
+	assert.Greater(t, mock.attachCount, 0, "Attach should have been called to re-attach to the restarted container")
+	mock.mu.Unlock()
+}
+
+// TestFastPathInspectFailureTriggersRecreation verifies Edict 589: when the fast
+// path inspect fails (e.g., container was removed), containerStarted is reset,
+// stale pipes are closed/nil'd, and initialize() recurses to create a new container.
+func TestFastPathInspectFailureTriggersRecreation(t *testing.T) {
+	// Inspect returns 404 → container doesn't exist → recurse → createContainer
+	mock := newMockPodmanServer("", http.StatusNotFound)
+	defer mock.close()
+
+	host := mock.start(t)
+	connCtx := makeConnCtx(t, host)
+
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/fastpath-removed"}, 0, nil)
+	runner.conn = connCtx
+	runner.containerStarted = true
+	stalePipe := &nopWriteCloser{}
+	runner.stdinPipe = stalePipe // non-nil: fast path condition
+
+	err := runner.initialize(context.Background())
+	require.NoError(t, err)
+
+	// After recursion, container should be created and started with fresh pipes
+	runner.mu.Lock()
+	assert.True(t, runner.containerStarted, "containerStarted should be true after recreation")
+	assert.NotEqual(t, stalePipe, runner.stdinPipe, "stale stdinPipe should have been replaced by a new pipe")
+	runner.mu.Unlock()
+
+	// Create was called (container didn't exist so createContainer path was taken)
+	mock.mu.Lock()
+	assert.Greater(t, mock.createCount, 0, "Create should have been called after inspect failure")
+	// Attach was called to attach to the newly created container
+	assert.Greater(t, mock.attachCount, 0, "Attach should have been called to attach to the new container")
+	mock.mu.Unlock()
+}
+
+// TestFastPathRunningContainerNoRecreation verifies Edict 589: when the fast
+// path inspect shows the container is running and pipes are alive, initialize()
+// does NOT recurse or recreate — the happy path.
+func TestFastPathRunningContainerNoRecreation(t *testing.T) {
+	// Container is running → fast path inspect sees Running=true → no recursion
+	mock := newMockPodmanServer(mockInspectJSON(true), http.StatusOK)
+	defer mock.close()
+
+	host := mock.start(t)
+	connCtx := makeConnCtx(t, host)
+
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/fastpath-running"}, 0, nil)
+	runner.conn = connCtx
+	runner.containerStarted = true
+	runner.stdinPipe = &nopWriteCloser{} // non-nil: fast path condition
+
+	err := runner.initialize(context.Background())
+	require.NoError(t, err)
+
+	// Container should still be started, no recreation
+	runner.mu.Lock()
+	assert.True(t, runner.containerStarted, "containerStarted should remain true")
+	runner.mu.Unlock()
+
+	// Start, Create, and Attach should NOT have been called
+	mock.mu.Lock()
+	assert.Equal(t, 0, mock.startCount, "Start should not be called when container is running")
+	assert.Equal(t, 0, mock.createCount, "Create should not be called when container is running")
+	assert.Equal(t, 0, mock.attachCount, "Attach should not be called when pipes are alive and container is running")
+	mock.mu.Unlock()
 }

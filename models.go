@@ -108,11 +108,20 @@ func checkProviderAuth(provider string) bool {
 	// Check keyring
 	apiKey, err := GetAPIKeyFromKeyring(provider)
 	if err == nil && apiKey != "" {
-		// For openai, the keyring value may be a JSON OAuth credential
+		// For openai, the keyring value may be a JSON OAuth credential or a plain API key.
+		// A value that is neither (e.g. JSON with an empty access token) must not
+		// count as authenticated, otherwise fetchAllModels will attempt API calls
+		// with invalid credentials.
 		if provider == "openai" {
 			if _, ok := parseCodexOAuthCredential(apiKey); ok {
-				return true
+				return true // valid OAuth credential
 			}
+			// If it looks like JSON but failed to parse as a valid credential, reject
+			if strings.HasPrefix(strings.TrimSpace(apiKey), "{") {
+				return false
+			}
+			// Non-JSON, non-empty → treat as a plain API key
+			return true
 		}
 		return true
 	}
@@ -303,32 +312,9 @@ func fetchAllModels(config *Config) []Model {
 		}
 	}
 
-	// Emit login_required entries for providers without auth
-	knownProviders := []string{"openai", "anthropic", "googleai", "openrouter"}
-	for _, p := range knownProviders {
-		if checkProviderAuth(p) {
-			continue
-		}
-		if p == "openai" {
-			allModels = append(allModels, Model{
-				ID:          "codex-login",
-				DisplayName: "Login with OpenAI (Codex OAuth)",
-				Provider:    "openai",
-				Status:      "login_required",
-			})
-		} else {
-			allModels = append(allModels, Model{
-				ID:          p + "-apikey",
-				DisplayName: "Set API key for " + providerDisplayName(p),
-				Provider:    p,
-				Status:      "login_required",
-			})
-		}
-	}
-
-	// Sort models: active first, then ready, then error, then login_required
+	// Sort models: active first, then ready, then manual_entry
 	sort.Slice(allModels, func(i, j int) bool {
-		statusPriority := map[string]int{"active": 0, "ready": 1, "manual_entry": 2, "error": 3, "login_required": 4}
+		statusPriority := map[string]int{"active": 0, "ready": 1, "manual_entry": 2, "error": 3}
 		if statusPriority[allModels[i].Status] != statusPriority[allModels[j].Status] {
 			return statusPriority[allModels[i].Status] < statusPriority[allModels[j].Status]
 		}
@@ -882,8 +868,6 @@ func getStatusIcon(status string) string {
 		return "✓"
 	case "ready":
 		return ""
-	case "login_required":
-		return "🔒"
 	case "error":
 		return "⚠"
 	case "manual_entry":
@@ -929,7 +913,7 @@ func (m *ModelsWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 		OnEmpty: func(sb *strings.Builder) {
 			sb.WriteString("No models available\n")
 			sb.WriteString("\n")
-			sb.WriteString("Select a provider below to login\n")
+			sb.WriteString("Use :login to authenticate with a provider\n")
 		},
 		RenderItem: func(i int, model Model, isSelected bool, sb *strings.Builder) {
 			if !isFirst && model.Provider != lastProvider {
@@ -1078,21 +1062,12 @@ func handleModelsCommand(model *TUIModel, args []string) tea.Cmd {
 	loadCmd := func() tea.Msg {
 		models := fetchAllModels(model.config)
 
-		// Set OnSelect for login_required entries
+		// Set OnSelect for manual_entry entries
 		for i := range models {
 			m := &models[i]
 			if m.Status == "manual_entry" {
 				provider := m.Provider
 				m.OnSelect = func() tea.Msg { return enterModelNameMsg{provider: provider} }
-				continue
-			}
-			if m.Status != "login_required" {
-				continue
-			}
-			if m.Provider == "openai" {
-				m.OnSelect = model.performCodexLogin()
-			} else {
-				m.OnSelect = func() tea.Msg { return apiKeyPromptMsg{provider: m.Provider} }
 			}
 		}
 

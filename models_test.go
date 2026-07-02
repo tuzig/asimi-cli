@@ -81,12 +81,9 @@ func TestFetchAllModels_ReturnsEmptyWithoutAuth(t *testing.T) {
 
 	models := fetchAllModels(config)
 
-	// Should have 4 login_required entries — one per provider
-	// (openai, anthropic, googleai, openrouter) since none are authenticated
-	assert.Equal(t, 4, len(models), "Expected 4 login_required entries when no auth and empty Ollama")
-	for _, m := range models {
-		assert.Equal(t, "login_required", m.Status, "Expected login_required status for provider %s", m.Provider)
-	}
+	// With no auth and empty Ollama, should return no models
+	// (login_required entries are now handled by :login, not :models)
+	assert.Equal(t, 0, len(models), "Expected 0 models when no auth and empty Ollama")
 }
 
 // TestCheckProviderAuth verifies provider authentication detection
@@ -507,14 +504,14 @@ func TestModelsWindowRenderList(t *testing.T) {
 	window.SetModels([]Model{}, "")
 	render = window.RenderList(0, 0, window.GetVisibleSlots())
 	assert.Contains(t, render, "No models available")
-	assert.Contains(t, render, "Select a provider below to login")
+	assert.Contains(t, render, "Use :login to authenticate with a provider")
 
 	// Test Normal Rendering with Active/Ready and Grouping
 	models := []Model{
 		{ID: "claude-3-5-sonnet-latest", DisplayName: "Claude 3.5 Sonnet", Provider: "anthropic", Status: "active"},
 		{ID: "claude-3-5-haiku-latest", DisplayName: "Claude 3.5 Haiku", Provider: "anthropic", Status: "ready"},
 		{ID: "gpt-4o", DisplayName: "GPT-4o", Provider: "openai", Status: "ready"},
-		{ID: "o1-mini", DisplayName: "o1 Mini", Provider: "openai", Status: "login_required"},
+		{ID: "gpt-4o-mini", DisplayName: "GPT-4o Mini", Provider: "openai", Status: "ready"},
 		{ID: "gemini-2.5-pro", DisplayName: "Gemini 2.5 Pro", Provider: "googleai", Status: "ready"},
 		{ID: "anthropic/claude-3.5-sonnet", DisplayName: "anthropic/claude-3.5-sonnet", Provider: "openrouter", Status: "ready"},
 	}
@@ -526,7 +523,7 @@ func TestModelsWindowRenderList(t *testing.T) {
 	assert.True(t, strings.HasPrefix(lines[2], "  🅰️  Claude 3.5 Haiku"))
 	assert.Equal(t, "", lines[3]) // Blank line between provider groups
 	assert.True(t, strings.HasPrefix(lines[4], "  🤖 GPT-4o"))
-	assert.True(t, strings.HasPrefix(lines[5], "  🤖 🔒 o1 Mini"))
+	assert.True(t, strings.HasPrefix(lines[5], "  🤖 GPT-4o Mini"))
 	assert.Equal(t, "", lines[6]) // Blank line between provider groups
 	assert.True(t, strings.HasPrefix(lines[7], "  🔷 Gemini 2.5 Pro"))
 	assert.Equal(t, "", lines[8]) // Blank line between provider groups
@@ -550,7 +547,6 @@ func TestGetProviderIcon(t *testing.T) {
 func TestGetStatusIcon(t *testing.T) {
 	assert.Equal(t, "✓", getStatusIcon("active"))
 	assert.Equal(t, "", getStatusIcon("ready"))
-	assert.Equal(t, "🔒", getStatusIcon("login_required"))
 	assert.Equal(t, "⚠", getStatusIcon("error"))
 	assert.Equal(t, "✏️", getStatusIcon("manual_entry"))
 	assert.Equal(t, "", getStatusIcon("unknown"))
@@ -642,7 +638,7 @@ func TestFetchAllModels_WithAPIKey(t *testing.T) {
 }
 
 // TestFetchAllModels_LoginRequiredEntryContents verifies that login_required entries
-// have correct IDs, DisplayNames, and providers when no auth is configured
+// are no longer emitted by fetchAllModels (they moved to :login)
 func TestFetchAllModels_LoginRequiredEntryContents(t *testing.T) {
 	DeleteAPIKeyFromKeyring("anthropic")
 	DeleteAPIKeyFromKeyring("openai")
@@ -701,34 +697,17 @@ func TestFetchAllModels_LoginRequiredEntryContents(t *testing.T) {
 
 	models := fetchAllModels(config)
 
-	require.Equal(t, 4, len(models), "Expected 4 login_required entries")
+	// login_required entries should no longer be in fetchAllModels output
+	assert.Equal(t, 0, len(models), "Expected 0 entries — login_required moved to :login")
 
-	// Build a map for easy lookup
-	byID := make(map[string]Model)
 	for _, m := range models {
-		byID[m.ID] = m
-	}
-
-	// OpenAI should have a codex-login entry
-	openaiEntry, ok := byID["codex-login"]
-	require.True(t, ok, "Expected codex-login entry for OpenAI")
-	assert.Equal(t, "openai", openaiEntry.Provider)
-	assert.Contains(t, openaiEntry.DisplayName, "Login with OpenAI")
-	assert.Contains(t, openaiEntry.DisplayName, "Codex OAuth")
-
-	// Other providers should have apikey entries
-	for _, p := range []string{"anthropic", "googleai", "openrouter"} {
-		entry, ok := byID[p+"-apikey"]
-		require.True(t, ok, "Expected %s-apikey entry", p)
-		assert.Equal(t, p, entry.Provider)
-		assert.Contains(t, entry.DisplayName, "Set API key")
-		assert.Contains(t, entry.DisplayName, providerDisplayName(p))
+		assert.NotEqual(t, "login_required", m.Status, "login_required entries should not be in fetchAllModels")
 	}
 }
 
-// TestHandleModelsCommand_SetsOnSelectForLoginRequired verifies that handleModelsCommand
-// sets OnSelect callbacks for login_required entries
-func TestHandleModelsCommand_SetsOnSelectForLoginRequired(t *testing.T) {
+// TestHandleModelsCommand_NoLoginRequiredOnSelect verifies that handleModelsCommand
+// no longer wires OnSelect for login_required entries (they moved to :login)
+func TestHandleModelsCommand_NoLoginRequiredOnSelect(t *testing.T) {
 	DeleteAPIKeyFromKeyring("anthropic")
 	DeleteAPIKeyFromKeyring("openai")
 	DeleteAPIKeyFromKeyring("googleai")
@@ -792,57 +771,15 @@ func TestHandleModelsCommand_SetsOnSelectForLoginRequired(t *testing.T) {
 	cmd := handleModelsCommand(model, []string{})
 	require.NotNil(t, cmd)
 
-	// The command is a tea.Batch; execute it to get the batch message
 	msg := cmd()
 	require.NotNil(t, msg)
 
-	// The batch returns a tea.Msg that could be a batch of messages.
-	// We need to find the modelsLoadedMsg among them.
-	var modelsMsg modelsLoadedMsg
-	found := false
-
-	// Try to extract modelsLoadedMsg from the batch
-	switch m := msg.(type) {
-	case modelsLoadedMsg:
-		modelsMsg = m
-		found = true
-	default:
-		// It might be a batch — try executing further
-		_ = m
-	}
-
-	// If not found directly, the loadCmd runs synchronously inside the batch.
-	// Let's call fetchAllModels directly and verify OnSelect is set
-	// by replicating the handleModelsCommand logic check.
-	if !found {
-		// The batch may not resolve synchronously in test; verify via direct call
-		models := fetchAllModels(config)
-		for i := range models {
-			m := &models[i]
-			if m.Status != "login_required" {
-				continue
-			}
-			// Simulate what handleModelsCommand does
-			if m.Provider == "openai" {
-				m.OnSelect = model.performCodexLogin()
-			} else {
-				m.OnSelect = func() tea.Msg { return apiKeyPromptMsg{provider: m.Provider} }
-			}
-		}
-
-		// Verify all login_required entries have OnSelect set
-		for _, m := range models {
-			if m.Status == "login_required" {
-				assert.NotNil(t, m.OnSelect, "Expected OnSelect to be set for login_required entry %s (provider: %s)", m.ID, m.Provider)
-			}
-		}
-		return
-	}
-
-	// Verify all login_required entries have OnSelect set
-	for _, m := range modelsMsg.models {
-		if m.Status == "login_required" {
-			assert.NotNil(t, m.OnSelect, "Expected OnSelect to be set for login_required entry %s (provider: %s)", m.ID, m.Provider)
+	// Verify no login_required entries exist in the models list
+	// (they moved to :login)
+	if modelsMsg, ok := msg.(modelsLoadedMsg); ok {
+		for _, m := range modelsMsg.models {
+			assert.NotEqual(t, "login_required", m.Status,
+				"login_required entries should not be in handleModelsCommand output")
 		}
 	}
 }

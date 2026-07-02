@@ -124,6 +124,7 @@ func (h *HelpWindow) getHelpTopic(topic string) string {
 		"context":    helpContext,
 		"config":     helpConfig,
 		"models":     helpModels,
+		"login":       helpLogin,
 		"quickref":   helpQuickRef,
 	}
 
@@ -150,6 +151,7 @@ Type :help followed by one of these topics:
   :help context     - Context and token usage
   :help config      - Configuration options
   :help models      - Model selection and LLM configuration
+  :help login       - Provider authentication
   :help quickref    - Quick reference guide
 
 Press 'q' or ESC to close this help window.
@@ -185,6 +187,7 @@ Asimi uses ':' for sending commmands and starts in INSERT mode.
   :help sessions    - Session management and resume
   :help context     - Context and token usage
   :help models      - Model selection and LLM configuration
+  :help login       - Provider authentication
   :help config      - Configuration options
   :help quickref    - Quick reference guide
 
@@ -320,6 +323,7 @@ COMMAND-LINE mode, then type the command and press Enter.
 ## Configuration
 
   :models           - Select AI model
+  :login            - Authenticate with an AI provider
 
   :init [clean]     - Initialize project with infrastructure files
                       Creates: AGENTS.md, Justfile, .agents/Sandbox
@@ -656,7 +660,6 @@ using the :models command or configure them via environment variables.
 The model selector displays:
   - Available models from all providers
   - Current active model (marked with ✓)
-  - Models requiring authentication (marked with 🔒)
   - Provider icons (🅰️  Anthropic, 🤖 OpenAI, 🔷 Google, 🦙 Ollama)
 
 Navigation:
@@ -749,7 +752,7 @@ For custom or self-hosted LLM endpoints:
 ## Troubleshooting
 
 ### No models available
-  - Check authentication: :models or set API keys
+  - Check authentication: :login or set API keys
   - Verify network connectivity
   - Check provider status pages
 
@@ -759,7 +762,7 @@ For custom or self-hosted LLM endpoints:
   - Verify API key has access to the model
 
 ### Authentication errors
-  - Re-authenticate: :models
+  - Re-authenticate: :login
   - Check API key validity
   - Verify environment variables are set correctly
 
@@ -770,9 +773,9 @@ For custom or self-hosted LLM endpoints:
 
 ## Examples
 
-  # Use Claude with OAuth
-  :models
-  # Select Anthropic, complete OAuth flow
+  # Use Claude with API key
+  :login
+  # Select Anthropic, enter API key
   :models
   # Select claude-3-5-sonnet-latest
 
@@ -786,6 +789,77 @@ For custom or self-hosted LLM endpoints:
   export OPENAI_BASE_URL=https://my-llm.company.com
   export OPENAI_API_KEY=my-key
   asimi
+`
+
+const helpLogin = `# Provider Authentication
+
+Use the :login command to authenticate with an AI provider. This is separate
+from :models, which only shows models you can already access.
+
+## Using :login
+
+  :login           - Open provider selection list
+
+The login list shows:
+  - Login with OpenAI (Codex OAuth) — browser-based OAuth flow
+  - Set API key for Anthropic — prompts for an API key
+  - Set API key for Google AI — prompts for an API key
+  - Set API key for OpenRouter — prompts for an API key
+
+Navigation:
+  ↓/↑              - Navigate through providers
+  Enter            - Select provider and authenticate
+  ESC              - Cancel
+
+## OpenAI (Codex OAuth)
+
+Selecting "Login with OpenAI (Codex OAuth)" opens a browser window to complete
+the OAuth flow. A local callback server on port 1455 receives the authorization
+code. After successful login, your credentials are stored securely in the
+OS keyring and the models list is refreshed.
+
+Requirements:
+  - A browser available on your machine
+  - Port 1455 accessible on localhost
+
+## API Key Providers
+
+For Anthropic, Google AI, and OpenRouter, selecting the entry prompts you to
+enter an API key. The key is stored in the OS keyring (not in plaintext config)
+and the models list is refreshed.
+
+## Environment Variables
+
+You can also set API keys via environment variables instead of :login:
+
+  ANTHROPIC_API_KEY   - Anthropic API key
+  OPENAI_API_KEY      - OpenAI API key (plain key, not OAuth)
+  GEMINI_API_KEY      - Google Gemini API key
+  OPENROUTER_API_KEY  - OpenRouter API key
+
+## Logging Out
+
+Use :logout to clear stored credentials for the current provider:
+
+  :logout
+
+## After Login
+
+Once authenticated, use :models to select and switch between available models:
+
+  :models
+
+## Troubleshooting
+
+### OAuth flow times out
+  - Ensure port 1455 is not in use
+  - Check your browser opens correctly
+  - Complete the flow within 5 minutes
+
+### API key not accepted
+  - Verify the key is valid and active
+  - Check for trailing whitespace or newlines
+  - Try logging out first with :logout, then :login again
 `
 
 const helpConfig = `# Configuration
@@ -927,6 +1001,7 @@ const helpQuickRef = `# Quick Reference
   :quit            - Quit
   :update          - Check for updates
   :models          - Login and select the model 
+  :login           - Authenticate with a provider
   :context         - Show context info
   :export          - Export conversation
   :init            - Initialize project
