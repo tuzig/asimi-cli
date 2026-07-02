@@ -3408,6 +3408,11 @@ func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
 
 	// pendingRitualEnact should be cleared
 	assert.Nil(t, updated.pendingRitualEnact)
+
+	// A success toast should be shown
+	require.Len(t, updated.commandLine.toasts, 1, "expected one toast for ritual enact")
+	assert.Equal(t, "success", updated.commandLine.toasts[0].Type)
+	assert.Contains(t, updated.commandLine.toasts[0].Message, "Ritual enact")
 }
 
 func TestPendingRitualEnact_NoDoesNotPublishEvent(t *testing.T) {
@@ -3425,6 +3430,9 @@ func TestPendingRitualEnact_NoDoesNotPublishEvent(t *testing.T) {
 
 	// No event should be published
 	assert.Empty(t, mock.publishedEvents)
+
+	// No toast should be shown
+	assert.Empty(t, updated.commandLine.toasts)
 
 	// pendingRitualEnact should be cleared
 	assert.Nil(t, updated.pendingRitualEnact)

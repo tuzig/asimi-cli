@@ -124,7 +124,7 @@ func (h *HelpWindow) getHelpTopic(topic string) string {
 		"context":    helpContext,
 		"config":     helpConfig,
 		"models":     helpModels,
-		"login":       helpLogin,
+		"login":      helpLogin,
 		"quickref":   helpQuickRef,
 	}
 

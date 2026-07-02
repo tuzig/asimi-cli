@@ -22,4 +22,4 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
       - name: Run tests
-        run: go test ./...
+        run: just test
