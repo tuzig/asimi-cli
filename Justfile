@@ -20,15 +20,16 @@ run:
     go build .
     ./asimi --debug
 
-# Run all tests (skips git-altering tests locally)
+# Run all tests (CI mode when CI env var is set)
 test:
     #!/usr/bin/env bash
     set -o pipefail
-    go test -timeout 1m ./... | tee test.out
-
-# Run all tests including git-altering tests (CI mode)
-test-ci:
-    CI=1 go test -timeout 5m -v ./...
+    if [ -n "$CI" ]; then
+        go test -timeout 5m -v ./...
+        just vuln
+    else
+        go test -timeout 1m ./... | tee test.out
+    fi
 
 # Run tests with coverage
 test-coverage:
@@ -61,6 +62,19 @@ clean:
 bootstrap:
     go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
     go install golang.org/x/tools/cmd/goimports@latest
+    go install golang.org/x/vuln/cmd/govulncheck@latest
+
+# Run vulnerability scanning (fails in CI if vulnerabilities found)
+vuln:
+    #!/usr/bin/env bash
+    set -o pipefail
+    if ! command -v govulncheck > /dev/null 2>&1; then
+        echo "ERROR: govulncheck is not installed. Run 'just bootstrap' first."
+        exit 1
+    fi
+    go build -o /tmp/asimi-vuln .
+    govulncheck -mode=binary /tmp/asimi-vuln
+    rm -f /tmp/asimi-vuln
 
 # Init and start the podman machine 
 init-podman:
