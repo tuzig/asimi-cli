@@ -35,6 +35,7 @@ type PodmanRunner struct {
 	fallback         Runner
 	mu               sync.Mutex
 	conn             context.Context
+	establishConn    func(ctx context.Context) (context.Context, error)
 	containerStarted bool
 	stdinPipe        io.WriteCloser
 	stdoutPipe       io.ReadCloser
@@ -77,7 +78,7 @@ func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, connID uint64, fallbac
 	containerName := fmt.Sprintf("asimi-shell-%s-%d", repo.SanitizeSegment(repoInfo.Slug), connID)
 	slog.Debug("NewPodmanRunner", "containerName", containerName, "imageName", imageName, "slug", repoInfo.Slug)
 
-	return &PodmanRunner{
+	r := &PodmanRunner{
 		imageName:     imageName,
 		containerName: containerName,
 		allowFallback: cfg.AllowHostFallback,
@@ -88,6 +89,8 @@ func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, connID uint64, fallbac
 		outputs:       make(map[int]*commandOutput),
 		nextCommandID: 1,
 	}
+	r.establishConn = r.establishConnection
+	return r
 }
 
 func (r *PodmanRunner) SetMessageChannel(msgChan chan<- Msg) {
@@ -125,7 +128,7 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 	if !hasConnection {
 		slog.Debug("establishing podman connection")
-		conn, err := r.establishConnection(ctx)
+		conn, err := r.establishConn(context.Background())
 		if err != nil {
 			return fmt.Errorf("failed to connect to podman: %w", err)
 		}
@@ -133,6 +136,21 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 		r.conn = conn
 		r.mu.Unlock()
 		slog.Debug("podman connection established")
+	} else if r.conn.Err() != nil {
+		slog.Info("podman connection cancelled, re-establishing", "error", r.conn.Err())
+		r.mu.Lock()
+		r.conn = nil
+		r.mu.Unlock()
+		hasConnection = false
+
+		conn, err := r.establishConn(context.Background())
+		if err != nil {
+			return fmt.Errorf("failed to reconnect to podman: %w", err)
+		}
+		r.mu.Lock()
+		r.conn = conn
+		r.mu.Unlock()
+		slog.Debug("podman connection re-established")
 	}
 
 	existingRunning := false
@@ -431,7 +449,7 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 	macOSSocket := filepath.Join(currentUser.HomeDir, ".local/share/containers/podman/machine/podman.sock")
 	slog.Debug("trying macOS podman socket", "socket", macOSSocket)
 	if _, err := os.Stat(macOSSocket); err == nil {
-		conn, err := bindings.NewConnection(ctx, "unix://"+macOSSocket)
+		conn, err := bindings.NewConnection(context.Background(), "unix://"+macOSSocket)
 		if err == nil {
 			slog.Debug("successfully connected via macOS socket")
 			return conn, nil
@@ -440,7 +458,7 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 	}
 
 	slog.Debug("trying default podman connection")
-	if conn, err := bindings.NewConnection(ctx, ""); err == nil {
+	if conn, err := bindings.NewConnection(context.Background(), ""); err == nil {
 		slog.Debug("successfully connected via default connection")
 		return conn, nil
 	} else {
@@ -449,13 +467,13 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 
 	userSocket := fmt.Sprintf("unix:///run/user/%s/podman/podman.sock", currentUser.Uid)
 	slog.Debug("trying user socket", "socket", userSocket)
-	if conn, err := bindings.NewConnection(ctx, userSocket); err == nil {
+	if conn, err := bindings.NewConnection(context.Background(), userSocket); err == nil {
 		slog.Debug("successfully connected via user socket")
 		return conn, nil
 	}
 
 	slog.Debug("trying system socket")
-	conn, err := bindings.NewConnection(ctx, "unix:///var/run/podman/podman.sock")
+	conn, err := bindings.NewConnection(context.Background(), "unix:///var/run/podman/podman.sock")
 	if err != nil {
 		slog.Debug("failed to connect via system socket", "error", err)
 		return nil, err

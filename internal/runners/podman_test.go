@@ -679,6 +679,10 @@ func TestAttachGoroutineResetsContainerStartedNonMatchingPipes(t *testing.T) {
 // with defer cancel(), which canceled the context — and all children — the
 // moment the function returned, killing every subsequent API call.
 //
+// Edict 601 extends this test to verify that establishConnection uses
+// context.Background() internally — so even if the caller's ctx is cancelled,
+// the returned connection remains alive.
+//
 // This test calls establishConnection against a live podman socket if
 // available; if podman is not running it is skipped.
 func TestEstablishConnectionContextNotCanceled(t *testing.T) {
@@ -689,16 +693,72 @@ func TestEstablishConnectionContextNotCanceled(t *testing.T) {
 	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/ctx"}, 0, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	conn, err := runner.establishConnection(ctx)
 	if err != nil {
+		cancel()
 		t.Skipf("podman not available, skipping: %v", err)
 	}
 
+	// The connection must be alive immediately after establishConnection.
 	if err := conn.Err(); err != nil {
+		cancel()
 		t.Fatalf("connection context is already canceled after establishConnection returned: %v", err)
 	}
+
+	// Cancel the caller's ctx — the connection (built from context.Background())
+	// must remain alive.
+	cancel()
+
+	if err := conn.Err(); err != nil {
+		t.Fatalf("connection context was canceled when caller ctx was cancelled: %v", err)
+	}
+}
+
+// TestInitializeReestablishesDeadConnection verifies Edict 601: when r.conn
+// is set but its context is cancelled (r.conn.Err() != nil), initialize()
+// should detect the dead connection and re-establish a new one.
+//
+// This test uses a mock podman server to avoid needing a live podman daemon.
+// It sets r.conn to a cancelled context (simulating a dead streaming-derived
+// connection) and a mock conn to re-establish against, then verifies the
+// re-establishment logic detects and replaces the dead connection.
+func TestInitializeReestablishesDeadConnection(t *testing.T) {
+	mock := newMockPodmanServer(mockInspectJSON(true), http.StatusOK)
+	defer mock.close()
+	host := mock.start(t)
+
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/dead-conn"}, 0, nil)
+
+	// Simulate a dead connection: a cancelled context (as would happen if
+	// establishConnection had been called with a streaming context that was
+	// later cancelled).
+	deadCtx, deadCancel := context.WithCancel(context.Background())
+	deadCancel()
+
+	runner.mu.Lock()
+	runner.conn = deadCtx
+	runner.containerStarted = true
+	stalePipe := &nopWriteCloser{}
+	runner.stdinPipe = stalePipe // non-nil: fast path condition
+	runner.mu.Unlock()
+
+	// Replace establishConnection to point at the mock server, since the
+	// real establishConnection tries hardcoded socket paths.
+	runner.establishConn = func(_ context.Context) (context.Context, error) {
+		conn, err := bindings.NewConnection(context.Background(), "tcp://"+host)
+		require.NoError(t, err, "failed to connect to mock podman server")
+		return conn, err
+	}
+
+	err := runner.initialize(context.Background())
+	require.NoError(t, err)
+
+	// The dead connection should have been replaced with a live one.
+	runner.mu.Lock()
+	assert.NotNil(t, runner.conn, "conn should be re-established")
+	assert.NoError(t, runner.conn.Err(), "re-established connection should be alive")
+	runner.mu.Unlock()
 }
 
 // nopWriteCloser is a no-op io.WriteCloser for testing.
