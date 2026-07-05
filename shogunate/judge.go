@@ -93,19 +93,40 @@ func (j *Judge) GetPendingManifests(key storage.EdictKey) ([]storage.ForgeManife
 // For rituals with no manifests (e.g., project-init), it also checks for
 // edict-level verdicts as an alternative completion signal.
 func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
+	// Only count the latest manifest per file_path; superseded manifests should
+	// not inflate the pending count after reforging.
 	var pendingCount int64
-	err := j.db.Model(&storage.ForgeManifest{}).
-		Where("edict_id = ? AND username = ? AND project = ? AND status != ?", key.ID, key.Username, key.Project, storage.ManifestQuenched).
-		Count(&pendingCount).Error
+	err := j.db.Raw(`
+		SELECT COUNT(*) FROM forge_manifests fm
+		WHERE fm.edict_id = ? AND fm.username = ? AND fm.project = ?
+		  AND fm.status != ?
+		  AND fm.created_at = (
+		    SELECT MAX(fm2.created_at) FROM forge_manifests fm2
+		    WHERE fm2.edict_id = fm.edict_id
+		      AND fm2.username = fm.username
+		      AND fm2.project = fm.project
+		      AND fm2.file_path = fm.file_path
+		  )`,
+		key.ID, key.Username, key.Project, storage.ManifestQuenched).
+		Scan(&pendingCount).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check quenched status: %w", err)
 	}
 
-	// Also check that at least one manifest exists
+	// Also check that at least one manifest exists (latest per file_path only)
 	var totalCount int64
-	err = j.db.Model(&storage.ForgeManifest{}).
-		Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
-		Count(&totalCount).Error
+	err = j.db.Raw(`
+		SELECT COUNT(*) FROM forge_manifests fm
+		WHERE fm.edict_id = ? AND fm.username = ? AND fm.project = ?
+		  AND fm.created_at = (
+		    SELECT MAX(fm2.created_at) FROM forge_manifests fm2
+		    WHERE fm2.edict_id = fm.edict_id
+		      AND fm2.username = fm.username
+		      AND fm2.project = fm.project
+		      AND fm2.file_path = fm.file_path
+		  )`,
+		key.ID, key.Username, key.Project).
+		Scan(&totalCount).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to count manifests: %w", err)
 	}

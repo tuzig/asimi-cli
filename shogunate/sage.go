@@ -152,27 +152,32 @@ func (c *Sage) Tools() []Tool {
 		return result
 	}
 	// Fallback: legacy tool list when registry is not yet wired
+	ctx := tools.ToolContext{
+		RepoInfo:   &c.repoInfo,
+		MinisterID: c.ministerID,
+		Username:   c.username,
+		Project:    c.project,
+		DB:         c.db,
+	}
 	toolList := []Tool{
-		tools.RequestZhengmingTool{MinisterID: c.ID(), Requester: c, WaitForAnswer: c.WaitForZhengming, Username: c.Username(), Project: c.Project()},
-		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.Username(), Project: c.Project()},
-		tools.ListEdictsTool{DB: c.db, Username: c.Username(), Project: c.Project()},
+		tools.RequestZhengmingTool{Ctx: ctx, Requester: c, WaitForAnswer: c.WaitForZhengming},
+		tools.GetEdictStatusTool{Ctx: ctx, Manager: c},
+		tools.ListEdictsTool{Ctx: ctx},
 		tools.SuggestEdictTool{
+			Ctx:       ctx,
 			Requester: c,
 			NotifyFn:  func() func(any) { return c.notify },
-			Username:  c.Username(),
-			Project:   c.Project(),
 		},
-		tools.QueryCourtTool{DB: c.db, Username: c.Username(), Project: c.Project()},
+		tools.QueryCourtTool{Ctx: ctx},
 		tools.RecordPrecedentTool{
+			Ctx:        ctx,
 			Store:      c,
-			Username:   c.Username(),
-			Project:    c.Project(),
 			AddFailure: AddFailure,
 		},
-		tools.ListQuenchedManifestsTool{Store: c, Username: c.Username(), Project: c.Project()},
-		tools.QueryPrecedentsTool{Store: c, Username: c.Username(), Project: c.Project()},
+		tools.ListQuenchedManifestsTool{Ctx: ctx, Store: c},
+		tools.QueryPrecedentsTool{Ctx: ctx, Store: c},
 	}
-	for _, t := range tools.GetROTools(c.config.LLM, c.RepoInfo().ProjectRoot) {
+	for _, t := range tools.GetROTools(c.config.LLM, ctx) {
 		toolList = append(toolList, t)
 	}
 	return toolList
@@ -364,12 +369,24 @@ func (c *Sage) GetQuenchedManifests(key storage.EdictKey) ([]storage.ForgeManife
 	return manifests, nil
 }
 
-// NoRejections checks if there are any rejected manifests for an edict
+// NoRejections checks if there are any rejected manifests for an edict.
+// Only the latest manifest per file_path is considered; superseded rejected
+// manifests from prior forging rounds do not count.
 func (c *Sage) NoRejections(key storage.EdictKey) (bool, error) {
 	var count int64
-	err := c.db.Model(&storage.ForgeManifest{}).
-		Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.ManifestRejected).
-		Count(&count).Error
+	err := c.db.Raw(`
+		SELECT COUNT(*) FROM forge_manifests fm
+		WHERE fm.edict_id = ? AND fm.username = ? AND fm.project = ?
+		  AND fm.status = ?
+		  AND fm.created_at = (
+		    SELECT MAX(fm2.created_at) FROM forge_manifests fm2
+		    WHERE fm2.edict_id = fm.edict_id
+		      AND fm2.username = fm.username
+		      AND fm2.project = fm.project
+		      AND fm2.file_path = fm.file_path
+		  )`,
+		key.ID, key.Username, key.Project, storage.ManifestRejected).
+		Scan(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check rejections: %w", err)
 	}

@@ -970,9 +970,22 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		}
 		return nil
 	case "check_verdicts_passed":
-		// Check all manifests for this edict - fail if any are rejected
+		// Check all manifests for this edict - fail if any of the latest per file_path are rejected.
+		// Only the most recent manifest per file_path matters; superseded rejected manifests
+		// should not trigger false failures after reforging.
 		var manifests []storage.ForgeManifest
-		if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", thenKey.ID, thenKey.Username, thenKey.Project).Find(&manifests).Error; err != nil {
+		if err := r.db.Raw(`
+			SELECT * FROM forge_manifests fm
+			WHERE fm.edict_id = ? AND fm.username = ? AND fm.project = ?
+			  AND fm.created_at = (
+			    SELECT MAX(fm2.created_at) FROM forge_manifests fm2
+			    WHERE fm2.edict_id = fm.edict_id
+			      AND fm2.username = fm.username
+			      AND fm2.project = fm.project
+			      AND fm2.file_path = fm.file_path
+			  )`,
+			thenKey.ID, thenKey.Username, thenKey.Project).
+			Scan(&manifests).Error; err != nil {
 			return fmt.Errorf("failed to query manifests: %w", err)
 		}
 		var rejected []string
