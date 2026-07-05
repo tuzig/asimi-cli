@@ -259,10 +259,10 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 	// circular imports.
 	var invokeMinisterTool, enactRitualTool tools.Tool
 	if chancellor != nil {
-		invokeMinisterTool = &InvokeMinisterTool{chancellor: chancellor}
+		invokeMinisterTool = tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: s.config.Username, Project: s.config.Project}, Invoker: chancellor}
 		// enact_ritual is only available when ritual runner is set up
 		if s.GetRitualRunner() != nil {
-			enactRitualTool = &InvokeRitualTool{chancellor: chancellor}
+			enactRitualTool = tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: s.config.Username, Project: s.config.Project}, Launcher: chancellor}
 		}
 	}
 
@@ -459,6 +459,13 @@ func (s *Shogunate) Start(ctx context.Context) error {
 
 	for _, minister := range s.Ministers() {
 		go minister.Run(s.ctx)
+	}
+
+	// Wire minister lookup into all MinisterBase instances so InvokeMinister works
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
+			base.SetMinisterLookup(s.GetMinister)
+		}
 	}
 
 	if s.ritualGuard != nil {

@@ -152,32 +152,27 @@ func (c *Sage) Tools() []Tool {
 		return result
 	}
 	// Fallback: legacy tool list when registry is not yet wired
-	ctx := tools.ToolContext{
-		RepoInfo:   &c.repoInfo,
-		MinisterID: c.ministerID,
-		Username:   c.username,
-		Project:    c.project,
-		DB:         c.db,
-	}
 	toolList := []Tool{
-		tools.RequestZhengmingTool{Ctx: ctx, Requester: c, WaitForAnswer: c.WaitForZhengming},
-		tools.GetEdictStatusTool{Ctx: ctx, Manager: c},
-		tools.ListEdictsTool{Ctx: ctx},
+		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, WaitForAnswer: c.WaitForZhengming, Username: c.username, Project: c.project},
+		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.username, Project: c.project},
+		tools.ListEdictsTool{DB: c.db, Username: c.username, Project: c.project},
 		tools.SuggestEdictTool{
-			Ctx:       ctx,
 			Requester: c,
 			NotifyFn:  func() func(any) { return c.notify },
+			Username:  c.username,
+			Project:   c.project,
 		},
-		tools.QueryCourtTool{Ctx: ctx},
+		tools.QueryCourtTool{DB: c.db, Username: c.username, Project: c.project},
 		tools.RecordPrecedentTool{
-			Ctx:        ctx,
 			Store:      c,
+			Username:   c.username,
+			Project:    c.project,
 			AddFailure: AddFailure,
 		},
-		tools.ListQuenchedManifestsTool{Ctx: ctx, Store: c},
-		tools.QueryPrecedentsTool{Ctx: ctx, Store: c},
+		tools.ListQuenchedManifestsTool{Store: c, Username: c.username, Project: c.project},
+		tools.QueryPrecedentsTool{Store: c, Username: c.username, Project: c.project},
 	}
-	for _, t := range tools.GetROTools(c.config.LLM, ctx) {
+	for _, t := range tools.GetROTools(c.config.LLM, c.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
 	}
 	return toolList

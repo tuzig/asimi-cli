@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,6 +28,7 @@ import (
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/vmihailenco/msgpack/v5"
 	"gorm.io/gorm"
 )
 
@@ -223,6 +225,7 @@ type MinisterBase struct {
 	tasks        chan *Task
 	publish      func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint // routes events through Shogunate when set
 	toolRegistry *tools.ToolRegistry                                                                     // central tool registry with permission classifications
+	getMinister  func(string) Minister                                                                   // minister lookup injected by Shogunate
 
 	zhengmingMu         sync.Mutex
 	onZhengmingRaised   func()
@@ -576,6 +579,11 @@ func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 	m.notify = notify
 }
 
+// SetMinisterLookup sets the minister lookup function injected by the Shogunate.
+func (m *MinisterBase) SetMinisterLookup(lookup func(string) Minister) {
+	m.getMinister = lookup
+}
+
 // SetSessionPersister stores the persister and propagates it to the
 // currently-held session if there is one. Future sessions pick it up
 // at the call sites that wire interactive sessions (chancellor.go,
@@ -888,6 +896,224 @@ func (m *MinisterBase) EmitEvent(key storage.EdictKey, eventType storage.Shoguna
 	if err := m.db.Create(&event).Error; err != nil {
 		return fmt.Errorf("failed to emit event: %w", err)
 	}
+	return nil
+}
+
+// --- Minister invocation and ritual launching (implements tools.MinisterInvoker, tools.RitualLauncher) ---
+
+// MinisterInvokingMsg notifies the user that a minister is being invoked
+type MinisterInvokingMsg struct {
+	ChannelID  string           `msgpack:"channel_id"`
+	MinisterID string           `msgpack:"minister_id"`
+	EdictKey   storage.EdictKey `msgpack:"edict_key"`
+	Task       string           `msgpack:"task,omitempty"`
+}
+
+// MinisterCompletedMsg notifies the user that a minister completed its task.
+// Error rides the wire as a string; decoded values reconstruct via errors.New.
+type MinisterCompletedMsg struct {
+	ChannelID  string           `msgpack:"-"`
+	MinisterID string           `msgpack:"-"`
+	EdictKey   storage.EdictKey `msgpack:"-"`
+	Output     string           `msgpack:"-"`
+	Sealed     bool             `msgpack:"-"`
+	Error      error            `msgpack:"-"`
+}
+
+type ministerCompletedMsgWire struct {
+	ChannelID  string           `msgpack:"channel_id"`
+	MinisterID string           `msgpack:"minister_id"`
+	EdictKey   storage.EdictKey `msgpack:"edict_key"`
+	Output     string           `msgpack:"output,omitempty"`
+	Sealed     bool             `msgpack:"sealed,omitempty"`
+	Error      string           `msgpack:"err,omitempty"`
+}
+
+// MarshalMsgpack encodes MinisterCompletedMsg with Error as a plain string.
+func (m MinisterCompletedMsg) MarshalMsgpack() ([]byte, error) {
+	w := ministerCompletedMsgWire{
+		ChannelID:  m.ChannelID,
+		MinisterID: m.MinisterID,
+		EdictKey:   m.EdictKey,
+		Output:     m.Output,
+		Sealed:     m.Sealed,
+	}
+	if m.Error != nil {
+		w.Error = m.Error.Error()
+	}
+	return msgpack.Marshal(w)
+}
+
+// UnmarshalMsgpack decodes MinisterCompletedMsg, reviving Error via errors.New.
+func (m *MinisterCompletedMsg) UnmarshalMsgpack(b []byte) error {
+	var w ministerCompletedMsgWire
+	if err := msgpack.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	m.ChannelID = w.ChannelID
+	m.MinisterID = w.MinisterID
+	m.EdictKey = w.EdictKey
+	m.Output = w.Output
+	m.Sealed = w.Sealed
+	if w.Error != "" {
+		m.Error = errors.New(w.Error)
+	}
+	return nil
+}
+
+// InvokeMinister dispatches work to a registered minister for an edict (synchronous).
+// Implements tools.MinisterInvoker via MinisterBase embedding.
+func (m *MinisterBase) InvokeMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	// Notify: invoking
+	if m.notify != nil {
+		m.notify(MinisterInvokingMsg{
+			ChannelID:  m.ministerID,
+			MinisterID: ministerID,
+			EdictKey:   key,
+			Task:       work,
+		})
+	}
+
+	// Get minister via injected lookup
+	var minister Minister
+	if m.getMinister != nil {
+		minister = m.getMinister(ministerID)
+	}
+	if minister == nil {
+		err := fmt.Errorf("minister not found: %s", ministerID)
+		if m.notify != nil {
+			m.notify(MinisterCompletedMsg{
+				ChannelID:  m.ministerID,
+				MinisterID: ministerID,
+				EdictKey:   key,
+				Error:      err,
+			})
+		}
+		return "", fmt.Errorf("minister %s failed: %w", ministerID, err)
+	}
+
+	// Wrap notify with WithChannelID so the invoked minister's session routes to caller's tab
+	wrappedNotify := WithChannelID(m.notify, m.session, m.ministerID)
+
+	// Create per-call done channel (synchronous blocking pattern)
+	doneChan := make(chan Result, 1)
+
+	task := &Task{
+		Ctx:       ctx,
+		EdictKey:  key,
+		Work:      work,
+		Done:      doneChan,
+		Notify:    wrappedNotify,
+		ChannelID: m.ministerID,
+	}
+
+	// Send task to minister
+	timeout := 15 * time.Minute
+	select {
+	case minister.Tasks() <- task:
+		logger.Info("task sent to minister",
+			"minister", ministerID,
+			"edict_id", key.ID,
+			"work", truncateString(work, 50))
+	case <-ctx.Done():
+		return "", fmt.Errorf("minister %s failed: context cancelled while sending task to %s", ministerID, ministerID)
+	}
+
+	// Block until minister replies (only blocks this session's goroutine)
+	var result Result
+	select {
+	case result = <-doneChan:
+	case <-time.After(timeout):
+		err := fmt.Errorf("minister %s timeout after %v", ministerID, timeout)
+		if m.notify != nil {
+			m.notify(MinisterCompletedMsg{
+				ChannelID:  m.ministerID,
+				MinisterID: ministerID,
+				EdictKey:   key,
+				Error:      err,
+			})
+		}
+		return "", err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+
+	if result.Err != nil {
+		if m.notify != nil {
+			m.notify(MinisterCompletedMsg{
+				ChannelID:  m.ministerID,
+				MinisterID: ministerID,
+				EdictKey:   key,
+				Error:      result.Err,
+			})
+		}
+		logger.Error("task returned error",
+			"minister", ministerID,
+			"edict_id", key.ID,
+			"error", result.Err)
+		return "", fmt.Errorf("minister %s failed: %w", ministerID, result.Err)
+	}
+
+	// Notify: completed
+	if m.notify != nil {
+		m.notify(MinisterCompletedMsg{
+			ChannelID:  m.ministerID,
+			MinisterID: ministerID,
+			EdictKey:   key,
+			Output:     work,
+			Sealed:     true,
+		})
+	}
+
+	logger.Info("task completed",
+		"minister", ministerID,
+		"edict_id", key.ID,
+		"sealed", result.Sealed,
+		"output_len", len(result.Output))
+
+	resultMap := map[string]any{
+		"minister_id": ministerID,
+		"edict_id":    key.ID,
+		"status":      "completed",
+		"sealed":      result.Sealed,
+		"output":      result.Output,
+	}
+	resultJSON, _ := json.Marshal(resultMap)
+	return string(resultJSON), nil
+}
+
+// StartRitual emits a ritual_enacted event for the RitualGuard to handle asynchronously.
+// Implements tools.RitualLauncher via MinisterBase embedding.
+func (m *MinisterBase) StartRitual(name string, key storage.EdictKey, inputs map[string]string) error {
+	if inputs == nil {
+		inputs = make(map[string]string)
+	}
+	inputs["edict_id"] = fmt.Sprintf("%d", key.ID)
+
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	inputsPayload := make(map[string]interface{}, len(inputs))
+	for k, v := range inputs {
+		inputsPayload[k] = v
+	}
+	payload := storage.JSON{
+		"ritual_name": name,
+		"inputs":      inputsPayload,
+	}
+	if err := m.EmitEvent(key, storage.EventRitualEnacted, payload); err != nil {
+		logger.Warn("failed to emit ritual_enacted event", "error", err)
+		return err
+	}
+
+	logger.Info("ritual enacted", "ritual", name, "edict_id", key.ID)
 	return nil
 }
 

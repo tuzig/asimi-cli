@@ -17,6 +17,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 
 	"github.com/stretchr/testify/assert"
@@ -1770,7 +1771,7 @@ func TestInvokeRitualTool_Enacted(t *testing.T) {
 		shogunate:    shogunate,
 	}
 
-	tool := InvokeRitualTool{chancellor: chanc}
+	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: chanc}
 	input := `{"ritual_name":"test-enacted","edict_id":1}`
 
 	result, err := tool.Call(context.Background(), input)
@@ -1817,7 +1818,7 @@ func TestInvokeRitualTool_EnactedEvenForBadRitual(t *testing.T) {
 		shogunate:    shogunate,
 	}
 
-	tool := InvokeRitualTool{chancellor: chanc}
+	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: chanc}
 	input := `{"ritual_name":"test-fail-enacted","edict_id":2}`
 
 	result, err := tool.Call(context.Background(), input)

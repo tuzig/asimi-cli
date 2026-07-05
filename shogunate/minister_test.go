@@ -18,6 +18,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 
@@ -326,6 +327,7 @@ func TestHappyFlowE2E(t *testing.T) {
 		},
 	}
 	chancellor.SetShogunate(shogunate)
+	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	// Create an edict for the test
 	edict, err := CreateEdictForTest(db, "E2E test edict")
@@ -335,7 +337,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	go forge.Run(ctx)
 
 	// Create the InvokeMinisterTool
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
 	// Invoke the Forge minister with a trivial task
 	// With synchronous blocking, this call blocks until minister replies
@@ -393,8 +395,9 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 		},
 	}
 	chancellor.SetShogunate(shogunate)
+	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
 	// Try to invoke a non-existent minister
 	taskInput := `{"minister_id": "unknown", "edict_id": 1, "task": "hello"}`
@@ -412,7 +415,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
 	// Missing task parameter
 	taskInput := `{"minister_id": "forge", "edict_id": 1}`
@@ -426,7 +429,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
 	_, err := tool.Call(context.Background(), `not json`)
 	if err == nil {
@@ -441,7 +444,7 @@ func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
 func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
 	_, err := tool.Call(context.Background(), `{"edict_id": 1, "task": "do something"}`)
 	if err == nil {
@@ -456,7 +459,7 @@ func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
 func TestInvokeMinisterTool_MissingEdictID(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
 	_, err := tool.Call(context.Background(), `{"minister_id": "forge", "task": "do something"}`)
 	if err == nil {
@@ -483,6 +486,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 		ministers: map[string]Minister{"failing": fake},
 	}
 	chancellor.SetShogunate(shogunate)
+	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	// Start the fake minister: reads task, sends error result
 	go func() {
@@ -493,7 +497,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 		}
 	}()
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 	_, err := tool.Call(ctx, `{"minister_id": "failing", "edict_id": 1, "task": "break"}`)
 	if err == nil {
 		t.Fatal("Expected error when minister returns Result.Err")
@@ -517,12 +521,13 @@ func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 		ministers: map[string]Minister{"blocked": fake},
 	}
 	chancellor.SetShogunate(shogunate)
+	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	// Cancel context immediately
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 	_, err := tool.Call(ctx, `{"minister_id": "blocked", "edict_id": 1, "task": "go"}`)
 	if err == nil {
 		t.Fatal("Expected error when context is cancelled during send")
@@ -546,6 +551,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 		ministers: map[string]Minister{"slow": fake},
 	}
 	chancellor.SetShogunate(shogunate)
+	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	// Drain the task channel so the send succeeds, but never reply
 	go func() { <-fake.tasks }()
@@ -557,7 +563,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 		cancel()
 	}()
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 	_, err := tool.Call(ctx, `{"minister_id": "slow", "edict_id": 1, "task": "wait"}`)
 	if err == nil {
 		t.Fatal("Expected error when context is cancelled during wait")
@@ -591,13 +597,14 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 		ministers: map[string]Minister{"notifier": fake},
 	}
 	chancellor.SetShogunate(shogunate)
+	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	go func() {
 		task := <-fake.tasks
 		task.Done <- Result{MinisterID: "notifier", Sealed: true, Output: "done"}
 	}()
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 	_, err := tool.Call(ctx, `{"minister_id": "notifier", "edict_id": 1, "task": "notify me"}`)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -654,8 +661,9 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 		ministers: map[string]Minister{},
 	}
 	chancellor.SetShogunate(shogunate)
+	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
-	tool := InvokeMinisterTool{chancellor: chancellor}
+	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 	_, _ = tool.Call(ctx, `{"minister_id": "ghost", "edict_id": 1, "task": "haunt"}`)
 
 	mu.Lock()
@@ -677,7 +685,7 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 
 // TestInvokeMinisterTool_Format tests the Format method
 func TestInvokeMinisterTool_Format(t *testing.T) {
-	tool := InvokeMinisterTool{}
+	tool := tools.InvokeMinisterTool{}
 
 	// Normal case
 	output := tool.Format(`{"minister_id": "forge", "task": "build it"}`, `{"status":"ok"}`, nil)
