@@ -233,11 +233,11 @@ func (p *PromptComponent) CalculateDesiredHeight() int {
 		return 2
 	}
 
-	// In answering mode, size for: title + question + options + Other... + padding
+	// In answering mode, size for: title + question + options + padding
 	if p.answering != nil && p.answering.Current < len(p.answering.Questions) {
 		q := p.answering.Questions[p.answering.Current]
-		// 1 title + 1 blank + question lines + option count + 1 (Other...) + 1 padding
-		h := 3 + len(q.Options) + 1 + 1
+		// 1 title + 1 blank + question lines + option count + 1 padding
+		h := 3 + len(q.Options)
 		if p.MaxHeight > 0 && h > p.MaxHeight {
 			return p.MaxHeight
 		}
@@ -392,7 +392,7 @@ func (p *PromptComponent) HandleZhengmingPending(msg shogunate.ZhengmingPendingM
 		aq[i] = AnsweringQuestion{
 			Text:    q.Text,
 			Summary: q.Summary,
-			Options: q.Options,
+			Options: append(q.Options, "Edit", "Chat"),
 		}
 	}
 
@@ -763,16 +763,14 @@ func (p PromptComponent) viewAnswering() string {
 	b.WriteString(displayText)
 	b.WriteByte('\n')
 
-	// Render options + "Chat" + "Edit"
-	// TODO: remove the "Edit" as it does not belong here. It should be only when suggesting an edict
-	allOptions := append(q.Options, "Edit", "Chat")
-	for i, opt := range allOptions {
+	// Render options
+	for i, opt := range q.Options {
 		if i == q.Selected {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptOnBorder).Render(fmt.Sprintf("  ▶ %s", opt)))
 		} else {
 			b.WriteString(fmt.Sprintf("    %s", opt))
 		}
-		if i < len(allOptions)-1 {
+		if i < len(q.Options)-1 {
 			b.WriteByte('\n')
 		}
 	}
@@ -789,7 +787,7 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 	q := &a.Questions[a.Current]
 
 	// Option selection mode
-	totalOptions := len(q.Options) + 2 // +1 for "Chat", +1 for "Edit"
+	totalOptions := len(q.Options)
 	switch keyMsg.String() {
 	case "j", "down":
 		q.Selected = (q.Selected + 1) % totalOptions
@@ -797,7 +795,7 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 		q.Selected = (q.Selected - 1 + totalOptions) % totalOptions
 	case "enter":
 		slog.Info("User hit enter in answering", "selected", q.Selected, "len", len(q.Options))
-		if q.Selected == len(q.Options) {
+		if q.Options[q.Selected] == "Edit" {
 			// "Edit" selected — open question in external editor
 			requestID := a.RequestID
 			questionText := q.Text
@@ -807,7 +805,7 @@ func (p PromptComponent) updateAnswering(keyMsg tea.KeyMsg) (PromptComponent, te
 			return p, func() tea.Msg {
 				return AnsweringEditMsg{RequestID: requestID, Question: questionText}
 			}
-		} else if q.Selected == len(q.Options)+1 {
+		} else if q.Options[q.Selected] == "Chat" {
 			// "Chat" selected — reject zhengming and return to chat
 			requestID := a.RequestID
 			return p, func() tea.Msg {

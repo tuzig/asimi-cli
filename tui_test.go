@@ -4265,7 +4265,7 @@ func TestShowEdictActionMenu_EntersAnsweringMode(t *testing.T) {
 	assert.NotNil(t, model.prompt().answering, "prompt should be in answering mode")
 	assert.Equal(t, "edict-42", model.prompt().answering.RequestID)
 	require.Len(t, model.prompt().answering.Questions, 1)
-	assert.Equal(t, []string{"Status", "Implement", "Seal", "Cancel"},
+	assert.Equal(t, []string{"Status", "Implement", "Seal", "Cancel", "Edit"},
 		model.prompt().answering.Questions[0].Options)
 }
 

@@ -6,7 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/storage"
 )
 
 // TestPromptHeightGrowsTo10LinesForMultilineInput tests that prompt grows to 10 lines
@@ -311,7 +313,7 @@ func TestAnsweringModeEditOption(t *testing.T) {
 			{
 				Text:     "What would you like to do?",
 				Summary:  "What to do?",
-				Options:  []string{"Accept", tools.AnswerReject},
+				Options:  []string{"Accept", tools.AnswerReject, "Edit", "Chat"},
 				Selected: 0,
 			},
 		},
@@ -389,5 +391,115 @@ func TestAnsweringModeEditUpdatesQuestion(t *testing.T) {
 	// Selection should be reset to 0
 	if prompt.answering.Questions[0].Selected != 0 {
 		t.Errorf("Expected Selected to be reset to 0, got %d", prompt.answering.Questions[0].Selected)
+	}
+}
+
+// TestHandleZhengmingPendingAppendsEditChat verifies that HandleZhengmingPending
+// appends "Edit" and "Chat" to each question's Options.
+func TestHandleZhengmingPendingAppendsEditChat(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+
+	msg := shogunate.ZhengmingPendingMsg{
+		RequestID:  "zhengming-1",
+		MinisterID: "sage",
+		Questions: storage.ZhengmingQuestions{
+			{Text: "Which approach?", Summary: "Approach?", Options: []string{"Option A", "Option B"}},
+			{Text: "Confirm?", Summary: "Confirm?", Options: []string{"Yes", "No"}},
+		},
+	}
+	prompt.HandleZhengmingPending(msg)
+
+	if prompt.answering == nil {
+		t.Fatal("Expected answering state to be set")
+	}
+	if prompt.answering.RequestID != "zhengming-1" {
+		t.Errorf("Expected RequestID 'zhengming-1', got %q", prompt.answering.RequestID)
+	}
+	if len(prompt.answering.Questions) != 2 {
+		t.Fatalf("Expected 2 questions, got %d", len(prompt.answering.Questions))
+	}
+
+	for i, q := range prompt.answering.Questions {
+		expected := len(msg.Questions[i].Options) + 2 // +Edit +Chat
+		if len(q.Options) != expected {
+			t.Errorf("Question %d: expected %d options, got %d", i, expected, len(q.Options))
+		}
+		if q.Options[len(q.Options)-2] != "Edit" {
+			t.Errorf("Question %d: expected second-to-last option 'Edit', got %q", i, q.Options[len(q.Options)-2])
+		}
+		if q.Options[len(q.Options)-1] != "Chat" {
+			t.Errorf("Question %d: expected last option 'Chat', got %q", i, q.Options[len(q.Options)-1])
+		}
+	}
+}
+
+// TestAnsweringModeChatOption verifies that selecting "Chat" emits AnsweredMsg with AnswerChat.
+func TestAnsweringModeChatOption(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+
+	state := &AnsweringState{
+		RequestID: "test-chat-1",
+		Title:     "Zhengming: Sage asks",
+		Questions: []AnsweringQuestion{
+			{
+				Text:     "Pick one",
+				Summary:  "Pick",
+				Options:  []string{"Accept", tools.AnswerReject, "Edit", "Chat"},
+				Selected: 0,
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	// Navigate to "Chat" (index 3)
+	downMsg := tea.KeyMsg{Type: tea.KeyDown}
+	prompt, _ = prompt.Update(downMsg) // Selected = 1
+	prompt, _ = prompt.Update(downMsg) // Selected = 2
+	prompt, _ = prompt.Update(downMsg) // Selected = 3 (Chat)
+
+	// Press Enter to select Chat
+	enterMsg := tea.KeyMsg{Type: tea.KeyEnter}
+	_, cmd := prompt.Update(enterMsg)
+
+	if cmd == nil {
+		t.Fatal("Expected cmd to emit AnsweredMsg")
+	}
+	msg := cmd()
+	answered, ok := msg.(AnsweredMsg)
+	if !ok {
+		t.Fatalf("Expected AnsweredMsg, got %T", msg)
+	}
+	if answered.RequestID != "test-chat-1" {
+		t.Errorf("Expected RequestID 'test-chat-1', got %q", answered.RequestID)
+	}
+	if len(answered.Answers) != 1 || answered.Answers[0] != tools.AnswerChat {
+		t.Errorf("Expected Answers [%q], got %v", tools.AnswerChat, answered.Answers)
+	}
+}
+
+// TestCalculateDesiredHeightAnsweringMode verifies the height calculation in answering mode.
+func TestCalculateDesiredHeightAnsweringMode(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+	prompt.SetScreenHeight(40) // MaxHeight = 20
+
+	state := &AnsweringState{
+		RequestID: "test-height-1",
+		Title:     "Zhengming",
+		Questions: []AnsweringQuestion{
+			{
+				Text:    "Question?",
+				Summary: "Q?",
+				Options: []string{"A", "B", "C"},
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	// Expected: 3 (title + blank + question) + 3 (options) = 6
+	height := prompt.CalculateDesiredHeight()
+	if height != 6 {
+		t.Errorf("Expected height 6 (3 + 3 options), got %d", height)
 	}
 }

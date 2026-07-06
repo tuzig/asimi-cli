@@ -524,7 +524,7 @@ The prompt dynamically adjusts its height based on content:
 - **Minimum (2 lines)**: Empty prompt, single-line content, or scroll mode
 - **Expanded (`ExpandedHeight`, default 10)**: When content spans multiple lines (including wrapped text)
 - **Maximum (50% of screen)**: Hard cap to ensure content area remains usable
-- **Answering mode**: Sized to fit title + question + options + "Edit"/"Chat" buttons
+- **Answering mode**: Sized to fit title + question + options (including "Edit"/"Chat" which are part of Options)
 
 ### Height Calculation Logic
 
@@ -535,10 +535,10 @@ func (p *PromptComponent) CalculateDesiredHeight() int {
         return 2
     }
 
-    // In answering mode, size for: title + question + options + Other... + padding
+    // In answering mode, size for: title + question + options + padding
     if p.answering != nil && p.answering.Current < len(p.answering.Questions) {
         q := p.answering.Questions[p.answering.Current]
-        h := 3 + len(q.Options) + 1 + 1
+        h := 3 + len(q.Options)
         if p.MaxHeight > 0 && h > p.MaxHeight {
             return p.MaxHeight
         }
@@ -632,7 +632,7 @@ func (m TUIModel) View() string {
 | Long wrapped text | 2+ | ExpandedHeight (10) |
 | Any content in scroll mode | N/A | 2 lines |
 | Multiline (small screen) | 2+ | MaxHeight (50% of screen) |
-| Answering mode | N/A | 3 + options + 2 |
+| Answering mode | N/A | 3 + options |
 
 ---
 
