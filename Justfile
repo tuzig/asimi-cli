@@ -61,6 +61,7 @@ clean:
 bootstrap:
     go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
     go install golang.org/x/tools/cmd/goimports@latest
+    brew install pkg-config gpgme
 
 # Init and start the podman machine 
 init-podman:
