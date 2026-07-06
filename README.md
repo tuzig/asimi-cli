@@ -216,6 +216,9 @@ ASIMI_LOOPBACK=1 just run
 
 - Go 1.25 or higher
 - `just bootstrap`
+- `pkg-config` and `gpgme` (macOS: `brew install pkg-config gpgme`) — required to
+  build the `podman`/`gpgme` cgo dependency; installed automatically by
+  `just bootstrap`
 
 ### Common Tasks
 
