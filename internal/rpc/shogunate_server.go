@@ -49,7 +49,7 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 		if err := wire.Decode(params, &p); err != nil {
 			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
 		}
-		edict, err := impl.CreateEdict(p.IssueRef, p.Intent)
+		edict, err := impl.CreateEdict(p.IssueRef, p.Intent, p.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -61,7 +61,7 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 		if err := wire.Decode(params, &p); err != nil {
 			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
 		}
-		edict, err := impl.CreateEdictSilent(p.IssueRef, p.Intent)
+		edict, err := impl.CreateEdictSilent(p.IssueRef, p.Intent, p.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -78,6 +78,28 @@ func RegisterShogunateHandlers(c *Conn, impl shogunateapi.Client) {
 			return nil, err
 		}
 		return wire.Encode(GetEdictResult{Edict: edict})
+	})
+
+	c.Handle(MethodCancelEdict, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p CancelEdictParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		if err := impl.CancelEdict(p.EdictID); err != nil {
+			return nil, err
+		}
+		return wire.Encode(nil)
+	})
+
+	c.Handle(MethodAppendToIntent, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p AppendToIntentParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		if err := impl.AppendToIntent(p.EdictID, p.Clarification); err != nil {
+			return nil, err
+		}
+		return wire.Encode(nil)
 	})
 
 	c.Handle(MethodGrantRulerSeal, func(ctx context.Context, params []byte) ([]byte, error) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -152,25 +153,30 @@ func (c *Sage) Tools() []Tool {
 		return result
 	}
 	// Fallback: legacy tool list when registry is not yet wired
+	tc := tools.ToolContext{
+		RepoInfo:   &repo.RepoInfo{},
+		MinisterID: c.ministerID,
+		Username:   c.username,
+		Project:    c.project,
+		DB:         c.db,
+	}
+	*tc.RepoInfo = c.RepoInfo()
 	toolList := []Tool{
 		tools.RequestZhengmingTool{MinisterID: c.ministerID, Requester: c, WaitForAnswer: c.WaitForZhengming, Username: c.username, Project: c.project},
 		tools.GetEdictStatusTool{Manager: c, DB: c.db, Username: c.username, Project: c.project},
 		tools.ListEdictsTool{DB: c.db, Username: c.username, Project: c.project},
 		tools.SuggestEdictTool{
+			Ctx:       tc,
 			Requester: c,
 			NotifyFn:  func() func(any) { return c.notify },
-			Username:  c.username,
-			Project:   c.project,
 		},
 		tools.QueryCourtTool{DB: c.db, Username: c.username, Project: c.project},
 		tools.RecordPrecedentTool{
-			Store:      c,
-			Username:   c.username,
-			Project:    c.project,
+			Ctx:        tc,
 			AddFailure: AddFailure,
 		},
-		tools.ListQuenchedManifestsTool{Store: c, Username: c.username, Project: c.project},
-		tools.QueryPrecedentsTool{Store: c, Username: c.username, Project: c.project},
+		tools.ListQuenchedManifestsTool{Ctx: tc},
+		tools.QueryPrecedentsTool{Ctx: tc},
 	}
 	for _, t := range tools.GetROTools(c.config.LLM, c.RepoInfo().ProjectRoot) {
 		toolList = append(toolList, t)
@@ -178,8 +184,8 @@ func (c *Sage) Tools() []Tool {
 	return toolList
 }
 
-// GrantSeal exposes MinisterBase's seal-granting method so tool packages can
-// invoke it through the tools.PrecedentStore interface without importing
+// GrantSeal exposes MinisterBase's seal-granting method so the Sage can
+// grant seals directly (e.g., during ritual workflows) without importing
 // shogunate-internal helpers.
 func (c *Sage) GrantSeal(key storage.EdictKey, metadata storage.JSON) error {
 	return c.grantSeal(key, metadata)

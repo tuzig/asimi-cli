@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/storage"
 )
 
 // noopRunner is a minimal Runner implementation for testing.
@@ -19,9 +21,37 @@ func (n *noopRunner) AllowFallback(_ bool)                   {}
 func (n *noopRunner) RunnerType() string                     { return "test" }
 func (n *noopRunner) SetMessageChannel(_ chan<- runners.Msg) {}
 
+// testCtx returns a ToolContext suitable for tests that don't need a DB.
+func testCtx() ToolContext {
+	return ToolContext{
+		RepoInfo: newRepoInfo("/tmp"),
+		Username: "testuser",
+		Project:  "testproject",
+	}
+}
+
+// newRepoInfo creates a *repo.RepoInfo with the given project root.
+func newRepoInfo(projectRoot string) *repo.RepoInfo {
+	return &repo.RepoInfo{ProjectRoot: projectRoot}
+}
+
+// mockInvoker satisfies MinisterInvoker for testing.
+type mockInvoker struct{}
+
+func (m mockInvoker) InvokeMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
+	return "ok", nil
+}
+
+// mockLauncher satisfies RitualLauncher for testing.
+type mockLauncher struct{}
+
+func (m mockLauncher) StartRitual(name string, key storage.EdictKey, inputs map[string]string) error {
+	return nil
+}
+
 func TestRegisterBuiltinToolsEarthRead(t *testing.T) {
 	r := NewToolRegistry()
-	RegisterBuiltinTools(r, ToolRegistrationOpts{ProjectRoot: "/tmp"})
+	RegisterBuiltinTools(r, ToolRegistrationOpts{Ctx: testCtx()})
 
 	// Strategist: r-----rw- — has earth Read
 	strategistPerm, _ := ParsePermissions("r-----rw-")
@@ -36,7 +66,7 @@ func TestRegisterBuiltinToolsEarthRead(t *testing.T) {
 
 func TestRegisterBuiltinToolsEarthWrite(t *testing.T) {
 	r := NewToolRegistry()
-	RegisterBuiltinTools(r, ToolRegistrationOpts{ProjectRoot: "/tmp"})
+	RegisterBuiltinTools(r, ToolRegistrationOpts{Ctx: testCtx()})
 
 	// Forge: rwxr---w- — has earth Write
 	forgePerm, _ := ParsePermissions("rwxr---w-")
@@ -51,7 +81,7 @@ func TestRegisterBuiltinToolsEarthExecute(t *testing.T) {
 	r := NewToolRegistry()
 	// Need a non-nil runner to get run_shell_command
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot: "/tmp",
+		Ctx:         testCtx(),
 		Runner:      &noopRunner{},
 		HostChecker: func(string) (bool, bool) { return false, true },
 	})
@@ -66,7 +96,7 @@ func TestRegisterBuiltinToolsEarthExecute(t *testing.T) {
 
 func TestRegisterBuiltinToolsNoRunnerNoShell(t *testing.T) {
 	r := NewToolRegistry()
-	RegisterBuiltinTools(r, ToolRegistrationOpts{ProjectRoot: "/tmp"})
+	RegisterBuiltinTools(r, ToolRegistrationOpts{Ctx: testCtx()})
 
 	// Forge: rwxr---w- — would match earth Execute, but tool not registered
 	forgePerm, _ := ParsePermissions("rwxr---w-")
@@ -79,13 +109,8 @@ func TestRegisterBuiltinToolsNoRunnerNoShell(t *testing.T) {
 func TestRegisterBuiltinToolsHeavenTools(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot: "/tmp",
-		DBPath:      "/tmp/test.db",
-		ListPendingManifestsTool: mockTool{name: "list_pending_manifests"},
-		GetManifestByCommitTool:  mockTool{name: "get_manifest_by_commit"},
-		CreateManifestTool:       mockTool{name: "create_manifest"},
-		RecordVerdictTool:        mockTool{name: "record_verdict"},
-		UpdateManifestStatusTool: mockTool{name: "update_manifest_status"},
+		Ctx:    testCtx(),
+		DBPath: "/tmp/test.db",
 	})
 
 	// Judge: rwxrwxr-- — has heaven Read, Write, Execute
@@ -104,13 +129,8 @@ func TestRegisterBuiltinToolsHeavenTools(t *testing.T) {
 func TestRegisterBuiltinToolsHeavenReadNoWrite(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot:             "/tmp",
-		DBPath:                  "/tmp/test.db",
-		ListPendingManifestsTool: mockTool{name: "list_pending_manifests"},
-		GetManifestByCommitTool:  mockTool{name: "get_manifest_by_commit"},
-		CreateManifestTool:       mockTool{name: "create_manifest"},
-		RecordVerdictTool:        mockTool{name: "record_verdict"},
-		UpdateManifestStatusTool: mockTool{name: "update_manifest_status"},
+		Ctx:    testCtx(),
+		DBPath: "/tmp/test.db",
 	})
 
 	// Sage: r--r--rwx — has heaven Read but NOT Write
@@ -135,9 +155,7 @@ func TestRegisterBuiltinToolsHeavenReadNoWrite(t *testing.T) {
 func TestRegisterBuiltinToolsIntentRead(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot:     "/tmp",
-		ListLingTool:    mockTool{name: "list_ling"},
-		GetIncidentTool: mockTool{name: "get_incident"},
+		Ctx: testCtx(),
 	})
 
 	// Strategist: r-----rw- — has intent Read
@@ -154,11 +172,7 @@ func TestRegisterBuiltinToolsIntentRead(t *testing.T) {
 func TestRegisterBuiltinToolsIntentWrite(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot:         "/tmp",
-		InsertLingTool:      mockTool{name: "insert_ling"},
-		UpdateLingStatusTool: mockTool{name: "update_ling_status"},
-		CreateIncidentTool:  mockTool{name: "create_incident"},
-		ResolveIncidentTool: mockTool{name: "resolve_incident"},
+		Ctx: testCtx(),
 	})
 
 	// Strategist: r-----rw- — has intent Write
@@ -176,7 +190,7 @@ func TestRegisterBuiltinToolsIntentWrite(t *testing.T) {
 func TestRegisterBuiltinToolsIntentExecute(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot: "/tmp",
+		Ctx: testCtx(),
 	})
 
 	// Sage: r--r--rwx — has intent Execute
@@ -191,9 +205,9 @@ func TestRegisterBuiltinToolsIntentExecute(t *testing.T) {
 func TestRegisterBuiltinToolsPrivateChancellor(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot:       "/tmp",
-		InvokeMinisterTool: mockTool{name: "invoke_minister"},
-		EnactRitualTool:    mockTool{name: "enact_ritual"},
+		Ctx:             testCtx(),
+		MinisterInvoker: mockInvoker{},
+		RitualLauncher:  mockLauncher{},
 	})
 
 	chancellorPerm, _ := ParsePermissions("rwxr--rwx")
@@ -212,12 +226,12 @@ func TestRegisterBuiltinToolsPrivateChancellor(t *testing.T) {
 }
 
 func TestRegisterBuiltinToolsPrivateConditionalRitual(t *testing.T) {
-	// Without enact_ritual (no ritual runner) — tool not registered
+	// Without ritual launcher — tool not registered
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot:        "/tmp",
-		InvokeMinisterTool: mockTool{name: "invoke_minister"},
-		// EnactRitualTool is nil
+		Ctx:             testCtx(),
+		MinisterInvoker: mockInvoker{},
+		// RitualLauncher is nil
 	})
 
 	chancellorPerm, _ := ParsePermissions("rwxr--rwx")
@@ -231,23 +245,12 @@ func TestRegisterBuiltinToolsPrivateConditionalRitual(t *testing.T) {
 func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot:             "/tmp",
-		DBPath:                  "/tmp/test.db",
-		Runner:                  &noopRunner{},
-		HostChecker:             func(string) (bool, bool) { return false, true },
-		ListPendingManifestsTool: mockTool{name: "list_pending_manifests"},
-		GetManifestByCommitTool:  mockTool{name: "get_manifest_by_commit"},
-		CreateManifestTool:       mockTool{name: "create_manifest"},
-		RecordVerdictTool:        mockTool{name: "record_verdict"},
-		UpdateManifestStatusTool:  mockTool{name: "update_manifest_status"},
-		InsertLingTool:           mockTool{name: "insert_ling"},
-		ListLingTool:             mockTool{name: "list_ling"},
-		UpdateLingStatusTool:      mockTool{name: "update_ling_status"},
-		CreateIncidentTool:        mockTool{name: "create_incident"},
-		ResolveIncidentTool:       mockTool{name: "resolve_incident"},
-		GetIncidentTool:           mockTool{name: "get_incident"},
-		InvokeMinisterTool:        mockTool{name: "invoke_minister"},
-		EnactRitualTool:           mockTool{name: "enact_ritual"},
+		Ctx:             testCtx(),
+		DBPath:          "/tmp/test.db",
+		Runner:          &noopRunner{},
+		HostChecker:     func(string) (bool, bool) { return false, true },
+		MinisterInvoker: mockInvoker{},
+		RitualLauncher:  mockLauncher{},
 	})
 
 	ministerPerms := map[string]string{
@@ -273,9 +276,7 @@ func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 func TestRegisterBuiltinToolsStrategistNoHeaven(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		ProjectRoot:             "/tmp",
-		ListPendingManifestsTool: mockTool{name: "list_pending_manifests"},
-		CreateManifestTool:       mockTool{name: "create_manifest"},
+		Ctx: testCtx(),
 	})
 
 	// Strategist: r-----rw- — NO heaven access at all

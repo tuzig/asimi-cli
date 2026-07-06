@@ -18,6 +18,7 @@ import (
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Verify that shogunate.Session implements ExportableSession
@@ -80,7 +81,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("login", "Authenticate with an AI provider", handleLoginCommand)
 	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [hunting|<minister>|ritual <run_id>])", handleTabNewCommand)
 	registry.RegisterCommand("tabclose", "Close the current tab", handleTabCloseCommand)
-	registry.RegisterCommand("seal", "Grant Ruler's seal to an edict (usage: :seal [edict_id] | :seal to select)", handleSealCommand)
+	registry.RegisterCommand("edict", "Manage edicts: read, enact, seal, resume, or cancel (usage: :edict [id] [enact|seal|resume|cancel])", handleEdictCommand)
 
 	return registry
 }
@@ -384,7 +385,7 @@ func createInitEdict(model *TUIModel) tea.Cmd {
 	// Use CreateEdictSilent: we already know the ritual (project-init) and will
 	// dispatch it directly below. Publishing EventEdictCreated would make the
 	// chancellor LLM also try to enact a ritual for this edict, starting it twice.
-	edict, err := model.shogunate.CreateEdictSilent("", "Initialize project with Asimi agent configuration")
+	edict, err := model.shogunate.CreateEdictSilent("", "Initialize project with Asimi agent configuration", "")
 	if err != nil {
 		return func() tea.Msg {
 			return showContextMsg{content: fmt.Sprintf("Failed to create edict: %v", err)}
@@ -924,51 +925,129 @@ func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
 	return nil
 }
 
-// handleSealCommand grants the Ruler's seal to an edict
-func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
+// handleEdictCommand manages edicts: read, enact, seal, resume, or cancel.
+func handleEdictCommand(model *TUIModel, args []string) tea.Cmd {
 	if model.shogunate == nil {
 		return func() tea.Msg {
-			return showSystemMsg("Shogunate not active - cannot grant seal")
+			return showSystemMsg("Shogunate not active - cannot manage edicts")
 		}
 	}
 
-	// If no args, show selection of pending edicts
+	// No args: show selection of active edicts
 	if len(args) == 0 {
 		return func() tea.Msg {
 			edicts, err := model.shogunate.ListActiveEdicts()
 			if err != nil {
-				return showSystemMsg(fmt.Sprintf("Failed to list pending edicts: %v", err))
+				return showSystemMsg(fmt.Sprintf("Failed to list active edicts: %v", err))
 			}
-			return sealedEdictsLoadedMsg{edicts: edicts}
+			return edictsLoadedMsg{edicts: edicts}
 		}
 	}
 
-	// Parse arguments: :seal [edict_id] [notes]
-	var edictID uint
-	var notes string
-
+	// Parse edict ID
 	parsed, err := strconv.ParseUint(args[0], 10, 64)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Invalid edict ID '%s': must be a number", args[0]))
 		}
 	}
-	edictID = uint(parsed)
+	edictID := uint(parsed)
+
+	// Determine subcommand
+	subcommand := ""
 	if len(args) > 1 {
-		notes = strings.Join(args[1:], " ")
+		subcommand = args[1]
 	}
 
-	// Build full EdictKey with username and project context
+	switch subcommand {
+	case "":
+		// :edict <id> — show action menu (Status, Implement, Edit, Seal, Cancel)
+		return showEdictActionMenu(model, edictID)
+
+	case "seal":
+		// :edict <id> seal — grant Ruler's seal
+		notes := ""
+		if len(args) > 2 {
+			notes = strings.Join(args[2:], " ")
+		}
+		return handleEdictSeal(model, edictID, notes)
+
+	case "enact":
+		// :edict <id> enact — enact a ritual (default: swift-strike)
+		return enactRitualForEdict(model, edictID, "swift-strike")
+
+	case "resume":
+		// :edict <id> resume — resume linked session
+		return resumeEdictSession(model, edictID)
+
+	case "cancel":
+		// :edict <id> cancel — cancel the edict
+		return handleEdictCancel(model, edictID)
+
+	default:
+		return func() tea.Msg {
+			return showSystemMsg(fmt.Sprintf("Unknown subcommand '%s'. Usage: :edict [id] [enact|seal|resume|cancel]", subcommand))
+		}
+	}
+}
+
+// loadEdictDashboardCmd loads edict detail and shows the dashboard view
+func loadEdictDashboardCmd(model *TUIModel, edictID uint) tea.Cmd {
+	return func() tea.Msg {
+		edict, err := model.shogunate.GetEdict(edictID)
+		if err != nil {
+			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
+		}
+
+		key := model.shogunate.EdictKey(edictID)
+
+		// Get seals
+		seals, _ := model.shogunate.GetEdictSeals(key)
+
+		// Build dashboard content
+		content := renderEdictDashboard(edict, seals, 80)
+		return showEdictDashboardMsg{content: content}
+	}
+}
+
+// showEdictActionMenu enters answering mode with edict action options.
+func showEdictActionMenu(model *TUIModel, edictID uint) tea.Cmd {
+	// Validate edict exists first
+	_, err := model.shogunate.GetEdict(edictID)
+	if err != nil {
+		return func() tea.Msg {
+			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
+		}
+	}
+
+	state := &AnsweringState{
+		RequestID: fmt.Sprintf("edict-%d", edictID),
+		Title:     fmt.Sprintf("Edict %d", edictID),
+		Questions: []AnsweringQuestion{
+			{
+				Text:    "Choose an action",
+				Summary: "Choose an action",
+				Options: []string{"Status", "Implement", "Seal", "Cancel"},
+			},
+		},
+		Answers: []string{""},
+	}
+	model.prompt().EnterAnsweringMode(state)
+	return nil
+}
+
+// handleEdictSeal grants the Ruler's seal to an edict (same logic as old handleSealCommand with ID)
+func handleEdictSeal(model *TUIModel, edictID uint, notes string) tea.Cmd {
 	key := model.shogunate.EdictKey(edictID)
 
-	// Validate edict exists BEFORE seal lookup
+	// Validate edict exists
 	if _, err := model.shogunate.GetEdict(edictID); err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Edict not found %v", key))
 		}
 	}
 
-	// Get current seals for the edict
+	// Get current seals
 	seals, err := model.shogunate.GetEdictSeals(key)
 	if err != nil {
 		return func() tea.Msg {
@@ -976,14 +1055,11 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 	}
 
-	// Display seal chain status
 	sealChainMsg := renderSealChain(seals, 60)
 
-	// Check if Judge and Sage seals exist
 	hasJudge := false
 	hasSage := false
 	hasRuler := false
-
 	for _, seal := range seals {
 		switch seal.MinisterID {
 		case "judge":
@@ -995,14 +1071,12 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 	}
 
-	// If Ruler seal already exists, inform user
 	if hasRuler {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Ruler's seal already granted to %d\n%s", edictID, sealChainMsg))
 		}
 	}
 
-	// Check prerequisites
 	var missingSeals []string
 	if !hasJudge {
 		missingSeals = append(missingSeals, "Judge")
@@ -1012,9 +1086,7 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 	}
 
 	if len(missingSeals) > 0 {
-		// Enter YesNo mode to allow Ruler to override
 		question := fmt.Sprintf("Edict is missing a seal by [%s], seal?", strings.Join(missingSeals, ", "))
-		// Store pending seal state
 		model.pendingSealOverride = &pendingSealOverride{
 			edictID: edictID,
 			notes:   notes,
@@ -1022,8 +1094,121 @@ func handleSealCommand(model *TUIModel, args []string) tea.Cmd {
 		return model.commandLine.EnterYesNoMode(question)
 	}
 
-	// All prerequisites met - grant Ruler's seal directly
 	return grantRulerSealCmd(model, edictID, notes)
+}
+
+// enactRitualForEdict publishes EventRitualEnacted for the given edict and ritual
+func enactRitualForEdict(model *TUIModel, edictID uint, ritualName string) tea.Cmd {
+	return func() tea.Msg {
+		key := model.shogunate.EdictKey(edictID)
+		payload := storage.JSON{
+			"ritual_name": ritualName,
+			"edict_id":    edictID,
+			"inputs": map[string]interface{}{
+				"edict_id": fmt.Sprintf("%d", edictID),
+			},
+		}
+		model.shogunate.PublishEvent(key, storage.EventRitualEnacted, payload)
+		return showSystemMsg(fmt.Sprintf("Ritual '%s' enacted for edict %d — check the Chancellor for progress", ritualName, edictID))
+	}
+}
+
+// resumeEdictSession loads the session linked to an edict
+func resumeEdictSession(model *TUIModel, edictID uint) tea.Cmd {
+	return func() tea.Msg {
+		edict, err := model.shogunate.GetEdict(edictID)
+		if err != nil {
+			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
+		}
+		if edict.SessionID == "" {
+			return showSystemMsg(fmt.Sprintf("No session linked to edict %d", edictID))
+		}
+		return resumeEdictSessionMsg{sessionID: edict.SessionID}
+	}
+}
+
+// handleEdictCancel enters YesNo mode to confirm edict cancellation
+func handleEdictCancel(model *TUIModel, edictID uint) tea.Cmd {
+	// Validate edict exists and is not already cancelled
+	edict, err := model.shogunate.GetEdict(edictID)
+	if err != nil {
+		return func() tea.Msg {
+			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
+		}
+	}
+	if edict.CancelledAt != nil {
+		return func() tea.Msg {
+			return showSystemMsg(fmt.Sprintf("Edict %d is already cancelled", edictID))
+		}
+	}
+	model.pendingEdictCancel = &pendingEdictCancel{edictID: edictID}
+	return model.commandLine.EnterYesNoMode(fmt.Sprintf("Cancel edict %d? This will stop any running ritual.", edictID))
+}
+
+// cancelEdictCmd cancels an edict and stops any running ritual
+func cancelEdictCmd(model *TUIModel, edictID uint) tea.Cmd {
+	return func() tea.Msg {
+		if err := model.shogunate.CancelEdict(edictID); err != nil {
+			return showSystemMsg(fmt.Sprintf("Failed to cancel edict %d: %v", edictID, err))
+		}
+		return showSystemMsg(fmt.Sprintf("Edict %d cancelled. Any running ritual has been stopped.", edictID))
+	}
+}
+
+// cancelEdictMsg is unused but kept for potential future event-based flow
+type cancelEdictMsg struct {
+	edictID uint
+}
+
+// renderEdictDashboard builds the text content for the edict dashboard view
+func renderEdictDashboard(edict *storage.Edict, seals []storage.Seal, width int) string {
+	var b strings.Builder
+
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptBorder)
+	labelStyle := lipgloss.NewStyle().Foreground(globalTheme.DimTextColor)
+
+	b.WriteString(headerStyle.Render(fmt.Sprintf("Edict %d", edict.ID)))
+	b.WriteString("\n\n")
+
+	// Status
+	status := "active"
+	if edict.CancelledAt != nil {
+		status = "cancelled"
+	} else {
+		for _, s := range seals {
+			if s.MinisterID == "ruler" {
+				status = "sealed"
+				break
+			}
+		}
+	}
+	b.WriteString(fmt.Sprintf("%s %s\n", labelStyle.Render("Status:"), status))
+	b.WriteString(fmt.Sprintf("%s %s\n", labelStyle.Render("Created:"), edict.CreatedAt.Format("2006-01-02 15:04")))
+	if edict.Summary != "" {
+		b.WriteString(fmt.Sprintf("%s %s\n", labelStyle.Render("Summary:"), edict.Summary))
+	}
+	if edict.SessionID != "" {
+		b.WriteString(fmt.Sprintf("%s %s\n", labelStyle.Render("Session:"), edict.SessionID))
+	}
+	b.WriteString("\n")
+
+	// Seal chain
+	b.WriteString(headerStyle.Render("Seal Chain"))
+	b.WriteString("\n")
+	b.WriteString(renderSealChain(seals, width))
+	b.WriteString("\n\n")
+
+	// Intent
+	b.WriteString(headerStyle.Render("Intent"))
+	b.WriteString("\n")
+	intent := edict.Intent
+	if intent == "" {
+		intent = "(no intent recorded)"
+	}
+	b.WriteString(intent)
+	b.WriteString("\n")
+
+	return b.String()
 }
 
 // grantRulerSealCmd creates a command that grants the Ruler's seal to an edict.

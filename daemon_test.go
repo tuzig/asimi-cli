@@ -180,7 +180,7 @@ func TestDaemonHandshakeThenRPC(t *testing.T) {
 	var e *storage.Edict
 	var err error
 	for i := 0; i < 50; i++ {
-		e, err = client.CreateEdict("#1", "handshake test")
+		e, err = client.CreateEdict("#1", "handshake test", "")
 		if err == nil {
 			break
 		}
@@ -730,7 +730,7 @@ func TestDaemonTwoClients(t *testing.T) {
 	}
 
 	// Each client can create an edict independently.
-	edictA, err := clientA.CreateEdict("#2", "client A edict")
+	edictA, err := clientA.CreateEdict("#2", "client A edict", "")
 	if err != nil {
 		t.Fatalf("client A CreateEdict: %v", err)
 	}
@@ -738,7 +738,7 @@ func TestDaemonTwoClients(t *testing.T) {
 		t.Errorf("client A edict.Intent = %q, want %q", edictA.Intent, "client A edict")
 	}
 
-	edictB, err := clientB.CreateEdict("#3", "client B edict")
+	edictB, err := clientB.CreateEdict("#3", "client B edict", "")
 	if err != nil {
 		t.Fatalf("client B CreateEdict: %v", err)
 	}
@@ -781,7 +781,7 @@ func TestDaemonTwoClientsIsolation(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Client B must still work after A is gone.
-	edictB, err := clientB.CreateEdict("#4", "client B still alive")
+	edictB, err := clientB.CreateEdict("#4", "client B still alive", "")
 	if err != nil {
 		t.Fatalf("client B CreateEdict after A disconnect: %v", err)
 	}

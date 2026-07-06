@@ -764,6 +764,7 @@ func (p PromptComponent) viewAnswering() string {
 	b.WriteByte('\n')
 
 	// Render options + "Chat" + "Edit"
+	// TODO: remove the "Edit" as it does not belong here. It should be only when suggesting an edict
 	allOptions := append(q.Options, "Edit", "Chat")
 	for i, opt := range allOptions {
 		if i == q.Selected {

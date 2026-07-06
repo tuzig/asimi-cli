@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab and Shift+Tab keyboard shortcuts for navigating between TUI tabs (e498)
 - **Per-tab streaming** — origin-based stream routing with per-tab CTRL-C context cancellation
 - **Tab system** — `gt`/`gT` navigation across chancellor, forge, judge, and shogunate tabs
-- **`:seal` command** — seal chain verification with edict validation and fresh seal chain display
+- **`:edict` command** — unified edict management (replaces `:seal`): read dashboard, enact ritual, seal, resume session, cancel edict with action menu
 - **`:export` over the wire** — session export via `GetSessionExport` RPC
 - **SetContext handshake** — multi-project daemon support with per-client project context
 - **Ritual recovery** — resume interrupted rituals with zhengming confirmation

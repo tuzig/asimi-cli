@@ -170,6 +170,7 @@ type Zhengming struct {
 	Username   string             `gorm:"column:username"`
 	Project    string             `gorm:"column:project"`
 	MinisterID string             `gorm:"column:minister_id"`
+	SessionID  string             `gorm:"column:session_id"`
 	Questions  ZhengmingQuestions `gorm:"column:question;type:text"`
 	Answer     string             `gorm:"column:answer"`
 	Priority   ZhengmingPriority  `gorm:"column:priority"`

@@ -4,20 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/afittestide/asimi/storage"
+	"gorm.io/gorm"
 )
-
-// PrecedentStore is the surface the precedent/manifest tools need from the
-// Sage. Kept narrow so tests can fake it without dragging in MinisterBase.
-type PrecedentStore interface {
-	GetQuenchedManifests(key storage.EdictKey) ([]storage.ForgeManifest, error)
-	LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error)
-	RejectManifest(key storage.EdictKey, manifestID string) error
-	GetPrecedentsForManifest(username, project, manifestID string) ([]storage.CensorPrecedent, error)
-	QueryPrecedentsByPrinciple(username, project, principle string, limit int) ([]storage.CensorPrecedent, error)
-	GrantSeal(key storage.EdictKey, metadata storage.JSON) error
-}
 
 // FailureRecorder lets tools flag soft failures into a Sage's failure
 // accumulator without depending on the shogunate package's context key.
@@ -26,10 +17,8 @@ type FailureRecorder func(ctx context.Context, reason string)
 // RecordPrecedentTool records the Sage's ethics review outcome for every
 // quenched manifest on an edict, granting or withholding the Sage's seal.
 type RecordPrecedentTool struct {
-	Store        PrecedentStore
-	Username     string
-	Project      string
-	AddFailure   FailureRecorder
+	Ctx        ToolContext
+	AddFailure FailureRecorder
 }
 
 func (t RecordPrecedentTool) Name() string { return "record_precedent" }
@@ -51,11 +40,13 @@ func (t RecordPrecedentTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("edict_id and reasoning are required")
 	}
 
-	key := storage.EdictKey{ID: params.EdictID, Username: t.Username, Project: t.Project}
+	key := storage.EdictKey{ID: params.EdictID, Username: t.Ctx.Username, Project: t.Ctx.Project}
 
-	manifests, err := t.Store.GetQuenchedManifests(key)
-	if err != nil {
-		return "", err
+	var manifests []storage.ForgeManifest
+	if err := t.Ctx.DB.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.ManifestQuenched).
+		Order("created_at ASC").
+		Find(&manifests).Error; err != nil {
+		return "", fmt.Errorf("failed to get quenched manifests: %w", err)
 	}
 
 	ruling := storage.PrecedentApproved
@@ -64,12 +55,23 @@ func (t RecordPrecedentTool) Call(ctx context.Context, input string) (string, er
 	}
 
 	for _, m := range manifests {
-		if _, err := t.Store.LogPrecedent(m.ManifestID, "ethics_review", ruling, params.Reasoning); err != nil {
+		precedentID := GenerateID("precedent", m.ManifestID, "ethics_review", fmt.Sprintf("%d", time.Now().UnixNano()))
+		precedent := storage.CensorPrecedent{
+			PrecedentID:   precedentID,
+			ManifestID:    m.ManifestID,
+			Principle:     "ethics_review",
+			Ruling:        ruling,
+			Justification: params.Reasoning,
+		}
+		if err := t.Ctx.DB.Create(&precedent).Error; err != nil {
 			return "", fmt.Errorf("failed to log precedent: %w", err)
 		}
 		if !params.Approved {
-			if err := t.Store.RejectManifest(key, m.ManifestID); err != nil {
-				return "", fmt.Errorf("failed to reject manifest: %w", err)
+			result := t.Ctx.DB.Model(&storage.ForgeManifest{}).
+				Where("manifest_id = ? AND username = ? AND project = ?", m.ManifestID, key.Username, key.Project).
+				Update("status", storage.ManifestRejected)
+			if result.Error != nil {
+				return "", fmt.Errorf("failed to reject manifest: %w", result.Error)
 			}
 		}
 	}
@@ -81,7 +83,7 @@ func (t RecordPrecedentTool) Call(ctx context.Context, input string) (string, er
 			t.AddFailure(ctx, fmt.Sprintf("rejected edict %d: %s", key.ID, params.Reasoning))
 		}
 	} else {
-		if err := t.Store.GrantSeal(key, storage.JSON{"reason": params.Reasoning}); err != nil {
+		if err := grantSageSeal(t.Ctx.DB, key, "sage", storage.JSON{"reason": params.Reasoning}); err != nil {
 			return "", fmt.Errorf("failed to grant seal: %w", err)
 		}
 	}
@@ -109,9 +111,7 @@ func (t RecordPrecedentTool) Format(input, result string, err error) string {
 
 // ListQuenchedManifestsTool lists manifests ready for ethics review.
 type ListQuenchedManifestsTool struct {
-	Store    PrecedentStore
-	Username string
-	Project  string
+	Ctx ToolContext
 }
 
 func (t ListQuenchedManifestsTool) Name() string { return "list_quenched_manifests" }
@@ -131,10 +131,11 @@ func (t ListQuenchedManifestsTool) Call(ctx context.Context, input string) (stri
 		return "", fmt.Errorf("edict_id is required")
 	}
 
-	key := storage.EdictKey{ID: params.EdictID, Username: t.Username, Project: t.Project}
-	manifests, err := t.Store.GetQuenchedManifests(key)
-	if err != nil {
-		return "", err
+	var manifests []storage.ForgeManifest
+	if err := t.Ctx.DB.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", params.EdictID, t.Ctx.Username, t.Ctx.Project, storage.ManifestQuenched).
+		Order("created_at ASC").
+		Find(&manifests).Error; err != nil {
+		return "", fmt.Errorf("failed to get quenched manifests: %w", err)
 	}
 
 	if len(manifests) == 0 {
@@ -167,9 +168,7 @@ func (t ListQuenchedManifestsTool) Format(input, result string, err error) strin
 
 // QueryPrecedentsTool searches precedents by principle.
 type QueryPrecedentsTool struct {
-	Store    PrecedentStore
-	Username string
-	Project  string
+	Ctx ToolContext
 }
 
 func (t QueryPrecedentsTool) Name() string { return "query_precedents" }
@@ -193,9 +192,13 @@ func (t QueryPrecedentsTool) Call(ctx context.Context, input string) (string, er
 		params.Limit = 10
 	}
 
-	precedents, err := t.Store.QueryPrecedentsByPrinciple(t.Username, t.Project, params.Principle, params.Limit)
-	if err != nil {
-		return "", err
+	var precedents []storage.CensorPrecedent
+	query := t.Ctx.DB.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+		Where("censor_precedents.principle LIKE ? AND forge_manifests.username = ? AND forge_manifests.project = ?", "%"+params.Principle+"%", t.Ctx.Username, t.Ctx.Project).
+		Order("censor_precedents.created_at DESC").
+		Limit(params.Limit)
+	if err := query.Find(&precedents).Error; err != nil {
+		return "", fmt.Errorf("failed to query precedents: %w", err)
 	}
 
 	if len(precedents) == 0 {
@@ -225,4 +228,32 @@ func (t QueryPrecedentsTool) Format(input, result string, err error) string {
 		return fmt.Sprintf("Query Precedents: Error: %v\n", err)
 	}
 	return fmt.Sprintf("Query Precedents: %s\n", result)
+}
+
+// grantSageSeal records the Sage's seal on an edict (idempotent).
+func grantSageSeal(db *gorm.DB, key storage.EdictKey, ministerID string, metadata storage.JSON) error {
+	var count int64
+	if err := db.Model(&storage.Seal{}).
+		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.ID, key.Username, key.Project, ministerID).
+		Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check existing seal: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	sealID := GenerateID("seal", fmt.Sprintf("%d", key.ID), key.Username, key.Project, ministerID)
+	seal := storage.Seal{
+		SealID:     sealID,
+		EdictID:    key.ID,
+		Username:   key.Username,
+		Project:    key.Project,
+		MinisterID: ministerID,
+		SealedAt:   time.Now(),
+		Metadata:   metadata,
+	}
+	if err := db.Create(&seal).Error; err != nil {
+		return fmt.Errorf("failed to grant seal: %w", err)
+	}
+	return nil
 }

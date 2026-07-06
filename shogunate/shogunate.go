@@ -88,6 +88,10 @@ type Shogunate struct {
 	// Ministers use it via ForPermissions() to get their tool sets.
 	toolRegistry *tools.ToolRegistry
 
+	// toolCtxRepoInfo is the shared *repo.RepoInfo backing all ToolContext
+	// instances. Updated by SetRepoInfo so tools see live project root.
+	toolCtxRepoInfo *repo.RepoInfo
+
 	notify        internal.NotifyFunc
 	drainedEvents []DrainedEvent // events recovered from DB at startup
 
@@ -182,7 +186,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 					if idx := strings.Index(suggestion, "\n\nEvidence:"); idx != -1 {
 						suggestion = suggestion[:idx]
 					}
-					edict, err := s.CreateEdict("", suggestion)
+					edict, err := s.CreateEdict("", suggestion, req.SessionID)
 					if err != nil {
 						s.logger.Warn("failed to create edict from zhengming approval", "error", err)
 					} else if summary != "" {
@@ -203,7 +207,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 
 		// 3. Handle system ritual path (e.g., wakeup) — no edict, user chose a path forward
 		if key.ID == 0 && answer != "" {
-			if edict, err := s.CreateEdict("", answer); err != nil {
+			if edict, err := s.CreateEdict("", answer, ""); err != nil {
 				s.logger.Warn("failed to create edict from zhengming answer", "error", err)
 			} else {
 				s.logger.Info("created edict from zhengming answer", "edict_id", edict.ID, "answer", answer)
@@ -237,11 +241,6 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 	registry := tools.NewToolRegistry()
 
 	chancellor, _ := s.GetMinister("chancellor").(*Chancellor)
-	strategist, _ := s.GetMinister("strategist").(*Strategist)
-	forge, _ := s.GetMinister("forge").(*Forge)
-	judge, _ := s.GetMinister("judge").(*Judge)
-	marshal, _ := s.GetMinister("marshal").(*Marshal)
-	sage, _ := s.GetMinister("sage").(*Sage)
 
 	// Determine DBPath for asimisql
 	dbPath := ""
@@ -249,48 +248,14 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 		dbPath = chancellor.getDBPath()
 	}
 
-	// Determine projectRoot — may be empty at construction time
-	// (set later via SetRepoInfo/ConfigureModel), but file tools
-	// use it for path resolution. Updated in SetRepoInfo below.
-	projectRoot := ""
-
-	// Minister-bound tools — each embeds its minister reference.
-	// These are constructed here, not in the tools package, to avoid
-	// circular imports.
-	var invokeMinisterTool, enactRitualTool tools.Tool
-	if chancellor != nil {
-		invokeMinisterTool = tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: s.config.Username, Project: s.config.Project}, Invoker: chancellor}
-		// enact_ritual is only available when ritual runner is set up
-		if s.GetRitualRunner() != nil {
-			enactRitualTool = tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: s.config.Username, Project: s.config.Project}, Launcher: chancellor}
-		}
-	}
-
-	var insertLingTool, listLingTool, updateLingStatusTool tools.Tool
-	if strategist != nil {
-		insertLingTool = &InsertLingTool{strategist: strategist}
-		listLingTool = &ListLingTool{strategist: strategist}
-		updateLingStatusTool = &UpdateLingStatusTool{strategist: strategist}
-	}
-
-	var createManifestTool tools.Tool
-	if forge != nil {
-		createManifestTool = &CreateManifestTool{forge: forge}
-	}
-
-	var recordVerdictTool, listPendingManifestsTool, updateManifestStatusTool tools.Tool
-	if judge != nil {
-		recordVerdictTool = &RecordVerdictTool{judge: judge}
-		listPendingManifestsTool = &ListPendingManifestsTool{judge: judge}
-		updateManifestStatusTool = &UpdateManifestStatusTool{judge: judge}
-	}
-
-	var createIncidentTool, resolveIncidentTool, getIncidentTool, getManifestByCommitTool tools.Tool
-	if marshal != nil {
-		createIncidentTool = &CreateIncidentTool{marshal: marshal}
-		resolveIncidentTool = &ResolveIncidentTool{marshal: marshal}
-		getIncidentTool = &GetIncidentTool{marshal: marshal}
-		getManifestByCommitTool = &GetManifestByCommitTool{marshal: marshal}
+	// Shared ToolContext — RepoInfo is a pointer so all tools see live state
+	// (project root is set later via SetRepoInfo).
+	repoInfo := &repo.RepoInfo{}
+	ctx := tools.ToolContext{
+		RepoInfo: repoInfo,
+		Username: s.config.Username,
+		Project:  s.config.Project,
+		DB:       s.db,
 	}
 
 	// EdictManager — Chancellor implements the interface
@@ -308,11 +273,9 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 		waitForZhengming = chancellor.WaitForZhengming
 	}
 
-	// PrecedentStore — Sage implements the interface
-	var precedentStore tools.PrecedentStore
+	// AddFailure — Sage's failure accumulator
 	var addFailure tools.FailureRecorder
-	if sage != nil {
-		precedentStore = sage
+	if sage, _ := s.GetMinister("sage").(*Sage); sage != nil {
 		addFailure = AddFailure
 	}
 
@@ -322,42 +285,43 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 		notifyFn = func() func(any) { return s.notify }
 	}
 
-	opts := tools.ToolRegistrationOpts{
-		// Common
-		DB:          s.db,
-		DBPath:      dbPath,
-		ProjectRoot: projectRoot,
-		Runner:      s.runner,
-		Username:    s.config.Username,
-		Project:     s.config.Project,
+	// SessionIDFn — lazy getter for the chancellor's current session ID,
+	// used by suggest_edict to link edicts to their originating session.
+	var sessionIDFn func() string
+	if chancellor != nil {
+		sessionIDFn = func() string {
+			if sess := chancellor.Session(); sess != nil {
+				return sess.ID
+			}
+			return ""
+		}
+	}
 
-		// Intent interfaces
+	opts := tools.ToolRegistrationOpts{
+		Ctx:                  ctx,
+		DBPath:               dbPath,
+		Runner:               s.runner,
 		EdictManager:         edictManager,
 		ZhengmingRequester:   zhengmingRequester,
 		WaitForZhengming:     waitForZhengming,
 		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
-		PrecedentStore:       precedentStore,
 		AddFailure:           addFailure,
 		NotifyFn:             notifyFn,
+		SessionIDFn:          sessionIDFn,
 
-		// Minister-bound tools — Heaven
-		ListPendingManifestsTool: listPendingManifestsTool,
-		GetManifestByCommitTool:  getManifestByCommitTool,
-		CreateManifestTool:       createManifestTool,
-		RecordVerdictTool:        recordVerdictTool,
-		UpdateManifestStatusTool: updateManifestStatusTool,
-
-		// Minister-bound tools — Intent
-		InsertLingTool:       insertLingTool,
-		ListLingTool:         listLingTool,
-		UpdateLingStatusTool: updateLingStatusTool,
-		CreateIncidentTool:   createIncidentTool,
-		ResolveIncidentTool:  resolveIncidentTool,
-		GetIncidentTool:      getIncidentTool,
-
-		// Private (chancellor only)
-		InvokeMinisterTool: invokeMinisterTool,
-		EnactRitualTool:    enactRitualTool,
+		// MinisterInvoker / RitualLauncher — chancellor-backed
+		MinisterInvoker: func() tools.MinisterInvoker {
+			if chancellor != nil {
+				return chancellor
+			}
+			return nil
+		}(),
+		RitualLauncher: func() tools.RitualLauncher {
+			if chancellor != nil && s.GetRitualRunner() != nil {
+				return chancellor
+			}
+			return nil
+		}(),
 	}
 
 	tools.RegisterBuiltinTools(registry, opts)
@@ -368,6 +332,9 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 			base.SetToolRegistry(registry)
 		}
 	}
+
+	// Store repoInfo pointer so SetRepoInfo can update it later.
+	s.toolCtxRepoInfo = repoInfo
 
 	return registry
 }
@@ -494,6 +461,10 @@ func (s *Shogunate) SetRepoInfo(repoInfo repo.RepoInfo) {
 	}
 	if s.ritualGuard != nil {
 		s.ritualGuard.repoInfo = repoInfo
+	}
+	// Update the shared ToolContext RepoInfo so all tools see the new root
+	if s.toolCtxRepoInfo != nil {
+		*s.toolCtxRepoInfo = repoInfo
 	}
 	// Update project-root-dependent tools when the root becomes available
 	if repoInfo.ProjectRoot != "" {
@@ -679,9 +650,10 @@ func (s *Shogunate) nextEdictID() uint {
 }
 
 // CreateEdict creates a new active edict record in the database and publishes storage.EventEdictCreated.
+// sessionID links the edict to the chat session that suggested it (empty for direct ruler-created edicts).
 // TODO: Add a "summary" parameter which is already in the Edict
-func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
-	edict, err := s.createEdict(issueRef, intent)
+func (s *Shogunate) CreateEdict(issueRef, intent, sessionID string) (*storage.Edict, error) {
+	edict, err := s.createEdict(issueRef, intent, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -696,17 +668,18 @@ func (s *Shogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error)
 // Use this when the caller already knows which ritual to run and will
 // dispatch it directly, so routing through the chancellor LLM would be
 // redundant and would double-start the ritual.
-func (s *Shogunate) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
-	return s.createEdict(issueRef, intent)
+func (s *Shogunate) CreateEdictSilent(issueRef, intent, sessionID string) (*storage.Edict, error) {
+	return s.createEdict(issueRef, intent, sessionID)
 }
 
-func (s *Shogunate) createEdict(issueRef, intent string) (*storage.Edict, error) {
+func (s *Shogunate) createEdict(issueRef, intent, sessionID string) (*storage.Edict, error) {
 	edict := storage.Edict{
-		ID:       s.nextEdictID(),
-		Username: s.config.Username,
-		Project:  s.config.Project,
-		IssueRef: issueRef,
-		Intent:   intent,
+		ID:        s.nextEdictID(),
+		Username:  s.config.Username,
+		Project:   s.config.Project,
+		IssueRef:  issueRef,
+		Intent:    intent,
+		SessionID: sessionID,
 	}
 	if err := s.db.Create(&edict).Error; err != nil {
 		return nil, fmt.Errorf("failed to create edict: %w", err)
@@ -728,12 +701,64 @@ func CreateEdictForTest(db *gorm.DB, intent string) (*storage.Edict, error) {
 	return &edict, nil
 }
 
+// CreateEdictForTestWithSession creates an edict with a session ID (for unit tests).
+func CreateEdictForTestWithSession(db *gorm.DB, intent, sessionID string) (*storage.Edict, error) {
+	var maxID uint
+	db.Model(&storage.Edict{}).Select("COALESCE(MAX(id), 0)").Scan(&maxID)
+	edict := storage.Edict{
+		ID:        maxID + 1,
+		Intent:    intent,
+		SessionID: sessionID,
+	}
+	if err := db.Create(&edict).Error; err != nil {
+		return nil, fmt.Errorf("failed to create edict: %w", err)
+	}
+	return &edict, nil
+}
+
 // PublishEvent delegates to RitualGuard.
 func (s *Shogunate) PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
 	if s == nil || s.ritualGuard == nil {
 		return key.ID
 	}
 	return s.ritualGuard.PublishEvent(key, eventType, payload)
+}
+
+// CancelEdict marks an edict as cancelled and stops any running ritual.
+func (s *Shogunate) CancelEdict(edictID uint) error {
+	now := time.Now()
+	result := s.db.Model(&storage.Edict{}).
+		Where("id = ? AND username = ? AND project = ?", edictID, s.config.Username, s.config.Project).
+		Update("cancelled_at", now)
+	if result.Error != nil {
+		return fmt.Errorf("failed to cancel edict: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("edict not found: %d", edictID)
+	}
+	// Stop any running ritual for the chancellor channel
+	s.CancelTab("chancellor")
+	return nil
+}
+
+// AppendToIntent appends a clarification to an edict's intent (Ruler-initiated edit).
+func (s *Shogunate) AppendToIntent(edictID uint, clarification string) error {
+	key := s.EdictKey(edictID)
+	return s.appendToIntent(key, clarification)
+}
+
+// appendToIntent is the shared implementation used by both the Ruler-facing
+// method and the MinisterBase path.
+func (s *Shogunate) appendToIntent(key storage.EdictKey, clarification string) error {
+	var edict storage.Edict
+	if err := s.db.Where("id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).First(&edict).Error; err != nil {
+		return fmt.Errorf("get edict: %w", err)
+	}
+	updatedIntent := edict.Intent + "\n\n---\n**Clarification:**\n" + clarification
+	if err := s.db.Model(&storage.Edict{}).Where("id = ?", edict.ID).Update("intent", updatedIntent).Error; err != nil {
+		return fmt.Errorf("update edict intent: %w", err)
+	}
+	return nil
 }
 
 // DispatchEvent delegates to RitualGuard.

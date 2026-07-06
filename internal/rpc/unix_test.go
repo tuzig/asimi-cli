@@ -62,7 +62,7 @@ func TestListenDialRoundTrip(t *testing.T) {
 	if !client.HasMinister("chancellor") {
 		t.Error("HasMinister(chancellor) = false over unix socket")
 	}
-	e, err := client.CreateEdict("#1", "ship it")
+	e, err := client.CreateEdict("#1", "ship it", "")
 	if err != nil {
 		t.Fatalf("CreateEdict over socket: %v", err)
 	}

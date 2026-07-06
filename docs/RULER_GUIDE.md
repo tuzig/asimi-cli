@@ -273,6 +273,7 @@ vi keys: Esc, i, :, gt, gT, /, n — all work as expected
 :context       — Token usage
 :new           — New conversation
 :resume        — Resume session
+:edict         — Manage edicts (read, enact, seal, resume, cancel)
 :tabnew forge  — Open Forge's work log
 :export        — Useful for debugging
 ```

@@ -600,7 +600,7 @@ const (
 	ViewHelp
 	ViewModels
 	ViewResume
-	ViewSeal
+	ViewEdict
 )
 
 // NavigationMode represents how navigation works in the current view
@@ -618,11 +618,14 @@ type ContentComponent struct {
 	height     int
 
 	// Sub-components
-	Chat       *ChatComponent
-	help       HelpWindow
-	models     ModelsWindow
-	resume     ResumeWindow
-	sealSelect SealSelectWindow
+	Chat        *ChatComponent
+	help        HelpWindow
+	models      ModelsWindow
+	resume      ResumeWindow
+	edictSelect EdictSelectWindow
+
+	// edictDashboard holds the rendered text for the ViewEdict dashboard.
+	edictDashboard string
 
 	// Unified navigation state
 	navMode      NavigationMode
@@ -640,16 +643,16 @@ type ContentComponent struct {
 // NewContentComponent creates a new content component
 func NewContentComponent(width, height int, markdownEnabled bool) ContentComponent {
 	return ContentComponent{
-		activeView: ViewChat,
-		width:      width,
-		height:     height,
-		Chat:       NewChatComponent(width, height, markdownEnabled),
-		help:       NewHelpWindow(),
-		models:     NewModelsWindow(),
-		resume:     NewResumeWindow(),
-		sealSelect: NewSealSelectWindow(),
-		navMode:    NavText,
-		viewport:   viewport.New(width, height),
+		activeView:  ViewChat,
+		width:       width,
+		height:      height,
+		Chat:        NewChatComponent(width, height, markdownEnabled),
+		help:        NewHelpWindow(),
+		models:      NewModelsWindow(),
+		resume:      NewResumeWindow(),
+		edictSelect: NewEdictSelectWindow(),
+		navMode:     NavText,
+		viewport:    viewport.New(width, height),
 	}
 }
 
@@ -659,13 +662,13 @@ func (c *ContentComponent) SetSize(width, height int) {
 	c.height = height
 	c.viewport.Width = width
 	c.viewport.Height = height - 1
-	// Help, models, resume, and sealSelect each render a title line,
+	// Help, models, resume, and edictSelect each render a title line,
 	// so they get height-1. Chat has no title line and needs the full height.
 	c.Chat.SetSize(width, height)
 	c.help.SetSize(width, height-1)
 	c.models.SetSize(width, height-1)
 	c.resume.SetSize(width, height-1)
-	c.sealSelect.SetSize(width, height-1)
+	c.edictSelect.SetSize(width, height-1)
 }
 
 // GetActiveView returns the current view type
@@ -771,26 +774,38 @@ func (c *ContentComponent) ShowResume(sessions []shogunate.Session) tea.Cmd {
 	}
 }
 
-// ShowSealSelection switches to seal selection view
-func (c *ContentComponent) ShowSealSelection(edicts []storage.ActiveEdict) tea.Cmd {
-	c.activeView = ViewSeal
+// ShowEdictSelection switches to edict selection view
+func (c *ContentComponent) ShowEdictSelection(edicts []storage.ActiveEdict) tea.Cmd {
+	c.activeView = ViewEdict
 	c.navMode = NavList
-	c.activeList = &c.sealSelect.SelectWindow
-	c.sealSelect.SetItems(edicts)
+	c.activeList = &c.edictSelect.SelectWindow
+	c.edictSelect.SetItems(edicts)
 	c.selectedItem = 0
 	c.scrollOffset = 0
 	c.onSelect = func(index int) tea.Cmd {
-		edict := c.sealSelect.GetSelectedItem(index)
+		edict := c.edictSelect.GetSelectedItem(index)
 		if edict == nil {
 			return nil
 		}
 		return func() tea.Msg {
-			return sealSelectedMsg{edictID: edict.ID}
+			return edictSelectedMsg{edictID: edict.ID}
 		}
 	}
 
 	return func() tea.Msg {
 		return ChangeModeMsg{NewMode: "select"}
+	}
+}
+
+// ShowEdictDashboard switches to the read-only edict dashboard view
+func (c *ContentComponent) ShowEdictDashboard(content string) tea.Cmd {
+	c.activeView = ViewEdict
+	c.navMode = NavText
+	c.edictDashboard = content
+	c.viewport.SetContent(content)
+	c.viewport.GotoTop()
+	return func() tea.Msg {
+		return ChangeModeMsg{NewMode: "help"}
 	}
 }
 
@@ -1045,8 +1060,11 @@ func (c *ContentComponent) View() string {
 		return c.renderModelsView()
 	case ViewResume:
 		return c.renderResumeView()
-	case ViewSeal:
-		return c.renderSealView()
+	case ViewEdict:
+		if c.navMode == NavList {
+			return c.renderEdictSelectView()
+		}
+		return c.renderEdictView()
 	}
 	return ""
 }
@@ -1096,13 +1114,34 @@ func (c *ContentComponent) renderResumeView() string {
 		Render(content)
 }
 
-// renderSealView renders the seal selection view
-func (c *ContentComponent) renderSealView() string {
-	content := c.sealSelect.RenderList(c.selectedItem, c.scrollOffset, c.sealSelect.GetVisibleSlots())
+// renderEdictSelectView renders the edict selection list view
+func (c *ContentComponent) renderEdictSelectView() string {
+	content := c.edictSelect.RenderList(c.selectedItem, c.scrollOffset, c.edictSelect.GetVisibleSlots())
 
 	// Apply height constraint to prevent overflow clipping from the top
 	return lipgloss.NewStyle().
 		Height(c.height).
 		MaxHeight(c.height).
+		Render(content)
+}
+
+// renderEdictView renders the edict dashboard view (read-only, scrollable)
+func (c *ContentComponent) renderEdictView() string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(globalTheme.PromptBorder).
+		Background(globalTheme.PaneBackground).
+		Padding(0, 1)
+
+	title := titleStyle.Render(" Edict Dashboard ")
+
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
+		title,
+		c.viewport.View(),
+	)
+
+	return lipgloss.NewStyle().
+		Height(c.height).
 		Render(content)
 }

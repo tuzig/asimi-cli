@@ -972,29 +972,29 @@ type modelSelectedMsg struct {
 }
 
 // Message types for seal selection
-type sealSelectedMsg struct {
+type edictSelectedMsg struct {
 	edictID uint
 }
 
-type sealedEdictsLoadedMsg struct {
+type edictsLoadedMsg struct {
 	edicts []storage.ActiveEdict
 }
 
-// SealSelectWindow displays a selectable list of edicts pending the Ruler's seal
-type SealSelectWindow struct {
+// EdictSelectWindow displays a selectable list of active edicts
+type EdictSelectWindow struct {
 	SelectWindow[storage.ActiveEdict]
 }
 
-// NewSealSelectWindow creates a new seal selection window
-func NewSealSelectWindow() SealSelectWindow {
+// NewEdictSelectWindow creates a new edict selection window
+func NewEdictSelectWindow() EdictSelectWindow {
 	sw := NewSelectWindow[storage.ActiveEdict]()
 	sw.Height = 15
 	sw.SetSize(70, 15)
-	return SealSelectWindow{SelectWindow: sw}
+	return EdictSelectWindow{SelectWindow: sw}
 }
 
-// RenderList renders the seal selection list
-func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int) string {
+// RenderList renders the edict selection list
+func (s *EdictSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int) string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(globalTheme.PromptBorder).
@@ -1003,10 +1003,10 @@ func (s *SealSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots 
 
 	config := RenderConfig[storage.ActiveEdict]{
 		ConstructTitle: func(selectedIndex, totalItems int) string {
-			return titleStyle.Render(fmt.Sprintf("Select edict to seal [%3d/%3d]:", selectedIndex+1, totalItems))
+			return titleStyle.Render(fmt.Sprintf("Select edict [%3d/%3d]:", selectedIndex+1, totalItems))
 		},
 		OnEmpty: func(sb *strings.Builder) {
-			sb.WriteString("No edicts awaiting seal\n")
+			sb.WriteString("No active edicts\n")
 		},
 		RenderItem: func(i int, edict storage.ActiveEdict, isSelected bool, sb *strings.Builder) {
 			prefix := "  "

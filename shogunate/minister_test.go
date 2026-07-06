@@ -1141,7 +1141,7 @@ func TestCreateEdict_DoesNotReserveEdict1(t *testing.T) {
 	shogunate := NewShogunate(db, cfg, nil, nil)
 
 	// Create a user edict
-	userEdict, err := shogunate.CreateEdict("user-issue", "Implement user feature")
+	userEdict, err := shogunate.CreateEdict("user-issue", "Implement user feature", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, userEdict)
 

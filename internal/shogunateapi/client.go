@@ -36,9 +36,11 @@ type Client interface {
 	GetMinister(id string) shogunate.Minister
 
 	// Edicts and events.
-	CreateEdict(issueRef, intent string) (*storage.Edict, error)
-	CreateEdictSilent(issueRef, intent string) (*storage.Edict, error)
+	CreateEdict(issueRef, intent, sessionID string) (*storage.Edict, error)
+	CreateEdictSilent(issueRef, intent, sessionID string) (*storage.Edict, error)
 	GetEdict(edictID uint) (*storage.Edict, error)
+	CancelEdict(edictID uint) error
+	AppendToIntent(edictID uint, clarification string) error
 	PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint
 
 	// Seals.

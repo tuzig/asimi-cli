@@ -71,16 +71,16 @@ func (c *ShogunateClient) CourtEdictKey() storage.EdictKey {
 	return r.Key
 }
 
-func (c *ShogunateClient) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
-	return c.createEdict(MethodCreateEdict, issueRef, intent)
+func (c *ShogunateClient) CreateEdict(issueRef, intent, sessionID string) (*storage.Edict, error) {
+	return c.createEdict(MethodCreateEdict, issueRef, intent, sessionID)
 }
 
-func (c *ShogunateClient) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
-	return c.createEdict(MethodCreateEdictSilent, issueRef, intent)
+func (c *ShogunateClient) CreateEdictSilent(issueRef, intent, sessionID string) (*storage.Edict, error) {
+	return c.createEdict(MethodCreateEdictSilent, issueRef, intent, sessionID)
 }
 
-func (c *ShogunateClient) createEdict(method, issueRef, intent string) (*storage.Edict, error) {
-	raw, err := c.conn.Call(context.Background(), method, CreateEdictParams{IssueRef: issueRef, Intent: intent})
+func (c *ShogunateClient) createEdict(method, issueRef, intent, sessionID string) (*storage.Edict, error) {
+	raw, err := c.conn.Call(context.Background(), method, CreateEdictParams{IssueRef: issueRef, Intent: intent, SessionID: sessionID})
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +105,14 @@ func (c *ShogunateClient) GetEdict(edictID uint) (*storage.Edict, error) {
 
 func (c *ShogunateClient) GrantRulerSeal(edictID uint, notes string) error {
 	return c.callVoid(context.Background(), MethodGrantRulerSeal, GrantRulerSealParams{EdictID: edictID, Notes: notes})
+}
+
+func (c *ShogunateClient) CancelEdict(edictID uint) error {
+	return c.callVoid(context.Background(), MethodCancelEdict, CancelEdictParams{EdictID: edictID})
+}
+
+func (c *ShogunateClient) AppendToIntent(edictID uint, clarification string) error {
+	return c.callVoid(context.Background(), MethodAppendToIntent, AppendToIntentParams{EdictID: edictID, Clarification: clarification})
 }
 
 func (c *ShogunateClient) ListActiveEdicts() ([]storage.ActiveEdict, error) {

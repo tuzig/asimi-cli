@@ -6,53 +6,40 @@ import (
 	"testing"
 
 	"github.com/afittestide/asimi/storage"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
-// fakePrecedentStore satisfies PrecedentStore for testing RecordPrecedentTool.
-type fakePrecedentStore struct {
-	manifests []storage.ForgeManifest
-	sealed    bool
-	rejected  []string
-	logged    []string
-}
-
-func (f *fakePrecedentStore) GetQuenchedManifests(key storage.EdictKey) ([]storage.ForgeManifest, error) {
-	return f.manifests, nil
-}
-
-func (f *fakePrecedentStore) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
-	f.logged = append(f.logged, manifestID)
-	return "ok", nil
-}
-
-func (f *fakePrecedentStore) RejectManifest(key storage.EdictKey, manifestID string) error {
-	f.rejected = append(f.rejected, manifestID)
-	return nil
-}
-
-func (f *fakePrecedentStore) GetPrecedentsForManifest(username, project, manifestID string) ([]storage.CensorPrecedent, error) {
-	return nil, nil
-}
-
-func (f *fakePrecedentStore) QueryPrecedentsByPrinciple(username, project, principle string, limit int) ([]storage.CensorPrecedent, error) {
-	return nil, nil
-}
-
-func (f *fakePrecedentStore) GrantSeal(key storage.EdictKey, metadata storage.JSON) error {
-	f.sealed = true
-	return nil
+// setupPrecedentTestDB creates an in-memory SQLite DB with the right schema.
+func setupPrecedentTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	if err := db.AutoMigrate(&storage.ForgeManifest{}, &storage.CensorPrecedent{}, &storage.Seal{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	return db
 }
 
 func TestRecordPrecedentTool_NoReasoningEcho(t *testing.T) {
-	store := &fakePrecedentStore{
-		manifests: []storage.ForgeManifest{
-			{ManifestID: "abc123"},
-		},
-	}
+	db := setupPrecedentTestDB(t)
+	// Insert a quenched manifest
+	db.Create(&storage.ForgeManifest{
+		ManifestID: "abc123",
+		EdictID:    5,
+		Username:   "testuser",
+		Project:    "testproject",
+		Status:     storage.ManifestQuenched,
+	})
+
 	tool := RecordPrecedentTool{
-		Store:    store,
-		Username: "testuser",
-		Project:  "testproject",
+		Ctx: ToolContext{
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
+		},
 	}
 
 	longReasoning := "This is a very long reasoning that should NOT appear in the tool output because the Sage already wrote it as conversational text."
@@ -73,15 +60,21 @@ func TestRecordPrecedentTool_NoReasoningEcho(t *testing.T) {
 }
 
 func TestRecordPrecedentTool_RejectedNoReasoningEcho(t *testing.T) {
-	store := &fakePrecedentStore{
-		manifests: []storage.ForgeManifest{
-			{ManifestID: "abc123"},
-		},
-	}
+	db := setupPrecedentTestDB(t)
+	db.Create(&storage.ForgeManifest{
+		ManifestID: "abc123",
+		EdictID:    5,
+		Username:   "testuser",
+		Project:    "testproject",
+		Status:     storage.ManifestQuenched,
+	})
+
 	tool := RecordPrecedentTool{
-		Store:    store,
-		Username: "testuser",
-		Project:  "testproject",
+		Ctx: ToolContext{
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
+		},
 	}
 
 	longReasoning := "Code has issues that need addressing."
@@ -107,5 +100,68 @@ func TestRecordPrecedentTool_Format(t *testing.T) {
 	want := "Record Precedent: Recorded precedent (approved) for edict 5\n"
 	if formatted != want {
 		t.Errorf("Format() = %q, want %q", formatted, want)
+	}
+}
+
+func TestRecordPrecedentTool_GrantsSageSealOnApproval(t *testing.T) {
+	db := setupPrecedentTestDB(t)
+	db.Create(&storage.ForgeManifest{
+		ManifestID: "m1",
+		EdictID:    7,
+		Username:   "testuser",
+		Project:    "testproject",
+		Status:     storage.ManifestQuenched,
+	})
+
+	tool := RecordPrecedentTool{
+		Ctx: ToolContext{
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
+		},
+	}
+
+	_, err := tool.Call(context.Background(),
+		`{"edict_id": 7, "approved": true, "reasoning": "LGTM"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify sage seal was created
+	var seal storage.Seal
+	if err := db.Where("edict_id = ? AND minister_id = ?", 7, "sage").First(&seal).Error; err != nil {
+		t.Errorf("expected sage seal to be granted: %v", err)
+	}
+}
+
+func TestRecordPrecedentTool_RejectsManifestOnRejection(t *testing.T) {
+	db := setupPrecedentTestDB(t)
+	db.Create(&storage.ForgeManifest{
+		ManifestID: "m1",
+		EdictID:    9,
+		Username:   "testuser",
+		Project:    "testproject",
+		Status:     storage.ManifestQuenched,
+	})
+
+	tool := RecordPrecedentTool{
+		Ctx: ToolContext{
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
+		},
+	}
+
+	_, err := tool.Call(context.Background(),
+		`{"edict_id": 9, "approved": false, "reasoning": "bad code"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify manifest was rejected
+	var manifest storage.ForgeManifest
+	db.Where("manifest_id = ?", "m1").First(&manifest)
+	if manifest.Status != storage.ManifestRejected {
+		t.Errorf("expected manifest status rejected, got %s", manifest.Status)
 	}
 }

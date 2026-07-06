@@ -3337,6 +3337,9 @@ type mockShogunateClient struct {
 	edictKeyFn          func(uint) storage.EdictKey
 	zhengmingResponses  []zhengmingResponse
 	sealsFn             func() ([]storage.Seal, error)
+	getEdictFn          func(uint) (*storage.Edict, error)
+	cancelEdictFn       func(uint) error
+	cancelledEdicts     map[uint]bool
 }
 
 type publishedEvent struct {
@@ -3362,7 +3365,7 @@ func (m *mockShogunateClient) PublishEvent(key storage.EdictKey, eventType stora
 	return key.ID
 }
 
-func (m *mockShogunateClient) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
+func (m *mockShogunateClient) CreateEdictSilent(issueRef, intent, sessionID string) (*storage.Edict, error) {
 	return &storage.Edict{ID: 1, Intent: intent, IssueRef: issueRef}, nil
 }
 
@@ -3376,6 +3379,28 @@ func (m *mockShogunateClient) GetEdictSeals(_ storage.EdictKey) ([]storage.Seal,
 		return m.sealsFn()
 	}
 	return nil, nil
+}
+
+func (m *mockShogunateClient) GetEdict(edictID uint) (*storage.Edict, error) {
+	if m.getEdictFn != nil {
+		return m.getEdictFn(edictID)
+	}
+	return &storage.Edict{ID: edictID, Intent: "Test intent"}, nil
+}
+
+func (m *mockShogunateClient) CancelEdict(edictID uint) error {
+	if m.cancelEdictFn != nil {
+		return m.cancelEdictFn(edictID)
+	}
+	if m.cancelledEdicts == nil {
+		m.cancelledEdicts = make(map[uint]bool)
+	}
+	m.cancelledEdicts[edictID] = true
+	return nil
+}
+
+func (m *mockShogunateClient) AppendToIntent(edictID uint, clarification string) error {
+	return nil
 }
 
 // --- Tests for pendingRitualEnact YESNO flow ---
@@ -4211,4 +4236,298 @@ func TestEventSealGranted_NonRulerAddsChatMessage(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected chat message about judge sealing edict 7")
+}
+
+// --- Tests for edict action menu ---
+
+func TestParseEdictActionRequestID_Valid(t *testing.T) {
+	id, ok := parseEdictActionRequestID("edict-42")
+	assert.True(t, ok)
+	assert.Equal(t, uint(42), id)
+}
+
+func TestParseEdictActionRequestID_Invalid(t *testing.T) {
+	_, ok := parseEdictActionRequestID("zhengming-abc")
+	assert.False(t, ok)
+
+	_, ok = parseEdictActionRequestID("edict-abc")
+	assert.False(t, ok)
+}
+
+func TestShowEdictActionMenu_EntersAnsweringMode(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := showEdictActionMenu(model, 42)
+	assert.Nil(t, cmd, "should return nil cmd — menu is entered synchronously")
+
+	assert.NotNil(t, model.prompt().answering, "prompt should be in answering mode")
+	assert.Equal(t, "edict-42", model.prompt().answering.RequestID)
+	require.Len(t, model.prompt().answering.Questions, 1)
+	assert.Equal(t, []string{"Status", "Implement", "Seal", "Cancel"},
+		model.prompt().answering.Questions[0].Options)
+}
+
+func TestDispatchEdictAction_Status(t *testing.T) {
+	mock := &mockShogunateClient{
+		sealsFn: func() ([]storage.Seal, error) {
+			return []storage.Seal{}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := dispatchEdictAction(model, 42, []string{"Status"})
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, ok := msg.(showEdictDashboardMsg)
+	assert.True(t, ok, "expected showEdictDashboardMsg for Status action")
+}
+
+func TestDispatchEdictAction_Implement(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := dispatchEdictAction(model, 42, []string{"Implement"})
+	require.NotNil(t, cmd)
+	msg := cmd()
+	sysMsg, ok := msg.(showContextMsg)
+	assert.True(t, ok, "expected showContextMsg for Implement action")
+	assert.Contains(t, sysMsg.content, "swift-strike")
+	assert.Contains(t, sysMsg.content, "42")
+}
+
+func TestDispatchEdictAction_Cancel(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := dispatchEdictAction(model, 42, []string{"Cancel"})
+	require.NotNil(t, cmd)
+	// Cancel enters YesNo mode — should set pendingEdictCancel
+	require.NotNil(t, model.pendingEdictCancel)
+	assert.Equal(t, uint(42), model.pendingEdictCancel.edictID)
+}
+
+func TestEdictSelectedMsg_ShowsActionMenu(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	newModel, _ := model.handleCustomMessages(edictSelectedMsg{edictID: 7})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	assert.NotNil(t, updated.prompt().answering, "should enter answering mode")
+	assert.Equal(t, "edict-7", updated.prompt().answering.RequestID)
+}
+
+func TestAnsweredMsg_EdictActionMenu_Dispatches(t *testing.T) {
+	mock := &mockShogunateClient{
+		sealsFn: func() ([]storage.Seal, error) {
+			return []storage.Seal{}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	// Set up answering mode first
+	showEdictActionMenu(model, 42)
+
+	// Simulate user selecting "Status"
+	newModel, cmd := model.handleCustomMessages(AnsweredMsg{
+		RequestID: "edict-42",
+		Answers:   []string{"Status"},
+	})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.Nil(t, updated.prompt().answering, "should exit answering mode")
+	assert.NotNil(t, cmd, "should return a command")
+
+	// The command should produce a dashboard msg
+	msg := cmd()
+	_, ok = msg.(showEdictDashboardMsg)
+	assert.True(t, ok, "expected showEdictDashboardMsg")
+}
+
+func TestAnsweredMsg_EdictActionMenu_Cancel_DoesNotCallZhengming(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	showEdictActionMenu(model, 42)
+
+	newModel, _ := model.handleCustomMessages(AnsweringCancelMsg{RequestID: "edict-42"})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.Nil(t, updated.prompt().answering, "should exit answering mode")
+	assert.Empty(t, mock.zhengmingResponses, "should NOT call HandleZhengmingResponse for edict menu cancel")
+}
+
+// --- Tests for resumeEdictSession ---
+
+func TestResumeEdictSession_WithSessionID(t *testing.T) {
+	mock := &mockShogunateClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, SessionID: "sess-123"}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := resumeEdictSession(model, 5)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	resumeMsg, ok := msg.(resumeEdictSessionMsg)
+	require.True(t, ok, "expected resumeEdictSessionMsg")
+	assert.Equal(t, "sess-123", resumeMsg.sessionID)
+}
+
+func TestResumeEdictSession_NoSessionLinked(t *testing.T) {
+	mock := &mockShogunateClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, SessionID: ""}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := resumeEdictSession(model, 5)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	sysMsg, ok := msg.(showContextMsg)
+	require.True(t, ok, "expected showContextMsg")
+	assert.Contains(t, sysMsg.content, "No session linked")
+}
+
+// --- Tests for handleEdictCancel already-cancelled ---
+
+func TestHandleEdictCancel_AlreadyCancelled(t *testing.T) {
+	cancelled := time.Now()
+	mock := &mockShogunateClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, CancelledAt: &cancelled}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := handleEdictCancel(model, 3)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	sysMsg, ok := msg.(showContextMsg)
+	require.True(t, ok, "expected showContextMsg")
+	assert.Contains(t, sysMsg.content, "already cancelled")
+	assert.Nil(t, model.pendingEdictCancel, "should not set pendingEdictCancel for already-cancelled edict")
+}
+
+// --- Tests for cancelEdictCmd ---
+
+func TestCancelEdictCmd_Success(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := cancelEdictCmd(model, 7)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	sysMsg, ok := msg.(showContextMsg)
+	require.True(t, ok, "expected showContextMsg")
+	assert.Contains(t, sysMsg.content, "cancelled")
+	assert.True(t, mock.cancelledEdicts[7], "CancelEdict should have been called on mock")
+}
+
+// --- Tests for YesNoMsg with pendingEdictCancel ---
+
+func TestYesNoMsg_PendingEdictCancel_YesCancels(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+	model.pendingEdictCancel = &pendingEdictCancel{edictID: 9}
+
+	newModel, cmd := model.handleCustomMessages(yesNoResponseMsg{answer: true})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.Nil(t, updated.pendingEdictCancel, "should clear pendingEdictCancel after Yes")
+	require.NotNil(t, cmd, "should return a command when Yes")
+
+	msg := cmd()
+	sysMsg, ok := msg.(showContextMsg)
+	require.True(t, ok, "expected showContextMsg")
+	assert.Contains(t, sysMsg.content, "cancelled")
+	assert.True(t, mock.cancelledEdicts[9], "CancelEdict should have been called")
+}
+
+func TestYesNoMsg_PendingEdictCancel_NoDoesNotCancel(t *testing.T) {
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+	model.pendingEdictCancel = &pendingEdictCancel{edictID: 9}
+
+	newModel, cmd := model.handleCustomMessages(yesNoResponseMsg{answer: false})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.Nil(t, updated.pendingEdictCancel, "should clear pendingEdictCancel after No")
+	assert.Nil(t, cmd, "should return nil cmd when No")
+	assert.False(t, mock.cancelledEdicts[9], "CancelEdict should NOT have been called")
+}
+
+// --- Tests for dispatchEdictAction with "Seal" ---
+
+func TestDispatchEdictAction_Seal(t *testing.T) {
+	mock := &mockShogunateClient{
+		sealsFn: func() ([]storage.Seal, error) {
+			return []storage.Seal{}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := dispatchEdictAction(model, 42, []string{"Seal"})
+	require.NotNil(t, cmd)
+	// Seal with no existing seals → enters YesNo mode for missing prerequisites
+	require.NotNil(t, model.pendingSealOverride, "should set pendingSealOverride for missing seals")
+	assert.Equal(t, uint(42), model.pendingSealOverride.edictID)
+}
+
+// --- Tests for renderEdictDashboard ---
+
+func TestRenderEdictDashboard_BasicFields(t *testing.T) {
+	edict := &storage.Edict{
+		ID:        42,
+		Intent:    "Fix the login bug",
+		Summary:   "Login fix",
+		SessionID: "sess-1",
+	}
+	seals := []storage.Seal{
+		{MinisterID: "judge", SealID: "j1"},
+		{MinisterID: "ruler", SealID: "r1"},
+	}
+
+	output := renderEdictDashboard(edict, seals, 80)
+	assert.Contains(t, output, "Edict 42")
+	assert.Contains(t, output, "sealed") // ruler seal present → status "sealed"
+	assert.Contains(t, output, "Fix the login bug")
+	assert.Contains(t, output, "Login fix")
+	assert.Contains(t, output, "sess-1")
+	assert.Contains(t, output, "Seal Chain")
+}
+
+func TestRenderEdictDashboard_Cancelled(t *testing.T) {
+	cancelled := time.Now()
+	edict := &storage.Edict{
+		ID:          99,
+		Intent:      "Test intent",
+		CancelledAt: &cancelled,
+	}
+	output := renderEdictDashboard(edict, nil, 80)
+	assert.Contains(t, output, "cancelled")
+}
+
+func TestRenderEdictDashboard_EmptyIntent(t *testing.T) {
+	edict := &storage.Edict{ID: 1, Intent: ""}
+	output := renderEdictDashboard(edict, nil, 80)
+	assert.Contains(t, output, "(no intent recorded)")
 }

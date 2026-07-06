@@ -433,7 +433,7 @@ The `ContentComponent` (`content.go`) uses `activeList ListNavigator` to delegat
 |--------------|----------|-------------------------------|-----------|
 | `ViewModels` | `models`  | `c.models.SelectWindow`       | Selects model, returns `modelSelectedMsg` |
 | `ViewResume` | `select`  | `c.resume.SelectWindow`      | Loads session |
-| `ViewSeal`    | `select`  | `c.sealSelect.SelectWindow`   | Returns `sealSelectedMsg` with edict ID |
+| `ViewEdict`    | `select`  | `c.edictSelect.SelectWindow`  | Returns `edictSelectedMsg` with edict ID |
 
 ### Navigation Keys (List Mode)
 

@@ -16,7 +16,7 @@ Our goal is to harmonize The 三界:
        - Production code shaped by 工部 (Ministry of Works)
        - Documentation shaped by 孔子 (Sage)
        - Concrete, malleable, present
-       - Divided into three kingdoms:
+       - Divided into three parts:
          1. The Capital — committed, unpushed changes
          2. The Middle Kingdom — staged changes
          3. The Borderlands — unstaged changes

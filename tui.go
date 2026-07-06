@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,6 +88,7 @@ type TUIModel struct {
 	pendingRitualEnact *pendingRitualEnact
 	// Seal override confirmation state
 	pendingSealOverride *pendingSealOverride
+	pendingEdictCancel  *pendingEdictCancel
 	// Onboarding model selection confirmation state
 	pendingOnboarding bool
 	// Pending API key input: set when user selects a login_required non-OpenAI provider
@@ -177,6 +179,21 @@ type pendingRitualEnact struct {
 type pendingSealOverride struct {
 	edictID uint
 	notes   string
+}
+
+// pendingEdictCancel tracks state when waiting for Ruler confirmation to cancel an edict
+type pendingEdictCancel struct {
+	edictID uint
+}
+
+// showEdictDashboardMsg requests showing the edict dashboard view
+type showEdictDashboardMsg struct {
+	content string
+}
+
+// resumeEdictSessionMsg requests resuming the session linked to an edict
+type resumeEdictSessionMsg struct {
+	sessionID string
 }
 
 // NewTUIModel creates a new TUI model
@@ -2282,15 +2299,28 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnsweredMsg:
 		m.prompt().ExitAnsweringMode()
+		// Check if this is an edict action menu response
+		if edictID, ok := parseEdictActionRequestID(msg.RequestID); ok {
+			return m, dispatchEdictAction(&m, edictID, msg.Answers)
+		}
 		go m.handleAnsweringComplete(msg)
 		return m, nil
 
 	case AnsweringCancelMsg:
 		m.prompt().ExitAnsweringMode()
+		// Edict action menu cancel — just exit, no zhengming to cancel
+		if _, ok := parseEdictActionRequestID(msg.RequestID); ok {
+			return m, nil
+		}
 		go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: []string{tools.AnswerChat}})
 		return m, nil
 
 	case AnsweringEditMsg:
+		// Check if this is an edict action menu edit
+		if edictID, ok := parseEdictActionRequestID(msg.RequestID); ok {
+			return m, editEdictIntentCmd(&m, edictID)
+		}
+
 		// Open the question text in $EDITOR and update it if modified
 		originalText := msg.Question
 		return m, func() tea.Msg {
@@ -2521,6 +2551,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Check if this is a response to an edict cancel request
+		if m.pendingEdictCancel != nil {
+			edictID := m.pendingEdictCancel.edictID
+			m.pendingEdictCancel = nil
+			if msg.answer {
+				return m, cancelEdictCmd(&m, edictID)
+			}
+			return m, nil
+		}
+
 		// Check if this is a response to a host command approval request
 		if m.pendingHostApproval != nil {
 			// Send the response back to the waiting goroutine
@@ -2695,12 +2735,22 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionsLoadedMsg:
 		return m, m.tabs.Content().ShowResume(msg.sessions)
 
-	case sealedEdictsLoadedMsg:
-		return m, m.tabs.Content().ShowSealSelection(msg.edicts)
+	case edictsLoadedMsg:
+		return m, m.tabs.Content().ShowEdictSelection(msg.edicts)
 
-	case sealSelectedMsg:
-		// Grant the ruler's seal to the selected edict
-		return m, grantRulerSealCmd(&m, msg.edictID, "")
+	case edictSelectedMsg:
+		// Show the edict action menu for the selected edict
+		return m, showEdictActionMenu(&m, msg.edictID)
+
+	case showEdictDashboardMsg:
+		return m, m.tabs.Content().ShowEdictDashboard(msg.content)
+
+	case resumeEdictSessionMsg:
+		// Resume the session linked to the edict
+		if loadFn := m.tabs.Content().loadSessionFn; loadFn != nil {
+			return m, loadFn(msg.sessionID)
+		}
+		return m, nil
 
 	case ChangeModeMsg:
 		// Centralized mode change handling
@@ -3616,6 +3666,96 @@ func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
 		"shogunate_type", fmt.Sprintf("%T", m.shogunate))
 	if err := m.shogunate.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
 		slog.Error("failed to handle zhengming response", "error", err)
+	}
+}
+
+// parseEdictActionRequestID checks if a RequestID is a synthetic edict action
+// menu ID (format: "edict-<id>") and returns the edict ID.
+func parseEdictActionRequestID(requestID string) (uint, bool) {
+	if !strings.HasPrefix(requestID, "edict-") {
+		return 0, false
+	}
+	parsed, err := strconv.ParseUint(strings.TrimPrefix(requestID, "edict-"), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return uint(parsed), true
+}
+
+// dispatchEdictAction dispatches to the appropriate edict subcommand based on
+// the selected menu option.
+func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
+	if len(answers) == 0 {
+		return nil
+	}
+	action := answers[0]
+	switch action {
+	case "Status":
+		return loadEdictDashboardCmd(m, edictID)
+	case "Implement":
+		return enactRitualForEdict(m, edictID, "swift-strike")
+	case "Seal":
+		return handleEdictSeal(m, edictID, "")
+	case "Cancel":
+		return handleEdictCancel(m, edictID)
+	default:
+		return nil
+	}
+}
+
+// editEdictIntentCmd opens the edict intent in $EDITOR and calls AppendToIntent
+// with the modified text.
+func editEdictIntentCmd(m *TUIModel, edictID uint) tea.Cmd {
+	edict, err := m.shogunate.GetEdict(edictID)
+	if err != nil {
+		return func() tea.Msg {
+			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
+		}
+	}
+	originalText := edict.Intent
+
+	return func() tea.Msg {
+		tmpFile, err := os.CreateTemp("", "edict_edit_*.md")
+		if err != nil {
+			return showSystemMsg(fmt.Sprintf("Failed to create temp file: %v", err))
+		}
+		tmpPath := tmpFile.Name()
+		tmpFile.Close()
+
+		if err := os.WriteFile(tmpPath, []byte(originalText), 0644); err != nil {
+			os.Remove(tmpPath)
+			return showSystemMsg(fmt.Sprintf("Failed to write temp file: %v", err))
+		}
+
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = "vi"
+		}
+
+		cmd := exec.Command(editor, tmpPath)
+		return tea.ExecProcess(cmd, func(err error) tea.Msg {
+			defer os.Remove(tmpPath)
+			if err != nil {
+				return showSystemMsg(fmt.Sprintf("Editor failed: %v", err))
+			}
+
+			content, err := os.ReadFile(tmpPath)
+			if err != nil {
+				return showSystemMsg(fmt.Sprintf("Failed to read edited file: %v", err))
+			}
+
+			modified := strings.TrimRight(string(content), " \t\n\r")
+			original := strings.TrimRight(originalText, " \t\n\r")
+			if modified == original {
+				return showSystemMsg("No changes made to edict intent")
+			}
+
+			// Call AppendToIntent with the modified text
+			if err := m.shogunate.AppendToIntent(edictID, modified); err != nil {
+				return showSystemMsg(fmt.Sprintf("Failed to update edict: %v", err))
+			}
+			return showSystemMsg(fmt.Sprintf("Edict %d intent updated", edictID))
+		})
 	}
 }
 

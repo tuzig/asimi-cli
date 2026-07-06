@@ -288,15 +288,15 @@ func (rc *ReconnectingClient) CourtEdictKey() storage.EdictKey {
 // CreateEdict is a mutating method. It does NOT retry on
 // ErrPeerDisconnected because the edict may have already been created
 // on the server — only on ErrClosed (the call never left the client).
-func (rc *ReconnectingClient) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
+func (rc *ReconnectingClient) CreateEdict(issueRef, intent, sessionID string) (*storage.Edict, error) {
 	client := rc.getClient()
 	if client == nil {
 		return nil, ErrClosed
 	}
-	edict, err := client.CreateEdict(issueRef, intent)
+	edict, err := client.CreateEdict(issueRef, intent, sessionID)
 	if rc.reconnectIfError(err, rc.shouldRetry) {
 		if client = rc.getClient(); client != nil {
-			return client.CreateEdict(issueRef, intent)
+			return client.CreateEdict(issueRef, intent, sessionID)
 		}
 	}
 	return edict, err
@@ -305,15 +305,15 @@ func (rc *ReconnectingClient) CreateEdict(issueRef, intent string) (*storage.Edi
 // CreateEdictSilent is a mutating method. It does NOT retry on
 // ErrPeerDisconnected because the edict may have already been created
 // on the server — only on ErrClosed (the call never left the client).
-func (rc *ReconnectingClient) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
+func (rc *ReconnectingClient) CreateEdictSilent(issueRef, intent, sessionID string) (*storage.Edict, error) {
 	client := rc.getClient()
 	if client == nil {
 		return nil, ErrClosed
 	}
-	edict, err := client.CreateEdictSilent(issueRef, intent)
+	edict, err := client.CreateEdictSilent(issueRef, intent, sessionID)
 	if rc.reconnectIfError(err, rc.shouldRetry) {
 		if client = rc.getClient(); client != nil {
-			return client.CreateEdictSilent(issueRef, intent)
+			return client.CreateEdictSilent(issueRef, intent, sessionID)
 		}
 	}
 	return edict, err
@@ -345,6 +345,34 @@ func (rc *ReconnectingClient) GrantRulerSeal(edictID uint, notes string) error {
 	if rc.reconnectIfError(err, rc.shouldRetry) {
 		if client = rc.getClient(); client != nil {
 			return client.GrantRulerSeal(edictID, notes)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) CancelEdict(edictID uint) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.CancelEdict(edictID)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.CancelEdict(edictID)
+		}
+	}
+	return err
+}
+
+func (rc *ReconnectingClient) AppendToIntent(edictID uint, clarification string) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.AppendToIntent(edictID, clarification)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.AppendToIntent(edictID, clarification)
 		}
 	}
 	return err

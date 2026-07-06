@@ -398,10 +398,10 @@ func TestReconnectingClient_NilClientReturnsErrClosed(t *testing.T) {
 	rc := &ReconnectingClient{}
 
 	// Methods that return error when client is nil should return ErrClosed.
-	if _, err := rc.CreateEdict("ref", "intent"); !errors.Is(err, ErrClosed) {
+	if _, err := rc.CreateEdict("ref", "intent", ""); !errors.Is(err, ErrClosed) {
 		t.Errorf("CreateEdict with nil client should return ErrClosed, got %v", err)
 	}
-	if _, err := rc.CreateEdictSilent("ref", "intent"); !errors.Is(err, ErrClosed) {
+	if _, err := rc.CreateEdictSilent("ref", "intent", ""); !errors.Is(err, ErrClosed) {
 		t.Errorf("CreateEdictSilent with nil client should return ErrClosed, got %v", err)
 	}
 	if err := rc.GrantRulerSeal(1, ""); !errors.Is(err, ErrClosed) {
@@ -421,6 +421,12 @@ func TestReconnectingClient_NilClientReturnsErrClosed(t *testing.T) {
 	}
 	if _, err := rc.GetSessionExport("tab"); !errors.Is(err, ErrClosed) {
 		t.Errorf("GetSessionExport with nil client should return ErrClosed, got %v", err)
+	}
+	if err := rc.CancelEdict(1); !errors.Is(err, ErrClosed) {
+		t.Errorf("CancelEdict with nil client should return ErrClosed, got %v", err)
+	}
+	if err := rc.AppendToIntent(1, "clarification"); !errors.Is(err, ErrClosed) {
+		t.Errorf("AppendToIntent with nil client should return ErrClosed, got %v", err)
 	}
 }
 

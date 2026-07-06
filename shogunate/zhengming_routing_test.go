@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
@@ -40,10 +41,12 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 	registry := tools.NewToolRegistry()
 	sagePerm, _ := tools.ParsePermissions("r--r--rwx")
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
-		DB:                   db,
-		ProjectRoot:          "/tmp",
-		Username:             "testuser",
-		Project:              "testproject",
+		Ctx: tools.ToolContext{
+			RepoInfo:   &repo.RepoInfo{ProjectRoot: "/tmp"},
+			Username:   "testuser",
+			Project:    "testproject",
+			DB:         db,
+		},
 		ZhengmingRequester:   base,
 		WaitForZhengming:     nil, // no WaitForAnswer — Call returns immediately with "pending" status
 		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
@@ -100,10 +103,12 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 	registry := tools.NewToolRegistry()
 	strategistPerm, _ := tools.ParsePermissions("r-----rwx")
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
-		DB:                   db,
-		ProjectRoot:          "/tmp",
-		Username:             "testuser",
-		Project:              "testproject",
+		Ctx: tools.ToolContext{
+			RepoInfo: &repo.RepoInfo{ProjectRoot: "/tmp"},
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
+		},
 		ZhengmingRequester:   base,
 		WaitForZhengming:     nil, // no WaitForAnswer — Call returns immediately
 		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
@@ -149,10 +154,12 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 	registry := tools.NewToolRegistry()
 	sagePerm, _ := tools.ParsePermissions("r--r--rwx")
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
-		DB:                   db,
-		ProjectRoot:          "/tmp",
-		Username:             "testuser",
-		Project:              "testproject",
+		Ctx: tools.ToolContext{
+			RepoInfo: &repo.RepoInfo{ProjectRoot: "/tmp"},
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
+		},
 		ZhengmingRequester:   base,
 		WaitForZhengming:     nil, // no WaitForAnswer — Call returns immediately
 		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},

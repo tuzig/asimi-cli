@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -80,9 +81,13 @@ func (c *Chancellor) Scratchpad() string {
 // Tools returns the Chancellor's LLM tools for interactive sessions
 func (c *Chancellor) Tools() []Tool {
 	tc := tools.ToolContext{
-		Username: c.username,
-		Project:  c.project,
+		RepoInfo:   &repo.RepoInfo{},
+		MinisterID: c.ministerID,
+		Username:   c.username,
+		Project:    c.project,
+		DB:         c.db,
 	}
+	*tc.RepoInfo = c.RepoInfo()
 	toolList := []Tool{
 		tools.AsimiSQLTool{DBPath: c.getDBPath(), ProjectRoot: c.RepoInfo().ProjectRoot},
 		tools.UpdateEdictTool{Manager: c, Username: c.username, Project: c.project},

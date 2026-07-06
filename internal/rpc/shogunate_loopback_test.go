@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -76,12 +77,25 @@ func (f *fakeShogunate) CourtEdictKey() storage.EdictKey {
 	return storage.EdictKey{ID: 1, Username: "alice", Project: "asimi"}
 }
 
-func (f *fakeShogunate) CreateEdict(issueRef, intent string) (*storage.Edict, error) {
+func (f *fakeShogunate) CreateEdict(issueRef, intent, sessionID string) (*storage.Edict, error) {
 	return f.makeEdict(issueRef, intent)
 }
 
-func (f *fakeShogunate) CreateEdictSilent(issueRef, intent string) (*storage.Edict, error) {
+func (f *fakeShogunate) CreateEdictSilent(issueRef, intent, sessionID string) (*storage.Edict, error) {
 	return f.makeEdict(issueRef, intent)
+}
+
+func (f *fakeShogunate) CancelEdict(edictID uint) error {
+	return nil
+}
+
+func (f *fakeShogunate) AppendToIntent(edictID uint, clarification string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e, ok := f.edicts[edictID]; ok {
+		e.Intent += "\n\n---\n**Clarification:**\n" + clarification
+	}
+	return nil
 }
 
 func (f *fakeShogunate) makeEdict(issueRef, intent string) (*storage.Edict, error) {
@@ -301,7 +315,7 @@ func TestShogunateRPCLoopback(t *testing.T) {
 		t.Errorf("CourtEdictKey = %+v", k)
 	}
 
-	e, err := client.CreateEdict("#7", "add feature")
+	e, err := client.CreateEdict("#7", "add feature", "")
 	if err != nil {
 		t.Fatalf("CreateEdict: %v", err)
 	}
@@ -320,6 +334,28 @@ func TestShogunateRPCLoopback(t *testing.T) {
 	if _, err := client.GetEdict(99); err == nil {
 		t.Error("GetEdict(99): want error")
 	}
+
+	// CancelEdict round-trip.
+	if err := client.CancelEdict(e.ID); err != nil {
+		t.Fatalf("CancelEdict: %v", err)
+	}
+	impl.mu.Lock()
+	if len(impl.edicts) == 0 || impl.edicts[e.ID] == nil {
+		t.Errorf("edict %d should still exist after cancel", e.ID)
+	}
+	impl.mu.Unlock()
+
+	// AppendToIntent round-trip.
+	if err := client.AppendToIntent(e.ID, "additional context"); err != nil {
+		t.Fatalf("AppendToIntent: %v", err)
+	}
+	impl.mu.Lock()
+	if ed := impl.edicts[e.ID]; ed != nil {
+		if !strings.Contains(ed.Intent, "additional context") {
+			t.Errorf("intent after AppendToIntent = %q", ed.Intent)
+		}
+	}
+	impl.mu.Unlock()
 
 	if err := client.GrantRulerSeal(e.ID, "looks good"); err != nil {
 		t.Fatalf("GrantRulerSeal: %v", err)

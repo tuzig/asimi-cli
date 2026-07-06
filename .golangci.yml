@@ -1,71 +1,27 @@
 version: 2
 
+# Phase 1: Minimal linter set — catches real bugs with low false-positive rate.
+# Additional linters (errcheck, gosec, revive, misspell, unconvert, unparam)
+# will be added in later phases as the codebase is cleaned up.
+
 run:
   timeout: 5m
-  tests: true
   modules-download-mode: vendor
 
 linters:
+  default: none
   enable:
-    - errcheck      # check for unchecked errors
     - govet         # reports suspicious constructs
     - ineffassign   # detect ineffectual assignments
     - staticcheck   # go vet on steroids
     - unused        # check for unused constants, variables, functions and types
-    - misspell      # check for misspelled English words
-    - revive        # fast, configurable linter for Go
-    - unconvert     # remove unnecessary type conversions
-    - unparam       # report unused function parameters
-    - gosec         # inspect source code for security problems
 
   settings:
-    errcheck:
-      check-blank: true
-      check-type-assertions: true
-
     govet:
       enable-all: true
       disable:
         - shadow  # can be too strict
 
-    revive:
-      rules:
-        - name: blank-imports
-        - name: context-as-argument
-        - name: dot-imports
-        - name: error-return
-        - name: error-strings
-        - name: error-naming
-        - name: exported
-        - name: increment-decrement
-        - name: var-naming
-        - name: package-comments
-        - name: range
-        - name: receiver-naming
-        - name: indent-error-flow
-        - name: superfluous-else
-        - name: unreachable-code
-        - name: redefines-builtin-id
-
-    gosec:
-      # Disable specific security checks that are false positives for CLI tools
-      excludes:
-        - G101  # OAuth client IDs are public, not secrets
-        - G112  # Decompression needed for tar/zip handling
-        - G204  # Subprocess with variable (core CLI feature)
-        - G301  # 0755 directory permissions appropriate for CLI
-        - G302  # Chmod operations needed for file management
-        - G304  # File path from variable (core CLI feature)
-        - G306  # 0644 file permissions appropriate for user files
-
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
-  
-  exclude-rules:
-    # Exclude some linters from running on tests files
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck

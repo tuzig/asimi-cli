@@ -38,8 +38,9 @@ type CourtEdictKeyResult struct {
 }
 
 type CreateEdictParams struct {
-	IssueRef string `msgpack:"issue_ref,omitempty"`
-	Intent   string `msgpack:"intent,omitempty"`
+	IssueRef  string `msgpack:"issue_ref,omitempty"`
+	Intent    string `msgpack:"intent,omitempty"`
+	SessionID string `msgpack:"session_id,omitempty"`
 }
 type CreateEdictResult struct {
 	Edict *storage.Edict `msgpack:"edict"`
@@ -50,6 +51,15 @@ type GetEdictParams struct {
 }
 type GetEdictResult struct {
 	Edict *storage.Edict `msgpack:"edict"`
+}
+
+type CancelEdictParams struct {
+	EdictID uint `msgpack:"edict_id"`
+}
+
+type AppendToIntentParams struct {
+	EdictID       uint   `msgpack:"edict_id"`
+	Clarification string `msgpack:"clarification,omitempty"`
 }
 
 type GrantRulerSealParams struct {

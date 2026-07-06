@@ -307,6 +307,7 @@ COMMAND-LINE mode, then type the command and press Enter.
 
   :new              - Start a new conversation
   :resume           - Resume a previous session
+  :edict            - Manage edicts (read, enact, seal, resume, cancel)
   :quit             - Quit Asimi (also saves session)
   :update           - Check for and install updates
 
