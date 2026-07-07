@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -36,20 +34,14 @@ type Judge struct {
 // NewJudge creates a new Judge minister
 func NewJudge(base *MinisterBase, ci CIRunner) *Judge {
 	base.ministerID = "judge"
-	return &Judge{
+	j := &Judge{
 		MinisterBase: base,
 		ci:           ci,
 	}
-}
-
-// ID returns the minister identifier
-func (j *Judge) ID() string {
-	return "judge"
-}
-
-// RestoreSession rebuilds the Judge's interactive session populated with msgs.
-func (j *Judge) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
-	return j.MinisterBase.restoreSession(minister, msgs)
+	j.self = j
+	j.SetPostTaskHook(j.sealIfCompleteHook)
+	j.SetTaskFallback(j.executeFallback)
+	return j
 }
 
 // SystemPrompt returns the Judge's system prompt template.
@@ -150,6 +142,17 @@ func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 		return false, fmt.Errorf("failed to check edict-level verdicts: %w", err)
 	}
 	return latestVerdict.Outcome == storage.VerdictPassed, nil
+}
+
+// sealIfCompleteHook is the PostTaskHook wrapper for sealIfComplete.
+func (j *Judge) sealIfCompleteHook(ctx context.Context, task *Task, session *Session, output string) (string, error) {
+	j.sealIfComplete(task.EdictKey)
+	return "", nil
+}
+
+// executeFallback is the TaskFallback for deterministic CI execution.
+func (j *Judge) executeFallback(ctx context.Context, task *Task) (bool, error) {
+	return j.execute(ctx, task.EdictKey)
 }
 
 // sealIfComplete checks whether all manifests for the edict are quenched
@@ -327,102 +330,7 @@ func (j *Judge) judgeManifest(ctx context.Context, key storage.EdictKey, manifes
 
 // Run starts the Judge's task processing loop
 func (j *Judge) Run(ctx context.Context) {
-	j.RunLoop(ctx, j, nil, j.processTask)
-}
-
-// processTask handles a single task. When an LLM is configured, Judge reasons
-// through the pending manifests via its tools (shell tests, record_verdict,
-// update_manifest_status). Without an LLM, it falls back to deterministic CI.
-func (j *Judge) processTask(ctx context.Context, task *Task) {
-	j.logger.Info("judge processing task",
-		"edict_id", task.EdictKey.ID,
-		"work", task.Work)
-
-	notify := j.notify
-	if task.Notify != nil {
-		notify = task.Notify
-	}
-
-	var output string
-	var taskErr error
-	var session *Session
-	sealed := false
-
-	if j.client != nil {
-		session, output, taskErr = j.streamTask(ctx, task, notify)
-		if taskErr == nil {
-			sealed = j.sealIfComplete(task.EdictKey)
-		}
-	} else {
-		// Fallback: deterministic CI execution (used by tests and no-LLM setups)
-		var err error
-		sealed, err = j.execute(ctx, task.EdictKey)
-		taskErr = err
-		if sealed {
-			output = "judgment complete"
-		}
-	}
-
-	result := Result{
-		MinisterID: j.ID(),
-		Sealed:     sealed,
-		Output:     output,
-		Session:    session,
-		Err:        taskErr,
-	}
-
-	// Send result (non-blocking)
-	select {
-	case task.Done <- result:
-	default:
-		j.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
-	}
-}
-
-// streamTask creates (or reuses) a session and streams the task through the LLM.
-func (j *Judge) streamTask(ctx context.Context, task *Task, notify internal.NotifyFunc) (*Session, string, error) {
-	var session *Session
-	var output string
-	var err error
-
-	if task.Session != nil {
-		session = task.Session
-		// Derive ChannelID from existing session's routing target
-		sessionChannelID := session.ChannelID()
-		if sessionChannelID == "" {
-			sessionChannelID = task.ChannelID
-		}
-		if sessionChannelID == "" {
-			sessionChannelID = "judge"
-		}
-		session.SetNotify(notify, sessionChannelID)
-		output, err = session.AskWithStreaming(ctx, task.Work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	} else {
-		// Create new session for first invocation
-		// Use task.ChannelID if provided, otherwise default to "judge"
-		channelID := task.ChannelID
-		if channelID == "" {
-			channelID = "judge"
-		}
-		session, err = CreateSessionWithOpts(j, j.client, j.config, notify, CreateSessionOpts{
-			EdictKey:   task.EdictKey,
-			ChannelID:  channelID,
-			Scratchpad: task.Scratchpad,
-		})
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to create judge session: %w", err)
-		}
-		output, err = session.AskWithStreaming(ctx, task.Work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	}
-
-	j.logger.Info("judge task completed")
-	return session, output, nil
+	j.RunLoop(ctx, j, nil, j.MinisterBase.processTask)
 }
 
 // --- Judge Specialized Tools ---

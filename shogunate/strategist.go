@@ -37,14 +37,12 @@ type Strategist struct {
 // NewStrategist creates a new Strategist minister
 func NewStrategist(base *MinisterBase) *Strategist {
 	base.ministerID = "strategist"
-	return &Strategist{
+	s := &Strategist{
 		MinisterBase: base,
 	}
-}
-
-// ID returns the minister identifier
-func (s *Strategist) ID() string {
-	return "strategist"
+	s.self = s
+	s.SetPostTaskHook(s.validateDependenciesHook)
+	return s
 }
 
 // SystemPrompt returns the Strategist's system prompt template.
@@ -116,56 +114,15 @@ func (s *Strategist) LingExistsForEdict(key storage.EdictKey) (bool, error) {
 	return count > 0, nil
 }
 
-// streamTask creates a session (or reuses existing) and streams the task through the LLM.
-func (s *Strategist) streamTask(ctx context.Context, task *Task) (*Session, string, error) {
-	notify := s.notify
-	if task.Notify != nil {
-		notify = task.Notify
-	}
-
-	var session *Session
-	var output string
-	var err error
-
-	if task.Session != nil {
-		session = task.Session
-		// Derive ChannelID from existing session's routing target
-		sessionChannelID := session.ChannelID()
-		if sessionChannelID == "" {
-			sessionChannelID = task.ChannelID
-		}
-		if sessionChannelID == "" {
-			sessionChannelID = "strategist"
-		}
-		session.SetNotify(notify, sessionChannelID)
-		output, err = session.AskWithStreaming(ctx, task.Work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	} else {
-		// Create new session for first invocation
-		// Use task.ChannelID if provided, otherwise default to "strategist"
-		channelID := task.ChannelID
-		if channelID == "" {
-			channelID = "strategist"
-		}
-		session, err = CreateSessionWithOpts(s, s.client, s.config, notify, CreateSessionOpts{
-			EdictKey:   task.EdictKey,
-			ChannelID:  channelID,
-			Scratchpad: task.Scratchpad,
-		})
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to create strategist session: %w", err)
-		}
-
-		output, err = session.AskWithStreaming(ctx, task.Work, nil)
-		if err != nil {
-			return session, "", err
+// validateDependenciesHook is the PostTaskHook wrapper for validateDependencies.
+func (s *Strategist) validateDependenciesHook(ctx context.Context, task *Task, session *Session, output string) (string, error) {
+	lingList, err := s.GetLingForEdict(task.EdictKey)
+	if err == nil && len(lingList) > 0 {
+		if err := s.validateDependencies(lingList); err != nil {
+			return "", fmt.Errorf("invalid dependencies: %w", err)
 		}
 	}
-
-	s.logger.Info("strategist task completed")
-	return session, output, nil
+	return "", nil
 }
 
 // validateDependencies ensures ling form a DAG (no cycles)
@@ -212,48 +169,7 @@ func (s *Strategist) validateDependencies(lingList []storage.Ling) error {
 
 // Run starts the Strategist's task processing loop
 func (s *Strategist) Run(ctx context.Context) {
-	s.RunLoop(ctx, s, nil, s.processTask)
-}
-
-// processTask handles a single task
-func (s *Strategist) processTask(ctx context.Context, task *Task) {
-	s.logger.Info("strategist processing task",
-		"edict_id", task.EdictKey.ID,
-		"work", task.Work)
-
-	var output string
-	var taskErr error
-	var session *Session
-
-	if s.client != nil {
-		session, output, taskErr = s.streamTask(ctx, task)
-	} else {
-		output = "strategist task acknowledged (no LLM configured)"
-	}
-
-	// Validate ling dependencies after session completes
-	if taskErr == nil {
-		lingList, err := s.GetLingForEdict(task.EdictKey)
-		if err == nil && len(lingList) > 0 {
-			if err := s.validateDependencies(lingList); err != nil {
-				taskErr = fmt.Errorf("invalid dependencies: %w", err)
-			}
-		}
-	}
-
-	result := Result{
-		MinisterID: s.ID(),
-		Sealed:     true,
-		Output:     output,
-		Session:    session,
-		Err:        taskErr,
-	}
-
-	select {
-	case task.Done <- result:
-	default:
-		s.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
-	}
+	s.RunLoop(ctx, s, nil, s.MinisterBase.processTask)
 }
 
 // --- Strategist Tools ---

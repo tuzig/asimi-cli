@@ -1375,3 +1375,370 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 		assert.NotContains(t, result, "worktree", "should not mention worktree when not a worktree")
 	})
 }
+
+// === Edict 610: Unified processTask Hook Tests ===
+// The following tests verify that the unified MinisterBase.processTask correctly
+// dispatches to hooks (preTaskHook, postTaskHook, taskFallback, ctxMiddleware)
+// for each minister type that was refactored to use the shared base.
+
+// TestMarshal_ProcessTask_Fallback verifies that Marshal's unified processTask
+// calls the taskFallback (executeFallback) when no LLM is configured, producing
+// a sealed result.
+func TestMarshal_ProcessTask_Fallback(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "Hotfix edict")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	marshal := NewMarshal(base, nil)
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: edict.Key(),
+		Work:     "handle incident",
+		Done:     doneCh,
+	}
+
+	marshal.MinisterBase.processTask(ctx, task)
+	result := <-doneCh
+
+	assert.NoError(t, result.Err)
+	assert.True(t, result.Sealed)
+	assert.Equal(t, "marshal", result.MinisterID)
+	// When sealed via fallback, output is set to minister_id + " task complete"
+	assert.Contains(t, result.Output, "marshal")
+	assert.Contains(t, result.Output, "task complete")
+}
+
+// TestJudge_ProcessTask_Fallback verifies that Judge's unified processTask
+// calls the taskFallback (executeFallback → execute) when no LLM is configured,
+// auto-passing manifests and sealing the edict via the postTaskHook.
+func TestJudge_ProcessTask_Fallback(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "Feature to judge")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	forge := NewForge(base)
+	manifestID, err := forge.StageManifest(edict.Key(), "", "feature.go", "Feat", "sha1")
+	assert.NoError(t, err)
+	_ = manifestID
+
+	judge := NewJudge(base, nil)
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: edict.Key(),
+		Work:     "judge the manifests",
+		Done:     doneCh,
+	}
+
+	judge.MinisterBase.processTask(ctx, task)
+	result := <-doneCh
+
+	assert.NoError(t, result.Err)
+	assert.True(t, result.Sealed)
+	assert.Equal(t, "judge", result.MinisterID)
+
+	// Verify the postTaskHook (sealIfComplete) was invoked — judge should have a seal
+	sealed, err := judge.hasSeal(edict.Key())
+	assert.NoError(t, err)
+	assert.True(t, sealed, "Judge should have granted a seal via postTaskHook")
+}
+
+// TestStrategist_ProcessTask_ValidateDependenciesHook verifies that the
+// postTaskHook (validateDependenciesHook) runs after processTask and
+// surfaces dependency cycle errors in the Result.
+func TestStrategist_ProcessTask_ValidateDependenciesHook(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "Plan with cycle")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	strategist := NewStrategist(base)
+
+	// Insert lings with a circular dependency BEFORE running processTask.
+	// The postTaskHook will detect the cycle and return an error.
+	lingA := &storage.Ling{
+		LingID:      "ling-a",
+		EdictID:     edict.ID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Description: "Task A",
+		Dependencies: storage.StringArray{"ling-b"},
+		Status:      storage.LingPending,
+	}
+	lingB := &storage.Ling{
+		LingID:      "ling-b",
+		EdictID:     edict.ID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Description: "Task B",
+		Dependencies: storage.StringArray{"ling-a"},
+		Status:      storage.LingPending,
+	}
+	assert.NoError(t, db.Create(lingA).Error)
+	assert.NoError(t, db.Create(lingB).Error)
+
+	// Set the edict key with username/project for the strategist's DB queries
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     "Create battle plan",
+		Done:     doneCh,
+	}
+
+	strategist.MinisterBase.processTask(ctx, task)
+	result := <-doneCh
+
+	// No LLM configured → streamTask is skipped, output is the "no LLM" ack.
+	// But the postTaskHook should detect the cycle and set Err.
+	assert.Error(t, result.Err, "postTaskHook should surface dependency cycle error")
+	assert.Contains(t, result.Err.Error(), "invalid dependencies")
+	assert.Contains(t, result.Err.Error(), "circular dependency")
+}
+
+// TestStrategist_ProcessTask_ValidDAG_NoHookError verifies that the
+// postTaskHook does NOT produce an error when dependencies form a valid DAG.
+func TestStrategist_ProcessTask_ValidDAG_NoHookError(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "Plan with valid DAG")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	strategist := NewStrategist(base)
+
+	lingA := &storage.Ling{
+		LingID:      "ling-x",
+		EdictID:     edict.ID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Description: "Task X",
+		Dependencies: storage.StringArray{},
+		Status:      storage.LingPending,
+	}
+	lingB := &storage.Ling{
+		LingID:      "ling-y",
+		EdictID:     edict.ID,
+		Username:    "testuser",
+		Project:     "testproject",
+		Description: "Task Y depends on X",
+		Dependencies: storage.StringArray{"ling-x"},
+		Status:      storage.LingPending,
+	}
+	assert.NoError(t, db.Create(lingA).Error)
+	assert.NoError(t, db.Create(lingB).Error)
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     "Create battle plan",
+		Done:     doneCh,
+	}
+
+	strategist.MinisterBase.processTask(ctx, task)
+	result := <-doneCh
+
+	assert.NoError(t, result.Err, "valid DAG should not produce hook error")
+	assert.Contains(t, result.Output, "no LLM configured")
+}
+
+// TestSage_ProcessTask_FailureAccumulation verifies that the ctxMiddleware
+// (setupFailureCtx) and postTaskHook (accumulateFailuresHook) work together
+// via the unified processTask. Since there's no LLM, the failure buffer
+// stays empty, but the Result.Failure should be empty (not nil-panic).
+func TestSage_ProcessTask_FailureAccumulation(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "Sage review edict")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	sage := NewSage(base, nil)
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     "review the diff",
+		Done:     doneCh,
+	}
+
+	sage.MinisterBase.processTask(ctx, task)
+	result := <-doneCh
+
+	assert.NoError(t, result.Err)
+	assert.True(t, result.Sealed)
+	assert.Equal(t, "sage", result.MinisterID)
+	// No failures accumulated (no LLM, no tools ran) → Failure should be empty
+	assert.Empty(t, result.Failure)
+	// The failureBuf should have been initialized by ctxMiddleware
+	assert.NotNil(t, sage.failureBuf, "ctxMiddleware should have initialized failureBuf")
+}
+
+// TestSage_ProcessTask_FailureAccumulatedViaAddFailure verifies that when
+// AddFailure is called during task processing (simulating a tool flagging a
+// soft failure), the failure string appears in Result.Failure via the
+// postTaskHook.
+func TestSage_ProcessTask_FailureAccumulatedViaAddFailure(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "Sage failure edict")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	sage := NewSage(base, nil)
+
+	// Set a preTaskHook that calls AddFailure to simulate a tool flagging issues
+	sage.SetPreTaskHook(func(ctx context.Context, task *Task, notify internal.NotifyFunc) (bool, *Result) {
+		AddFailure(ctx, "naming violation in foo.go")
+		AddFailure(ctx, "missing error handling in bar.go")
+		return false, nil // don't handle — let processTask continue
+	})
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     "review the diff",
+		Done:     doneCh,
+	}
+
+	sage.MinisterBase.processTask(ctx, task)
+	result := <-doneCh
+
+	assert.NoError(t, result.Err)
+	// The postTaskHook should have accumulated the failures
+	assert.Contains(t, result.Failure, "naming violation in foo.go")
+	assert.Contains(t, result.Failure, "missing error handling in bar.go")
+}
+
+// TestForge_ProcessTask_PreTaskHookSkipsStream verifies that when the
+// preTaskHook returns handled=true, processTask skips streamTask and sends
+// the hook's result directly.
+func TestForge_ProcessTask_PreTaskHookSkipsStream(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "Forge pre-hook edict")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	forge := NewForge(base)
+
+	// Override the preTaskHook with a simple one that returns handled=true
+	forge.SetPreTaskHook(func(ctx context.Context, task *Task, notify internal.NotifyFunc) (bool, *Result) {
+		return true, &Result{
+			Sealed: true,
+			Output: "handled by pre-hook",
+		}
+	})
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     "forge something",
+		Done:     doneCh,
+	}
+
+	forge.MinisterBase.processTask(ctx, task)
+	result := <-doneCh
+
+	assert.NoError(t, result.Err)
+	assert.True(t, result.Sealed)
+	assert.Equal(t, "handled by pre-hook", result.Output)
+	assert.Equal(t, "forge", result.MinisterID)
+}
+
+// TestProcessTask_NoLLM_NoFallback_Acknowledges verifies that when a minister
+// has no LLM and no taskFallback, processTask produces an acknowledgement result.
+func TestProcessTask_NoLLM_NoFallback_Acknowledges(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "No-config edict")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	strategist := NewStrategist(base)
+
+	// Strategist has no LLM and no taskFallback
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     "do something",
+		Done:     doneCh,
+	}
+
+	strategist.MinisterBase.processTask(ctx, task)
+	result := <-doneCh
+
+	assert.NoError(t, result.Err)
+	assert.Contains(t, result.Output, "no LLM configured")
+	assert.True(t, result.Sealed)
+}
+
+// TestProcessTask_SendResult_NonBlocking verifies that sendResult doesn't block
+// when the done channel is full — it should log a warning instead.
+func TestProcessTask_SendResult_NonBlocking(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	edict, err := CreateEdictForTest(db, "Full channel edict")
+	assert.NoError(t, err)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	strategist := NewStrategist(base)
+
+	// Create a done channel with buffer 1 and fill it
+	doneCh := make(chan Result, 1)
+	doneCh <- Result{Output: "stale"}
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     "do something",
+		Done:     doneCh,
+	}
+
+	// This should NOT block even though the channel is full
+	strategist.MinisterBase.processTask(ctx, task)
+
+	// The channel should still contain the stale result (new result was dropped)
+	select {
+	case r := <-doneCh:
+		assert.Equal(t, "stale", r.Output, "stale result should remain; new result dropped")
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("should not block reading from done channel")
+	}
+}

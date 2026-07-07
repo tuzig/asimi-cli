@@ -209,6 +209,21 @@ type StreamDoneMsg struct {
 	ChannelID string `msgpack:"channel_id"`
 }
 
+// PreTaskHook runs before the main task work. If handled=true is returned,
+// the main streamTask is skipped (e.g., Forge's failed-verdict handling).
+type PreTaskHook func(ctx context.Context, task *Task, notify internal.NotifyFunc) (handled bool, result *Result)
+
+// PostTaskHook runs after the main task work completes (e.g., Strategist's
+// dependency validation, Judge's sealIfComplete). Returns a failure string
+// for soft failures (e.g., Sage's accumulated failures) and an error for
+// hard failures.
+type PostTaskHook func(ctx context.Context, task *Task, session *Session, output string) (failure string, err error)
+
+// TaskFallback is a no-LLM fallback for ministers that have deterministic
+// execution paths (e.g., Judge's CI, Marshal's incident handling).
+// Returns (sealed, error).
+type TaskFallback func(ctx context.Context, task *Task) (bool, error)
+
 // MinisterBase provides shared functionality for all ministers.
 // Ministers embed this struct to gain database access and session creation capabilities.
 type MinisterBase struct {
@@ -243,6 +258,14 @@ type MinisterBase struct {
 	// brewWithStreaming paths). Ephemeral ritual-task sessions never get
 	// it set and skip storage.
 	persister SessionPersister
+
+	// Hooks for unified processTask
+	preTaskHook   PreTaskHook
+	postTaskHook  PostTaskHook
+	taskFallback  TaskFallback
+	ctxMiddleware func(context.Context) context.Context // wraps ctx before streaming (e.g., Sage's failure accumulator)
+
+	self Minister // concrete minister, set by RunLoop for session creation
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
@@ -288,6 +311,7 @@ func (m *MinisterBase) RunLoop(
 	processPrompt func(context.Context, *Prompt),
 	processTask func(context.Context, *Task),
 ) {
+	m.self = minister
 	if processPrompt == nil {
 		processPrompt = func(ctx context.Context, p *Prompt) {
 			m.ProcessPrompt(ctx, minister, p)
@@ -615,6 +639,157 @@ func (m *MinisterBase) restoreSession(minister Minister, msgs []schemas.ChatMess
 	sess.SetPersister(m.persister)
 	m.session = sess
 	return nil
+}
+
+// ID returns the minister's unique identifier.
+func (m *MinisterBase) ID() string {
+	return m.ministerID
+}
+
+// SetPreTaskHook sets the pre-task hook for unified processTask.
+func (m *MinisterBase) SetPreTaskHook(h PreTaskHook) {
+	m.preTaskHook = h
+}
+
+// SetPostTaskHook sets the post-task hook for unified processTask.
+func (m *MinisterBase) SetPostTaskHook(h PostTaskHook) {
+	m.postTaskHook = h
+}
+
+// SetTaskFallback sets the no-LLM fallback for unified processTask.
+func (m *MinisterBase) SetTaskFallback(f TaskFallback) {
+	m.taskFallback = f
+}
+
+// SetContextMiddleware sets a function that wraps the context before streaming.
+// Used by the Sage to inject a failure accumulator into the context.
+func (m *MinisterBase) SetContextMiddleware(f func(context.Context) context.Context) {
+	m.ctxMiddleware = f
+}
+
+// sendResult sends a Result to the task's Done channel (non-blocking).
+func (m *MinisterBase) sendResult(task *Task, result Result) {
+	select {
+	case task.Done <- result:
+	default:
+		m.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
+	}
+}
+
+// streamTask creates a session (or reuses existing) and streams the task through the LLM.
+// This is the unified version used by all ministers via MinisterBase.
+func (m *MinisterBase) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string) (*Session, string, error) {
+	var session *Session
+	var output string
+	var err error
+
+	if existingSession != nil {
+		// Reuse existing session for multi-turn conversation
+		session = existingSession
+		sessionChannelID := channelID
+		if sessionChannelID == "" {
+			sessionChannelID = session.ChannelID()
+		}
+		if sessionChannelID == "" {
+			sessionChannelID = m.ministerID
+		}
+		session.SetNotify(notify, sessionChannelID)
+		output, err = session.AskWithStreaming(ctx, work, nil)
+		if err != nil {
+			return session, "", err
+		}
+	} else if m.session != nil {
+		// Reuse embedded session (e.g., Sage's interactive session)
+		session = m.session
+		sessionChannelID := channelID
+		if sessionChannelID == "" {
+			sessionChannelID = session.ChannelID()
+		}
+		if sessionChannelID == "" {
+			sessionChannelID = m.ministerID
+		}
+		session.SetNotify(notify, sessionChannelID)
+		output, err = session.AskWithStreaming(ctx, work, nil)
+		if err != nil {
+			return session, "", err
+		}
+	} else {
+		// Create new session for first invocation
+		if channelID == "" {
+			channelID = m.ministerID
+		}
+		session, err = CreateSessionWithOpts(m.self, m.client, m.config, notify, CreateSessionOpts{
+			EdictKey:   key,
+			ChannelID:  channelID,
+			Scratchpad: scratchpad,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create %s session: %w", m.ministerID, err)
+		}
+		output, err = session.AskWithStreaming(ctx, work, nil)
+		if err != nil {
+			return session, "", err
+		}
+	}
+
+	m.logger.Info("task completed", "minister_id", m.ministerID)
+	return session, output, nil
+}
+
+// processTask is the unified task processor for all ministers.
+// It delegates to hooks set by each minister constructor.
+func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
+	m.logger.Info("processing task", "minister_id", m.ministerID, "edict_id", task.EdictKey.ID, "work", task.Work)
+
+	// Allow context middleware (e.g., Sage's failure accumulator) to wrap ctx
+	if m.ctxMiddleware != nil {
+		ctx = m.ctxMiddleware(ctx)
+	}
+
+	notify := m.notify
+	if task.Notify != nil {
+		notify = task.Notify
+	}
+
+	// Pre-task hook (e.g., Forge's HandleFailedVerdicts)
+	if m.preTaskHook != nil {
+		if handled, result := m.preTaskHook(ctx, task, notify); handled {
+			result.MinisterID = m.ministerID
+			m.sendResult(task, *result)
+			return
+		}
+	}
+
+	var output string
+	var taskErr error
+	var session *Session
+	sealed := true
+	var failure string
+
+	if m.client != nil {
+		session, output, taskErr = m.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
+	} else if m.taskFallback != nil {
+		sealed, taskErr = m.taskFallback(ctx, task)
+		if sealed {
+			output = m.ministerID + " task complete"
+		}
+	} else {
+		output = m.ministerID + " task acknowledged (no LLM configured)"
+	}
+
+	// Post-task hook (e.g., Strategist's validateDependencies, Judge's sealIfComplete)
+	if taskErr == nil && m.postTaskHook != nil {
+		failure, taskErr = m.postTaskHook(ctx, task, session, output)
+	}
+
+	m.sendResult(task, Result{
+		MinisterID: m.ministerID,
+		Sealed:     sealed,
+		Output:     output,
+		Failure:    failure,
+		Session:    session,
+		Err:        taskErr,
+	})
 }
 
 // Model returns the minister's LLM client.

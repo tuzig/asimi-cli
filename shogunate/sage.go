@@ -7,11 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -119,21 +117,23 @@ type Finding struct {
 // Sage provides read-only codebase exploration and suggests edicts via zhengming
 type Sage struct {
 	*MinisterBase
-	shogunate *Shogunate
-	linter    Linter
+	shogunate  *Shogunate
+	linter     Linter
+	failureBuf *strings.Builder // set by ctxMiddleware, read by postTaskHook
 }
 
 // NewSage creates a new Sage minister
 func NewSage(base *MinisterBase, linter Linter) *Sage {
 	base.ministerID = "sage"
-	return &Sage{
+	c := &Sage{
 		MinisterBase: base,
 		linter:       linter,
 	}
+	c.self = c
+	c.SetContextMiddleware(c.setupFailureCtx)
+	c.SetPostTaskHook(c.accumulateFailuresHook)
+	return c
 }
-
-// ID returns the minister identifier
-func (c *Sage) ID() string { return "sage" }
 
 // Title returns the minister's honorific title
 func (c *Sage) Title() string { return "Sage" }
@@ -196,11 +196,6 @@ func (c *Sage) ResetSession() {
 	c.MinisterBase.ResetSession()
 }
 
-// RestoreSession creates a fully-wired hunting session and injects loaded history
-func (c *Sage) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
-	return c.MinisterBase.restoreSession(minister, msgs)
-}
-
 // GetSession returns the Sage's session (from MinisterBase)
 func (c *Sage) GetSession() *Session {
 	return c.MinisterBase.Session()
@@ -220,9 +215,28 @@ func (c *Sage) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 
 // AppendToIntent is a no-op stub — Sage never modifies edicts (satisfies EdictManager interface)
 
+// setupFailureCtx injects a failure accumulator into the context so tools
+// can flag soft failures via AddFailure. The buffer is stored on the Sage
+// for the post-task hook to read.
+func (c *Sage) setupFailureCtx(ctx context.Context) context.Context {
+	var buf *strings.Builder
+	ctx, buf = CtxWithFailure(ctx)
+	c.failureBuf = buf
+	return ctx
+}
+
+// accumulateFailuresHook reads the failure buffer accumulated by tools
+// during the task and returns it as the failure string for Result.Failure.
+func (c *Sage) accumulateFailuresHook(ctx context.Context, task *Task, session *Session, output string) (string, error) {
+	if c.failureBuf != nil {
+		return c.failureBuf.String(), nil
+	}
+	return "", nil
+}
+
 // Run starts the Sage's processing loop
 func (c *Sage) Run(ctx context.Context) {
-	c.RunLoop(ctx, c, c.processPrompt, c.processTask)
+	c.RunLoop(ctx, c, c.processPrompt, c.MinisterBase.processTask)
 }
 
 func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
@@ -251,109 +265,6 @@ func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 		return
 	}
 	c.notify(StreamDoneMsg{ChannelID: "sage"})
-}
-
-func (c *Sage) processTask(ctx context.Context, task *Task) {
-	c.logger.Info("sage processing task", "edict_id", task.EdictKey.ID, "work", task.Work)
-
-	// Inject failure accumulator into context so tools can flag soft failures
-	ctx, failureBuf := CtxWithFailure(ctx)
-
-	// Use task-level notify override for routing (e.g., ritual → Chancellor tab)
-	notify := c.notify
-	if task.Notify != nil {
-		notify = task.Notify
-	}
-
-	var output string
-	var taskErr error
-	var session *Session
-
-	if c.client != nil {
-		// Single call handles both new and existing session cases
-		session, output, taskErr = c.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
-	} else {
-		output = "sage task acknowledged (no LLM configured)"
-	}
-
-	result := Result{
-		MinisterID: c.ID(),
-		Sealed:     true,
-		Output:     output,
-		Failure:    failureBuf.String(),
-		Session:    session,
-		Err:        taskErr,
-	}
-
-	select {
-	case task.Done <- result:
-	default:
-		c.logger.Warn("done channel full", "edict_id", task.EdictKey.ID)
-	}
-}
-
-// streamTask creates a session (or reuses existing) and streams the task through the LLM.
-// Returns the session for potential reuse in multi-turn conversations.
-func (c *Sage) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string) (*Session, string, error) {
-	var session *Session
-	var output string
-	var err error
-
-	if existingSession != nil {
-		// Reuse existing session for multi-turn conversation
-		session = existingSession
-		// Use caller's channelID if provided, else session's, else default
-		sessionChannelID := channelID
-		if sessionChannelID == "" {
-			sessionChannelID = session.ChannelID()
-		}
-		if sessionChannelID == "" {
-			sessionChannelID = "sage"
-		}
-		session.SetNotify(notify, sessionChannelID)
-		output, err = session.AskWithStreaming(ctx, work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	} else if c.MinisterBase.Session() != nil {
-		// Reuse embedded session
-		session = c.MinisterBase.Session()
-		// Use caller's channelID if provided, else session's, else default
-		sessionChannelID := channelID
-		if sessionChannelID == "" {
-			sessionChannelID = session.ChannelID()
-		}
-		if sessionChannelID == "" {
-			sessionChannelID = "sage"
-		}
-		session.SetNotify(notify, sessionChannelID)
-		output, err = session.AskWithStreaming(ctx, work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	} else {
-		// Create new session for first invocation
-		// Use passed channelID if provided, otherwise default to "sage"
-		if channelID == "" {
-			channelID = "sage"
-		}
-		session, err = CreateSessionWithOpts(c, c.client, c.config, notify, CreateSessionOpts{
-			EdictKey:   key,
-			ChannelID:  channelID,
-			Scratchpad: scratchpad,
-		})
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to create sage session: %w", err)
-		}
-
-		output, err = session.AskWithStreaming(ctx, work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	}
-
-	c.logger.Info("sage task completed", "channel", channelID)
-	return session, output, nil
 }
 
 // --- Database Methods (migrated from Censor) ---

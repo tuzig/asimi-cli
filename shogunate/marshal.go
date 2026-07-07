@@ -46,15 +46,13 @@ type Marshal struct {
 // NewMarshal creates a new Marshal minister
 func NewMarshal(base *MinisterBase, rca RCAAnalyzer) *Marshal {
 	base.ministerID = "marshal"
-	return &Marshal{
+	m := &Marshal{
 		MinisterBase: base,
 		rca:          rca,
 	}
-}
-
-// ID returns the minister identifier
-func (m *Marshal) ID() string {
-	return "marshal"
+	m.self = m
+	m.SetTaskFallback(m.executeFallback)
+	return m
 }
 
 // SystemPrompt returns the Marshal's system prompt template.
@@ -191,6 +189,11 @@ func (m *Marshal) execute(ctx context.Context, key storage.EdictKey) (bool, erro
 	return true, nil
 }
 
+// executeFallback is the TaskFallback for the Marshal's deterministic execution.
+func (m *Marshal) executeFallback(ctx context.Context, task *Task) (bool, error) {
+	return m.execute(ctx, task.EdictKey)
+}
+
 // OnIncident handles a production incident
 func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string) error {
 	// Perform RCA if analyzer available
@@ -247,35 +250,7 @@ func (m *Marshal) OnIncident(ctx context.Context, incidentID, commitHash string)
 
 // Run starts the Marshal's task processing loop
 func (m *Marshal) Run(ctx context.Context) {
-	m.RunLoop(ctx, m, nil, m.processTask)
-}
-
-// processTask handles a single task
-func (m *Marshal) processTask(ctx context.Context, task *Task) {
-	m.logger.Info("marshal processing task",
-		"edict_id", task.EdictKey.ID,
-		"work", task.Work)
-
-	// Execute the marshal logic
-	sealed, err := m.execute(ctx, task.EdictKey)
-
-	// Send result back to Chancellor
-	result := Result{
-		MinisterID: m.ID(),
-		Sealed:     sealed,
-		Err:        err,
-	}
-
-	if sealed {
-		result.Output = "marshal task complete"
-	}
-
-	// Send result (non-blocking)
-	select {
-	case task.Done <- result:
-	default:
-		m.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
-	}
+	m.RunLoop(ctx, m, nil, m.MinisterBase.processTask)
 }
 
 // --- Marshal Specialized Tools ---

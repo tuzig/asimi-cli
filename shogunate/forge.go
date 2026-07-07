@@ -9,7 +9,6 @@ import (
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // Forge receives Tasks from the Chancellor via the tasks channel.
@@ -21,19 +20,12 @@ type Forge struct {
 // NewForge creates a new Forge that processes tasks via the Task pattern.
 func NewForge(base *MinisterBase) *Forge {
 	base.ministerID = "forge"
-	return &Forge{
+	f := &Forge{
 		MinisterBase: base,
 	}
-}
-
-// ID returns the minister identifier.
-func (f *Forge) ID() string {
-	return "forge"
-}
-
-// RestoreSession rebuilds the Forge's interactive session populated with msgs.
-func (f *Forge) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
-	return f.MinisterBase.restoreSession(minister, msgs)
+	f.self = f
+	f.SetPreTaskHook(f.handleFailedVerdictsHook)
+	return f
 }
 
 // SystemPrompt returns the Forge's system prompt template.
@@ -85,17 +77,13 @@ func (f *Forge) GetFailedVerdicts(key storage.EdictKey) ([]storage.JudgeVerdict,
 	return verdicts, nil
 }
 
-// HandleFailedVerdicts fixes any failed verdicts for the task's edict by streaming
-// fix prompts through the LLM. Returns (true, err) if failed verdicts were found
-// and processed (err is non-nil if any fix attempt errored), or (false, nil) if
-// there were no failed verdicts to handle. The caller should treat handled=true
-// as terminal: do NOT execute task.Work, since the original act is what produced
-// the broken state.
-func (f *Forge) HandleFailedVerdicts(ctx context.Context, task *Task, notify internal.NotifyFunc) (bool, error) {
+// handleFailedVerdictsHook is the PreTaskHook wrapper for HandleFailedVerdicts.
+// Returns (handled=true, result) when failed verdicts were found and processed.
+func (f *Forge) handleFailedVerdictsHook(ctx context.Context, task *Task, notify internal.NotifyFunc) (bool, *Result) {
 	failedVerdicts, err := f.GetFailedVerdicts(task.EdictKey)
 	if err != nil {
 		f.logger.Error("failed to query failed verdicts", "error", err)
-		return false, err
+		return true, &Result{Sealed: true, Session: task.Session, Err: err}
 	}
 	if len(failedVerdicts) == 0 {
 		return false, nil
@@ -115,11 +103,11 @@ func (f *Forge) HandleFailedVerdicts(ctx context.Context, task *Task, notify int
 		task.Session = session
 		if taskErr != nil {
 			f.logger.Error("failed to fix verdict", "verdict_id", verdict.VerdictID, "error", taskErr)
-			return true, taskErr
+			return true, &Result{Sealed: true, Session: task.Session, Err: taskErr}
 		}
 	}
 	f.logger.Info("finished fixing verdicts")
-	return true, nil
+	return true, &Result{Sealed: true, Session: task.Session}
 }
 
 // buildFixPrompt creates a fix prompt from a failed verdict's evidence
@@ -186,113 +174,7 @@ func (f *Forge) GetRejectedManifests(key storage.EdictKey) ([]storage.ForgeManif
 
 // Run starts the Forge's processing loop
 func (f *Forge) Run(ctx context.Context) {
-	f.RunLoop(ctx, f, nil, f.processTask)
-}
-
-// processTask handles a task from the Chancellor.
-// If an LLM is configured, it creates a session to process the task through the LLM,
-// which may generate tool calls that the Forge executes.
-func (f *Forge) processTask(ctx context.Context, task *Task) {
-	f.logger.Info("forge processing task",
-		"edict_id", task.EdictKey.ID,
-		"work", task.Work)
-
-	// Use task-level notify override for routing (e.g., ritual → Chancellor tab)
-	notify := f.notify
-	if task.Notify != nil {
-		notify = task.Notify
-	}
-
-	var output string
-	var taskErr error
-	var session *Session
-
-	// Failed verdicts take priority over normal task work: if any exist for this
-	// edict, fix them and return — do NOT also execute task.Work, since the
-	// original act is what produced the broken state in the first place.
-	handled, fixErr := f.HandleFailedVerdicts(ctx, task, notify)
-	if handled {
-		result := Result{
-			MinisterID: f.ID(),
-			Sealed:     true,
-			Session:    task.Session,
-			Err:        fixErr,
-		}
-		select {
-		case task.Done <- result:
-		default:
-			f.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
-		}
-		return
-	}
-
-	if f.client != nil {
-		session, output, taskErr = f.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
-	} else {
-		output = "forge task acknowledged (no LLM configured)"
-	}
-
-	result := Result{
-		MinisterID: f.ID(),
-		Sealed:     true,
-		Output:     output,
-		Session:    session,
-		Err:        taskErr,
-	}
-
-	select {
-	case task.Done <- result:
-	default:
-		f.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
-	}
-}
-
-// streamTask creates a session (or reuses existing) and streams the task through the LLM.
-// Returns the session for potential reuse in multi-turn conversations.
-func (f *Forge) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string) (*Session, string, error) {
-	var session *Session
-	var output string
-	var err error
-
-	if existingSession != nil {
-		// Reuse existing session for multi-turn conversation
-		session = existingSession
-		// Use caller's channelID if provided, else session's, else default
-		sessionChannelID := channelID
-		if sessionChannelID == "" {
-			sessionChannelID = session.ChannelID()
-		}
-		if sessionChannelID == "" {
-			sessionChannelID = "forge"
-		}
-		session.SetNotify(notify, sessionChannelID)
-		output, err = session.AskWithStreaming(ctx, work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	} else {
-		// Create new session for first invocation
-		// Use passed channelID if provided, otherwise default to "forge"
-		if channelID == "" {
-			channelID = "forge"
-		}
-		session, err = CreateSessionWithOpts(f, f.client, f.config, notify, CreateSessionOpts{
-			EdictKey:   key,
-			ChannelID:  channelID,
-			Scratchpad: scratchpad,
-		})
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to create forge session: %w", err)
-		}
-
-		output, err = session.AskWithStreaming(ctx, work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	}
-
-	f.logger.Info("forge task completed")
-	return session, output, nil
+	f.RunLoop(ctx, f, nil, f.MinisterBase.processTask)
 }
 
 // --- Forge Specialized Tools ---
