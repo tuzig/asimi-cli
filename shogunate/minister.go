@@ -684,15 +684,6 @@ func GenerateID(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// generateIdempotencyKey creates a deterministic key for deduplication
-func generateIdempotencyKey(parts ...string) string {
-	h := sha256.New()
-	for _, p := range parts {
-		h.Write([]byte(p))
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
 // RequestZhengming creates a clarification request
 func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 	requestID := GenerateID("zhengming", fmt.Sprintf("%d", key.ID), callerMinisterID, fmt.Sprintf("%v", questions), time.Now().String())

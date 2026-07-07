@@ -175,11 +175,3 @@ func HostRun(ctx context.Context, in Input, projectRoot string) (Output, error) 
 	slog.Debug("Run a host command", "cmd", in.Command, "err", err, "out", out)
 	return out, err
 }
-
-func lineBytes(lines []string) int {
-	n := 0
-	for _, l := range lines {
-		n += len(l) + 1 // +1 for newline
-	}
-	return n
-}

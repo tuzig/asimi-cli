@@ -1,12 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"testing"
-	"time"
 
-	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -17,28 +14,6 @@ func skipIfNotCI(t *testing.T) {
 	t.Helper()
 	if os.Getenv("CI") == "" {
 		t.Skip("Skipping git-altering test (set CI=true to run)")
-	}
-}
-
-// testStorageSessionData creates a dummy storage.SessionData for testing
-func testStorageSessionData(id, prompt string, updated time.Time, messageTexts ...string) *storage.SessionData {
-	var messages []schemas.ChatMessage
-	for _, text := range messageTexts {
-		messages = append(messages, textMessage(schemas.ChatMessageRoleUser, text))
-	}
-
-	// Serialize messages to JSON for storage
-	messagesJSON, _ := json.Marshal(messages)
-
-	return &storage.SessionData{
-		ID:           id,
-		FirstPrompt:  prompt,
-		LastUpdated:  updated,
-		Messages:     messagesJSON,
-		MessageCount: len(messages), // Set MessageCount for list views
-		Model:        "test",
-		CreatedAt:    updated,
-		WorkingDir:   "/tmp",
 	}
 }
 

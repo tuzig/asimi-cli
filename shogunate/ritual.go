@@ -18,9 +18,9 @@ import (
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
-	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -707,7 +707,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 
 			// Context cancelled (user interrupt) — the session layer already
 			// sent StreamInterruptedMsg which surfaces as 🛠️ ABORTED in the
-			// TUI. 
+			// TUI.
 			if ctx.Err() != nil {
 				exec.State = RitualStateAborted
 				r.saveExecution(exec)
@@ -1817,50 +1817,6 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	}
 }
 
-// buildEnhancedScratchpad creates a unified scratchpad with ritual context, edict details, and previous step results
-func (r *RitualRunner) buildEnhancedScratchpad(ctx context.Context, exec *RitualExecution, step RitualStep) string {
-	var buf bytes.Buffer
-
-	// 1. Ritual context
-	stepNum := exec.CurrentStep + 1
-	totalSteps := len(exec.def.Steps)
-	fmt.Fprintf(&buf, "# Ritual Context\n\n")
-	fmt.Fprintf(&buf, "**Ritual:** %s\n", exec.RitualName)
-	fmt.Fprintf(&buf, "**Step:** %s (%d/%d)\n\n", step.Name, stepNum, totalSteps)
-
-	// 2. Full edict details
-	scratchKey := exec.EdictKey()
-	edict, clarifications, err := r.getEdictDetails(ctx, scratchKey)
-	if err == nil && edict != nil {
-		sealService := storage.NewSealService(r.db)
-		status, _ := sealService.GetEdictStatus(scratchKey)
-		fmt.Fprintf(&buf, "# Edict\n\n")
-		fmt.Fprintf(&buf, "```json\n")
-		fmt.Fprintf(&buf, "{\n")
-		fmt.Fprintf(&buf, "  \"edict_id\": %d,\n", edict.ID)
-		fmt.Fprintf(&buf, "  \"status\": %q\n", status)
-		fmt.Fprintf(&buf, "}\n")
-		fmt.Fprintf(&buf, "```\n\n")
-		fmt.Fprintf(&buf, "## Intent\n\n%s\n\n", edict.Intent)
-
-		// Include clarification history
-		if len(clarifications) > 0 {
-			fmt.Fprintf(&buf, "## Clarification History\n\n")
-			for i, c := range clarifications {
-				fmt.Fprintf(&buf, "### Clarification %d\n\n", i+1)
-				for _, q := range c.Questions {
-					fmt.Fprintf(&buf, "**Q:** %s\n\n", q.Text)
-				}
-				if c.Answer != "" {
-					fmt.Fprintf(&buf, "**A:** %s\n\n", c.Answer)
-				}
-			}
-		}
-	}
-
-	return buf.String()
-}
-
 // workPromptTmpl is the template for building dynamic work messages.
 // Task comes first so the model reads the instruction before the data.
 var workPromptTmpl = template.Must(template.New("work").Parse(
@@ -1922,22 +1878,6 @@ func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string
 		return act
 	}
 	return buf.String()
-}
-
-// getEdictDetails retrieves full edict information including clarification history
-func (r *RitualRunner) getEdictDetails(ctx context.Context, key storage.EdictKey) (*storage.Edict, []storage.Zhengming, error) {
-	var edict storage.Edict
-	if err := r.db.First(&edict, "id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Error; err != nil {
-		return nil, nil, err
-	}
-
-	// Get clarification history
-	var clarifications []storage.Zhengming
-	r.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.ZhengmingAnswered).
-		Order("created_at ASC").
-		Find(&clarifications)
-
-	return &edict, clarifications, nil
 }
 
 // handleFailure handles step failure based on on_failure action

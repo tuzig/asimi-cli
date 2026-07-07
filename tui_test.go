@@ -2878,15 +2878,6 @@ func runTestGitCommand(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// requireCommandSucceeds runs a command and fails the test if it exits non-zero.
-func requireCommandSucceeds(t *testing.T, dir string, name string, args ...string) {
-	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s %v should succeed\nOutput: %s", name, args, output)
-}
-
 // TestContextPercentOnTabSwitch tests that ContextPercent is properly updated when switching tabs.
 // This test verifies the fix for the bug where ContextPercent wasn't being updated to 0
 // when switching to a tab without an active session.

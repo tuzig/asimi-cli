@@ -1000,11 +1000,6 @@ func (c *ChatComponent) UpdateLastToolCallEmoji(command string, newEmoji string)
 	return false
 }
 
-// formatToolCall formats a tool call using the Tool's Format method
-func formatToolCall(tool runners.Tool, icon string, input, result string, err error) string {
-	return fmt.Sprintf("%s %s", icon, tool.Format(input, result, err))
-}
-
 // formatToolCallByName formats a tool call when only the tool name is available (e.g., resume)
 func formatToolCallByName(toolName, icon string, input, result string, err error) string {
 	display := result

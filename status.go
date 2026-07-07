@@ -406,32 +406,3 @@ func (s StatusComponent) renderRightSection() string {
 
 	return style.Render(s.getStatusIcon() + " " + providerModel)
 }
-
-// truncateString truncates a string to fit within maxWidth, adding "..." if needed
-func (s StatusComponent) truncateString(str string, maxWidth int) string {
-	if lipgloss.Width(str) <= maxWidth {
-		return str
-	}
-
-	if maxWidth <= 3 {
-		return "..."
-	}
-
-	// Binary search to find the right length
-	left, right := 0, len(str)
-	for left < right {
-		mid := (left + right + 1) / 2
-		candidate := str[:mid] + "..."
-		if lipgloss.Width(candidate) <= maxWidth {
-			left = mid
-		} else {
-			right = mid - 1
-		}
-	}
-
-	if left == 0 {
-		return "..."
-	}
-
-	return str[:left] + "..."
-}

@@ -330,12 +330,6 @@ func serveOne(ctx context.Context, c net.Conn, shared *DaemonShared, connID uint
 // notification. 100 ms is long enough for the write loop to flush the
 // frame in practice, but short enough that a caller waiting on the
 // connection still sees a timely disconnect.
-func sendErrorAndClose(conn *rpc.Conn, errMsg string) {
-	_ = conn.Notify("daemon.error", map[string]string{"error": errMsg})
-	time.Sleep(100 * time.Millisecond)
-	conn.Close()
-}
-
 func writePidFile(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

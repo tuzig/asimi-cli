@@ -16,9 +16,6 @@ func TestMain(m *testing.M) {
 	original := os.Getenv("ASIMI_KEYRING_SERVICE")
 	os.Setenv("ASIMI_KEYRING_SERVICE", "dev.asimi.asimi-cli-test")
 
-	// Update the global keyringService variable
-	keyringService = getKeyringService()
-
 	// Unless explicitly testing the real keyring, use the in-memory mock
 	// to avoid macOS Keychain Access prompts during tests.
 	if os.Getenv("ASIMI_TEST_KEYRING") != "1" {
@@ -27,7 +24,6 @@ func TestMain(m *testing.M) {
 
 	defer func() {
 		os.Setenv("ASIMI_KEYRING_SERVICE", original)
-		keyringService = getKeyringService()
 	}()
 
 	// Run tests

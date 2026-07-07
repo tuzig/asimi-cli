@@ -597,24 +597,6 @@ func TestSubscribe_ForwardsNormalMessages(t *testing.T) {
 	}
 }
 
-// noopTool is a minimal Tool implementation for scheduler tests.
-type noopTool struct {
-	name string
-}
-
-func (t *noopTool) Name() string        { return t.name }
-func (t *noopTool) Description() string { return "noop" }
-func (t *noopTool) Call(ctx context.Context, input string) (string, error) {
-	return "ok", nil
-}
-func (t *noopTool) Format(input, result string, err error) string {
-	if err != nil {
-		return err.Error()
-	}
-	return result
-}
-func (t *noopTool) ParameterSchema() map[string]any { return nil }
-
 // blockingTool is a Tool whose Call blocks until done is closed.
 type blockingTool struct {
 	name string

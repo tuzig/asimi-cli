@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -36,26 +35,6 @@ func (t *mockTool) Format(input, result string, err error) string {
 
 func (t *mockTool) ParameterSchema() map[string]any {
 	return nil
-}
-
-type mockModel struct {
-	messages []tea.Msg
-}
-
-func (m *mockModel) Init() tea.Cmd {
-	return nil
-}
-
-func (m *mockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	m.messages = append(m.messages, msg)
-	if _, ok := msg.(tea.QuitMsg); ok {
-		return m, tea.Quit
-	}
-	return m, nil
-}
-
-func (m *mockModel) View() string {
-	return ""
 }
 
 func TestCoreToolScheduler(t *testing.T) {

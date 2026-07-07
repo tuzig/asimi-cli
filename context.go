@@ -15,26 +15,6 @@ const (
 	defaultUnknownContextRef = 8192
 )
 
-// extendedModelContextSizes maps model names to their context window sizes.
-var extendedModelContextSizes = map[string]int{
-	// Anthropic Claude models
-	"claude-3-5-sonnet-latest":   200_000,
-	"claude-3-5-sonnet":          200_000,
-	"claude-3-opus-20240229":     200_000,
-	"claude-3-sonnet-20240229":   200_000,
-	"claude-3-5-haiku-latest":    200_000,
-	"claude-3-haiku-20240307":    200_000,
-	"claude-sonnet-4-5-20250929": 200_000,
-
-	// Google Gemini models
-	"gemini-1.5-flash":        1_000_000,
-	"gemini-1.5-flash-latest": 1_000_000,
-	"gemini-1.5-pro":          2_000_000,
-	"gemini-1.5-pro-latest":   2_000_000,
-	"gemini-pro":              1_000_000,
-	"gemini-2.0-flash":        1_000_000,
-}
-
 // ContextInfo holds information about context usage.
 type ContextInfo struct {
 	Model              string

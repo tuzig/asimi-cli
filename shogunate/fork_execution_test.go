@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 )
 
@@ -793,22 +792,3 @@ func TestExecuteForkStep_Cancelation(t *testing.T) {
 }
 
 // mockCallCountRunner implements runners.Runner for fork tests
-type mockForkRunner struct {
-	results []runners.Output
-	idx     int
-}
-
-func (m *mockForkRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
-	if m.idx >= len(m.results) {
-		return runners.Output{Output: "", ExitCode: "0"}, nil
-	}
-	result := m.results[m.idx]
-	m.idx++
-	return result, nil
-}
-
-func (m *mockForkRunner) Restart(ctx context.Context) error    { return nil }
-func (m *mockForkRunner) Close(ctx context.Context) error      { return nil }
-func (m *mockForkRunner) AllowFallback(bool)                   {}
-func (m *mockForkRunner) RunnerType() string                   { return "mock" }
-func (m *mockForkRunner) SetMessageChannel(chan<- runners.Msg) {}

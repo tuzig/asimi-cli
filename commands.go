@@ -24,9 +24,6 @@ import (
 // Verify that shogunate.Session implements ExportableSession
 var _ ExportableSession = (*shogunate.Session)(nil)
 
-//go:embed prompts/init.tmpl
-var initializePrompt string
-
 //go:embed prompts/compact.txt
 var compactPrompt string
 
@@ -159,11 +156,6 @@ type showHelpMsg struct {
 	topic string
 }
 type showContextMsg struct{ content string }
-
-// agentAskLLMMsg is a message sent by the agent to trigger a new LLM conversation
-type agentAskLLMMsg struct {
-	prompt string
-}
 
 func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 	// Determine the help topic from args
@@ -777,25 +769,6 @@ func handleVerificationFailure(model *TUIModel, containerRunner runners.Runner, 
 	}
 }
 
-// checkMissingInfraFiles checks which infrastructure files are missing
-func checkMissingInfraFiles(agentsFile string) []string {
-	var missing []string
-
-	for _, file := range []string{
-		agentsFile,
-		"Justfile",
-		".agents/asimi.conf",
-		".agents/sandbox/Dockerfile",
-		".agents/sandbox/bashrc",
-	} {
-		if _, err := os.Stat(file); os.IsNotExist(err) {
-			missing = append(missing, file)
-		}
-	}
-
-	return missing
-}
-
 func handleCompactCommand(model *TUIModel, args []string) tea.Cmd {
 	state, ok := model.currentSessionState()
 	messageCount := 0
@@ -1153,11 +1126,6 @@ func cancelEdictCmd(model *TUIModel, edictID uint) tea.Cmd {
 		}
 		return showSystemMsg(fmt.Sprintf("Edict %d cancelled. Any running ritual has been stopped.", edictID))
 	}
-}
-
-// cancelEdictMsg is unused but kept for potential future event-based flow
-type cancelEdictMsg struct {
-	edictID uint
 }
 
 // renderEdictDashboard builds the text content for the edict dashboard view

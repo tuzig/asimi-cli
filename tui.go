@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -902,12 +901,6 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 }
 
-// handleToggleRawMode toggles between chat and raw session view
-func (m TUIModel) handleToggleRawMode() (tea.Model, tea.Cmd) {
-	m.rawMode = !m.rawMode
-	return m, nil
-}
-
 func (m TUIModel) enterScrollMode() (tea.Model, tea.Cmd) {
 	if m.Mode == "scroll" || m.tabs.Content().GetActiveView() != ViewChat {
 		return m, nil
@@ -1719,26 +1712,6 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, tea.Batch(cmds...)
-}
-
-// handleSlashKey handles the slash key for command completion
-func (m TUIModel) handleSlashKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Only show command completion if we're at the beginning of the input
-	if m.prompt().Value() == "" {
-		*m.prompt(), _ = m.prompt().Update(msg)
-		// Show completion dialog with commands (add / prefix for display)
-		m.showCompletionDialog = true
-		m.completionMode = "command"
-		var commandsWithPrefix []string
-		for _, cmd := range m.commandRegistry.order {
-			commandsWithPrefix = append(commandsWithPrefix, "/"+cmd)
-		}
-		m.completions.SetOptions(commandsWithPrefix)
-		m.completions.Show()
-	} else {
-		*m.prompt(), _ = m.prompt().Update(msg)
-	}
-	return m, nil
 }
 
 // handleColonKey handles the colon key - enters command mode in command line
@@ -3777,14 +3750,4 @@ func (m *TUIModel) raiseShogunateEvent(event storage.ShogunateEvent, params stor
 		}
 	}
 	m.shogunate.PublishEvent(key, event, params)
-}
-
-// jsonEscape escapes a string for use in JSON
-func jsonEscape(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		// Fallback to simple quote escaping if marshal fails
-		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
-	}
-	return string(b)
 }

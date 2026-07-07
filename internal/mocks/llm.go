@@ -11,9 +11,9 @@ import (
 // Note: This mock implements the shogunate.LLMProvider interface by method signature.
 // The compile-time interface check is in shogunate/mocks_test.go to avoid import cycles.
 type MockProvider struct {
-	StreamingChunks []StreamingChunk
-	StaticResponse  *schemas.BifrostChatResponse
-	Error           *schemas.BifrostError
+	StreamingChunks    []StreamingChunk
+	StaticResponse     *schemas.BifrostChatResponse
+	Error              *schemas.BifrostError
 	DelayBetweenChunks time.Duration
 }
 
@@ -171,4 +171,3 @@ func (m *MockProvider) SetError(err *schemas.BifrostError) {
 // Helper functions
 
 func strPtr(s string) *string { return &s }
-func intPtr(i int) *int       { return &i }
