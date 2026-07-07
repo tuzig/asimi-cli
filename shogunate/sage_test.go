@@ -11,7 +11,7 @@ import (
 
 // TestNoRejections_SupersededRejected verifies that old rejected manifests
 // superseded by newer quenched ones for the same file_path do not cause
-// NoRejections to return false.
+// noRejections to return false.
 func TestNoRejections_SupersededRejected(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
@@ -46,13 +46,13 @@ func TestNoRejections_SupersededRejected(t *testing.T) {
 	}
 	assert.NoError(t, db.Create(&newQuenched).Error)
 
-	noRej, err := sage.NoRejections(key)
+	noRej, err := sage.noRejections(key)
 	assert.NoError(t, err)
 	assert.True(t, noRej, "Should report no rejections when old rejected is superseded by quenched")
 }
 
 // TestNoRejections_LatestRejected verifies that if the latest manifest for a
-// file is rejected, NoRejections returns false even if an older one was quenched.
+// file is rejected, noRejections returns false even if an older one was quenched.
 func TestNoRejections_LatestRejected(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
@@ -87,7 +87,7 @@ func TestNoRejections_LatestRejected(t *testing.T) {
 	}
 	assert.NoError(t, db.Create(&newRejected).Error)
 
-	noRej, err := sage.NoRejections(key)
+	noRej, err := sage.noRejections(key)
 	assert.NoError(t, err)
 	assert.False(t, noRej, "Should report rejections when latest manifest is rejected")
 }

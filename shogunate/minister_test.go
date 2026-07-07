@@ -144,28 +144,33 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
-	forge := NewForge(base)
-	manifestID, err := forge.StageManifest(edict.Key(), "", "test.go", "TestFunc", "hash1")
-	assert.NoError(t, err)
-	assert.NotEmpty(t, manifestID)
-
-	// Create judge (no CI runner - will auto-pass, picks up "forged" manifests)
-	judge := NewJudge(base, nil)
+	manifestID := stageManifestForTest(t, db, edict.Key(), "", "test.go", "TestFunc", "hash1")
 
 	// Record a passing verdict (simulates what the ritual's record_verdict step does)
-	verdictID, err := judge.InsertVerdict(manifestID, "auto", storage.VerdictPassed, storage.JSON{"reason": "no CI configured"}, edict.Key())
-	if err != nil {
+	verdictID := GenerateID("verdict", manifestID, "auto")
+	verdict := storage.JudgeVerdict{
+		VerdictID:  verdictID,
+		ManifestID: manifestID,
+		Username:   edict.Key().Username,
+		Project:    edict.Key().Project,
+		TestSuite:  "auto",
+		Outcome:    storage.VerdictPassed,
+		Evidence:   storage.JSON{"reason": "no CI configured"},
+	}
+	if err := db.Create(&verdict).Error; err != nil {
 		t.Fatalf("Failed to insert verdict: %v", err)
 	}
-	if err := judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID, edict.Key()); err != nil {
+	if err := db.Model(&storage.ForgeManifest{}).
+		Where("manifest_id = ?", manifestID).
+		Updates(map[string]interface{}{"status": storage.ManifestQuenched, "verdict_id": verdictID}).Error; err != nil {
 		t.Fatalf("Failed to update manifest status: %v", err)
 	}
 
-	// Check manifest is quenched
-	allQuenched, _ := judge.AllManifestsQuenched(edict.Key())
-	if !allQuenched {
-		t.Error("Expected all manifests quenched")
-	}
+	// Check manifest is quenched — use tools RecordVerdictTool to verify sealing
+	tool := tools.RecordVerdictTool{Ctx: toolContextForTest(base)}
+	result, err := tool.Call(context.Background(), fmt.Sprintf(`{"edict_id": %d, "passed": true}`, edict.ID))
+	assert.NoError(t, err)
+	assert.Contains(t, result, "sealed=true")
 }
 
 func TestSage_ReviewFlow(t *testing.T) {
@@ -178,14 +183,22 @@ func TestSage_ReviewFlow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
-	forge := NewForge(base)
-	manifestID, err := forge.StageManifest(edict.Key(), "", "review.go", "ReviewFunc", "hash2")
-	assert.NoError(t, err)
-	assert.NotEmpty(t, manifestID)
+	manifestID := stageManifestForTest(t, db, edict.Key(), "", "review.go", "ReviewFunc", "hash2")
 
-	judge := NewJudge(base, nil)
-	verdictID, _ := judge.InsertVerdict(manifestID, "tests", storage.VerdictPassed, nil, edict.Key())
-	judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID, edict.Key())
+	// Quench the manifest
+	verdictID := GenerateID("verdict", manifestID, "tests")
+	verdict := storage.JudgeVerdict{
+		VerdictID:  verdictID,
+		ManifestID: manifestID,
+		Username:   edict.Key().Username,
+		Project:    edict.Key().Project,
+		TestSuite:  "tests",
+		Outcome:    storage.VerdictPassed,
+	}
+	assert.NoError(t, db.Create(&verdict).Error)
+	assert.NoError(t, db.Model(&storage.ForgeManifest{}).
+		Where("manifest_id = ?", manifestID).
+		Updates(map[string]interface{}{"status": storage.ManifestQuenched, "verdict_id": verdictID}).Error)
 
 	// Create sage (no linter - will auto-approve)
 	sage := NewSage(base, nil)
@@ -203,7 +216,7 @@ func TestSage_ReviewFlow(t *testing.T) {
 	}
 
 	// Check no rejections
-	noReject, _ := sage.NoRejections(edict.Key())
+	noReject, _ := sage.noRejections(edict.Key())
 	if !noReject {
 		t.Error("Expected no rejections")
 	}
@@ -219,10 +232,8 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
 
-	forge := NewForge(base)
-	manifestID, err := forge.StageManifest(edict.Key(), "", "prod.go", "ProdFunc", "hash3")
-	assert.NoError(t, err)
-	assert.NotEmpty(t, manifestID)
+	manifestID := stageManifestForTest(t, db, edict.Key(), "", "prod.go", "ProdFunc", "hash3")
+	_ = manifestID
 	// Set commit_hash directly for marshal incident lookup
 	db.Model(&storage.ForgeManifest{}).Where("edict_id = ?", edict.ID).
 		Update("commit_hash", "prodcommit789")
@@ -237,12 +248,10 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 	}
 
 	// Check incident was logged
-	incident, err := marshal.GetIncident("sentry-456", "testuser", "testproject")
+	var incident storage.MarshalIncident
+	err = db.Where("incident_id = ? AND username = ? AND project = ?", "sentry-456", "testuser", "testproject").First(&incident).Error
 	if err != nil {
 		t.Fatalf("Failed to get incident: %v", err)
-	}
-	if incident == nil {
-		t.Error("Expected incident to be logged")
 	}
 }
 
@@ -1416,9 +1425,7 @@ func TestJudge_ProcessTask_NoLLM(t *testing.T) {
 	assert.NoError(t, err)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	forge := NewForge(base)
-	manifestID, err := forge.StageManifest(edict.Key(), "", "feature.go", "Feat", "sha1")
-	assert.NoError(t, err)
+	manifestID := stageManifestForTest(t, db, edict.Key(), "", "feature.go", "Feat", "sha1")
 	_ = manifestID
 
 	judge := NewJudge(base, nil)

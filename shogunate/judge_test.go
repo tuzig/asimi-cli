@@ -6,28 +6,58 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
+	"gorm.io/gorm"
 )
 
+// stageManifestForTest is a test helper that creates a manifest directly in the DB.
+func stageManifestForTest(t *testing.T, db *gorm.DB, key storage.EdictKey, lingID, filePath, funcName, contentSHA string) string {
+	t.Helper()
+	manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.ID), lingID, filePath, fmt.Sprintf("%d", time.Now().UnixNano()))
+	manifest := storage.ForgeManifest{
+		ManifestID: manifestID,
+		EdictID:    key.ID,
+		Username:   key.Username,
+		Project:    key.Project,
+		LingID:     lingID,
+		FilePath:   filePath,
+		FuncName:   funcName,
+		ContentSHA: contentSHA,
+		Status:     storage.ManifestForged,
+	}
+	if err := db.Create(&manifest).Error; err != nil {
+		t.Fatalf("failed to stage manifest: %v", err)
+	}
+	return manifestID
+}
+
+// toolContextForTest builds a tools.ToolContext from a MinisterBase for testing.
+func toolContextForTest(base *MinisterBase) tools.ToolContext {
+	tc := tools.ToolContext{
+		RepoInfo:   &repo.RepoInfo{},
+		MinisterID: base.ministerID,
+		Username:   base.username,
+		Project:    base.project,
+		DB:         base.db,
+	}
+	*tc.RepoInfo = base.RepoInfo()
+	return tc
+}
+
 // TestAllManifestsQuenched_NoManifests_EdictLevelVerdict tests that when no manifests exist,
-// AllManifestsQuenched checks for edict-level verdicts as a completion signal.
+// the tools' RecordVerdictTool.sealIfComplete checks for edict-level verdicts as a completion signal.
 func TestAllManifestsQuenched_NoManifests_EdictLevelVerdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	judge := NewJudge(base, nil)
 
 	// Create edict without any manifests
 	edict, err := CreateEdictForTest(db, "Project init edict")
 	assert.NoError(t, err)
 
-	// Use edict's actual key (may have empty username/project from CreateEdictForTest)
-	key := edict.Key()
-
-	// Initially no manifests and no verdicts -> not quenched
-	quenched, err := judge.AllManifestsQuenched(key)
-	assert.NoError(t, err)
-	assert.False(t, quenched, "Should not be quenched without manifests or edict-level verdict")
+	key := storage.EdictKey{ID: edict.ID, Username: base.username, Project: base.project}
 
 	// Record an edict-level verdict (ManifestID = "")
 	verdictID := GenerateID("verdict", fmt.Sprintf("%d", edict.ID), "edict", "direct")
@@ -43,10 +73,12 @@ func TestAllManifestsQuenched_NoManifests_EdictLevelVerdict(t *testing.T) {
 	err = db.Create(&verdict).Error
 	assert.NoError(t, err)
 
-	// Now should be quenched
-	quenched, err = judge.AllManifestsQuenched(key)
+	// Use the tools RecordVerdictTool to check sealing
+	tool := tools.RecordVerdictTool{Ctx: toolContextForTest(base)}
+	input := fmt.Sprintf(`{"edict_id": %d, "passed": true, "details": "project-init complete"}`, edict.ID)
+	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
-	assert.True(t, quenched, "Should be quenched with edict-level verdict")
+	assert.Contains(t, result, "sealed=true")
 }
 
 // TestRecordVerdictTool_EdictLevelVerdict tests that RecordVerdictTool creates edict-level
@@ -55,17 +87,15 @@ func TestRecordVerdictTool_EdictLevelVerdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	judge := NewJudge(base, nil)
 
 	// Create edict without manifests
 	edict, err := CreateEdictForTest(db, "Init ritual")
 	assert.NoError(t, err)
 
 	// Create the tool
-	tool := RecordVerdictTool{judge: judge}
+	tool := tools.RecordVerdictTool{Ctx: toolContextForTest(base)}
 
 	// Call with passed=true for edict with no manifests
-	// Use the edict's actual key values for the call
 	input := fmt.Sprintf(`{"edict_id": %d, "passed": true, "details": "init complete"}`, edict.ID)
 	result, err := tool.Call(ctx, input)
 	assert.NoError(t, err)
@@ -86,23 +116,19 @@ func TestRecordVerdictTool_ManifestVerdicts(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	judge := NewJudge(base, nil)
-	forge := NewForge(base)
 
 	// Create edict with manifest
 	edict, err := CreateEdictForTest(db, "Feature with tests")
 	assert.NoError(t, err)
 
-	// Stage manifest using the judge's key (with username/project)
-	// This ensures the manifest matches the key used by RecordVerdictTool
+	// Stage manifest using the base's key (with username/project)
 	judgeKey := storage.EdictKey{ID: edict.ID, Username: base.username, Project: base.project}
-	manifestID, err := forge.StageManifest(judgeKey, "", "feature.go", "TestFeature", "hash123")
-	assert.NoError(t, err)
+	manifestID := stageManifestForTest(t, db, judgeKey, "", "feature.go", "TestFeature", "hash123")
 
 	// Create the tool
-	tool := RecordVerdictTool{judge: judge}
+	tool := tools.RecordVerdictTool{Ctx: toolContextForTest(base)}
 
-	// Call with passed=true using the edict ID (tool will use judge's username/project)
+	// Call with passed=true using the edict ID
 	input := fmt.Sprintf(`{"edict_id": %d, "passed": true}`, edict.ID)
 	result, err := tool.Call(ctx, input)
 	assert.NoError(t, err)
@@ -121,20 +147,17 @@ func TestRecordVerdictTool_ManifestVerdictsFailed(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	judge := NewJudge(base, nil)
-	forge := NewForge(base)
 
 	// Create edict with manifest
 	edict, err := CreateEdictForTest(db, "Feature with failing tests")
 	assert.NoError(t, err)
 
-	// Stage manifest using the judge's key
+	// Stage manifest using the base's key
 	judgeKey := storage.EdictKey{ID: edict.ID, Username: base.username, Project: base.project}
-	manifestID, err := forge.StageManifest(judgeKey, "", "feature.go", "TestFeature", "hash456")
-	assert.NoError(t, err)
+	manifestID := stageManifestForTest(t, db, judgeKey, "", "feature.go", "TestFeature", "hash456")
 
 	// Create the tool
-	tool := RecordVerdictTool{judge: judge}
+	tool := tools.RecordVerdictTool{Ctx: toolContextForTest(base)}
 
 	// Call with passed=false
 	input := fmt.Sprintf(`{"edict_id": %d, "passed": false, "details": "tests failed"}`, edict.ID)
@@ -155,14 +178,13 @@ func TestRecordVerdictTool_EdictLevelFailed(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	judge := NewJudge(base, nil)
 
 	// Create edict without manifests
 	edict, err := CreateEdictForTest(db, "Init ritual failing")
 	assert.NoError(t, err)
 
 	// Create the tool
-	tool := RecordVerdictTool{judge: judge}
+	tool := tools.RecordVerdictTool{Ctx: toolContextForTest(base)}
 
 	// Call with passed=false
 	input := fmt.Sprintf(`{"edict_id": %d, "passed": false, "details": "init failed"}`, edict.ID)
@@ -177,82 +199,51 @@ func TestRecordVerdictTool_EdictLevelFailed(t *testing.T) {
 	assert.Equal(t, storage.VerdictFailed, verdict.Outcome)
 }
 
-// TestAllManifestsQuenched_NoManifests_FailedEdictLevelVerdict tests that a failed
-// edict-level verdict does NOT count as quenched.
-func TestAllManifestsQuenched_NoManifests_FailedEdictLevelVerdict(t *testing.T) {
+// TestRecordVerdictTool_EdictLevelFailedNotSealed tests that a failed
+// edict-level verdict does NOT result in sealing.
+func TestRecordVerdictTool_EdictLevelFailedNotSealed(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	judge := NewJudge(base, nil)
 
 	edict, err := CreateEdictForTest(db, "Failed init edict")
 	assert.NoError(t, err)
-	key := edict.Key()
 
-	// Record a failed edict-level verdict
-	verdict := storage.JudgeVerdict{
-		VerdictID:  GenerateID("verdict", fmt.Sprintf("%d", edict.ID), "edict", "fail"),
-		ManifestID: "",
-		Username:   key.Username,
-		Project:    key.Project,
-		TestSuite:  "edict",
-		Outcome:    storage.VerdictFailed,
-		Evidence:   storage.JSON{"details": "init failed"},
-	}
-	err = db.Create(&verdict).Error
+	// Record a failed edict-level verdict via the tool
+	tool := tools.RecordVerdictTool{Ctx: toolContextForTest(base)}
+	input := fmt.Sprintf(`{"edict_id": %d, "passed": false, "details": "init failed"}`, edict.ID)
+	result, err := tool.Call(context.Background(), input)
 	assert.NoError(t, err)
-
-	// Should NOT be quenched because the verdict outcome is "failed"
-	quenched, err := judge.AllManifestsQuenched(key)
-	assert.NoError(t, err)
-	assert.False(t, quenched, "Failed edict-level verdict should not count as quenched")
+	assert.Contains(t, result, "sealed=false")
 }
 
-// TestAllManifestsQuenched_NoManifests_PassedThenFailed tests latest-wins:
-// a failed verdict after a passed one should not be quenched.
-func TestAllManifestsQuenched_NoManifests_PassedThenFailed(t *testing.T) {
+// TestRecordVerdictTool_EdictLevelPassedThenFailed tests latest-wins:
+// a failed verdict after a passed one should not be sealed.
+func TestRecordVerdictTool_EdictLevelPassedThenFailed(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	judge := NewJudge(base, nil)
 
 	edict, err := CreateEdictForTest(db, "Retried init edict")
 	assert.NoError(t, err)
-	key := edict.Key()
 
 	// First: passed verdict
-	passed := storage.JudgeVerdict{
-		VerdictID:  GenerateID("verdict", fmt.Sprintf("%d", edict.ID), "edict", "pass1"),
-		ManifestID: "",
-		Username:   key.Username,
-		Project:    key.Project,
-		TestSuite:  "edict",
-		Outcome:    storage.VerdictPassed,
-	}
-	assert.NoError(t, db.Create(&passed).Error)
+	tool := tools.RecordVerdictTool{Ctx: toolContextForTest(base)}
+	input := fmt.Sprintf(`{"edict_id": %d, "passed": true, "details": "first pass"}`, edict.ID)
+	result, err := tool.Call(context.Background(), input)
+	assert.NoError(t, err)
+	assert.Contains(t, result, "sealed=true")
 
 	// Later: failed verdict (supersedes the passed one)
 	time.Sleep(10 * time.Millisecond)
-	failed := storage.JudgeVerdict{
-		VerdictID:  GenerateID("verdict", fmt.Sprintf("%d", edict.ID), "edict", "fail1"),
-		ManifestID: "",
-		Username:   key.Username,
-		Project:    key.Project,
-		TestSuite:  "edict",
-		Outcome:    storage.VerdictFailed,
-	}
-	assert.NoError(t, db.Create(&failed).Error)
-
-	quenched, err := judge.AllManifestsQuenched(key)
+	inputFail := fmt.Sprintf(`{"edict_id": %d, "passed": false, "details": "fail"}`, edict.ID)
+	result, err = tool.Call(context.Background(), inputFail)
 	assert.NoError(t, err)
-	assert.False(t, quenched, "Latest verdict is failed, should not be quenched")
+	assert.Contains(t, result, "sealed=false")
 }
 
 // TestListPendingManifestsTool_Format tests the Format method of ListPendingManifestsTool
 // for the three cases: error, no manifests, and N manifests.
 func TestListPendingManifestsTool_Format(t *testing.T) {
-	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	judge := NewJudge(base, nil)
-	tool := &ListPendingManifestsTool{judge: judge}
+	tool := tools.ListPendingManifestsTool{Ctx: ToolContextForTest()}
 
 	// Error case
 	out := tool.Format(`{"edict_id":1}`, "", fmt.Errorf("db error"))
@@ -260,7 +251,7 @@ func TestListPendingManifestsTool_Format(t *testing.T) {
 	assert.Contains(t, out, "db error")
 
 	// No manifests — Call returns "No pending manifests found" (not JSON);
-	// Format logs an error and returns the full text for debugging.
+	// Format returns the full text.
 	out = tool.Format(`{"edict_id":1}`, "No pending manifests found", nil)
 	assert.Equal(t, "No pending manifests found\n", out)
 
@@ -273,4 +264,14 @@ func TestListPendingManifestsTool_Format(t *testing.T) {
 	jsonResult = `[{"manifest_id":"m1"},{"manifest_id":"m2"},{"manifest_id":"m3"}]`
 	out = tool.Format(`{"edict_id":1}`, jsonResult, nil)
 	assert.Equal(t, "Listed 3 pending manifests\n", out)
+}
+
+// ToolContextForTest returns a ToolContext with a nil DB for Format-only tests.
+func ToolContextForTest() tools.ToolContext {
+	return tools.ToolContext{
+		RepoInfo:   &repo.RepoInfo{},
+		MinisterID: "test",
+		Username:   "testuser",
+		Project:    "testproject",
+	}
 }

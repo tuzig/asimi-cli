@@ -101,7 +101,7 @@ func TestStrategist_ZhengmingRoutesToStrategist(t *testing.T) {
 // and to avoid shorthand aliases. This prevents the DAG resolver from failing
 // when the strategist invents abbreviated dependency references.
 func TestStrategist_InsertLingTool_DescriptionMentionsFullLingID(t *testing.T) {
-	tool := &InsertLingTool{}
+	tool := asimitools.InsertLingTool{}
 
 	desc := tool.Description()
 
@@ -122,7 +122,7 @@ func TestStrategist_InsertLingTool_DescriptionMentionsFullLingID(t *testing.T) {
 // the dependencies parameter in ParameterSchema explicitly warns against
 // shorthand aliases and instructs use of full ling IDs.
 func TestStrategist_InsertLingTool_ParameterSchemaWarnsAboutShorthand(t *testing.T) {
-	tool := &InsertLingTool{}
+	tool := asimitools.InsertLingTool{}
 
 	schema := tool.ParameterSchema()
 

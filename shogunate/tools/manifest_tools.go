@@ -160,7 +160,7 @@ func (t RecordVerdictTool) Call(ctx context.Context, input string) (string, erro
 
 	// If no manifests, record verdict for edict directly (for rituals like project-init)
 	if recordedCount == 0 {
-		verdictID := "verdict_" + fmt.Sprintf("%d", params.EdictID) + "_edict_direct"
+		verdictID := GenerateID("verdict", fmt.Sprintf("%d", params.EdictID), "edict", fmt.Sprintf("%d", time.Now().UnixNano()))
 		verdict := storage.JudgeVerdict{
 			VerdictID:  verdictID,
 			ManifestID: "",
@@ -223,12 +223,15 @@ func (t RecordVerdictTool) sealIfComplete(key storage.EdictKey) bool {
 			return false
 		}
 	} else {
-		// No manifests: check for edict-level verdict
-		var verdictCount int64
-		err = t.Ctx.DB.Model(&storage.JudgeVerdict{}).
-			Where("manifest_id = '' AND test_suite = 'edict' AND username = ? AND project = ?", key.Username, key.Project).
-			Count(&verdictCount).Error
-		if err != nil || verdictCount == 0 {
+		// No manifests: check the outcome of the latest edict-level verdict
+		var latestVerdict storage.JudgeVerdict
+		err = t.Ctx.DB.Where("manifest_id = '' AND test_suite = 'edict' AND username = ? AND project = ?", key.Username, key.Project).
+			Order("created_at DESC").
+			First(&latestVerdict).Error
+		if err != nil {
+			return false
+		}
+		if latestVerdict.Outcome != storage.VerdictPassed {
 			return false
 		}
 	}

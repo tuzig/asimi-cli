@@ -160,13 +160,6 @@ func (c *Sage) Tools() []Tool {
 	return toolList
 }
 
-// GrantSeal exposes MinisterBase's seal-granting method so the Sage can
-// grant seals directly (e.g., during ritual workflows) without importing
-// shogunate-internal helpers.
-func (c *Sage) GrantSeal(key storage.EdictKey, metadata storage.JSON) error {
-	return c.grantSeal(key, metadata)
-}
-
 // ResetSession clears the Sage's session (delegates to MinisterBase)
 func (c *Sage) ResetSession() {
 	c.MinisterBase.ResetSession()
@@ -188,8 +181,6 @@ func (c *Sage) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 	}
 	return &edict, nil
 }
-
-// AppendToIntent is a no-op stub — Sage never modifies edicts (satisfies EdictManager interface)
 
 // Run starts the Sage's processing loop
 func (c *Sage) Run(ctx context.Context) {
@@ -222,133 +213,6 @@ func (c *Sage) processPrompt(ctx context.Context, prompt *Prompt) {
 		return
 	}
 	c.notify(StreamDoneMsg{ChannelID: "sage"})
-}
-
-// --- Database Methods (migrated from Censor) ---
-
-// GetQuenchedManifests retrieves all quenched manifests ready for ethics review
-func (c *Sage) GetQuenchedManifests(key storage.EdictKey) ([]storage.ForgeManifest, error) {
-	var manifests []storage.ForgeManifest
-	err := c.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.ManifestQuenched).
-		Order("created_at ASC").
-		Find(&manifests).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get quenched manifests: %w", err)
-	}
-	return manifests, nil
-}
-
-// NoRejections checks if there are any rejected manifests for an edict.
-// Only the latest manifest per file_path is considered; superseded rejected
-// manifests from prior forging rounds do not count.
-func (c *Sage) NoRejections(key storage.EdictKey) (bool, error) {
-	var count int64
-	err := c.db.Raw(`
-		SELECT COUNT(*) FROM forge_manifests fm
-		WHERE fm.edict_id = ? AND fm.username = ? AND fm.project = ?
-		  AND fm.status = ?
-		  AND fm.created_at = (
-		    SELECT MAX(fm2.created_at) FROM forge_manifests fm2
-		    WHERE fm2.edict_id = fm.edict_id
-		      AND fm2.username = fm.username
-		      AND fm2.project = fm.project
-		      AND fm2.file_path = fm.file_path
-		  )`,
-		key.ID, key.Username, key.Project, storage.ManifestRejected).
-		Scan(&count).Error
-	if err != nil {
-		return false, fmt.Errorf("failed to check rejections: %w", err)
-	}
-	return count == 0, nil
-}
-
-// LogPrecedent records an ethics decision for a manifest.
-// Precedents are an append-only audit log, so the ID includes a nanosecond
-// timestamp to keep repeated decisions on the same (manifest, principle) unique.
-func (c *Sage) LogPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
-	precedentID := GenerateID("precedent", manifestID, principle, fmt.Sprintf("%d", time.Now().UnixNano()))
-
-	precedent := storage.CensorPrecedent{
-		PrecedentID:   precedentID,
-		ManifestID:    manifestID,
-		Principle:     principle,
-		Ruling:        ruling,
-		Justification: justification,
-	}
-
-	if err := c.db.Create(&precedent).Error; err != nil {
-		return "", fmt.Errorf("failed to log precedent: %w", err)
-	}
-	return precedentID, nil
-}
-
-// RejectManifest marks a manifest as rejected by the Censor
-func (c *Sage) RejectManifest(key storage.EdictKey, manifestID string) error {
-	result := c.db.Model(&storage.ForgeManifest{}).
-		Where("manifest_id = ? AND username = ? AND project = ?", manifestID, key.Username, key.Project).
-		Update("status", storage.ManifestRejected)
-	if result.Error != nil {
-		return fmt.Errorf("failed to reject manifest: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("manifest not found: %s", manifestID)
-	}
-	return nil
-}
-
-// GetPrecedentsForManifest retrieves all precedents for a specific manifest
-func (c *Sage) GetPrecedentsForManifest(username, project, manifestID string) ([]storage.CensorPrecedent, error) {
-	var precedents []storage.CensorPrecedent
-	err := c.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
-		Where("censor_precedents.manifest_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", manifestID, username, project).
-		Order("censor_precedents.created_at ASC").
-		Find(&precedents).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get precedents: %w", err)
-	}
-	return precedents, nil
-}
-
-// QueryPrecedentsByPrinciple searches precedents by principle (for case law lookup)
-func (c *Sage) QueryPrecedentsByPrinciple(username, project, principle string, limit int) ([]storage.CensorPrecedent, error) {
-	var precedents []storage.CensorPrecedent
-	query := c.db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
-		Where("censor_precedents.principle LIKE ? AND forge_manifests.username = ? AND forge_manifests.project = ?", "%"+principle+"%", username, project).
-		Order("censor_precedents.created_at DESC")
-	if limit > 0 {
-		query = query.Limit(limit)
-	}
-	err := query.Find(&precedents).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to query precedents: %w", err)
-	}
-	return precedents, nil
-}
-
-// GetEdictsWithQuenchedManifests returns edicts with quenched manifests needing review
-func (c *Sage) GetEdictsWithQuenchedManifests(username, project string) ([]storage.Edict, error) {
-	var edicts []storage.Edict
-	err := c.db.Distinct("edicts.*").
-		Joins("JOIN forge_manifests ON forge_manifests.edict_id = edicts.id AND forge_manifests.username = edicts.username AND forge_manifests.project = edicts.project").
-		Where("forge_manifests.status = ? AND edicts.username = ? AND edicts.project = ?", storage.ManifestQuenched, username, project).
-		Find(&edicts).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get edicts with quenched manifests: %w", err)
-	}
-
-	// Filter out sealed/cancelled edicts using derived status
-	sealService := storage.NewSealService(c.db)
-	var activeEdicts []storage.Edict
-	for _, e := range edicts {
-		status, err := sealService.GetEdictStatus(storage.EdictKey{ID: e.ID, Username: e.Username, Project: e.Project})
-		if err != nil {
-			continue
-		}
-		if status == storage.EdictActive || status == storage.EdictBlocked {
-			activeEdicts = append(activeEdicts, e)
-		}
-	}
-	return activeEdicts, nil
 }
 
 // --- Diff Review Methods (migrated from Censor) ---
@@ -410,13 +274,15 @@ func (c *Sage) ReviewDiffWithManifests(ctx context.Context, diff string, manifes
 				ruling = storage.PrecedentRejected
 			}
 
-			_, err := c.LogPrecedent(
-				manifest.ManifestID,
-				finding.Principle,
-				ruling,
-				finding.Message,
-			)
-			if err != nil {
+			precedentID := GenerateID("precedent", manifest.ManifestID, finding.Principle, fmt.Sprintf("%d", time.Now().UnixNano()))
+			precedent := storage.CensorPrecedent{
+				PrecedentID:   precedentID,
+				ManifestID:    manifest.ManifestID,
+				Principle:     finding.Principle,
+				Ruling:        ruling,
+				Justification: finding.Message,
+			}
+			if err := c.db.Create(&precedent).Error; err != nil {
 				c.logger.Warn("failed to log precedent",
 					"manifest_id", manifest.ManifestID,
 					"principle", finding.Principle,
@@ -434,10 +300,13 @@ func (c *Sage) ReviewDiffWithManifests(ctx context.Context, diff string, manifes
 		}
 
 		if hasErrors {
-			if err := c.RejectManifest(storage.EdictKey{Username: manifest.Username, Project: manifest.Project}, manifest.ManifestID); err != nil {
+			result := c.db.Model(&storage.ForgeManifest{}).
+				Where("manifest_id = ? AND username = ? AND project = ?", manifest.ManifestID, manifest.Username, manifest.Project).
+				Update("status", storage.ManifestRejected)
+			if result.Error != nil {
 				c.logger.Warn("failed to reject manifest",
 					"manifest_id", manifest.ManifestID,
-					"error", err)
+					"error", result.Error)
 			}
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/afittestide/asimi/storage"
 )
@@ -13,15 +14,17 @@ import (
 // execute runs the Sage's ethics review for an edict (internal method)
 // Returns: sealed (phase complete), review summary, error
 func (c *Sage) execute(ctx context.Context, key storage.EdictKey) (bool, *ReviewSummary, error) {
-	// Check if there are any rejections
-	noRejections, err := c.NoRejections(key)
+	// Check if there are any rejections (latest manifest per file_path only)
+	noRejections, err := c.noRejections(key)
 	if err != nil {
 		return false, nil, fmt.Errorf("check rejections: %w", err)
 	}
 
 	// Get quenched manifests to review
-	manifests, err := c.GetQuenchedManifests(key)
-	if err != nil {
+	var manifests []storage.ForgeManifest
+	if err := c.db.Where("edict_id = ? AND username = ? AND project = ? AND status = ?", key.ID, key.Username, key.Project, storage.ManifestQuenched).
+		Order("created_at ASC").
+		Find(&manifests).Error; err != nil {
 		return false, nil, fmt.Errorf("get quenched manifests: %w", err)
 	}
 
@@ -57,7 +60,7 @@ func (c *Sage) execute(ctx context.Context, key storage.EdictKey) (bool, *Review
 	}
 
 	// Check again for rejections
-	noRejections, err = c.NoRejections(key)
+	noRejections, err = c.noRejections(key)
 	if err != nil {
 		return false, nil, fmt.Errorf("check rejections after review: %w", err)
 	}
@@ -91,6 +94,62 @@ func (c *Sage) execute(ctx context.Context, key storage.EdictKey) (bool, *Review
 	return noRejections, summary, nil
 }
 
+// noRejections checks if there are any rejected manifests for an edict.
+// Only the latest manifest per file_path is considered; superseded rejected
+// manifests from prior forging rounds do not count.
+func (c *Sage) noRejections(key storage.EdictKey) (bool, error) {
+	var count int64
+	err := c.db.Raw(`
+		SELECT COUNT(*) FROM forge_manifests fm
+		WHERE fm.edict_id = ? AND fm.username = ? AND fm.project = ?
+		  AND fm.status = ?
+		  AND fm.created_at = (
+		    SELECT MAX(fm2.created_at) FROM forge_manifests fm2
+		    WHERE fm2.edict_id = fm.edict_id
+		      AND fm2.username = fm.username
+		      AND fm2.project = fm.project
+		      AND fm2.file_path = fm.file_path
+		  )`,
+		key.ID, key.Username, key.Project, storage.ManifestRejected).
+		Scan(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to check rejections: %w", err)
+	}
+	return count == 0, nil
+}
+
+// logPrecedent records an ethics decision for a manifest.
+func (c *Sage) logPrecedent(manifestID, principle string, ruling storage.PrecedentRuling, justification string) (string, error) {
+	precedentID := GenerateID("precedent", manifestID, principle, fmt.Sprintf("%d", time.Now().UnixNano()))
+
+	precedent := storage.CensorPrecedent{
+		PrecedentID:   precedentID,
+		ManifestID:    manifestID,
+		Principle:     principle,
+		Ruling:        ruling,
+		Justification: justification,
+	}
+
+	if err := c.db.Create(&precedent).Error; err != nil {
+		return "", fmt.Errorf("failed to log precedent: %w", err)
+	}
+	return precedentID, nil
+}
+
+// rejectManifest marks a manifest as rejected by the Sage
+func (c *Sage) rejectManifest(key storage.EdictKey, manifestID string) error {
+	result := c.db.Model(&storage.ForgeManifest{}).
+		Where("manifest_id = ? AND username = ? AND project = ?", manifestID, key.Username, key.Project).
+		Update("status", storage.ManifestRejected)
+	if result.Error != nil {
+		return fmt.Errorf("failed to reject manifest: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("manifest not found: %s", manifestID)
+	}
+	return nil
+}
+
 // reviewManifest runs ethics checks on a single manifest and returns any findings
 func (c *Sage) reviewManifest(ctx context.Context, manifest *storage.ForgeManifest) ([]Finding, error) {
 	// If we have a linter, use it for static analysis
@@ -104,7 +163,7 @@ func (c *Sage) reviewManifest(ctx context.Context, manifest *storage.ForgeManife
 	}
 
 	// No linter or LLM - auto-approve with precedent
-	_, err := c.LogPrecedent(
+	_, err := c.logPrecedent(
 		manifest.ManifestID,
 		"auto-approval",
 		storage.PrecedentApproved,
@@ -127,7 +186,7 @@ func (c *Sage) reviewManifestWithLinter(ctx context.Context, manifest *storage.F
 	var findings []Finding
 	hasRejection := false
 	for _, v := range violations {
-		_, err := c.LogPrecedent(
+		_, err := c.logPrecedent(
 			manifest.ManifestID,
 			v.Principle,
 			v.Ruling,
@@ -153,7 +212,7 @@ func (c *Sage) reviewManifestWithLinter(ctx context.Context, manifest *storage.F
 
 	// Reject manifest if any violations were rejected
 	if hasRejection {
-		if err := c.RejectManifest(storage.EdictKey{Username: manifest.Username, Project: manifest.Project}, manifest.ManifestID); err != nil {
+		if err := c.rejectManifest(storage.EdictKey{Username: manifest.Username, Project: manifest.Project}, manifest.ManifestID); err != nil {
 			return nil, fmt.Errorf("reject manifest: %w", err)
 		}
 		c.logger.Info("manifest rejected by sage",
@@ -189,7 +248,7 @@ func (c *Sage) reviewManifestWithLLM(ctx context.Context, manifest *storage.Forg
 			ruling = storage.PrecedentRejected
 		}
 
-		_, err := c.LogPrecedent(
+		_, err := c.logPrecedent(
 			manifest.ManifestID,
 			finding.Principle,
 			ruling,
@@ -205,7 +264,7 @@ func (c *Sage) reviewManifestWithLLM(ctx context.Context, manifest *storage.Forg
 
 	// Reject manifest if not approved
 	if !result.Approved {
-		if err := c.RejectManifest(storage.EdictKey{Username: manifest.Username, Project: manifest.Project}, manifest.ManifestID); err != nil {
+		if err := c.rejectManifest(storage.EdictKey{Username: manifest.Username, Project: manifest.Project}, manifest.ManifestID); err != nil {
 			return nil, fmt.Errorf("reject manifest: %w", err)
 		}
 		c.logger.Info("manifest rejected by sage",

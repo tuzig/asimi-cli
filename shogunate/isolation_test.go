@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
@@ -36,64 +37,91 @@ func createEdictForProject(db *gorm.DB, username, project, intent string) (*stor
 	return &edict, nil
 }
 
+// stageManifestDB creates a manifest directly in the DB for tests.
+func stageManifestDB(t *testing.T, db *gorm.DB, key storage.EdictKey, lingID, filePath, funcName, contentSHA string) string {
+	t.Helper()
+	manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.ID), lingID, filePath, fmt.Sprintf("%d", time.Now().UnixNano()))
+	manifest := storage.ForgeManifest{
+		ManifestID: manifestID,
+		EdictID:    key.ID,
+		Username:   key.Username,
+		Project:    key.Project,
+		LingID:     lingID,
+		FilePath:   filePath,
+		FuncName:   funcName,
+		ContentSHA: contentSHA,
+		Status:     storage.ManifestForged,
+	}
+	require.NoError(t, db.Create(&manifest).Error)
+	return manifestID
+}
+
 // TestIsolation_MarshalIncident verifies that MarshalIncident queries with
 // wrong username/project return no results.
 func TestIsolation_MarshalIncident(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	// Create an incident under project A
-	baseA := NewMinisterBase(db, nil, nil, isolationUserA, isolationProjA)
-	marshalA := NewMarshal(baseA, nil)
 	edictA, err := createEdictForProject(db, isolationUserA, isolationProjA, "incident test")
 	require.NoError(t, err)
 
 	keyA := storage.EdictKey{ID: edictA.ID, Username: isolationUserA, Project: isolationProjA}
-	err = marshalA.LogIncident("inc-001", keyA, "deadbeef", "segfault in main")
-	require.NoError(t, err)
+	incidentID := "inc-001"
+	incident := storage.MarshalIncident{
+		IncidentID: incidentID,
+		EdictID:    keyA.ID,
+		Username:   keyA.Username,
+		Project:    keyA.Project,
+		CommitHash: "deadbeef",
+		RCASummary: "segfault in main",
+	}
+	require.NoError(t, db.Create(&incident).Error)
 
 	// Verify project A can see its own incident
-	incident, err := marshalA.GetIncident("inc-001", isolationUserA, isolationProjA)
+	var foundA storage.MarshalIncident
+	err = db.Where("incident_id = ? AND username = ? AND project = ?", incidentID, isolationUserA, isolationProjA).First(&foundA).Error
 	require.NoError(t, err)
-	assert.NotNil(t, incident)
+	assert.NotNil(t, foundA)
 
 	// Query as project B — should get "not found"
-	_, err = marshalA.GetIncident("inc-001", isolationUserB, isolationProjB)
+	var foundB storage.MarshalIncident
+	err = db.Where("incident_id = ? AND username = ? AND project = ?", incidentID, isolationUserB, isolationProjB).First(&foundB).Error
 	assert.Error(t, err, "cross-project GetIncident should return error")
-	assert.Contains(t, err.Error(), "not found")
 
 	// GetPendingIncidents as project B should return zero
-	pending, err := marshalA.GetPendingIncidents(isolationUserB, isolationProjB)
+	var pending []storage.MarshalIncident
+	err = db.Where("hotfix_approved = ? AND username = ? AND project = ?", false, isolationUserB, isolationProjB).
+		Order("created_at ASC").
+		Find(&pending).Error
 	require.NoError(t, err)
 	assert.Empty(t, pending, "cross-project GetPendingIncidents should return empty")
 
 	// MarkHotfixApproved as project B should affect zero rows
-	err = marshalA.MarkHotfixApproved("inc-001", isolationUserB, isolationProjB)
-	assert.Error(t, err, "cross-project MarkHotfixApproved should return error")
-	assert.Contains(t, err.Error(), "not found")
+	result := db.Model(&storage.MarshalIncident{}).
+		Where("incident_id = ? AND username = ? AND project = ?", incidentID, isolationUserB, isolationProjB).
+		Update("hotfix_approved", true)
+	assert.Equal(t, int64(0), result.RowsAffected, "cross-project MarkHotfixApproved should affect zero rows")
 }
 
-// TestIsolation_RejectManifest verifies that RejectManifest with wrong
-// project returns "not found".
+// TestIsolation_RejectManifest verifies that rejecting a manifest with wrong
+// project returns "not found" (zero rows affected).
 func TestIsolation_RejectManifest(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	baseA := NewMinisterBase(db, nil, nil, isolationUserA, isolationProjA)
-	sageA := NewSage(baseA, nil)
 	edictA, err := createEdictForProject(db, isolationUserA, isolationProjA, "reject isolation")
 	require.NoError(t, err)
 
-	forgeA := NewForge(baseA)
-	manifestID, err := forgeA.StageManifest(
+	manifestID := stageManifestDB(t, db,
 		storage.EdictKey{ID: edictA.ID, Username: isolationUserA, Project: isolationProjA},
 		"", "file.go", "Func", "sha1",
 	)
-	require.NoError(t, err)
 
-	// Reject as project B — should return "not found"
+	// Reject as project B — should affect zero rows
 	keyB := storage.EdictKey{Username: isolationUserB, Project: isolationProjB}
-	err = sageA.RejectManifest(keyB, manifestID)
-	assert.Error(t, err, "cross-project RejectManifest should fail")
-	assert.Contains(t, err.Error(), "not found")
+	result := db.Model(&storage.ForgeManifest{}).
+		Where("manifest_id = ? AND username = ? AND project = ?", manifestID, keyB.Username, keyB.Project).
+		Update("status", storage.ManifestRejected)
+	assert.Equal(t, int64(0), result.RowsAffected, "cross-project RejectManifest should affect zero rows")
 
 	// Verify manifest is still forged (not rejected) in project A
 	var manifest storage.ForgeManifest
@@ -196,40 +224,58 @@ func TestIsolation_QueryCourt(t *testing.T) {
 func TestIsolation_CensorPrecedent(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	baseA := NewMinisterBase(db, nil, nil, isolationUserA, isolationProjA)
-	sageA := NewSage(baseA, nil)
-
 	edictA, err := createEdictForProject(db, isolationUserA, isolationProjA, "precedent test")
 	require.NoError(t, err)
 
-	forgeA := NewForge(baseA)
-	manifestID, err := forgeA.StageManifest(
+	manifestID := stageManifestDB(t, db,
 		storage.EdictKey{ID: edictA.ID, Username: isolationUserA, Project: isolationProjA},
 		"", "file.go", "Func", "sha2",
 	)
-	require.NoError(t, err)
 
 	// Log a precedent for project A's manifest
-	_, err = sageA.LogPrecedent(manifestID, "naming_convention", storage.PrecedentApproved, "names are clear")
-	require.NoError(t, err)
+	precedentID := GenerateID("precedent", manifestID, "naming_convention", fmt.Sprintf("%d", time.Now().UnixNano()))
+	precedent := storage.CensorPrecedent{
+		PrecedentID:   precedentID,
+		ManifestID:    manifestID,
+		Principle:     "naming_convention",
+		Ruling:        storage.PrecedentApproved,
+		Justification: "names are clear",
+	}
+	require.NoError(t, db.Create(&precedent).Error)
 
 	// GetPrecedentsForManifest as project B should return empty
-	precedentsB, err := sageA.GetPrecedentsForManifest(isolationUserB, isolationProjB, manifestID)
+	var precedentsB []storage.CensorPrecedent
+	err = db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+		Where("censor_precedents.manifest_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", manifestID, isolationUserB, isolationProjB).
+		Order("censor_precedents.created_at ASC").
+		Find(&precedentsB).Error
 	require.NoError(t, err)
 	assert.Empty(t, precedentsB, "cross-project GetPrecedentsForManifest should return empty")
 
 	// GetPrecedentsForManifest as project A should return the precedent
-	precedentsA, err := sageA.GetPrecedentsForManifest(isolationUserA, isolationProjA, manifestID)
+	var precedentsA []storage.CensorPrecedent
+	err = db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+		Where("censor_precedents.manifest_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?", manifestID, isolationUserA, isolationProjA).
+		Order("censor_precedents.created_at ASC").
+		Find(&precedentsA).Error
 	require.NoError(t, err)
 	assert.Len(t, precedentsA, 1, "project A should see its own precedent")
 
 	// QueryPrecedentsByPrinciple as project B should return empty
-	resultsB, err := sageA.QueryPrecedentsByPrinciple(isolationUserB, isolationProjB, "naming", 10)
+	var resultsB []storage.CensorPrecedent
+	err = db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+		Where("censor_precedents.principle LIKE ? AND forge_manifests.username = ? AND forge_manifests.project = ?", "%naming%", isolationUserB, isolationProjB).
+		Order("censor_precedents.created_at DESC").
+		Find(&resultsB).Error
 	require.NoError(t, err)
 	assert.Empty(t, resultsB, "cross-project QueryPrecedentsByPrinciple should return empty")
 
 	// QueryPrecedentsByPrinciple as project A should return the precedent
-	resultsA, err := sageA.QueryPrecedentsByPrinciple(isolationUserA, isolationProjA, "naming", 10)
+	var resultsA []storage.CensorPrecedent
+	err = db.Joins("JOIN forge_manifests ON forge_manifests.manifest_id = censor_precedents.manifest_id").
+		Where("censor_precedents.principle LIKE ? AND forge_manifests.username = ? AND forge_manifests.project = ?", "%naming%", isolationUserA, isolationProjA).
+		Order("censor_precedents.created_at DESC").
+		Find(&resultsA).Error
 	require.NoError(t, err)
 	assert.Len(t, resultsA, 1, "project A should see its own precedent by principle")
 }

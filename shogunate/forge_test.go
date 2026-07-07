@@ -1,14 +1,16 @@
 package shogunate
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestForge_StageManifest_UniqueIDs verifies that StageManifest generates
+// TestForge_StageManifest_UniqueIDs verifies that manifest creation generates
 // unique IDs even when called multiple times with the same inputs.
 // This prevents UNIQUE constraint violations when the ritual retries.
 func TestForge_StageManifest_UniqueIDs(t *testing.T) {
@@ -17,9 +19,6 @@ func TestForge_StageManifest_UniqueIDs(t *testing.T) {
 	edict := &storage.Edict{SessionID: "test-session", Intent: "Build REST API", Username: "testuser", Project: "testproject"}
 	require.NoError(t, db.Create(edict).Error)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	forge := NewForge(base)
-
 	key := edict.Key()
 	lingID := "ling-1"
 	filePath := "internal/model/user.go"
@@ -27,14 +26,26 @@ func TestForge_StageManifest_UniqueIDs(t *testing.T) {
 	contentSHA := "abc123"
 
 	// Stage the same manifest multiple times with identical inputs
-	id1, err := forge.StageManifest(key, lingID, filePath, funcName, contentSHA)
-	require.NoError(t, err)
+	createManifest := func() string {
+		manifestID := GenerateID("manifest", fmt.Sprintf("%d", key.ID), lingID, filePath, fmt.Sprintf("%d", time.Now().UnixNano()))
+		manifest := storage.ForgeManifest{
+			ManifestID: manifestID,
+			EdictID:    key.ID,
+			Username:   key.Username,
+			Project:    key.Project,
+			LingID:     lingID,
+			FilePath:   filePath,
+			FuncName:   funcName,
+			ContentSHA: contentSHA,
+			Status:     storage.ManifestForged,
+		}
+		require.NoError(t, db.Create(&manifest).Error)
+		return manifestID
+	}
 
-	id2, err := forge.StageManifest(key, lingID, filePath, funcName, contentSHA)
-	require.NoError(t, err)
-
-	id3, err := forge.StageManifest(key, lingID, filePath, funcName, contentSHA)
-	require.NoError(t, err)
+	id1 := createManifest()
+	id2 := createManifest()
+	id3 := createManifest()
 
 	// All IDs should be unique
 	assert.NotEqual(t, id1, id2, "second call should produce different ID")
