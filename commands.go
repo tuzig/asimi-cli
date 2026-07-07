@@ -78,7 +78,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("login", "Authenticate with an AI provider", handleLoginCommand)
 	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [hunting|<minister>|ritual <run_id>])", handleTabNewCommand)
 	registry.RegisterCommand("tabclose", "Close the current tab", handleTabCloseCommand)
-	registry.RegisterCommand("edict", "Manage edicts: read, enact, seal, resume, or cancel (usage: :edict [id] [enact|seal|resume|cancel])", handleEdictCommand)
+	registry.RegisterCommand("edicts", "Manage edicts: read, enact, seal, resume, or cancel (usage: :edict [id] [enact|seal|resume|cancel])", handleEdictCommand)
 
 	return registry
 }
