@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
@@ -174,6 +175,75 @@ func TestRecordVerdictTool_EdictLevelFailed(t *testing.T) {
 	err = db.Where("manifest_id = '' AND test_suite = 'edict'").First(&verdict).Error
 	assert.NoError(t, err, "Edict-level verdict should be created")
 	assert.Equal(t, storage.VerdictFailed, verdict.Outcome)
+}
+
+// TestAllManifestsQuenched_NoManifests_FailedEdictLevelVerdict tests that a failed
+// edict-level verdict does NOT count as quenched.
+func TestAllManifestsQuenched_NoManifests_FailedEdictLevelVerdict(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	judge := NewJudge(base, nil)
+
+	edict, err := CreateEdictForTest(db, "Failed init edict")
+	assert.NoError(t, err)
+	key := edict.Key()
+
+	// Record a failed edict-level verdict
+	verdict := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", fmt.Sprintf("%d", edict.ID), "edict", "fail"),
+		ManifestID: "",
+		Username:   key.Username,
+		Project:    key.Project,
+		TestSuite:  "edict",
+		Outcome:    storage.VerdictFailed,
+		Evidence:   storage.JSON{"details": "init failed"},
+	}
+	err = db.Create(&verdict).Error
+	assert.NoError(t, err)
+
+	// Should NOT be quenched because the verdict outcome is "failed"
+	quenched, err := judge.AllManifestsQuenched(key)
+	assert.NoError(t, err)
+	assert.False(t, quenched, "Failed edict-level verdict should not count as quenched")
+}
+
+// TestAllManifestsQuenched_NoManifests_PassedThenFailed tests latest-wins:
+// a failed verdict after a passed one should not be quenched.
+func TestAllManifestsQuenched_NoManifests_PassedThenFailed(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	judge := NewJudge(base, nil)
+
+	edict, err := CreateEdictForTest(db, "Retried init edict")
+	assert.NoError(t, err)
+	key := edict.Key()
+
+	// First: passed verdict
+	passed := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", fmt.Sprintf("%d", edict.ID), "edict", "pass1"),
+		ManifestID: "",
+		Username:   key.Username,
+		Project:    key.Project,
+		TestSuite:  "edict",
+		Outcome:    storage.VerdictPassed,
+	}
+	assert.NoError(t, db.Create(&passed).Error)
+
+	// Later: failed verdict (supersedes the passed one)
+	time.Sleep(10 * time.Millisecond)
+	failed := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", fmt.Sprintf("%d", edict.ID), "edict", "fail1"),
+		ManifestID: "",
+		Username:   key.Username,
+		Project:    key.Project,
+		TestSuite:  "edict",
+		Outcome:    storage.VerdictFailed,
+	}
+	assert.NoError(t, db.Create(&failed).Error)
+
+	quenched, err := judge.AllManifestsQuenched(key)
+	assert.NoError(t, err)
+	assert.False(t, quenched, "Latest verdict is failed, should not be quenched")
 }
 
 // TestListPendingManifestsTool_Format tests the Format method of ListPendingManifestsTool

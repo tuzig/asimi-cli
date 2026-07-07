@@ -54,38 +54,58 @@ func (t RecordPrecedentTool) Call(ctx context.Context, input string) (string, er
 		ruling = storage.PrecedentRejected
 	}
 
-	for _, m := range manifests {
-		precedentID := GenerateID("precedent", m.ManifestID, "ethics_review", fmt.Sprintf("%d", time.Now().UnixNano()))
+	if len(manifests) == 0 {
+		// No manifests: record edict-level precedent (like edict-level verdicts)
+		precedentID := GenerateID("precedent", fmt.Sprintf("%d", key.ID), "ethics_review", fmt.Sprintf("%d", time.Now().UnixNano()))
 		precedent := storage.CensorPrecedent{
 			PrecedentID:   precedentID,
-			ManifestID:    m.ManifestID,
+			ManifestID:    "", // empty = edict-level
+			Username:      key.Username,
+			Project:       key.Project,
 			Principle:     "ethics_review",
 			Ruling:        ruling,
 			Justification: params.Reasoning,
 		}
 		if err := t.Ctx.DB.Create(&precedent).Error; err != nil {
-			return "", fmt.Errorf("failed to log precedent: %w", err)
+			return "", fmt.Errorf("failed to log edict-level precedent: %w", err)
 		}
-		if !params.Approved {
-			result := t.Ctx.DB.Model(&storage.ForgeManifest{}).
-				Where("manifest_id = ? AND username = ? AND project = ?", m.ManifestID, key.Username, key.Project).
-				Update("status", storage.ManifestRejected)
-			if result.Error != nil {
-				return "", fmt.Errorf("failed to reject manifest: %w", result.Error)
+	} else {
+		for _, m := range manifests {
+			precedentID := GenerateID("precedent", m.ManifestID, "ethics_review", fmt.Sprintf("%d", time.Now().UnixNano()))
+			precedent := storage.CensorPrecedent{
+				PrecedentID:   precedentID,
+				ManifestID:    m.ManifestID,
+				Principle:     "ethics_review",
+				Ruling:        ruling,
+				Justification: params.Reasoning,
 			}
+			if err := t.Ctx.DB.Create(&precedent).Error; err != nil {
+				return "", fmt.Errorf("failed to log precedent: %w", err)
+			}
+			if !params.Approved {
+				result := t.Ctx.DB.Model(&storage.ForgeManifest{}).
+					Where("manifest_id = ? AND username = ? AND project = ?", m.ManifestID, key.Username, key.Project).
+					Update("status", storage.ManifestRejected)
+				if result.Error != nil {
+					return "", fmt.Errorf("failed to reject manifest: %w", result.Error)
+				}
+			}
+		}
+	}
+
+	if params.Approved {
+		if err := grantSageSeal(t.Ctx.DB, key, "sage", storage.JSON{"reason": params.Reasoning}); err != nil {
+			return "", fmt.Errorf("failed to grant seal: %w", err)
+		}
+	} else {
+		if t.AddFailure != nil {
+			t.AddFailure(ctx, fmt.Sprintf("rejected edict %d: %s", key.ID, params.Reasoning))
 		}
 	}
 
 	status := "approved"
 	if !params.Approved {
 		status = "rejected"
-		if t.AddFailure != nil {
-			t.AddFailure(ctx, fmt.Sprintf("rejected edict %d: %s", key.ID, params.Reasoning))
-		}
-	} else {
-		if err := grantSageSeal(t.Ctx.DB, key, "sage", storage.JSON{"reason": params.Reasoning}); err != nil {
-			return "", fmt.Errorf("failed to grant seal: %w", err)
-		}
 	}
 	return fmt.Sprintf("Recorded precedent (%s) for edict %d", status, key.ID), nil
 }

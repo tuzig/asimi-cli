@@ -1023,6 +1023,26 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			}
 			return fmt.Errorf("verdict check failed: %d verdict(s) with failed outcome: %v", len(failedVerdicts), manifestIDs)
 		}
+
+		// Also check edict-level verdicts (manifest_id = '')
+		var failedEdictVerdicts []storage.JudgeVerdict
+		if err := r.db.Raw(`
+			SELECT * FROM judge_verdicts jv
+			WHERE jv.manifest_id = '' AND jv.test_suite = 'edict'
+			  AND jv.username = ? AND jv.project = ?
+			  AND jv.created_at = (
+			    SELECT MAX(jv2.created_at) FROM judge_verdicts jv2
+			    WHERE jv2.manifest_id = '' AND jv2.test_suite = 'edict'
+			      AND jv2.username = jv.username AND jv2.project = jv.project
+			  )
+			  AND jv.outcome = ?`,
+			thenKey.Username, thenKey.Project, storage.VerdictFailed).
+			Scan(&failedEdictVerdicts).Error; err != nil {
+			return fmt.Errorf("failed to query edict-level verdicts: %w", err)
+		}
+		if len(failedEdictVerdicts) > 0 {
+			return fmt.Errorf("verdict check failed: edict-level verdict %s has failed outcome", failedEdictVerdicts[0].VerdictID)
+		}
 		return nil
 	case "check_precedent_approved":
 		// Check censor precedents using latest-wins per manifest:
@@ -1049,6 +1069,26 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 				manifestIDs[i] = p.ManifestID
 			}
 			return fmt.Errorf("precedent check failed: %d precedent(s) rejected: %v", len(rejectedPrecedents), manifestIDs)
+		}
+
+		// Also check edict-level precedents (manifest_id = '')
+		var rejectedEdictPrecedents []storage.CensorPrecedent
+		if err := r.db.Raw(`
+			SELECT * FROM censor_precedents cp
+			WHERE cp.manifest_id = ''
+			  AND cp.username = ? AND cp.project = ?
+			  AND cp.created_at = (
+			    SELECT MAX(cp2.created_at) FROM censor_precedents cp2
+			    WHERE cp2.manifest_id = ''
+			      AND cp2.username = cp.username AND cp2.project = cp.project
+			  )
+			  AND cp.ruling = ?`,
+			thenKey.Username, thenKey.Project, storage.PrecedentRejected).
+			Scan(&rejectedEdictPrecedents).Error; err != nil {
+			return fmt.Errorf("failed to query edict-level precedents: %w", err)
+		}
+		if len(rejectedEdictPrecedents) > 0 {
+			return fmt.Errorf("precedent check failed: edict-level precedent %s is rejected", rejectedEdictPrecedents[0].PrecedentID)
 		}
 		return nil
 	case "check_asimi_version":

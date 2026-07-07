@@ -3,12 +3,14 @@ package shogunate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
+	"gorm.io/gorm"
 )
 
 // JudgePrompt defines the Judge's identity and capabilities
@@ -136,17 +138,18 @@ func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 		return pendingCount == 0, nil
 	}
 
-	// No manifests: check for edict-level verdict (ManifestID = "")
-	var verdictCount int64
-	err = j.db.Model(&storage.JudgeVerdict{}).
-		Where("manifest_id = '' AND test_suite = 'edict' AND username = ? AND project = ?", key.Username, key.Project).
-		Count(&verdictCount).Error
+	// No manifests: check the outcome of the latest edict-level verdict
+	var latestVerdict storage.JudgeVerdict
+	err = j.db.Where("manifest_id = '' AND test_suite = 'edict' AND username = ? AND project = ?", key.Username, key.Project).
+		Order("created_at DESC").
+		First(&latestVerdict).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil // no verdict at all
+		}
 		return false, fmt.Errorf("failed to check edict-level verdicts: %w", err)
 	}
-
-	// Consider quenched if an edict-level verdict exists
-	return verdictCount > 0, nil
+	return latestVerdict.Outcome == storage.VerdictPassed, nil
 }
 
 // sealIfComplete checks whether all manifests for the edict are quenched

@@ -165,3 +165,103 @@ func TestRecordPrecedentTool_RejectsManifestOnRejection(t *testing.T) {
 		t.Errorf("expected manifest status rejected, got %s", manifest.Status)
 	}
 }
+
+// TestRecordPrecedentTool_NoManifests_Rejected verifies that when no manifests exist,
+// a rejection creates an edict-level precedent and does NOT grant the sage seal.
+func TestRecordPrecedentTool_NoManifests_Rejected(t *testing.T) {
+	db := setupPrecedentTestDB(t)
+
+	var addFailureCalled bool
+	tool := RecordPrecedentTool{
+		Ctx: ToolContext{
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
+		},
+		AddFailure: func(ctx context.Context, reason string) {
+			addFailureCalled = true
+		},
+	}
+
+	result, err := tool.Call(context.Background(),
+		`{"edict_id": 11, "approved": false, "reasoning": "edict-level rejection"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "Recorded precedent (rejected) for edict 11"
+	if result != want {
+		t.Errorf("result = %q, want %q", result, want)
+	}
+
+	// Verify edict-level precedent was created with manifest_id = ''
+	var precedent storage.CensorPrecedent
+	if err := db.Where("manifest_id = ''").First(&precedent).Error; err != nil {
+		t.Fatalf("expected edict-level precedent to be created: %v", err)
+	}
+	if precedent.Ruling != storage.PrecedentRejected {
+		t.Errorf("expected ruling rejected, got %s", precedent.Ruling)
+	}
+	if precedent.Justification != "edict-level rejection" {
+		t.Errorf("expected justification 'edict-level rejection', got %s", precedent.Justification)
+	}
+	if precedent.Username != "testuser" {
+		t.Errorf("expected username 'testuser', got %s", precedent.Username)
+	}
+	if precedent.Project != "testproject" {
+		t.Errorf("expected project 'testproject', got %s", precedent.Project)
+	}
+
+	// Verify NO sage seal was granted
+	var sealCount int64
+	db.Model(&storage.Seal{}).Where("edict_id = ? AND minister_id = ?", 11, "sage").Count(&sealCount)
+	if sealCount != 0 {
+		t.Errorf("expected no sage seal for rejected edict, got %d", sealCount)
+	}
+
+	// Verify AddFailure was called
+	if !addFailureCalled {
+		t.Error("expected AddFailure to be called on rejection")
+	}
+}
+
+// TestRecordPrecedentTool_NoManifests_Approved verifies that when no manifests exist,
+// an approval creates an edict-level precedent and grants the sage seal.
+func TestRecordPrecedentTool_NoManifests_Approved(t *testing.T) {
+	db := setupPrecedentTestDB(t)
+
+	tool := RecordPrecedentTool{
+		Ctx: ToolContext{
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
+		},
+	}
+
+	_, err := tool.Call(context.Background(),
+		`{"edict_id": 13, "approved": true, "reasoning": "edict-level approval"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify edict-level precedent was created
+	var precedent storage.CensorPrecedent
+	if err := db.Where("manifest_id = ''").First(&precedent).Error; err != nil {
+		t.Fatalf("expected edict-level precedent to be created: %v", err)
+	}
+	if precedent.Ruling != storage.PrecedentApproved {
+		t.Errorf("expected ruling approved, got %s", precedent.Ruling)
+	}
+	if precedent.Username != "testuser" {
+		t.Errorf("expected username 'testuser', got %s", precedent.Username)
+	}
+	if precedent.Project != "testproject" {
+		t.Errorf("expected project 'testproject', got %s", precedent.Project)
+	}
+
+	// Verify sage seal WAS granted
+	var seal storage.Seal
+	if err := db.Where("edict_id = ? AND minister_id = ?", 13, "sage").First(&seal).Error; err != nil {
+		t.Errorf("expected sage seal to be granted: %v", err)
+	}
+}

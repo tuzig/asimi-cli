@@ -1,6 +1,6 @@
 # This file contains the builtin rituals (aka workflows) used by the Shogunate
 - name: swift-strike
-  description: A tight loop for enacting small changes in 地
+  description: A tight loop for implementing edicts
   inputs:
     edict_id:
       type: string

@@ -1440,6 +1440,157 @@ func TestBuildSandbox_NilRunner(t *testing.T) {
 
 // TestCheckVerdictsPassed_PassedThenFailed verifies latest-wins: a failed
 // verdict after a passed one should fail.
+func TestCheckVerdictsPassed_EdictLevelFailed(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.JudgeVerdict{}); err != nil {
+		t.Fatalf("Failed to migrate JudgeVerdict: %v", err)
+	}
+
+	// Create a failed edict-level verdict (manifest_id = '')
+	verdict := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", "1", "edict", "fail"),
+		ManifestID: "",
+		Username:   "testuser",
+		Project:    "testproject",
+		TestSuite:  "edict",
+		Outcome:    storage.VerdictFailed,
+	}
+	if err := db.Create(&verdict).Error; err != nil {
+		t.Fatalf("Failed to create edict-level verdict: %v", err)
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_verdicts_passed")
+	if err == nil {
+		t.Error("Expected error when edict-level verdict is failed, got nil")
+	}
+	if !strings.Contains(err.Error(), "edict-level verdict") {
+		t.Errorf("Expected error to mention 'edict-level verdict', got: %v", err)
+	}
+}
+
+// TestCheckVerdictsPassed_EdictLevelPassed verifies that a passed edict-level
+// verdict does not trigger a failure.
+func TestCheckVerdictsPassed_EdictLevelPassed(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.JudgeVerdict{}); err != nil {
+		t.Fatalf("Failed to migrate JudgeVerdict: %v", err)
+	}
+
+	verdict := storage.JudgeVerdict{
+		VerdictID:  GenerateID("verdict", "1", "edict", "pass"),
+		ManifestID: "",
+		Username:   "testuser",
+		Project:    "testproject",
+		TestSuite:  "edict",
+		Outcome:    storage.VerdictPassed,
+	}
+	if err := db.Create(&verdict).Error; err != nil {
+		t.Fatalf("Failed to create edict-level verdict: %v", err)
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_verdicts_passed")
+	if err != nil {
+		t.Errorf("Expected no error when edict-level verdict is passed, got: %v", err)
+	}
+}
+
+// TestCheckPrecedentApproved_EdictLevelRejected verifies that a rejected
+// edict-level precedent triggers a failure.
+func TestCheckPrecedentApproved_EdictLevelRejected(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.CensorPrecedent{}); err != nil {
+		t.Fatalf("Failed to migrate CensorPrecedent: %v", err)
+	}
+
+	precedent := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "1", "edict", "reject"),
+		ManifestID:  "",
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "ethics_review",
+		Ruling:      storage.PrecedentRejected,
+	}
+	if err := db.Create(&precedent).Error; err != nil {
+		t.Fatalf("Failed to create edict-level precedent: %v", err)
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_precedent_approved")
+	if err == nil {
+		t.Error("Expected error when edict-level precedent is rejected, got nil")
+	}
+	if !strings.Contains(err.Error(), "edict-level precedent") {
+		t.Errorf("Expected error to mention 'edict-level precedent', got: %v", err)
+	}
+}
+
+// TestCheckPrecedentApproved_EdictLevelApproved verifies that an approved
+// edict-level precedent does not trigger a failure.
+func TestCheckPrecedentApproved_EdictLevelApproved(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.CensorPrecedent{}); err != nil {
+		t.Fatalf("Failed to migrate CensorPrecedent: %v", err)
+	}
+
+	precedent := storage.CensorPrecedent{
+		PrecedentID: GenerateID("precedent", "1", "edict", "approve"),
+		ManifestID:  "",
+		Username:    "testuser",
+		Project:     "testproject",
+		Principle:   "ethics_review",
+		Ruling:      storage.PrecedentApproved,
+	}
+	if err := db.Create(&precedent).Error; err != nil {
+		t.Fatalf("Failed to create edict-level precedent: %v", err)
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_precedent_approved")
+	if err != nil {
+		t.Errorf("Expected no error when edict-level precedent is approved, got: %v", err)
+	}
+}
+
+// TestCheckVerdictsPassed_PassedThenFailed verifies latest-wins: a failed
+// verdict after a passed one should fail.
 func TestCheckVerdictsPassed_PassedThenFailed(t *testing.T) {
 	db := setupRitualTestDB(t)
 
