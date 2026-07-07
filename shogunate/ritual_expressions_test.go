@@ -1651,3 +1651,111 @@ func TestCheckVerdictsPassed_PassedThenFailed(t *testing.T) {
 		t.Errorf("Expected error to contain 'verdict check failed', got: %v", err)
 	}
 }
+
+// TestCheckLingDAG_NoLings verifies that check_ling_dag passes when no lings exist.
+func TestCheckLingDAG_NoLings(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_ling_dag")
+	assert.NoError(t, err, "Expected no error when no lings exist")
+}
+
+// TestCheckLingDAG_ValidDAG verifies that check_ling_dag passes for a valid DAG.
+func TestCheckLingDAG_ValidDAG(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	lings := []storage.Ling{
+		{LingID: "a", EdictID: 1, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{}},
+		{LingID: "b", EdictID: 1, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{"a"}},
+		{LingID: "c", EdictID: 1, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{"a", "b"}},
+	}
+	for _, l := range lings {
+		if err := db.Create(&l).Error; err != nil {
+			t.Fatalf("Failed to create ling: %v", err)
+		}
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_ling_dag")
+	assert.NoError(t, err, "Expected no error for valid DAG")
+}
+
+// TestCheckLingDAG_CircularDependency verifies that check_ling_dag fails when
+// lings form a circular dependency.
+func TestCheckLingDAG_CircularDependency(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	lings := []storage.Ling{
+		{LingID: "a", EdictID: 1, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{"b"}},
+		{LingID: "b", EdictID: 1, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{"a"}},
+	}
+	for _, l := range lings {
+		if err := db.Create(&l).Error; err != nil {
+			t.Fatalf("Failed to create ling: %v", err)
+		}
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_ling_dag")
+	assert.Error(t, err, "Expected error for circular dependency")
+	assert.Contains(t, err.Error(), "circular dependency")
+}
+
+// TestCheckLingDAG_IsolatesByEdictKey verifies that check_ling_dag only considers
+// lings for the specific edict (not other edicts' lings).
+func TestCheckLingDAG_IsolatesByEdictKey(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// Edict 1: valid DAG
+	lings1 := []storage.Ling{
+		{LingID: "x", EdictID: 1, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{}},
+		{LingID: "y", EdictID: 1, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{"x"}},
+	}
+	// Edict 2: circular dependency (should not affect edict 1)
+	lings2 := []storage.Ling{
+		{LingID: "a", EdictID: 2, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{"b"}},
+		{LingID: "b", EdictID: 2, Username: "testuser", Project: "testproject", Dependencies: storage.StringArray{"a"}},
+	}
+	for _, l := range append(lings1, lings2...) {
+		if err := db.Create(&l).Error; err != nil {
+			t.Fatalf("Failed to create ling: %v", err)
+		}
+	}
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		EdictID:  1,
+		Username: "testuser",
+		Project:  "testproject",
+	}
+
+	err := runner.runThen(context.Background(), exec, "check_ling_dag")
+	assert.NoError(t, err, "Expected no error for edict 1 (valid DAG), despite edict 2 having a cycle")
+}

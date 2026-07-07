@@ -41,7 +41,6 @@ func NewStrategist(base *MinisterBase) *Strategist {
 		MinisterBase: base,
 	}
 	s.self = s
-	s.SetPostTaskHook(s.validateDependenciesHook)
 	return s
 }
 
@@ -112,59 +111,6 @@ func (s *Strategist) LingExistsForEdict(key storage.EdictKey) (bool, error) {
 		return false, fmt.Errorf("failed to check ling existence: %w", err)
 	}
 	return count > 0, nil
-}
-
-// validateDependenciesHook is the PostTaskHook wrapper for validateDependencies.
-func (s *Strategist) validateDependenciesHook(ctx context.Context, task *Task, session *Session, output string) (string, error) {
-	lingList, err := s.GetLingForEdict(task.EdictKey)
-	if err == nil && len(lingList) > 0 {
-		if err := s.validateDependencies(lingList); err != nil {
-			return "", fmt.Errorf("invalid dependencies: %w", err)
-		}
-	}
-	return "", nil
-}
-
-// validateDependencies ensures ling form a DAG (no cycles)
-func (s *Strategist) validateDependencies(lingList []storage.Ling) error {
-	// Build adjacency map
-	deps := make(map[string][]string)
-	for _, ling := range lingList {
-		deps[ling.LingID] = ling.Dependencies
-	}
-
-	// Check for cycles using DFS
-	visited := make(map[string]bool)
-	inStack := make(map[string]bool)
-
-	var hasCycle func(id string) bool
-	hasCycle = func(id string) bool {
-		visited[id] = true
-		inStack[id] = true
-
-		for _, dep := range deps[id] {
-			if !visited[dep] {
-				if hasCycle(dep) {
-					return true
-				}
-			} else if inStack[dep] {
-				return true
-			}
-		}
-
-		inStack[id] = false
-		return false
-	}
-
-	for _, ling := range lingList {
-		if !visited[ling.LingID] {
-			if hasCycle(ling.LingID) {
-				return fmt.Errorf("circular dependency detected involving ling %s", ling.LingID)
-			}
-		}
-	}
-
-	return nil
 }
 
 // Run starts the Strategist's task processing loop

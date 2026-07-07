@@ -10,15 +10,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// FailureRecorder lets tools flag soft failures into a Sage's failure
-// accumulator without depending on the shogunate package's context key.
-type FailureRecorder func(ctx context.Context, reason string)
-
 // RecordPrecedentTool records the Sage's ethics review outcome for every
 // quenched manifest on an edict, granting or withholding the Sage's seal.
 type RecordPrecedentTool struct {
-	Ctx        ToolContext
-	AddFailure FailureRecorder
+	Ctx ToolContext
 }
 
 func (t RecordPrecedentTool) Name() string { return "record_precedent" }
@@ -96,10 +91,6 @@ func (t RecordPrecedentTool) Call(ctx context.Context, input string) (string, er
 	if params.Approved {
 		if err := grantSageSeal(t.Ctx.DB, key, "sage", storage.JSON{"reason": params.Reasoning}); err != nil {
 			return "", fmt.Errorf("failed to grant seal: %w", err)
-		}
-	} else {
-		if t.AddFailure != nil {
-			t.AddFailure(ctx, fmt.Sprintf("rejected edict %d: %s", key.ID, params.Reasoning))
 		}
 	}
 

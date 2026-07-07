@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 )
@@ -24,7 +23,6 @@ func NewForge(base *MinisterBase) *Forge {
 		MinisterBase: base,
 	}
 	f.self = f
-	f.SetPreTaskHook(f.handleFailedVerdictsHook)
 	return f
 }
 
@@ -58,66 +56,6 @@ func (f *Forge) Tools() []Tool {
 		toolList = append(toolList, tools.NewRunShellCommand(f.CheckHostCommand, f.runner, f.msgChan, f.RepoInfo().ProjectRoot))
 	}
 	return toolList
-}
-
-// GetFailedVerdicts retrieves all failed verdicts for an edict that need fixing.
-// It joins with forge_manifests to get context about what failed.
-func (f *Forge) GetFailedVerdicts(key storage.EdictKey) ([]storage.JudgeVerdict, error) {
-	var verdicts []storage.JudgeVerdict
-	err := f.db.Table("judge_verdicts").
-		Joins("JOIN forge_manifests ON forge_manifests.manifest_id = judge_verdicts.manifest_id").
-		Where("forge_manifests.edict_id = ? AND forge_manifests.username = ? AND forge_manifests.project = ?",
-			key.ID, key.Username, key.Project).
-		Where("judge_verdicts.outcome = ?", storage.VerdictFailed).
-		Order("judge_verdicts.created_at ASC").
-		Find(&verdicts).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get failed verdicts: %w", err)
-	}
-	return verdicts, nil
-}
-
-// handleFailedVerdictsHook is the PreTaskHook wrapper for HandleFailedVerdicts.
-// Returns (handled=true, result) when failed verdicts were found and processed.
-func (f *Forge) handleFailedVerdictsHook(ctx context.Context, task *Task, notify internal.NotifyFunc) (bool, *Result) {
-	failedVerdicts, err := f.GetFailedVerdicts(task.EdictKey)
-	if err != nil {
-		f.logger.Error("failed to query failed verdicts", "error", err)
-		return true, &Result{Sealed: true, Session: task.Session, Err: err}
-	}
-	if len(failedVerdicts) == 0 {
-		return false, nil
-	}
-
-	f.logger.Info("found failed verdicts, fixing instead of act",
-		"count", len(failedVerdicts),
-		"edict_id", task.EdictKey.ID)
-
-	for _, verdict := range failedVerdicts {
-		f.logger.Info("forge working on verdict",
-			"verdict_id", verdict.VerdictID,
-			"manifest_id", verdict.ManifestID,
-			"edict_id", task.EdictKey.ID)
-		fixWork := f.buildFixPrompt(verdict)
-		session, _, taskErr := f.streamTask(ctx, fixWork, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
-		task.Session = session
-		if taskErr != nil {
-			f.logger.Error("failed to fix verdict", "verdict_id", verdict.VerdictID, "error", taskErr)
-			return true, &Result{Sealed: true, Session: task.Session, Err: taskErr}
-		}
-	}
-	f.logger.Info("finished fixing verdicts")
-	return true, &Result{Sealed: true, Session: task.Session}
-}
-
-// buildFixPrompt creates a fix prompt from a failed verdict's evidence
-func (f *Forge) buildFixPrompt(verdict storage.JudgeVerdict) string {
-	evidenceJSON, _ := json.Marshal(verdict.Evidence)
-	return fmt.Sprintf(`A Judge has recorded a failed verdict for manifest %s.
-The verdict contains evidence of what failed: %s
-
-Focus on minimal, targeted changes to fulfill the intent.
-Do not repeat work that already passed judgment.`, verdict.ManifestID, string(evidenceJSON))
 }
 
 // StageManifest creates a staged manifest (not yet committed to git)

@@ -78,7 +78,6 @@ type Result struct {
 	MinisterID string
 	Sealed     bool // phase complete
 	Output     string
-	Failure    string   // soft failure reason (tool completed but found problems)
 	Session    *Session // Return session for reuse by ritual runner
 	Err        error
 }
@@ -210,12 +209,11 @@ type StreamDoneMsg struct {
 }
 
 // PreTaskHook runs before the main task work. If handled=true is returned,
-// the main streamTask is skipped (e.g., Forge's failed-verdict handling).
+// the main streamTask is skipped.
 type PreTaskHook func(ctx context.Context, task *Task, notify internal.NotifyFunc) (handled bool, result *Result)
 
-// PostTaskHook runs after the main task work completes (e.g., Strategist's
-// dependency validation, Judge's sealIfComplete). Returns a failure string
-// for soft failures (e.g., Sage's accumulated failures) and an error for
+// PostTaskHook runs after the main task work completes (e.g., validation
+// steps). Returns a failure string for soft failures and an error for
 // hard failures.
 type PostTaskHook func(ctx context.Context, task *Task, session *Session, output string) (failure string, err error)
 
@@ -662,7 +660,6 @@ func (m *MinisterBase) SetTaskFallback(f TaskFallback) {
 }
 
 // SetContextMiddleware sets a function that wraps the context before streaming.
-// Used by the Sage to inject a failure accumulator into the context.
 func (m *MinisterBase) SetContextMiddleware(f func(context.Context) context.Context) {
 	m.ctxMiddleware = f
 }
@@ -751,7 +748,7 @@ func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
 		notify = task.Notify
 	}
 
-	// Pre-task hook (e.g., Forge's HandleFailedVerdicts)
+	// Pre-task hook
 	if m.preTaskHook != nil {
 		if handled, result := m.preTaskHook(ctx, task, notify); handled {
 			result.MinisterID = m.ministerID
@@ -764,7 +761,6 @@ func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
 	var taskErr error
 	var session *Session
 	sealed := true
-	var failure string
 
 	if m.client != nil {
 		session, output, taskErr = m.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
@@ -777,16 +773,15 @@ func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
 		output = m.ministerID + " task acknowledged (no LLM configured)"
 	}
 
-	// Post-task hook (e.g., Strategist's validateDependencies, Judge's sealIfComplete)
+	// Post-task hook
 	if taskErr == nil && m.postTaskHook != nil {
-		failure, taskErr = m.postTaskHook(ctx, task, session, output)
+		_, taskErr = m.postTaskHook(ctx, task, session, output)
 	}
 
 	m.sendResult(task, Result{
 		MinisterID: m.ministerID,
 		Sealed:     sealed,
 		Output:     output,
-		Failure:    failure,
 		Session:    session,
 		Err:        taskErr,
 	})

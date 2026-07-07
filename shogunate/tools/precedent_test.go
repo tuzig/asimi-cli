@@ -171,15 +171,11 @@ func TestRecordPrecedentTool_RejectsManifestOnRejection(t *testing.T) {
 func TestRecordPrecedentTool_NoManifests_Rejected(t *testing.T) {
 	db := setupPrecedentTestDB(t)
 
-	var addFailureCalled bool
 	tool := RecordPrecedentTool{
 		Ctx: ToolContext{
 			Username: "testuser",
 			Project:  "testproject",
 			DB:       db,
-		},
-		AddFailure: func(ctx context.Context, reason string) {
-			addFailureCalled = true
 		},
 	}
 
@@ -217,11 +213,6 @@ func TestRecordPrecedentTool_NoManifests_Rejected(t *testing.T) {
 	db.Model(&storage.Seal{}).Where("edict_id = ? AND minister_id = ?", 11, "sage").Count(&sealCount)
 	if sealCount != 0 {
 		t.Errorf("expected no sage seal for rejected edict, got %d", sealCount)
-	}
-
-	// Verify AddFailure was called
-	if !addFailureCalled {
-		t.Error("expected AddFailure to be called on rejection")
 	}
 }
 

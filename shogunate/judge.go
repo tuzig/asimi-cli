@@ -39,8 +39,6 @@ func NewJudge(base *MinisterBase, ci CIRunner) *Judge {
 		ci:           ci,
 	}
 	j.self = j
-	j.SetPostTaskHook(j.sealIfCompleteHook)
-	j.SetTaskFallback(j.executeFallback)
 	return j
 }
 
@@ -144,35 +142,6 @@ func (j *Judge) AllManifestsQuenched(key storage.EdictKey) (bool, error) {
 	return latestVerdict.Outcome == storage.VerdictPassed, nil
 }
 
-// sealIfCompleteHook is the PostTaskHook wrapper for sealIfComplete.
-func (j *Judge) sealIfCompleteHook(ctx context.Context, task *Task, session *Session, output string) (string, error) {
-	j.sealIfComplete(task.EdictKey)
-	return "", nil
-}
-
-// executeFallback is the TaskFallback for deterministic CI execution.
-func (j *Judge) executeFallback(ctx context.Context, task *Task) (bool, error) {
-	return j.execute(ctx, task.EdictKey)
-}
-
-// sealIfComplete checks whether all manifests for the edict are quenched
-// and, if so, grants the Judge's seal. Returns true when sealed.
-func (j *Judge) sealIfComplete(key storage.EdictKey) bool {
-	allQuenched, err := j.AllManifestsQuenched(key)
-	if err != nil {
-		j.logger.Warn("failed to check quenched status", "error", err)
-		return false
-	}
-	if !allQuenched {
-		return false
-	}
-	if err := j.grantSeal(key, storage.JSON{"type": "judgment_complete"}); err != nil {
-		j.logger.Warn("failed to grant judge seal", "edict_id", key.ID, "error", err)
-		return false
-	}
-	return true
-}
-
 // InsertVerdict records a CI judgment for a manifest
 func (j *Judge) InsertVerdict(manifestID, testSuite string, outcome storage.VerdictOutcome, evidence storage.JSON, key storage.EdictKey) (string, error) {
 	verdictID := GenerateID("verdict", manifestID, testSuite)
@@ -236,96 +205,6 @@ func (j *Judge) GetEdictsWithPendingManifests() ([]storage.Edict, error) {
 		}
 	}
 	return activeEdicts, nil
-}
-
-// --- Execute Logic ---
-
-// execute runs the Judge's CI evaluation for an edict (internal method)
-func (j *Judge) execute(ctx context.Context, key storage.EdictKey) (bool, error) {
-	// Check if all manifests are already quenched
-	allQuenched, err := j.AllManifestsQuenched(key)
-	if err != nil {
-		return false, fmt.Errorf("check quenched: %w", err)
-	}
-	if allQuenched {
-		j.logger.Info("all manifests quenched, judgment complete", "edict_id", key.ID)
-		return true, nil
-	}
-
-	// Get pending manifests
-	manifests, err := j.GetPendingManifests(key)
-	if err != nil {
-		return false, fmt.Errorf("get pending manifests: %w", err)
-	}
-
-	if len(manifests) == 0 {
-		j.logger.Info("no pending manifests", "edict_id", key.ID)
-		return false, nil
-	}
-
-	// Judge each manifest
-	for _, manifest := range manifests {
-		if err := j.judgeManifest(ctx, key, &manifest); err != nil {
-			return false, fmt.Errorf("judge manifest %s: %w", manifest.ManifestID, err)
-		}
-	}
-
-	return j.sealIfComplete(key), nil
-}
-
-// judgeManifest runs CI for a single manifest
-func (j *Judge) judgeManifest(ctx context.Context, key storage.EdictKey, manifest *storage.ForgeManifest) error {
-	if j.ci == nil {
-		// No CI runner - auto-pass
-		verdictID, err := j.InsertVerdict(
-			manifest.ManifestID,
-			"auto",
-			storage.VerdictPassed,
-			storage.JSON{"reason": "no CI configured"},
-			key,
-		)
-		if err != nil {
-			return fmt.Errorf("insert auto-pass verdict: %w", err)
-		}
-		return j.UpdateManifestStatus(manifest.ManifestID, storage.ManifestQuenched, verdictID, key)
-	}
-
-	// Run CI
-	outcome, evidence, err := j.ci.Run(ctx, manifest.CommitHash)
-	if err != nil {
-		return fmt.Errorf("CI run: %w", err)
-	}
-
-	// Insert verdict
-	verdictID, err := j.InsertVerdict(
-		manifest.ManifestID,
-		j.ci.GetTestSuite(),
-		outcome,
-		evidence,
-		key,
-	)
-	if err != nil {
-		return fmt.Errorf("insert verdict: %w", err)
-	}
-
-	// Update manifest status based on verdict
-	var newStatus storage.ManifestStatus
-	if outcome == storage.VerdictPassed {
-		newStatus = storage.ManifestQuenched
-	} else {
-		newStatus = storage.ManifestRejected
-	}
-
-	if err := j.UpdateManifestStatus(manifest.ManifestID, newStatus, verdictID, key); err != nil {
-		return fmt.Errorf("update manifest status: %w", err)
-	}
-
-	j.logger.Info("manifest judged",
-		"manifest_id", manifest.ManifestID,
-		"outcome", outcome,
-		"new_status", newStatus)
-
-	return nil
 }
 
 // Run starts the Judge's task processing loop
@@ -418,7 +297,7 @@ func (t *RecordVerdictTool) Call(ctx context.Context, input string) (string, err
 		recordedCount++
 	}
 
-	sealed := t.judge.sealIfComplete(key)
+	sealed, _ := t.judge.AllManifestsQuenched(key)
 	return fmt.Sprintf("Recorded verdict (passed=%v) for edict %d (sealed=%v)", params.Passed, params.EdictID, sealed), nil
 }
 

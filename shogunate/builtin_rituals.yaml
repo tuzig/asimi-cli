@@ -85,6 +85,8 @@
 
         Break down the work into clear phases with dependencies.
         Use insert_ling to record the plan's lings.
+      then:
+        - the lings form a valid DAG
       on_failure: zhengming
 
     - name: implementing

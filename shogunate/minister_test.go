@@ -137,7 +137,6 @@ func TestStrategist_ProcessTask(t *testing.T) {
 
 func TestJudge_VerdictFlow(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	ctx := context.Background()
 
 	// Setup: create edict and manifest
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
@@ -153,13 +152,13 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	// Create judge (no CI runner - will auto-pass, picks up "forged" manifests)
 	judge := NewJudge(base, nil)
 
-	// Execute judgment (internal method)
-	sealed, err := judge.execute(ctx, edict.Key())
+	// Record a passing verdict (simulates what the ritual's record_verdict step does)
+	verdictID, err := judge.InsertVerdict(manifestID, "auto", storage.VerdictPassed, storage.JSON{"reason": "no CI configured"}, edict.Key())
 	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
+		t.Fatalf("Failed to insert verdict: %v", err)
 	}
-	if !sealed {
-		t.Error("Expected sealed after judgment")
+	if err := judge.UpdateManifestStatus(manifestID, storage.ManifestQuenched, verdictID, edict.Key()); err != nil {
+		t.Fatalf("Failed to update manifest status: %v", err)
 	}
 
 	// Check manifest is quenched
@@ -275,8 +274,6 @@ func TestChancellor_CancelEdict(t *testing.T) {
 }
 
 func TestStrategist_CircularDependencyDetection(t *testing.T) {
-	strategist := &Strategist{}
-
 	// Create ling with circular dependency
 	ling := []storage.Ling{
 		{LingID: "a", Dependencies: storage.StringArray{"b"}},
@@ -284,15 +281,13 @@ func TestStrategist_CircularDependencyDetection(t *testing.T) {
 		{LingID: "c", Dependencies: storage.StringArray{"a"}}, // Circular!
 	}
 
-	err := strategist.validateDependencies(ling)
+	err := checkLingDAG(ling)
 	if err == nil {
 		t.Error("Expected error for circular dependency")
 	}
 }
 
 func TestStrategist_ValidDependencies(t *testing.T) {
-	strategist := &Strategist{}
-
 	// Create ling with valid DAG
 	ling := []storage.Ling{
 		{LingID: "a", Dependencies: storage.StringArray{}},
@@ -300,7 +295,7 @@ func TestStrategist_ValidDependencies(t *testing.T) {
 		{LingID: "c", Dependencies: storage.StringArray{"a", "b"}},
 	}
 
-	err := strategist.validateDependencies(ling)
+	err := checkLingDAG(ling)
 	if err != nil {
 		t.Errorf("Expected no error for valid dependencies: %v", err)
 	}
@@ -1381,10 +1376,9 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 // dispatches to hooks (preTaskHook, postTaskHook, taskFallback, ctxMiddleware)
 // for each minister type that was refactored to use the shared base.
 
-// TestMarshal_ProcessTask_Fallback verifies that Marshal's unified processTask
-// calls the taskFallback (executeFallback) when no LLM is configured, producing
-// a sealed result.
-func TestMarshal_ProcessTask_Fallback(t *testing.T) {
+// TestMarshal_ProcessTask_NoLLM verifies that Marshal's unified processTask
+// returns an acknowledged result when no LLM is configured (no fallback).
+func TestMarshal_ProcessTask_NoLLM(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -1408,15 +1402,13 @@ func TestMarshal_ProcessTask_Fallback(t *testing.T) {
 	assert.NoError(t, result.Err)
 	assert.True(t, result.Sealed)
 	assert.Equal(t, "marshal", result.MinisterID)
-	// When sealed via fallback, output is set to minister_id + " task complete"
-	assert.Contains(t, result.Output, "marshal")
-	assert.Contains(t, result.Output, "task complete")
+	assert.Contains(t, result.Output, "no LLM configured")
 }
 
-// TestJudge_ProcessTask_Fallback verifies that Judge's unified processTask
-// calls the taskFallback (executeFallback → execute) when no LLM is configured,
-// auto-passing manifests and sealing the edict via the postTaskHook.
-func TestJudge_ProcessTask_Fallback(t *testing.T) {
+// TestJudge_ProcessTask_NoLLM verifies that Judge's unified processTask
+// returns an acknowledged result when no LLM is configured (no fallback,
+// no postTaskHook — sealing is handled by ritual then steps).
+func TestJudge_ProcessTask_NoLLM(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -1445,17 +1437,14 @@ func TestJudge_ProcessTask_Fallback(t *testing.T) {
 	assert.NoError(t, result.Err)
 	assert.True(t, result.Sealed)
 	assert.Equal(t, "judge", result.MinisterID)
-
-	// Verify the postTaskHook (sealIfComplete) was invoked — judge should have a seal
-	sealed, err := judge.hasSeal(edict.Key())
-	assert.NoError(t, err)
-	assert.True(t, sealed, "Judge should have granted a seal via postTaskHook")
+	assert.Contains(t, result.Output, "no LLM configured")
 }
 
-// TestStrategist_ProcessTask_ValidateDependenciesHook verifies that the
-// postTaskHook (validateDependenciesHook) runs after processTask and
-// surfaces dependency cycle errors in the Result.
-func TestStrategist_ProcessTask_ValidateDependenciesHook(t *testing.T) {
+// TestStrategist_ProcessTask_NoLLM_NoHookError verifies that with no LLM
+// configured and no postTaskHook, processTask returns an acknowledged result.
+// DAG validation is now handled by the ritual's "then: the lings form a
+// valid DAG" step, not by a minister hook.
+func TestStrategist_ProcessTask_NoLLM_NoHookError(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -1465,8 +1454,8 @@ func TestStrategist_ProcessTask_ValidateDependenciesHook(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	strategist := NewStrategist(base)
 
-	// Insert lings with a circular dependency BEFORE running processTask.
-	// The postTaskHook will detect the cycle and return an error.
+	// Insert lings with a circular dependency — the postTaskHook is gone,
+	// so processTask won't detect the cycle. The ritual's then step will.
 	lingA := &storage.Ling{
 		LingID:      "ling-a",
 		EdictID:     edict.ID,
@@ -1488,7 +1477,6 @@ func TestStrategist_ProcessTask_ValidateDependenciesHook(t *testing.T) {
 	assert.NoError(t, db.Create(lingA).Error)
 	assert.NoError(t, db.Create(lingB).Error)
 
-	// Set the edict key with username/project for the strategist's DB queries
 	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
 
 	doneCh := make(chan Result, 1)
@@ -1503,14 +1491,13 @@ func TestStrategist_ProcessTask_ValidateDependenciesHook(t *testing.T) {
 	result := <-doneCh
 
 	// No LLM configured → streamTask is skipped, output is the "no LLM" ack.
-	// But the postTaskHook should detect the cycle and set Err.
-	assert.Error(t, result.Err, "postTaskHook should surface dependency cycle error")
-	assert.Contains(t, result.Err.Error(), "invalid dependencies")
-	assert.Contains(t, result.Err.Error(), "circular dependency")
+	// No postTaskHook → no cycle detection in processTask.
+	assert.NoError(t, result.Err)
+	assert.Contains(t, result.Output, "no LLM configured")
 }
 
 // TestStrategist_ProcessTask_ValidDAG_NoHookError verifies that the
-// postTaskHook does NOT produce an error when dependencies form a valid DAG.
+// processTask does NOT produce an error when dependencies form a valid DAG.
 func TestStrategist_ProcessTask_ValidDAG_NoHookError(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
@@ -1559,11 +1546,10 @@ func TestStrategist_ProcessTask_ValidDAG_NoHookError(t *testing.T) {
 	assert.Contains(t, result.Output, "no LLM configured")
 }
 
-// TestSage_ProcessTask_FailureAccumulation verifies that the ctxMiddleware
-// (setupFailureCtx) and postTaskHook (accumulateFailuresHook) work together
-// via the unified processTask. Since there's no LLM, the failure buffer
-// stays empty, but the Result.Failure should be empty (not nil-panic).
-func TestSage_ProcessTask_FailureAccumulation(t *testing.T) {
+// TestSage_ProcessTask_NoHooks verifies that the Sage's processTask works
+// correctly without any hooks (no ctxMiddleware, no postTaskHook). Since
+// there's no LLM, it should return an acknowledged result.
+func TestSage_ProcessTask_NoHooks(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -1589,50 +1575,7 @@ func TestSage_ProcessTask_FailureAccumulation(t *testing.T) {
 	assert.NoError(t, result.Err)
 	assert.True(t, result.Sealed)
 	assert.Equal(t, "sage", result.MinisterID)
-	// No failures accumulated (no LLM, no tools ran) → Failure should be empty
-	assert.Empty(t, result.Failure)
-	// The failureBuf should have been initialized by ctxMiddleware
-	assert.NotNil(t, sage.failureBuf, "ctxMiddleware should have initialized failureBuf")
-}
-
-// TestSage_ProcessTask_FailureAccumulatedViaAddFailure verifies that when
-// AddFailure is called during task processing (simulating a tool flagging a
-// soft failure), the failure string appears in Result.Failure via the
-// postTaskHook.
-func TestSage_ProcessTask_FailureAccumulatedViaAddFailure(t *testing.T) {
-	db := setupMinisterTestDB(t)
-	ctx := context.Background()
-
-	edict, err := CreateEdictForTest(db, "Sage failure edict")
-	assert.NoError(t, err)
-
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	sage := NewSage(base, nil)
-
-	// Set a preTaskHook that calls AddFailure to simulate a tool flagging issues
-	sage.SetPreTaskHook(func(ctx context.Context, task *Task, notify internal.NotifyFunc) (bool, *Result) {
-		AddFailure(ctx, "naming violation in foo.go")
-		AddFailure(ctx, "missing error handling in bar.go")
-		return false, nil // don't handle — let processTask continue
-	})
-
-	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
-
-	doneCh := make(chan Result, 1)
-	task := &Task{
-		Ctx:      ctx,
-		EdictKey: key,
-		Work:     "review the diff",
-		Done:     doneCh,
-	}
-
-	sage.MinisterBase.processTask(ctx, task)
-	result := <-doneCh
-
-	assert.NoError(t, result.Err)
-	// The postTaskHook should have accumulated the failures
-	assert.Contains(t, result.Failure, "naming violation in foo.go")
-	assert.Contains(t, result.Failure, "missing error handling in bar.go")
+	assert.Contains(t, result.Output, "no LLM configured")
 }
 
 // TestForge_ProcessTask_PreTaskHookSkipsStream verifies that when the

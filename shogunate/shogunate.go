@@ -273,12 +273,6 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 		waitForZhengming = chancellor.WaitForZhengming
 	}
 
-	// AddFailure — Sage's failure accumulator
-	var addFailure tools.FailureRecorder
-	if sage, _ := s.GetMinister("sage").(*Sage); sage != nil {
-		addFailure = AddFailure
-	}
-
 	// NotifyFn — lazy getter for the current notify, used by suggest_edict
 	var notifyFn func() func(any)
 	if chancellor != nil {
@@ -305,7 +299,6 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 		ZhengmingRequester:   zhengmingRequester,
 		WaitForZhengming:     waitForZhengming,
 		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
-		AddFailure:           addFailure,
 		NotifyFn:             notifyFn,
 		SessionIDFn:          sessionIDFn,
 

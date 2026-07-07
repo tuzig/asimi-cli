@@ -13,26 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type ctxKey int
-
-const failureKey ctxKey = iota
-
-// CtxWithFailure adds a failure accumulator to the context.
-func CtxWithFailure(ctx context.Context) (context.Context, *strings.Builder) {
-	buf := &strings.Builder{}
-	return context.WithValue(ctx, failureKey, buf), buf
-}
-
-// AddFailure appends a failure reason to the context's accumulator.
-func AddFailure(ctx context.Context, reason string) {
-	if buf, ok := ctx.Value(failureKey).(*strings.Builder); ok {
-		if buf.Len() > 0 {
-			buf.WriteString("; ")
-		}
-		buf.WriteString(reason)
-	}
-}
-
 // SageRole defines the Sage's identity and capabilities
 const SageRole = `孔子 聖人, the Sage.
 Your domain is clarity, nomenclature, semantic precision, AND code review with precedent tracking.
@@ -117,9 +97,8 @@ type Finding struct {
 // Sage provides read-only codebase exploration and suggests edicts via zhengming
 type Sage struct {
 	*MinisterBase
-	shogunate  *Shogunate
-	linter     Linter
-	failureBuf *strings.Builder // set by ctxMiddleware, read by postTaskHook
+	shogunate *Shogunate
+	linter    Linter
 }
 
 // NewSage creates a new Sage minister
@@ -130,8 +109,6 @@ func NewSage(base *MinisterBase, linter Linter) *Sage {
 		linter:       linter,
 	}
 	c.self = c
-	c.SetContextMiddleware(c.setupFailureCtx)
-	c.SetPostTaskHook(c.accumulateFailuresHook)
 	return c
 }
 
@@ -172,8 +149,7 @@ func (c *Sage) Tools() []Tool {
 		},
 		tools.QueryCourtTool{DB: c.db, Username: c.username, Project: c.project},
 		tools.RecordPrecedentTool{
-			Ctx:        tc,
-			AddFailure: AddFailure,
+			Ctx: tc,
 		},
 		tools.ListQuenchedManifestsTool{Ctx: tc},
 		tools.QueryPrecedentsTool{Ctx: tc},
@@ -214,25 +190,6 @@ func (c *Sage) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 }
 
 // AppendToIntent is a no-op stub — Sage never modifies edicts (satisfies EdictManager interface)
-
-// setupFailureCtx injects a failure accumulator into the context so tools
-// can flag soft failures via AddFailure. The buffer is stored on the Sage
-// for the post-task hook to read.
-func (c *Sage) setupFailureCtx(ctx context.Context) context.Context {
-	var buf *strings.Builder
-	ctx, buf = CtxWithFailure(ctx)
-	c.failureBuf = buf
-	return ctx
-}
-
-// accumulateFailuresHook reads the failure buffer accumulated by tools
-// during the task and returns it as the failure string for Result.Failure.
-func (c *Sage) accumulateFailuresHook(ctx context.Context, task *Task, session *Session, output string) (string, error) {
-	if c.failureBuf != nil {
-		return c.failureBuf.String(), nil
-	}
-	return "", nil
-}
 
 // Run starts the Sage's processing loop
 func (c *Sage) Run(ctx context.Context) {

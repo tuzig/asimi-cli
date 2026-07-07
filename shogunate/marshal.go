@@ -51,7 +51,6 @@ func NewMarshal(base *MinisterBase, rca RCAAnalyzer) *Marshal {
 		rca:          rca,
 	}
 	m.self = m
-	m.SetTaskFallback(m.executeFallback)
 	return m
 }
 
@@ -165,33 +164,6 @@ func (m *Marshal) GetPendingIncidents(username, project string) ([]storage.Marsh
 		return nil, fmt.Errorf("failed to get pending incidents: %w", err)
 	}
 	return incidents, nil
-}
-
-// --- Execute Logic ---
-
-// execute runs the Marshal's production monitoring (internal method)
-// Note: Marshal doesn't participate in normal edict flow, but handles incidents
-func (m *Marshal) execute(ctx context.Context, key storage.EdictKey) (bool, error) {
-	// Marshal's Execute is called for 'assassination' type edicts (hotfixes)
-	// Check if this is a hotfix edict created by an incident
-	sealService := storage.NewSealService(m.db)
-	status, err := sealService.GetEdictStatus(key)
-	if err != nil {
-		return false, fmt.Errorf("get edict status: %w", err)
-	}
-
-	if status == storage.EdictActive {
-		// Hotfix needs expedited processing
-		m.logger.Info("marshal expediting hotfix", "edict_id", key.ID)
-		return true, nil
-	}
-
-	return true, nil
-}
-
-// executeFallback is the TaskFallback for the Marshal's deterministic execution.
-func (m *Marshal) executeFallback(ctx context.Context, task *Task) (bool, error) {
-	return m.execute(ctx, task.EdictKey)
 }
 
 // OnIncident handles a production incident

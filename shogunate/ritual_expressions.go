@@ -84,6 +84,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the precedent is approved", "check_precedent_approved", ""},
 		{"the unsealed edicts", "get_unsealed_edicts", "unsealed_edicts"},
 		{"the edict lings", "get_lings", "lings"},
+		{"the lings form a valid DAG", "check_ling_dag", ""},
 		{"a heaven's snapshot", "get_heaven_snapshot", "heaven_snapshot"},
 		{"Asimi's versions", "check_asimi_version", "asimi_version"},
 	}
@@ -211,6 +212,45 @@ func (r *RitualRunner) getLings(key storage.EdictKey) (interface{}, error) {
 		}
 	}
 	return result, nil
+}
+
+// checkLingDAG ensures ling dependencies form a DAG (no cycles) using DFS.
+func checkLingDAG(lingList []storage.Ling) error {
+	deps := make(map[string][]string)
+	for _, ling := range lingList {
+		deps[ling.LingID] = ling.Dependencies
+	}
+
+	visited := make(map[string]bool)
+	inStack := make(map[string]bool)
+
+	var hasCycle func(id string) bool
+	hasCycle = func(id string) bool {
+		visited[id] = true
+		inStack[id] = true
+
+		for _, dep := range deps[id] {
+			if !visited[dep] {
+				if hasCycle(dep) {
+					return true
+				}
+			} else if inStack[dep] {
+				return true
+			}
+		}
+
+		inStack[id] = false
+		return false
+	}
+
+	for _, ling := range lingList {
+		if !visited[ling.LingID] {
+			if hasCycle(ling.LingID) {
+				return fmt.Errorf("circular dependency detected involving ling %s", ling.LingID)
+			}
+		}
+	}
+	return nil
 }
 
 func (r *RitualRunner) getHeavenSnapshot(ctx context.Context) (interface{}, error) {
@@ -1095,6 +1135,17 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		// Warn if not running the latest Asimi version - non-blocking check
 		// This is handled as a "then" step that logs a warning but doesn't fail
 		return nil
+	case "check_ling_dag":
+		// Validate that the edict's lings form a valid DAG (no cycles)
+		var lings []storage.Ling
+		if err := r.db.Where("edict_id = ? AND username = ? AND project = ?", thenKey.ID, thenKey.Username, thenKey.Project).
+			Find(&lings).Error; err != nil {
+			return fmt.Errorf("failed to query lings for DAG check: %w", err)
+		}
+		if len(lings) == 0 {
+			return nil // no lings, nothing to validate
+		}
+		return checkLingDAG(lings)
 	default:
 		return fmt.Errorf("unknown then function: %s", fn)
 	}

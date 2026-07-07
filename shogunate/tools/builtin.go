@@ -30,7 +30,6 @@ type ToolRegistrationOpts struct {
 
 	MinisterInvoker MinisterInvoker
 	RitualLauncher   RitualLauncher
-	AddFailure       FailureRecorder
 
 	// ZhengmingMinisterIDs lists minister IDs that should get a private
 	// request_zhengming tool with their own MinisterID for correct routing.
@@ -132,8 +131,7 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 		}, intentExec)
 	}
 	r.Register(RecordPrecedentTool{
-		Ctx:        opts.Ctx,
-		AddFailure: opts.AddFailure,
+		Ctx: opts.Ctx,
 	}, intentExec)
 	r.Register(ApproveDocTool{}, intentExec)
 }
