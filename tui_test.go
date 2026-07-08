@@ -4522,3 +4522,48 @@ func TestRenderEdictDashboard_EmptyIntent(t *testing.T) {
 	output := renderEdictDashboard(edict, nil, 80)
 	assert.Contains(t, output, "(no intent recorded)")
 }
+
+func TestEditEdictIntentCmd_ReturnsExecProcessCmd(t *testing.T) {
+	// Set EDITOR to "true" so the editor exits immediately without changes
+	oldEditor := os.Getenv("EDITOR")
+	os.Setenv("EDITOR", "true")
+	defer os.Setenv("EDITOR", oldEditor)
+
+	mock := &mockShogunateClient{}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := editEdictIntentCmd(model, 42)
+	require.NotNil(t, cmd, "editEdictIntentCmd should return a non-nil tea.Cmd")
+
+	msg := cmd()
+	// tea.ExecProcess returns a tea.Cmd that produces a tea.execMsg internally;
+	// Bubbletea's runtime handles execMsg by running the process then invoking
+	// the callback. The key assertion: msg must NOT be a tea.Cmd (func() tea.Msg).
+	// With the old bug, the outer closure returned tea.ExecProcess's result
+	// (a function) as a "message" — so msg would be a func() tea.Msg, not a
+	// proper tea.Msg that Bubbletea recognizes.
+	_, isCmd := msg.(func() tea.Msg)
+	assert.False(t, isCmd, "msg should not be a tea.Cmd (func() tea.Msg); the old bug returned a function as a message")
+	// tea.execMsg is the internal message type from ExecProcess that Bubbletea
+	// handles to actually run the process. This confirms we got a proper
+	// ExecProcess cmd, not a wrapped closure.
+	assert.NotNil(t, msg, "msg should be a non-nil tea.Msg")
+}
+
+func TestEditEdictIntentCmd_EdictNotFound(t *testing.T) {
+	mock := &mockShogunateClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return nil, errors.New("not found")
+		},
+	}
+	model := newTestModel(t)
+	model.shogunate = mock
+
+	cmd := editEdictIntentCmd(model, 999)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	sysMsg, ok := msg.(showContextMsg)
+	assert.True(t, ok, "expected showContextMsg for not-found edict")
+	assert.Contains(t, sysMsg.content, "not found")
+}

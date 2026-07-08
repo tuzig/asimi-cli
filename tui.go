@@ -3687,49 +3687,50 @@ func editEdictIntentCmd(m *TUIModel, edictID uint) tea.Cmd {
 	}
 	originalText := edict.Intent
 
-	return func() tea.Msg {
-		tmpFile, err := os.CreateTemp("", "edict_edit_*.md")
-		if err != nil {
+	tmpFile, err := os.CreateTemp("", "edict_edit_*.md")
+	if err != nil {
+		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Failed to create temp file: %v", err))
 		}
-		tmpPath := tmpFile.Name()
-		tmpFile.Close()
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
 
-		if err := os.WriteFile(tmpPath, []byte(originalText), 0644); err != nil {
-			os.Remove(tmpPath)
+	if err := os.WriteFile(tmpPath, []byte(originalText), 0644); err != nil {
+		os.Remove(tmpPath)
+		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Failed to write temp file: %v", err))
 		}
+	}
 
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			editor = "vi"
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+
+	cmd := exec.Command(editor, tmpPath)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		defer os.Remove(tmpPath)
+		if err != nil {
+			return showSystemMsg(fmt.Sprintf("Editor failed: %v", err))
 		}
 
-		cmd := exec.Command(editor, tmpPath)
-		return tea.ExecProcess(cmd, func(err error) tea.Msg {
-			defer os.Remove(tmpPath)
-			if err != nil {
-				return showSystemMsg(fmt.Sprintf("Editor failed: %v", err))
-			}
+		content, err := os.ReadFile(tmpPath)
+		if err != nil {
+			return showSystemMsg(fmt.Sprintf("Failed to read edited file: %v", err))
+		}
 
-			content, err := os.ReadFile(tmpPath)
-			if err != nil {
-				return showSystemMsg(fmt.Sprintf("Failed to read edited file: %v", err))
-			}
+		modified := strings.TrimRight(string(content), " \t\n\r")
+		original := strings.TrimRight(originalText, " \t\n\r")
+		if modified == original {
+			return showSystemMsg("No changes made to edict intent")
+		}
 
-			modified := strings.TrimRight(string(content), " \t\n\r")
-			original := strings.TrimRight(originalText, " \t\n\r")
-			if modified == original {
-				return showSystemMsg("No changes made to edict intent")
-			}
-
-			// Call AppendToIntent with the modified text
-			if err := m.shogunate.AppendToIntent(edictID, modified); err != nil {
-				return showSystemMsg(fmt.Sprintf("Failed to update edict: %v", err))
-			}
-			return showSystemMsg(fmt.Sprintf("Edict %d intent updated", edictID))
-		})
-	}
+		if err := m.shogunate.AppendToIntent(edictID, modified); err != nil {
+			return showSystemMsg(fmt.Sprintf("Failed to update edict: %v", err))
+		}
+		return showSystemMsg(fmt.Sprintf("Edict %d intent updated", edictID))
+	})
 }
 
 func (m *TUIModel) raiseShogunateEvent(event storage.ShogunateEvent, params storage.JSON) {
