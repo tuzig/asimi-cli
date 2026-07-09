@@ -5,6 +5,12 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-07-09
+
+### Changed
+
+- podman is now v6 for safety & speed
+
 ## [0.8.0] - 2026-07-09
 
 ### Added
