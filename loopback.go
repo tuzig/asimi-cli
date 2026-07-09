@@ -125,12 +125,13 @@ func newDaemonConn(ctx context.Context, socketPath string) (*rpc.Conn, error) {
 	}
 
 	if err := rpc.NewShogunateClient(conn).SetContext(ctx, types.SetContextParams{
-		Project:      repoInfo.Slug,
-		Username:     username,
-		ProjectRoot:  repoInfo.ProjectRoot,
-		WorktreePath: repoInfo.WorktreePath,
-		Branch:       repoInfo.Branch,
-		APIKeys:      collectAPIKeys(),
+		Project:        repoInfo.Slug,
+		Username:       username,
+		ProjectRoot:    repoInfo.ProjectRoot,
+		WorktreePath:   repoInfo.WorktreePath,
+		Branch:         repoInfo.Branch,
+		APIKeys:        collectAPIKeys(),
+		CodexAccountID: getCodexAccountID(),
 	}); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("handshake failed: %w", err)

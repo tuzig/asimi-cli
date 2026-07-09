@@ -3723,6 +3723,7 @@ func editEdictIntentCmd(m *TUIModel, edictID uint) tea.Cmd {
 		modified := strings.TrimRight(string(content), " \t\n\r")
 		original := strings.TrimRight(originalText, " \t\n\r")
 		if modified == original {
+			// TODO: turn into a toast
 			return showSystemMsg("No changes made to edict intent")
 		}
 

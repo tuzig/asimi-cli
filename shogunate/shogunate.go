@@ -593,6 +593,7 @@ func (s *Shogunate) SetContext(ctx context.Context, params types.SetContextParam
 		projectCfg.LLM.MaxRetries,
 		projectCfg.LLM.BaseURL,
 		params.APIKeys,
+		params.CodexAccountID,
 	)
 	if err != nil {
 		return fmt.Errorf("init bifrost: %w", err)

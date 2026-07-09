@@ -219,6 +219,7 @@ func reconfigureModel(ctx context.Context, shog *shogunate.Shogunate, hp types.S
 		projectCfg.LLM.MaxRetries,
 		projectCfg.LLM.BaseURL,
 		hp.APIKeys,
+		hp.CodexAccountID,
 	)
 	if err != nil {
 		return fmt.Errorf("init bifrost: %w", err)

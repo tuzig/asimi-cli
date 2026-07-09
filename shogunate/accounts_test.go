@@ -126,7 +126,7 @@ func TestGetConfiguredProviders_WithAWSKeysInMap(t *testing.T) {
 		"AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		"openai":                "sk-test",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	providers, err := account.GetConfiguredProviders()
 	if err != nil {
@@ -156,7 +156,7 @@ func TestGetConfiguredProviders_WithAWSKeysInMap_MissingSecret(t *testing.T) {
 		"AWS_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
 		"openai":            "sk-test",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	providers, err := account.GetConfiguredProviders()
 	if err != nil {
@@ -197,7 +197,7 @@ func TestNewAccountWithKeys_ReturnsKeyFromMap(t *testing.T) {
 		"openai":    "sk-test-openai",
 		"anthropic": "sk-ant-test",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	result, err := account.GetKeysForProvider(context.Background(), schemas.OpenAI)
 	if err != nil {
@@ -216,7 +216,7 @@ func TestNewAccountWithKeys_ProviderNotInMap_FallsThroughToKeyring(t *testing.T)
 	keys := map[string]string{
 		"openai": "sk-test-openai",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	// anthropic is not in the map, so it goes to keyring fallback (which returns empty)
 	result, err := account.GetKeysForProvider(context.Background(), schemas.Anthropic)
@@ -234,7 +234,7 @@ func TestNewAccountWithKeys_EmptyValueInMap_ReturnsNoKeys(t *testing.T) {
 	keys := map[string]string{
 		"openai": "",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	result, err := account.GetKeysForProvider(context.Background(), schemas.OpenAI)
 	if err != nil {
@@ -251,7 +251,7 @@ func TestNewAccountWithKeys_NilMap_FallsThroughToKeyring(t *testing.T) {
 	keyring.MockKeyring()
 
 	// Nil map should behave like NewAccount — full keyring fallback path
-	account := NewAccountWithKeys(30, 60, 3, "", nil)
+	account := NewAccountWithKeys(30, 60, 3, "", nil, "")
 
 	// No keyring key set, so expect empty
 	result, err := account.GetKeysForProvider(context.Background(), schemas.OpenAI)
@@ -270,7 +270,7 @@ func TestNewAccountWithKeys_AllProviders(t *testing.T) {
 		"gemini":     "sk-gemini",
 		"openrouter": "sk-or",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	providers := []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Gemini, schemas.OpenRouter}
 	for _, provider := range providers {
@@ -288,7 +288,7 @@ func TestNewAccountWithKeys_BedrockNotInMap_ReturnsEmpty(t *testing.T) {
 	keys := map[string]string{
 		"openai": "sk-test",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	result, err := account.GetKeysForProvider(context.Background(), schemas.Bedrock)
 	if err != nil {
@@ -305,7 +305,7 @@ func TestGetKeysForProvider_Bedrock_WithAWSKeysInMap(t *testing.T) {
 		"AWS_ACCESS_KEY_ID":     "AKIAIOSFODNN7EXAMPLE",
 		"AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	result, err := account.GetKeysForProvider(context.Background(), schemas.Bedrock)
 	if err != nil {
@@ -339,7 +339,7 @@ func TestGetKeysForProvider_Bedrock_WithSessionToken(t *testing.T) {
 		"AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		"AWS_SESSION_TOKEN":     "FwoGZXIvYXdzEGMaDNu5EXAMPLESESSION",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	result, err := account.GetKeysForProvider(context.Background(), schemas.Bedrock)
 	if err != nil {
@@ -365,7 +365,7 @@ func TestGetKeysForProvider_Bedrock_OnlyAccessKeyInMap(t *testing.T) {
 	keys := map[string]string{
 		"AWS_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
 	}
-	account := NewAccountWithKeys(30, 60, 3, "", keys)
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
 
 	result, err := account.GetKeysForProvider(context.Background(), schemas.Bedrock)
 	if err != nil {
@@ -454,7 +454,7 @@ func TestGetConfigForProvider(t *testing.T) {
 
 // TestGetConfigForProvider_WithKeysMap tests config works with NewAccountWithKeys
 func TestGetConfigForProvider_WithKeysMap(t *testing.T) {
-	account := NewAccountWithKeys(45, 90, 2, "https://custom.api.com", map[string]string{"openai": "sk-test"})
+	account := NewAccountWithKeys(45, 90, 2, "https://custom.api.com", map[string]string{"openai": "sk-test"}, "")
 	cfg, err := account.GetConfigForProvider(schemas.OpenAI)
 	if err != nil {
 		t.Fatalf("GetConfigForProvider() error = %v", err)
@@ -473,5 +473,52 @@ func TestGetConfigForProvider_WithKeysMap(t *testing.T) {
 	}
 	if cfg.NetworkConfig.BaseURL != "https://custom.api.com" {
 		t.Errorf("expected base URL 'https://custom.api.com', got %q", cfg.NetworkConfig.BaseURL)
+	}
+}
+
+// TestGetConfigForProvider_CodexAccountIDHeader verifies that when a
+// codexAccountID is set, GetConfigForProvider includes the
+// "chatgpt-account-id" header for OpenAI provider requests.
+func TestGetConfigForProvider_CodexAccountIDHeader(t *testing.T) {
+	account := NewAccountWithKeys(30, 60, 3, "https://chatgpt.com/backend-api",
+		map[string]string{"openai": "sk-test"}, "org-codex-123")
+
+	cfg, err := account.GetConfigForProvider(schemas.OpenAI)
+	if err != nil {
+		t.Fatalf("GetConfigForProvider() error = %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+
+	headers := cfg.NetworkConfig.ExtraHeaders
+	if headers["chatgpt-account-id"] != "org-codex-123" {
+		t.Errorf("expected chatgpt-account-id header 'org-codex-123', got %q", headers["chatgpt-account-id"])
+	}
+	if headers["originator"] != "asimi" {
+		t.Errorf("expected originator header 'asimi', got %q", headers["originator"])
+	}
+	if cfg.NetworkConfig.BaseURL != "https://chatgpt.com/backend-api" {
+		t.Errorf("expected base URL 'https://chatgpt.com/backend-api', got %q", cfg.NetworkConfig.BaseURL)
+	}
+}
+
+// TestGetConfigForProvider_NoCodexAccountID verifies that the
+// chatgpt-account-id header is absent when codexAccountID is empty.
+func TestGetConfigForProvider_NoCodexAccountID(t *testing.T) {
+	account := NewAccountWithKeys(30, 60, 3, "", map[string]string{"openai": "sk-test"}, "")
+
+	cfg, err := account.GetConfigForProvider(schemas.OpenAI)
+	if err != nil {
+		t.Fatalf("GetConfigForProvider() error = %v", err)
+	}
+
+	headers := cfg.NetworkConfig.ExtraHeaders
+	if _, ok := headers["chatgpt-account-id"]; ok {
+		t.Error("expected no chatgpt-account-id header when codexAccountID is empty")
+	}
+	// originator should still be present for all providers
+	if headers["originator"] != "asimi" {
+		t.Errorf("expected originator header 'asimi', got %q", headers["originator"])
 	}
 }

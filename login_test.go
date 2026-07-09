@@ -22,7 +22,7 @@ func TestCodexConstants(t *testing.T) {
 	assert.Equal(t, "https://auth.openai.com/oauth/authorize", codexAuthURL)
 	assert.Equal(t, "https://auth.openai.com/oauth/token", codexTokenURL)
 	assert.Equal(t, "http://localhost:1455/auth/callback", codexRedirectURI)
-	assert.Equal(t, "openid profile email offline_access", codexScope)
+	assert.Equal(t, "openid profile email offline_access model.request", codexScope)
 	assert.Equal(t, 1455, codexCallbackPort)
 	assert.Equal(t, "/auth/callback", codexCallbackPath)
 }

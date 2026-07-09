@@ -50,6 +50,7 @@ type Account struct {
 	maxRetries        int
 	baseURL           string
 	apiKeys           map[string]string
+	codexAccountID    string
 }
 
 // NewAccount creates a new Account implementation backed by the OS keyring.
@@ -62,8 +63,8 @@ func NewAccount(requestTimeout, streamIdleTimeout, maxRetries int, baseURL strin
 // Environment-variable reads are removed from the primary path; the caller
 // (typically the daemon) is responsible for populating the map from env vars
 // or any other source.
-func NewAccountWithKeys(requestTimeout, streamIdleTimeout, maxRetries int, baseURL string, apiKeys map[string]string) schemas.Account {
-	return &Account{requestTimeout: requestTimeout, streamIdleTimeout: streamIdleTimeout, maxRetries: maxRetries, baseURL: baseURL, apiKeys: apiKeys}
+func NewAccountWithKeys(requestTimeout, streamIdleTimeout, maxRetries int, baseURL string, apiKeys map[string]string, codexAccountID string) schemas.Account {
+	return &Account{requestTimeout: requestTimeout, streamIdleTimeout: streamIdleTimeout, maxRetries: maxRetries, baseURL: baseURL, apiKeys: apiKeys, codexAccountID: codexAccountID}
 }
 
 // GetConfiguredProviders returns providers that have credentials configured.
@@ -225,6 +226,12 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	// a header when it's absent, so these can't clobber Authorization etc.
 	headers := map[string]string{
 		"User-Agent": "asimi-cli/" + utils.AsimiVersion,
+		"originator": "asimi",
+	}
+	// Codex OAuth: set the chatgpt-account-id header so the backend routes
+	// requests to the correct organization.
+	if provider == schemas.OpenAI && a.codexAccountID != "" {
+		headers["chatgpt-account-id"] = a.codexAccountID
 	}
 	// OpenRouter app attribution: HTTP-Referer + X-Title surface asimi on
 	// openrouter.ai/rankings and in users' dashboards.

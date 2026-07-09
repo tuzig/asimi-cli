@@ -198,12 +198,13 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 		username = u.Username
 	}
 	if err := rpc.NewShogunateClient(conn).SetContext(ctx, types.SetContextParams{
-		Project:      repoInfo.Slug,
-		Username:     username,
-		ProjectRoot:  repoInfo.ProjectRoot,
-		WorktreePath: repoInfo.WorktreePath,
-		Branch:       repoInfo.Branch,
-		APIKeys:      collectAPIKeys(),
+		Project:        repoInfo.Slug,
+		Username:       username,
+		ProjectRoot:    repoInfo.ProjectRoot,
+		WorktreePath:   repoInfo.WorktreePath,
+		Branch:         repoInfo.Branch,
+		APIKeys:        collectAPIKeys(),
+		CodexAccountID: getCodexAccountID(),
 	}); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("installDaemonAutostart: handshake failed: %w", err)

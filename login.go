@@ -76,7 +76,7 @@ const (
 	codexClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
 	codexAuthURL      = "https://auth.openai.com/oauth/authorize"
 	codexRedirectURI  = "http://localhost:1455/auth/callback"
-	codexScope        = "openid profile email offline_access"
+	codexScope        = "openid profile email offline_access model.request"
 	codexCallbackPort = 1455
 )
 
@@ -139,6 +139,9 @@ func (m *TUIModel) performCodexLogin() tea.Cmd {
 		q.Set("state", state)
 		q.Set("code_challenge", codeChallenge)
 		q.Set("code_challenge_method", "S256")
+		q.Set("id_token_add_organizations", "true")
+		q.Set("codex_cli_simplified_flow", "true")
+		q.Set("originator", "asimi")
 		u.RawQuery = q.Encode()
 
 		// Start loopback server on port 1455
@@ -250,15 +253,16 @@ func (m *TUIModel) performCodexLogin() tea.Cmd {
 			}
 		} else {
 			// Update config file with provider and model (keyring has the key)
-			if err := UpdateUserLLMAuth("openai", "", "codex-mini-latest"); err != nil {
+			if err := UpdateUserLLMAuth("openai", "", "gpt-5.5"); err != nil {
 				slog.Warn("Failed to update config file", "error", err)
 			}
 		}
 
 		// Update in-memory config
 		m.config.LLM.Provider = "openai"
-		m.config.LLM.Model = "codex-mini-latest"
+		m.config.LLM.Model = "gpt-5.5"
 		m.config.LLM.APIKey = tok.AccessToken
+		m.config.LLM.BaseURL = "https://chatgpt.com/backend-api"
 
 		// Initialize LLM with new credentials
 		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
