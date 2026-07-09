@@ -3515,7 +3515,7 @@ func TestRenderMainContent_WelcomeScreenShown(t *testing.T) {
 	require.True(t, model.tabs.IsWelcome(), "new model should start in welcome state")
 
 	content := model.renderMainContent(0)
-	assert.Contains(t, content, "Asimi - An imperial court for project rulers")
+	assert.Contains(t, content, "imperial court for project rulers")
 }
 
 // TestRenderMainContent_ChatViewWhenSessionActive verifies that the chat view

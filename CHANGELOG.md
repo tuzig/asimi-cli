@@ -5,6 +5,31 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-07-09
+
+### Added
+
+- **Context-aware onboarding** — onboarding flow now detects what's actually missing and provides targeted guidance (e617)
+
+### Changed
+
+- **`:edict` command** — replaced `:seal` with a unified `:edict` command for edict management: read dashboard, enact ritual, seal, resume session, cancel edict with action menu (e595)
+- **Improved help text **
+
+### Fixed
+
+- **Edit action in edict menu** — fixed the "Edit" action in `:edict <id>` (e613)
+- **Manifest-less ritual path** — edict-level verdicts and precedents are now visible to then-checks (e611)
+- **Default menu options** — removed hardcoded "Edit" and "Chat" options, moved them into per-question Options slice (e609)
+- **Superseded manifest checks** — `check_verdicts_passed` and related queries now respect superseded manifests, preventing false retries (e603)
+- **PodmanRunner connection context** — fixed sandbox disconnection caused by context derived from streaming context (e601)
+- **Lost sandbox handling** — improved recovery when sandboxes are lost (e589)
+- **Empty forging handling** — fixed handling of empty forge results
+
+### Known Bugs
+
+- Codex OAuth login fails
+
 ## [0.7.0] - 2026-06-30
 
 ### Added
