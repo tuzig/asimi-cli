@@ -1,6 +1,6 @@
 # Asimi Help Index
 
-Welcome to Asimi - A safe, opinionated coding agent with vi-like interface.
+Welcome to Asimi - A sandboxed imperial court for project rules 
 
 ## Getting Started
 

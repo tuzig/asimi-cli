@@ -69,7 +69,7 @@ var tabGreetings = map[string]string{
 		"\t- **Intent**: the ruler's edicts, TODO comments and docs\n" +
 		"\t- **Earth**: the repo\n" +
 		"\t- **Heaven**: Logs, CI, test results and tests\n\n" +
-		"The Chancellor is here to manage the project, as in releasing versions",
+		"Rituals are running in the this tab",
 	"sage": `Greetings, Ruler and welcome to your hunting grounds
 With the sage you can hunt bugs' root cause,
 brew new features and formulate edicts.`,
@@ -153,7 +153,7 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 		Align(lipgloss.Center).
 		Width(width)
 
-	title := titleStyle.Render("Asimi - An imperial court for project rulers")
+	title := titleStyle.Render("Asimi - A sandboxed imperial court for project rulers")
 
 	subtitleStyle := lipgloss.NewStyle().
 		Foreground(globalTheme.TextColor).

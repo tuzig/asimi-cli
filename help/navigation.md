@@ -34,6 +34,15 @@ Navigation commands work in NORMAL mode.
   k        - Previous prompt (in NORMAL mode, when on first line)
   j        - Next prompt (in NORMAL mode, when on last line)
 
+## Tab Navigation
+
+  Tab          - Next tab
+  Shift+Tab    - Previous tab
+  gt           - Next tab (NORMAL mode)
+  gT           - Previous tab (NORMAL mode)
+  :tabnew      - Open a new tab
+  :tabclose    - Close current tab
+
 ## Chat Scrolling (SCROLL Mode)
 
   Ctrl+b       - Enter SCROLL mode (from INSERT/NORMAL)

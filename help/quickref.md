@@ -17,6 +17,15 @@
   gg G     - Document start/end
   ↑ ↓      - History navigation
 
+## Tabs
+
+  Tab          - Next tab
+  Shift+Tab    - Previous tab
+  gt           - Next tab (NORMAL mode)
+  gT           - Previous tab (NORMAL mode)
+  :tabnew      - Open a new tab
+  :tabclose    - Close current tab
+
 ## Editing (NORMAL mode)
 
   x        - Delete character
