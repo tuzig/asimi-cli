@@ -18,9 +18,9 @@ import (
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/bindings/containers"
-	"github.com/containers/podman/v5/pkg/specgen"
+	"go.podman.io/podman/v6/pkg/bindings"
+	"go.podman.io/podman/v6/pkg/bindings/containers"
+	"go.podman.io/podman/v6/pkg/specgen"
 )
 
 // PodmanRunner executes shell commands in a podman container

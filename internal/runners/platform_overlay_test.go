@@ -11,7 +11,7 @@ import (
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/containers/podman/v5/pkg/specgen"
+	"go.podman.io/podman/v6/pkg/specgen"
 )
 
 func TestMd5Hash(t *testing.T) {

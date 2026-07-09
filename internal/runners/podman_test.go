@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/containers/podman/v5/pkg/bindings"
+	"go.podman.io/podman/v6/pkg/bindings"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
