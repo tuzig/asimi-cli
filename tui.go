@@ -612,6 +612,33 @@ func (m *TUIModel) shutdown() {
 // onboardingPromptMsg triggers the YES/NO model selection prompt on the home view.
 type onboardingPromptMsg struct{}
 
+// onboardingState determines what onboarding step is needed based on config.
+const (
+	onboardingNeedsLogin = "needs_login"
+	onboardingNeedsModel = "needs_model"
+	onboardingConfigured = "configured"
+)
+
+func onboardingState(config *Config) string {
+	if config == nil || config.LLM.Provider == "" {
+		return onboardingNeedsLogin
+	}
+	if config.LLM.Model == "" {
+		return onboardingNeedsModel
+	}
+	return onboardingConfigured
+}
+
+// onboardingPromptText returns the appropriate prompt message for the current onboarding state.
+func onboardingPromptText(state string) string {
+	switch state {
+	case onboardingNeedsLogin:
+		return "No provider is configured. Would you like to log in now?"
+	default:
+		return "No model is configured. Would you like to select one now?"
+	}
+}
+
 // Init implements bubbletea.Model. It asks the shogunate to build its
 // Bifrost client (daemon-side in daemon mode, inline otherwise).
 func (m TUIModel) Init() tea.Cmd {
@@ -629,7 +656,7 @@ func (m TUIModel) Init() tea.Cmd {
 	}
 
 	// On first run or unconfigured, show the onboarding prompt shortly after startup
-	if m.configCreated || (m.config != nil && m.config.LLM.Provider == "") {
+	if m.configCreated || onboardingState(m.config) != onboardingConfigured {
 		return tea.Batch(llmInit, tick, func() tea.Msg { return onboardingPromptMsg{} }, watchConnDrop(m.shogunate))
 	}
 	return tea.Batch(llmInit, tick, watchConnDrop(m.shogunate))
@@ -1580,12 +1607,12 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Guard: block session start if no model is configured — show YES/NO
+	// Guard: block session start if not fully configured — show YES/NO
 	// prompt (same as startup onboarding) instead of a toast
-	if m.config == nil || m.config.LLM.Provider == "" || m.config.LLM.Model == "" {
+	state := onboardingState(m.config)
+	if state != onboardingConfigured {
 		m.pendingOnboarding = true
-		return m, m.commandLine.EnterYesNoMode(
-			"No model is configured. Would you like to select one now?")
+		return m, m.commandLine.EnterYesNoMode(onboardingPromptText(state))
 	}
 
 	// Handle learning mode - append to agents file
@@ -1807,12 +1834,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		content := msg.Prompt
 
-		// Guard: block session start if no model is configured — show YES/NO
+		// Guard: block session start if not fully configured — show YES/NO
 		// prompt (same as startup onboarding) instead of a toast
-		if m.config == nil || m.config.LLM.Provider == "" || m.config.LLM.Model == "" {
+		obState := onboardingState(m.config)
+		if obState != onboardingConfigured {
 			m.pendingOnboarding = true
-			return m, m.commandLine.EnterYesNoMode(
-				"No model is configured. Would you like to select one now?")
+			return m, m.commandLine.EnterYesNoMode(onboardingPromptText(obState))
 		}
 
 		// This logic is adapted from handleEnterKey
@@ -2467,24 +2494,31 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case onboardingPromptMsg:
-		// Show YES/NO prompt on home view when unconfigured (first run or empty provider)
-		if m.onboardingDeclined || (m.config != nil && m.config.LLM.Provider != "") {
+		// Show YES/NO prompt on home view when unconfigured (first run or missing provider/model)
+		state := onboardingState(m.config)
+		if m.onboardingDeclined || state == onboardingConfigured {
 			return m, nil
 		}
 		m.pendingOnboarding = true
-		return m, m.commandLine.EnterYesNoMode(
-			"No model is configured. Would you like to select one now?")
+		return m, m.commandLine.EnterYesNoMode(onboardingPromptText(state))
 
 	case yesNoResponseMsg:
 		// Check if this is a response to the onboarding model selection prompt
 		if m.pendingOnboarding {
 			m.pendingOnboarding = false
 			if msg.answer {
+				if onboardingState(m.config) == onboardingNeedsLogin {
+					return m, handleLoginCommand(&m, nil)
+				}
 				return m, handleModelsCommand(&m, nil)
 			}
 			// User declined — quit with a clear message
 			m.onboardingDeclined = true
-			fmt.Fprintln(os.Stderr, "Asimi needs a model and provider to function. Run `asimi` again and select a model, or edit ~/.config/asimi/asimi.conf manually.")
+			if onboardingState(m.config) == onboardingNeedsLogin {
+				fmt.Fprintln(os.Stderr, "Asimi needs a provider to function. Run `asimi` again and use :login, or edit ~/.config/asimi/asimi.conf manually.")
+			} else {
+				fmt.Fprintln(os.Stderr, "Asimi needs a model to function. Run `asimi` again and use :models, or edit ~/.config/asimi/asimi.conf manually.")
+			}
 			return m, tea.Quit
 		}
 

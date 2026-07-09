@@ -3744,6 +3744,64 @@ func TestOnboardingPrompt_ShownWhenConfigCreated(t *testing.T) {
 	assert.Equal(t, "yesno", msg.(ChangeModeMsg).NewMode)
 }
 
+// TestInit_FiresOnboardingWhenModelEmpty verifies that Init fires
+// onboardingPromptMsg when provider is set but model is empty.
+func TestInit_FiresOnboardingWhenModelEmpty(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.Model = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.configCreated = false
+
+	cmd := model.Init()
+	require.NotNil(t, cmd)
+
+	// Init returns a tea.Batch — collect all messages from the batch
+	msgs := extractBatchMsgs(t, cmd)
+	found := false
+	for _, msg := range msgs {
+		if _, ok := msg.(onboardingPromptMsg); ok {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Init should fire onboardingPromptMsg when model is empty")
+}
+
+// TestInit_DoesNotFireOnboardingWhenConfigured verifies that Init does NOT fire
+// onboardingPromptMsg when both provider and model are set.
+func TestInit_DoesNotFireOnboardingWhenConfigured(t *testing.T) {
+	cfg := mockConfig()
+	// mockConfig has Provider="fake", Model="mock-model"
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.configCreated = false
+
+	cmd := model.Init()
+	require.NotNil(t, cmd)
+
+	msgs := extractBatchMsgs(t, cmd)
+	for _, msg := range msgs {
+		_, ok := msg.(onboardingPromptMsg)
+		assert.False(t, ok, "Init should NOT fire onboardingPromptMsg when fully configured")
+	}
+}
+
+func extractBatchMsgs(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var msgs []tea.Msg
+		for _, c := range batch {
+			msgs = append(msgs, c())
+		}
+		return msgs
+	}
+	return []tea.Msg{msg}
+}
+
 func TestCollectAPIKeys_FromEnvVars(t *testing.T) {
 	// Save and restore env vars
 	saveAndRestore := func(key, val string) func() {
@@ -4026,6 +4084,26 @@ func TestOnboardingPrompt_ShownWhenProviderEmpty(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, updated.pendingOnboarding)
 	require.NotNil(t, cmd)
+	assert.Contains(t, updated.commandLine.yesNoQuestion, "No provider is configured")
+	assert.Contains(t, updated.commandLine.yesNoQuestion, "log in now")
+}
+
+// TestOnboardingPrompt_ShownWhenModelEmpty verifies that onboardingPromptMsg
+// triggers when provider is set but model is empty, and shows the model prompt text.
+func TestOnboardingPrompt_ShownWhenModelEmpty(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.Model = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.configCreated = false
+
+	newModel, cmd := model.handleCustomMessages(onboardingPromptMsg{})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.True(t, updated.pendingOnboarding)
+	require.NotNil(t, cmd)
+	assert.Contains(t, updated.commandLine.yesNoQuestion, "No model is configured")
+	assert.Contains(t, updated.commandLine.yesNoQuestion, "select one now")
 }
 
 // TestOnboardingPrompt_NotShownWhenConfigured verifies the prompt is skipped
@@ -4057,11 +4135,29 @@ func TestOnboardingPrompt_NotShownWhenDeclined(t *testing.T) {
 	assert.Nil(t, cmd)
 }
 
-// TestOnboardingYesNo_YesTriggersModelsCommand verifies that answering YES
-// to the onboarding prompt triggers model selection.
-func TestOnboardingYesNo_YesTriggersModelsCommand(t *testing.T) {
+// TestOnboardingYesNo_YesTriggersLoginWhenNoProvider verifies that answering YES
+// to the onboarding prompt triggers the login view when no provider is set.
+func TestOnboardingYesNo_YesTriggersLoginWhenNoProvider(t *testing.T) {
 	cfg := mockConfig()
 	cfg.LLM.Provider = ""
+	cfg.LLM.Model = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.pendingOnboarding = true
+
+	newModel, _ := model.handleCustomMessages(yesNoResponseMsg{answer: true})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.False(t, updated.pendingOnboarding, "pendingOnboarding should be cleared after YES")
+	// Login view should be active (handleLoginCommand shows unified models list)
+	assert.Equal(t, ViewModels, updated.tabs.Content().GetActiveView())
+}
+
+// TestOnboardingYesNo_YesTriggersModelsWhenProviderSet verifies that answering YES
+// to the onboarding prompt triggers the models view when a provider is set but no model.
+func TestOnboardingYesNo_YesTriggersModelsWhenProviderSet(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.Model = ""
 	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
 	model.pendingOnboarding = true
 
@@ -4074,10 +4170,11 @@ func TestOnboardingYesNo_YesTriggersModelsCommand(t *testing.T) {
 }
 
 // TestOnboardingYesNo_NoQuits verifies that answering NO to the onboarding
-// prompt quits the program.
-func TestOnboardingYesNo_NoQuits(t *testing.T) {
+// prompt quits the program with a provider-specific message when no provider.
+func TestOnboardingYesNo_NoQuits_NoProvider(t *testing.T) {
 	cfg := mockConfig()
 	cfg.LLM.Provider = ""
+	cfg.LLM.Model = ""
 	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
 	model.pendingOnboarding = true
 
@@ -4088,6 +4185,27 @@ func TestOnboardingYesNo_NoQuits(t *testing.T) {
 	assert.True(t, updated.onboardingDeclined, "onboardingDeclined should be set after NO")
 
 	// The command should be a tea.Quit
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, isQuit := msg.(tea.QuitMsg)
+	assert.True(t, isQuit, "Expected tea.QuitMsg when user declines onboarding")
+}
+
+// TestOnboardingYesNo_NoQuits_NoModel verifies that answering NO when provider
+// is set but model is missing references :models in the decline message.
+func TestOnboardingYesNo_NoQuits_NoModel(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.Model = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.pendingOnboarding = true
+
+	newModel, cmd := model.handleCustomMessages(yesNoResponseMsg{answer: false})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.False(t, updated.pendingOnboarding, "pendingOnboarding should be cleared after NO")
+	assert.True(t, updated.onboardingDeclined, "onboardingDeclined should be set after NO")
+
 	require.NotNil(t, cmd)
 	msg := cmd()
 	_, isQuit := msg.(tea.QuitMsg)
