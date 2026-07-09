@@ -1115,7 +1115,7 @@ func handleEdictCancel(model *TUIModel, edictID uint) tea.Cmd {
 		}
 	}
 	model.pendingEdictCancel = &pendingEdictCancel{edictID: edictID}
-	return model.commandLine.EnterYesNoMode(fmt.Sprintf("Cancel edict %d? This will stop any running ritual.", edictID))
+	return model.commandLine.EnterYesNoMode(fmt.Sprintf("Cancel edict %d?", edictID))
 }
 
 // cancelEdictCmd cancels an edict and stops any running ritual
@@ -1124,7 +1124,7 @@ func cancelEdictCmd(model *TUIModel, edictID uint) tea.Cmd {
 		if err := model.shogunate.CancelEdict(edictID); err != nil {
 			return showSystemMsg(fmt.Sprintf("Failed to cancel edict %d: %v", edictID, err))
 		}
-		return showSystemMsg(fmt.Sprintf("Edict %d cancelled. Any running ritual has been stopped.", edictID))
+		return showSystemMsg(fmt.Sprintf("Edict %d cancelled", edictID))
 	}
 }
 

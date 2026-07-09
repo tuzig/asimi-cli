@@ -69,10 +69,7 @@ var tabGreetings = map[string]string{
 		"\t- **Intent**: the ruler's edicts, TODO comments and docs\n" +
 		"\t- **Earth**: the repo\n" +
 		"\t- **Heaven**: Logs, CI, test results and tests\n\n" +
-		"The UI follows vi's and support INSERT, NORMAL, SCROLL modes" +
-		"For system commands use the " + bt + ":" + bt + " prefix, as in " + bt + ":help" + bt + "\n" +
-		"For shell commands in the sandbox use " + bt + ":!" + bt + " prefix, as in " + bt + ":!uname" + bt +
-		"Use shift-TAB & TAB to go back a minister or forth.",
+		"The Chancellor is here to manage the project, as in releasing versions",
 	"sage": `Greetings, Ruler and welcome to your hunting grounds
 With the sage you can hunt bugs' root cause,
 brew new features and formulate edicts.`,
@@ -174,15 +171,12 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 
 	commands := []string{
 		"▶ Mode base UI, starting in INSERT",
-		"▶ Press `CTRL-B` for SCROLL mode",
-		"▶ Press `CTRL-C` to stop the model, twice to exit",
-		"▶ Press `ESC` to switch modes",
-		"▶ Press `TAB` to switch ministers",
-		"▶ Key `:` for COMMAND mode",
-		"▶ Type `!` in COMMAND for the sandbox's shell",
-		"▶ Select your model and provider — type :models",
-		"▶ Generate project infrastructure files — type :init",
-		"     e.g, ⌨️ ESC:!uname -aENTER⌨️",
+		"▶ `ESC` to switch modes",
+		"▶ `CTRL-B` for SCROLL mode",
+		"▶ `CTRL-C` to stop the model, twice to exit",
+		"▶ `:help` for COMMAND mode",
+		"▶ `:!uname` to run uname in the sandbox's shell",
+		"⇒ `TAB` to switch ministers",
 	}
 
 	commandStyle := lipgloss.NewStyle().

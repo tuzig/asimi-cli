@@ -115,22 +115,6 @@ func TestTabManager_RenderWelcome(t *testing.T) {
 	assert.Contains(t, view, "INSERT")
 }
 
-func TestTabManager_RenderWelcome_ModelsHint(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
-
-	view := tm.renderWelcome(80, 24)
-	assert.Contains(t, view, "Select your model and provider")
-	assert.Contains(t, view, ":models")
-}
-
-func TestTabManager_RenderWelcome_InitHint(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
-
-	view := tm.renderWelcome(80, 24)
-	assert.Contains(t, view, "Generate project infrastructure files")
-	assert.Contains(t, view, ":init")
-}
-
 func TestTabManager_RenderWelcome_UpdateAvailable(t *testing.T) {
 	tm := NewTabManager(80, 24, true, func() string { return "insert" })
 	tm.getUpdateAvail = func() bool { return true }
