@@ -474,7 +474,6 @@ message HealthResponse {
 | Forge | No | create_manifest, update_manifest, commit_manifest + file tools + shell |
 | Judge | No | insert_verdict, update_manifest_status + shell + files |
 | Censor | No | record_precedent, query_precedents + read-only files |
-| Marshal | No | log_incident, approve_hotfix + read-only shell |
 | Confucius | **No** — can suggest via zhengming | request_zhengming + read-only files + asimisql (SELECT only) |
 
 Only `SubmitEdict` (Ruler → API) creates edicts. This is enforced by not giving any minister a `create_edict` tool.

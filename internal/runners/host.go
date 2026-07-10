@@ -99,6 +99,11 @@ func (r *HostRunner) RunnerType() string {
 func (r *HostRunner) AllowFallback(allow bool) {
 }
 
+// HealthCheck returns nil — the host is always healthy.
+func (r *HostRunner) HealthCheck(ctx context.Context) error {
+	return nil
+}
+
 // requestApproval sends an approval request via the message channel and waits for response
 func (r *HostRunner) requestApproval(ctx context.Context, command string) (bool, error) {
 	if r.msgChan == nil {

@@ -2507,7 +2507,7 @@ func setupTestGormDB(t *testing.T) *gorm.DB {
 		&storage.ForgeManifest{},
 		&storage.JudgeVerdict{},
 		&storage.CensorPrecedent{},
-		&storage.MarshalIncident{},
+		&storage.Incident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
 		&storage.Seal{},

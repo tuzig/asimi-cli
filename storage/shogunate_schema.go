@@ -358,22 +358,25 @@ func (CensorPrecedent) TableName() string {
 	return "censor_precedents"
 }
 
-// MarshalIncident represents a production incident tracked by the Marshal
-type MarshalIncident struct {
-	IncidentID     string    `gorm:"primaryKey;column:incident_id"`
-	CommitHash     string    `gorm:"column:commit_hash;index"`
-	EdictID        uint      `gorm:"column:edict_id;index"`
-	Username       string    `gorm:"column:username"`
-	Project        string    `gorm:"column:project"`
-	HotfixApproved bool      `gorm:"column:hotfix_approved;default:false"`
-	RCASummary     string    `gorm:"column:rca_summary"`
-	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+// Incident represents a production incident tracked independently of any minister
+type Incident struct {
+	IncidentID  string    `gorm:"primaryKey;column:incident_id"`
+	Description string    `gorm:"column:description"`
+	Severity    string    `gorm:"column:severity"`
+	Status      string    `gorm:"column:status;default:open"`
+	RootCause   string    `gorm:"column:root_cause"`
+	Resolution  string    `gorm:"column:resolution"`
+	EdictID     uint      `gorm:"column:edict_id;index"`
+	CommitHash  string    `gorm:"column:commit_hash;index"`
+	Username    string    `gorm:"column:username"`
+	Project     string    `gorm:"column:project"`
+	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt   time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
-// TableName returns the table name for MarshalIncident
-func (MarshalIncident) TableName() string {
-	return "marshal_incidents"
+// TableName returns the table name for Incident
+func (Incident) TableName() string {
+	return "incidents"
 }
 
 // RulerCouncil represents a high-stakes decision requiring human approval

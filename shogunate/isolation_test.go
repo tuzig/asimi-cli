@@ -56,9 +56,9 @@ func stageManifestDB(t *testing.T, db *gorm.DB, key storage.EdictKey, lingID, fi
 	return manifestID
 }
 
-// TestIsolation_MarshalIncident verifies that MarshalIncident queries with
+// TestIsolation_Incident verifies that Incident queries with
 // wrong username/project return no results.
-func TestIsolation_MarshalIncident(t *testing.T) {
+func TestIsolation_Incident(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	// Create an incident under project A
@@ -67,40 +67,42 @@ func TestIsolation_MarshalIncident(t *testing.T) {
 
 	keyA := storage.EdictKey{ID: edictA.ID, Username: isolationUserA, Project: isolationProjA}
 	incidentID := "inc-001"
-	incident := storage.MarshalIncident{
-		IncidentID: incidentID,
-		EdictID:    keyA.ID,
-		Username:   keyA.Username,
-		Project:    keyA.Project,
-		CommitHash: "deadbeef",
-		RCASummary: "segfault in main",
+	incident := storage.Incident{
+		IncidentID:  incidentID,
+		Description: "segfault in main",
+		Severity:    "critical",
+		Status:      "open",
+		EdictID:     keyA.ID,
+		Username:    keyA.Username,
+		Project:     keyA.Project,
+		CommitHash:  "deadbeef",
 	}
 	require.NoError(t, db.Create(&incident).Error)
 
 	// Verify project A can see its own incident
-	var foundA storage.MarshalIncident
+	var foundA storage.Incident
 	err = db.Where("incident_id = ? AND username = ? AND project = ?", incidentID, isolationUserA, isolationProjA).First(&foundA).Error
 	require.NoError(t, err)
 	assert.NotNil(t, foundA)
 
 	// Query as project B — should get "not found"
-	var foundB storage.MarshalIncident
+	var foundB storage.Incident
 	err = db.Where("incident_id = ? AND username = ? AND project = ?", incidentID, isolationUserB, isolationProjB).First(&foundB).Error
 	assert.Error(t, err, "cross-project GetIncident should return error")
 
-	// GetPendingIncidents as project B should return zero
-	var pending []storage.MarshalIncident
-	err = db.Where("hotfix_approved = ? AND username = ? AND project = ?", false, isolationUserB, isolationProjB).
+	// Open incidents as project B should return zero
+	var open []storage.Incident
+	err = db.Where("status = ? AND username = ? AND project = ?", "open", isolationUserB, isolationProjB).
 		Order("created_at ASC").
-		Find(&pending).Error
+		Find(&open).Error
 	require.NoError(t, err)
-	assert.Empty(t, pending, "cross-project GetPendingIncidents should return empty")
+	assert.Empty(t, open, "cross-project open incidents should return empty")
 
-	// MarkHotfixApproved as project B should affect zero rows
-	result := db.Model(&storage.MarshalIncident{}).
+	// Resolve as project B should affect zero rows
+	result := db.Model(&storage.Incident{}).
 		Where("incident_id = ? AND username = ? AND project = ?", incidentID, isolationUserB, isolationProjB).
-		Update("hotfix_approved", true)
-	assert.Equal(t, int64(0), result.RowsAffected, "cross-project MarkHotfixApproved should affect zero rows")
+		Update("status", "resolved")
+	assert.Equal(t, int64(0), result.RowsAffected, "cross-project resolve should affect zero rows")
 }
 
 // TestIsolation_RejectManifest verifies that rejecting a manifest with wrong

@@ -91,8 +91,8 @@ to handle complex software engineering tasks from inception to deployment.
                               │ Task / Result                   │
           ┌────────────┬──────┼───────┬────────────┐            │
           ▼            ▼      ▼       ▼            ▼            │
-     Strategist     Forge   Judge   Censor     Marshal          │
-      (兵部)        (工部)  (刑部)  (都察院)    (锦衣卫)          │
+     Strategist     Forge   Judge   Censor                    │
+      (兵部)        (工部)  (刑部)  (都察院)                    │
                                                                 │
                         ┌─────────────────┐                     │
                         │  Ritual Runner  │◄────────────────────┘
@@ -143,7 +143,6 @@ Each minister is a specialized AI agent with a specific role:
 | **Forge** | Implements code changes according to plans | `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell_command` | `create_manifest`, `update_manifest`, `commit_manifest`, `request_zhengming` |
 | **Judge** | Writes tests and validates changes through test coverage | `read_file`, `write_file`, `edit_file`, `glob`, `run_shell_command` | `record_verdict`, `reject_manifest`, `request_zhengming` |
 | **Censor** | Reviews code for ethics, quality, and standards compliance | `read_file`, `glob`, `grep` | `record_precedent`, `reject_manifest`, `request_zhengming` |
-| **Marshal** | Handles production incidents and performs root cause analysis | `read_file`, `glob`, `grep`, `run_shell_command` | `create_incident`, `resolve_incident`, `request_zhengming` |
 | **Sage** | Sees all state read-only, helps distill intent into edicts | `read_file`, `glob`, `grep` (all tables) | `create_edict`, `request_zhengming` |
 
 **Core Tools** are the basic file system and shell tools needed for each minister's work. **Specialized Tools** are unique to each minister's role in the Shogunate.
@@ -589,12 +588,6 @@ When a step exhausts all `max_retries` attempts, the Shogunate invokes the `repo
 - `reject_manifest(manifest_id, reason)` — Mark a manifest as rejected with reasoning
 - `request_zhengming(edict_id, question, priority?)` — Request clarification from the Ruler
 
-### Marshal Tools
-
-- `create_incident(description, severity, edict_id?)` — Create a new incident, optionally linked to an edict
-- `resolve_incident(incident_id, resolution, root_cause?)` — Mark incident resolved with details
-- `request_zhengming(edict_id, question, priority?)` — Request clarification from the Ruler
-
 ---
 
 ## Data Model
@@ -622,15 +615,6 @@ Lings track their progress through the execution plan:
 The Judge creates **Verdicts** after running tests:
 - `passed` — Tests succeeded
 - `failed` — Tests failed
-
-### Incident Severity
-
-The Marshal tracks incidents using standard logging severity levels:
-
-- `debug` — Tracing information, no impact
-- `info` — Normal operational events
-- `warn` — Warning conditions, potential issues
-- `error` — Error conditions, requires attention
 
 ### Censor Precedents
 
@@ -912,12 +896,9 @@ The Shogunate maintains a central event registry. Ministers subscribe to event t
 | `manifest_rejected` | Judge, Censor | Forge |
 | `verdict_delivered` | Judge | Chancellor, Censor |
 | `precedent_recorded` | Censor | Chancellor |
-| `incident_created` | logger, Marshal | Chancellor |
 | `ritual_step_started` | Ritual Runner | — |
 | `ritual_step_completed` | Ritual Runner | — |
 | `ritual_step_failed` | Ritual Runner | — |
-
-A warning or error level log message is an incident. The logger emits `incident_created` directly — the Shogunate handles it from there.
 
 ### Tool-Level Isolation
 
@@ -930,14 +911,13 @@ Ministers are isolated by **tool catalogs** — each minister receives a differe
 | **Forge** | read-write (read, write, replace, list, read_many, grep) | yes | forge_manifests | create_manifest, update_manifest, commit_manifest, request_zhengming |
 | **Judge** | edit (read, write, replace, list, read_many, grep) | yes | verdicts, forge_manifests | record_verdict, reject_manifest, request_zhengming |
 | **Censor** | read-only | no | censor_precedents | record_precedent, reject_manifest, request_zhengming |
-| **Marshal** | read-only | yes | incidents | create_incident, resolve_incident, request_zhengming |
 | **Sage** | read-only (all tables) | no | edicts, ling, forge_manifests, verdicts, censor_precedents | create_edict, request_zhengming |
 
 Key constraints:
 - **Strategist cannot write code** — it only plans (ling) and reads.
 - **Censor cannot modify files** — it reviews and records precedents.
 - **Chancellor cannot write files** — it orchestrates, never implements.
-- **Only Forge and Judge have shell access** alongside the Marshal (for incident investigation).
+- **Only Forge and Judge have shell access**.
 - **Sage sees all but changes nothing** — full read-only across every table; can only create edicts.
 
 The `Session` also enforces **write protection** — a file must be read via `read_file` before it can be written via `write_file`. This is tracked per-session in `filesRead`.
@@ -947,7 +927,7 @@ The `Session` also enforces **write protection** — a file must be read via `re
 | Concern | Prevention Mechanism |
 |---------|---------------------|
 | **Minister writes code it shouldn't** | Tool catalogs: only Forge and Judge get write/edit tools |
-| **Minister runs shell commands it shouldn't** | Shell tool only granted to Forge, Judge, Marshal |
+| **Minister runs shell commands it shouldn't** | Shell tool only granted to Forge, Judge |
 | **Intent drift** | Chancellor classifies edicts; Strategist plans before Forge implements |
 | **Ambiguity propagation** | Zhengming: any minister can halt and request clarification |
 | **Runaway minister** | 5-minute timeout on task dispatch; context cancellation propagates |

@@ -9,3 +9,11 @@ Some ritual are not ritual-bound. e.g, `review-borderland` for them use edict 1.
 an exception is trivial ruler commands e.g, "Move:w
 the borderlands to the middle kingdom".
 You are async in nature and trust ritual guard to trigger rituals & edicts events.
+
+## Critical Rules
+- Size the edict (S, M, L, XL) and invoke the appropriate ritual
+- Use swift-strike for all code changes
+- castle-siege is reserved for explicit ruler invocation only — do not auto-select it
+- Use invoke_minister for ad-hoc tasks not covered by rituals
+- When ambiguity threatens progress, invoke Zhengming immediately
+- Never guess at requirements—always clarify

@@ -170,7 +170,6 @@ To keep the number of zhengmings low, we make it the goal of your Chancellor to 
 | **Strategist (兵部)** | Plans complex work | Indirectly — creates battle plans for M/L edicts |
 | **Forge (工部)** | Writes code | Indirectly — you see their manifests in work logs |
 | **Judge (刑部)** | Runs tests, validates | Indirectly — you see verdicts (pass/fail) |
-| **Marshal (锦衣卫)** | Handles incidents | Rarely — for production issues |
 
 **Note:** The Sage serves as both advisor and code reviewer — reviewing code quality and recording precedents. This consolidates the review function.
 

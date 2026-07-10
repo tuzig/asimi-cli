@@ -72,7 +72,7 @@ func setupMinisterTestDBWithPath(t *testing.T) (*gorm.DB, string) {
 		&storage.Seal{},
 		&storage.JudgeVerdict{},
 		&storage.CensorPrecedent{},
-		&storage.MarshalIncident{},
+		&storage.Incident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
 	)
@@ -174,158 +174,6 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	assert.Contains(t, result, "sealed=true")
 }
 
-func TestMarshal_IncidentFlow(t *testing.T) {
-	db := setupMinisterTestDB(t)
-	ctx := context.Background()
-
-	// Setup: create edict and manifest
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	edict, err := CreateEdictForTest(db, "Production feature")
-	assert.NoError(t, err)
-	assert.NotNil(t, edict)
-
-	manifestID := stageManifestForTest(t, db, edict.Key(), "", "prod.go", "ProdFunc", "hash3")
-	_ = manifestID
-	// Set commit_hash directly for marshal incident lookup
-	db.Model(&storage.ForgeManifest{}).Where("edict_id = ?", edict.ID).
-		Update("commit_hash", "prodcommit789")
-
-	// Create marshal
-	marshal := NewMarshal(base, nil)
-
-	// Report incident
-	err = marshal.OnIncident(ctx, "sentry-456", "prodcommit789")
-	if err != nil {
-		t.Fatalf("Failed to handle incident: %v", err)
-	}
-
-	// Check incident was logged
-	var incident storage.MarshalIncident
-	err = db.Where("incident_id = ? AND username = ? AND project = ?", "sentry-456", "testuser", "testproject").First(&incident).Error
-	if err != nil {
-		t.Fatalf("Failed to get incident: %v", err)
-	}
-}
-
-func TestChancellor_CancelEdict(t *testing.T) {
-	db := setupMinisterTestDB(t)
-
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	chancellor := NewChancellor(base)
-
-	edict, err := CreateEdictForTest(db, "Feature to cancel")
-	assert.NoError(t, err)
-	assert.NotNil(t, edict)
-	err = chancellor.CancelEdict(edict.Key(), "@user", "No longer needed")
-	if err != nil {
-		t.Fatalf("Failed to cancel: %v", err)
-	}
-
-	// Check cancelled
-	edict, _ = chancellor.MinisterBase.GetEdict(edict.Key())
-	sealService := storage.NewSealService(db)
-	status, err := sealService.GetEdictStatus(edict.Key())
-	if err != nil {
-		t.Fatalf("Failed to get edict status: %v", err)
-	}
-	if status != storage.EdictCancelled {
-		t.Errorf("Expected status cancelled, got %s", status)
-	}
-}
-
-// TestChancellor_PreprocessPrompt_EdictBound verifies that the preprocessor
-// appends the message to the edict intent and prepends the context prefix
-// when key.ID != 0.
-func TestChancellor_PreprocessPrompt_EdictBound(t *testing.T) {
-	db := setupMinisterTestDB(t)
-
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	chancellor := NewChancellor(base)
-
-	edict, err := CreateEdictForTest(db, "Original intent")
-	assert.NoError(t, err)
-
-	key := edict.Key()
-	message := "do something"
-	result := chancellor.preprocessPrompt(key, message)
-
-	assert.Contains(t, result, "[Context: edict ")
-	assert.Contains(t, result, fmt.Sprintf("%d", key.ID))
-	assert.Contains(t, result, message)
-
-	// Verify intent was appended
-	updated, err := chancellor.MinisterBase.GetEdict(key)
-	assert.NoError(t, err)
-	assert.Contains(t, updated.Intent, message)
-}
-
-// TestChancellor_PreprocessPrompt_RulingSession verifies that the preprocessor
-// returns the message unchanged when key.ID == 0 (ruling session).
-func TestChancellor_PreprocessPrompt_RulingSession(t *testing.T) {
-	db := setupMinisterTestDB(t)
-
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	chancellor := NewChancellor(base)
-
-	key := storage.EdictKey{ID: 0, Username: "testuser", Project: "testproject"}
-	message := "hello ruler"
-	result := chancellor.preprocessPrompt(key, message)
-
-	assert.Equal(t, message, result, "ruling session prompt should be unchanged")
-}
-
-// TestProcessPrompt_PreprocessorHook verifies that MinisterBase.ProcessPrompt
-// invokes the promptPreprocessor hook when set, so the transformed message is
-// what actually gets streamed to the LLM.
-func TestProcessPrompt_PreprocessorHook(t *testing.T) {
-	db := setupMinisterTestDB(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	mockLLM := mocks.NewLLMProvider()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	chancellor := NewChancellor(base)
-	chancellor.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
-
-	// Create an edict so preprocessPrompt has something to append to.
-	edict, err := CreateEdictForTest(db, "Test intent")
-	require.NoError(t, err)
-
-	var mu sync.Mutex
-	var startMsgs []StreamStartMsg
-	var doneMsgs []StreamDoneMsg
-
-	chancellor.SetNotify(func(msg any) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch m := msg.(type) {
-		case StreamStartMsg:
-			startMsgs = append(startMsgs, m)
-		case StreamDoneMsg:
-			doneMsgs = append(doneMsgs, m)
-		}
-	})
-
-	prompt := &Prompt{
-		EdictKey: edict.Key(),
-		Message:  "implement the feature",
-	}
-	chancellor.processPrompt(ctx, prompt)
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, startMsgs, 1, "should emit one StreamStartMsg")
-	assert.Equal(t, "chancellor", startMsgs[0].ChannelID)
-	assert.Equal(t, edict.ID, startMsgs[0].EdictID)
-	require.Len(t, doneMsgs, 1, "should emit one StreamDoneMsg")
-
-	// Verify the edict intent was appended (proves the preprocessor ran).
-	updated, err := chancellor.MinisterBase.GetEdict(edict.Key())
-	require.NoError(t, err)
-	assert.Contains(t, updated.Intent, "implement the feature")
-}
-
-// TestProcessPrompt_NoPreprocessor verifies that MinisterBase.ProcessPrompt
 // works correctly when no preprocessor is set (nil = pass through unchanged).
 func TestProcessPrompt_NoPreprocessor(t *testing.T) {
 	db := setupMinisterTestDB(t)
@@ -410,7 +258,6 @@ func TestHappyFlowE2E(t *testing.T) {
 			forge.ID():      forge,
 		},
 	}
-	chancellor.SetShogunate(shogunate)
 	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	// Create an edict for the test
@@ -478,7 +325,6 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 			chancellor.ID(): chancellor,
 		},
 	}
-	chancellor.SetShogunate(shogunate)
 	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
@@ -569,7 +415,6 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 		db:        db,
 		ministers: map[string]Minister{"failing": fake},
 	}
-	chancellor.SetShogunate(shogunate)
 	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	// Start the fake minister: reads task, sends error result
@@ -604,7 +449,6 @@ func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 		db:        db,
 		ministers: map[string]Minister{"blocked": fake},
 	}
-	chancellor.SetShogunate(shogunate)
 	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	// Cancel context immediately
@@ -634,7 +478,6 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 		db:        db,
 		ministers: map[string]Minister{"slow": fake},
 	}
-	chancellor.SetShogunate(shogunate)
 	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	// Drain the task channel so the send succeeds, but never reply
@@ -680,7 +523,6 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 		db:        db,
 		ministers: map[string]Minister{"notifier": fake},
 	}
-	chancellor.SetShogunate(shogunate)
 	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	go func() {
@@ -744,7 +586,6 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 		db:        db,
 		ministers: map[string]Minister{},
 	}
-	chancellor.SetShogunate(shogunate)
 	chancellor.SetMinisterLookup(shogunate.GetMinister)
 
 	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
@@ -882,7 +723,9 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	shogunate.ritualGuard = NewRitualGuard(RitualGuardOpts{Base: rgBase})
 	shogunate.GetRitualRegistry().Register(&RitualDef{Name: "swift-strike", Description: "The Swift Strike (S)"})
 	shogunate.GetRitualRegistry().Register(&RitualDef{Name: "castle-siege", Description: "The Castle Siege (L)"})
-	chancellor.SetShogunate(shogunate)
+	chancellor.SetRitualSummaries(func() string {
+		return shogunate.GetRitualRegistry().Summaries()
+	})
 
 	prompt := buildSystemPrompt(chancellor, nil, storage.EdictKey{})
 
@@ -912,100 +755,53 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	}
 }
 
-// TestChancellor_GetDBPath tests that getDBPath correctly extracts the database path from gorm.DB
-func TestChancellor_GetDBPath(t *testing.T) {
+// TestStorage_DBPath tests that storage.DBPath correctly extracts the database path from gorm.DB
+func TestStorage_DBPath(t *testing.T) {
 	db, expectedPath := setupMinisterTestDBWithPath(t)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	chancellor := NewChancellor(base)
-
-	// Call getDBPath and verify it returns the correct path
-	gotPath := chancellor.getDBPath()
+	// Call DBPath and verify it returns the correct path
+	gotPath := storage.DBPath(db)
 
 	// Resolve symlinks for comparison (e.g., /tmp -> /private/tmp on macOS)
 	expectedResolved, _ := filepath.EvalSymlinks(expectedPath)
 	gotResolved, _ := filepath.EvalSymlinks(gotPath)
 
 	if gotResolved != expectedResolved {
-		t.Errorf("getDBPath() = %q, want %q", gotPath, expectedPath)
+		t.Errorf("DBPath() = %q, want %q", gotPath, expectedPath)
 	}
 }
 
-// TestChancellor_GetDBPath_NilDB tests getDBPath returns empty string when db is nil
-func TestChancellor_GetDBPath_NilDB(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
-	chancellor := NewChancellor(base)
-
-	gotPath := chancellor.getDBPath()
+// TestStorage_DBPath_NilDB tests DBPath returns empty string when db is nil
+func TestStorage_DBPath_NilDB(t *testing.T) {
+	gotPath := storage.DBPath(nil)
 	if gotPath != "" {
-		t.Errorf("getDBPath() with nil db = %q, want empty string", gotPath)
+		t.Errorf("DBPath() with nil db = %q, want empty string", gotPath)
 	}
 }
 
-// TestCheckSandboxHealth tests the sandbox health check function
-func TestCheckSandboxHealth(t *testing.T) {
-	db := setupMinisterTestDB(t)
+// TestRunner_HealthCheck tests the runner health check function
+func TestRunner_HealthCheck(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("nil_shogunate", func(t *testing.T) {
-		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-		chancellor := NewChancellor(base)
-		err := chancellor.CheckSandboxHealth(ctx)
-		if err == nil {
-			t.Error("Expected error when shogunate is nil")
-		}
-		if !strings.Contains(err.Error(), "shogunate not configured") {
-			t.Errorf("Expected 'shogunate not configured', got: %v", err)
-		}
-	})
-
-	t.Run("nil_runner", func(t *testing.T) {
-		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-		chancellor := NewChancellor(base)
-		shogunate := &Shogunate{}
-		chancellor.SetShogunate(shogunate)
-
-		err := chancellor.CheckSandboxHealth(ctx)
-		if err == nil {
-			t.Error("Expected error when runner is nil")
-		}
-		if !strings.Contains(err.Error(), "shell runner not available") {
-			t.Errorf("Expected 'shell runner not available', got: %v", err)
-		}
-	})
-
 	t.Run("successful_health_check", func(t *testing.T) {
-		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-		chancellor := NewChancellor(base)
-
-		// Create a mock runner that returns Linux
 		mockRunner := &mockHealthCheckRunner{
 			output:   "Linux",
 			exitCode: "0",
 		}
-		shogunate := &Shogunate{}
-		shogunate.runner = mockRunner
-		chancellor.SetShogunate(shogunate)
 
-		err := chancellor.CheckSandboxHealth(ctx)
+		err := mockRunner.HealthCheck(ctx)
 		if err != nil {
 			t.Errorf("Expected nil error for healthy sandbox, got: %v", err)
 		}
 	})
 
 	t.Run("non_zero_exit_code", func(t *testing.T) {
-		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-		chancellor := NewChancellor(base)
-
 		mockRunner := &mockHealthCheckRunner{
 			output:   "",
 			exitCode: "1",
 		}
-		shogunate := &Shogunate{}
-		shogunate.runner = mockRunner
-		chancellor.SetShogunate(shogunate)
 
-		err := chancellor.CheckSandboxHealth(ctx)
+		err := mockRunner.HealthCheck(ctx)
 		if err == nil {
 			t.Error("Expected error for non-zero exit code")
 		}
@@ -1015,18 +811,12 @@ func TestCheckSandboxHealth(t *testing.T) {
 	})
 
 	t.Run("missing_linux_in_output", func(t *testing.T) {
-		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-		chancellor := NewChancellor(base)
-
 		mockRunner := &mockHealthCheckRunner{
 			output:   "Darwin",
 			exitCode: "0",
 		}
-		shogunate := &Shogunate{}
-		shogunate.runner = mockRunner
-		chancellor.SetShogunate(shogunate)
 
-		err := chancellor.CheckSandboxHealth(ctx)
+		err := mockRunner.HealthCheck(ctx)
 		if err == nil {
 			t.Error("Expected error when Linux not in output")
 		}
@@ -1036,17 +826,11 @@ func TestCheckSandboxHealth(t *testing.T) {
 	})
 
 	t.Run("runner_run_error", func(t *testing.T) {
-		base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-		chancellor := NewChancellor(base)
-
 		mockRunner := &mockHealthCheckRunner{
 			runErr: errors.New("container not running"),
 		}
-		shogunate := &Shogunate{}
-		shogunate.runner = mockRunner
-		chancellor.SetShogunate(shogunate)
 
-		err := chancellor.CheckSandboxHealth(ctx)
+		err := mockRunner.HealthCheck(ctx)
 		if err == nil {
 			t.Error("Expected error when runner.Run fails")
 		}
@@ -1056,7 +840,7 @@ func TestCheckSandboxHealth(t *testing.T) {
 	})
 }
 
-// mockHealthCheckRunner is a mock runner for testing CheckSandboxHealth
+// mockHealthCheckRunner is a mock runner for testing HealthCheck
 type mockHealthCheckRunner struct {
 	output   string
 	exitCode string
@@ -1078,6 +862,24 @@ func (m *mockHealthCheckRunner) Close(context.Context) error                  { 
 func (m *mockHealthCheckRunner) Restart(context.Context) error                { return nil }
 func (m *mockHealthCheckRunner) RunnerType() string                           { return "mock" }
 func (m *mockHealthCheckRunner) SetMessageChannel(msgChan chan<- runners.Msg) {}
+
+// HealthCheck implements runners.Runner.HealthCheck
+func (m *mockHealthCheckRunner) HealthCheck(ctx context.Context) error {
+	result, err := m.Run(ctx, runners.Input{
+		Command:     "uname",
+		Description: "sandbox health check",
+	})
+	if err != nil {
+		return fmt.Errorf("sandbox health check failed: %w", err)
+	}
+	if result.ExitCode != "0" {
+		return fmt.Errorf("sandbox health check failed: uname exited with %s", result.ExitCode)
+	}
+	if !strings.Contains(result.Output, "Linux") {
+		return fmt.Errorf("sandbox health check failed: expected Linux in output, got: %s", result.Output)
+	}
+	return nil
+}
 
 func TestZhengmingMultipleQuestions(t *testing.T) {
 	questions := []storage.ZhengmingQuestion{
@@ -1461,35 +1263,6 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 // The following tests verify that the unified MinisterBase.processTask correctly
 // dispatches to hooks (preTaskHook, postTaskHook, taskFallback, ctxMiddleware)
 // for each minister type that was refactored to use the shared base.
-
-// TestMarshal_ProcessTask_NoLLM verifies that Marshal's unified processTask
-// returns an acknowledged result when no LLM is configured (no fallback).
-func TestMarshal_ProcessTask_NoLLM(t *testing.T) {
-	db := setupMinisterTestDB(t)
-	ctx := context.Background()
-
-	edict, err := CreateEdictForTest(db, "Hotfix edict")
-	assert.NoError(t, err)
-
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	marshal := NewMarshal(base, nil)
-
-	doneCh := make(chan Result, 1)
-	task := &Task{
-		Ctx:      ctx,
-		EdictKey: edict.Key(),
-		Work:     "handle incident",
-		Done:     doneCh,
-	}
-
-	marshal.MinisterBase.processTask(ctx, task)
-	result := <-doneCh
-
-	assert.NoError(t, result.Err)
-	assert.True(t, result.Sealed)
-	assert.Equal(t, "marshal", result.MinisterID)
-	assert.Contains(t, result.Output, "no LLM configured")
-}
 
 // TestJudge_ProcessTask_NoLLM verifies that Judge's unified processTask
 // returns an acknowledged result when no LLM is configured (no fallback,

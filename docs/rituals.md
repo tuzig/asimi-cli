@@ -271,7 +271,7 @@ steps:
 
 ### Minister Session Semantics
 
-Ritual Acts dispatched to `forge`, `judge`, `marshal`, `sage`, or `strategist` run in a throwaway session created per step — their conversation history is discarded once the step completes, so large `given:` payloads (diffs, DB dumps) do not leak into any user-facing chat.
+Ritual Acts dispatched to a minister run in a throwaway session created per step — their conversation history is discarded once the step completes, so large `given:` payloads (diffs, DB dumps) do not leak into any user-facing chat.
 
 `chancellor` is intentionally different: Acts targeting the chancellor run inside its persistent interactive session, so their prompts and outputs become part of the user's chat history. This lets rituals weave context into the ongoing conversation, but it also means anything you put in a chancellor Act will burn user-facing context window. Keep chancellor Acts short — pre-digest heavy data in a `strategist` (or `sage`) step and pass the summary in via `{{ .priorStep }}`, as in the example above.
 

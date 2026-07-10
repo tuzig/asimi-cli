@@ -166,17 +166,6 @@ type EthicsViolation struct {
 	Justification string
 }
 
-// RCAAnalyzer performs root cause analysis on incidents
-type RCAAnalyzer interface {
-	Analyze(ctx context.Context, incidentID string) (*RCAReport, error)
-}
-
-// RCAReport contains the results of root cause analysis
-type RCAReport struct {
-	Summary  string
-	EdictKey storage.EdictKey
-}
-
 // --- Tool Interface ---
 
 // Tool defines a tool that can be invoked by ministers
@@ -218,7 +207,7 @@ type PreTaskHook func(ctx context.Context, task *Task, notify internal.NotifyFun
 type PostTaskHook func(ctx context.Context, task *Task, session *Session, output string) (failure string, err error)
 
 // TaskFallback is a no-LLM fallback for ministers that have deterministic
-// execution paths (e.g., Judge's CI, Marshal's incident handling).
+// execution paths (e.g., Judge's CI).
 // Returns (sealed, error).
 type TaskFallback func(ctx context.Context, task *Task) (bool, error)
 
@@ -267,6 +256,10 @@ type MinisterBase struct {
 	// Set by ministers that need edict-specific preprocessing (e.g., Chancellor).
 	// nil = no preprocessing.
 	promptPreprocessor func(key storage.EdictKey, message string) string
+
+	// getRitualSummaries returns formatted ritual summaries for the scratchpad.
+	// Injected by the Shogunate for ministers that need ritual context.
+	getRitualSummaries func() string
 
 	self Minister // concrete minister, set by RunLoop for session creation
 }
@@ -408,10 +401,13 @@ func (m *MinisterBase) Project() string {
 	return m.project
 }
 
-// Scratchpad returns dynamic per-minister context. Default is empty.
-// Ministers can override this to provide context like available rituals, rules, etc.
+// Scratchpad returns dynamic per-minister context. Default returns ritual
+// summaries when the getRitualSummaries hook is injected.
 func (m *MinisterBase) Scratchpad() string {
-	return ""
+	if m.getRitualSummaries == nil {
+		return ""
+	}
+	return "# Available Rituals\n" + m.getRitualSummaries()
 }
 
 // SetMessageChannel sets the message channel for approval requests.
@@ -616,6 +612,11 @@ func (m *MinisterBase) SetNotify(notify internal.NotifyFunc) {
 // SetMinisterLookup sets the minister lookup function injected by the Shogunate.
 func (m *MinisterBase) SetMinisterLookup(lookup func(string) Minister) {
 	m.getMinister = lookup
+}
+
+// SetRitualSummaries sets the ritual summaries hook injected by the Shogunate.
+func (m *MinisterBase) SetRitualSummaries(fn func() string) {
+	m.getRitualSummaries = fn
 }
 
 // SetSessionPersister stores the persister and propagates it to the
@@ -1330,6 +1331,28 @@ func (m *MinisterBase) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
 	return &edict, nil
+}
+
+// ResumeEdict resumes the minister's work on an edict after clarification.
+// It looks up the edict, builds a resume-work task, and sends it to the task channel.
+func (m *MinisterBase) ResumeEdict(ctx context.Context, key storage.EdictKey, work string) {
+	if key.ID == 0 || work == "" {
+		return
+	}
+	m.logger.Info("resuming edict after zhengming", "edict_id", key.ID)
+
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: key,
+		Work:     work,
+		Done:     make(chan Result, 1),
+	}
+
+	select {
+	case m.tasks <- task:
+	default:
+		m.logger.Warn("task channel full", "edict_id", key.ID)
+	}
 }
 func (m *MinisterBase) GetSession() *Session {
 	return m.session

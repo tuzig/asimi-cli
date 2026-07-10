@@ -344,7 +344,7 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		&storage.ForgeManifest{},
 		&storage.JudgeVerdict{},
 		&storage.CensorPrecedent{},
-		&storage.MarshalIncident{},
+		&storage.Incident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
 		&shogunate.RitualExecution{},

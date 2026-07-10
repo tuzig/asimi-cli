@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/afittestide/asimi/storage"
 )
@@ -34,15 +35,16 @@ func (t CreateIncidentTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("description and severity are required")
 	}
 
-	incidentID := fmt.Sprintf("incident_%s_%s", params.Severity, params.Description)
+	incidentID := GenerateID("incident", params.Severity, params.Description, time.Now().String())
 
-	incident := storage.MarshalIncident{
-		IncidentID: incidentID,
-		EdictID:    params.EdictID,
-		Username:   t.Ctx.Username,
-		Project:    t.Ctx.Project,
-		CommitHash: params.Severity,
-		RCASummary: params.Description,
+	incident := storage.Incident{
+		IncidentID:  incidentID,
+		Description: params.Description,
+		Severity:    params.Severity,
+		Status:      "open",
+		EdictID:     params.EdictID,
+		Username:    t.Ctx.Username,
+		Project:     t.Ctx.Project,
 	}
 
 	if err := t.Ctx.DB.Create(&incident).Error; err != nil {
@@ -97,11 +99,12 @@ func (t ResolveIncidentTool) Call(ctx context.Context, input string) (string, er
 		return "", fmt.Errorf("incident_id and resolution are required")
 	}
 
-	result := t.Ctx.DB.Model(&storage.MarshalIncident{}).
+	result := t.Ctx.DB.Model(&storage.Incident{}).
 		Where("incident_id = ? AND username = ? AND project = ?", params.IncidentID, t.Ctx.Username, t.Ctx.Project).
 		Updates(map[string]interface{}{
-			"rca_summary":     params.Resolution + "\n\nRoot Cause: " + params.RootCause,
-			"hotfix_approved": true,
+			"status":     "resolved",
+			"resolution": params.Resolution,
+			"root_cause": params.RootCause,
 		})
 	if result.Error != nil {
 		return "", fmt.Errorf("failed to resolve incident: %w", result.Error)
@@ -156,7 +159,7 @@ func (t GetIncidentTool) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("incident_id is required")
 	}
 
-	var incident storage.MarshalIncident
+	var incident storage.Incident
 	if err := t.Ctx.DB.Where("incident_id = ? AND username = ? AND project = ?", params.IncidentID, t.Ctx.Username, t.Ctx.Project).
 		First(&incident).Error; err != nil {
 		return "", fmt.Errorf("incident not found: %s", params.IncidentID)

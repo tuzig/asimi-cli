@@ -56,7 +56,7 @@ func initTestDB(t *testing.T) (*gorm.DB, *storage.DB, func()) {
 		&storage.ForgeManifest{},
 		&storage.JudgeVerdict{},
 		&storage.CensorPrecedent{},
-		&storage.MarshalIncident{},
+		&storage.Incident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
 		&shogunate.RitualExecution{},

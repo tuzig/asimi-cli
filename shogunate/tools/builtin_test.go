@@ -260,7 +260,6 @@ func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 		"judge":       "rwxrwxr--",
 		"sage":        "r--r--rwx",
 		"strategist":  "r-----rw-",
-		"marshal":     "r-xr--rw-",
 	}
 
 	for minister, permStr := range ministerPerms {

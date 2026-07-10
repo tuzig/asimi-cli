@@ -688,35 +688,6 @@ func TestStrategistPermissions(t *testing.T) {
 	}
 }
 
-func TestMarshalPermissions(t *testing.T) {
-	p, err := ParsePermissions("r-xr--rw-")
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-
-	// Earth: r-x — read and execute (shell for diagnostics), no write
-	if !p.Earth.Read || !p.Earth.Execute {
-		t.Error("marshal should have earth Read and Execute")
-	}
-	if p.Earth.Write {
-		t.Error("marshal should NOT have earth Write")
-	}
-	// Heaven: r-- — read test results
-	if !p.Heaven.Read {
-		t.Error("marshal should have heaven Read")
-	}
-	if p.Heaven.Write || p.Heaven.Execute {
-		t.Error("marshal should NOT have heaven Write or Execute")
-	}
-	// Intent: rw- — read and write incidents
-	if !p.Intent.Read || !p.Intent.Write {
-		t.Error("marshal should have intent Read and Write")
-	}
-	if p.Intent.Execute {
-		t.Error("marshal should NOT have intent Execute")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // ToolRegistry.String — smoke test
 // ---------------------------------------------------------------------------

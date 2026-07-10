@@ -63,7 +63,7 @@ func setupShogunateTestDB(t *testing.T) *gorm.DB {
 		&storage.Seal{},
 		&storage.JudgeVerdict{},
 		&storage.CensorPrecedent{},
-		&storage.MarshalIncident{},
+		&storage.Incident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
 		&RitualExecution{},

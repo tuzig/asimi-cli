@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -224,6 +225,33 @@ func (r *RitualRegistry) List() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// Summaries returns a formatted list of all rituals with their descriptions.
+// Returns "None loaded\n" if the registry is empty.
+func (r *RitualRegistry) Summaries() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if len(r.rituals) == 0 {
+		return "None loaded\n"
+	}
+
+	var b strings.Builder
+	// Sort names for deterministic output
+	names := make([]string, 0, len(r.rituals))
+	for name := range r.rituals {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		ritual := r.rituals[name]
+		if ritual != nil {
+			fmt.Fprintf(&b, "- %s: %s\n", name, ritual.Description)
+		}
+	}
+	return b.String()
 }
 
 // ParseRitual parses YAML content into a RitualDef
@@ -465,6 +493,14 @@ type RitualExecution struct {
 // TableName returns the table name for RitualExecution
 func (RitualExecution) TableName() string {
 	return "ritual_executions"
+}
+
+// getLastStepOutput returns the full output of the last step that produced a message.
+func getLastStepOutput(exec *RitualExecution) string {
+	if out, ok := exec.Data["act_result"].(string); ok {
+		return out
+	}
+	return ""
 }
 
 // EdictKey returns the storage.EdictKey for this execution.

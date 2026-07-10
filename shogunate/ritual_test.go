@@ -326,6 +326,38 @@ func TestRitualRegistry(t *testing.T) {
 	}
 }
 
+func TestRitualRegistry_Summaries(t *testing.T) {
+	registry := NewRitualRegistry()
+
+	// Empty registry returns "None loaded\n"
+	if s := registry.Summaries(); s != "None loaded\n" {
+		t.Errorf("empty Summaries() = %q, want %q", s, "None loaded\n")
+	}
+
+	// Register rituals
+	if err := registry.Register(&RitualDef{Name: "zebra", Description: "Zebra ritual"}); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := registry.Register(&RitualDef{Name: "alpha", Description: "Alpha ritual"}); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	// Should be sorted alphabetically
+	s := registry.Summaries()
+	if !strings.Contains(s, "- alpha: Alpha ritual") {
+		t.Errorf("expected alpha in summaries, got:\n%s", s)
+	}
+	if !strings.Contains(s, "- zebra: Zebra ritual") {
+		t.Errorf("expected zebra in summaries, got:\n%s", s)
+	}
+	// alpha should appear before zebra (sorted)
+	alphaIdx := strings.Index(s, "alpha")
+	zebraIdx := strings.Index(s, "zebra")
+	if alphaIdx > zebraIdx {
+		t.Error("expected alpha before zebra (sorted)")
+	}
+}
+
 func TestLoadRitualsFromDir(t *testing.T) {
 	// Create temp directory
 	dir := t.TempDir()
@@ -1642,7 +1674,7 @@ func (m *ritualTestMinister) getCallLog() []string {
 func newRitualTestShogunate(t *testing.T, output string, err error) *Shogunate {
 	t.Helper()
 	ministers := map[string]Minister{}
-	for _, id := range []string{"forge", "judge", "sage", "strategist", "chancellor", "marshal"} {
+	for _, id := range []string{"forge", "judge", "sage", "strategist", "chancellor"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,
@@ -1672,7 +1704,7 @@ func newRitualTestShogunate(t *testing.T, output string, err error) *Shogunate {
 func newRitualTestShogunateWithDB(t *testing.T, db *gorm.DB, output string, err error) *Shogunate {
 	t.Helper()
 	ministers := map[string]Minister{}
-	for _, id := range []string{"forge", "judge", "sage", "strategist", "chancellor", "marshal"} {
+	for _, id := range []string{"forge", "judge", "sage", "strategist", "chancellor"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,
@@ -2451,7 +2483,7 @@ func TestRitualSessionIDTracking(t *testing.T) {
 		&storage.ForgeManifest{},
 		&storage.JudgeVerdict{},
 		&storage.CensorPrecedent{},
-		&storage.MarshalIncident{},
+		&storage.Incident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
 		&RitualExecution{},
@@ -3670,7 +3702,7 @@ func TestExecuteForkDAG_NoEarlyDispatch(t *testing.T) {
 	go slowMinister.Run(ctx)
 
 	ministers := map[string]Minister{}
-	for _, id := range []string{"judge", "sage", "strategist", "chancellor", "marshal"} {
+	for _, id := range []string{"judge", "sage", "strategist", "chancellor"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,

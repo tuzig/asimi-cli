@@ -133,13 +133,11 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	}
 
 	chancellor := NewChancellor(newBase())
-	chancellor.SetShogunate(s)
 	s.ministers[chancellor.ID()] = chancellor
 
 	// Wire up the ritual guard — it owns all ritual/event infrastructure
 	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:            newBase(),
-		Chancellor:      chancellor,
 		Runner:          runner,
 		GetMinister:     s.GetMinister,
 		OnRunnerUpgrade: s.SetRunner,
@@ -214,13 +212,13 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 
 		// 4. Forward to chancellor as fallback for legacy path
 		s.logger.Info("Default forwarding zhengming answer to chancellot")
-		go chancellor.handleZhengmingAnswered(s.ctx, key, e.Payload)
+		work := fmt.Sprintf("Resume edict %d with clarification: %s", key.ID, answer)
+		go chancellor.ResumeEdict(s.ctx, key, work)
 	})
 
 	s.ministers["strategist"] = NewStrategist(newBase())
 	s.ministers["forge"] = NewForge(newBase())
 	s.ministers["judge"] = NewJudge(newBase(), nil)
-	s.ministers["marshal"] = NewMarshal(newBase(), nil)
 	sage := NewSage(newBase())
 	s.ministers["sage"] = sage
 
@@ -236,13 +234,8 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 	registry := tools.NewToolRegistry()
 
-	chancellor, _ := s.GetMinister("chancellor").(*Chancellor)
-
 	// Determine DBPath for asimisql
-	dbPath := ""
-	if chancellor != nil {
-		dbPath = chancellor.getDBPath()
-	}
+	dbPath := storage.DBPath(s.db)
 
 	// Shared ToolContext — RepoInfo is a pointer so all tools see live state
 	// (project root is set later via SetRepoInfo).
@@ -254,36 +247,41 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 		DB:       s.db,
 	}
 
-	// EdictManager — Chancellor implements the interface
-	var edictManager tools.EdictManager
-	if chancellor != nil {
-		edictManager = chancellor
-	}
+	// Use the chancellor's MinisterBase for EdictManager and ZhengmingRequester.
+	// MinisterBase implements both interfaces.
+	chancellor := s.GetMinister("chancellor")
 
-	// ZhengmingRequester — MinisterBase implements the interface via RequestZhengming.
-	// WaitForZhengming is on MinisterBase too.
+	var edictManager tools.EdictManager
 	var zhengmingRequester tools.ZhengmingRequester
 	var waitForZhengming func(ctx context.Context, requestID string) (string, error)
 	if chancellor != nil {
-		zhengmingRequester = chancellor
-		waitForZhengming = chancellor.WaitForZhengming
+		if em, ok := chancellor.(tools.EdictManager); ok {
+			edictManager = em
+		}
+		if zr, ok := chancellor.(tools.ZhengmingRequester); ok {
+			zhengmingRequester = zr
+		}
+		if base, ok := chancellor.(interface {
+			WaitForZhengming(ctx context.Context, requestID string) (string, error)
+		}); ok {
+			waitForZhengming = base.WaitForZhengming
+		}
 	}
 
 	// NotifyFn — lazy getter for the current notify, used by suggest_edict
-	var notifyFn func() func(any)
-	if chancellor != nil {
-		notifyFn = func() func(any) { return s.notify }
-	}
+	notifyFn := func() func(any) { return s.notify }
 
 	// SessionIDFn — lazy getter for the chancellor's current session ID,
 	// used by suggest_edict to link edicts to their originating session.
 	var sessionIDFn func() string
 	if chancellor != nil {
-		sessionIDFn = func() string {
-			if sess := chancellor.Session(); sess != nil {
-				return sess.ID
+		if ss, ok := chancellor.(interface{ Session() *Session }); ok {
+			sessionIDFn = func() string {
+				if sess := ss.Session(); sess != nil {
+					return sess.ID
+				}
+				return ""
 			}
-			return ""
 		}
 	}
 
@@ -300,14 +298,16 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 
 		// MinisterInvoker / RitualLauncher — chancellor-backed
 		MinisterInvoker: func() tools.MinisterInvoker {
-			if chancellor != nil {
-				return chancellor
+			if mi, ok := chancellor.(tools.MinisterInvoker); ok {
+				return mi
 			}
 			return nil
 		}(),
 		RitualLauncher: func() tools.RitualLauncher {
-			if chancellor != nil && s.GetRitualRunner() != nil {
-				return chancellor
+			if s.GetRitualRunner() != nil {
+				if rl, ok := chancellor.(tools.RitualLauncher); ok {
+					return rl
+				}
 			}
 			return nil
 		}(),
@@ -421,6 +421,19 @@ func (s *Shogunate) Start(ctx context.Context) error {
 	for _, minister := range s.Ministers() {
 		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
 			base.SetMinisterLookup(s.GetMinister)
+		}
+	}
+
+	// Inject ritual summaries hook into the chancellor so its Scratchpad
+	// includes available rituals.
+	if ch := s.GetMinister("chancellor"); ch != nil {
+		if base, ok := ch.(interface{ SetRitualSummaries(func() string) }); ok {
+			base.SetRitualSummaries(func() string {
+				if s.GetRitualRegistry() == nil {
+					return "None loaded\n"
+				}
+				return s.GetRitualRegistry().Summaries()
+			})
 		}
 	}
 
@@ -1010,9 +1023,7 @@ func (s *Shogunate) ResetChancellor() {
 	if s == nil {
 		return
 	}
-	if ch, ok := s.GetMinister("chancellor").(*Chancellor); ok {
-		ch.ResetSession()
-	}
+	s.ResetMinisterSession("chancellor")
 }
 
 // ResetHunting resets the hunting session
@@ -1058,11 +1069,15 @@ func (s *Shogunate) GetEdict(edictID uint) (*storage.Edict, error) {
 	if s == nil {
 		return nil, fmt.Errorf("shogunate not initialized")
 	}
-	ch, ok := s.GetMinister("chancellor").(*Chancellor)
-	if !ok {
-		return nil, fmt.Errorf("chancellor not found")
+	key := s.EdictKey(edictID)
+	var edict storage.Edict
+	if err := s.db.First(&edict, "id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("edict not found: %d", key.ID)
+		}
+		return nil, fmt.Errorf("failed to get edict: %w", err)
 	}
-	return ch.GetEdict(s.EdictKey(edictID))
+	return &edict, nil
 }
 
 // GrantRulerSeal stamps the Ruler's seal on an edict and publishes EventSealGranted.

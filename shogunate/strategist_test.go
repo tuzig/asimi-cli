@@ -182,7 +182,7 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 	go strat.Run(ctx)
 
 	ministers := map[string]Minister{"strategist": strat}
-	for _, id := range []string{"forge", "judge", "sage", "chancellor", "marshal"} {
+	for _, id := range []string{"forge", "judge", "sage", "chancellor"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,

@@ -7,8 +7,25 @@ import (
 	"os"
 	"path/filepath"
 
+	"gorm.io/gorm"
 	_ "modernc.org/sqlite" // SQLite driver
 )
+
+// DBPath extracts the database file path from a gorm.DB using PRAGMA database_list.
+func DBPath(db *gorm.DB) string {
+	if db == nil {
+		return ""
+	}
+	var file string
+	row := db.Raw("PRAGMA database_list").Row()
+	var seq int
+	var name string
+	if err := row.Scan(&seq, &name, &file); err != nil {
+		slog.Warn("failed to get database path", "error", err)
+		return ""
+	}
+	return file
+}
 
 // DB wraps the database connection with additional functionality
 type DB struct {

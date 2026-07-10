@@ -58,7 +58,7 @@ The `docs/shogunate_guide.md` describes the full Shogunate vision. Substantial c
 
 ### BC5: Observability & Events (Heaven/Tian)
 **Aggregate Root:** `TianEvent`
-**Entities:** TianEventDLQ, MarshalIncident, RitualGuardCheckpoint
+**Entities:** TianEventDLQ, Incident, RitualGuardCheckpoint
 
 **Status:** Tables and RitualGuard exist but event routing is a stub.
 **Gaps:**

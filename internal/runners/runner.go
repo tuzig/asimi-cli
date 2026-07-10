@@ -56,6 +56,7 @@ type Runner interface {
 	AllowFallback(bool)
 	RunnerType() string // Returns "podman" or "host"
 	SetMessageChannel(msgChan chan<- Msg)
+	HealthCheck(ctx context.Context) error
 }
 
 // Type aliases - use types from internal/config as the single source of truth

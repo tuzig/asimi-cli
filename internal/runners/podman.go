@@ -977,6 +977,25 @@ func (r *PodmanRunner) AllowFallback(allow bool) {
 	r.allowFallback = allow
 }
 
+// HealthCheck verifies the sandbox container is healthy by running uname
+// and checking that "Linux" appears in the output.
+func (r *PodmanRunner) HealthCheck(ctx context.Context) error {
+	result, err := r.Run(ctx, Input{
+		Command:     "uname",
+		Description: "sandbox health check",
+	})
+	if err != nil {
+		return fmt.Errorf("sandbox health check failed: %w", err)
+	}
+	if result.ExitCode != "0" {
+		return fmt.Errorf("sandbox health check failed: uname exited with %s", result.ExitCode)
+	}
+	if !strings.Contains(result.Output, "Linux") {
+		return fmt.Errorf("sandbox health check failed: expected Linux in output, got: %s", result.Output)
+	}
+	return nil
+}
+
 // md5Hash returns the hex MD5 hash of s.
 func md5Hash(s string) string {
 	h := md5.Sum([]byte(s))

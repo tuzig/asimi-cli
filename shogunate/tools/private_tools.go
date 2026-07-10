@@ -24,7 +24,7 @@ func (t InvokeMinisterTool) Name() string {
 func (t InvokeMinisterTool) Description() string {
 	return `Invoke a minister by ID to execute its logic for an edict.
 	Ministers process edicts through their specialized phase logic
-	(e.g., strategist for planning, forge for code generation, judge for testing and verification, censor for review, marshal for deployment).
+	(e.g., strategist for planning, forge for code generation, judge for testing and verification, sage for review).
 	Provide specific task instructions for what the minister should do.`
 }
 
@@ -87,7 +87,7 @@ func (t InvokeMinisterTool) ParameterSchema() map[string]any {
 		"properties": map[string]any{
 			"minister_id": map[string]any{
 				"type":        "string",
-				"description": "The minister to invoke (strategist, forge, judge, censor or marshal)",
+				"description": "The minister to invoke (strategist, forge, judge, or sage)",
 			},
 			"edict_id": map[string]any{
 				"type":        "integer",
