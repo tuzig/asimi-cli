@@ -226,3 +226,7 @@ func (m *mockRunner) RunnerType() string {
 func (m *mockRunner) SetMessageChannel(msgChan chan<- runners.Msg) {
 	m.msgChan = msgChan
 }
+
+func (m *mockRunner) HealthCheck(ctx context.Context) error {
+	return nil
+}

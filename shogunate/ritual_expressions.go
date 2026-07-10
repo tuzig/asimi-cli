@@ -358,7 +358,7 @@ SELECT
     CASE
         WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler') THEN 'sealed'
         WHEN EXISTS (SELECT 1 FROM zhengming_requests z WHERE z.edict_id = e.id AND z.username = e.username AND z.project = e.project AND z.status = 'pending') THEN 'blocked'
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'confucius') THEN 'active'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'sage') THEN 'active'
         WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'judge') THEN 'active'
         ELSE 'active'
     END as status

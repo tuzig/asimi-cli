@@ -27,12 +27,12 @@ func (tc ToolContext) ProjectRoot() string {
 	return ""
 }
 
-// RitualLauncher starts ritual workflows (implemented by *Chancellor).
+// RitualLauncher starts ritual workflows (implemented by MinisterBase).
 type RitualLauncher interface {
 	StartRitual(name string, key storage.EdictKey, inputs map[string]string) error
 }
 
-// MinisterInvoker dispatches work to a minister (implemented by *Chancellor).
+// MinisterInvoker dispatches work to a minister (implemented by MinisterBase).
 type MinisterInvoker interface {
 	InvokeMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error)
 }

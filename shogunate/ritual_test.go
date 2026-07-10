@@ -1721,6 +1721,8 @@ func (m *mockCallCountRunner) AllowFallback(bool)                   {}
 func (m *mockCallCountRunner) RunnerType() string                   { return "mock" }
 func (m *mockCallCountRunner) SetMessageChannel(chan<- runners.Msg) {}
 
+func (m *mockCallCountRunner) HealthCheck(ctx context.Context) error { return nil }
+
 // setupRitualTestDB creates a test database with ritual tables
 func setupRitualTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -1766,12 +1768,11 @@ func TestInvokeRitualTool_Enacted(t *testing.T) {
 	shogunate.GetRitualRegistry().Register(ritual)
 
 	base := &MinisterBase{logger: slog.Default(), db: db}
-	chanc := &Chancellor{
-		MinisterBase: base,
-		shogunate:    shogunate,
+	base.publish = func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
+		return shogunate.PublishEvent(key, eventType, payload)
 	}
 
-	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: chanc}
+	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: base}
 	input := `{"ritual_name":"test-enacted","edict_id":1}`
 
 	result, err := tool.Call(context.Background(), input)
@@ -1813,12 +1814,11 @@ func TestInvokeRitualTool_EnactedEvenForBadRitual(t *testing.T) {
 	shogunate.GetRitualRegistry().Register(ritual)
 
 	base := &MinisterBase{logger: slog.Default(), db: db}
-	chanc := &Chancellor{
-		MinisterBase: base,
-		shogunate:    shogunate,
+	base.publish = func(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
+		return shogunate.PublishEvent(key, eventType, payload)
 	}
 
-	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: chanc}
+	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: base}
 	input := `{"ritual_name":"test-fail-enacted","edict_id":2}`
 
 	result, err := tool.Call(context.Background(), input)
@@ -1872,6 +1872,8 @@ func (m *mockCmdRunner) Close(ctx context.Context) error      { return nil }
 func (m *mockCmdRunner) AllowFallback(bool)                   {}
 func (m *mockCmdRunner) RunnerType() string                   { return "mock" }
 func (m *mockCmdRunner) SetMessageChannel(chan<- runners.Msg) {}
+
+func (m *mockCmdRunner) HealthCheck(ctx context.Context) error { return nil }
 
 // TestRitualMinisterStepCompletes verifies that a minister step using the ephemeral
 // session pattern completes successfully and stores its result.

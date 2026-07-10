@@ -24,6 +24,7 @@ run:
 test:
     #!/usr/bin/env bash
     set -o pipefail
+    export GOTOOLCHAIN=auto
     if [ -n "$CI" ]; then
         go test -timeout 5m -v ./...
         just vuln

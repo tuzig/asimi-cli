@@ -16,6 +16,7 @@ import (
 
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/mocks"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate/tools"
@@ -98,7 +99,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	// Verify edict was created
-	edict2, err := chancellor.GetEdict(edict.Key())
+	edict2, err := chancellor.MinisterBase.GetEdict(edict.Key())
 	assert.NoError(t, err)
 	assert.NotNil(t, edict2)
 	// Status is now derived - new edicts are active by default (no seals, no zhengming, not cancelled)
@@ -173,55 +174,6 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	assert.Contains(t, result, "sealed=true")
 }
 
-func TestSage_ReviewFlow(t *testing.T) {
-	db := setupMinisterTestDB(t)
-	ctx := context.Background()
-
-	// Setup: create quenched manifest
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	edict, err := CreateEdictForTest(db, "Review feature")
-	assert.NoError(t, err)
-	assert.NotNil(t, edict)
-
-	manifestID := stageManifestForTest(t, db, edict.Key(), "", "review.go", "ReviewFunc", "hash2")
-
-	// Quench the manifest
-	verdictID := GenerateID("verdict", manifestID, "tests")
-	verdict := storage.JudgeVerdict{
-		VerdictID:  verdictID,
-		ManifestID: manifestID,
-		Username:   edict.Key().Username,
-		Project:    edict.Key().Project,
-		TestSuite:  "tests",
-		Outcome:    storage.VerdictPassed,
-	}
-	assert.NoError(t, db.Create(&verdict).Error)
-	assert.NoError(t, db.Model(&storage.ForgeManifest{}).
-		Where("manifest_id = ?", manifestID).
-		Updates(map[string]interface{}{"status": storage.ManifestQuenched, "verdict_id": verdictID}).Error)
-
-	// Create sage (no linter - will auto-approve)
-	sage := NewSage(base, nil)
-
-	// Execute review (internal method)
-	sealed, summary, err := sage.execute(ctx, edict.Key())
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
-	}
-	if !sealed {
-		t.Error("Expected sealed after review")
-	}
-	if summary == nil {
-		t.Error("Expected review summary")
-	}
-
-	// Check no rejections
-	noReject, _ := sage.noRejections(edict.Key())
-	if !noReject {
-		t.Error("Expected no rejections")
-	}
-}
-
 func TestMarshal_IncidentFlow(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
@@ -257,7 +209,6 @@ func TestMarshal_IncidentFlow(t *testing.T) {
 
 func TestChancellor_CancelEdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	ctx := context.Background()
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	chancellor := NewChancellor(base)
@@ -265,13 +216,13 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "Feature to cancel")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
-	err = chancellor.CancelEdictWithContext(ctx, edict.Key(), "@user", "No longer needed")
+	err = chancellor.CancelEdict(edict.Key(), "@user", "No longer needed")
 	if err != nil {
 		t.Fatalf("Failed to cancel: %v", err)
 	}
 
 	// Check cancelled
-	edict, _ = chancellor.GetEdict(edict.Key())
+	edict, _ = chancellor.MinisterBase.GetEdict(edict.Key())
 	sealService := storage.NewSealService(db)
 	status, err := sealService.GetEdictStatus(edict.Key())
 	if err != nil {
@@ -280,6 +231,135 @@ func TestChancellor_CancelEdict(t *testing.T) {
 	if status != storage.EdictCancelled {
 		t.Errorf("Expected status cancelled, got %s", status)
 	}
+}
+
+// TestChancellor_PreprocessPrompt_EdictBound verifies that the preprocessor
+// appends the message to the edict intent and prepends the context prefix
+// when key.ID != 0.
+func TestChancellor_PreprocessPrompt_EdictBound(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	chancellor := NewChancellor(base)
+
+	edict, err := CreateEdictForTest(db, "Original intent")
+	assert.NoError(t, err)
+
+	key := edict.Key()
+	message := "do something"
+	result := chancellor.preprocessPrompt(key, message)
+
+	assert.Contains(t, result, "[Context: edict ")
+	assert.Contains(t, result, fmt.Sprintf("%d", key.ID))
+	assert.Contains(t, result, message)
+
+	// Verify intent was appended
+	updated, err := chancellor.MinisterBase.GetEdict(key)
+	assert.NoError(t, err)
+	assert.Contains(t, updated.Intent, message)
+}
+
+// TestChancellor_PreprocessPrompt_RulingSession verifies that the preprocessor
+// returns the message unchanged when key.ID == 0 (ruling session).
+func TestChancellor_PreprocessPrompt_RulingSession(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	chancellor := NewChancellor(base)
+
+	key := storage.EdictKey{ID: 0, Username: "testuser", Project: "testproject"}
+	message := "hello ruler"
+	result := chancellor.preprocessPrompt(key, message)
+
+	assert.Equal(t, message, result, "ruling session prompt should be unchanged")
+}
+
+// TestProcessPrompt_PreprocessorHook verifies that MinisterBase.ProcessPrompt
+// invokes the promptPreprocessor hook when set, so the transformed message is
+// what actually gets streamed to the LLM.
+func TestProcessPrompt_PreprocessorHook(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	chancellor := NewChancellor(base)
+	chancellor.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	// Create an edict so preprocessPrompt has something to append to.
+	edict, err := CreateEdictForTest(db, "Test intent")
+	require.NoError(t, err)
+
+	var mu sync.Mutex
+	var startMsgs []StreamStartMsg
+	var doneMsgs []StreamDoneMsg
+
+	chancellor.SetNotify(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch m := msg.(type) {
+		case StreamStartMsg:
+			startMsgs = append(startMsgs, m)
+		case StreamDoneMsg:
+			doneMsgs = append(doneMsgs, m)
+		}
+	})
+
+	prompt := &Prompt{
+		EdictKey: edict.Key(),
+		Message:  "implement the feature",
+	}
+	chancellor.processPrompt(ctx, prompt)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, startMsgs, 1, "should emit one StreamStartMsg")
+	assert.Equal(t, "chancellor", startMsgs[0].ChannelID)
+	assert.Equal(t, edict.ID, startMsgs[0].EdictID)
+	require.Len(t, doneMsgs, 1, "should emit one StreamDoneMsg")
+
+	// Verify the edict intent was appended (proves the preprocessor ran).
+	updated, err := chancellor.MinisterBase.GetEdict(edict.Key())
+	require.NoError(t, err)
+	assert.Contains(t, updated.Intent, "implement the feature")
+}
+
+// TestProcessPrompt_NoPreprocessor verifies that MinisterBase.ProcessPrompt
+// works correctly when no preprocessor is set (nil = pass through unchanged).
+func TestProcessPrompt_NoPreprocessor(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	// Sage does not set a preprocessor — promptPreprocessor is nil.
+	require.Nil(t, base.promptPreprocessor)
+
+	var mu sync.Mutex
+	var doneCount int
+	sage.SetNotify(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if _, ok := msg.(StreamDoneMsg); ok {
+			doneCount++
+		}
+	})
+
+	// Use the shared ProcessPrompt (Sage.Run now passes nil for processPrompt).
+	prompt := &Prompt{
+		EdictKey: storage.EdictKey{ID: 0, Username: "testuser", Project: "testproject"},
+		Message:  "hello",
+	}
+	base.ProcessPrompt(ctx, sage, prompt)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, doneCount, "should complete streaming without error")
 }
 
 func TestStrategist_CircularDependencyDetection(t *testing.T) {
@@ -1242,9 +1322,6 @@ func TestRestoreMinisterSession_UnknownTabType(t *testing.T) {
 
 // TestRestoreSession_SetsPersister verifies that the exported
 // RestoreSession method wires the persister into the restored session.
-// This is the bug where RestoreSession (exported) originally missed
-// calling sess.SetPersister(m.persister), unlike the private
-// restoreSession which did it correctly.
 func TestRestoreSession_SetsPersister(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultShogunateConfig()
@@ -1564,7 +1641,7 @@ func TestSage_ProcessTask_NoHooks(t *testing.T) {
 	assert.NoError(t, err)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	sage := NewSage(base, nil)
+	sage := NewSage(base)
 
 	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
 

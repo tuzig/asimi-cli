@@ -197,7 +197,7 @@ func TestSageChannelID_Routing(t *testing.T) {
 
 	// Create Sage with mock LLM client
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
-	sage := NewSage(base, nil)
+	sage := NewSage(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	// Collect all streaming notifications

@@ -20,6 +20,7 @@ func (n *noopRunner) Close(_ context.Context) error         { return nil }
 func (n *noopRunner) AllowFallback(_ bool)                   {}
 func (n *noopRunner) RunnerType() string                     { return "test" }
 func (n *noopRunner) SetMessageChannel(_ chan<- runners.Msg) {}
+func (n *noopRunner) HealthCheck(_ context.Context) error   { return nil }
 
 // testCtx returns a ToolContext suitable for tests that don't need a DB.
 func testCtx() ToolContext {

@@ -166,13 +166,13 @@ To keep the number of zhengmings low, we make it the goal of your Chancellor to 
 | Minister | Role | When You'd Talk to Them |
 |----------|------|------------------------|
 | **Chancellor (宰相)** | Coordinator, interfaces with you | Always — all requests go through Chancellor |
-| **Sage (孔子)** | Advisor + Censor, sees all, creates edicts, reviews code | Hunting tab — for exploration, edict creation, and code review |
+| **Sage (孔子)** | Advisor + code reviewer, sees all, creates edicts, reviews code | Hunting tab — for exploration, edict creation, and code review |
 | **Strategist (兵部)** | Plans complex work | Indirectly — creates battle plans for M/L edicts |
 | **Forge (工部)** | Writes code | Indirectly — you see their manifests in work logs |
 | **Judge (刑部)** | Runs tests, validates | Indirectly — you see verdicts (pass/fail) |
 | **Marshal (锦衣卫)** | Handles incidents | Rarely — for production issues |
 
-**Note:** The Sage now serves as both advisor and Censor — reviewing code quality and recording precedents. This consolidates the review function.
+**Note:** The Sage serves as both advisor and code reviewer — reviewing code quality and recording precedents. This consolidates the review function.
 
 **Key insight:** You talk to **Chancellor** (Ruling tab) and **Sage** (Hunting tab). The other ministers work behind the scenes.
 
@@ -233,7 +233,7 @@ The Confucian metaphor isn't decoration. It encodes principles:
 | **Zhi (智)** | Wisdom | Planning before implementation |
 | **Xin (信)** | Trustworthiness | Event ledger provides accountability |
 
-**The Five Constant Virtues (五常)** are embodied by the ministers. The Sage (as Censor) is 仁 (benevolence), the Judge is 义 (righteousness), rituals are 礼 (propriety), the Strategist is 智 (wisdom), and the Tian ledger is 信 (trustworthiness).
+**The Five Constant Virtues (五常)** are embodied by the ministers. The Sage is 仁 (benevolence), the Judge is 义 (righteousness), rituals are 礼 (propriety), the Strategist is 智 (wisdom), and the Tian ledger is 信 (trustworthiness).
 
 As Confucius taught:
 
@@ -261,7 +261,7 @@ Welcome to the Shogunate, Ruler. The court awaits your command.
 
 ```
 Tabs: 1=Ruling (Chancellor), 2=Hunting (Sage)
-Edict Phases: brewing → planning → forging → judging → censoring → sealed
+Edict Phases: brewing → planning → forging → judging → reviewing → sealed
 Rituals: swift-strike (S), castle-siege (M), grand-orchestration (L/XL)
 Zhengming: When Asimi asks, answer — work resumes after
 vi keys: Esc, i, :, gt, gT, /, n — all work as expected

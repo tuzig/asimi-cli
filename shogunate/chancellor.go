@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -12,8 +11,6 @@ import (
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
-	"github.com/maximhq/bifrost/core/schemas"
-	"gorm.io/gorm"
 )
 
 //go:embed context/chancellor.md
@@ -28,9 +25,12 @@ type Chancellor struct {
 // NewChancellor creates a new Chancellor minister
 func NewChancellor(base *MinisterBase) *Chancellor {
 	base.ministerID = "chancellor"
-	return &Chancellor{
+	c := &Chancellor{
 		MinisterBase: base,
 	}
+	// Set the prompt preprocessor so ProcessPrompt handles edict-specific prep
+	c.promptPreprocessor = c.preprocessPrompt
+	return c
 }
 
 // ID returns the minister identifier
@@ -114,7 +114,6 @@ func getLastStepOutput(exec *RitualExecution) string {
 	if out, ok := exec.Data["act_result"].(string); ok {
 		return out
 	}
-	slog.Debug("act_result is not a string", "act_result", fmt.Sprintf("%v", exec.Data["act_result"]))
 	return ""
 }
 
@@ -156,9 +155,10 @@ func (c *Chancellor) getDBPath() string {
 	return file
 }
 
-// Run listens for prompts from the Ruler, tasks from ministers, and events from the Shogunate
+// Run listens for prompts from the Ruler, tasks from ministers, and events from the Shogunate.
+// processTask is nil so RunLoop uses MinisterBase.processTask as the default.
 func (c *Chancellor) Run(ctx context.Context) {
-	c.RunLoop(ctx, c, c.processPrompt, c.processTask)
+	c.RunLoop(ctx, c, c.processPrompt, nil)
 }
 
 // SetShogunate sets the Shogunate reference for minister access
@@ -166,68 +166,7 @@ func (c *Chancellor) SetShogunate(s *Shogunate) {
 	c.shogunate = s
 }
 
-// SubscribeToEvents registers the Chancellor's event handlers directly with the RitualGuard.
-func (c *Chancellor) SubscribeToEvents(rg *RitualGuard) {
-	rg.Subscribe(storage.EventRitualCompleted, func(e Event) {
-		c.handleRitualCompleted(c.shogunate.ctx, e.EdictKey, e.Payload)
-	})
-	rg.Subscribe(storage.EventRitualFailed, func(e Event) {
-		c.handleRitualFailed(c.shogunate.ctx, e.EdictKey, e.Payload)
-	})
-}
-
-// ResetSession clears the Chancellor's session (delegates to MinisterBase)
-func (c *Chancellor) ResetSession() {
-	c.MinisterBase.ResetSession()
-}
-
-// RestoreSession creates a fully-wired interactive session and injects loaded history
-func (c *Chancellor) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
-	return c.MinisterBase.restoreSession(minister, msgs)
-}
-
 // --- Edict Management ---
-
-// GetEdict retrieves an edict by ID
-func (c *Chancellor) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
-	var edict storage.Edict
-	if err := c.db.First(&edict, "id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Error; err != nil {
-		c.logger.Warn("Edict not found", "key", key)
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("edict %d not found", key.ID)
-		}
-		return nil, fmt.Errorf("failed to get edict: %w", err)
-	}
-	return &edict, nil
-}
-
-// SetChancellorSeal sets or clears the Chancellor's seal on an edict
-func (c *Chancellor) SetChancellorSeal(key storage.EdictKey, sealed bool) error {
-	result := c.db.Model(&storage.Edict{}).
-		Where("id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
-		Update("chancellor_seal", sealed)
-	if result.Error != nil {
-		return fmt.Errorf("failed to set chancellor seal: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %d", key.ID)
-	}
-	return nil
-}
-
-// SetCensorSeal sets or clears the Censor's seal on an edict
-func (c *Chancellor) SetCensorSeal(key storage.EdictKey, sealed bool) error {
-	result := c.db.Model(&storage.Edict{}).
-		Where("id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
-		Update("censor_seal", sealed)
-	if result.Error != nil {
-		return fmt.Errorf("failed to set censor seal: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("edict not found: %d", key.ID)
-	}
-	return nil
-}
 
 // CancelEdict marks an edict as cancelled
 func (c *Chancellor) CancelEdict(key storage.EdictKey, cancelledBy, reason string) error {
@@ -241,76 +180,6 @@ func (c *Chancellor) CancelEdict(key storage.EdictKey, cancelledBy, reason strin
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("edict not found: %d", key.ID)
 	}
-	return nil
-}
-
-// --- Zhengming (Clarification) Management ---
-
-// GetPendingZhengming retrieves all pending clarification requests for an edict
-func (c *Chancellor) GetPendingZhengming(key storage.EdictKey) ([]storage.Zhengming, error) {
-	var requests []storage.Zhengming
-	query := c.db.Where("status = ?", storage.ZhengmingPending).Order("created_at ASC")
-	if key.ID != 0 {
-		query = query.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project)
-	}
-	if err := query.Find(&requests).Error; err != nil {
-		return nil, fmt.Errorf("failed to get pending zhengming: %w", err)
-	}
-	return requests, nil
-}
-
-// --- Manifest and Ling Management ---
-
-// GetAllManifestsForEdict retrieves all manifests for an edict (Chancellor privilege)
-func (c *Chancellor) GetAllManifestsForEdict(key storage.EdictKey) ([]storage.ForgeManifest, error) {
-	var manifests []storage.ForgeManifest
-	err := c.db.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
-		Order("created_at ASC").
-		Find(&manifests).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get manifests: %w", err)
-	}
-	return manifests, nil
-}
-
-// GetAllLingForEdict retrieves all ling for an edict (Chancellor privilege)
-func (c *Chancellor) GetAllLingForEdict(key storage.EdictKey) ([]storage.Ling, error) {
-	var ling []storage.Ling
-	err := c.db.Where("edict_id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).
-		Order("created_at ASC").
-		Find(&ling).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ling: %w", err)
-	}
-	return ling, nil
-}
-
-// ResetLingStatus resets a ling's status (for regression handling)
-func (c *Chancellor) ResetLingStatus(lingID string, status storage.LingStatus) error {
-	result := c.db.Model(&storage.Ling{}).
-		Where("ling_id = ?", lingID).
-		Update("status", status)
-	if result.Error != nil {
-		return fmt.Errorf("failed to reset ling status: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("ling not found: %s", lingID)
-	}
-	return nil
-}
-
-// CancelEdictWithContext cancels an edict (context-aware variant)
-func (c *Chancellor) CancelEdictWithContext(ctx context.Context, key storage.EdictKey, cancelledBy, reason string) error {
-	if err := c.CancelEdict(key, cancelledBy, reason); err != nil {
-		return err
-	}
-
-	c.EmitEvent(key, "edict_cancelled", storage.JSON{
-		"cancelled_by": cancelledBy,
-		"reason":       reason,
-	})
-
-	c.logger.Info("edict cancelled", "edict_id", key.ID, "by", cancelledBy)
 	return nil
 }
 
@@ -344,110 +213,25 @@ func (c *Chancellor) CheckSandboxHealth(ctx context.Context) error {
 
 // --- Prompt Processing ---
 
-// processPrompt handles a single prompt from the Ruler
-func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
-	key := prompt.EdictKey
+// preprocessPrompt is the Chancellor's PromptPreprocessor hook.
+// For edict-bound prompts (key.ID != 0) it appends the message to the edict
+// intent and prepends a [Context: edict N] prefix. For ruling-session prompts
+// (key.ID == 0) it returns the message unchanged.
+func (c *Chancellor) preprocessPrompt(key storage.EdictKey, message string) string {
 	if key.ID != 0 {
-		// Edict-bound prompt — append to intent
-		if err := c.AppendToIntent(key, prompt.Message); err != nil {
+		if err := c.AppendToIntent(key, message); err != nil {
 			c.logger.Warn("failed to append to intent", "edict_id", key.ID, "error", err)
 		}
+		return fmt.Sprintf("[Context: edict %d]\n\n%s", key.ID, message)
 	}
-	// When ID == 0, this is a ruling session (edict-free chat).
-	// No edict is created — the Chancellor can create one on-demand via tools.
-
-	// Notify TUI of edict ID before streaming begins
-	c.notify(StreamStartMsg{ChannelID: "chancellor", EdictID: key.ID})
-
-	// Call LLM with streaming
-	c.brewWithStreaming(ctx, key, prompt.Message, prompt.ContextFiles)
+	return message
 }
 
-// brewWithStreaming delegates to Session for LLM interaction
-func (c *Chancellor) brewWithStreaming(ctx context.Context, key storage.EdictKey, prompt string, contextFiles map[string]string) {
-	if c.client == nil {
-		c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: fmt.Errorf("LLM not configured")})
-		return
-	}
-
-	// Always use session — no per-edict sessions
-	if c.session == nil {
-		var err error
-		c.session, err = CreateSession(c, c.client, c.config, c.notify, "chancellor")
-		if err != nil {
-			c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: fmt.Errorf("failed to create session: %w", err)})
-			return
-		}
-		c.session.TabType = "chancellor"
-		c.session.SetPersister(c.Persister())
-		c.logger.Info("chancellor created interactive session")
-	}
-
-	c.logger.Debug("context files received from TUI", "count", len(contextFiles))
-
-	// Pass edictID in prompt context, not session
-	fullPrompt := prompt
-	if key.ID != 0 {
-		fullPrompt = fmt.Sprintf("[Context: edict %d]\n\n%s", key.ID, prompt)
-	}
-
-	_, err := c.session.AskWithStreaming(ctx, fullPrompt, contextFiles)
-	if err != nil && ctx.Err() == nil {
-		c.notify(StreamErrorMsg{ChannelID: "chancellor", Err: err})
-		return
-	}
-	c.notify(StreamDoneMsg{ChannelID: "chancellor"})
-}
-
-// processTask handles a task from the ritual runner or other ministers.
-func (c *Chancellor) processTask(ctx context.Context, task *Task) {
-	c.logger.Info("chancellor processing task",
-		"edict_id", task.EdictKey.ID,
-		"work", truncateString(task.Work, 50))
-
-	var output string
-	var taskErr error
-
-	if c.client != nil {
-		// Always use session for task conversation
-		if c.session == nil {
-			var err error
-			c.session, err = CreateSession(c, c.client, c.config, c.notify, "chancellor")
-			if err != nil {
-				taskErr = fmt.Errorf("failed to create session: %w", err)
-			} else {
-				c.session.TabType = "chancellor"
-				c.session.SetPersister(c.Persister())
-			}
-		}
-
-		if taskErr == nil {
-			output, taskErr = c.session.AskWithStreaming(ctx, task.Work, nil)
-		}
-	} else {
-		output = "chancellor task acknowledged (no LLM configured)"
-	}
-
-	result := Result{
-		MinisterID: c.ID(),
-		Sealed:     true,
-		Output:     output,
-		Err:        taskErr,
-	}
-
-	if task.Done != nil {
-		select {
-		case task.Done <- result:
-		default:
-			c.logger.Warn("done channel full, dropping result", "edict_id", task.EdictKey.ID)
-		}
-	}
-}
-
-// handleRitualCompleted processes a completed ritual event
-func (c *Chancellor) handleRitualCompleted(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
-	c.logger.Info("handling ritual completed", "edict_id", key.ID, "payload", payload)
-	c.logger.Debug("ritual completed - edict may need synthesis", "edict_id", key.ID)
+// processPrompt handles a single prompt from the Ruler.
+// The preprocessor hook handles edict-specific preprocessing; the actual
+// session creation and streaming is delegated to MinisterBase.ProcessPrompt.
+func (c *Chancellor) processPrompt(ctx context.Context, prompt *Prompt) {
+	c.ProcessPrompt(ctx, c, prompt)
 }
 
 // handleZhengmingAnswered resumes the chancellor's work on an edict after clarification
@@ -458,7 +242,7 @@ func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, key storage.Ed
 	}
 	c.logger.Info("handling zhengming answered", "edict_id", key.ID, "answer", answer)
 
-	edict, err := c.GetEdict(key)
+	edict, err := c.MinisterBase.GetEdict(key)
 	if err != nil {
 		c.logger.Error("failed to get edict for zhengming resumption", "edict_id", key.ID, "error", err)
 		return
@@ -477,19 +261,4 @@ func (c *Chancellor) handleZhengmingAnswered(ctx context.Context, key storage.Ed
 	default:
 		c.logger.Warn("chancellor task channel full", "edict_id", key.ID)
 	}
-}
-
-// handleRitualFailed processes a failed ritual event
-func (c *Chancellor) handleRitualFailed(ctx context.Context, key storage.EdictKey, payload map[string]interface{}) {
-	c.logger.Error("handling ritual failed", "edict_id", key.ID, "payload", payload)
-	c.logger.Debug("ritual failed - may need zhengming or retry", "edict_id", key.ID)
-}
-
-// truncateString truncates a string to maxLen characters
-func truncateString(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }

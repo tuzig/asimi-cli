@@ -38,7 +38,7 @@
         - record the judge's seal
       on_failure: goto
       on_failure_target: forging
-    - name: censoring
+    - name: reviewing
       minister: sage
       given:
         - the manifests
@@ -122,7 +122,7 @@
       on_failure: goto
       on_failure_target: implementing
 
-    - name: censoring
+    - name: reviewing
       minister: sage
       given:
         - the manifests
@@ -230,8 +230,8 @@
         {{ .borderland_manifests }}
 
         Use record_verdict to record pass/fail for this edict.
-        Censoring is next so don't stage, commit nor push.
-    - name: censoring
+        Reviewing is next so don't stage, commit nor push.
+    - name: reviewing
       minister: sage
       given:
         - the borderlands

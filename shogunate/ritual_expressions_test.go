@@ -1759,3 +1759,52 @@ func TestCheckLingDAG_IsolatesByEdictKey(t *testing.T) {
 	err := runner.runThen(context.Background(), exec, "check_ling_dag")
 	assert.NoError(t, err, "Expected no error for edict 1 (valid DAG), despite edict 2 having a cycle")
 }
+
+// TestGetCourtStatus_SageSealChecksSageMinisterID verifies that getCourtStatus
+// checks for minister_id = 'sage' (not the old 'confucius'). An edict with a
+// sage seal should show status 'active' via the SQL CASE expression.
+func TestGetCourtStatus_SageSealChecksSageMinisterID(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	// setupRitualTestDB doesn't migrate Edict/Seal tables — create them here.
+	require.NoError(t, db.AutoMigrate(&storage.Edict{}, &storage.Seal{}, &storage.Zhengming{}))
+
+	// Create an edict.
+	edict := storage.Edict{
+		ID:       1, Username: "testuser", Project: "testproject", Intent: "test",
+	}
+	require.NoError(t, db.Create(&edict).Error)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	key := storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}
+
+	// Before any seal: status should be 'active'.
+	result, err := runner.getCourtStatus(key)
+	require.NoError(t, err)
+	rows, ok := result.([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "active", rows[0]["status"])
+
+	// Grant a sage seal — the SQL must match minister_id = 'sage'.
+	sealSvc := storage.NewSealService(db)
+	require.NoError(t, sealSvc.GrantSeal(key, "sage", storage.JSON{}))
+
+	result, err = runner.getCourtStatus(key)
+	require.NoError(t, err)
+	rows, ok = result.([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, rows, 1)
+	// With a sage seal (but no ruler seal), the edict is still 'active'.
+	assert.Equal(t, "active", rows[0]["status"])
+
+	// Grant a ruler seal — the edict should disappear from the active list.
+	require.NoError(t, sealSvc.GrantSeal(key, "ruler", storage.JSON{}))
+	result, err = runner.getCourtStatus(key)
+	require.NoError(t, err)
+	rows, ok = result.([]map[string]interface{})
+	require.True(t, ok)
+	assert.Empty(t, rows, "edict with ruler seal should not appear in court status")
+}

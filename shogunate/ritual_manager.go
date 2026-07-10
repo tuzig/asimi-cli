@@ -38,7 +38,6 @@ type EventNotificationMsg struct {
 // RitualGuard processes events and owns ritual/event infrastructure
 type RitualGuard struct {
 	*MinisterBase  // embedded base for database access and session creation
-	chancellor     *Chancellor
 	ritualRegistry *RitualRegistry
 	ritualRunner   *RitualRunner
 	eventRegistry  *EventRegistry
@@ -60,8 +59,6 @@ type RitualGuard struct {
 // RitualGuardOpts configures a new RitualGuard.
 type RitualGuardOpts struct {
 	Base *MinisterBase
-	// TODO: remove chancellor as we have GetMinister("chancellor")
-	Chancellor      *Chancellor
 	Runner          runners.Runner
 	GetMinister     func(id string) Minister
 	OnRunnerUpgrade func(runners.Runner) // propagates runner changes back to shogunate
@@ -78,7 +75,6 @@ func NewRitualGuard(opts RitualGuardOpts) *RitualGuard {
 
 	rg := &RitualGuard{
 		MinisterBase:   opts.Base,
-		chancellor:     opts.Chancellor,
 		ritualRegistry: registry,
 		eventRegistry:  eventRegistry,
 		eventCh:        eventCh,
@@ -393,19 +389,21 @@ func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 	}
 
 	// Check 2: Model - Verify LLM connectivity with actual ping
-	if rg.chancellor != nil {
-		base := rg.chancellor.MinisterBase
-		if base == nil || base.client == nil {
-			result.ModelOK = false
-			result.Remediation["model"] = "Configure LLM model in settings"
-			fail("✗ LLM model not configured")
-		} else if !rg.pingLLM(base) {
-			result.ModelOK = false
-			result.Remediation["model"] = "Check LLM API endpoint and credentials"
-			fail("✗ LLM model not responsive")
-		} else {
-			result.ModelOK = true
-			info("✓ Model connectivity check passed")
+	if rg.getMinister != nil {
+		chancellor := rg.getMinister("chancellor")
+		if chancellor != nil {
+			if chancellor.Model() == nil {
+				result.ModelOK = false
+				result.Remediation["model"] = "Configure LLM model in settings"
+				fail("✗ LLM model not configured")
+			} else if !rg.pingLLM(chancellor) {
+				result.ModelOK = false
+				result.Remediation["model"] = "Check LLM API endpoint and credentials"
+				fail("✗ LLM model not responsive")
+			} else {
+				result.ModelOK = true
+				info("✓ Model connectivity check passed")
+			}
 		}
 	}
 
@@ -428,18 +426,19 @@ func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 }
 
 // pingLLM creates a session and sends a ping to verify LLM connectivity
-func (rg *RitualGuard) pingLLM(base *MinisterBase) bool {
-	if base == nil || base.client == nil {
+func (rg *RitualGuard) pingLLM(minister Minister) bool {
+	client := minister.Model()
+	if client == nil {
 		return false
 	}
 
 	// Create a minimal session for ping test
 	config := &SessionConfig{
-		LLM:        base.config.LLM,
-		WorkingDir: base.RepoInfo().ProjectRoot,
+		LLM:        minister.GetConfig(),
+		WorkingDir: minister.RepoInfo().ProjectRoot,
 	}
 
-	sess, err := CreateSession(rg, base.client, config, nil, "health_check")
+	sess, err := CreateSession(rg, client, config, nil, "health_check")
 	if err != nil {
 		rg.logger.Debug("health check: failed to create session for ping", "error", err)
 		return false
@@ -462,15 +461,19 @@ func (rg *RitualGuard) pingLLM(base *MinisterBase) bool {
 
 // getSandboxImageName returns the sandbox image name from the runner
 func (rg *RitualGuard) getSandboxImageName() string {
-	if rg.chancellor != nil && rg.chancellor.Runner() != nil {
-		// Try to get image name from PodmanRunner if available
-		if podmanRunner, ok := rg.chancellor.Runner().(*runners.PodmanRunner); ok {
-			return podmanRunner.GetImageName()
+	if rg.getMinister != nil {
+		chancellor := rg.getMinister("chancellor")
+		if chancellor != nil {
+			if runnerProvider, ok := chancellor.(interface{ Runner() runners.Runner }); ok {
+				runner := runnerProvider.Runner()
+				if runner != nil {
+					if podmanRunner, ok := runner.(*runners.PodmanRunner); ok {
+						return podmanRunner.GetImageName()
+					}
+				}
+			}
 		}
 	}
-	// No runner or no PodmanRunner — return empty so callers know
-	// the image name is not available (e.g., health check can skip
-	// the sandbox verification rather than checking a bogus name).
 	return ""
 }
 
@@ -529,10 +532,15 @@ func (rg *RitualGuard) SetNotify(notify internal.NotifyFunc) {
 // DeliverZhengmingAnswer delivers a zhengming answer to the chancellor's pending wait.
 // Returns true if the answer was delivered to a waiting caller.
 func (rg *RitualGuard) DeliverZhengmingAnswer(answer ZhengmingAnswer) bool {
-	if rg.chancellor == nil {
-		return false
+	if rg.getMinister != nil {
+		chancellor := rg.getMinister("chancellor")
+		if chancellor != nil {
+			if deliverer, ok := chancellor.(interface{ DeliverZhengmingAnswer(ZhengmingAnswer) bool }); ok {
+				return deliverer.DeliverZhengmingAnswer(answer)
+			}
+		}
 	}
-	return rg.chancellor.MinisterBase.DeliverZhengmingAnswer(answer)
+	return false
 }
 
 // DrainUnprocessedEvents replays events persisted to DB but never dispatched (crash recovery).

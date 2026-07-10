@@ -263,6 +263,11 @@ type MinisterBase struct {
 	taskFallback  TaskFallback
 	ctxMiddleware func(context.Context) context.Context // wraps ctx before streaming (e.g., Sage's failure accumulator)
 
+	// promptPreprocessor transforms a prompt before streaming.
+	// Set by ministers that need edict-specific preprocessing (e.g., Chancellor).
+	// nil = no preprocessing.
+	promptPreprocessor func(key storage.EdictKey, message string) string
+
 	self Minister // concrete minister, set by RunLoop for session creation
 }
 
@@ -345,6 +350,8 @@ func (m *MinisterBase) RunLoop(
 
 // ProcessPrompt is the shared prompt handler for all ministers.
 // It creates a session if needed and streams the LLM response.
+// If a promptPreprocessor hook is set, it transforms the prompt message
+// before streaming (e.g., adding edict context prefix).
 func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, prompt *Prompt) {
 	if m.client == nil {
 		m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: fmt.Errorf("LLM not configured for %s", m.ministerID)})
@@ -363,9 +370,14 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 		m.logger.Info("created interactive session", "minister_id", m.ministerID)
 	}
 
+	message := prompt.Message
+	if m.promptPreprocessor != nil {
+		message = m.promptPreprocessor(prompt.EdictKey, message)
+	}
+
 	m.notify(StreamStartMsg{ChannelID: m.ministerID, EdictID: prompt.EdictKey.ID})
 
-	_, err := m.session.AskWithStreaming(ctx, prompt.Message, prompt.ContextFiles)
+	_, err := m.session.AskWithStreaming(ctx, message, prompt.ContextFiles)
 	if err != nil && ctx.Err() == nil {
 		m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: err})
 		return
@@ -620,23 +632,6 @@ func (m *MinisterBase) SetSessionPersister(p SessionPersister) {
 // Persister returns the configured persister (nil if none was set).
 func (m *MinisterBase) Persister() SessionPersister {
 	return m.persister
-}
-
-// restoreSession rebuilds the minister's interactive session and seeds
-// it with msgs. The concrete Minister is passed in so CreateSession can
-// dispatch Tools/SystemPrompt polymorphically. TabType is keyed off the
-// minister's id (matches what ListSessions filters on); persister is
-// attached so subsequent appends continue to flow into storage.
-func (m *MinisterBase) restoreSession(minister Minister, msgs []schemas.ChatMessage) error {
-	sess, err := CreateSession(minister, m.client, m.config, m.notify, m.ministerID)
-	if err != nil {
-		return err
-	}
-	sess.SetMessages(msgs)
-	sess.TabType = m.ministerID
-	sess.SetPersister(m.persister)
-	m.session = sess
-	return nil
 }
 
 // ID returns the minister's unique identifier.

@@ -387,7 +387,7 @@ Here's `swift-strike`, one of the built-in rituals — a tight forge/judge/sage 
       on_failure: goto
       on_failure_target: forging
 
-    - name: censoring
+    - name: reviewing
       minister: sage
       given:
         - the manifests
@@ -412,13 +412,13 @@ Asimi ships with six built-in rituals in [`builtin_rituals.yaml`](../shogunate/b
 
 A tight forge/judge/sage loop for small, targeted changes. The forge implements the edict, the judge runs tests and verifies coverage, and the sage reviews for style and security. On failure, control loops back to forging.
 
-**Steps:** forging → judging → censoring
+**Steps:** forging → judging → reviewing
 
 ### castle-siege
 
-A medium-complexity workflow that adds a strategist planning phase before forging. The strategist analyzes the edict and produces a Battle Plan with phases and dependencies. The forge then executes the plan, followed by judging and censoring.
+A medium-complexity workflow that adds a strategist planning phase before forging. The strategist analyzes the edict and produces a Battle Plan with phases and dependencies. The forge then executes the plan, followed by judging and reviewing.
 
-**Steps:** strategizing → forging → judging → censoring
+**Steps:** strategizing → forging → judging → reviewing
 
 ### dawn-audience
 
@@ -430,7 +430,7 @@ The startup ritual, triggered automatically by the `shogunate_started` event. It
 
 A code review ritual for unstaged changes. The judge verifies test coverage for the borderlands, then the sage reviews for style, security, and architecture. Neither step stages or commits — the ruler decides what to do after review.
 
-**Steps:** judging → censoring
+**Steps:** judging → reviewing
 
 ### lint-fix
 

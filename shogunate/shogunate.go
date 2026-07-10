@@ -152,9 +152,6 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		},
 	})
 
-	// Subscribe Chancellor to events via RitualGuard
-	chancellor.SubscribeToEvents(s.ritualGuard)
-
 	// Handle zhengming_answered events: merged handler for ritual delivery, edict creation, and legacy path
 	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
 		requestID, _ := e.Payload["request_id"].(string)
@@ -224,8 +221,7 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 	s.ministers["forge"] = NewForge(newBase())
 	s.ministers["judge"] = NewJudge(newBase(), nil)
 	s.ministers["marshal"] = NewMarshal(newBase(), nil)
-	sage := NewSage(newBase(), nil)
-	sage.shogunate = s
+	sage := NewSage(newBase())
 	s.ministers["sage"] = sage
 
 	// Build and populate the tool registry with permission classifications.
