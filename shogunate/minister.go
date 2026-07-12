@@ -715,7 +715,7 @@ func (m *MinisterBase) streamTask(ctx context.Context, work string, key storage.
 // processTask is the unified task processor for all ministers.
 // It delegates to hooks set by each minister constructor.
 func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
-	m.logger.Info("processing task", "minister_id", m.ministerID, "edict_id", task.EdictKey.ID, "work", task.Work)
+	m.logger.Info("processing task", "minister_id", m.ministerID, "edict_id", task.EdictKey.ID, "work", task.Work[:min(60, len(task.Work))])
 
 	// Allow context middleware (e.g., Sage's failure accumulator) to wrap ctx
 	if m.ctxMiddleware != nil {
