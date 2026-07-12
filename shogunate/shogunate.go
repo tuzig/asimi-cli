@@ -99,6 +99,16 @@ type Shogunate struct {
 	// are created so messages flow into durable storage in near-real time.
 	persister SessionPersister
 
+	// hostChecker determines whether a command should run on the host
+	// (from config run_on_host/safe_run_on_host patterns). Extracted from
+	// the chancellor's MinisterBase during buildToolRegistry so both the
+	// initial RegisterBuiltinTools and updateProjectRootTools can use it.
+	hostChecker func(string) (bool, bool)
+
+	// msgChan is the approval channel for ephemeral HostRunner instances
+	// used by the shell tool. Set by SetRunnerMessageChannel (via Subscribe).
+	msgChan chan<- runners.Msg
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -295,10 +305,25 @@ func (s *Shogunate) buildToolRegistry() *tools.ToolRegistry {
 		}
 	}
 
+	// Extract CheckHostCommand from the chancellor's MinisterBase so
+	// the shell tool honors run_on_host/safe_run_on_host config patterns.
+	// Same extraction pattern as EdictManager/ZhengmingRequester above.
+	var hostChecker func(string) (bool, bool)
+	if chancellor != nil {
+		if hc, ok := chancellor.(interface {
+			CheckHostCommand(cmd string) (runOnHost, needsApproval bool)
+		}); ok {
+			hostChecker = hc.CheckHostCommand
+		}
+	}
+	s.hostChecker = hostChecker
+
 	opts := tools.ToolRegistrationOpts{
 		Ctx:                  ctx,
 		DBPath:               dbPath,
 		Runner:               s.runner,
+		HostChecker:          hostChecker,
+		MsgChan:              s.msgChan,
 		EdictManager:         edictManager,
 		ZhengmingRequester:   zhengmingRequester,
 		WaitForZhengming:     waitForZhengming,
@@ -357,7 +382,7 @@ func (s *Shogunate) updateProjectRootTools(projectRoot string) {
 
 	// Earth/Execute — shell command execution (needs runner)
 	if s.runner != nil {
-		s.toolRegistry.Update(tools.NewRunShellCommand(nil, s.runner, nil, projectRoot))
+		s.toolRegistry.Update(tools.NewRunShellCommand(s.hostChecker, s.runner, s.msgChan, projectRoot))
 	}
 
 	s.logger.Debug("updated project-root-dependent tools", "projectRoot", projectRoot)
@@ -855,6 +880,7 @@ func (s *Shogunate) SetRunnerMessageChannel(msgChan chan<- runners.Msg) {
 	if s == nil || s.runner == nil {
 		return
 	}
+	s.msgChan = msgChan
 	s.runner.SetMessageChannel(msgChan)
 	// Propagate to all ministers so their shell tools can pass msgChan
 	// to ephemeral HostRunner instances

@@ -1010,7 +1010,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		r.logger.Debug("exec.Data is nil")
 		exec.Data = storage.JSON{}
 	}
-	r.logger.Debug("updating act_result", "act_result", actResult)
+	r.logger.Debug("act_result", "act_result", actResult[:min(60, len(actResult))])
 	exec.Data["act_result"] = actResult
 	exec.Data[step.Name] = actResult
 

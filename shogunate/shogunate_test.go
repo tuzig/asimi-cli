@@ -18,6 +18,7 @@ import (
 	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
+	"reflect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -827,4 +828,92 @@ func TestZhengmingAnswered_ChatAndNonSentinelIsolation(t *testing.T) {
 	err = db.Where("intent = ?", legitAnswer).Find(&legitEdicts).Error
 	require.NoError(t, err)
 	assert.Len(t, legitEdicts, 1, "one edict should be created from the legitimate answer")
+}
+
+// ---------------------------------------------------------------------------
+// HostChecker wiring tests (edict 631)
+// ---------------------------------------------------------------------------
+
+// TestBuildToolRegistry_WiresHostChecker verifies that buildToolRegistry
+// extracts CheckHostCommand from the chancellor's MinisterBase and stores
+// it as s.hostChecker so the shell tool can honor run_on_host /
+// safe_run_on_host config patterns.
+func TestBuildToolRegistry_WiresHostChecker(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+	s := NewShogunate(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	// ConfigureModel with a SessionConfig that has RunOnHost patterns
+	s.ConfigureModel(nil, &SessionConfig{
+		Sandbox: config.SandboxConfig{
+			RunOnHost: []string{"^gh "},
+		},
+	}, repo.RepoInfo{})
+
+	// hostChecker should be non-nil after buildToolRegistry
+	require.NotNil(t, s.hostChecker, "hostChecker should be wired from chancellor's CheckHostCommand")
+
+	// Verify it actually matches patterns from the config
+	runOnHost, needsApproval := s.hostChecker("gh issue list")
+	assert.True(t, runOnHost, "command matching RunOnHost should return runOnHost=true")
+	assert.True(t, needsApproval, "RunOnHost patterns require approval")
+
+	runOnHost, needsApproval = s.hostChecker("ls -la")
+	assert.False(t, runOnHost, "non-matching command should return runOnHost=false")
+}
+
+// TestUpdateProjectRootTools_PreservesHostChecker verifies that
+// updateProjectRootTools re-registers the shell tool with the stored
+// hostChecker (and msgChan) rather than nil values.
+func TestUpdateProjectRootTools_PreservesHostChecker(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultShogunateConfig()
+
+	runner := &msgForwardingRunner{}
+	s := NewShogunate(db, cfg, runner, nil)
+	require.NotNil(t, s)
+
+	// Set up a msgChan via Subscribe (which calls SetRunnerMessageChannel)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_ = s.Subscribe(ctx)
+	require.NotNil(t, s.msgChan, "msgChan should be set after Subscribe")
+
+	// ConfigureModel to wire hostChecker
+	s.ConfigureModel(nil, &SessionConfig{
+		Sandbox: config.SandboxConfig{
+			RunOnHost: []string{"^docker "},
+		},
+	}, repo.RepoInfo{})
+	require.NotNil(t, s.hostChecker)
+
+	// Call updateProjectRootTools and verify the shell tool has the hostChecker
+	s.updateProjectRootTools("/tmp")
+
+	// Get the registered shell tool from the registry
+	forgePerm, _ := tools.ParsePermissions("rwxr---w-")
+	ts := s.toolRegistry.ForPermissions("forge", forgePerm)
+	var shellTool *tools.RunShellCommand
+	for _, t := range ts {
+		if st, ok := t.(*tools.RunShellCommand); ok {
+			shellTool = st
+			break
+		}
+	}
+	require.NotNil(t, shellTool, "run_shell_command should be registered after updateProjectRootTools")
+
+	// Verify the shell tool's internal shouldRunOnHost field is non-nil.
+	// This is the critical check: updateProjectRootTools must pass s.hostChecker
+	// (not nil) when constructing the RunShellCommand. We use reflection because
+	// shouldRunOnHost is an unexported field on tools.RunShellCommand.
+	shellVal := reflect.ValueOf(shellTool).Elem()
+	shouldRunOnHost := shellVal.FieldByName("shouldRunOnHost")
+	require.True(t, shouldRunOnHost.IsValid(), "RunShellCommand should have shouldRunOnHost field")
+	assert.False(t, shouldRunOnHost.IsNil(), "shell tool's shouldRunOnHost must be non-nil after updateProjectRootTools")
+
+	// Verify the shell tool's internal msgChan field is non-nil.
+	msgChanField := shellVal.FieldByName("msgChan")
+	require.True(t, msgChanField.IsValid(), "RunShellCommand should have msgChan field")
+	assert.False(t, msgChanField.IsNil(), "shell tool's msgChan must be non-nil after updateProjectRootTools")
 }
