@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode"
 
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/shogunate/tools"
@@ -656,6 +657,64 @@ func (p *PromptComponent) deleteWordForward() (bool, tea.Cmd) {
 	return true, nil
 }
 
+// wordBackward moves the cursor one word to the left using the textarea public API.
+// This replaces the built-in textarea wordLeft() which has an infinite loop bug
+// when the cursor is at (0,0) with an empty buffer or leading whitespace.
+func (p *PromptComponent) wordBackward() {
+	value := p.TextArea.Value()
+	if value == "" {
+		return
+	}
+
+	lines := strings.Split(value, "\n")
+	row := p.TextArea.Line()
+	lineInfo := p.TextArea.LineInfo()
+	col := lineInfo.StartColumn + lineInfo.ColumnOffset
+
+	// Already at the very beginning
+	if row == 0 && col == 0 {
+		return
+	}
+
+	for {
+		// Move left by one character
+		if col > 0 {
+			col--
+		} else if row > 0 {
+			// Move to end of previous line
+			row--
+			col = len(lines[row])
+			continue
+		} else {
+			// At (0,0), can't go further
+			return
+		}
+
+		// Skip whitespace: if current char is not whitespace, we've found a word
+		if col < len(lines[row]) && !unicode.IsSpace(rune(lines[row][col])) {
+			break
+		}
+	}
+
+	// Now skip backwards over the word (non-whitespace chars)
+	for col > 0 && !unicode.IsSpace(rune(lines[row][col-1])) {
+		col--
+	}
+
+	// Position the cursor
+	p.TextArea.SetCursor(0)
+	currentRow := p.TextArea.Line()
+	for currentRow > row {
+		p.TextArea.CursorUp()
+		currentRow = p.TextArea.Line()
+	}
+	for currentRow < row {
+		p.TextArea.CursorDown()
+		currentRow = p.TextArea.Line()
+	}
+	p.TextArea.SetCursor(col)
+}
+
 // Update handles messages for the prompt component
 func (p PromptComponent) Update(msg interface{}) (PromptComponent, tea.Cmd) {
 	var cmd tea.Cmd
@@ -682,6 +741,11 @@ func (p PromptComponent) Update(msg interface{}) (PromptComponent, tea.Cmd) {
 				return p, nil
 			}
 		}
+		// Intercept word-backward to bypass the buggy textarea.wordLeft()
+		if p.IsViInsertMode() && keyMsg.String() == "alt+left" {
+			p.wordBackward()
+			return p, nil
+		}
 		if p.IsViNormalMode() {
 			keyStr := keyMsg.String()
 
@@ -702,6 +766,12 @@ func (p PromptComponent) Update(msg interface{}) (PromptComponent, tea.Cmd) {
 			handled, viCmd := p.handleViCommand(keyStr)
 			if handled {
 				return p, viCmd
+			}
+
+			// Intercept "b" (word-backward) to bypass the buggy textarea.wordLeft()
+			if keyStr == "b" && p.viPendingOp == "" {
+				p.wordBackward()
+				return p, nil
 			}
 
 			// Allow only specific navigation and command keys in normal mode

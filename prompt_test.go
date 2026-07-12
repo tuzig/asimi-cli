@@ -503,3 +503,190 @@ func TestCalculateDesiredHeightAnsweringMode(t *testing.T) {
 		t.Errorf("Expected height 6 (3 + 3 options), got %d", height)
 	}
 }
+
+// getCursorPos returns the current (row, col) of the textarea cursor.
+func getCursorPos(p PromptComponent) (int, int) {
+	row := p.TextArea.Line()
+	li := p.TextArea.LineInfo()
+	col := li.StartColumn + li.ColumnOffset
+	return row, col
+}
+
+// TestWordBackwardEmptyBuffer tests that wordBackward on an empty buffer
+// does not infinite-loop (the original bubbles wordLeft() bug).
+func TestWordBackwardEmptyBuffer(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("")
+	prompt.TextArea.SetCursor(0)
+
+	// This should return immediately without hanging
+	prompt.wordBackward()
+
+	row, col := getCursorPos(prompt)
+	if row != 0 || col != 0 {
+		t.Errorf("Expected cursor at (0,0), got (%d,%d)", row, col)
+	}
+}
+
+// TestWordBackwardLeadingWhitespace tests wordBackward with leading whitespace
+// at (0,0) — another trigger for the original infinite-loop bug.
+func TestWordBackwardLeadingWhitespace(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("   hello")
+	prompt.TextArea.SetCursor(0)
+
+	prompt.wordBackward()
+
+	row, col := getCursorPos(prompt)
+	if row != 0 || col != 0 {
+		t.Errorf("Expected cursor at (0,0), got (%d,%d)", row, col)
+	}
+}
+
+// TestWordBackwardSimpleWord moves cursor from end of "hello world" to start of "hello".
+func TestWordBackwardSimpleWord(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("hello world")
+	prompt.TextArea.SetCursor(len("hello world")) // cursor at end
+
+	prompt.wordBackward()
+
+	row, col := getCursorPos(prompt)
+	if row != 0 || col != 6 { // "world" starts at index 6
+		t.Errorf("Expected cursor at (0,6), got (%d,%d)", row, col)
+	}
+
+	// Move back once more to reach "hello"
+	prompt.wordBackward()
+
+	row, col = getCursorPos(prompt)
+	if row != 0 || col != 0 {
+		t.Errorf("Expected cursor at (0,0), got (%d,%d)", row, col)
+	}
+}
+
+// TestWordBackwardMultiline tests wordBackward crossing line boundaries.
+func TestWordBackwardMultiline(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("foo bar\nbaz qux")
+	prompt.TextArea.SetCursor(0)
+	// Move cursor to "qux" on line 1 (col 8 = "baz qux", "qux" starts at index 4)
+	prompt.TextArea.SetCursor(4) // on line 0, col 4
+	// Move down to line 1
+	prompt.TextArea.CursorDown()
+
+	prompt.wordBackward()
+
+	row, col := getCursorPos(prompt)
+	// "baz" starts at index 0 on line 1
+	if row != 1 || col != 0 {
+		t.Errorf("Expected cursor at (1,0), got (%d,%d)", row, col)
+	}
+
+	// Move back again — should cross to end of line 0
+	prompt.wordBackward()
+
+	row, col = getCursorPos(prompt)
+	// "bar" starts at index 4 on line 0
+	if row != 0 || col != 4 {
+		t.Errorf("Expected cursor at (0,4), got (%d,%d)", row, col)
+	}
+}
+
+// TestWordBackwardInsertModeAltLeft tests the alt+left key binding in insert mode.
+func TestWordBackwardInsertModeAltLeft(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("hello world")
+	prompt.TextArea.SetCursor(len("hello world"))
+
+	// Press alt+left in insert mode
+	prompt, _ = prompt.Update(tea.KeyMsg{
+		Type: tea.KeyLeft,
+		Alt:  true,
+	})
+
+	row, col := getCursorPos(prompt)
+	if row != 0 || col != 6 {
+		t.Errorf("Expected cursor at (0,6) after alt+left, got (%d,%d)", row, col)
+	}
+}
+
+// TestWordBackwardNormalModeB tests the "b" key in vi normal mode.
+func TestWordBackwardNormalModeB(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("hello world")
+	prompt.TextArea.SetCursor(len("hello world"))
+	prompt.EnterViNormalMode()
+
+	// Press "b" in normal mode
+	bMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}
+	prompt, _ = prompt.Update(bMsg)
+
+	row, col := getCursorPos(prompt)
+	if row != 0 || col != 6 {
+		t.Errorf("Expected cursor at (0,6) after 'b', got (%d,%d)", row, col)
+	}
+}
+
+// TestWordBackwardNormalModeBEmptyBuffer tests that "b" in normal mode
+// with an empty buffer doesn't hang.
+func TestWordBackwardNormalModeBEmptyBuffer(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("")
+	prompt.EnterViNormalMode()
+
+	bMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}
+	prompt, _ = prompt.Update(bMsg)
+
+	if !prompt.IsViNormalMode() {
+		t.Error("Should still be in normal mode")
+	}
+}
+
+// TestWordBackwardNormalModeBLeadingWhitespace tests "b" in normal mode
+// with leading whitespace at (0,0).
+func TestWordBackwardNormalModeBLeadingWhitespace(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("   hello")
+	prompt.TextArea.SetCursor(0)
+	prompt.EnterViNormalMode()
+
+	bMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}
+	prompt, _ = prompt.Update(bMsg)
+
+	row, col := getCursorPos(prompt)
+	if row != 0 || col != 0 {
+		t.Errorf("Expected cursor at (0,0), got (%d,%d)", row, col)
+	}
+}
+
+// TestWordBackwardDoesNotInterfereWithDB verifies that pressing "b" after "d"
+// is treated as a compound command (db), not as a standalone word-backward.
+func TestWordBackwardDoesNotInterfereWithDB(t *testing.T) {
+	prompt := NewPromptComponent(80, 5)
+	prompt.SetValue("hello world")
+	prompt.TextArea.SetCursor(len("hello world"))
+	prompt.EnterViNormalMode()
+
+	// Press "d" to start a compound command
+	dMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}}
+	prompt, _ = prompt.Update(dMsg)
+
+	if prompt.viPendingOp != "d" {
+		t.Fatalf("Expected pending op 'd', got %q", prompt.viPendingOp)
+	}
+
+	// Press "b" — should be consumed as part of "db", not as word-backward
+	bMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}
+	prompt, _ = prompt.Update(bMsg)
+
+	// The pending op should be cleared (compound command completed)
+	if prompt.viPendingOp != "" {
+		t.Errorf("Expected pending op cleared, got %q", prompt.viPendingOp)
+	}
+
+	// Should still be in normal mode
+	if !prompt.IsViNormalMode() {
+		t.Error("Should still be in normal mode after db")
+	}
+}
