@@ -60,35 +60,15 @@ type TabManager struct {
 // bt is a backtick character, used inside raw string literals where ` cannot appear.
 const bt = "`"
 
-// tabGreetings maps each minister tab target to a welcome message.
-// Messages are injected as system messages into each tab's ChatComponent
-// at initialization — pure presentation, no daemon coupling.
-var tabGreetings = map[string]string{
-	"chancellor": "Greetings, Ruler and welcome to your Court\n" +
-		"Your court's main function is to harmonize the three realms:\n\n" +
-		"\t- **Intent**: the ruler's edicts, TODO comments and docs\n" +
-		"\t- **Earth**: the repo\n" +
-		"\t- **Heaven**: Logs, CI, test results and tests\n\n" +
-		"Rituals are running in the this tab",
-	"sage": `Greetings, Ruler and welcome to your hunting grounds
-With the sage you can hunt bugs' root cause,
-brew new features and formulate edicts.`,
-	"forge": `Salutations, Ruler and welcome to your Forge 工部
-The forge is where code is changed and the earth is shaped
-It's best to run the forge as part of a ritual,
-but if it's a quick-fix you're after, you're in the right tab`,
-	"judge": `Greetings, Ruler and welcome to your tribunal
-Here we weigh every change against the truth:
-- **Tests** pass or fail — there is no ambiguity
-- **Verdicts** seal the fate of every manifest
-If quality bugs you, you're on the right tab`,
-}
-
 // initTabGreetings seeds each tab's ChatComponent with its minister welcome
-// message. Called once during NewTabManager construction.
-func initTabGreetings(tm *TabManager) {
+// message, sourced from the Greeting field of each MinisterDef.
+func initTabGreetings(tm *TabManager, defs []shogunate.MinisterDef) {
+	greetings := make(map[string]string, len(defs))
+	for _, d := range defs {
+		greetings[d.ID] = d.Greeting
+	}
 	for i := range tm.tabs {
-		if greeting := tabGreetings[tm.tabs[i].Target]; greeting != "" {
+		if greeting := greetings[tm.tabs[i].Target]; greeting != "" {
 			tm.tabs[i].Content.Chat.AddGreetingMessage(greeting)
 		}
 	}
@@ -621,6 +601,10 @@ type ContentComponent struct {
 	// edictDashboard holds the rendered text for the ViewEdict dashboard.
 	edictDashboard string
 
+	// edictListActive is true when the dashboard was entered from the edicts
+	// list; Esc returns to the list instead of chat.
+	edictListActive bool
+
 	// Unified navigation state
 	navMode      NavigationMode
 	activeList   ListNavigator           // current list view for NavList mode
@@ -674,6 +658,7 @@ func (c *ContentComponent) GetActiveView() ViewType {
 func (c *ContentComponent) ShowChat() tea.Cmd {
 	c.activeView = ViewChat
 	c.navMode = NavText
+	c.edictListActive = false
 	return func() tea.Msg {
 		return ChangeModeMsg{NewMode: "insert"}
 	}
@@ -772,6 +757,7 @@ func (c *ContentComponent) ShowResume(sessions []shogunate.Session) tea.Cmd {
 func (c *ContentComponent) ShowEdictSelection(edicts []storage.ActiveEdict) tea.Cmd {
 	c.activeView = ViewEdict
 	c.navMode = NavList
+	c.edictListActive = true
 	c.activeList = &c.edictSelect.SelectWindow
 	c.edictSelect.SetItems(edicts)
 	c.selectedItem = 0
@@ -887,6 +873,14 @@ func (c *ContentComponent) handleExitKeys(msg tea.KeyMsg) tea.Cmd {
 		// Ctrl+C exits to chat
 		return c.ShowChat()
 	case "esc":
+		// In ViewEdict dashboard (NavText) with edictListActive, Esc returns
+		// to the edicts list. When already in the list (NavList), Esc exits to chat.
+		if c.activeView == ViewEdict && c.edictListActive && c.navMode == NavText {
+			c.edictListActive = false
+			return func() tea.Msg {
+				return reloadEdictsMsg{}
+			}
+		}
 		// Single ESC exits to chat
 		return c.ShowChat()
 	}

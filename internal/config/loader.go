@@ -334,4 +334,3 @@ func EnsureProjectConfig(projectRoot string) error {
 	}
 	return nil
 }
-

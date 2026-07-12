@@ -8,8 +8,8 @@ import (
 	"context"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"

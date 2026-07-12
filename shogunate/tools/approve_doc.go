@@ -32,9 +32,9 @@ type EditorRequest struct {
 // EditorResult carries the post-edit content back to the tool, or an error if
 // the editor failed to launch.
 type EditorResult struct {
-	Content  string // modified bytes; empty if Saved == false
-	Saved    bool   // false when the user quit without writing (vi :q!)
-	Err      error
+	Content string // modified bytes; empty if Saved == false
+	Saved   bool   // false when the user quit without writing (vi :q!)
+	Err     error
 }
 
 // ApproveDocTool opens documents in $EDITOR for review. Returns status='approved'

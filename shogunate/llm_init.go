@@ -19,5 +19,3 @@ func InitBifrost(ctx context.Context, requestTimeout, streamIdleTimeout, maxRetr
 		Logger:  NewBifrostLogger(slog.Default()),
 	})
 }
-
-

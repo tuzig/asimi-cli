@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/afittestide/asimi/storage"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewEdictSelectWindowDefaults(t *testing.T) {
@@ -153,4 +155,34 @@ func TestEdictSelectWindowRenderList_MultipleEdicts(t *testing.T) {
 	assert.Contains(t, lines[4], "[  4]")
 	assert.NotContains(t, lines[4], "刑")
 	assert.Contains(t, lines[4], "聖")
+}
+
+func TestHandleExitKeys_EscInEdictList_GoesToChat(t *testing.T) {
+	c := NewContentComponent(80, 24, false)
+	c.activeView = ViewEdict
+	c.edictListActive = true
+	c.navMode = NavList
+
+	cmd := c.handleExitKeys(tea.KeyMsg{Type: tea.KeyEsc})
+	require.NotNil(t, cmd, "Esc should return a cmd")
+
+	// Esc in the list itself should go to chat, not reload edicts
+	msg := cmd()
+	_, ok := msg.(reloadEdictsMsg)
+	assert.False(t, ok, "Esc in edicts list should go to chat, not reload")
+}
+
+func TestHandleExitKeys_EscInEdictDashboardWithoutListActive_GoesToChat(t *testing.T) {
+	c := NewContentComponent(80, 24, false)
+	c.activeView = ViewEdict
+	c.edictListActive = false
+	c.navMode = NavText
+
+	cmd := c.handleExitKeys(tea.KeyMsg{Type: tea.KeyEsc})
+	require.NotNil(t, cmd, "Esc should return a cmd")
+
+	// Should go to chat (ChangeModeMsg), not reload edicts
+	msg := cmd()
+	_, ok := msg.(reloadEdictsMsg)
+	assert.False(t, ok, "should not reload edicts when edictListActive is false")
 }

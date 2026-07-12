@@ -14,7 +14,6 @@ const MaxFrameSize = 16 * 1024 * 1024
 // ErrFrameTooLarge is returned when a peer announces a frame above MaxFrameSize.
 var ErrFrameTooLarge = errors.New(fmt.Sprintf("wire: frame exceeds %d bytes", MaxFrameSize))
 
-
 // ReadFrame reads one msgpack-RPC envelope from dec and decodes it.
 // Returns io.EOF on a clean peer close.
 // IMPORTANT: The decoder must be reused across calls to preserve its internal

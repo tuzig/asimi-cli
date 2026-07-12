@@ -22,9 +22,9 @@ import (
 // Tools()-construction would be nil (or stale) and silently bypass the
 // editor branch.
 type SuggestEdictTool struct {
-	Ctx        ToolContext
-	Requester  ZhengmingRequester
-	NotifyFn   func() func(any)
+	Ctx         ToolContext
+	Requester   ZhengmingRequester
+	NotifyFn    func() func(any)
 	SessionIDFn func() string
 }
 

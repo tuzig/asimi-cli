@@ -31,7 +31,7 @@ of what's happening in the Shogunate.`
 // Call executes the court query and returns a JSON snapshot.
 func (t QueryCourtTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		Scope   string `json:"scope"`   // "active", "all", or specific edict_id
+		Scope   string `json:"scope"` // "active", "all", or specific edict_id
 		EdictID uint   `json:"edict_id"`
 	}
 	// Input may be empty for a default scope query; ignore unmarshal errors.

@@ -94,10 +94,10 @@ func (t RecordVerdictTool) Description() string {
 
 func (t RecordVerdictTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		EdictID  uint   `json:"edict_id"`
-		LingID   string `json:"ling_id"`
-		Passed   bool   `json:"passed"`
-		Details  string `json:"details"`
+		EdictID uint   `json:"edict_id"`
+		LingID  string `json:"ling_id"`
+		Passed  bool   `json:"passed"`
+		Details string `json:"details"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)

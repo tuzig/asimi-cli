@@ -22,9 +22,9 @@ func TestDefaultSessionConfig_Table(t *testing.T) {
 	got := DefaultSessionConfig()
 
 	tests := []struct {
-		name  string
-		got   int
-		want  int
+		name string
+		got  int
+		want int
 	}{
 		{"MaxSessions", got.MaxSessions, 50},
 		{"MaxAgeDays", got.MaxAgeDays, 30},

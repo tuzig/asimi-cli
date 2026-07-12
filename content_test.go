@@ -4,14 +4,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afittestide/asimi/shogunate"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTabGreetingsAllPresent(t *testing.T) {
+	defs, err := shogunate.LoadMinisters()
+	require.NoError(t, err)
+
+	greetings := make(map[string]string, len(defs))
+	for _, d := range defs {
+		greetings[d.ID] = d.Greeting
+	}
+
 	for _, target := range []string{"chancellor", "sage", "forge", "judge"} {
-		g, ok := tabGreetings[target]
-		if !ok || g == "" {
-			t.Errorf("missing greeting for tab %q", target)
+		g := greetings[target]
+		if g == "" {
+			t.Errorf("missing greeting for minister %q", target)
 		}
 	}
 }

@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"go.podman.io/podman/v6/pkg/bindings"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.podman.io/podman/v6/pkg/bindings"
 )
 
 func TestNewPodmanRunner(t *testing.T) {
@@ -772,7 +772,7 @@ func (n *nopWriteCloser) Close() error                { return nil }
 type nopReadCloser struct{}
 
 func (n *nopReadCloser) Read(p []byte) (int, error) { return 0, io.EOF }
-func (n *nopReadCloser) Close() error                { return nil }
+func (n *nopReadCloser) Close() error               { return nil }
 
 // TestRcCommandsWriteErrorPropagation verifies Bug 1: when the rc-commands
 // write fails (broken pipe), the error should be returned rather than nil.

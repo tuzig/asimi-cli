@@ -125,4 +125,3 @@ func TestSocketPathFallsBackWithoutXDG(t *testing.T) {
 		t.Errorf("path has no dir: %q", p)
 	}
 }
-

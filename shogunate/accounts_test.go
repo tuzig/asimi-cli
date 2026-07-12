@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/afittestide/asimi/internal/keyring"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 func TestHasAWSEnvCredentials(t *testing.T) {

@@ -42,10 +42,10 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 	sagePerm, _ := tools.ParsePermissions("r--r--rwx")
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
-			RepoInfo:   &repo.RepoInfo{ProjectRoot: "/tmp"},
-			Username:   "testuser",
-			Project:    "testproject",
-			DB:         db,
+			RepoInfo: &repo.RepoInfo{ProjectRoot: "/tmp"},
+			Username: "testuser",
+			Project:  "testproject",
+			DB:       db,
 		},
 		ZhengmingRequester:   base,
 		WaitForZhengming:     nil, // no WaitForAnswer — Call returns immediately with "pending" status

@@ -719,7 +719,7 @@ func (f *fakeMinister) SystemPrompt() string        { return "You are a test min
 func (f *fakeMinister) Title() string               { return "Fake" }
 func (f *fakeMinister) Tools() []Tool               { return nil }
 func (f *fakeMinister) Tasks() chan<- *Task         { return f.tasks }
-func (f *fakeMinister) Model() LLMProvider     { return nil }
+func (f *fakeMinister) Model() LLMProvider          { return nil }
 func (f *fakeMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (f *fakeMinister) Run(ctx context.Context)     {}
 
@@ -1329,22 +1329,22 @@ func TestStrategist_ProcessTask_NoLLM_NoHookError(t *testing.T) {
 	// Insert lings with a circular dependency — the postTaskHook is gone,
 	// so processTask won't detect the cycle. The ritual's then step will.
 	lingA := &storage.Ling{
-		LingID:      "ling-a",
-		EdictID:     edict.ID,
-		Username:    "testuser",
-		Project:     "testproject",
-		Description: "Task A",
+		LingID:       "ling-a",
+		EdictID:      edict.ID,
+		Username:     "testuser",
+		Project:      "testproject",
+		Description:  "Task A",
 		Dependencies: storage.StringArray{"ling-b"},
-		Status:      storage.LingPending,
+		Status:       storage.LingPending,
 	}
 	lingB := &storage.Ling{
-		LingID:      "ling-b",
-		EdictID:     edict.ID,
-		Username:    "testuser",
-		Project:     "testproject",
-		Description: "Task B",
+		LingID:       "ling-b",
+		EdictID:      edict.ID,
+		Username:     "testuser",
+		Project:      "testproject",
+		Description:  "Task B",
 		Dependencies: storage.StringArray{"ling-a"},
-		Status:      storage.LingPending,
+		Status:       storage.LingPending,
 	}
 	assert.NoError(t, db.Create(lingA).Error)
 	assert.NoError(t, db.Create(lingB).Error)
@@ -1381,22 +1381,22 @@ func TestStrategist_ProcessTask_ValidDAG_NoHookError(t *testing.T) {
 	strategist := NewStrategist(base)
 
 	lingA := &storage.Ling{
-		LingID:      "ling-x",
-		EdictID:     edict.ID,
-		Username:    "testuser",
-		Project:     "testproject",
-		Description: "Task X",
+		LingID:       "ling-x",
+		EdictID:      edict.ID,
+		Username:     "testuser",
+		Project:      "testproject",
+		Description:  "Task X",
 		Dependencies: storage.StringArray{},
-		Status:      storage.LingPending,
+		Status:       storage.LingPending,
 	}
 	lingB := &storage.Ling{
-		LingID:      "ling-y",
-		EdictID:     edict.ID,
-		Username:    "testuser",
-		Project:     "testproject",
-		Description: "Task Y depends on X",
+		LingID:       "ling-y",
+		EdictID:      edict.ID,
+		Username:     "testuser",
+		Project:      "testproject",
+		Description:  "Task Y depends on X",
 		Dependencies: storage.StringArray{"ling-x"},
-		Status:      storage.LingPending,
+		Status:       storage.LingPending,
 	}
 	assert.NoError(t, db.Create(lingA).Error)
 	assert.NoError(t, db.Create(lingB).Error)

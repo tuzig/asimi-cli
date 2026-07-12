@@ -2195,7 +2195,15 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.EventType {
 		case storage.EventShogunateStarted:
 			icon = courtPrefix
-			initTabGreetings(&m.tabs)
+			projectDir := ""
+			if m.repoInfo != nil {
+				projectDir = m.repoInfo.ProjectRoot
+			}
+			defs, err := shogunate.LoadAllMinisters(projectDir)
+			if err != nil {
+				slog.Warn("failed to load ministers for greetings", "error", err)
+			}
+			initTabGreetings(&m.tabs, defs)
 			return m, nil
 		case storage.EventShogunateReady:
 			icon = courtPrefix
@@ -2308,9 +2316,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnsweringCancelMsg:
 		m.prompt().ExitAnsweringMode()
-		// Edict action menu cancel — just exit, no zhengming to cancel
+		// Edict action menu cancel — return to edicts list
 		if _, ok := parseEdictActionRequestID(msg.RequestID); ok {
-			return m, nil
+			return m, reloadEdictsListCmd(&m)
 		}
 		go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: []string{tools.AnswerChat}})
 		return m, nil
@@ -2546,16 +2554,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if this is a response to a seal override request
 		if m.pendingSealOverride != nil {
 			if msg.answer {
-				// User confirmed - proceed with sealing
-				return m, grantRulerSealCmd(&m, m.pendingSealOverride.edictID, m.pendingSealOverride.notes)
+				// User confirmed - proceed with sealing, then return to edicts list
+				edictID := m.pendingSealOverride.edictID
+				notes := m.pendingSealOverride.notes
+				m.pendingSealOverride = nil
+				return m, grantRulerSealCmd(&m, edictID, notes)
 			} else {
-				// User declined
-				cancelMsg := NewChatMsgBuilder(systemPrefix)
-				cancelMsg.WriteLn("Seal cancelled.")
-				m.tabs.Content().Chat.AddMessage(cancelMsg.String())
+				// User declined — go back to edicts list
+				m.pendingSealOverride = nil
+				return m, reloadEdictsListCmd(&m)
 			}
-			m.pendingSealOverride = nil
-			return m, nil
 		}
 
 		// Check if this is a response to an edict cancel request
@@ -2565,7 +2573,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.answer {
 				return m, cancelEdictCmd(&m, edictID)
 			}
-			return m, nil
+			return m, reloadEdictsListCmd(&m)
 		}
 
 		// Check if this is a response to a host command approval request
@@ -2751,6 +2759,15 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case showEdictDashboardMsg:
 		return m, m.tabs.Content().ShowEdictDashboard(msg.content)
+
+	case edictIntentUpdatedMsg:
+		m.tabs.Content().Chat.AddToRawHistory("CONTEXT", systemPrefix+msg.message)
+		m.tabs.Content().Chat.AddMessage(systemPrefix + msg.message)
+		m.sessionActive = true
+		return m, reloadEdictsListCmd(&m)
+
+	case reloadEdictsMsg:
+		return m, reloadEdictsListCmd(&m)
 
 	case resumeEdictSessionMsg:
 		// Resume the session linked to the edict
@@ -3700,11 +3717,15 @@ func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
 	case "Status":
 		return loadEdictDashboardCmd(m, edictID)
 	case "Implement":
-		return enactRitualForEdict(m, edictID, "swift-strike")
+		return tea.Batch(enactRitualForEdict(m, edictID, "swift-strike"), reloadEdictsListCmd(m))
 	case "Seal":
 		return handleEdictSeal(m, edictID, "")
 	case "Cancel":
 		return handleEdictCancel(m, edictID)
+	case "Edit":
+		return editEdictIntentCmd(m, edictID)
+	case "Back":
+		return reloadEdictsListCmd(m)
 	default:
 		return nil
 	}
@@ -3757,14 +3778,13 @@ func editEdictIntentCmd(m *TUIModel, edictID uint) tea.Cmd {
 		modified := strings.TrimRight(string(content), " \t\n\r")
 		original := strings.TrimRight(originalText, " \t\n\r")
 		if modified == original {
-			// TODO: turn into a toast
-			return showSystemMsg("No changes made to edict intent")
+			return edictIntentUpdatedMsg{edictID: edictID, message: "No changes made to edict intent"}
 		}
 
 		if err := m.shogunate.AppendToIntent(edictID, modified); err != nil {
-			return showSystemMsg(fmt.Sprintf("Failed to update edict: %v", err))
+			return edictIntentUpdatedMsg{edictID: edictID, message: fmt.Sprintf("Failed to update edict: %v", err)}
 		}
-		return showSystemMsg(fmt.Sprintf("Edict %d intent updated", edictID))
+		return edictIntentUpdatedMsg{edictID: edictID, message: fmt.Sprintf("Edict %d intent updated", edictID)}
 	})
 }
 

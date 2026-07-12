@@ -980,6 +980,17 @@ type edictsLoadedMsg struct {
 	edicts []storage.ActiveEdict
 }
 
+// edictIntentUpdatedMsg is emitted when an edict intent edit completes;
+// the handler shows a confirmation message and reloads the edicts list.
+type edictIntentUpdatedMsg struct {
+	edictID uint
+	message string
+}
+
+// reloadEdictsMsg is emitted by ContentComponent when the user presses Esc
+// in the edict dashboard to return to the edicts list.
+type reloadEdictsMsg struct{}
+
 // EdictSelectWindow displays a selectable list of active edicts
 type EdictSelectWindow struct {
 	SelectWindow[storage.ActiveEdict]

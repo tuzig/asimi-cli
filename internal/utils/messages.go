@@ -94,6 +94,7 @@ func (b *MsgBlockBuilder) String() string {
 
 	return result.String()
 }
+
 // TruncateMiddle truncates a string by keeping the beginning and end portions
 // and replacing the middle with an ellipsis. The maxWidth parameter specifies
 // the maximum total width of the result. The beginning portion takes 1/3 of

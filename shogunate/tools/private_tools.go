@@ -13,7 +13,7 @@ import (
 
 // InvokeMinisterTool allows the Chancellor to invoke any registered minister for an edict.
 type InvokeMinisterTool struct {
-	Ctx    ToolContext
+	Ctx     ToolContext
 	Invoker MinisterInvoker
 }
 

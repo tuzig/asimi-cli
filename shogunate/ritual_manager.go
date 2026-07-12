@@ -58,7 +58,7 @@ type RitualGuard struct {
 
 // RitualGuardOpts configures a new RitualGuard.
 type RitualGuardOpts struct {
-	Base *MinisterBase
+	Base            *MinisterBase
 	Runner          runners.Runner
 	GetMinister     func(id string) Minister
 	OnRunnerUpgrade func(runners.Runner) // propagates runner changes back to shogunate

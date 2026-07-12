@@ -115,10 +115,10 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 			if accessKey != "" && secretKey != "" {
 				enabled := true
 				key := schemas.Key{
-					ID:     "bedrock_aws",
-					Name:   "Bedrock AWS Credentials",
-					Models: []string{"*"},
-					Weight: 1.0,
+					ID:      "bedrock_aws",
+					Name:    "Bedrock AWS Credentials",
+					Models:  []string{"*"},
+					Weight:  1.0,
 					Enabled: &enabled,
 					BedrockKeyConfig: &schemas.BedrockKeyConfig{
 						AccessKey: schemas.EnvVar{Val: accessKey},
@@ -246,5 +246,3 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 		Logger:        NewBifrostLogger(slog.Default()),
 	}, nil
 }
-
-

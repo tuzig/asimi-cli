@@ -1219,10 +1219,10 @@ func TestThenStepEmitsToolCallMessages(t *testing.T) {
 		Name: "then-test",
 		Steps: []RitualStep{
 			{
-				Name:    "work",
+				Name:     "work",
 				Minister: "forge",
-				Task:    "do work",
-				Then:    []string{"!echo then-output"},
+				Task:     "do work",
+				Then:     []string{"!echo then-output"},
 			},
 		},
 	}
@@ -1292,10 +1292,10 @@ func TestThenStepFailureEmitsToolCallErrorMsg(t *testing.T) {
 		Name: "then-fail-test",
 		Steps: []RitualStep{
 			{
-				Name:    "work",
+				Name:     "work",
 				Minister: "forge",
-				Task:    "do work",
-				Then:    []string{"!false"},
+				Task:     "do work",
+				Then:     []string{"!false"},
 			},
 		},
 	}
@@ -1356,10 +1356,10 @@ func TestStepLevelGivenEmitsToolCallMessages(t *testing.T) {
 		Name: "step-given-test",
 		Steps: []RitualStep{
 			{
-				Name:    "work",
+				Name:     "work",
 				Minister: "forge",
-				Task:    "do work",
-				Given:   []string{"!echo step-given-data"},
+				Task:     "do work",
+				Given:    []string{"!echo step-given-data"},
 			},
 		},
 	}
@@ -1498,10 +1498,10 @@ func TestStepLevelGivenFailureEmitsToolCallErrorMsg(t *testing.T) {
 		Name: "step-given-fail-test",
 		Steps: []RitualStep{
 			{
-				Name:    "work",
+				Name:     "work",
 				Minister: "forge",
-				Task:    "do work",
-				Given:   []string{"!false"},
+				Task:     "do work",
+				Given:    []string{"!false"},
 			},
 		},
 	}
@@ -1631,7 +1631,7 @@ func (m *ritualTestMinister) SystemPrompt() string        { return "" }
 func (m *ritualTestMinister) Title() string               { return m.id }
 func (m *ritualTestMinister) Tools() []Tool               { return nil }
 func (m *ritualTestMinister) Tasks() chan<- *Task         { return m.tasksCh }
-func (m *ritualTestMinister) Model() LLMProvider     { return nil }
+func (m *ritualTestMinister) Model() LLMProvider          { return nil }
 func (m *ritualTestMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (m *ritualTestMinister) Run(ctx context.Context) {
 	for {
@@ -3162,14 +3162,14 @@ func TestExecuteForkDAG_NoDeps(t *testing.T) {
 	runner := NewRitualRunner(registry, shogunate.GetMinister, shogunate.PublishEvent, db, nil, slog.Default(), repo.RepoInfo{})
 
 	exec := &RitualExecution{
-		ID:          "test-exec",
-		RitualName:  "fork-no-deps",
-		EdictID:     1,
-		Username:    "testuser",
-		Project:     "testproject",
-		Data:        storage.JSON{"items": []interface{}{map[string]interface{}{"file": "a.go"}, map[string]interface{}{"file": "b.go"}}},
-		def:         ritual,
-		stepStates:  []RitualStepState{{Name: "fork-step"}},
+		ID:         "test-exec",
+		RitualName: "fork-no-deps",
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		Data:       storage.JSON{"items": []interface{}{map[string]interface{}{"file": "a.go"}, map[string]interface{}{"file": "b.go"}}},
+		def:        ritual,
+		stepStates: []RitualStepState{{Name: "fork-step"}},
 	}
 
 	step := ritual.Steps[0]
@@ -3196,7 +3196,7 @@ func TestExecuteForkDAG_WithDeps(t *testing.T) {
 	l1 := storage.Ling{
 		LingID:   "l1",
 		EdictID:  1,
-		Username:  "testuser",
+		Username: "testuser",
 		Project:  "testproject",
 		Status:   storage.LingPending,
 	}
@@ -3239,27 +3239,27 @@ func TestExecuteForkDAG_WithDeps(t *testing.T) {
 			"ling_id":      "l1",
 			"edict_id":     float64(1),
 			"description":  "task 1",
-			"dependencies":  storage.StringArray{},
+			"dependencies": storage.StringArray{},
 			"status":       "pending",
 		},
 		map[string]interface{}{
 			"ling_id":      "l2",
 			"edict_id":     float64(1),
 			"description":  "task 2",
-			"dependencies":  storage.StringArray{"l1"},
+			"dependencies": storage.StringArray{"l1"},
 			"status":       "pending",
 		},
 	}
 
 	exec := &RitualExecution{
-		ID:          "test-exec",
-		RitualName:  "fork-with-deps",
-		EdictID:     1,
-		Username:    "testuser",
-		Project:     "testproject",
-		Data:        storage.JSON{"lings": workUnits},
-		def:         ritual,
-		stepStates:  []RitualStepState{{Name: "fork-step"}},
+		ID:         "test-exec",
+		RitualName: "fork-with-deps",
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		Data:       storage.JSON{"lings": workUnits},
+		def:        ritual,
+		stepStates: []RitualStepState{{Name: "fork-step"}},
 	}
 
 	// The DAG executor needs the "record the ling completed" then step to
@@ -3325,20 +3325,20 @@ func TestExecuteForkDAG_StuckItems(t *testing.T) {
 		map[string]interface{}{
 			"ling_id":      "l2",
 			"description":  "task 2",
-			"dependencies":  storage.StringArray{"missing_ling"},
+			"dependencies": storage.StringArray{"missing_ling"},
 			"status":       "pending",
 		},
 	}
 
 	exec := &RitualExecution{
-		ID:          "test-exec",
-		RitualName:  "fork-stuck",
-		EdictID:     1,
-		Username:    "testuser",
-		Project:     "testproject",
-		Data:        storage.JSON{},
-		def:         ritual,
-		stepStates:  []RitualStepState{{Name: "fork-step"}},
+		ID:         "test-exec",
+		RitualName: "fork-stuck",
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		Data:       storage.JSON{},
+		def:        ritual,
+		stepStates: []RitualStepState{{Name: "fork-step"}},
 	}
 
 	step := ritual.Steps[0]
@@ -3378,14 +3378,14 @@ func TestExecuteForkDAG_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	exec := &RitualExecution{
-		ID:          "test-exec",
-		RitualName:  "fork-cancel",
-		EdictID:     1,
-		Username:    "testuser",
-		Project:     "testproject",
-		Data:        storage.JSON{"items": []interface{}{map[string]interface{}{"file": "a.go"}}},
-		def:         ritual,
-		stepStates:  []RitualStepState{{Name: "fork-step"}},
+		ID:         "test-exec",
+		RitualName: "fork-cancel",
+		EdictID:    1,
+		Username:   "testuser",
+		Project:    "testproject",
+		Data:       storage.JSON{"items": []interface{}{map[string]interface{}{"file": "a.go"}}},
+		def:        ritual,
+		stepStates: []RitualStepState{{Name: "fork-step"}},
 	}
 
 	step := ritual.Steps[0]

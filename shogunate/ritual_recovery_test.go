@@ -2292,8 +2292,13 @@ func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
 
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
 	rg := NewRitualGuard(RitualGuardOpts{
-		Base:         base,
-		GetMinister:  func(id string) Minister { if id == "chancellor" { return chancellor }; return nil },
+		Base: base,
+		GetMinister: func(id string) Minister {
+			if id == "chancellor" {
+				return chancellor
+			}
+			return nil
+		},
 		StreamingCtx: func() context.Context { return context.Background() },
 	})
 	rg.ritualRegistry.Register(ritual)

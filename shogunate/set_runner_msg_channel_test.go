@@ -21,10 +21,10 @@ func (r *recordingMsgChanRunner) SetMessageChannel(ch chan<- runners.Msg) { r.ms
 func (r *recordingMsgChanRunner) Run(context.Context, runners.Input) (runners.Output, error) {
 	return runners.Output{}, nil
 }
-func (r *recordingMsgChanRunner) Close(context.Context) error               { return nil }
-func (r *recordingMsgChanRunner) Restart(context.Context) error             { return nil }
-func (r *recordingMsgChanRunner) AllowFallback(bool)                        {}
-func (r *recordingMsgChanRunner) RunnerType() string                        { return "recording" }
+func (r *recordingMsgChanRunner) Close(context.Context) error   { return nil }
+func (r *recordingMsgChanRunner) Restart(context.Context) error { return nil }
+func (r *recordingMsgChanRunner) AllowFallback(bool)            {}
+func (r *recordingMsgChanRunner) RunnerType() string            { return "recording" }
 
 // TestSetRunnerMessageChannel_PropagatesToMinisters verifies that
 // SetRunnerMessageChannel sets the msg channel on the runner AND on every

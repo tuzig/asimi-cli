@@ -10,11 +10,11 @@ type mockTool struct {
 	name string
 }
 
-func (m mockTool) Name() string                                       { return m.name }
-func (m mockTool) Description() string                                { return "" }
-func (m mockTool) Call(_ context.Context, _ string) (string, error)   { return "", nil }
-func (m mockTool) Format(_, _ string, _ error) string                { return "" }
-func (m mockTool) ParameterSchema() map[string]any                   { return nil }
+func (m mockTool) Name() string                                     { return m.name }
+func (m mockTool) Description() string                              { return "" }
+func (m mockTool) Call(_ context.Context, _ string) (string, error) { return "", nil }
+func (m mockTool) Format(_, _ string, _ error) string               { return "" }
+func (m mockTool) ParameterSchema() map[string]any                  { return nil }
 
 // ---------------------------------------------------------------------------
 // ParsePermissions — valid strings
@@ -22,82 +22,82 @@ func (m mockTool) ParameterSchema() map[string]any                   { return ni
 
 func TestParsePermissionsValid(t *testing.T) {
 	tests := []struct {
-		input   string
+		input  string
 		earth  Access
 		heaven Access
 		intent Access
 	}{
 		{
-			input:   "rwxrwxrwx",
+			input:  "rwxrwxrwx",
 			earth:  Access{true, true, true},
 			heaven: Access{true, true, true},
 			intent: Access{true, true, true},
 		},
 		{
-			input:   "r-----rw-",
+			input:  "r-----rw-",
 			earth:  Access{true, false, false},
 			heaven: Access{false, false, false},
 			intent: Access{true, true, false},
 		},
 		{
-			input:   "r-----rwx",
+			input:  "r-----rwx",
 			earth:  Access{true, false, false},
 			heaven: Access{false, false, false},
 			intent: Access{true, true, true},
 		},
 		{
-			input:   "r--r--rwx",
+			input:  "r--r--rwx",
 			earth:  Access{true, false, false},
 			heaven: Access{true, false, false},
 			intent: Access{true, true, true},
 		},
 		{
-			input:   "r-xr--rw-",
+			input:  "r-xr--rw-",
 			earth:  Access{true, false, true},
 			heaven: Access{true, false, false},
 			intent: Access{true, true, false},
 		},
 		{
-			input:   "rwxr---w-",
+			input:  "rwxr---w-",
 			earth:  Access{true, true, true},
 			heaven: Access{true, false, false},
 			intent: Access{false, true, false},
 		},
 		{
-			input:   "rwxrwxr--",
+			input:  "rwxrwxr--",
 			earth:  Access{true, true, true},
 			heaven: Access{true, true, true},
 			intent: Access{true, false, false},
 		},
 		{
-			input:   "rwxr--rwx",
+			input:  "rwxr--rwx",
 			earth:  Access{true, true, true},
 			heaven: Access{true, false, false},
 			intent: Access{true, true, true},
 		},
 		{
-			input:   "---------",
+			input:  "---------",
 			earth:  Access{},
 			heaven: Access{},
 			intent: Access{},
 		},
 		{
 			// Only read in every realm
-			input:   "r--r--r--",
+			input:  "r--r--r--",
 			earth:  Access{Read: true},
 			heaven: Access{Read: true},
 			intent: Access{Read: true},
 		},
 		{
 			// Only write in every realm
-			input:   "-w--w--w-",
+			input:  "-w--w--w-",
 			earth:  Access{Write: true},
 			heaven: Access{Write: true},
 			intent: Access{Write: true},
 		},
 		{
 			// Only execute in every realm
-			input:   "--x--x--x",
+			input:  "--x--x--x",
 			earth:  Access{Execute: true},
 			heaven: Access{Execute: true},
 			intent: Access{Execute: true},
@@ -261,8 +261,8 @@ func TestPermissionsMatchMultiFlagOverlap(t *testing.T) {
 func TestPermissionsMatchAnyRealm(t *testing.T) {
 	// Minister matches in Intent realm even though Earth and Heaven don't match
 	minister := Permissions{
-		Earth:  Access{Write: true},  // no overlap with tool's earth
-		Heaven: Access{},             // no access
+		Earth:  Access{Write: true},   // no overlap with tool's earth
+		Heaven: Access{},              // no access
 		Intent: Access{Execute: true}, // overlap with tool's intent
 	}
 	tool := Permissions{
@@ -481,9 +481,9 @@ func TestForPermissionsMultiToolFiltering(t *testing.T) {
 	strategistPerm, _ := ParsePermissions("r-----rw-")
 	strategistTools := r.ForPermissions("strategist", strategistPerm)
 	strategistNames := toolNames(strategistTools)
-	assertHas(t, strategistNames, "read_file")          // earth Read matches
-	assertHas(t, strategistNames, "write_file")         // earth Read matches (shared Read)
-	assertHas(t, strategistNames, "create_manifest")   // intent Write matches
+	assertHas(t, strategistNames, "read_file")            // earth Read matches
+	assertHas(t, strategistNames, "write_file")           // earth Read matches (shared Read)
+	assertHas(t, strategistNames, "create_manifest")      // intent Write matches
 	assertNotHas(t, strategistNames, "run_shell_command") // strategist has no earth Execute
 
 	// Forge: rwxr---w- (earth: rwx, intent: -w-)

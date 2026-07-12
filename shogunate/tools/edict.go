@@ -282,8 +282,6 @@ func (t ListEdictsTool) ParameterSchema() map[string]any {
 	}
 }
 
-
-
 // TransitionEdictTool transitions an edict to a new status (e.g., unblock or reject).
 type TransitionEdictTool struct {
 	DB       *gorm.DB

@@ -29,7 +29,7 @@ type ToolRegistrationOpts struct {
 	SessionIDFn        func() string
 
 	MinisterInvoker MinisterInvoker
-	RitualLauncher   RitualLauncher
+	RitualLauncher  RitualLauncher
 
 	// ZhengmingMinisterIDs lists minister IDs that should get a private
 	// request_zhengming tool with their own MinisterID for correct routing.
@@ -124,9 +124,9 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 	}
 	if opts.ZhengmingRequester != nil && opts.NotifyFn != nil {
 		r.Register(SuggestEdictTool{
-			Ctx:        opts.Ctx,
-			Requester:  opts.ZhengmingRequester,
-			NotifyFn:   opts.NotifyFn,
+			Ctx:         opts.Ctx,
+			Requester:   opts.ZhengmingRequester,
+			NotifyFn:    opts.NotifyFn,
 			SessionIDFn: opts.SessionIDFn,
 		}, intentExec)
 	}

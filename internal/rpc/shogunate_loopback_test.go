@@ -22,29 +22,29 @@ import (
 type fakeShogunate struct {
 	shogunateapi.Client
 
-	mu         sync.Mutex
-	hasIDs     map[string]bool
-	resetLog   []string
-	edicts     map[uint]*storage.Edict
-	seals      map[uint][]storage.Seal
-	sealNotes  map[uint]string
-	fallback   bool
-	cancels    []string
-	clears     []string
-	messages   []string // "target/role/content"
-	ctxFiles   []string // "target/path/content"
-	rollbacks  []string // "target/snapshot"
-	zhengAns   []string // "reqID/answer"
-	sessions   map[string]shogunate.SessionState
-	compacted  []string // "target/prompt"
-	shellCmds  []runners.Input
-	events     []struct {
+	mu        sync.Mutex
+	hasIDs    map[string]bool
+	resetLog  []string
+	edicts    map[uint]*storage.Edict
+	seals     map[uint][]storage.Seal
+	sealNotes map[uint]string
+	fallback  bool
+	cancels   []string
+	clears    []string
+	messages  []string // "target/role/content"
+	ctxFiles  []string // "target/path/content"
+	rollbacks []string // "target/snapshot"
+	zhengAns  []string // "reqID/answer"
+	sessions  map[string]shogunate.SessionState
+	compacted []string // "target/prompt"
+	shellCmds []runners.Input
+	events    []struct {
 		Key       storage.EdictKey
 		EventType storage.ShogunateEvent
 		Payload   storage.JSON
 	}
-	prompts   []string // "target/message"
-	restored  []string // "tabType/N"
+	prompts  []string // "target/message"
+	restored []string // "tabType/N"
 }
 
 func newFakeShogunate() *fakeShogunate {

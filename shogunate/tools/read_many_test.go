@@ -19,9 +19,9 @@ func TestReadManyFilesTool_RelativePatternWithProjectRoot(t *testing.T) {
 
 	// Create files inside the project directory
 	projectFiles := map[string]string{
-		filepath.Join(projectDir, "a.txt"):          "alpha",
-		filepath.Join(projectDir, "sub", "b.txt"):   "beta",
-		filepath.Join(projectDir, "sub", "c.go"):    "package sub",
+		filepath.Join(projectDir, "a.txt"):        "alpha",
+		filepath.Join(projectDir, "sub", "b.txt"): "beta",
+		filepath.Join(projectDir, "sub", "c.go"):  "package sub",
 	}
 	for path, content := range projectFiles {
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

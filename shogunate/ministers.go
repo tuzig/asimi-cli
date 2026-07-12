@@ -21,6 +21,7 @@ type MinisterDef struct {
 	Permissions string `yaml:"permissions"`
 	Title       string `yaml:"title,omitempty"`
 	Kanji       string `yaml:"kanji,omitempty"`
+	Greeting   string `yaml:"greeting,omitempty"`
 }
 
 // ministerImpl is the generic, YAML-driven minister type. It replaces the

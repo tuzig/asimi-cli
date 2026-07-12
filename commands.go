@@ -964,6 +964,18 @@ func handleEdictCommand(model *TUIModel, args []string) tea.Cmd {
 	}
 }
 
+// reloadEdictsListCmd fetches active edicts and returns edictsLoadedMsg,
+// causing the edicts list to refresh. Used to return to the list after an action.
+func reloadEdictsListCmd(model *TUIModel) tea.Cmd {
+	return func() tea.Msg {
+		edicts, err := model.shogunate.ListActiveEdicts()
+		if err != nil {
+			return showSystemMsg(fmt.Sprintf("Failed to list active edicts: %v", err))
+		}
+		return edictsLoadedMsg{edicts: edicts}
+	}
+}
+
 // loadEdictDashboardCmd loads edict detail and shows the dashboard view
 func loadEdictDashboardCmd(model *TUIModel, edictID uint) tea.Cmd {
 	return func() tea.Msg {
@@ -1000,7 +1012,7 @@ func showEdictActionMenu(model *TUIModel, edictID uint) tea.Cmd {
 			{
 				Text:    "Choose an action",
 				Summary: "Choose an action",
-				Options: []string{"Status", "Implement", "Seal", "Cancel", "Edit"},
+				Options: []string{"Status", "Implement", "Seal", "Cancel", "Edit", "Back"},
 			},
 		},
 		Answers: []string{""},
@@ -1045,9 +1057,12 @@ func handleEdictSeal(model *TUIModel, edictID uint, notes string) tea.Cmd {
 	}
 
 	if hasRuler {
-		return func() tea.Msg {
-			return showSystemMsg(fmt.Sprintf("Ruler's seal already granted to %d\n%s", edictID, sealChainMsg))
-		}
+		return tea.Batch(
+			func() tea.Msg {
+				return showSystemMsg(fmt.Sprintf("Ruler's seal already granted to %d\n%s", edictID, sealChainMsg))
+			},
+			reloadEdictsListCmd(model),
+		)
 	}
 
 	var missingSeals []string
@@ -1110,22 +1125,29 @@ func handleEdictCancel(model *TUIModel, edictID uint) tea.Cmd {
 		}
 	}
 	if edict.CancelledAt != nil {
-		return func() tea.Msg {
-			return showSystemMsg(fmt.Sprintf("Edict %d is already cancelled", edictID))
-		}
+		return tea.Batch(
+			func() tea.Msg {
+				return showSystemMsg(fmt.Sprintf("Edict %d is already cancelled", edictID))
+			},
+			reloadEdictsListCmd(model),
+		)
 	}
 	model.pendingEdictCancel = &pendingEdictCancel{edictID: edictID}
 	return model.commandLine.EnterYesNoMode(fmt.Sprintf("Cancel edict %d?", edictID))
 }
 
-// cancelEdictCmd cancels an edict and stops any running ritual
+// cancelEdictCmd cancels an edict, shows a confirmation, and returns
+// showContextMsg so the caller can batch it with a list reload.
 func cancelEdictCmd(model *TUIModel, edictID uint) tea.Cmd {
-	return func() tea.Msg {
-		if err := model.shogunate.CancelEdict(edictID); err != nil {
-			return showSystemMsg(fmt.Sprintf("Failed to cancel edict %d: %v", edictID, err))
-		}
-		return showSystemMsg(fmt.Sprintf("Edict %d cancelled", edictID))
-	}
+	return tea.Batch(
+		func() tea.Msg {
+			if err := model.shogunate.CancelEdict(edictID); err != nil {
+				return showSystemMsg(fmt.Sprintf("Failed to cancel edict %d: %v", edictID, err))
+			}
+			return showContextMsg{content: systemPrefix + fmt.Sprintf("Edict %d cancelled", edictID)}
+		},
+		reloadEdictsListCmd(model),
+	)
 }
 
 // renderEdictDashboard builds the text content for the edict dashboard view
@@ -1179,12 +1201,16 @@ func renderEdictDashboard(edict *storage.Edict, seals []storage.Seal, width int)
 	return b.String()
 }
 
-// grantRulerSealCmd creates a command that grants the Ruler's seal to an edict.
+// grantRulerSealCmd creates a command that grants the Ruler's seal to an edict,
+// then returns reloadEdictsListCmd so the list refreshes after the seal is committed.
 func grantRulerSealCmd(model *TUIModel, edictID uint, notes string) tea.Cmd {
-	return func() tea.Msg {
-		if err := model.shogunate.GrantRulerSeal(edictID, notes); err != nil {
-			return showSystemMsg(fmt.Sprintf("Failed to grant Ruler's seal: %v", err))
-		}
-		return nil
-	}
+	return tea.Batch(
+		func() tea.Msg {
+			if err := model.shogunate.GrantRulerSeal(edictID, notes); err != nil {
+				return showSystemMsg(fmt.Sprintf("Failed to grant Ruler's seal: %v", err))
+			}
+			return nil
+		},
+		reloadEdictsListCmd(model),
+	)
 }

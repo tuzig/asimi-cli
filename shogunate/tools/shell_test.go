@@ -183,12 +183,12 @@ func TestRunShellCommandSandboxMissingFallbackWithMsgChan(t *testing.T) {
 
 // mockRunner implements runners.Runner for testing
 type mockRunner struct {
-	runFn       func(ctx context.Context, input runners.Input) (runners.Output, error)
-	restartFn   func(ctx context.Context) error
-	closeFn     func(ctx context.Context) error
-	runnerType  string
+	runFn               func(ctx context.Context, input runners.Input) (runners.Output, error)
+	restartFn           func(ctx context.Context) error
+	closeFn             func(ctx context.Context) error
+	runnerType          string
 	allowFallbackCalled bool
-	msgChan     chan<- runners.Msg
+	msgChan             chan<- runners.Msg
 }
 
 func (m *mockRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {

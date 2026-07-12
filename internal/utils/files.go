@@ -46,4 +46,3 @@ func GetFileTree(root string) ([]string, error) {
 	sort.Strings(files)
 	return files, nil
 }
-
