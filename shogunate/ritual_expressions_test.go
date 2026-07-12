@@ -257,7 +257,7 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 	manifests := []storage.ForgeManifest{
 		{ManifestID: "manifest-1", EdictID: edict.ID, FilePath: "shogunate/ritual.go", Status: storage.ManifestForged},
 		{ManifestID: "manifest-2", EdictID: edict.ID, FilePath: "shogunate/builtin_rituals.yaml", Status: storage.ManifestForged},
-		{ManifestID: "manifest-3", EdictID: edict.ID, FilePath: "shogunate/chancellor.go", Status: storage.ManifestForged},
+		{ManifestID: "manifest-3", EdictID: edict.ID, FilePath: "shogunate/ministers.go", Status: storage.ManifestForged},
 	}
 	for i := range manifests {
 		if err := db.Create(&manifests[i]).Error; err != nil {
@@ -293,7 +293,7 @@ func TestAwaitRulerSeal_StageManifestFiles(t *testing.T) {
 	}
 
 	// Verify only manifest files were staged
-	expectedFiles := "shogunate/ritual.go shogunate/builtin_rituals.yaml shogunate/chancellor.go"
+	expectedFiles := "shogunate/ritual.go shogunate/builtin_rituals.yaml shogunate/ministers.go"
 	if stagedFiles != expectedFiles {
 		t.Errorf("expected staged files %q, got %q", expectedFiles, stagedFiles)
 	}
@@ -1309,7 +1309,7 @@ func TestForkWithGiven_LoadsLingsBeforeFork(t *testing.T) {
 		Name: "fork-lings-test",
 		Steps: []RitualStep{
 			{
-				Name: "implementing",
+				Name:  "implementing",
 				Given: []string{"the edict lings"},
 				Fork: &ForkDef{
 					Over:      "lings",
@@ -1362,7 +1362,7 @@ func TestForkWithGiven_LoadsLingsBeforeFork(t *testing.T) {
 type closeTrackingRunner struct {
 	mockCmdRunner
 	closeCalled bool
-	closeErr   error
+	closeErr    error
 }
 
 func (r *closeTrackingRunner) Close(ctx context.Context) error {
@@ -1771,7 +1771,7 @@ func TestGetCourtStatus_SageSealChecksSageMinisterID(t *testing.T) {
 
 	// Create an edict.
 	edict := storage.Edict{
-		ID:       1, Username: "testuser", Project: "testproject", Intent: "test",
+		ID: 1, Username: "testuser", Project: "testproject", Intent: "test",
 	}
 	require.NoError(t, db.Create(&edict).Error)
 

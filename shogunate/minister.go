@@ -25,6 +25,7 @@ import (
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -146,24 +147,6 @@ type FileChange struct {
 type EdictLock interface {
 	Lock(edictID string) error
 	Unlock(edictID string) error
-}
-
-// CIRunner executes CI pipelines
-type CIRunner interface {
-	Run(ctx context.Context, commitHash string) (outcome storage.VerdictOutcome, evidence storage.JSON, err error)
-	GetTestSuite() string
-}
-
-// Linter performs static code analysis
-type Linter interface {
-	Analyze(ctx context.Context, filePath string) (violations []EthicsViolation, err error)
-}
-
-// EthicsViolation represents a censor finding
-type EthicsViolation struct {
-	Principle     string
-	Ruling        storage.PrecedentRuling
-	Justification string
 }
 
 // --- Tool Interface ---
@@ -1176,7 +1159,7 @@ func (m *MinisterBase) InvokeMinister(ctx context.Context, ministerID string, ke
 		logger.Info("task sent to minister",
 			"minister", ministerID,
 			"edict_id", key.ID,
-			"work", truncateString(work, 50))
+			"work", utils.TruncateMiddle(work, 50))
 	case <-ctx.Done():
 		return "", fmt.Errorf("minister %s failed: context cancelled while sending task to %s", ministerID, ministerID)
 	}

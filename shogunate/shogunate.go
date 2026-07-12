@@ -132,8 +132,18 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		return base
 	}
 
-	chancellor := NewChancellor(newBase())
-	s.ministers[chancellor.ID()] = chancellor
+	// Load minister definitions from YAML (builtin + user + project overrides)
+	defs, err := LoadAllMinisters("")
+	if err != nil {
+		s.logger.Warn("failed to load minister definitions, using builtin defaults", "error", err)
+		defs, _ = LoadMinisters()
+	}
+
+	// Construct all ministers from the YAML defs — each gets its own base.
+	for _, def := range defs {
+		m := NewMinister(def, newBase())
+		s.ministers[m.ID()] = m
+	}
 
 	// Wire up the ritual guard — it owns all ritual/event infrastructure
 	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
@@ -213,14 +223,14 @@ func NewShogunate(db *gorm.DB, cfg *config.ShogunateConfig, runner runners.Runne
 		// 4. Forward to chancellor as fallback for legacy path
 		s.logger.Info("Default forwarding zhengming answer to chancellot")
 		work := fmt.Sprintf("Resume edict %d with clarification: %s", key.ID, answer)
-		go chancellor.ResumeEdict(s.ctx, key, work)
+		if ch := s.GetMinister("chancellor"); ch != nil {
+			if rs, ok := ch.(interface {
+				ResumeEdict(context.Context, storage.EdictKey, string)
+			}); ok {
+				go rs.ResumeEdict(s.ctx, key, work)
+			}
+		}
 	})
-
-	s.ministers["strategist"] = NewStrategist(newBase())
-	s.ministers["forge"] = NewForge(newBase())
-	s.ministers["judge"] = NewJudge(newBase(), nil)
-	sage := NewSage(newBase())
-	s.ministers["sage"] = sage
 
 	// Build and populate the tool registry with permission classifications.
 	s.toolRegistry = s.buildToolRegistry()
@@ -1031,9 +1041,7 @@ func (s *Shogunate) ResetHunting() {
 	if s == nil {
 		return
 	}
-	if sage, ok := s.GetMinister("sage").(*Sage); ok {
-		sage.ResetSession()
-	}
+	s.ResetMinisterSession("sage")
 }
 
 // GetSealService returns the seal service

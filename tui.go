@@ -802,7 +802,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Scroll mode activation and handling
-	if keyStr == "ctrl+b" && m.Mode != "scroll" {
+	if (keyStr == "ctrl+b" || keyStr == "ctrl+f") && m.Mode != "scroll" {
 		return m.enterScrollMode()
 	}
 	if m.Mode == "scroll" {

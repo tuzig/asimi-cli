@@ -663,6 +663,21 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPrompt_MinisterIntro verifies the template renders the
+// minister ID with the corrected "known as" phrasing (was "knwon").
+func TestBuildSystemPrompt_MinisterIntro(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	fake := &fakeMinister{MinisterBase: base, id: "judge"}
+
+	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{})
+	if !strings.Contains(prompt, "known as judge") {
+		t.Errorf("Expected 'known as judge' in system prompt, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "knwon") {
+		t.Errorf("Template should not contain old 'knwon' typo, got:\n%s", prompt)
+	}
+}
+
 // TestBuildSystemPrompt_Scratchpad verifies scratchpad is included with minister ID heading
 func TestBuildSystemPrompt_Scratchpad(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/afittestide/asimi/internal/utils"
@@ -243,7 +242,7 @@ func (t ListEdictsTool) Call(ctx context.Context, input string) (string, error) 
 		results = append(results, map[string]any{
 			"edict_id": e.ID,
 			"status":   string(status),
-			"intent":   truncateString(e.Intent, 100),
+			"intent":   utils.TruncateMiddle(e.Intent, 100),
 		})
 	}
 
@@ -283,14 +282,7 @@ func (t ListEdictsTool) ParameterSchema() map[string]any {
 	}
 }
 
-// truncateString truncates a string to maxLen characters
-func truncateString(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
+
 
 // TransitionEdictTool transitions an edict to a new status (e.g., unblock or reject).
 type TransitionEdictTool struct {

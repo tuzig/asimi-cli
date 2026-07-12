@@ -32,7 +32,7 @@ func (m *capturingMinister) SystemPrompt() string        { return "" }
 func (m *capturingMinister) Title() string               { return m.id }
 func (m *capturingMinister) Tools() []Tool               { return nil }
 func (m *capturingMinister) Tasks() chan<- *Task         { return m.tasksCh }
-func (m *capturingMinister) Model() LLMProvider     { return nil }
+func (m *capturingMinister) Model() LLMProvider          { return nil }
 func (m *capturingMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
 func (m *capturingMinister) Run(ctx context.Context) {
 	for {
@@ -72,12 +72,13 @@ func TestStrategist_ZhengmingRoutesToStrategist(t *testing.T) {
 	db := setupRitualTestDB(t)
 	require.NoError(t, db.AutoMigrate(&storage.Edict{}))
 
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
-	strategist := NewStrategist(base)
+	cfg := config.DefaultShogunateConfig()
+	shog := NewShogunate(db, cfg, nil, nil)
+	require.NotNil(t, shog)
+	shog.ConfigureModel(nil, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
-	// Configure with empty LLM config to avoid nil pointer in GetROTools
-	llmConfig := config.LLMConfig{Provider: "test", Model: "test"}
-	strategist.SetMinisterConfig(nil, &SessionConfig{LLM: llmConfig}, repo.RepoInfo{})
+	strategist := shog.GetMinister("strategist")
+	require.NotNil(t, strategist)
 
 	tools := strategist.Tools()
 	var zhengmingTool asimitools.RequestZhengmingTool
