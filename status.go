@@ -356,8 +356,7 @@ func (s StatusComponent) renderShellRunnerIndicator() string {
 		if id == "" {
 			ret += "TBD"
 		} else {
-			parts := strings.Split(id, "-")
-			ret += parts[len(parts)-1]
+			ret += "📦 " + id[:4]
 		}
 		return ret
 	}

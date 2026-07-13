@@ -172,11 +172,12 @@ func TestPodmanRunnerContainerLaunchMessage(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Check that we received a container launched message
+	// Check that we received a container launched message with a non-empty ContainerID
 	select {
 	case msg := <-msgChan:
-		_, ok := msg.(ContainerLaunchedMsg)
+		launchMsg, ok := msg.(ContainerLaunchedMsg)
 		assert.True(t, ok, "Expected ContainerLaunchedMsg, got %T", msg)
+		assert.NotEmpty(t, launchMsg.ContainerID, "ContainerID should be populated")
 	default:
 		// Message may have already been consumed or container was already running
 		t.Log("No container launch message received (container may have been reused)")
@@ -979,10 +980,12 @@ type mockPodmanServer struct {
 // which internally calls Inspect.
 func mockInspectJSON(running bool) string {
 	status := "running"
+	pid := 12345
 	if !running {
 		status = "exited"
+		pid = 0
 	}
-	return fmt.Sprintf(`{"State":{"Running":%v,"Status":%q},"Config":{"Tty":true}}`, running, status)
+	return fmt.Sprintf(`{"State":{"Running":%v,"Status":%q,"Pid":%d},"Config":{"Tty":true}}`, running, status, pid)
 }
 
 func newMockPodmanServer(inspectResp string, inspectCode int) *mockPodmanServer {
@@ -1022,6 +1025,17 @@ func newMockPodmanServer(inspectResp string, inspectCode int) *mockPodmanServer 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, `{"Id":"mock-container-id","Warnings":[]}`)
+			return
+		}
+
+		// /containers/{name} with no action — could be DELETE (Remove)
+		if len(parts) == 5 && r.Method == http.MethodDelete {
+			m.mu.Lock()
+			m.inspectResp = ""
+			m.inspectCode = http.StatusNotFound
+			m.mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "[]")
 			return
 		}
 
@@ -1074,6 +1088,11 @@ func newMockPodmanServer(inspectResp string, inspectCode int) *mockPodmanServer 
 			}
 
 		case "delete":
+			m.mu.Lock()
+			// After removal, container no longer exists → inspect returns 404
+			m.inspectResp = ""
+			m.inspectCode = http.StatusNotFound
+			m.mu.Unlock()
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, "[]")
 
@@ -1222,4 +1241,95 @@ func TestFastPathRunningContainerNoRecreation(t *testing.T) {
 	assert.Equal(t, 0, mock.createCount, "Create should not be called when container is running")
 	assert.Equal(t, 0, mock.attachCount, "Attach should not be called when pipes are alive and container is running")
 	mock.mu.Unlock()
+}
+
+// TestContainerLaunchedMsgAllPaths verifies Edict 639: ContainerLaunchedMsg is
+// sent on all three initialize() paths where containerStarted transitions to true,
+// and that the ContainerID field is populated.
+func TestContainerLaunchedMsgAllPaths(t *testing.T) {
+	t.Run("path_a_already_running", func(t *testing.T) {
+		// Container exists and is already running → path (a)
+		mock := newMockPodmanServer(mockInspectJSON(true), http.StatusOK)
+		defer mock.close()
+		host := mock.start(t)
+		connCtx := makeConnCtx(t, host)
+
+		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/launch-a"}, 0, nil)
+		runner.conn = connCtx
+		msgChan := make(chan Msg, 10)
+		runner.SetMessageChannel(msgChan)
+
+		err := runner.initialize(context.Background())
+		require.NoError(t, err)
+
+		select {
+		case msg := <-msgChan:
+			launchMsg, ok := msg.(ContainerLaunchedMsg)
+			require.True(t, ok, "Expected ContainerLaunchedMsg, got %T", msg)
+			assert.NotEmpty(t, launchMsg.ContainerID, "ContainerID should be populated on path (a)")
+			assert.Equal(t, "12345", launchMsg.ContainerID, "ContainerID should be the PID from inspect")
+		default:
+			t.Fatal("Expected ContainerLaunchedMsg on path (a) but got none")
+		}
+	})
+
+	t.Run("path_b_start_existing", func(t *testing.T) {
+		// Container exists but stopped → path (b): start it
+		mock := newMockPodmanServer(mockInspectJSON(false), http.StatusOK)
+		defer mock.close()
+		host := mock.start(t)
+		connCtx := makeConnCtx(t, host)
+
+		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/launch-b"}, 0, nil)
+		runner.conn = connCtx
+		msgChan := make(chan Msg, 10)
+		runner.SetMessageChannel(msgChan)
+
+		err := runner.initialize(context.Background())
+		require.NoError(t, err)
+
+		select {
+		case msg := <-msgChan:
+			launchMsg, ok := msg.(ContainerLaunchedMsg)
+			require.True(t, ok, "Expected ContainerLaunchedMsg, got %T", msg)
+			assert.NotEmpty(t, launchMsg.ContainerID, "ContainerID should be populated on path (b)")
+			assert.Equal(t, "12345", launchMsg.ContainerID, "ContainerID should be the PID from inspect")
+		default:
+			t.Fatal("Expected ContainerLaunchedMsg on path (b) but got none")
+		}
+	})
+
+	t.Run("path_c_create_new", func(t *testing.T) {
+		// Container doesn't exist → path (c): create new
+		mock := newMockPodmanServer("", http.StatusNotFound)
+		defer mock.close()
+		host := mock.start(t)
+		connCtx := makeConnCtx(t, host)
+
+		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/launch-c"}, 0, nil)
+		runner.conn = connCtx
+		msgChan := make(chan Msg, 10)
+		runner.SetMessageChannel(msgChan)
+
+		err := runner.initialize(context.Background())
+		require.NoError(t, err)
+
+		select {
+		case msg := <-msgChan:
+			launchMsg, ok := msg.(ContainerLaunchedMsg)
+			require.True(t, ok, "Expected ContainerLaunchedMsg, got %T", msg)
+			assert.NotEmpty(t, launchMsg.ContainerID, "ContainerID should be populated on path (c)")
+			assert.Equal(t, "mock-container-id", launchMsg.ContainerID, "ContainerID should be the create response ID")
+		default:
+			t.Fatal("Expected ContainerLaunchedMsg on path (c) but got none")
+		}
+	})
+}
+
+// TestSendContainerLaunchedNoChannel verifies that sendContainerLaunched is
+// a no-op when msgChan is nil (no panic).
+func TestSendContainerLaunchedNoChannel(t *testing.T) {
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/nochan"}, 0, nil)
+	// msgChan is nil by default
+	runner.sendContainerLaunched("test-id") // should not panic
 }

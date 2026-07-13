@@ -175,30 +175,35 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 				r.containerStarted = true
 				existingRunning = true
 				r.mu.Unlock()
+				r.sendContainerLaunched(fmt.Sprintf("%d", inspectData.State.Pid))
 			} else {
 				slog.Debug("starting existing container", "containerName", r.containerName)
 				if err := containers.Start(r.conn, r.containerName, nil); err != nil {
 					return fmt.Errorf("failed to start existing container: %w", err)
 				}
 				slog.Debug("existing container started", "containerName", r.containerName)
+				// Re-inspect after Start to get the actual PID — the pre-Start
+				// inspectData has Pid=0 because the container was stopped.
+				startedInspect, err := containers.Inspect(r.conn, r.containerName, nil)
+				if err != nil {
+					return fmt.Errorf("failed to inspect started container: %w", err)
+				}
 				r.mu.Lock()
 				r.containerStarted = true
 				r.mu.Unlock()
+				r.sendContainerLaunched(fmt.Sprintf("%d", startedInspect.State.Pid))
 			}
 		} else {
 			slog.Debug("container doesn't exist, creating new one", "containerName", r.containerName)
-			if err := r.createContainer(ctx); err != nil {
+			containerID, err := r.createContainer(ctx)
+			if err != nil {
 				return err
 			}
 			r.mu.Lock()
 			r.containerStarted = true
 			r.mu.Unlock()
 
-			// Notify that container was launched
-			if r.msgChan != nil {
-				// TODO: add the process ID to the message
-				r.msgChan <- ContainerLaunchedMsg{Message: "🐳 Container launched"}
-			}
+			r.sendContainerLaunched(containerID)
 		}
 	} else {
 		// Even if we have an active attachment, the container may have been
@@ -621,7 +626,7 @@ func (r *PodmanRunner) readStream(reader io.Reader, stopChan <-chan struct{}) {
 	slog.Debug("stream reader exited")
 }
 
-func (r *PodmanRunner) createContainer(ctx context.Context) error {
+func (r *PodmanRunner) createContainer(ctx context.Context) (string, error) {
 	slog.Debug("creating new container", "image", r.imageName, "containerName", r.containerName, "noCleanup", r.noCleanup)
 
 	s := specgen.NewSpecGenerator(r.imageName, false)
@@ -648,7 +653,7 @@ func (r *PodmanRunner) createContainer(ctx context.Context) error {
 
 	absPath, err := filepath.Abs(r.repoInfo.ProjectRoot)
 	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
+		return "", fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
 	slog.Debug("mounting directory to container", "source", absPath, "destination", absPath)
@@ -687,12 +692,12 @@ func (r *PodmanRunner) createContainer(ctx context.Context) error {
 		} else {
 			overlayDataDir, err := overlayFileDir(absPath)
 			if err != nil {
-				return fmt.Errorf("failed to create overlay data directory: %w", err)
+				return "", fmt.Errorf("failed to create overlay data directory: %w", err)
 			}
 			overlayFilePath := filepath.Join(overlayDataDir, sanitizePath(relPath))
 			if _, err := os.Stat(overlayFilePath); err != nil {
 				if err := os.WriteFile(overlayFilePath, nil, 0644); err != nil {
-					return fmt.Errorf("failed to create overlay file: %w", err)
+					return "", fmt.Errorf("failed to create overlay file: %w", err)
 				}
 			}
 			slog.Debug("adding file overlay as bind mount", "source", overlayFilePath, "destination", overlayDest)
@@ -709,17 +714,28 @@ func (r *PodmanRunner) createContainer(ctx context.Context) error {
 	slog.Debug("calling CreateWithSpec")
 	createResponse, err := containers.CreateWithSpec(r.conn, s, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create container: %w", err)
+		return "", fmt.Errorf("failed to create container: %w", err)
 	}
 	slog.Debug("container created", "containerID", createResponse.ID)
 
 	slog.Debug("starting container", "containerID", createResponse.ID)
 	if err := containers.Start(r.conn, createResponse.ID, nil); err != nil {
-		return fmt.Errorf("failed to start container: %w", err)
+		return "", fmt.Errorf("failed to start container: %w", err)
 	}
 	slog.Debug("container started successfully", "containerID", createResponse.ID)
 
-	return nil
+	return createResponse.ID, nil
+}
+
+// sendContainerLaunched notifies the TUI that a container is running,
+// including the container's PID or ID for the status bar indicator.
+func (r *PodmanRunner) sendContainerLaunched(containerID string) {
+	if r.msgChan != nil {
+		r.msgChan <- ContainerLaunchedMsg{
+			Message:     "🐳 Container launched",
+			ContainerID: containerID,
+		}
+	}
 }
 
 func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
