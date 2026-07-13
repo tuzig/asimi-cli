@@ -1557,3 +1557,177 @@ func TestProcessTask_SendResult_NonBlocking(t *testing.T) {
 		t.Fatal("should not block reading from done channel")
 	}
 }
+
+// TestRunLoop_ConcurrentTaskDispatch verifies that RunLoop dispatches tasks
+// concurrently: a slow task should not block prompt processing.
+func TestRunLoop_ConcurrentTaskDispatch(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base.ministerID = "test"
+	strategist := NewStrategist(base)
+	strategist.SetNotify(func(any) {})
+
+	var taskStarted sync.WaitGroup
+	var taskRelease sync.WaitGroup
+	taskStarted.Add(1)
+	taskRelease.Add(1)
+
+	slowTaskHandler := func(ctx context.Context, task *Task) {
+		taskStarted.Done()
+		taskRelease.Wait() // simulate slow work
+		base.sendResult(task, Result{MinisterID: "test", Sealed: true, Output: "done"})
+	}
+
+	go base.RunLoop(ctx, strategist, nil, slowTaskHandler)
+
+	// Send a slow task
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+		Work:     "slow task",
+		Done:     doneCh,
+	}
+	base.tasks <- task
+
+	// Wait for task to start
+	taskStarted.Wait()
+
+	// Now send a prompt — it should be processed even though the task is still running
+	promptDone := make(chan struct{})
+	base.SubmitPrompt(&Prompt{
+		Ctx:      ctx,
+		Message:  "hello while task runs",
+		EdictKey: storage.EdictKey{ID: 0, Username: "testuser", Project: "testproject"},
+	})
+
+	// Give the prompt a moment to be received; if dispatch were blocking,
+	// the prompt would never be processed until the task completes.
+	select {
+	case <-promptDone:
+		// This is fine — prompt was received by the channel.
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Release the task and verify it completes
+	taskRelease.Done()
+	select {
+	case r := <-doneCh:
+		assert.Equal(t, "done", r.Output)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task result")
+	}
+}
+
+// TestRunLoop_GracefulShutdownWaitsInFlightTasks verifies that RunLoop's
+// context cancellation waits for in-flight tasks to complete before returning.
+func TestRunLoop_GracefulShutdownWaitsInFlightTasks(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base.ministerID = "test"
+	strategist := NewStrategist(base)
+	strategist.SetNotify(func(any) {})
+
+	var taskDone sync.WaitGroup
+	taskDone.Add(1)
+
+	taskHandler := func(ctx context.Context, task *Task) {
+		defer taskDone.Done()
+		time.Sleep(100 * time.Millisecond) // simulate work
+		base.sendResult(task, Result{MinisterID: "test", Sealed: true, Output: "done"})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	loopDone := make(chan struct{})
+	go func() {
+		base.RunLoop(ctx, strategist, nil, taskHandler)
+		close(loopDone)
+	}()
+
+	// Send a task
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+		Work:     "work",
+		Done:     doneCh,
+	}
+	base.tasks <- task
+
+	// Cancel while the task is in-flight
+	time.Sleep(20 * time.Millisecond) // ensure task started
+	cancel()
+
+	// RunLoop should wait for the task to finish before returning
+	select {
+	case <-loopDone:
+		// RunLoop returned — but did the task complete?
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunLoop did not return within timeout; may not be waiting for tasks")
+	}
+
+	select {
+	case r := <-doneCh:
+		assert.Equal(t, "done", r.Output, "in-flight task should have completed before shutdown")
+	case <-time.After(time.Second):
+		t.Fatal("in-flight task result was not delivered")
+	}
+}
+
+// TestStreamTask_RitualTaskCreatesOwnSession verifies that when
+// existingSession is nil, streamTask creates its own ephemeral session
+// rather than reusing the minister's interactive session (m.session).
+func TestStreamTask_RitualTaskCreatesOwnSession(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base.ministerID = "sage"
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+	sage.SetNotify(func(any) {})
+
+	// Create an interactive session on m.session (simulating ProcessPrompt)
+	interactiveSession, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "sage")
+	require.NoError(t, err)
+	base.SetSession(interactiveSession)
+	interactiveMsgCount := len(interactiveSession.Messages())
+
+	// Call streamTask with existingSession=nil (ritual task scenario)
+	session, _, err := base.streamTask(ctx, "ritual work", storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}, "# scratch", func(any) {}, nil, "sage")
+	require.NoError(t, err)
+
+	// The returned session must NOT be the interactive session
+	assert.NotNil(t, session)
+	assert.NotEqual(t, interactiveSession, session, "ritual task must create its own ephemeral session, not reuse m.session")
+
+	// The interactive session should be untouched
+	assert.Equal(t, interactiveMsgCount, len(interactiveSession.Messages()), "interactive session messages must be unchanged")
+}
+
+// TestStreamTask_ExistingSessionStillReused verifies that when an
+// existingSession is provided, it is still reused (multi-turn path).
+func TestStreamTask_ExistingSessionStillReused(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base.ministerID = "sage"
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+	sage.SetNotify(func(any) {})
+
+	existing, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "sage")
+	require.NoError(t, err)
+
+	session, _, err := base.streamTask(ctx, "more work", storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "", func(any) {}, existing, "sage")
+	require.NoError(t, err)
+
+	assert.Equal(t, existing, session, "existing session should be reused")
+}

@@ -297,9 +297,14 @@ func (m *MinisterBase) RunLoop(
 		}
 	}
 	m.logger.Info("minister started", "minister_id", m.ministerID)
+
+	var taskWg sync.WaitGroup
+
 	for {
 		select {
 		case <-ctx.Done():
+			m.logger.Info("minister stopping, waiting for in-flight tasks", "minister_id", m.ministerID)
+			taskWg.Wait()
 			m.logger.Info("minister stopped", "minister_id", m.ministerID)
 			return
 		case prompt := <-m.PromptsChan():
@@ -318,8 +323,12 @@ func (m *MinisterBase) RunLoop(
 			if task.Ctx != nil {
 				context.AfterFunc(task.Ctx, func() { mergedCancel() })
 			}
-			processTask(merged, task)
-			mergedCancel()
+			taskWg.Add(1)
+			go func() {
+				defer taskWg.Done()
+				defer mergedCancel()
+				processTask(merged, task)
+			}()
 		}
 	}
 }
@@ -662,21 +671,6 @@ func (m *MinisterBase) streamTask(ctx context.Context, work string, key storage.
 	if existingSession != nil {
 		// Reuse existing session for multi-turn conversation
 		session = existingSession
-		sessionChannelID := channelID
-		if sessionChannelID == "" {
-			sessionChannelID = session.ChannelID()
-		}
-		if sessionChannelID == "" {
-			sessionChannelID = m.ministerID
-		}
-		session.SetNotify(notify, sessionChannelID)
-		output, err = session.AskWithStreaming(ctx, work, nil)
-		if err != nil {
-			return session, "", err
-		}
-	} else if m.session != nil {
-		// Reuse embedded session (e.g., Sage's interactive session)
-		session = m.session
 		sessionChannelID := channelID
 		if sessionChannelID == "" {
 			sessionChannelID = session.ChannelID()
