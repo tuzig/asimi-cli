@@ -405,7 +405,7 @@ func TestHandleLoginCommand_ReturnsProviders(t *testing.T) {
 				Model:    "claude-3-5-sonnet-latest",
 			},
 		},
-		tabs: NewTabManager(80, 24, false, func() string { return "insert" }),
+		tabs: newTestTabManager(),
 	}
 
 	cmd := handleLoginCommand(model, []string{})
@@ -425,7 +425,7 @@ func TestHandleLoginCommand_ProviderListContents(t *testing.T) {
 				Model:    "gpt-4o",
 			},
 		},
-		tabs: NewTabManager(80, 24, false, func() string { return "insert" }),
+		tabs: newTestTabManager(),
 	}
 
 	// Build the same provider list that handleLoginCommand constructs

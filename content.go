@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/shogunate"
 	"github.com/afittestide/asimi/storage"
@@ -62,7 +63,7 @@ const bt = "`"
 
 // initTabGreetings seeds each tab's ChatComponent with its minister welcome
 // message, sourced from the Greeting field of each MinisterDef.
-func initTabGreetings(tm *TabManager, defs []shogunate.MinisterDef) {
+func initTabGreetings(tm *TabManager, defs []ministers.MinisterDef) {
 	greetings := make(map[string]string, len(defs))
 	for _, d := range defs {
 		greetings[d.ID] = d.Greeting
@@ -74,21 +75,21 @@ func initTabGreetings(tm *TabManager, defs []shogunate.MinisterDef) {
 	}
 }
 
-// NewTabManager creates a TabManager with 4 tabs per the Shogunate structure:
-// 宰相 Chancellor (ruling/edicts), 聖人 Sage (exploration),
-// 工部 Forge (builds), 刑部 Judge (tests)
-func NewTabManager(w, h int, mdEnabled bool, getStatus func() string) TabManager {
+// NewTabManager creates a TabManager with default tabs built from the given
+// minister defs. The default tabs are Chancellor, Sage, Forge, Judge —
+// using "Kanji Title" as the label, derived from the defs.
+func NewTabManager(w, h int, mdEnabled bool, getStatus func() string, defs []ministers.MinisterDef) TabManager {
+	defsByID := ministers.LookupMap(defs)
+
+	var tabs []Tab
+	for _, id := range ministers.DefaultTabIDs {
+		d := defsByID[id]
+		tabs = append(tabs, NewTab(d.Label(), TabType(id), id,
+			newContentComponent(w, h, mdEnabled, getStatus)))
+	}
+
 	tm := TabManager{
-		tabs: []Tab{
-			NewTab("宰相 Chancellor", "chancellor", "chancellor",
-				newContentComponent(w, h, mdEnabled, getStatus)),
-			NewTab("聖人 Sage", "sage", "sage",
-				newContentComponent(w, h, mdEnabled, getStatus)),
-			NewTab("工部 Forge", "forge", "forge",
-				newContentComponent(w, h, mdEnabled, getStatus)),
-			NewTab("刑部 Judge", "judge", "judge",
-				newContentComponent(w, h, mdEnabled, getStatus)),
-		},
+		tabs:            tabs,
 		activeTab:       0,
 		width:           w,
 		height:          h,

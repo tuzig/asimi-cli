@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
@@ -855,18 +856,32 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 }
 
 func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
+	// Load defs for label derivation
+	defs, _ := ministers.LoadMinisters()
+	defsByID := ministers.LookupMap(defs)
+
 	if len(args) == 0 {
 		// Default: open a Sage tab
-		model.tabs.Add("Sage", "sage", "sage")
-		model.commandLine.AddToast("Opened Sage tab", "success", time.Second*2)
+		d := defsByID[ministers.Sage]
+		label := d.Label()
+		if label == "" {
+			label = "Sage"
+		}
+		model.tabs.Add(label, TabType(ministers.Sage), ministers.Sage)
+		model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 		return nil
 	}
 
 	target := args[0]
 	switch target {
-	case "sage":
-		model.tabs.Add("Sage", "sage", "sage")
-		model.commandLine.AddToast("Opened Sage tab", "success", time.Second*2)
+	case ministers.Sage:
+		d := defsByID[ministers.Sage]
+		label := d.Label()
+		if label == "" {
+			label = "Sage"
+		}
+		model.tabs.Add(label, TabType(ministers.Sage), ministers.Sage)
+		model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 	case "ritual":
 		if len(args) < 2 {
 			model.commandLine.AddToast("Usage: :tabnew ritual <run_id>", "error", time.Second*3)
@@ -1047,11 +1062,11 @@ func handleEdictSeal(model *TUIModel, edictID uint, notes string) tea.Cmd {
 	hasRuler := false
 	for _, seal := range seals {
 		switch seal.MinisterID {
-		case "judge":
+		case ministers.Judge:
 			hasJudge = true
-		case "sage":
+		case ministers.Sage:
 			hasSage = true
-		case "ruler":
+		case ministers.Ruler:
 			hasRuler = true
 		}
 	}
@@ -1166,7 +1181,7 @@ func renderEdictDashboard(edict *storage.Edict, seals []storage.Seal, width int)
 		status = "cancelled"
 	} else {
 		for _, s := range seals {
-			if s.MinisterID == "ruler" {
+			if s.MinisterID == ministers.Ruler {
 				status = "sealed"
 				break
 			}

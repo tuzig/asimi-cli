@@ -585,7 +585,7 @@ func TestHandleModelsCommandShowsConfiguredModels(t *testing.T) {
 
 	model := &TUIModel{
 		config: config,
-		tabs:   NewTabManager(80, 24, false, func() string { return "insert" }),
+		tabs:   newTestTabManager(),
 	}
 
 	cmd := handleModelsCommand(model, []string{})
@@ -765,7 +765,7 @@ func TestHandleModelsCommand_NoLoginRequiredOnSelect(t *testing.T) {
 
 	model := &TUIModel{
 		config: config,
-		tabs:   NewTabManager(80, 24, false, func() string { return "insert" }),
+		tabs:   newTestTabManager(),
 	}
 
 	cmd := handleModelsCommand(model, []string{})

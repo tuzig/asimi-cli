@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/shogunateapi"
@@ -247,8 +248,17 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 		connDropPendingRetry:     make(map[string]pendingRetry),
 	}
 
-	// Initialize tab system with default Chancellor tab
-	model.tabs = NewTabManager(80, 18, markdownEnabled, func() string { return model.Mode })
+	// Initialize tab system with default tabs built from minister defs
+	projectDir := ""
+	if repoInfo != nil {
+		projectDir = repoInfo.ProjectRoot
+	}
+	ms, err := ministers.LoadAllMinisters(projectDir)
+	if err != nil {
+		slog.Warn("failed to load minister ms for tabs, using builtins", "error", err)
+		ms, _ = ministers.LoadMinisters()
+	}
+	model.tabs = NewTabManager(80, 18, markdownEnabled, func() string { return model.Mode }, ms)
 	// Wire loadSessionFn so :resume reuses the shared session store
 	model.tabs.SetLoadSessionFn(func(sessionID string) tea.Cmd {
 		return model.tabs.Content().resume.LoadSession(sessionID, model.sessionStore)
@@ -2199,11 +2209,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.repoInfo != nil {
 				projectDir = m.repoInfo.ProjectRoot
 			}
-			defs, err := shogunate.LoadAllMinisters(projectDir)
+			ms, err := ministers.LoadAllMinisters(projectDir)
 			if err != nil {
 				slog.Warn("failed to load ministers for greetings", "error", err)
 			}
-			initTabGreetings(&m.tabs, defs)
+			initTabGreetings(&m.tabs, ms)
 			return m, nil
 		case storage.EventShogunateReady:
 			icon = courtPrefix

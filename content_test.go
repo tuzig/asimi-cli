@@ -4,13 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTabGreetingsAllPresent(t *testing.T) {
-	defs, err := shogunate.LoadMinisters()
+	defs, err := ministers.LoadMinisters()
 	require.NoError(t, err)
 
 	greetings := make(map[string]string, len(defs))
@@ -102,13 +102,18 @@ func TestAddGreetingMessage_RespectsScrollLock(t *testing.T) {
 
 // --- Welcome screen tests ---
 
+func newTestTabManager() TabManager {
+	defs, _ := ministers.LoadMinisters()
+	return NewTabManager(80, 24, true, func() string { return "insert" }, defs)
+}
+
 func TestTabManager_WelcomeDefaultTrue(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm := newTestTabManager()
 	assert.True(t, tm.IsWelcome(), "new TabManager should start in welcome state")
 }
 
 func TestTabManager_DismissWelcome(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm := newTestTabManager()
 	assert.True(t, tm.IsWelcome())
 
 	tm.DismissWelcome()
@@ -117,7 +122,7 @@ func TestTabManager_DismissWelcome(t *testing.T) {
 }
 
 func TestTabManager_RenderWelcome(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm := newTestTabManager()
 
 	view := tm.renderWelcome(80, 24)
 	assert.NotEmpty(t, view)
@@ -126,7 +131,7 @@ func TestTabManager_RenderWelcome(t *testing.T) {
 }
 
 func TestTabManager_RenderWelcome_UpdateAvailable(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm := newTestTabManager()
 	tm.getUpdateAvail = func() bool { return true }
 
 	view := tm.renderWelcome(80, 24)
@@ -135,7 +140,7 @@ func TestTabManager_RenderWelcome_UpdateAvailable(t *testing.T) {
 }
 
 func TestTabManager_RenderWelcome_NoUpdateWhenFalse(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm := newTestTabManager()
 	tm.getUpdateAvail = func() bool { return false }
 
 	view := tm.renderWelcome(80, 24)
@@ -143,7 +148,7 @@ func TestTabManager_RenderWelcome_NoUpdateWhenFalse(t *testing.T) {
 }
 
 func TestTabManager_RenderWelcome_ConfigCreated(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm := newTestTabManager()
 	tm.getConfigCreated = func() bool { return true }
 
 	view := tm.renderWelcome(80, 24)
@@ -151,7 +156,7 @@ func TestTabManager_RenderWelcome_ConfigCreated(t *testing.T) {
 }
 
 func TestTabManager_RenderTabBar_NoActiveInWelcome(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm := newTestTabManager()
 	assert.True(t, tm.IsWelcome())
 
 	bar := tm.RenderTabBar(80)
@@ -165,11 +170,60 @@ func TestTabManager_RenderTabBar_NoActiveInWelcome(t *testing.T) {
 }
 
 func TestTabManager_RenderTabBar_ActiveAfterDismiss(t *testing.T) {
-	tm := NewTabManager(80, 24, true, func() string { return "insert" })
+	tm := newTestTabManager()
 	tm.DismissWelcome()
 
 	bar := tm.RenderTabBar(80)
 	assert.NotEmpty(t, bar)
 	assert.Contains(t, bar, "Chancellor")
 	//TODO: need to asser it's color is highlighted
+}
+
+func TestTabManager_DefaultTabsUseKanjiLabels(t *testing.T) {
+	tm := newTestTabManager()
+	bar := tm.RenderTabBar(80)
+	// Labels should be derived from defs (Kanji + " " + Title)
+	assert.Contains(t, bar, "宰相")
+	assert.Contains(t, bar, "聖人")
+	assert.Contains(t, bar, "工部")
+	assert.Contains(t, bar, "刑部")
+}
+
+func TestTabManager_DefaultTabIDs(t *testing.T) {
+	tm := newTestTabManager()
+	assert.Equal(t, "chancellor", string(tm.tabs[0].Type))
+	assert.Equal(t, "chancellor", tm.tabs[0].Target)
+	assert.Equal(t, "sage", string(tm.tabs[1].Type))
+	assert.Equal(t, "sage", tm.tabs[1].Target)
+	assert.Equal(t, "forge", string(tm.tabs[2].Type))
+	assert.Equal(t, "forge", tm.tabs[2].Target)
+	assert.Equal(t, "judge", string(tm.tabs[3].Type))
+	assert.Equal(t, "judge", tm.tabs[3].Target)
+}
+
+func TestHandleTabNewCommand_DefaultOpensSageTabWithDerivedLabel(t *testing.T) {
+	model := newTestModel(t)
+	initialTabCount := len(model.tabs.tabs)
+
+	handleTabNewCommand(model, []string{})
+
+	assert.Len(t, model.tabs.tabs, initialTabCount+1)
+	newTab := model.tabs.tabs[initialTabCount]
+	assert.Equal(t, "sage", string(newTab.Type))
+	assert.Equal(t, "sage", newTab.Target)
+	// Label should be derived from defs, not hardcoded "Sage"
+	assert.Contains(t, newTab.Label, "Sage")
+}
+
+func TestHandleTabNewCommand_SageArgOpensSageTab(t *testing.T) {
+	model := newTestModel(t)
+	initialTabCount := len(model.tabs.tabs)
+
+	handleTabNewCommand(model, []string{"sage"})
+
+	assert.Len(t, model.tabs.tabs, initialTabCount+1)
+	newTab := model.tabs.tabs[initialTabCount]
+	assert.Equal(t, "sage", string(newTab.Type))
+	assert.Equal(t, "sage", newTab.Target)
+	assert.Contains(t, newTab.Label, "Sage")
 }
