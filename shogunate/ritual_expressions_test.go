@@ -342,6 +342,64 @@ func TestAwaitRulerSeal_NoManifests(t *testing.T) {
 	}
 }
 
+func TestAwaitRulerSeal_CommaSeparatedFilePaths(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	if err := db.AutoMigrate(&storage.Edict{}, &storage.ForgeManifest{}); err != nil {
+		t.Fatalf("failed to migrate edict/manifest tables: %v", err)
+	}
+
+	registry := NewRitualRegistry()
+
+	edict := storage.Edict{
+		ID:        1,
+		SessionID: "test-session",
+		Intent:    "Test comma-separated paths",
+	}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Manifests with comma-separated file paths
+	manifests := []storage.ForgeManifest{
+		{ManifestID: "manifest-1", EdictID: edict.ID, FilePath: "internal/ministers/def.go, internal/ministers/load.go", Status: storage.ManifestForged},
+		{ManifestID: "manifest-2", EdictID: edict.ID, FilePath: "internal/ministers/util.go", Status: storage.ManifestForged},
+	}
+	for i := range manifests {
+		if err := db.Create(&manifests[i]).Error; err != nil {
+			t.Fatalf("failed to create manifest %d: %v", i, err)
+		}
+	}
+
+	var stagedFiles string
+	mockRunner := &mockCmdRunner{
+		output:   "",
+		exitCode: "0",
+		onRun: func(cmd string) {
+			if strings.HasPrefix(cmd, "git add ") {
+				stagedFiles = strings.TrimPrefix(cmd, "git add ")
+			}
+		},
+	}
+	runner := NewRitualRunner(registry, nil, nil, db, mockRunner, nil, repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		ID:         "test-await-ruler-seal-comma",
+		RitualName: "swift-strike",
+		EdictID:    edict.ID,
+	}
+
+	err := runner.runThen(context.Background(), exec, "await_ruler_seal")
+	if err != nil {
+		t.Fatalf("runThen(await_ruler_seal) error: %v", err)
+	}
+
+	expectedFiles := "internal/ministers/def.go internal/ministers/load.go internal/ministers/util.go"
+	if stagedFiles != expectedFiles {
+		t.Errorf("expected staged files %q, got %q", expectedFiles, stagedFiles)
+	}
+}
+
 func TestCheckVerdictsPassed_AllApproved(t *testing.T) {
 	db := setupRitualTestDB(t)
 

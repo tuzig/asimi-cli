@@ -155,6 +155,7 @@ func (r *ToolRegistry) Update(tool Tool) {
 // RegisterPrivate adds a tool exclusively for a specific minister.
 // Private tools are returned by ForPermissions in addition to
 // any permission-matched public tools.
+// TODO: Replace this with "extra_tools" array on the minister's yaml
 func (r *ToolRegistry) RegisterPrivate(ministerID string, tool Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

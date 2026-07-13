@@ -954,10 +954,15 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		}
 
 		if len(manifests) > 0 {
-			// Extract file paths
-			files := make([]string, len(manifests))
-			for i, m := range manifests {
-				files[i] = m.FilePath
+			// Extract file paths, splitting comma-separated paths
+			var files []string
+			for _, m := range manifests {
+				for _, f := range strings.Split(m.FilePath, ",") {
+					f = strings.TrimSpace(f)
+					if f != "" {
+						files = append(files, f)
+					}
+				}
 			}
 
 			// Stage specific files
