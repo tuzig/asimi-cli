@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/afittestide/asimi/shogunate"
-	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -387,7 +387,7 @@ func (p PromptComponent) ViModeStatus() (enabled bool, mode string, pending stri
 }
 
 // HandleZhengmingPending parses a ZhengmingPendingMsg and enters answering mode
-func (p *PromptComponent) HandleZhengmingPending(msg shogunate.ZhengmingPendingMsg) {
+func (p *PromptComponent) HandleZhengmingPending(msg court.ZhengmingPendingMsg) {
 	aq := make([]AnsweringQuestion, len(msg.Questions))
 	for i, q := range msg.Questions {
 		aq[i] = AnsweringQuestion{

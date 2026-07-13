@@ -1,9 +1,9 @@
 // Package types contains shared type definitions used across packages,
-// breaking import cycles between rpc, shogunate, and shogunateapi.
+// breaking import cycles between rpc, court, and courtapi.
 package types
 
 // SetContextParams carries client-side credentials and project context
-// to the shogunate. Both the in-process Shogunate and the daemon-side
+// to the court. Both the in-process Court and the daemon-side
 // handler consume this struct to initialise (or re-initialise) the
 // Bifrost LLM client.
 type SetContextParams struct {

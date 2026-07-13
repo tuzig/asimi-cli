@@ -6,7 +6,7 @@ The review ritual was executed and printed suggestions for improvements, but tho
 ## Root Cause Analysis
 
 ### 1. Database Corruption
-The Shogunate database at `~/.local/share/asimi/asimi.sqlite` was corrupted (0 bytes, empty). This prevented any data from being persisted, including:
+The Court database at `~/.local/share/asimi/asimi.sqlite` was corrupted (0 bytes, empty). This prevented any data from being persisted, including:
 - Censor precedents (review suggestions)
 - Judge verdicts
 - Forge manifests

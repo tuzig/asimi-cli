@@ -265,7 +265,7 @@ func (m *TUIModel) performCodexLogin() tea.Cmd {
 		m.config.LLM.BaseURL = "https://chatgpt.com/backend-api"
 
 		// Initialize LLM with new credentials
-		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
+		if err := m.court.SetContext(context.Background(), m.setContextParams()); err != nil {
 			return showOauthFailed{"Failed to initialize AI session: " + err.Error()}
 		}
 

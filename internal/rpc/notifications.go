@@ -8,7 +8,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/wire"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 )
 
 // Notification method names (server → client). Keep in sync with the
@@ -39,24 +39,24 @@ const (
 
 // typeToMethod maps a Go notification type to its wire method name.
 // Used by the server-side dispatcher to route messages coming out of
-// shogunate.Subscribe. Extendable: call RegisterNotificationType.
+// court.Subscribe. Extendable: call RegisterNotificationType.
 var (
 	typeToMethodMu sync.RWMutex
 	typeToMethod   = map[reflect.Type]string{
-		reflect.TypeOf(shogunate.StreamStartMsg{}):              NotifyStreamStart,
-		reflect.TypeOf(shogunate.StreamChunkMsg{}):              NotifyStreamChunk,
-		reflect.TypeOf(shogunate.StreamCompleteMsg{}):           NotifyStreamComplete,
-		reflect.TypeOf(shogunate.StreamDoneMsg{}):               NotifyStreamDone,
-		reflect.TypeOf(shogunate.StreamInterruptedMsg{}):        NotifyStreamInterrupted,
-		reflect.TypeOf(shogunate.StreamMaxTokensReachedMsg{}):   NotifyStreamMaxTokens,
-		reflect.TypeOf(shogunate.StreamErrorMsg{}):              NotifyStreamError,
-		reflect.TypeOf(shogunate.EventsDrainedMsg{}):            NotifyEventsDrained,
-		reflect.TypeOf(shogunate.MinisterInvokingMsg{}):         NotifyMinisterInvoking,
-		reflect.TypeOf(shogunate.MinisterCompletedMsg{}):        NotifyMinisterCompleted,
-		reflect.TypeOf(shogunate.EventNotificationMsg{}):        NotifyEvent,
-		reflect.TypeOf(shogunate.ZhengmingPendingMsg{}):         NotifyZhengmingPending,
-		reflect.TypeOf(shogunate.ZhengmingAnsweredMsg{}):        NotifyZhengmingAnswered,
-		reflect.TypeOf(shogunate.RitualStepMsg{}):               NotifyRitualStep,
+		reflect.TypeOf(court.StreamStartMsg{}):              NotifyStreamStart,
+		reflect.TypeOf(court.StreamChunkMsg{}):              NotifyStreamChunk,
+		reflect.TypeOf(court.StreamCompleteMsg{}):           NotifyStreamComplete,
+		reflect.TypeOf(court.StreamDoneMsg{}):               NotifyStreamDone,
+		reflect.TypeOf(court.StreamInterruptedMsg{}):        NotifyStreamInterrupted,
+		reflect.TypeOf(court.StreamMaxTokensReachedMsg{}):   NotifyStreamMaxTokens,
+		reflect.TypeOf(court.StreamErrorMsg{}):              NotifyStreamError,
+		reflect.TypeOf(court.EventsDrainedMsg{}):            NotifyEventsDrained,
+		reflect.TypeOf(court.MinisterInvokingMsg{}):         NotifyMinisterInvoking,
+		reflect.TypeOf(court.MinisterCompletedMsg{}):        NotifyMinisterCompleted,
+		reflect.TypeOf(court.EventNotificationMsg{}):        NotifyEvent,
+		reflect.TypeOf(court.ZhengmingPendingMsg{}):         NotifyZhengmingPending,
+		reflect.TypeOf(court.ZhengmingAnsweredMsg{}):        NotifyZhengmingAnswered,
+		reflect.TypeOf(court.RitualStepMsg{}):               NotifyRitualStep,
 		reflect.TypeOf(runners.ContainerLaunchedMsg{}):          NotifyContainerLaunched,
 		reflect.TypeOf(runners.ToolCallScheduledMsg{}):          NotifyToolCallScheduled,
 		reflect.TypeOf(runners.ToolCallExecutingMsg{}):          NotifyToolCallExecuting,
@@ -114,20 +114,20 @@ type NotificationDecoder func([]byte) (any, error)
 var (
 	methodToDecoderMu sync.RWMutex
 	methodToDecoder   = map[string]NotificationDecoder{
-		NotifyStreamStart:                decode[shogunate.StreamStartMsg],
-		NotifyStreamChunk:                decode[shogunate.StreamChunkMsg],
-		NotifyStreamComplete:             decode[shogunate.StreamCompleteMsg],
-		NotifyStreamDone:                 decode[shogunate.StreamDoneMsg],
-		NotifyStreamInterrupted:          decode[shogunate.StreamInterruptedMsg],
-		NotifyStreamMaxTokens:            decode[shogunate.StreamMaxTokensReachedMsg],
-		NotifyStreamError:                decode[shogunate.StreamErrorMsg],
-		NotifyEventsDrained:              decode[shogunate.EventsDrainedMsg],
-		NotifyMinisterInvoking:           decode[shogunate.MinisterInvokingMsg],
-		NotifyMinisterCompleted:          decode[shogunate.MinisterCompletedMsg],
-		NotifyEvent:                      decode[shogunate.EventNotificationMsg],
-		NotifyZhengmingPending:           decode[shogunate.ZhengmingPendingMsg],
-		NotifyZhengmingAnswered:          decode[shogunate.ZhengmingAnsweredMsg],
-		NotifyRitualStep:                 decode[shogunate.RitualStepMsg],
+		NotifyStreamStart:                decode[court.StreamStartMsg],
+		NotifyStreamChunk:                decode[court.StreamChunkMsg],
+		NotifyStreamComplete:             decode[court.StreamCompleteMsg],
+		NotifyStreamDone:                 decode[court.StreamDoneMsg],
+		NotifyStreamInterrupted:          decode[court.StreamInterruptedMsg],
+		NotifyStreamMaxTokens:            decode[court.StreamMaxTokensReachedMsg],
+		NotifyStreamError:                decode[court.StreamErrorMsg],
+		NotifyEventsDrained:              decode[court.EventsDrainedMsg],
+		NotifyMinisterInvoking:           decode[court.MinisterInvokingMsg],
+		NotifyMinisterCompleted:          decode[court.MinisterCompletedMsg],
+		NotifyEvent:                      decode[court.EventNotificationMsg],
+		NotifyZhengmingPending:           decode[court.ZhengmingPendingMsg],
+		NotifyZhengmingAnswered:          decode[court.ZhengmingAnsweredMsg],
+		NotifyRitualStep:                 decode[court.RitualStepMsg],
 		NotifyContainerLaunched:          decode[runners.ContainerLaunchedMsg],
 		NotifyToolCallScheduled:          decode[runners.ToolCallScheduledMsg],
 		NotifyToolCallExecuting:          decode[runners.ToolCallExecutingMsg],

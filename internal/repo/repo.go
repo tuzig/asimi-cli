@@ -16,7 +16,7 @@ import (
 )
 
 // RepoInfo contains information about the git repository and worktree.
-// This type is shared between main and shogunate packages.
+// This type is shared between main and court packages.
 type RepoInfo struct {
 	ProjectRoot  string
 	WorktreePath string

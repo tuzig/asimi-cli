@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/court/tools"
 )
 
 func TestEditorRequestRoundTrip(t *testing.T) {
@@ -88,7 +88,7 @@ func TestEditorRequestQuitWithoutSaving(t *testing.T) {
 	}
 }
 
-func TestPumpShogunateEventsInterceptsEditor(t *testing.T) {
+func TestPumpCourtEventsInterceptsEditor(t *testing.T) {
 	pa, pb := net.Pipe()
 	daemon := New(pa, Options{})
 	tui := New(pb, Options{})
@@ -108,7 +108,7 @@ func TestPumpShogunateEventsInterceptsEditor(t *testing.T) {
 
 	events := make(chan any, 4)
 	pumpCtx, cancelPump := context.WithCancel(context.Background())
-	go PumpShogunateEvents(pumpCtx, daemon, events)
+	go PumpCourtEvents(pumpCtx, daemon, events)
 	defer cancelPump()
 
 	go func() {

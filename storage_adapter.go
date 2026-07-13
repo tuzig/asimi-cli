@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 	"modernc.org/sqlite"
@@ -175,14 +175,14 @@ type SessionStore struct {
 	Project     string
 	Branch      string
 	ProjectRoot string
-	saveChan    chan *shogunate.Session
+	saveChan    chan *court.Session
 	stopChan    chan struct{}
 	closeOnce   sync.Once
 	wg          sync.WaitGroup // Track in-flight saves
 
 	// saveHook, if non-nil, replaces saveSessionSync in saveWithRetry.
 	// Used only in tests to simulate transient SQLITE_BUSY errors.
-	saveHook func(*shogunate.Session) error
+	saveHook func(*court.Session) error
 }
 
 // NewSessionStore creates a new session store using SQLite
@@ -207,7 +207,7 @@ func NewSessionStore(db *storage.DB, repoInfo repo.RepoInfo, maxSessions, maxAge
 		Project:     project,
 		Branch:      branch,
 		ProjectRoot: repoInfo.ProjectRoot,
-		saveChan:    make(chan *shogunate.Session, 100),
+		saveChan:    make(chan *court.Session, 100),
 		stopChan:    make(chan struct{}),
 	}
 
@@ -242,7 +242,7 @@ func (s *SessionStore) saveWorker() {
 
 // saveWithRetry calls saveSessionSync with exponential backoff on SQLITE_BUSY.
 // Backoff schedule: 50ms, 200ms, 500ms (3 retries).
-func (s *SessionStore) saveWithRetry(session *shogunate.Session) {
+func (s *SessionStore) saveWithRetry(session *court.Session) {
 	backoffs := []time.Duration{50 * time.Millisecond, 200 * time.Millisecond, 500 * time.Millisecond}
 
 	saveFn := s.saveSessionSync
@@ -285,7 +285,7 @@ func isSQLiteBusy(err error) bool {
 }
 
 // SaveSession saves a session asynchronously
-func (s *SessionStore) SaveSession(session *shogunate.Session) {
+func (s *SessionStore) SaveSession(session *court.Session) {
 	if session != nil {
 		s.wg.Add(1) // Track this save
 		select {
@@ -298,11 +298,11 @@ func (s *SessionStore) SaveSession(session *shogunate.Session) {
 }
 
 // SaveSessionSync saves a session synchronously
-func (s *SessionStore) SaveSessionSync(session *shogunate.Session) error {
+func (s *SessionStore) SaveSessionSync(session *court.Session) error {
 	return s.saveSessionSync(session)
 }
 
-func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
+func (s *SessionStore) saveSessionSync(session *court.Session) error {
 	if session == nil {
 		return fmt.Errorf("cannot save nil session")
 	}
@@ -317,7 +317,7 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 
 	// Generate ID and timestamps for new sessions
 	if session.ID == "" {
-		session.ID = shogunate.GenerateSessionID()
+		session.ID = court.GenerateSessionID()
 	}
 	now := time.Now()
 	if session.CreatedAt.IsZero() {
@@ -362,7 +362,7 @@ func (s *SessionStore) saveSessionSync(session *shogunate.Session) error {
 }
 
 // LoadSession loads a session by ID
-func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
+func (s *SessionStore) LoadSession(id string) (*court.Session, error) {
 	storageSession, host, org, project, branch, err := s.store.LoadSession(id)
 	if err != nil {
 		return nil, err
@@ -382,8 +382,8 @@ func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 		}
 	}
 
-	// Convert storage.SessionData to shogunate.Session
-	session := &shogunate.Session{
+	// Convert storage.SessionData to court.Session
+	session := &court.Session{
 		ID:                storageSession.ID,
 		CreatedAt:         storageSession.CreatedAt,
 		LastUpdated:       storageSession.LastUpdated,
@@ -402,13 +402,13 @@ func (s *SessionStore) LoadSession(id string) (*shogunate.Session, error) {
 }
 
 // ListSessions lists sessions for the current branch, optionally filtered by tab type
-func (s *SessionStore) ListSessions(limit int, tabType string) ([]shogunate.Session, error) {
+func (s *SessionStore) ListSessions(limit int, tabType string) ([]court.Session, error) {
 	storageSessions, err := s.store.ListSessions(s.Host, s.Org, s.Project, s.Branch, tabType, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	sessions := make([]shogunate.Session, len(storageSessions))
+	sessions := make([]court.Session, len(storageSessions))
 	for i, ss := range storageSessions {
 		// Deserialize JSON messages (may be empty for list view)
 		var messages []schemas.ChatMessage
@@ -418,7 +418,7 @@ func (s *SessionStore) ListSessions(limit int, tabType string) ([]shogunate.Sess
 			}
 		}
 
-		sessions[i] = shogunate.Session{
+		sessions[i] = court.Session{
 			ID:           ss.ID,
 			CreatedAt:    ss.CreatedAt,
 			LastUpdated:  ss.LastUpdated,

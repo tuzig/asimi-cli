@@ -24,10 +24,10 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/shogunate"
-	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 
 	_ "modernc.org/sqlite"
@@ -73,12 +73,12 @@ func TestTUIModelInit(t *testing.T) {
 	require.NotNil(t, cmd)
 }
 
-// TestLLMInitSuccess_FiresShogunateStartedEvent tests that EventShogunateStarted
+// TestLLMInitSuccess_FiresCourtStartedEvent tests that EventCourtStarted
 // is fired after LLM initialization completes successfully
 // Note: This test is skipped due to a bug in the health check code that expects
 // payload data that isn't provided. The implementation is correct - the event is
-// fired after shogunate configuration as shown in tui.go:llmInitSuccessMsg handler.
-func TestLLMInitSuccess_FiresShogunateStartedEvent(t *testing.T) {
+// fired after court configuration as shown in tui.go:llmInitSuccessMsg handler.
+func TestLLMInitSuccess_FiresCourtStartedEvent(t *testing.T) {
 	t.Skip("Skipped due to health check bug - expects payload data not provided. Implementation verified manually.")
 }
 
@@ -148,8 +148,8 @@ func newTestModel(t *testing.T) *TUIModel {
 	// Disable persistent history to keep tests hermetic.
 	model.persistentPromptHistory = nil
 	model.initHistory()
-	// Use shogunate session for tests (nil Bifrost client is fine for non-LLM tests).
-	sess, err := shogunate.NewSession(nil, nil, nil, nil, func(any) {}, "", "")
+	// Use court session for tests (nil Bifrost client is fine for non-LLM tests).
+	sess, err := court.NewSession(nil, nil, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 	model.SetSession(sess)
 	return model
@@ -1216,9 +1216,9 @@ func TestWaitingTickMsg_NotWaiting(t *testing.T) {
 
 // TestHistoryRollback_OnSubmit tests that submitting a historical prompt rolls back state
 func TestHistoryRollback_OnSubmit(t *testing.T) {
-	// This test requires a shogunate session for rollback functionality.
-	// The rollback now uses shogunate.Session.RollbackTo() instead of legacy Session.
-	t.Skip("Requires shogunate session setup - see integration tests")
+	// This test requires a court session for rollback functionality.
+	// The rollback now uses court.Session.RollbackTo() instead of legacy Session.
+	t.Skip("Requires court session setup - see integration tests")
 }
 
 // TestNewSessionCommand_ResetsHistory tests that /new command resets history
@@ -1383,8 +1383,8 @@ func TestSaveHistoryPresentState(t *testing.T) {
 	require.Equal(t, "current prompt", model.historyPendingPrompt)
 	// Chat has 2 added messages (no welcome message)
 	require.Equal(t, 2, model.historyPresentChatSnapshot)
-	// Session snapshot is 0 when no shogunate session is configured
-	// (newTestModel doesn't set up shogunate, so getCurrentSession returns nil)
+	// Session snapshot is 0 when no court session is configured
+	// (newTestModel doesn't set up court, so getCurrentSession returns nil)
 	require.Equal(t, 0, model.historyPresentSessionSnapshot)
 
 	// Try to save again (should not change)
@@ -1446,7 +1446,7 @@ func TestStatusComponent_WaitingIndicatorView(t *testing.T) {
 	status := NewStatusComponent(200) // Use very wide width to avoid truncation
 	status.SetProvider("test", "model", true)
 
-	// Note: No shogunate session set - middle section will show "🪣 0%"
+	// Note: No court session set - middle section will show "🪣 0%"
 	// The waiting indicator test doesn't require a session with actual token data
 
 	// View without waiting
@@ -1485,7 +1485,7 @@ func TestStreamChunkMsg_StopsWaiting(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Receive stream chunk - should reset the waiting timer
-	newModel, _ := model.handleCustomMessages(shogunate.StreamChunkMsg{Text: "chunk"})
+	newModel, _ := model.handleCustomMessages(court.StreamChunkMsg{Text: "chunk"})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
@@ -1505,7 +1505,7 @@ func TestStreamChunkMsg_SetsVerified(t *testing.T) {
 	require.False(t, model.status.Verified, "status should start unverified")
 
 	// Receive a stream chunk
-	newModel, _ := model.handleCustomMessages(shogunate.StreamChunkMsg{Text: "hello"})
+	newModel, _ := model.handleCustomMessages(court.StreamChunkMsg{Text: "hello"})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
@@ -1520,13 +1520,13 @@ func TestStreamChunkMsg_SetsVerified_Idempotent(t *testing.T) {
 
 	require.False(t, model.status.Verified)
 
-	newModel, _ := model.handleCustomMessages(shogunate.StreamChunkMsg{Text: "first"})
+	newModel, _ := model.handleCustomMessages(court.StreamChunkMsg{Text: "first"})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 	require.True(t, updatedModel.status.Verified)
 
 	// Second chunk should keep it verified
-	newModel2, _ := updatedModel.handleCustomMessages(shogunate.StreamChunkMsg{Text: "second"})
+	newModel2, _ := updatedModel.handleCustomMessages(court.StreamChunkMsg{Text: "second"})
 	updatedModel2, ok := newModel2.(TUIModel)
 	require.True(t, ok)
 	require.True(t, updatedModel2.status.Verified)
@@ -1541,7 +1541,7 @@ func TestSetSession_DoesNotSetVerified(t *testing.T) {
 	model.persistentPromptHistory = nil
 	model.initHistory()
 
-	sess, err := shogunate.NewSession(nil, nil, nil, nil, func(any) {}, "", "")
+	sess, err := court.NewSession(nil, nil, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 
 	require.False(t, model.status.Verified, "should start unverified")
@@ -1558,7 +1558,7 @@ func TestStreamCompleteMsg_StopsWaiting(t *testing.T) {
 	require.True(t, model.waitingForResponse)
 
 	// Stream completes
-	newModel, _ := model.handleCustomMessages(shogunate.StreamCompleteMsg{})
+	newModel, _ := model.handleCustomMessages(court.StreamCompleteMsg{})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
@@ -1577,7 +1577,7 @@ func TestStreamInterruptedMsg_StopsWaiting(t *testing.T) {
 	require.True(t, model.waitingForResponse)
 
 	// Simulate Ctrl+C interruption
-	newModel, _ := model.handleCustomMessages(shogunate.StreamInterruptedMsg{
+	newModel, _ := model.handleCustomMessages(court.StreamInterruptedMsg{
 		ChannelID:      model.tabs.ActiveTab().Target,
 		PartialContent: "partial response text",
 	})
@@ -1597,7 +1597,7 @@ func TestStreamInterruptedMsg_ShowsAbortedInChat(t *testing.T) {
 
 	msgCountBefore := len(model.tabs.Content().Chat.Messages)
 
-	newModel, _ := model.handleCustomMessages(shogunate.StreamInterruptedMsg{
+	newModel, _ := model.handleCustomMessages(court.StreamInterruptedMsg{
 		ChannelID:      channelID,
 		PartialContent: "",
 	})
@@ -1620,7 +1620,7 @@ func TestStreamErrorMsg_StopsWaiting(t *testing.T) {
 
 	// Stream error
 	testErr := errors.New("test error")
-	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{Err: testErr})
+	newModel, _ := model.handleCustomMessages(court.StreamErrorMsg{Err: testErr})
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
@@ -1636,7 +1636,7 @@ func TestStreamErrorMsg_ShowsPartialContent(t *testing.T) {
 
 	msgCountBefore := len(model.tabs.Content().Chat.Messages)
 
-	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+	newModel, _ := model.handleCustomMessages(court.StreamErrorMsg{
 		ChannelID:      channelID,
 		Err:            errors.New("upstream blew up"),
 		PartialContent: "Partial text before failure",
@@ -1675,7 +1675,7 @@ func TestStreamErrorMsg_NoPartialContent(t *testing.T) {
 
 	msgCountBefore := len(model.tabs.Content().Chat.Messages)
 
-	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+	newModel, _ := model.handleCustomMessages(court.StreamErrorMsg{
 		ChannelID: channelID,
 		Err:       errors.New("no partial here"),
 	})
@@ -1698,7 +1698,7 @@ func TestStreamErrorMsg_ConnError_ShowsConnectionLost(t *testing.T) {
 
 	msgCountBefore := len(model.tabs.Content().Chat.Messages)
 
-	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+	newModel, _ := model.handleCustomMessages(court.StreamErrorMsg{
 		ChannelID: channelID,
 		Err:       errors.New("rpc: peer disconnected"),
 	})
@@ -1733,7 +1733,7 @@ func TestStreamErrorMsg_ConnError_Closed_ShowsConnectionLost(t *testing.T) {
 	model := newTestModel(t)
 	channelID := model.tabs.ActiveTab().Target
 
-	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+	newModel, _ := model.handleCustomMessages(court.StreamErrorMsg{
 		ChannelID: channelID,
 		Err:       errors.New("rpc: conn closed"),
 	})
@@ -1755,7 +1755,7 @@ func TestStreamErrorMsg_ConnError_WithPartialContent(t *testing.T) {
 
 	msgCountBefore := len(model.tabs.Content().Chat.Messages)
 
-	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+	newModel, _ := model.handleCustomMessages(court.StreamErrorMsg{
 		ChannelID:      channelID,
 		Err:            errors.New("rpc: peer disconnected"),
 		PartialContent: "Partial text before drop",
@@ -1794,7 +1794,7 @@ func TestStreamErrorMsg_ModelError_StillShowsModelError(t *testing.T) {
 	model := newTestModel(t)
 	channelID := model.tabs.ActiveTab().Target
 
-	newModel, _ := model.handleCustomMessages(shogunate.StreamErrorMsg{
+	newModel, _ := model.handleCustomMessages(court.StreamErrorMsg{
 		ChannelID: channelID,
 		Err:       errors.New("LLM generation failed: stop_reason=error"),
 	})
@@ -1955,7 +1955,7 @@ func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
 	model := newTestModel(t)
 
 	// Simulate a "started" message first
-	startedMsg := shogunate.RitualStepMsg{
+	startedMsg := court.RitualStepMsg{
 		ChannelID:  "chancellor",
 		RitualName: "dawn-audience",
 		StepName:   "strategist",
@@ -1967,7 +1967,7 @@ func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
 	startedModel := newModel.(TUIModel)
 
 	// Now send the "completed" message with minister output
-	completedMsg := shogunate.RitualStepMsg{
+	completedMsg := court.RitualStepMsg{
 		ChannelID:  "chancellor",
 		RitualName: "dawn-audience",
 		StepName:   "strategist",
@@ -1992,7 +1992,7 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	model := newTestModel(t)
 
 	// Simulate a "started" message
-	startedMsg := shogunate.RitualStepMsg{
+	startedMsg := court.RitualStepMsg{
 		ChannelID:  "chancellor",
 		RitualName: "dawn-audience",
 		StepName:   "check-sandbox",
@@ -2007,7 +2007,7 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	msgCountBefore := len(startedModel.tabs.Content().Chat.Messages)
 
 	// Send "completed" without a Message (e.g., check-sandbox which uses ToolCallScheduledMsg)
-	completedMsg := shogunate.RitualStepMsg{
+	completedMsg := court.RitualStepMsg{
 		ChannelID:  "chancellor",
 		RitualName: "dawn-audience",
 		StepName:   "check-sandbox",
@@ -2046,7 +2046,7 @@ func TestSessionResume_ResetsHistoryState(t *testing.T) {
 	model.historyPresentChatSnapshot = 4
 
 	// Create a mock resumed session
-	resumedSession := &shogunate.Session{
+	resumedSession := &court.Session{
 		ID:          "resumed-session-id",
 		FirstPrompt: "resumed prompt",
 	}
@@ -2123,7 +2123,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 
 	// Set up a mock session for the test (nil Bifrost client is fine for non-LLM tests)
-	sess, err := shogunate.NewSession(nil, nil, nil, nil, func(any) {}, "", "")
+	sess, err := court.NewSession(nil, nil, nil, nil, func(any) {}, "", "")
 	require.NoError(t, err)
 	model.SetSession(sess)
 
@@ -2235,12 +2235,12 @@ func TestHappyFlowE2E(t *testing.T) {
 	tuiModel, ok := finalModel.(TUIModel)
 	require.True(t, ok)
 
-	// Verify file was loaded through the shogunate session (if available)
+	// Verify file was loaded through the court session (if available)
 	if session := tuiModel.getCurrentSession(); session != nil {
 		contextFiles := session.GetContextFiles()
 		require.Contains(t, contextFiles["main.go"], "package main")
 	}
-	// Note: If shogunate session isn't set up in this test, context files check is skipped
+	// Note: If court session isn't set up in this test, context files check is skipped
 
 	// Verify help view is shown
 	require.Equal(t, ViewHelp, tuiModel.tabs.Content().GetActiveView())
@@ -2482,7 +2482,7 @@ func TestIsModelSelectable(t *testing.T) {
 
 // --- E2E: CTRL-C cancels streaming ---
 
-// setupTestGormDB creates an in-memory gorm.DB with shogunate tables for testing.
+// setupTestGormDB creates an in-memory gorm.DB with court tables for testing.
 func setupTestGormDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	sqlDB, err := sql.Open("sqlite", ":memory:")
@@ -2511,8 +2511,8 @@ func setupTestGormDB(t *testing.T) *gorm.DB {
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
 		&storage.Seal{},
-		&shogunate.RitualExecution{},
-		&shogunate.RitualStepState{},
+		&court.RitualExecution{},
+		&court.RitualStepState{},
 	)
 	require.NoError(t, err)
 
@@ -2520,7 +2520,7 @@ func setupTestGormDB(t *testing.T) *gorm.DB {
 }
 
 // TestCtrlCStopsStreamingE2E verifies that pressing CTRL-C during an active
-// LLM stream actually cancels the stream end-to-end: TUI → Shogunate → Session → LLM.
+// LLM stream actually cancels the stream end-to-end: TUI → Court → Session → LLM.
 // This is a regression test for the bug where the per-prompt context was not
 // passed through to the ministers, so CTRL-C cancelled a context nobody listened to.
 func TestCtrlCStopsStreamingE2E(t *testing.T) {
@@ -2550,7 +2550,7 @@ func TestEscapeDuringStreaming_StopsWaiting(t *testing.T) {
 }
 
 // TestInitCommandE2E verifies that typing :init in the TUI triggers the
-// project-init ritual through the full Shogunate event pipeline:
+// project-init ritual through the full Court event pipeline:
 // event dispatch → background checks → infrastructure template creation →
 // minister execution → git staging.
 func TestInitCommandE2E(t *testing.T) {
@@ -2577,11 +2577,11 @@ func TestInitCommandE2E(t *testing.T) {
 	db := setupTestGormDB(t)
 	runner := runners.NewHostRunner(0, t.TempDir())
 
-	// 3. Create and start Shogunate with a host runner for bash then-steps
+	// 3. Create and start Court with a host runner for bash then-steps
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
+	shog := court.NewCourt(db, nil, runner, slog.Default())
 	shog.SetRepoInfo(repo.RepoInfo{
 		ProjectRoot: tmpDir,
 		Slug:        "testorg/ror-demo",
@@ -2606,12 +2606,12 @@ func TestInitCommandE2E(t *testing.T) {
 	require.NoError(t, reg.Register(initDef))
 
 	// 4. Configure model so the ministers can create sessions (nil Bifrost client)
-	sessionCfg := &shogunate.SessionConfig{
+	sessionCfg := &court.SessionConfig{
 		LLM: config.LLMConfig{MaxTurns: 1},
 	}
 	shog.ConfigureModel(nil, sessionCfg, repo.RepoInfo{})
 
-	// 5. Create TUI model wired to the Shogunate
+	// 5. Create TUI model wired to the Court
 	tuiConfig := mockConfig()
 	tuiConfig.LLM.Provider = "none" // Prevent Init() from overwriting test LLM
 	ri := &repo.RepoInfo{}
@@ -2622,7 +2622,7 @@ func TestInitCommandE2E(t *testing.T) {
 	// 6. Launch teatest program
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 50))
 
-	// 7. Wire Shogunate notifications to the Bubble Tea program
+	// 7. Wire Court notifications to the Bubble Tea program
 	shog.SetNotify(func(msg any) { tm.Send(msg) })
 
 	// 8. Type :init and press Enter
@@ -2723,7 +2723,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	shog := shogunate.NewShogunate(db, nil, runner, slog.Default())
+	shog := court.NewCourt(db, nil, runner, slog.Default())
 	shog.SetRepoInfo(repo.RepoInfo{
 		ProjectRoot: tmpDir,
 		Slug:        "testorg/ror-demo",
@@ -2740,7 +2740,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	})
 
 	// Keep only project-init ritual — clear before Init() fires
-	// EventShogunateStarted so startup rituals don't interfere
+	// EventCourtStarted so startup rituals don't interfere
 	reg := shog.GetRitualRegistry()
 	initDef := reg.Get("project-init")
 	require.NotNil(t, initDef, "project-init ritual should be registered")
@@ -2753,7 +2753,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	tuiConfig.LLM.Model = model
 	tuiConfig.LLM.APIKey = apiKey
 	tuiConfig.LLM.MaxTurns = 10
-	tuiConfig.Shogunate.Project = "testorg/ror-demo"
+	tuiConfig.Court.Project = "testorg/ror-demo"
 	ri := &repo.RepoInfo{}
 	tuiModel := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, shog)
 	tuiModel.persistentPromptHistory = nil
@@ -2926,7 +2926,7 @@ func TestContextPercentCallbackInvoked(t *testing.T) {
 // TestContextPercentZeroWhenNoSession tests that ContextPercent is 0 when there's no active session.
 func TestContextPercentZeroWhenNoSession(t *testing.T) {
 	config := &Config{}
-	// No shogunate is passed, so there's no session
+	// No court is passed, so there's no session
 	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true
 
@@ -2955,7 +2955,7 @@ func TestBackpressure_DebouncePreventsImmediateUpdate(t *testing.T) {
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Mark the "forge" tab as streaming (required for chunk acceptance)
-	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	pmodel.Update(court.StreamStartMsg{ChannelID: "forge"})
 
 	// Capture baseline — viewport content before any chunks
 	chat := pmodel.tabs.ChatByTab("forge")
@@ -2967,7 +2967,7 @@ func TestBackpressure_DebouncePreventsImmediateUpdate(t *testing.T) {
 	// Send multiple chunks rapidly
 	const chunkCount = 10
 	for i := 0; i < chunkCount; i++ {
-		newModel, _ := model.Update(shogunate.StreamChunkMsg{
+		newModel, _ := model.Update(court.StreamChunkMsg{
 			ChannelID: "forge",
 			Text:      "chunk-" + time.Duration(i).String() + " ",
 		})
@@ -3000,14 +3000,14 @@ func TestBackpressure_DebounceFlushesCorrectContent(t *testing.T) {
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Mark the "forge" tab as streaming
-	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	pmodel.Update(court.StreamStartMsg{ChannelID: "forge"})
 
 	// Switch to value type for chaining Updates
 	model := *pmodel
 
 	chunks := []string{"Hello", " ", "world", "!", " This", " is", " a", " test."}
 	for _, chunk := range chunks {
-		newModel, cmd := model.Update(shogunate.StreamChunkMsg{
+		newModel, cmd := model.Update(court.StreamChunkMsg{
 			ChannelID: "forge",
 			Text:      chunk,
 		})
@@ -3043,13 +3043,13 @@ func TestBackpressure_DebounceFlushesCorrectContent(t *testing.T) {
 }
 
 // TestBackpressure_EndToEnd verifies the full pipeline:
-//   - A mock shogunate rapidly fires stream messages directly to the TUI
+//   - A mock court rapidly fires stream messages directly to the TUI
 //   - The TUIModel accumulates all chunks (no drops — synchronous delivery)
 //   - After the debounce window, the final content is correct
 func TestBackpressure_EndToEnd(t *testing.T) {
 	// Set up a TUIModel and start streaming
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	pmodel.Update(court.StreamStartMsg{ChannelID: "forge"})
 
 	model := *pmodel
 
@@ -3059,21 +3059,21 @@ func TestBackpressure_EndToEnd(t *testing.T) {
 
 	var cmds []tea.Cmd
 	for i := 0; i < textChunks; i++ {
-		newModel, cmd := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "text "})
+		newModel, cmd := model.Update(court.StreamChunkMsg{ChannelID: "forge", Text: "text "})
 		model = newModel.(TUIModel)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
 	for i := 0; i < reasoningChunks; i++ {
-		newModel, cmd := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Reasoning: "think "})
+		newModel, cmd := model.Update(court.StreamChunkMsg{ChannelID: "forge", Reasoning: "think "})
 		model = newModel.(TUIModel)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
 	// High-priority complete
-	newModel, _ := model.Update(shogunate.StreamCompleteMsg{ChannelID: "forge"})
+	newModel, _ := model.Update(court.StreamCompleteMsg{ChannelID: "forge"})
 	model = newModel.(TUIModel)
 
 	// Phase 2: Simulate debounce flush
@@ -3107,14 +3107,14 @@ func TestBackpressure_EndToEnd(t *testing.T) {
 // window (50ms), regardless of how many chunks arrive during that window.
 func TestBackpressure_DebounceCoalescesUpdates(t *testing.T) {
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	pmodel.Update(court.StreamStartMsg{ChannelID: "forge"})
 
 	// Switch to value type for chaining Updates
 	model := *pmodel
 
 	// Send 50 chunks without any debounce tick
 	for i := 0; i < 50; i++ {
-		newModel, _ := model.Update(shogunate.StreamChunkMsg{
+		newModel, _ := model.Update(court.StreamChunkMsg{
 			ChannelID: "forge",
 			Text:      "x",
 		})
@@ -3158,7 +3158,7 @@ func TestBackpressure_StreamCompleteResetsState(t *testing.T) {
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
 
 	// Start streaming
-	newModel, _ := pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	newModel, _ := pmodel.Update(court.StreamStartMsg{ChannelID: "forge"})
 	model := newModel.(TUIModel)
 
 	forgeTab := model.tabs.TabByTarget("forge")
@@ -3166,16 +3166,16 @@ func TestBackpressure_StreamCompleteResetsState(t *testing.T) {
 	assert.True(t, forgeTab.Streaming, "forge tab should be streaming after StreamStartMsg")
 
 	// Send chunks
-	newModel, _ = model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "Hello "})
+	newModel, _ = model.Update(court.StreamChunkMsg{ChannelID: "forge", Text: "Hello "})
 	model = newModel.(TUIModel)
-	newModel, _ = model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "World"})
+	newModel, _ = model.Update(court.StreamChunkMsg{ChannelID: "forge", Text: "World"})
 	model = newModel.(TUIModel)
 
 	chat := model.tabs.ChatByTab("forge")
 	assert.True(t, chat.contentDirty, "content should be dirty after chunks")
 
 	// Complete the stream — this is high-priority, must not be dropped
-	newModel, _ = model.Update(shogunate.StreamCompleteMsg{ChannelID: "forge"})
+	newModel, _ = model.Update(court.StreamCompleteMsg{ChannelID: "forge"})
 	model = newModel.(TUIModel)
 
 	// Streaming should be cleared
@@ -3193,17 +3193,17 @@ func TestBackpressure_StreamCompleteResetsState(t *testing.T) {
 // MessageTypeThinking messages rather than plain AI text.
 func TestBackpressure_ReasoningChunksUseThinkingPath(t *testing.T) {
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	pmodel.Update(court.StreamStartMsg{ChannelID: "forge"})
 	model := *pmodel
 
 	// Send reasoning chunks
-	newModel, _ := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Reasoning: "I think "})
+	newModel, _ := model.Update(court.StreamChunkMsg{ChannelID: "forge", Reasoning: "I think "})
 	model = newModel.(TUIModel)
-	newModel, _ = model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Reasoning: "therefore..."})
+	newModel, _ = model.Update(court.StreamChunkMsg{ChannelID: "forge", Reasoning: "therefore..."})
 	model = newModel.(TUIModel)
 
 	// Send a content chunk
-	newModel, _ = model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "Answer"})
+	newModel, _ = model.Update(court.StreamChunkMsg{ChannelID: "forge", Text: "Answer"})
 	model = newModel.(TUIModel)
 
 	// Flush
@@ -3225,10 +3225,10 @@ func TestBackpressure_ReasoningChunksUseThinkingPath(t *testing.T) {
 // types atomically (one delta → one notify → both fields).
 func TestBackpressure_MixedReasoningAndTextInOneDelta(t *testing.T) {
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	pmodel.Update(court.StreamStartMsg{ChannelID: "forge"})
 	model := *pmodel
 
-	newModel, _ := model.Update(shogunate.StreamChunkMsg{
+	newModel, _ := model.Update(court.StreamChunkMsg{
 		ChannelID: "forge",
 		Reasoning: "Let me reason...",
 		Text:      "Here is the answer.",
@@ -3251,10 +3251,10 @@ func TestBackpressure_MixedReasoningAndTextInOneDelta(t *testing.T) {
 // strings do not create spurious thinking messages.
 func TestBackpressure_EmptyReasoningSkipped(t *testing.T) {
 	pmodel := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	pmodel.Update(shogunate.StreamStartMsg{ChannelID: "forge"})
+	pmodel.Update(court.StreamStartMsg{ChannelID: "forge"})
 	model := *pmodel
 
-	newModel, _ := model.Update(shogunate.StreamChunkMsg{ChannelID: "forge", Text: "only text"})
+	newModel, _ := model.Update(court.StreamChunkMsg{ChannelID: "forge", Text: "only text"})
 	model = newModel.(TUIModel)
 
 	newModel, _ = model.Update(chatRenderTickMsg{})
@@ -3293,23 +3293,23 @@ func TestSetContextParams_UsesRepoInfoProjectRootWhenAvailable(t *testing.T) {
 }
 
 func TestSetContextParams_FallsBackToRepoInfoSlugWhenConfigProjectEmpty(t *testing.T) {
-	// mockConfig() has no Shogunate.Project, so Project should come from repoInfo.Slug
+	// mockConfig() has no Court.Project, so Project should come from repoInfo.Slug
 	r := &repo.RepoInfo{Slug: "owner/repo"}
 	m := NewTUIModel(mockConfig(), r, nil, nil, nil, nil, nil, nil)
 	params := m.setContextParams()
 	assert.Equal(t, "owner/repo", params.Project,
-		"Project should fall back to repoInfo.Slug when config.Shogunate.Project is empty")
+		"Project should fall back to repoInfo.Slug when config.Court.Project is empty")
 }
 
 func TestSetContextParams_ConfigProjectTakesPrecedenceOverRepoInfoSlug(t *testing.T) {
 	// When config sets a project, it wins over repoInfo.Slug
 	cfg := mockConfig()
-	cfg.Shogunate.Project = "configured/project"
+	cfg.Court.Project = "configured/project"
 	r := &repo.RepoInfo{Slug: "owner/repo"}
 	m := NewTUIModel(cfg, r, nil, nil, nil, nil, nil, nil)
 	params := m.setContextParams()
 	assert.Equal(t, "configured/project", params.Project,
-		"config.Shogunate.Project should take precedence over repoInfo.Slug")
+		"config.Court.Project should take precedence over repoInfo.Slug")
 }
 
 func TestSetContextParams_ProjectEmptyWhenNeitherConfigNorRepoInfoProvides(t *testing.T) {
@@ -3320,10 +3320,10 @@ func TestSetContextParams_ProjectEmptyWhenNeitherConfigNorRepoInfoProvides(t *te
 		"Project should be empty when neither config nor repoInfo provides it")
 }
 
-// --- mockShogunateClient records PublishEvent calls for test assertions ---
+// --- mockCourtClient records PublishEvent calls for test assertions ---
 
-type mockShogunateClient struct {
-	shogunateapi.Client // embed to satisfy interface; nil receivers panic on unused methods
+type mockCourtClient struct {
+	courtapi.Client // embed to satisfy interface; nil receivers panic on unused methods
 	publishedEvents     []publishedEvent
 	edictKeyFn          func(uint) storage.EdictKey
 	zhengmingResponses  []zhengmingResponse
@@ -3336,7 +3336,7 @@ type mockShogunateClient struct {
 
 type publishedEvent struct {
 	key       storage.EdictKey
-	eventType storage.ShogunateEvent
+	eventType storage.CourtEvent
 	payload   storage.JSON
 }
 
@@ -3345,42 +3345,42 @@ type zhengmingResponse struct {
 	answer    string
 }
 
-func (m *mockShogunateClient) EdictKey(edictID uint) storage.EdictKey {
+func (m *mockCourtClient) EdictKey(edictID uint) storage.EdictKey {
 	if m.edictKeyFn != nil {
 		return m.edictKeyFn(edictID)
 	}
 	return storage.EdictKey{ID: edictID, Username: "test", Project: "test"}
 }
 
-func (m *mockShogunateClient) PublishEvent(key storage.EdictKey, eventType storage.ShogunateEvent, payload storage.JSON) uint {
+func (m *mockCourtClient) PublishEvent(key storage.EdictKey, eventType storage.CourtEvent, payload storage.JSON) uint {
 	m.publishedEvents = append(m.publishedEvents, publishedEvent{key: key, eventType: eventType, payload: payload})
 	return key.ID
 }
 
-func (m *mockShogunateClient) CreateEdictSilent(issueRef, intent, sessionID string) (*storage.Edict, error) {
+func (m *mockCourtClient) CreateEdictSilent(issueRef, intent, sessionID string) (*storage.Edict, error) {
 	return &storage.Edict{ID: 1, Intent: intent, IssueRef: issueRef}, nil
 }
 
-func (m *mockShogunateClient) HandleZhengmingResponse(_ context.Context, requestID, answer string) error {
+func (m *mockCourtClient) HandleZhengmingResponse(_ context.Context, requestID, answer string) error {
 	m.zhengmingResponses = append(m.zhengmingResponses, zhengmingResponse{requestID: requestID, answer: answer})
 	return nil
 }
 
-func (m *mockShogunateClient) GetEdictSeals(_ storage.EdictKey) ([]storage.Seal, error) {
+func (m *mockCourtClient) GetEdictSeals(_ storage.EdictKey) ([]storage.Seal, error) {
 	if m.sealsFn != nil {
 		return m.sealsFn()
 	}
 	return nil, nil
 }
 
-func (m *mockShogunateClient) GetEdict(edictID uint) (*storage.Edict, error) {
+func (m *mockCourtClient) GetEdict(edictID uint) (*storage.Edict, error) {
 	if m.getEdictFn != nil {
 		return m.getEdictFn(edictID)
 	}
 	return &storage.Edict{ID: edictID, Intent: "Test intent"}, nil
 }
 
-func (m *mockShogunateClient) CancelEdict(edictID uint) error {
+func (m *mockCourtClient) CancelEdict(edictID uint) error {
 	if m.cancelEdictFn != nil {
 		return m.cancelEdictFn(edictID)
 	}
@@ -3391,15 +3391,15 @@ func (m *mockShogunateClient) CancelEdict(edictID uint) error {
 	return nil
 }
 
-func (m *mockShogunateClient) AppendToIntent(edictID uint, clarification string) error {
+func (m *mockCourtClient) AppendToIntent(edictID uint, clarification string) error {
 	return nil
 }
 
-func (m *mockShogunateClient) ListActiveEdicts() ([]storage.ActiveEdict, error) {
+func (m *mockCourtClient) ListActiveEdicts() ([]storage.ActiveEdict, error) {
 	return []storage.ActiveEdict{}, nil
 }
 
-func (m *mockShogunateClient) GrantRulerSeal(edictID uint, notes string) error {
+func (m *mockCourtClient) GrantRulerSeal(edictID uint, notes string) error {
 	if m.grantRulerSealCalls == nil {
 		m.grantRulerSealCalls = make(map[uint]bool)
 	}
@@ -3410,9 +3410,9 @@ func (m *mockShogunateClient) GrantRulerSeal(edictID uint, notes string) error {
 // --- Tests for pendingRitualEnact YESNO flow ---
 
 func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	// Simulate the state set by EventEdictCreated handler
 	model.pendingRitualEnact = &pendingRitualEnact{edictID: 42, intent: "Fix the bug"}
@@ -3445,9 +3445,9 @@ func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
 }
 
 func TestPendingRitualEnact_NoDoesNotPublishEvent(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	model.pendingRitualEnact = &pendingRitualEnact{edictID: 7, intent: "Some task"}
 
@@ -3468,9 +3468,9 @@ func TestPendingRitualEnact_NoDoesNotPublishEvent(t *testing.T) {
 }
 
 func TestPendingRitualEnact_EscClearsPendingState(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	model.pendingRitualEnact = &pendingRitualEnact{edictID: 5, intent: "Do something"}
 
@@ -3485,12 +3485,12 @@ func TestPendingRitualEnact_EscClearsPendingState(t *testing.T) {
 }
 
 func TestEventEdictCreated_EntersYesNoMode(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	// Simulate EventEdictCreated notification
-	eventMsg := shogunate.EventNotificationMsg{
+	eventMsg := court.EventNotificationMsg{
 		ChannelID: "chancellor",
 		EventType: storage.EventEdictCreated,
 		EdictKey:  storage.EdictKey{ID: 13, Username: "test", Project: "test"},
@@ -4271,10 +4271,10 @@ func TestSessionStartGuard_SubmitPromptShowsYesNo(t *testing.T) {
 	assert.Equal(t, "yesno", msg.(ChangeModeMsg).NewMode)
 }
 
-func TestHandleAnsweringComplete_ChatAnswerDeliveredToShogunate(t *testing.T) {
-	mock := &mockShogunateClient{}
+func TestHandleAnsweringComplete_ChatAnswerDeliveredToCourt(t *testing.T) {
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	model.handleAnsweringComplete(AnsweredMsg{
 		RequestID: "req-chat-1",
@@ -4288,11 +4288,11 @@ func TestHandleAnsweringComplete_ChatAnswerDeliveredToShogunate(t *testing.T) {
 }
 
 func TestEventSealGranted_RulerShowsToast(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
-	eventMsg := shogunate.EventNotificationMsg{
+	eventMsg := court.EventNotificationMsg{
 		ChannelID: "chancellor",
 		EventType: storage.EventSealGranted,
 		EdictKey:  storage.EdictKey{ID: 7, Username: "test", Project: "test"},
@@ -4321,7 +4321,7 @@ func TestEventSealGranted_RulerShowsToast(t *testing.T) {
 }
 
 func TestEventSealGranted_NonRulerAddsChatMessage(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{
 				{MinisterID: "judge", SealID: "s1"},
@@ -4329,9 +4329,9 @@ func TestEventSealGranted_NonRulerAddsChatMessage(t *testing.T) {
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
-	eventMsg := shogunate.EventNotificationMsg{
+	eventMsg := court.EventNotificationMsg{
 		ChannelID: "chancellor",
 		EventType: storage.EventSealGranted,
 		EdictKey:  storage.EdictKey{ID: 7, Username: "test", Project: "test"},
@@ -4377,9 +4377,9 @@ func TestParseEdictActionRequestID_Invalid(t *testing.T) {
 }
 
 func TestShowEdictActionMenu_EntersAnsweringMode(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := showEdictActionMenu(model, 42)
 	assert.Nil(t, cmd, "should return nil cmd — menu is entered synchronously")
@@ -4392,13 +4392,13 @@ func TestShowEdictActionMenu_EntersAnsweringMode(t *testing.T) {
 }
 
 func TestDispatchEdictAction_Status(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{}, nil
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := dispatchEdictAction(model, 42, []string{"Status"})
 	require.NotNil(t, cmd)
@@ -4408,9 +4408,9 @@ func TestDispatchEdictAction_Status(t *testing.T) {
 }
 
 func TestDispatchEdictAction_Implement(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := dispatchEdictAction(model, 42, []string{"Implement"})
 	require.NotNil(t, cmd)
@@ -4432,9 +4432,9 @@ func TestDispatchEdictAction_Implement(t *testing.T) {
 }
 
 func TestDispatchEdictAction_Cancel(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := dispatchEdictAction(model, 42, []string{"Cancel"})
 	require.NotNil(t, cmd)
@@ -4444,9 +4444,9 @@ func TestDispatchEdictAction_Cancel(t *testing.T) {
 }
 
 func TestDispatchEdictAction_Back(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := dispatchEdictAction(model, 42, []string{"Back"})
 	require.NotNil(t, cmd)
@@ -4456,9 +4456,9 @@ func TestDispatchEdictAction_Back(t *testing.T) {
 }
 
 func TestEdictSelectedMsg_ShowsActionMenu(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	newModel, _ := model.handleCustomMessages(edictSelectedMsg{edictID: 7})
 	updated, ok := newModel.(TUIModel)
@@ -4469,13 +4469,13 @@ func TestEdictSelectedMsg_ShowsActionMenu(t *testing.T) {
 }
 
 func TestAnsweredMsg_EdictActionMenu_Dispatches(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{}, nil
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	// Set up answering mode first
 	showEdictActionMenu(model, 42)
@@ -4497,9 +4497,9 @@ func TestAnsweredMsg_EdictActionMenu_Dispatches(t *testing.T) {
 }
 
 func TestAnsweredMsg_EdictActionMenu_Cancel_DoesNotCallZhengming(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	showEdictActionMenu(model, 42)
 
@@ -4513,13 +4513,13 @@ func TestAnsweredMsg_EdictActionMenu_Cancel_DoesNotCallZhengming(t *testing.T) {
 // --- Tests for resumeEdictSession ---
 
 func TestResumeEdictSession_WithSessionID(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		getEdictFn: func(id uint) (*storage.Edict, error) {
 			return &storage.Edict{ID: id, SessionID: "sess-123"}, nil
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := resumeEdictSession(model, 5)
 	require.NotNil(t, cmd)
@@ -4530,13 +4530,13 @@ func TestResumeEdictSession_WithSessionID(t *testing.T) {
 }
 
 func TestResumeEdictSession_NoSessionLinked(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		getEdictFn: func(id uint) (*storage.Edict, error) {
 			return &storage.Edict{ID: id, SessionID: ""}, nil
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := resumeEdictSession(model, 5)
 	require.NotNil(t, cmd)
@@ -4550,13 +4550,13 @@ func TestResumeEdictSession_NoSessionLinked(t *testing.T) {
 
 func TestHandleEdictCancel_AlreadyCancelled(t *testing.T) {
 	cancelled := time.Now()
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		getEdictFn: func(id uint) (*storage.Edict, error) {
 			return &storage.Edict{ID: id, CancelledAt: &cancelled}, nil
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := handleEdictCancel(model, 3)
 	require.NotNil(t, cmd)
@@ -4575,9 +4575,9 @@ func TestHandleEdictCancel_AlreadyCancelled(t *testing.T) {
 // --- Tests for cancelEdictCmd ---
 
 func TestCancelEdictCmd_Success(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := cancelEdictCmd(model, 7)
 	require.NotNil(t, cmd)
@@ -4597,9 +4597,9 @@ func TestCancelEdictCmd_Success(t *testing.T) {
 // --- Tests for YesNoMsg with pendingEdictCancel ---
 
 func TestYesNoMsg_PendingEdictCancel_YesCancels(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 	model.pendingEdictCancel = &pendingEdictCancel{edictID: 9}
 
 	newModel, cmd := model.handleCustomMessages(yesNoResponseMsg{answer: true})
@@ -4625,9 +4625,9 @@ func TestYesNoMsg_PendingEdictCancel_YesCancels(t *testing.T) {
 }
 
 func TestYesNoMsg_PendingEdictCancel_NoDoesNotCancel(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 	model.pendingEdictCancel = &pendingEdictCancel{edictID: 9}
 
 	newModel, cmd := model.handleCustomMessages(yesNoResponseMsg{answer: false})
@@ -4646,13 +4646,13 @@ func TestYesNoMsg_PendingEdictCancel_NoDoesNotCancel(t *testing.T) {
 // --- Tests for dispatchEdictAction with "Seal" ---
 
 func TestDispatchEdictAction_Seal(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{}, nil
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := dispatchEdictAction(model, 42, []string{"Seal"})
 	require.NotNil(t, cmd)
@@ -4662,13 +4662,13 @@ func TestDispatchEdictAction_Seal(t *testing.T) {
 }
 
 func TestYesNoMsg_PendingSealOverride_YesSeals(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{}, nil
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 	model.pendingSealOverride = &pendingSealOverride{edictID: 7, notes: ""}
 
 	newModel, cmd := model.handleCustomMessages(yesNoResponseMsg{answer: true})
@@ -4691,9 +4691,9 @@ func TestYesNoMsg_PendingSealOverride_YesSeals(t *testing.T) {
 }
 
 func TestYesNoMsg_PendingSealOverride_NoReturnsToEdictsList(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 	model.pendingSealOverride = &pendingSealOverride{edictID: 7, notes: ""}
 
 	newModel, cmd := model.handleCustomMessages(yesNoResponseMsg{answer: false})
@@ -4708,9 +4708,9 @@ func TestYesNoMsg_PendingSealOverride_NoReturnsToEdictsList(t *testing.T) {
 }
 
 func TestAnsweringCancelMsg_EdictMenu_ReturnsToEdictsList(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	showEdictActionMenu(model, 42)
 
@@ -4726,9 +4726,9 @@ func TestAnsweringCancelMsg_EdictMenu_ReturnsToEdictsList(t *testing.T) {
 }
 
 func TestEdictIntentUpdatedMsg_ReloadsEdictsList(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	newModel, cmd := model.handleCustomMessages(edictIntentUpdatedMsg{edictID: 42, message: "Edict 42 intent updated"})
 	_, ok := newModel.(TUIModel)
@@ -4741,9 +4741,9 @@ func TestEdictIntentUpdatedMsg_ReloadsEdictsList(t *testing.T) {
 }
 
 func TestReloadEdictsMsg_ReloadsEdictsList(t *testing.T) {
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	newModel, cmd := model.handleCustomMessages(reloadEdictsMsg{})
 	_, ok := newModel.(TUIModel)
@@ -4758,7 +4758,7 @@ func TestReloadEdictsMsg_ReloadsEdictsList(t *testing.T) {
 // --- Tests for dispatchEdictAction with "Seal" (all seals present) ---
 
 func TestDispatchEdictAction_SealAllSealsPresent_ReturnsToEdictsList(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{
 				{MinisterID: "judge"},
@@ -4767,7 +4767,7 @@ func TestDispatchEdictAction_SealAllSealsPresent_ReturnsToEdictsList(t *testing.
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := dispatchEdictAction(model, 42, []string{"Seal"})
 	require.NotNil(t, cmd)
@@ -4785,7 +4785,7 @@ func TestDispatchEdictAction_SealAllSealsPresent_ReturnsToEdictsList(t *testing.
 }
 
 func TestDispatchEdictAction_SealAlreadySealed_ReturnsToEdictsList(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{
 				{MinisterID: "judge"},
@@ -4795,7 +4795,7 @@ func TestDispatchEdictAction_SealAlreadySealed_ReturnsToEdictsList(t *testing.T)
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := dispatchEdictAction(model, 42, []string{"Seal"})
 	require.NotNil(t, cmd)
@@ -4812,14 +4812,14 @@ func TestDispatchEdictAction_SealAlreadySealed_ReturnsToEdictsList(t *testing.T)
 }
 
 func TestDispatchEdictAction_CancelAlreadyCancelled_ReturnsToEdictsList(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		getEdictFn: func(uint) (*storage.Edict, error) {
 			cancelledAt := time.Now()
 			return &storage.Edict{ID: 42, CancelledAt: &cancelledAt}, nil
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := dispatchEdictAction(model, 42, []string{"Cancel"})
 	require.NotNil(t, cmd)
@@ -4881,9 +4881,9 @@ func TestEditEdictIntentCmd_ReturnsExecProcessCmd(t *testing.T) {
 	os.Setenv("EDITOR", "true")
 	defer os.Setenv("EDITOR", oldEditor)
 
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := editEdictIntentCmd(model, 42)
 	require.NotNil(t, cmd, "editEdictIntentCmd should return a non-nil tea.Cmd")
@@ -4904,13 +4904,13 @@ func TestEditEdictIntentCmd_ReturnsExecProcessCmd(t *testing.T) {
 }
 
 func TestEditEdictIntentCmd_EdictNotFound(t *testing.T) {
-	mock := &mockShogunateClient{
+	mock := &mockCourtClient{
 		getEdictFn: func(id uint) (*storage.Edict, error) {
 			return nil, errors.New("not found")
 		},
 	}
 	model := newTestModel(t)
-	model.shogunate = mock
+	model.court = mock
 
 	cmd := editEdictIntentCmd(model, 999)
 	require.NotNil(t, cmd)

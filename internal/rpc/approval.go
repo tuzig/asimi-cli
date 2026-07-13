@@ -96,13 +96,13 @@ func interceptApproval(ctx context.Context, conn *Conn, msg any) bool {
 	return true
 }
 
-// PumpShogunateEvents consumes server-side Subscribe events, forwarding
+// PumpCourtEvents consumes server-side Subscribe events, forwarding
 // wire-safe notifications via conn.Notify and intercepting in-process
 // side-channels like ApprovalRequestMsg.
 //
-// Replaces the pair of (PumpNotifications + ServeShogunateNotifications)
+// Replaces the pair of (PumpNotifications + ServeCourtNotifications)
 // for callers that need approval interception.
-func PumpShogunateEvents(ctx context.Context, conn *Conn, events <-chan any) {
+func PumpCourtEvents(ctx context.Context, conn *Conn, events <-chan any) {
 	for {
 		select {
 		case <-ctx.Done():

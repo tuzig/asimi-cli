@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -35,7 +35,7 @@ func TestSessionStoreCloseWithTimeout(t *testing.T) {
 	}
 
 	// Create a test session
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:           "test-session-123",
 		CreatedAt:    time.Now(),
 		LastUpdated:  time.Now(),

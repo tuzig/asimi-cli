@@ -80,7 +80,7 @@ Triggers define when a ritual activates. If omitted, the ritual is manual by def
 
 ```yaml
 triggers:
-  - event: shogunate_started
+  - event: court_started
 ```
 
 The ritual activates when a specific event occurs.
@@ -406,7 +406,7 @@ Here's `swift-strike`, one of the built-in rituals — a tight forge/judge/sage 
 
 ## Built-in Rituals
 
-Asimi ships with six built-in rituals in [`builtin_rituals.yaml`](../shogunate/builtin_rituals.yaml).
+Asimi ships with six built-in rituals in [`builtin_rituals.yaml`](../court/builtin_rituals.yaml).
 
 ### swift-strike
 
@@ -422,7 +422,7 @@ A medium-complexity workflow that adds a strategist planning phase before forgin
 
 ### dawn-audience
 
-The startup ritual, triggered automatically by the `shogunate_started` event. It pings the model, checks sandbox health, checks for Asimi updates, then the strategist condenses the state of the three realms into a short briefing, and finally the chancellor presents that briefing and requests zhengming for the next step. The summarize step runs in a throwaway session so the raw diffs/edicts don't pollute the chancellor's interactive history; only the condensed briefing reaches the user-facing session. Contains system steps (no minister) for sandbox and version checks.
+The startup ritual, triggered automatically by the `court_started` event. It pings the model, checks sandbox health, checks for Asimi updates, then the strategist condenses the state of the three realms into a short briefing, and finally the chancellor presents that briefing and requests zhengming for the next step. The summarize step runs in a throwaway session so the raw diffs/edicts don't pollute the chancellor's interactive history; only the condensed briefing reaches the user-facing session. Contains system steps (no minister) for sandbox and version checks.
 
 **Steps:** ping-model → check-sandbox → check-asimi-version → summarize → next
 
@@ -448,6 +448,6 @@ Initializes a project for Asimi. The forge customizes infrastructure templates (
 
 ## See Also
 
-- [builtin_rituals.yaml](../shogunate/builtin_rituals.yaml) — Reference implementation of all built-in rituals
+- [builtin_rituals.yaml](../court/builtin_rituals.yaml) — Reference implementation of all built-in rituals
 - [Edicts](./edicts.md) — How edicts flow through the seal chain
 - [The Three Realms](./three-realms.md) — Understanding 天, 地, and 人

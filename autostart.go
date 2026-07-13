@@ -181,8 +181,8 @@ func spawnDaemonAndWait(ctx context.Context, socketPath string) error {
 //
 // This is now the default wire mode for the TUI.
 func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Program), error) {
-	if model == nil || model.shogunate == nil {
-		return nil, fmt.Errorf("installDaemonAutostart: tui model or shogunate is nil")
+	if model == nil || model.court == nil {
+		return nil, fmt.Errorf("installDaemonAutostart: tui model or court is nil")
 	}
 
 	conn, _, err := connectOrStartDaemon(ctx)
@@ -197,7 +197,7 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 	if u, err := user.Current(); err == nil {
 		username = u.Username
 	}
-	if err := rpc.NewShogunateClient(conn).SetContext(ctx, types.SetContextParams{
+	if err := rpc.NewCourtClient(conn).SetContext(ctx, types.SetContextParams{
 		Project:        repoInfo.Slug,
 		Username:       username,
 		ProjectRoot:    repoInfo.ProjectRoot,
@@ -210,8 +210,8 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 		return nil, fmt.Errorf("installDaemonAutostart: handshake failed: %w", err)
 	}
 
-	local := model.shogunate
-	model.shogunate = rpc.NewLoopbackShogunate(conn, local)
+	local := model.court
+	model.court = rpc.NewLoopbackCourt(conn, local)
 
 	return func(p *tea.Program) {
 		rpc.RegisterApprovalHandler(conn, teaSender{p})

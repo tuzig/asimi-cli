@@ -32,7 +32,7 @@ func TestListenDialRoundTrip(t *testing.T) {
 	defer l.Close()
 
 	// Server accepts one connection and registers fake handlers.
-	impl := newFakeShogunate()
+	impl := newFakeCourt()
 	impl.hasIDs["chancellor"] = true
 
 	var wg sync.WaitGroup
@@ -44,7 +44,7 @@ func TestListenDialRoundTrip(t *testing.T) {
 			return
 		}
 		conn := New(c, Options{})
-		RegisterShogunateHandlers(conn, impl)
+		RegisterCourtHandlers(conn, impl)
 		_ = conn.Serve()
 	}()
 	defer wg.Wait()
@@ -57,7 +57,7 @@ func TestListenDialRoundTrip(t *testing.T) {
 	go func() { _ = clientConn.Serve() }()
 	defer clientConn.Close()
 
-	client := NewShogunateClient(clientConn)
+	client := NewCourtClient(clientConn)
 
 	if !client.HasMinister("chancellor") {
 		t.Error("HasMinister(chancellor) = false over unix socket")

@@ -1,6 +1,6 @@
 module github.com/afittestide/asimi
 
-go 1.26.5
+go 1.26.2
 
 require (
 	al.essio.dev/pkg/shellescape v1.5.1

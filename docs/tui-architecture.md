@@ -1,6 +1,6 @@
 # TUI Architecture Documentation
 
-This document describes the architecture of the Terminal User Interface (TUI) for **Asimi**, focusing on the component boundaries, message-passing patterns, and the multi-tab structure that mirrors the Shogunate's minister system.
+This document describes the architecture of the Terminal User Interface (TUI) for **Asimi**, focusing on the component boundaries, message-passing patterns, and the multi-tab structure that mirrors the Court's minister system.
 
 ## Table of Contents
 
@@ -77,7 +77,7 @@ The TUI follows the [Bubbletea](https://github.com/charmbracelet/bubbletea) arch
 
 ## Tab Manager
 
-The `TabManager` (`content.go`) is a core architectural component that manages multiple tabs, each representing a minister in the Shogunate. Every tab has its own `ContentComponent` (with its own chat buffer), streaming state, and cancellable context.
+The `TabManager` (`content.go`) is a core architectural component that manages multiple tabs, each representing a minister in the Court. Every tab has its own `ContentComponent` (with its own chat buffer), streaming state, and cancellable context.
 
 ### Structure
 
@@ -96,7 +96,7 @@ type Tab struct {
 
 ### Default Tabs
 
-The `NewTabManager` creates 4 default tabs mirroring the Shogunate's ministers:
+The `NewTabManager` creates 4 default tabs mirroring the Court's ministers:
 
 | Index | Label           | Target      | Minister  |
 |-------|-----------------|-------------|-----------|
@@ -699,24 +699,24 @@ return m, m.tabs.Content().ShowHelp(msg.topic)  // Returns ChangeModeMsg
 
 ## Streaming AI Responses
 
-The TUI handles streaming responses from the AI through the Shogunate's message types. Streaming chunks are routed to the correct tab based on `ChannelID`.
+The TUI handles streaming responses from the AI through the Court's message types. Streaming chunks are routed to the correct tab based on `ChannelID`.
 
 ### Message Types
 
-- `shogunate.StreamStartMsg` — Streaming has started; sets the tab as streaming, captures edict ID
-- `shogunate.StreamChunkMsg` — Content chunk with optional `Text` and `Reasoning` fields
-- `shogunate.StreamCompleteMsg` — Marks the end of a streaming response
+- `court.StreamStartMsg` — Streaming has started; sets the tab as streaming, captures edict ID
+- `court.StreamChunkMsg` — Content chunk with optional `Text` and `Reasoning` fields
+- `court.StreamCompleteMsg` — Marks the end of a streaming response
 
 ### Message Flow
 
 ```
 AI starts response
        ↓
-   shogunate.StreamStartMsg
+   court.StreamStartMsg
        → SetStreamingTabByTab(channelID)
        → Clear error state
        ↓
-   shogunate.StreamChunkMsg (repeated)
+   court.StreamChunkMsg (repeated)
        → Route to correct tab via ChatByTab(channelID)
        → If msg.Reasoning != "": chat.AddThinkingChunk(reasoning)
        → If msg.Text != "": chat.AddAIChunk(text)
@@ -727,7 +727,7 @@ AI starts response
    chatRenderTickMsg (debounce)
        → FlushDirtyChats() — calls UpdateContent on every dirty tab
        ↓
-   shogunate.StreamCompleteMsg
+   court.StreamCompleteMsg
        → ClearStreamingByTab(channelID)
        → FinalizeLastAIMessage() — marks as SUCCESS or FAILURE
        → Run streamCompleteCallback if set

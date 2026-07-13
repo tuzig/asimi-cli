@@ -1,5 +1,5 @@
 // Package rpc implements the symmetric MessagePack RPC used between the
-// shogunate daemon and the TUI.
+// court daemon and the TUI.
 //
 // A Conn wraps any io.ReadWriteCloser (a unix socket, a net.Pipe, a pair
 // of os.Pipe, etc.) and supports three frame kinds:

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,11 +14,11 @@ import (
 )
 
 type sessionsLoadedMsg struct {
-	sessions []shogunate.Session
+	sessions []court.Session
 }
 
 type sessionSelectedMsg struct {
-	session *shogunate.Session
+	session *court.Session
 }
 
 type sessionResumeErrorMsg struct {
@@ -28,12 +28,12 @@ type sessionResumeErrorMsg struct {
 // ResumeWindow is a simplified component for displaying session selection
 // Navigation is handled by ContentComponent
 type ResumeWindow struct {
-	SelectWindow[shogunate.Session]
+	SelectWindow[court.Session]
 	loadingSession bool
 }
 
 func NewResumeWindow() ResumeWindow {
-	sw := NewSelectWindow[shogunate.Session]()
+	sw := NewSelectWindow[court.Session]()
 	sw.Height = 15 // Default height
 	sw.SetSize(70, 15)
 
@@ -43,7 +43,7 @@ func NewResumeWindow() ResumeWindow {
 	}
 }
 
-func (r *ResumeWindow) SetSessions(sessions []shogunate.Session) {
+func (r *ResumeWindow) SetSessions(sessions []court.Session) {
 	r.SetItems(sessions)
 	r.loadingSession = false
 }
@@ -53,11 +53,11 @@ func (r *ResumeWindow) SetError(err error) {
 	r.loadingSession = false
 }
 
-func (r *ResumeWindow) GetSelectedSession(index int) *shogunate.Session {
+func (r *ResumeWindow) GetSelectedSession(index int) *court.Session {
 	return r.GetSelectedItem(index)
 }
 
-func sessionTitlePreview(session shogunate.Session) string {
+func sessionTitlePreview(session court.Session) string {
 
 	snippet := session.FirstPrompt
 	msgs := session.GetMessages()
@@ -153,7 +153,7 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 		Background(globalTheme.PaneBackground).
 		Padding(0, 1)
 
-	config := RenderConfig[shogunate.Session]{
+	config := RenderConfig[court.Session]{
 		ConstructTitle: func(selectedIndex, totalItems int) string {
 			return titleStyle.Render(fmt.Sprintf("Choose a session to resume [%3d/%3d]:", selectedIndex+1, totalItems))
 		},
@@ -179,7 +179,7 @@ func (r *ResumeWindow) RenderList(selectedIndex, scrollOffset, visibleSlots int)
 			sb.WriteString("Start chatting to create a new session!\n")
 			sb.WriteString("\n")
 		},
-		RenderItem: func(i int, session shogunate.Session, isSelected bool, sb *strings.Builder) {
+		RenderItem: func(i int, session court.Session, isSelected bool, sb *strings.Builder) {
 			prefix := "  "
 			if isSelected {
 				prefix = "▶ "
@@ -259,7 +259,7 @@ func formatRelativeTime(t time.Time) string {
 // handleSessionSelected processes a resumed session and updates the TUI model.
 // It rebuilds the chat UI from messages, switches to the correct tab, and
 // re-hydrates the minister session for full conversation continuity.
-func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
+func (m *TUIModel) handleSessionSelected(session *court.Session) {
 	if session == nil {
 		return
 	}
@@ -361,12 +361,12 @@ func (m *TUIModel) handleSessionSelected(session *shogunate.Session) {
 	// conversation. TabType holds the minister id (chancellor/sage/forge/judge);
 	// legacy rows with no TabType predate per-minister persistence and are
 	// treated as chancellor sessions.
-	if m.shogunate != nil {
+	if m.court != nil {
 		tabType := session.TabType
 		if tabType == "" {
 			tabType = "chancellor"
 		}
-		if err := m.shogunate.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
+		if err := m.court.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
 			slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
 		}
 	}

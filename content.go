@@ -8,7 +8,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -171,7 +171,10 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 
 	var contentParts []string
 	contentParts = append(contentParts, lipgloss.JoinVertical(
-		lipgloss.Left, commandViews...))
+		lipgloss.Left, commandViews...,))
+
+	contentParts = append(contentParts, lipgloss.JoinVertical(
+		lipgloss.Left, subtitleStyle.Render("👑 Use the royal `We` 👑")))
 
 	if tm.getUpdateAvail != nil && tm.getUpdateAvail() {
 		updateStyle := lipgloss.NewStyle().
@@ -731,7 +734,7 @@ func (c *ContentComponent) ShowUnifiedModels(models []Model, currentModel string
 }
 
 // ShowResume switches to resume view
-func (c *ContentComponent) ShowResume(sessions []shogunate.Session) tea.Cmd {
+func (c *ContentComponent) ShowResume(sessions []court.Session) tea.Cmd {
 	c.activeView = ViewResume
 	c.navMode = NavList
 	c.activeList = &c.resume.SelectWindow

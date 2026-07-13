@@ -15,11 +15,11 @@ import (
 	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/shogunate"
-	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -58,9 +58,9 @@ type TUIModel struct {
 	sessionStore *SessionStore
 	db           *storage.DB
 	scheduler    *runners.CoreToolScheduler
-	shogunate    shogunateapi.Client
+	court        courtapi.Client
 
-	// Shogunate integration
+	// Court integration
 	currentEdictKey storage.EdictKey // Tracks current edict for multi-turn conversations
 
 	// Prompt history and rollback management
@@ -198,7 +198,7 @@ type resumeEdictSessionMsg struct {
 
 // NewTUIModel creates a new TUI model
 // NewTUIModelWithStores creates a new TUI model with provided stores (for fx injection)
-func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *runners.CoreToolScheduler, shog shogunateapi.Client) *TUIModel {
+func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *runners.CoreToolScheduler, shog courtapi.Client) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
@@ -241,7 +241,7 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 		sessionStore:             sessionStore,
 		db:                       db,
 		scheduler:                scheduler,
-		shogunate:                shog,
+		court:                shog,
 		waitingForResponse:       false,
 		persistentPromptHistory:  promptHistory,
 		persistentCommandHistory: commandHistory,
@@ -325,13 +325,13 @@ func (m *TUIModel) initHistory() {
 	}
 }
 
-// getCurrentSession returns the current shogunate session based on active tab's target minister.
-func (m *TUIModel) getCurrentSession() *shogunate.Session {
-	if m.shogunate == nil {
+// getCurrentSession returns the current court session based on active tab's target minister.
+func (m *TUIModel) getCurrentSession() *court.Session {
+	if m.court == nil {
 		return nil
 	}
 	tab := m.tabs.ActiveTab()
-	minister := m.shogunate.GetMinister(tab.Target)
+	minister := m.court.GetMinister(tab.Target)
 	if minister == nil {
 		return nil
 	}
@@ -348,22 +348,22 @@ func (m *TUIModel) currentTabTarget() string {
 
 // currentSessionState returns a snapshot of the active tab's session.
 // The bool reports whether a session actually exists for that tab.
-func (m *TUIModel) currentSessionState() (shogunate.SessionState, bool) {
-	if m.shogunate == nil {
-		return shogunate.SessionState{}, false
+func (m *TUIModel) currentSessionState() (court.SessionState, bool) {
+	if m.court == nil {
+		return court.SessionState{}, false
 	}
 	target := m.currentTabTarget()
 	if target == "" {
-		return shogunate.SessionState{}, false
+		return court.SessionState{}, false
 	}
-	state := m.shogunate.SessionState(target)
+	state := m.court.SessionState(target)
 	return state, state.Exists
 }
 
 // autoCompactIfNeeded triggers a synchronous compaction pass when free
 // context tokens drop below 10% and the conversation has more than two
 // messages. Chat status messages are written directly to the active chat.
-func (m *TUIModel) autoCompactIfNeeded(state shogunate.SessionState) {
+func (m *TUIModel) autoCompactIfNeeded(state court.SessionState) {
 	info := state.ContextInfo
 	threshold := float64(info.TotalTokens) * 0.10
 	if float64(info.FreeTokens) >= threshold || state.MessageCount <= 2 {
@@ -373,7 +373,7 @@ func (m *TUIModel) autoCompactIfNeeded(state shogunate.SessionState) {
 	m.tabs.Content().Chat.AddMessage("🗜️  Auto-compacting conversation history (low on context)...")
 
 	ctx := context.Background()
-	if _, err := m.shogunate.CompactSession(ctx, m.currentTabTarget(), compactPrompt); err != nil {
+	if _, err := m.court.CompactSession(ctx, m.currentTabTarget(), compactPrompt); err != nil {
 		slog.Warn("auto-compaction failed", "error", err)
 		m.tabs.Content().Chat.AddMessage(fmt.Sprintf("⚠️  Auto-compaction failed: %v", err))
 		return
@@ -390,14 +390,14 @@ func (m *TUIModel) autoCompactIfNeeded(state shogunate.SessionState) {
 	slog.Info("auto-compaction completed", "old_used", info.UsedTokens, "new_used", newInfo.UsedTokens, "saved", info.UsedTokens-newInfo.UsedTokens)
 }
 
-// SetSession configures the Shogunate with an LLM model from a session.
-func (m *TUIModel) SetSession(session *shogunate.Session) {
+// SetSession configures the Court with an LLM model from a session.
+func (m *TUIModel) SetSession(session *court.Session) {
 	if session != nil {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
-		if m.shogunate != nil {
+		if m.court != nil {
 			model := session.GetModel()
 			if model != nil {
-				cfg := &shogunate.SessionConfig{
+				cfg := &court.SessionConfig{
 					LLM: config.LLMConfig{
 						MaxTurns:          m.config.LLM.MaxTurns,
 						MaxThinkingTokens: m.config.LLM.MaxThinkingTokens,
@@ -413,7 +413,7 @@ func (m *TUIModel) SetSession(session *shogunate.Session) {
 						return ""
 					}(),
 				}
-				m.shogunate.ConfigureModel(model, cfg, repoInfo)
+				m.court.ConfigureModel(model, cfg, repoInfo)
 			}
 		}
 	} else {
@@ -421,13 +421,13 @@ func (m *TUIModel) SetSession(session *shogunate.Session) {
 	}
 }
 
-// switchModel asks the Shogunate to rebuild its Bifrost client with the
+// switchModel asks the Court to rebuild its Bifrost client with the
 // current config. In daemon mode this happens over the wire; in
 // single-process mode it happens inline.
 func (m *TUIModel) switchModel() tea.Cmd {
 	return func() tea.Msg {
-		if m.shogunate == nil {
-			return llmInitErrorMsg{err: fmt.Errorf("shogunate not initialised")}
+		if m.court == nil {
+			return llmInitErrorMsg{err: fmt.Errorf("court not initialised")}
 		}
 		// If using OpenAI OAuth credentials, check if the token needs refresh
 		if m.config.LLM.Provider == "openai" {
@@ -447,7 +447,7 @@ func (m *TUIModel) switchModel() tea.Cmd {
 			}
 		}
 		slog.Info("switching LLM model", "provider", m.config.LLM.Provider, "model", m.config.LLM.Model)
-		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
+		if err := m.court.SetContext(context.Background(), m.setContextParams()); err != nil {
 			return llmInitErrorMsg{err: err}
 		}
 		slog.Info("LLM model switched successfully")
@@ -478,11 +478,11 @@ func (m *TUIModel) setContextParams() types.SetContextParams {
 	project := ""
 	username := ""
 	if m.config != nil {
-		project = m.config.Shogunate.Project
-		username = m.config.Shogunate.Username
+		project = m.config.Court.Project
+		username = m.config.Court.Username
 	}
 	// Fall back to repoInfo.Slug (from git remote) when config doesn't set it.
-	// This mirrors ProvideShogunate (providers.go) and ensures the daemon
+	// This mirrors ProvideCourt (providers.go) and ensures the daemon
 	// receives the correct slug for sandbox image naming.
 	if project == "" && m.repoInfo != nil {
 		project = m.repoInfo.Slug
@@ -586,7 +586,7 @@ func (m *TUIModel) saveSession() {
 	if m.sessionStore == nil || !m.config.Session.Enabled || !m.config.Session.AutoSave {
 		return
 	}
-	if m.shogunate == nil {
+	if m.court == nil {
 		return
 	}
 
@@ -595,7 +595,7 @@ func (m *TUIModel) saveSession() {
 		return
 	}
 
-	minister := m.shogunate.GetMinister(tab.Target)
+	minister := m.court.GetMinister(tab.Target)
 	if minister == nil {
 		return
 	}
@@ -649,16 +649,16 @@ func onboardingPromptText(state string) string {
 	}
 }
 
-// Init implements bubbletea.Model. It asks the shogunate to build its
+// Init implements bubbletea.Model. It asks the court to build its
 // Bifrost client (daemon-side in daemon mode, inline otherwise).
 func (m TUIModel) Init() tea.Cmd {
 	tick := tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 	llmInit := func() tea.Msg {
-		if m.shogunate == nil {
-			return llmInitErrorMsg{err: fmt.Errorf("shogunate not initialised")}
+		if m.court == nil {
+			return llmInitErrorMsg{err: fmt.Errorf("court not initialised")}
 		}
 		slog.Info("connecting to LLM", "provider", m.config.LLM.Provider)
-		if err := m.shogunate.SetContext(context.Background(), m.setContextParams()); err != nil {
+		if err := m.court.SetContext(context.Background(), m.setContextParams()); err != nil {
 			return llmInitErrorMsg{err: err}
 		}
 		slog.Info("LLM client connected")
@@ -667,9 +667,9 @@ func (m TUIModel) Init() tea.Cmd {
 
 	// On first run or unconfigured, show the onboarding prompt shortly after startup
 	if m.configCreated || onboardingState(m.config) != onboardingConfigured {
-		return tea.Batch(llmInit, tick, func() tea.Msg { return onboardingPromptMsg{} }, watchConnDrop(m.shogunate))
+		return tea.Batch(llmInit, tick, func() tea.Msg { return onboardingPromptMsg{} }, watchConnDrop(m.court))
 	}
-	return tea.Batch(llmInit, tick, watchConnDrop(m.shogunate))
+	return tea.Batch(llmInit, tick, watchConnDrop(m.court))
 }
 
 // Update implements bubbletea.Model
@@ -1370,8 +1370,8 @@ func (m TUIModel) handleCompletionSelection() (tea.Model, tea.Cmd) {
 			content, err := os.ReadFile(filePath)
 			if err != nil {
 				m.commandLine.AddToast(fmt.Sprintf("Error reading file: %v", err), "error", time.Second*3)
-			} else if m.shogunate != nil {
-				if err := m.shogunate.AddSessionContextFile(m.currentTabTarget(), filePath, string(content)); err == nil {
+			} else if m.court != nil {
+				if err := m.court.AddSessionContextFile(m.currentTabTarget(), filePath, string(content)); err == nil {
 					m.tabs.Content().Chat.AddMessage(fmt.Sprintf("Loaded file: %s", filePath))
 				}
 			}
@@ -1468,11 +1468,11 @@ func friendlyConnError(err error) string {
 	}
 }
 
-// watchConnDrop returns a tea.Cmd that blocks on the shogunate's ConnDone
+// watchConnDrop returns a tea.Cmd that blocks on the court's ConnDone
 // channel and emits a connectionLostMsg when it fires, then polls for
 // reconnect and emits connectionRestoredMsg. In loopback/in-process
 // mode the channel never fires, so the goroutine idles.
-func watchConnDrop(shog shogunateapi.Client) tea.Cmd {
+func watchConnDrop(shog courtapi.Client) tea.Cmd {
 	if shog == nil {
 		return nil
 	}
@@ -1503,18 +1503,18 @@ func watchConnDrop(shog shogunateapi.Client) tea.Cmd {
 	}
 }
 
-// submitToShogunate sends a prompt to the appropriate minister based on active tab
+// submitToCourt sends a prompt to the appropriate minister based on active tab
 // and returns a command that listens for streaming responses.
-func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, contextFiles map[string]string) tea.Cmd {
-	if m.shogunate == nil {
+func (m *TUIModel) submitToCourt(ctx context.Context, prompt string, contextFiles map[string]string) tea.Cmd {
+	if m.court == nil {
 		return func() tea.Msg {
-			return shogunate.StreamErrorMsg{Err: fmt.Errorf("Shogunate not initialized")}
+			return court.StreamErrorMsg{Err: fmt.Errorf("Court not initialized")}
 		}
 	}
 
 	tab := m.tabs.ActiveTab()
 
-	p := &shogunate.Prompt{
+	p := &court.Prompt{
 		Ctx:          ctx,
 		Message:      prompt,
 		EdictKey:     m.currentEdictKey,
@@ -1522,9 +1522,9 @@ func (m *TUIModel) submitToShogunate(ctx context.Context, prompt string, context
 		ContextFiles: contextFiles,
 	}
 
-	if err := m.shogunate.SubmitPrompt(tab.Target, p); err != nil {
+	if err := m.court.SubmitPrompt(tab.Target, p); err != nil {
 		return func() tea.Msg {
-			return shogunate.StreamErrorMsg{Err: err}
+			return court.StreamErrorMsg{Err: err}
 		}
 	}
 
@@ -1685,8 +1685,8 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			// User is submitting a historical prompt - rollback to that state
 			entry := m.sessionPromptHistory[m.historyCursor]
 			m.stopStreamingTab(m.tabs.ActiveTab().Target)
-			if m.shogunate != nil {
-				_ = m.shogunate.RollbackSession(m.currentTabTarget(), entry.SessionSnapshot)
+			if m.court != nil {
+				_ = m.court.RollbackSession(m.currentTabTarget(), entry.SessionSnapshot)
 			}
 			m.tabs.Content().Chat.TruncateTo(entry.ChatSnapshot)
 			m.tabs.Content().Chat.ClearToolCallMessageIndex()
@@ -1707,7 +1707,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
 		m.tabs.Content().Chat.AddUserMessage(content)
-		if m.shogunate != nil {
+		if m.court != nil {
 			// Check if we need to auto-compact before sending the prompt (#54)
 			if hasSession {
 				m.autoCompactIfNeeded(state)
@@ -1726,8 +1726,8 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			if hasSession {
 				contextFiles = state.ContextFiles
 			}
-			shogunateCmd := m.submitToShogunate(ctx, content, contextFiles)
-			cmds = append(cmds, shogunateCmd)
+			courtCmd := m.submitToCourt(ctx, content, contextFiles)
+			cmds = append(cmds, courtCmd)
 		} else {
 			m.commandLine.AddToast("No model configured, use :models to configure a model", "error", time.Second*5)
 			m.prompt().SetValue("")
@@ -1808,7 +1808,7 @@ func (m TUIModel) handleShellCommand(command string) (tea.Model, tea.Cmd) {
 			BypassApproval: true, // User explicitly requested this command
 		}
 
-		output, err := m.shogunate.RunShellCommand(ctx, params)
+		output, err := m.court.RunShellCommand(ctx, params)
 
 		if err != nil {
 			return shellCommandResultMsg{
@@ -1859,8 +1859,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.historySaved && m.historyCursor < len(m.sessionPromptHistory) {
 			entry := m.sessionPromptHistory[m.historyCursor]
 			m.stopStreamingTab(m.tabs.ActiveTab().Target)
-			if m.shogunate != nil {
-				_ = m.shogunate.RollbackSession(m.currentTabTarget(), entry.SessionSnapshot)
+			if m.court != nil {
+				_ = m.court.RollbackSession(m.currentTabTarget(), entry.SessionSnapshot)
 			}
 			m.tabs.Content().Chat.TruncateTo(entry.ChatSnapshot)
 			m.tabs.Content().Chat.ClearToolCallMessageIndex()
@@ -1878,7 +1878,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionPromptHistory = m.sessionPromptHistory[:m.historyCursor]
 		}
 		m.tabs.Content().Chat.AddUserMessage(content)
-		if m.shogunate != nil {
+		if m.court != nil {
 			if hasSession {
 				m.autoCompactIfNeeded(state)
 			}
@@ -1894,8 +1894,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if hasSession {
 				contextFiles = state.ContextFiles
 			}
-			shogunateCmd := m.submitToShogunate(ctx, content, contextFiles)
-			cmds = append(cmds, shogunateCmd)
+			courtCmd := m.submitToCourt(ctx, content, contextFiles)
+			cmds = append(cmds, courtCmd)
 		} else {
 			m.commandLine.AddToast("No model configured. Use :models to select a model", "error", time.Second*5)
 		}
@@ -1947,11 +1947,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.AddToRawHistory("ERROR", fmt.Sprintf("%v", msg.err))
 		chat.AddMessage(fmt.Sprintf("Error: %v", msg.err))
 
-	case shogunate.StreamStartMsg:
+	case court.StreamStartMsg:
 		// Streaming has started — capture edict ID for multi-turn
 		m.tabs.SetStreamingTabByTab(msg.ChannelID)
 		if msg.EdictID != 0 {
-			m.currentEdictKey = m.shogunate.EdictKey(msg.EdictID)
+			m.currentEdictKey = m.court.EdictKey(msg.EdictID)
 			m.tabs.SetActiveEdictID(msg.EdictID)
 		}
 		chat := m.tabs.ChatByTab(msg.ChannelID)
@@ -1959,7 +1959,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Debug("streamStartMsg", "starting_stream", true, "edict_id", msg.EdictID)
 		m.status.ClearError() // Clear any previous error state
 
-	case shogunate.StreamCompleteMsg:
+	case court.StreamCompleteMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("STREAM_COMPLETE", "AI streaming response completed")
 		slog.Debug("streamCompleteMsg", "messages_count", len(chat.Messages))
@@ -1987,7 +1987,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, guardrailCmd
 
-	case shogunate.StreamInterruptedMsg:
+	case court.StreamInterruptedMsg:
 		// Session already stopped — just reset UI state, don't re-cancel ctx.
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
@@ -2000,10 +2000,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamCompleteCallback = nil // Clear callback on interrupt
 		m.repoInfo.RefreshDiff()
 
-	case shogunate.StreamErrorMsg:
+	case court.StreamErrorMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("STREAM_ERROR", fmt.Sprintf("AI streaming error: %v", msg.Err))
-		slog.Error("shogunate.StreamErrorMsg", "error", msg.Err)
+		slog.Error("court.StreamErrorMsg", "error", msg.Err)
 
 		connErr := isConnError(msg.Err)
 
@@ -2041,7 +2041,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamCompleteCallback = nil // Clear callback on max turns
 			m.repoInfo.RefreshDiff()
 		*/
-	case shogunate.StreamMaxTokensReachedMsg:
+	case court.StreamMaxTokensReachedMsg:
 		// Max tokens reached, mark session as inactive and show warning
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("STREAM_MAX_TOKENS_REACHED", fmt.Sprintf("AI response truncated due to length limit: %s", msg.Content))
@@ -2052,21 +2052,21 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamCompleteCallback = nil // Clear callback on max tokens
 		m.repoInfo.RefreshDiff()
 
-	// Shogunate streaming message handlers
-	case shogunate.StreamChunkMsg:
+	// Court streaming message handlers
+	case court.StreamChunkMsg:
 		// Drop chunks for tabs the user already cancelled; daemon may still
 		// emit a few in-flight chunks before its ctx-cancel takes effect.
 		if tab := m.tabs.TabByTarget(msg.ChannelID); tab != nil && !tab.Streaming {
 			return m, nil
 		}
-		// Handle text chunks from Shogunate — route to correct tab
+		// Handle text chunks from Court — route to correct tab
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		if msg.Reasoning != "" {
-			chat.AddToRawHistory("SHOGUNATE_REASONING", msg.Reasoning)
+			chat.AddToRawHistory("COURT_REASONING", msg.Reasoning)
 			chat.AddThinkingChunk(msg.Reasoning)
 		}
 		if msg.Text != "" {
-			chat.AddToRawHistory("SHOGUNATE_TEXT", msg.Text)
+			chat.AddToRawHistory("COURT_TEXT", msg.Text)
 			chat.AddAIChunk(msg.Text)
 		}
 		m.status.AddStreamChars(len(msg.Text) + len(msg.Reasoning))
@@ -2092,7 +2092,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderTickPending = false
 		m.tabs.FlushDirtyChats()
 
-	case shogunate.MinisterInvokingMsg:
+	case court.MinisterInvokingMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("MINISTER_INVOKING",
 			fmt.Sprintf("Minister %s invoked for edict %d", msg.MinisterID, msg.EdictKey.ID))
@@ -2104,7 +2104,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chat.Indent++
 		return m, nil
 
-	case shogunate.MinisterCompletedMsg:
+	case court.MinisterCompletedMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		if msg.Error != nil {
 			chat.AddToRawHistory("MINISTER_FAILED",
@@ -2120,7 +2120,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case shogunate.RitualStepMsg:
+	case court.RitualStepMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("RITUAL_STEP",
 			fmt.Sprintf("Ritual %s step %s [%d/%d] %s",
@@ -2192,7 +2192,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case shogunate.EventNotificationMsg:
+	case court.EventNotificationMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("EVENT_NOTIFICATION",
 			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictKey.ID, msg.Message))
@@ -2203,7 +2203,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		icon := "📋"   // Default
 		message := "" // What about msg.Message ?
 		switch msg.EventType {
-		case storage.EventShogunateStarted:
+		case storage.EventCourtStarted:
 			icon = courtPrefix
 			projectDir := ""
 			if m.repoInfo != nil {
@@ -2215,7 +2215,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			initTabGreetings(&m.tabs, ms)
 			return m, nil
-		case storage.EventShogunateReady:
+		case storage.EventCourtReady:
 			icon = courtPrefix
 			message = "READY at " + time.Now().Format("2 January, 3:04 PM MST")
 		case storage.EventEdictCreated:
@@ -2254,7 +2254,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			message = fmt.Sprintf("Minister %s sealed edict %d", minister, msg.EdictKey.ID)
 			// Re-query seals to show fresh seal chain with the minister's seal
-			updatedSeals, err := m.shogunate.GetEdictSeals(msg.EdictKey)
+			updatedSeals, err := m.court.GetEdictSeals(msg.EdictKey)
 			if err != nil {
 				message += fmt.Sprintf("\n  (failed to refresh seal chain: %v)", err)
 			} else {
@@ -2291,10 +2291,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case shogunate.StreamDoneMsg:
+	case court.StreamDoneMsg:
 		return m, nil
 
-	case shogunate.EventsDrainedMsg:
+	case court.EventsDrainedMsg:
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddMessage(fmt.Sprintf("%sRecovered %d event(s) from previous session:", systemPrefix, len(msg.Events)))
 		for _, ev := range msg.Events {
@@ -2306,7 +2306,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case shogunate.ZhengmingPendingMsg:
+	case court.ZhengmingPendingMsg:
 		// Route to the correct tab's prompt by matching MinisterID to tab target
 		if tab := m.tabs.TabByTarget(msg.MinisterID); tab != nil {
 			if p, ok := m.prompts[tab.Label]; ok {
@@ -2402,12 +2402,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if modified != original {
 			// Content was modified - send it back to the Sage as a chat message
-			if m.shogunate != nil {
-				_ = m.shogunate.AddSessionMessage(m.currentTabTarget(), "human", msg.Question)
+			if m.court != nil {
+				_ = m.court.AddSessionMessage(m.currentTabTarget(), "human", msg.Question)
 			}
 			// Cancel the pending zhengming so the Sage can re-suggest with modified content
-			if m.shogunate != nil {
-				m.shogunate.CancelZhengming(msg.RequestID)
+			if m.court != nil {
+				m.court.CancelZhengming(msg.RequestID)
 			}
 		}
 		return m, nil
@@ -2544,7 +2544,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingRitualEnact != nil {
 			if msg.answer {
 				// User confirmed - enact swift-strike
-				key := m.shogunate.EdictKey(m.pendingRitualEnact.edictID)
+				key := m.court.EdictKey(m.pendingRitualEnact.edictID)
 				payload := storage.JSON{
 					"ritual_name": "swift-strike",
 					"edict_id":    m.pendingRitualEnact.edictID,
@@ -2553,7 +2553,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 					},
 				}
 				slog.Info("Got user confiramtion, sending an even to enact ritual")
-				m.shogunate.PublishEvent(key, storage.EventRitualEnacted, payload)
+				m.court.PublishEvent(key, storage.EventRitualEnacted, payload)
 				m.commandLine.AddToast("Ritual enact, check the Chancellor for its progress", "success", 4*time.Second)
 			}
 			// No explicit "declined" message needed; the 📜 notification already shows
@@ -2957,9 +2957,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// in the status bar. Client init success doesn't mean verified.
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
 
-		// Fire shogunate_started event to trigger wakeup ritual and health checks
+		// Fire court_started event to trigger wakeup ritual and health checks
 		latest, hasUpdate, _ := utils.CheckForUpdates()
-		m.raiseShogunateEvent(storage.EventShogunateStarted, storage.JSON{
+		m.raiseCourtEvent(storage.EventCourtStarted, storage.JSON{
 			"latest_version":  latest.Version,
 			"has_update":      hasUpdate,
 			"current_version": utils.AsimiVersion})
@@ -2977,7 +2977,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle starting a new conversation (used by init, new, and other commands)
 		slog.Debug("got startConversationMsg", "RunOnHost", msg.RunOnHost, "tryUpgradeToSandbox", msg.tryUpgradeToSandbox)
 
-		// Clear history if requested - this can happen even without shogunate
+		// Clear history if requested - this can happen even without court
 		if msg.clearHistory {
 			m.sessionActive = true
 			// Clear the chat instead of creating a new component to avoid re-initializing the markdown renderer
@@ -2988,8 +2988,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stopStreamingTab(m.tabs.ActiveTab().Target)
 
 			// Reset session conversation history
-			if m.shogunate != nil {
-				_ = m.shogunate.ClearSessionHistory(m.currentTabTarget())
+			if m.court != nil {
+				_ = m.court.ClearSessionHistory(m.currentTabTarget())
 			}
 		}
 
@@ -2998,8 +2998,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tabs.Content().Chat.AddMessage(initialMsg)
 		}
 
-		// The rest of the operations require a shogunate
-		if m.shogunate == nil {
+		// The rest of the operations require a court
+		if m.court == nil {
 			m.commandLine.AddToast("No LLM session available", "error", 4000)
 			return m, nil
 		}
@@ -3007,12 +3007,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Set the shell runner based on RunOnHost flag
 		if msg.RunOnHost {
 			slog.Debug("using host shell runner for this conversation")
-			m.shogunate.AllowRunnerFallback(true)
+			m.court.AllowRunnerFallback(true)
 
 			// Wrap the caller's func with code to restore the previous runner
 			originalCallback := msg.onStreamComplete
 			msg.onStreamComplete = func(model *TUIModel) tea.Cmd {
-				model.shogunate.AllowRunnerFallback(false)
+				model.court.AllowRunnerFallback(false)
 
 				// Call the original callback if it exists
 				if originalCallback != nil {
@@ -3041,8 +3041,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionActive = true
 
 			var streamCmd tea.Cmd
-			// Route through Shogunate
-			streamCmd = m.submitToShogunate(ctx, msg.prompt, nil)
+			// Route through Court
+			streamCmd = m.submitToCourt(ctx, msg.prompt, nil)
 
 			if waitCmd := m.startWaitingForResponse(); waitCmd != nil {
 				return m, tea.Batch(waitCmd, streamCmd, upgradeCmd)
@@ -3094,7 +3094,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Perform the compaction in a goroutine
 		go func() {
 			ctx := context.Background()
-			summary, err := m.shogunate.CompactSession(ctx, target, compactPrompt)
+			summary, err := m.court.CompactSession(ctx, target, compactPrompt)
 			if err != nil {
 				if program != nil {
 					program.Send(compactErrorMsg{err: err})
@@ -3344,7 +3344,7 @@ func (m *TUIModel) updateComponentDimensions() {
 
 	// Update status info
 	/* TODO: move this to a proper place and drop the currentEdictKey
-	if m.shogunate != nil && m.currentEdictKey.ID != 0 {
+	if m.court != nil && m.currentEdictKey.ID != 0 {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, true)
 	} else { */
 	m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
@@ -3572,8 +3572,8 @@ func (m TUIModel) renderRawSessionView(width, height int) string {
 // the same channelID via CancellableStreamCtx) also tears down.
 func (m *TUIModel) stopStreamingTab(tabTarget string) {
 	m.tabs.CancelTabByID(tabTarget)
-	if m.shogunate != nil {
-		m.shogunate.CancelTab(tabTarget)
+	if m.court != nil {
+		m.court.CancelTab(tabTarget)
 	}
 	if !m.tabs.AnyStreaming() {
 		m.stopWaitingForResponse()
@@ -3646,7 +3646,7 @@ func (m TUIModel) handleConnectionLost() (tea.Model, tea.Cmd) {
 	m.commandLine.AddToast("Connection lost — Reconnecting…", "warning", time.Second*5)
 
 	// Start watching for reconnect
-	return m, watchConnDrop(m.shogunate)
+	return m, watchConnDrop(m.court)
 }
 
 // handleConnectionRestored is called after the RPC connection is re-established.
@@ -3667,7 +3667,7 @@ func (m TUIModel) handleConnectionRestored() (tea.Model, tea.Cmd) {
 		if tab := m.tabs.TabByTarget(tabTarget); tab != nil {
 			ctx = tab.Ctx
 		}
-		cmd := m.submitToShogunate(ctx, retry.prompt, retry.contextFiles)
+		cmd := m.submitToCourt(ctx, retry.prompt, retry.contextFiles)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -3690,15 +3690,15 @@ func (m TUIModel) handleConnectionRestored() (tea.Model, tea.Cmd) {
 // handleAnsweringComplete closes the zhengming waiter and updates the DB.
 // Runs in a goroutine from the Update loop.
 func (m *TUIModel) handleAnsweringComplete(msg AnsweredMsg) {
-	if m.shogunate == nil {
+	if m.court == nil {
 		return
 	}
 	answer := strings.Join(msg.Answers, "; ")
 	slog.Debug("handleAnsweringComplete: calling HandleZhengmingResponse",
 		"request_id", msg.RequestID,
 		"answer", answer,
-		"shogunate_type", fmt.Sprintf("%T", m.shogunate))
-	if err := m.shogunate.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
+		"court_type", fmt.Sprintf("%T", m.court))
+	if err := m.court.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
 		slog.Error("failed to handle zhengming response", "error", err)
 	}
 }
@@ -3744,7 +3744,7 @@ func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
 // editEdictIntentCmd opens the edict intent in $EDITOR and calls AppendToIntent
 // with the modified text.
 func editEdictIntentCmd(m *TUIModel, edictID uint) tea.Cmd {
-	edict, err := m.shogunate.GetEdict(edictID)
+	edict, err := m.court.GetEdict(edictID)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
@@ -3791,29 +3791,29 @@ func editEdictIntentCmd(m *TUIModel, edictID uint) tea.Cmd {
 			return edictIntentUpdatedMsg{edictID: edictID, message: "No changes made to edict intent"}
 		}
 
-		if err := m.shogunate.AppendToIntent(edictID, modified); err != nil {
+		if err := m.court.AppendToIntent(edictID, modified); err != nil {
 			return edictIntentUpdatedMsg{edictID: edictID, message: fmt.Sprintf("Failed to update edict: %v", err)}
 		}
 		return edictIntentUpdatedMsg{edictID: edictID, message: fmt.Sprintf("Edict %d intent updated", edictID)}
 	})
 }
 
-func (m *TUIModel) raiseShogunateEvent(event storage.ShogunateEvent, params storage.JSON) {
-	if m.shogunate == nil {
-		slog.Warn("Failed to raise event as shogunate is nil", "event", event)
+func (m *TUIModel) raiseCourtEvent(event storage.CourtEvent, params storage.JSON) {
+	if m.court == nil {
+		slog.Warn("Failed to raise event as court is nil", "event", event)
 		return
 	}
 	var key storage.EdictKey
 	switch event {
-	case storage.EventShogunateStarted, storage.EventShogunateReady:
-		key = m.shogunate.CourtEdictKey()
+	case storage.EventCourtStarted, storage.EventCourtReady:
+		key = m.court.CourtEdictKey()
 	default:
 		// Derive edict key from payload instead of stale currentEdictKey
 		if edictID, ok := params["edict_id"].(uint); ok {
-			key = m.shogunate.EdictKey(edictID)
+			key = m.court.EdictKey(edictID)
 		} else {
 			key = m.currentEdictKey // fallback for backward compatibility
 		}
 	}
-	m.shogunate.PublishEvent(key, event, params)
+	m.court.PublishEvent(key, event, params)
 }

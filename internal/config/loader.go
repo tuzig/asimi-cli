@@ -211,6 +211,23 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 		config.Session.Enabled = true // Default to enabled
 	}
 
+	// Backward-compat: old config files may have a [shogunate] section
+	// instead of [court]. If [court] wasn't explicitly set, copy values
+	// from [shogunate] so existing user configs keep working.
+	if !k.Exists("court.username") && k.Exists("shogunate.username") {
+		config.Court.Username = k.String("shogunate.username")
+	}
+	if !k.Exists("court.project") && k.Exists("shogunate.project") {
+		config.Court.Project = k.String("shogunate.project")
+	}
+	if !k.Exists("court.ritual_timeout") && k.Exists("shogunate.ritual_timeout") {
+		config.Court.RitualTimeout = k.Duration("shogunate.ritual_timeout")
+	}
+	// Step idle timeout: aborts a ritual step after N seconds of silence.
+	if !k.Exists("court.step_idle_timeout") && k.Exists("shogunate.step_idle_timeout") {
+		config.Court.StepIdleTimeout = k.Duration("shogunate.step_idle_timeout")
+	}
+
 	// Resolve API keys from environment variables when requested
 	if resolveKeys {
 		resolveAPIKeys(&config)

@@ -19,7 +19,7 @@ Before writing YAML, clarify with the user:
    - `judge` — runs tests, verifies correctness
    - `sage` — reviews code quality, records precedents
 3. **Inputs** — Does it need parameters (edict_id, file path, etc.)?
-4. **Trigger** — Should it activate on an event (e.g. `shogunate_started`) or be manual (no trigger)?
+4. **Trigger** — Should it activate on an event (e.g. `court_started`) or be manual (no trigger)?
 5. **Failure handling** — Should failing steps retry, goto an earlier step, or request zhengming?
 
 If `$ARGUMENTS` already provides enough detail, skip the questions and proceed.

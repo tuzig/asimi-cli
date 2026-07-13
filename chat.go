@@ -93,7 +93,7 @@ const (
 	treeFinalPrefix       = " ╰ "
 	treeMidPrefix         = " │ "
 
-	// Shogunate court branding
+	// Court court branding
 	courtPrefix    = "🏯  "  // Court in session
 	greetingPrefix = "🏯  "  // Greeting message block
 	edictPrefix    = "📜  "  // Edict received

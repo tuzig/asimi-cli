@@ -1,5 +1,5 @@
 // Package wire defines helpers for the standard msgpack-RPC wire format
-// used between the shogunate daemon and the TUI over a unix socket.
+// used between the court daemon and the TUI over a unix socket.
 //
 // Standard msgpack-RPC uses array envelopes:
 //

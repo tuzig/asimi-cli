@@ -126,7 +126,7 @@ func TestApprovalRequestContextTimeout(t *testing.T) {
 	}
 }
 
-func TestPumpShogunateEventsInterceptsApproval(t *testing.T) {
+func TestPumpCourtEventsInterceptsApproval(t *testing.T) {
 	pa, pb := net.Pipe()
 	daemon := New(pa, Options{})
 	tui := New(pb, Options{})
@@ -146,7 +146,7 @@ func TestPumpShogunateEventsInterceptsApproval(t *testing.T) {
 
 	events := make(chan any, 4)
 	pumpCtx, cancelPump := context.WithCancel(context.Background())
-	go PumpShogunateEvents(pumpCtx, daemon, events)
+	go PumpCourtEvents(pumpCtx, daemon, events)
 	defer cancelPump()
 
 	// Have the fake user answer "yes".

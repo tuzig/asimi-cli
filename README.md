@@ -191,7 +191,7 @@ To develop Asimi itself:
 ### Loopback Mode (Testing)
 
 By default, Asimi autostarts a daemon process for RPC communication between
-the TUI and the shogunate. In rare cases — debugging RPC issues, running in
+the TUI and the court. In rare cases — debugging RPC issues, running in
 environments where spawning a daemon is undesirable — contributors can set
 `ASIMI_LOOPBACK=1` to use an in-process `net.Pipe` loopback instead of a
 real daemon socket. This routes all wire-safe calls and notifications

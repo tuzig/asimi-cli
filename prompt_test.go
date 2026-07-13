@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/afittestide/asimi/shogunate"
-	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 )
 
@@ -399,7 +399,7 @@ func TestAnsweringModeEditUpdatesQuestion(t *testing.T) {
 func TestHandleZhengmingPendingAppendsEditChat(t *testing.T) {
 	prompt := NewPromptComponent(80, 10)
 
-	msg := shogunate.ZhengmingPendingMsg{
+	msg := court.ZhengmingPendingMsg{
 		RequestID:  "zhengming-1",
 		MinisterID: "sage",
 		Questions: storage.ZhengmingQuestions{

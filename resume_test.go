@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 )
@@ -34,7 +34,7 @@ func TestResumeWindowSetSessionsAndRender(t *testing.T) {
 	window := NewResumeWindow()
 	now := time.Now()
 
-	sessions := []shogunate.Session{
+	sessions := []court.Session{
 		testSession("s-1", "Refactor prompt", now, "Need to refactor"),
 		testSession("s-2", "Investigate bug", now.Add(-2*time.Hour), "Bug details"),
 	}
@@ -76,7 +76,7 @@ func TestResumeWindowScrollInfo(t *testing.T) {
 	window := NewResumeWindow()
 	now := time.Now()
 
-	var sessions []shogunate.Session
+	var sessions []court.Session
 	for i := 0; i < 20; i++ {
 		sessions = append(sessions, testSession(
 			fmt.Sprintf("s-%d", i+1),
@@ -95,7 +95,7 @@ func TestResumeWindowScrollInfo(t *testing.T) {
 
 func TestResumeWindowGetSelectedSession(t *testing.T) {
 	window := NewResumeWindow()
-	window.SetSessions([]shogunate.Session{
+	window.SetSessions([]court.Session{
 		testSession("one", "First", time.Now(), "msg"),
 	})
 
@@ -121,13 +121,13 @@ func TestSessionTitlePreviewFallbacks(t *testing.T) {
 	assert.Equal(t, "User question", sessionTitlePreview(session))
 }
 
-func testSession(id, prompt string, updated time.Time, messageTexts ...string) shogunate.Session {
+func testSession(id, prompt string, updated time.Time, messageTexts ...string) court.Session {
 	var messages []schemas.ChatMessage
 	for _, text := range messageTexts {
 		messages = append(messages, textMessage(schemas.ChatMessageRoleUser, text))
 	}
 
-	s := shogunate.Session{
+	s := court.Session{
 		ID:           id,
 		FirstPrompt:  prompt,
 		LastUpdated:  updated,

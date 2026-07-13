@@ -16,14 +16,14 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Verify that shogunate.Session implements ExportableSession
-var _ ExportableSession = (*shogunate.Session)(nil)
+// Verify that court.Session implements ExportableSession
+var _ ExportableSession = (*court.Session)(nil)
 
 //go:embed prompts/compact.txt
 var compactPrompt string
@@ -176,10 +176,10 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	model.sessionActive = true
 
 	// Reset the appropriate minister session based on active tab
-	if model.shogunate != nil {
+	if model.court != nil {
 		tab := model.tabs.ActiveTab()
-		if model.shogunate.HasMinister(string(tab.Type)) {
-			model.shogunate.ResetMinisterSession(string(tab.Type))
+		if model.court.HasMinister(string(tab.Type)) {
+			model.court.ResetMinisterSession(string(tab.Type))
 		} else {
 			slog.Debug("Failed to get session", "miniter", tab.Type)
 		}
@@ -227,7 +227,7 @@ func handleContextCommand(model *TUIModel, args []string) tea.Cmd {
 
 func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 	// Immediately show the resume view with loading state
-	showResumeCmd := model.tabs.Content().ShowResume([]shogunate.Session{})
+	showResumeCmd := model.tabs.Content().ShowResume([]court.Session{})
 	model.tabs.Content().resume.SetLoading(true)
 
 	// Load sessions in the background
@@ -293,10 +293,10 @@ func handleResumeCommand(model *TUIModel, args []string) tea.Cmd {
 func handleExportCommand(model *TUIModel, args []string) tea.Cmd {
 	var session ExportableSession
 
-	if model.shogunate != nil {
-		if exp, err := model.shogunate.GetSessionExport(model.currentTabTarget()); err == nil && exp != nil {
+	if model.court != nil {
+		if exp, err := model.court.GetSessionExport(model.currentTabTarget()); err == nil && exp != nil {
 			session = exp
-			slog.Debug("using Shogunate session for export", "edict_id", model.currentEdictKey.ID)
+			slog.Debug("using Court session for export", "edict_id", model.currentEdictKey.ID)
 		}
 	}
 
@@ -351,14 +351,14 @@ func handleInitCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 	}
 
-	if model.shogunate == nil {
+	if model.court == nil {
 		return func() tea.Msg {
 			return showContextMsg{content: "No model connection available. Please ensure a session is active."}
 		}
 	}
 
 	// Check if project name is already set in config
-	if model.config.Shogunate.Project == "" {
+	if model.config.Court.Project == "" {
 		// Auto-derive slug from git remote
 		slug := model.status.repoInfo.Slug
 		if slug == "" {
@@ -378,7 +378,7 @@ func createInitEdict(model *TUIModel) tea.Cmd {
 	// Use CreateEdictSilent: we already know the ritual (project-init) and will
 	// dispatch it directly below. Publishing EventEdictCreated would make the
 	// chancellor LLM also try to enact a ritual for this edict, starting it twice.
-	edict, err := model.shogunate.CreateEdictSilent("", "Initialize project with Asimi agent configuration", "")
+	edict, err := model.court.CreateEdictSilent("", "Initialize project with Asimi agent configuration", "")
 	if err != nil {
 		return func() tea.Msg {
 			return showContextMsg{content: fmt.Sprintf("Failed to create edict: %v", err)}
@@ -388,7 +388,7 @@ func createInitEdict(model *TUIModel) tea.Cmd {
 		"ritual_name": "project-init",
 		"edict_id":    edict.ID,
 	}
-	model.raiseShogunateEvent(storage.EventRitualEnacted, payload)
+	model.raiseCourtEvent(storage.EventRitualEnacted, payload)
 	return nil
 }
 
@@ -433,7 +433,7 @@ func handleAPIKeyInput(model *TUIModel, provider, apiKey string) tea.Cmd {
 func saveProjectNameAndInit(model *TUIModel, projectName string) tea.Cmd {
 	// Seed .agents/asimi.conf from the embedded default template before writing
 	// the project name. Without this, SetProjectConfig would create a stub file
-	// containing only the [shogunate] section, and the ritual's template-seeding
+	// containing only the [court] section, and the ritual's template-seeding
 	// step would later skip the file (since it exists), leaving the user with a
 	// near-empty config missing every default section.
 	projectRoot := model.status.repoInfo.ProjectRoot
@@ -444,7 +444,7 @@ func saveProjectNameAndInit(model *TUIModel, projectName string) tea.Cmd {
 	}
 
 	// Save project name to .agents/asimi.conf
-	if err := config.SetProjectConfig(projectRoot, "shogunate", "project", projectName); err != nil {
+	if err := config.SetProjectConfig(projectRoot, "court", "project", projectName); err != nil {
 		return func() tea.Msg {
 			return showContextMsg{content: fmt.Sprintf("Failed to save project name: %v", err)}
 		}
@@ -892,7 +892,7 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 		model.commandLine.AddToast(fmt.Sprintf("Opened Ritual tab: %s", runID), "success", time.Second*2)
 	default:
 		// Treat as minister name
-		if model.shogunate != nil && model.shogunate.HasMinister(target) {
+		if model.court != nil && model.court.HasMinister(target) {
 			label := strings.ToUpper(target[:1]) + target[1:]
 			model.tabs.Add(label, TabType(target), target)
 			model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
@@ -915,16 +915,16 @@ func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
 
 // handleEdictCommand manages edicts: read, enact, seal, resume, or cancel.
 func handleEdictCommand(model *TUIModel, args []string) tea.Cmd {
-	if model.shogunate == nil {
+	if model.court == nil {
 		return func() tea.Msg {
-			return showSystemMsg("Shogunate not active - cannot manage edicts")
+			return showSystemMsg("Court not active - cannot manage edicts")
 		}
 	}
 
 	// No args: show selection of active edicts
 	if len(args) == 0 {
 		return func() tea.Msg {
-			edicts, err := model.shogunate.ListActiveEdicts()
+			edicts, err := model.court.ListActiveEdicts()
 			if err != nil {
 				return showSystemMsg(fmt.Sprintf("Failed to list active edicts: %v", err))
 			}
@@ -983,7 +983,7 @@ func handleEdictCommand(model *TUIModel, args []string) tea.Cmd {
 // causing the edicts list to refresh. Used to return to the list after an action.
 func reloadEdictsListCmd(model *TUIModel) tea.Cmd {
 	return func() tea.Msg {
-		edicts, err := model.shogunate.ListActiveEdicts()
+		edicts, err := model.court.ListActiveEdicts()
 		if err != nil {
 			return showSystemMsg(fmt.Sprintf("Failed to list active edicts: %v", err))
 		}
@@ -994,15 +994,15 @@ func reloadEdictsListCmd(model *TUIModel) tea.Cmd {
 // loadEdictDashboardCmd loads edict detail and shows the dashboard view
 func loadEdictDashboardCmd(model *TUIModel, edictID uint) tea.Cmd {
 	return func() tea.Msg {
-		edict, err := model.shogunate.GetEdict(edictID)
+		edict, err := model.court.GetEdict(edictID)
 		if err != nil {
 			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
 		}
 
-		key := model.shogunate.EdictKey(edictID)
+		key := model.court.EdictKey(edictID)
 
 		// Get seals
-		seals, _ := model.shogunate.GetEdictSeals(key)
+		seals, _ := model.court.GetEdictSeals(key)
 
 		// Build dashboard content
 		content := renderEdictDashboard(edict, seals, 80)
@@ -1013,7 +1013,7 @@ func loadEdictDashboardCmd(model *TUIModel, edictID uint) tea.Cmd {
 // showEdictActionMenu enters answering mode with edict action options.
 func showEdictActionMenu(model *TUIModel, edictID uint) tea.Cmd {
 	// Validate edict exists first
-	_, err := model.shogunate.GetEdict(edictID)
+	_, err := model.court.GetEdict(edictID)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
@@ -1038,17 +1038,17 @@ func showEdictActionMenu(model *TUIModel, edictID uint) tea.Cmd {
 
 // handleEdictSeal grants the Ruler's seal to an edict (same logic as old handleSealCommand with ID)
 func handleEdictSeal(model *TUIModel, edictID uint, notes string) tea.Cmd {
-	key := model.shogunate.EdictKey(edictID)
+	key := model.court.EdictKey(edictID)
 
 	// Validate edict exists
-	if _, err := model.shogunate.GetEdict(edictID); err != nil {
+	if _, err := model.court.GetEdict(edictID); err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Edict not found %v", key))
 		}
 	}
 
 	// Get current seals
-	seals, err := model.shogunate.GetEdictSeals(key)
+	seals, err := model.court.GetEdictSeals(key)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Failed to get seals for %d: %v", edictID, err))
@@ -1103,7 +1103,7 @@ func handleEdictSeal(model *TUIModel, edictID uint, notes string) tea.Cmd {
 // enactRitualForEdict publishes EventRitualEnacted for the given edict and ritual
 func enactRitualForEdict(model *TUIModel, edictID uint, ritualName string) tea.Cmd {
 	return func() tea.Msg {
-		key := model.shogunate.EdictKey(edictID)
+		key := model.court.EdictKey(edictID)
 		payload := storage.JSON{
 			"ritual_name": ritualName,
 			"edict_id":    edictID,
@@ -1111,7 +1111,7 @@ func enactRitualForEdict(model *TUIModel, edictID uint, ritualName string) tea.C
 				"edict_id": fmt.Sprintf("%d", edictID),
 			},
 		}
-		model.shogunate.PublishEvent(key, storage.EventRitualEnacted, payload)
+		model.court.PublishEvent(key, storage.EventRitualEnacted, payload)
 		return showSystemMsg(fmt.Sprintf("Ritual '%s' enacted for edict %d — check the Chancellor for progress", ritualName, edictID))
 	}
 }
@@ -1119,7 +1119,7 @@ func enactRitualForEdict(model *TUIModel, edictID uint, ritualName string) tea.C
 // resumeEdictSession loads the session linked to an edict
 func resumeEdictSession(model *TUIModel, edictID uint) tea.Cmd {
 	return func() tea.Msg {
-		edict, err := model.shogunate.GetEdict(edictID)
+		edict, err := model.court.GetEdict(edictID)
 		if err != nil {
 			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
 		}
@@ -1133,7 +1133,7 @@ func resumeEdictSession(model *TUIModel, edictID uint) tea.Cmd {
 // handleEdictCancel enters YesNo mode to confirm edict cancellation
 func handleEdictCancel(model *TUIModel, edictID uint) tea.Cmd {
 	// Validate edict exists and is not already cancelled
-	edict, err := model.shogunate.GetEdict(edictID)
+	edict, err := model.court.GetEdict(edictID)
 	if err != nil {
 		return func() tea.Msg {
 			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
@@ -1156,7 +1156,7 @@ func handleEdictCancel(model *TUIModel, edictID uint) tea.Cmd {
 func cancelEdictCmd(model *TUIModel, edictID uint) tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
-			if err := model.shogunate.CancelEdict(edictID); err != nil {
+			if err := model.court.CancelEdict(edictID); err != nil {
 				return showSystemMsg(fmt.Sprintf("Failed to cancel edict %d: %v", edictID, err))
 			}
 			return showContextMsg{content: systemPrefix + fmt.Sprintf("Edict %d cancelled", edictID)}
@@ -1221,7 +1221,7 @@ func renderEdictDashboard(edict *storage.Edict, seals []storage.Seal, width int)
 func grantRulerSealCmd(model *TUIModel, edictID uint, notes string) tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
-			if err := model.shogunate.GrantRulerSeal(edictID, notes); err != nil {
+			if err := model.court.GrantRulerSeal(edictID, notes); err != nil {
 				return showSystemMsg(fmt.Sprintf("Failed to grant Ruler's seal: %v", err))
 			}
 			return nil

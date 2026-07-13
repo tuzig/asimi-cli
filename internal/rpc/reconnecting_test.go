@@ -53,7 +53,7 @@ func TestReconnectingClient_ReconnectSerialized(t *testing.T) {
 	conn, _ := factory()
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 
 	// Close the connection so both goroutines attempt reconnect.
@@ -91,7 +91,7 @@ func TestReconnectingClient_ReconnectSerializedMany(t *testing.T) {
 	conn, _ := factory()
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 
 	conn.Close()
@@ -185,7 +185,7 @@ func TestReconnectingClient_ReconnectIfError_RetryOnErrClosed(t *testing.T) {
 	conn, _ := factory()
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 	conn.Close()
 	time.Sleep(20 * time.Millisecond)
@@ -216,7 +216,7 @@ func TestReconnectingClient_ReconnectIfError_ReadOnlyRetriesPeerDisconnected(t *
 	conn, _ := factory()
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 	conn.Close()
 	time.Sleep(20 * time.Millisecond)
@@ -300,7 +300,7 @@ func TestReconnectingClient_ReconnectIfDead_TriggeredOnDeadConn(t *testing.T) {
 	conn, _ := factory()
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 
 	conn.Close()
@@ -333,7 +333,7 @@ func TestReconnectingClient_ReconnectIfDead_NoOpOnLiveConn(t *testing.T) {
 	conn, _ := factory()
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 
 	factoryBefore := factoryCalls.Load()
@@ -374,7 +374,7 @@ func TestReconnectingClient_HasMinister_CallsReconnectIfDead(t *testing.T) {
 	conn, _ := factory()
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 
 	conn.Close()
@@ -511,7 +511,7 @@ func TestReconnectingClient_SetContextIsFactoryResponsibility(t *testing.T) {
 	conn, _ := factory()
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 
 	conn.Close()
@@ -556,7 +556,7 @@ func TestReconnectingClient_ConnDone_LiveConn(t *testing.T) {
 	rc := &ReconnectingClient{}
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 
 	done := rc.ConnDone()
@@ -579,12 +579,12 @@ func TestReconnectingClient_ConnDone_LiveConn(t *testing.T) {
 	}
 }
 
-func TestLoopbackShogunate_ConnDone(t *testing.T) {
+func TestLoopbackCourt_ConnDone(t *testing.T) {
 	pa, _ := net.Pipe()
 	conn := New(pa, Options{})
 	go func() { _ = conn.Serve() }()
 
-	lb := NewLoopbackShogunate(conn, nil)
+	lb := NewLoopbackCourt(conn, nil)
 	done := lb.ConnDone()
 
 	select {

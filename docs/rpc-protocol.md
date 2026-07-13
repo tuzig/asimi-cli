@@ -1,4 +1,4 @@
-# Asimi's RPC Protocol
+# Court RPC Protocol
 
 This is the wire protocol between the `asimi` TUI and the `asimi daemon`
 when the two run as separate processes. It is **standard msgpack-RPC**
@@ -111,9 +111,9 @@ currently both peers assume "same build" compatibility.
 ## 4. Method catalog — TUI → daemon
 
 Every method name is a Go constant in
-`internal/rpc/shogunate_methods.go`. Params/results are Go structs in
-`internal/rpc/shogunate_types.go`. Most are 1:1 with
-`shogunateapi.Client` methods.
+`internal/rpc/court_methods.go`. Params/results are Go structs in
+`internal/rpc/court_types.go`. Most are 1:1 with
+`courtapi.Client` methods.
 
 | Method                     | Params                                              | Result                          |
 | -------------------------- | --------------------------------------------------- | ------------------------------- |
@@ -145,7 +145,7 @@ Every method name is a Go constant in
 | `CancelTab`                | `{channel_id}`                                      | —                               |
 | `SetContext`               | `{project, username, project_root, worktree_path, branch, api_keys?, auth_token?, refresh_token?}` | — |
 
-The `shogunate.Prompt` type has a `context.Context` field that doesn't
+The `court.Prompt` type has a `context.Context` field that doesn't
 cross the wire. `SubmitPromptParams` carries the same fields minus
 `Ctx`; the server rebuilds `ctx` from the handler's own ctx.
 
@@ -265,19 +265,19 @@ macOS machines with `podman machine start`.
 Wire a new `Client` method in five files:
 
 1. **Interface** — add the method signature to
-   `internal/shogunateapi/client.go`. Wire-safe params/return types
+   `internal/courtapi/client.go`. Wire-safe params/return types
    only (primitives, tagged structs, no closures, no `context.Context`
    as a param, no channels). Kept in-process only? See § 10.
-2. **Server implementation** — implement on `*shogunate.Shogunate` (or
+2. **Server implementation** — implement on `*court.Court` (or
    whichever type satisfies `Client`). Keep it in
-   `shogunate/shogunate.go` alongside siblings, or add a new file if
+   `court/court.go` alongside siblings, or add a new file if
    the surface grows.
 3. **Method constant** — add `MethodFoo = "Foo"` to
-   `internal/rpc/shogunate_methods.go`.
+   `internal/rpc/court_methods.go`.
 4. **Wire DTOs** — add `FooParams` / `FooResult` structs with
-   `msgpack:"..."` tags to `internal/rpc/shogunate_types.go`.
-5. **Server handler** — in `internal/rpc/shogunate_server.go` inside
-   `RegisterShogunateHandlers`, add:
+   `msgpack:"..."` tags to `internal/rpc/court_types.go`.
+5. **Server handler** — in `internal/rpc/court_server.go` inside
+   `RegisterCourtHandlers`, add:
 
    ```go
    c.Handle(MethodFoo, func(ctx context.Context, params []byte) ([]byte, error) {
@@ -292,10 +292,10 @@ Wire a new `Client` method in five files:
        return wire.Encode(FooResult{Out: out})
    })
    ```
-6. **Client method** — in `internal/rpc/shogunate_client.go`:
+6. **Client method** — in `internal/rpc/court_client.go`:
 
    ```go
-   func (c *ShogunateClient) Foo(x, y string) (string, error) {
+   func (c *CourtClient) Foo(x, y string) (string, error) {
        raw, err := c.conn.Call(context.Background(), MethodFoo, FooParams{X: x, Y: y})
        if err != nil { return "", err }
        var r FooResult
@@ -303,8 +303,8 @@ Wire a new `Client` method in five files:
        return r.Out, nil
    }
    ```
-7. **Test** — extend the `fakeShogunate` in
-   `internal/rpc/shogunate_loopback_test.go` and exercise Foo through
+7. **Test** — extend the `fakeCourt` in
+   `internal/rpc/court_loopback_test.go` and exercise Foo through
    the codec.
 
 ### Adding a new notification
@@ -318,13 +318,13 @@ Wire a new `Client` method in five files:
 3. **Register both sides** in the `typeToMethod` and `methodToDecoder`
    maps in the same file.
 4. **Emit** from the server by sending the struct down the Subscribe
-   chan that `PumpShogunateEvents` consumes.
+   chan that `PumpCourtEvents` consumes.
 5. **Consume** on the client: the `SubscribeAll` handler will decode
    and deliver it on the shared `<-chan any`.
 
 ## 10. The non-wire-safe holdouts
 
-One method on `shogunateapi.Client` is deliberately in-process only:
+One method on `courtapi.Client` is deliberately in-process only:
 
 | Method           | Why                                                                                       |
 | ---------------- | ----------------------------------------------------------------------------------------- |
@@ -334,8 +334,8 @@ One method on `shogunateapi.Client` is deliberately in-process only:
 `bifrost.LLMProvider` pointer. It is now deprecated: the daemon calls
 `ConfigureModel` internally after every `SetContext`, so the TUI never
 needs to invoke it directly. Once `GetMinister` is migrated to a
-wire-safe shape, `LoopbackShogunate` collapses into the plain
-`*ShogunateClient` and the TUI becomes truly stateless.
+wire-safe shape, `LoopbackCourt` collapses into the plain
+`*CourtClient` and the TUI becomes truly stateless.
 
 ## 11. Files at a glance
 
@@ -345,16 +345,16 @@ internal/wire/
   codec.go        ReadFrame / WriteFrame / Encode / Decode
 internal/rpc/
   conn.go         Bidirectional Conn: Call / Notify / Handle / HandleNotify
-  shogunate_methods.go  MethodFoo constants
-  shogunate_types.go    Params / Result DTOs
-  shogunate_server.go   RegisterShogunateHandlers + ServeShogunateNotifications
-  shogunate_client.go   Typed ShogunateClient
-  shogunate_loopback.go LoopbackShogunate hybrid (wire + local passthrough)
+  court_methods.go  MethodFoo constants
+  court_types.go    Params / Result DTOs
+  court_server.go   RegisterCourtHandlers + ServeCourtNotifications
+  court_client.go   Typed CourtClient
+  court_loopback.go LoopbackCourt hybrid (wire + local passthrough)
   notifications.go      typeToMethod + methodToDecoder registries,
                         PumpNotifications / SubscribeAll
   approval.go           Bidirectional approval Call (daemon → TUI)
   unix.go               SocketPath / Listen / Dial
-internal/shogunateapi/
+internal/courtapi/
   client.go       The Client interface (single source of truth)
 daemon.go         `asimi daemon` subcommand
 autostart.go      autostart

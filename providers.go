@@ -10,7 +10,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"go.uber.org/fx"
@@ -268,13 +268,13 @@ type TUIModelParams struct {
 	SessionStore   *SessionStore
 	DB             *storage.DB
 	Scheduler      *runners.CoreToolScheduler
-	Shogunate      *shogunate.Shogunate
+	Court      *court.Court
 	Logger         *slog.Logger
 }
 
 // ProvideTUIModel creates and returns the TUI model
 func ProvideTUIModel(params TUIModelParams) *TUIModel {
-	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler, params.Shogunate)
+	return NewTUIModel(params.Config, &params.RepoInfo, params.PromptHistory, params.CommandHistory, params.SessionStore, params.DB, params.Scheduler, params.Court)
 }
 
 // TUIProgramParams holds parameters for TUI program initialization
@@ -333,7 +333,7 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		}
 	}
 
-	// Auto-migrate Shogunate tables
+	// Auto-migrate Court tables
 	if err := db.AutoMigrate(
 		&storage.Edict{},
 		&storage.Seal{},
@@ -347,36 +347,18 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		&storage.Incident{},
 		&storage.RulerCouncil{},
 		&storage.RitualGuardCheckpoint{},
-		&shogunate.RitualExecution{},
-		&shogunate.RitualStepState{},
+		&court.RitualExecution{},
+		&court.RitualStepState{},
 	); err != nil {
-		return nil, fmt.Errorf("failed to migrate Shogunate schema: %w", err)
+		return nil, fmt.Errorf("failed to migrate Court schema: %w", err)
 	}
 
 	params.Logger.Info("GORM database initialized")
 	return db, nil
 }
 
-// DaemonShared holds shared resources for the daemon process.
-type DaemonShared struct {
-	DB      *gorm.DB
-	Storage *storage.DB
-	Config  *Config
-	Logger  *slog.Logger
-}
-
-// ProvideDaemonShared creates a DaemonShared with the given dependencies.
-func ProvideDaemonShared(db *gorm.DB, sdb *storage.DB, cfg *Config, logger *slog.Logger) *DaemonShared {
-	return &DaemonShared{
-		DB:      db,
-		Storage: sdb,
-		Config:  cfg,
-		Logger:  logger,
-	}
-}
-
-// ShogunateParams holds parameters for Shogunate initialization
-type ShogunateParams struct {
+// CourtParams holds parameters for Court initialization
+type CourtParams struct {
 	fx.In
 	Lifecycle    fx.Lifecycle
 	GormDB       *gorm.DB
@@ -387,22 +369,22 @@ type ShogunateParams struct {
 	SessionStore *SessionStore `optional:"true"`
 }
 
-// ProvideShogunate creates the Shogunate coordinator with lifecycle management
-func ProvideShogunate(params ShogunateParams) *shogunate.Shogunate {
+// ProvideCourt creates the Court coordinator with lifecycle management
+func ProvideCourt(params CourtParams) *court.Court {
 
 	// Start with defaults, then overlay config file values
-	cfg := config.DefaultShogunateConfig()
-	if params.Config.Shogunate.Username != "" {
-		cfg.Username = params.Config.Shogunate.Username
+	cfg := config.DefaultCourtConfig()
+	if params.Config.Court.Username != "" {
+		cfg.Username = params.Config.Court.Username
 	}
-	if params.Config.Shogunate.Project != "" {
-		cfg.Project = params.Config.Shogunate.Project
+	if params.Config.Court.Project != "" {
+		cfg.Project = params.Config.Court.Project
 	} else if params.RepoInfo.Slug != "" {
 		cfg.Project = params.RepoInfo.Slug
 	}
-	params.Logger.Info("initializing Shogunate", "user", cfg.Username, "project", cfg.Project)
+	params.Logger.Info("initializing Court", "user", cfg.Username, "project", cfg.Project)
 
-	s := shogunate.NewShogunate(params.GormDB, cfg, params.Runner, params.Logger)
+	s := court.NewCourt(params.GormDB, cfg, params.Runner, params.Logger)
 	// notify is set later via s.SetNotify(program.Send) once the TUI program is created
 
 	// Persist sessions to the DB as messages are added. Every minister
@@ -417,12 +399,12 @@ func ProvideShogunate(params ShogunateParams) *shogunate.Shogunate {
 	// Register lifecycle hooks
 	params.Lifecycle.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			params.Logger.Info("starting Shogunate")
+			params.Logger.Info("starting Court")
 			s.SetRepoInfo(params.RepoInfo)
 			return s.Start(ctx)
 		},
 		OnStop: func(ctx context.Context) error {
-			params.Logger.Info("stopping Shogunate")
+			params.Logger.Info("stopping Court")
 			return s.Stop()
 		},
 	})

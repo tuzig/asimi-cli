@@ -1,0 +1,37 @@
+package rpc
+
+// Method names for the Court RPC surface. Kept in one place so the
+// server (RegisterCourtHandlers) and client (CourtClient) stay
+// in sync. Method names double as msgpack dispatch keys.
+const (
+	MethodPing                 = "Ping"
+	MethodHasMinister          = "HasMinister"
+	MethodResetMinisterSession = "ResetMinisterSession"
+	MethodEdictKey             = "EdictKey"
+	MethodCourtEdictKey        = "CourtEdictKey"
+	MethodCreateEdict          = "CreateEdict"
+	MethodCreateEdictSilent    = "CreateEdictSilent"
+	MethodGetEdict             = "GetEdict"
+	MethodCancelEdict          = "CancelEdict"
+	MethodAppendToIntent       = "AppendToIntent"
+	MethodPublishEvent         = "PublishEvent"
+	MethodGrantRulerSeal       = "GrantRulerSeal"
+	MethodGetEdictSeals        = "GetEdictSeals"
+	MethodListActiveEdicts     = "ListActiveEdicts"
+	MethodSubmitPrompt         = "SubmitPrompt"
+	MethodRestoreMinisterSess  = "RestoreMinisterSession"
+	MethodHandleZhengming      = "HandleZhengmingResponse"
+	MethodCancelZhengming      = "CancelZhengming"
+	MethodAllowRunnerFallback  = "AllowRunnerFallback"
+	MethodRunShellCommand      = "RunShellCommand"
+	MethodSessionState         = "SessionState"
+	MethodAddSessionCtxFile    = "AddSessionContextFile"
+	MethodAddSessionMessage    = "AddSessionMessage"
+	MethodClearSessionHistory  = "ClearSessionHistory"
+	MethodRollbackSession      = "RollbackSession"
+	MethodCompactSession       = "CompactSession"
+	MethodTakeSnapshot         = "TakeSnapshot"
+	MethodCancelTab            = "CancelTab"
+	MethodGetSessionExport     = "GetSessionExport"
+	MethodSetContext           = "SetContext"
+)

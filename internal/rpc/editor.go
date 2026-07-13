@@ -6,7 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/afittestide/asimi/internal/wire"
-	"github.com/afittestide/asimi/shogunate/tools"
+	"github.com/afittestide/asimi/court/tools"
 )
 
 // MethodRunEditor is the daemon→TUI method that opens content in $EDITOR.

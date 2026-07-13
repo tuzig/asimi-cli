@@ -197,22 +197,22 @@ func TestHandleInitCommand(t *testing.T) {
 		require.True(t, os.IsNotExist(err), "Justfile should be removed")
 	})
 
-	// TODO: Tests for actual init workflow require a full shogunate setup with a configured session.
+	// TODO: Tests for actual init workflow require a full court setup with a configured session.
 	// These tests are skipped until proper integration test infrastructure is added.
 	t.Run("Clean directory - skipped without session", func(t *testing.T) {
-		t.Skip("Requires shogunate session setup - see integration tests")
+		t.Skip("Requires court session setup - see integration tests")
 	})
 
 	t.Run("Some files exist - skipped without session", func(t *testing.T) {
-		t.Skip("Requires shogunate session setup - see integration tests")
+		t.Skip("Requires court session setup - see integration tests")
 	})
 
 	t.Run("All files exist - skipped without session", func(t *testing.T) {
-		t.Skip("Requires shogunate session setup - see integration tests")
+		t.Skip("Requires court session setup - see integration tests")
 	})
 
 	t.Run("Clear mode - skipped without session", func(t *testing.T) {
-		t.Skip("Requires shogunate session setup - see integration tests")
+		t.Skip("Requires court session setup - see integration tests")
 	})
 }
 
@@ -418,15 +418,15 @@ func TestVerifyInitWithRetryNilRepoInfo(t *testing.T) {
 }
 
 // TestHandleInitCommand_AutoDerivesSlug tests that handleInitCommand auto-derives
-// the project slug from repoInfo when config.Shogunate.Project is empty.
+// the project slug from repoInfo when config.Court.Project is empty.
 func TestHandleInitCommand_AutoDerivesSlug(t *testing.T) {
 	skipIfNotCI(t)
 	tmpDir := t.TempDir()
 
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	mockTUI := &TUIModel{
 		config: &Config{
-			Shogunate: config.ShogunateConfig{
+			Court: config.CourtConfig{
 				Project: "", // empty — should trigger auto-derivation
 			},
 		},
@@ -436,14 +436,14 @@ func TestHandleInitCommand_AutoDerivesSlug(t *testing.T) {
 				Slug:        "owner/myrepo",
 			},
 		},
-		shogunate: mock,
+		court: mock,
 	}
 
 	cmd := handleInitCommand(mockTUI, []string{})
 	// createInitEdict returns nil (no tea.Cmd) but publishes an event
 	require.Nil(t, cmd, "createInitEdict returns nil cmd")
 
-	// The command chain calls createInitEdict → CreateEdictSilent → raiseShogunateEvent
+	// The command chain calls createInitEdict → CreateEdictSilent → raiseCourtEvent
 	// Verify the event was published
 	require.Len(t, mock.publishedEvents, 1, "expected EventRitualEnacted to be published")
 	assert.Equal(t, storage.EventRitualEnacted, mock.publishedEvents[0].eventType)
@@ -458,15 +458,15 @@ func TestHandleInitCommand_AutoDerivesSlug(t *testing.T) {
 }
 
 // TestHandleInitCommand_NoSlugReturnsError tests that handleInitCommand returns
-// an error message when both config.Shogunate.Project and repoInfo.Slug are empty.
+// an error message when both config.Court.Project and repoInfo.Slug are empty.
 func TestHandleInitCommand_NoSlugReturnsError(t *testing.T) {
 	skipIfNotCI(t)
 	tmpDir := t.TempDir()
 
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	mockTUI := &TUIModel{
 		config: &Config{
-			Shogunate: config.ShogunateConfig{
+			Court: config.CourtConfig{
 				Project: "",
 			},
 		},
@@ -476,7 +476,7 @@ func TestHandleInitCommand_NoSlugReturnsError(t *testing.T) {
 				Slug:        "", // no slug — no git remote
 			},
 		},
-		shogunate: mock,
+		court: mock,
 	}
 
 	cmd := handleInitCommand(mockTUI, []string{})
@@ -492,15 +492,15 @@ func TestHandleInitCommand_NoSlugReturnsError(t *testing.T) {
 }
 
 // TestHandleInitCommand_ProjectAlreadySet tests that handleInitCommand proceeds
-// directly to createInitEdict when config.Shogunate.Project is already set.
+// directly to createInitEdict when config.Court.Project is already set.
 func TestHandleInitCommand_ProjectAlreadySet(t *testing.T) {
 	skipIfNotCI(t)
 	tmpDir := t.TempDir()
 
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	mockTUI := &TUIModel{
 		config: &Config{
-			Shogunate: config.ShogunateConfig{
+			Court: config.CourtConfig{
 				Project: "existing/project",
 			},
 		},
@@ -510,7 +510,7 @@ func TestHandleInitCommand_ProjectAlreadySet(t *testing.T) {
 				Slug:        "should/not/be/used",
 			},
 		},
-		shogunate: mock,
+		court: mock,
 	}
 
 	cmd := handleInitCommand(mockTUI, []string{})
@@ -531,10 +531,10 @@ func TestSaveProjectNameAndInit(t *testing.T) {
 	skipIfNotCI(t)
 	tmpDir := t.TempDir()
 
-	mock := &mockShogunateClient{}
+	mock := &mockCourtClient{}
 	mockTUI := &TUIModel{
 		config: &Config{
-			Shogunate: config.ShogunateConfig{
+			Court: config.CourtConfig{
 				Project: "",
 			},
 		},
@@ -543,7 +543,7 @@ func TestSaveProjectNameAndInit(t *testing.T) {
 				ProjectRoot: tmpDir,
 			},
 		},
-		shogunate: mock,
+		court: mock,
 	}
 
 	cmd := saveProjectNameAndInit(mockTUI, "test-org/test-repo")

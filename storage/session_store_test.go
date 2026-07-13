@@ -521,7 +521,7 @@ func TestSchemaMigration_V3toV4(t *testing.T) {
 	version, err := db.getSchemaVersion()
 	require.NoError(t, err)
 	require.Equal(t, SchemaVersion, version)
-	require.Equal(t, 4, version)
+	require.Equal(t, SchemaVersion, version)
 
 	// Verify the unique index exists
 	var idxCount int
@@ -547,7 +547,7 @@ func TestSchemaMigration_V3toV4(t *testing.T) {
 	require.NoError(t, err)
 
 	// Downgrade to v3 by removing the v4 version record and dropping the unique index
-	_, err = db2.conn.Exec("DELETE FROM schema_version WHERE version = 4")
+	_, err = db2.conn.Exec("DELETE FROM schema_version WHERE version >= 4")
 	require.NoError(t, err)
 	_, err = db2.conn.Exec("DROP INDEX IF EXISTS idx_messages_session_seq")
 	require.NoError(t, err)
@@ -556,14 +556,14 @@ func TestSchemaMigration_V3toV4(t *testing.T) {
 	require.NoError(t, err)
 	db2.Close()
 
-	// Reopen — should trigger migration from v3 to v4
+	// Reopen — should trigger migration from v3 to current version
 	db2, err = InitDB(dbPath2)
 	require.NoError(t, err)
 	defer db2.Close()
 
 	version, err = db2.getSchemaVersion()
 	require.NoError(t, err)
-	require.Equal(t, 4, version, "should have migrated to v4")
+	require.Equal(t, SchemaVersion, version, "should have migrated to current schema version")
 
 	// Verify unique index exists after migration
 	err = db2.conn.QueryRow(

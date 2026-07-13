@@ -9,9 +9,9 @@ import (
 
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/shogunateapi"
+	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/internal/types"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -22,12 +22,12 @@ type handlerRegFunc func(*Conn)
 
 type ReconnectingClient struct {
 	factory  connFactory
-	local    shogunateapi.Client
+	local    courtapi.Client
 	handlers []handlerRegFunc
 
 	mu       sync.RWMutex
 	conn     *Conn
-	client   *ShogunateClient
+	client   *CourtClient
 	reconCtx context.Context
 	cancel   context.CancelFunc
 
@@ -39,7 +39,7 @@ type ReconnectingClient struct {
 	events   chan any
 }
 
-func NewReconnectingClient(factory connFactory, local shogunateapi.Client) *ReconnectingClient {
+func NewReconnectingClient(factory connFactory, local courtapi.Client) *ReconnectingClient {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ReconnectingClient{
 		factory:  factory,
@@ -66,7 +66,7 @@ func (rc *ReconnectingClient) Start() error {
 	}
 	rc.mu.Lock()
 	rc.conn = conn
-	rc.client = NewShogunateClient(conn)
+	rc.client = NewCourtClient(conn)
 	rc.mu.Unlock()
 
 	go rc.watchConnection()
@@ -161,7 +161,7 @@ func (rc *ReconnectingClient) reconnect() error {
 
 		rc.mu.Lock()
 		rc.conn = conn
-		rc.client = NewShogunateClient(conn)
+		rc.client = NewCourtClient(conn)
 		handlers := rc.handlers
 		rc.mu.Unlock()
 
@@ -197,7 +197,7 @@ func (rc *ReconnectingClient) reconnectIfDead() {
 	}
 }
 
-func (rc *ReconnectingClient) getClient() *ShogunateClient {
+func (rc *ReconnectingClient) getClient() *CourtClient {
 	rc.mu.RLock()
 	defer rc.mu.RUnlock()
 	return rc.client
@@ -231,14 +231,14 @@ func (rc *ReconnectingClient) reconnectIfError(err error, shouldRetry func(error
 	return true
 }
 
-func (rc *ReconnectingClient) GetMinister(id string) shogunate.Minister {
+func (rc *ReconnectingClient) GetMinister(id string) court.Minister {
 	if rc.local != nil {
 		return rc.local.GetMinister(id)
 	}
 	return nil
 }
 
-func (rc *ReconnectingClient) ConfigureModel(client shogunate.LLMProvider, config *shogunate.SessionConfig, repoInfo repo.RepoInfo) {
+func (rc *ReconnectingClient) ConfigureModel(client court.LLMProvider, config *court.SessionConfig, repoInfo repo.RepoInfo) {
 	if rc.local != nil {
 		rc.local.ConfigureModel(client, config, repoInfo)
 	}
@@ -490,11 +490,11 @@ func (rc *ReconnectingClient) CompactSession(ctx context.Context, tabTarget, pro
 	return result, err
 }
 
-func (rc *ReconnectingClient) SessionState(tabTarget string) shogunate.SessionState {
+func (rc *ReconnectingClient) SessionState(tabTarget string) court.SessionState {
 	rc.reconnectIfDead()
 	client := rc.getClient()
 	if client == nil {
-		return shogunate.SessionState{}
+		return court.SessionState{}
 	}
 	return client.SessionState(tabTarget)
 }
@@ -513,7 +513,7 @@ func (rc *ReconnectingClient) GetEdictSeals(key storage.EdictKey) ([]storage.Sea
 	return seals, err
 }
 
-func (rc *ReconnectingClient) PublishEvent(key storage.EdictKey, et storage.ShogunateEvent, payload storage.JSON) uint {
+func (rc *ReconnectingClient) PublishEvent(key storage.EdictKey, et storage.CourtEvent, payload storage.JSON) uint {
 	client := rc.getClient()
 	if client == nil {
 		return key.ID
@@ -535,7 +535,7 @@ func (rc *ReconnectingClient) RunShellCommand(ctx context.Context, input runners
 	return output, err
 }
 
-func (rc *ReconnectingClient) SubmitPrompt(targetID string, p *shogunate.Prompt) error {
+func (rc *ReconnectingClient) SubmitPrompt(targetID string, p *court.Prompt) error {
 	client := rc.getClient()
 	if client == nil {
 		return ErrClosed
@@ -563,10 +563,10 @@ func (rc *ReconnectingClient) RestoreMinisterSession(tabType string, msgs []sche
 	return err
 }
 
-func (rc *ReconnectingClient) TakeSnapshot() shogunate.Snapshot {
+func (rc *ReconnectingClient) TakeSnapshot() court.Snapshot {
 	client := rc.getClient()
 	if client == nil {
-		return shogunate.Snapshot{}
+		return court.Snapshot{}
 	}
 	return client.TakeSnapshot()
 }
@@ -578,7 +578,7 @@ func (rc *ReconnectingClient) CancelTab(channelID string) {
 	}
 }
 
-func (rc *ReconnectingClient) GetSessionExport(tabTarget string) (*shogunate.SessionExport, error) {
+func (rc *ReconnectingClient) GetSessionExport(tabTarget string) (*court.SessionExport, error) {
 	client := rc.getClient()
 	if client == nil {
 		return nil, ErrClosed
@@ -607,7 +607,7 @@ func (rc *ReconnectingClient) Subscribe(ctx context.Context) <-chan any {
 	return rc.events
 }
 
-// SetContext updates the shogunate's session configuration (model, API keys,
+// SetContext updates the court's session configuration (model, API keys,
 // repo info) over the wire. The daemon re-initializes Bifrost and calls
 // ConfigureModel internally after every SetContext.
 func (rc *ReconnectingClient) SetContext(ctx context.Context, params types.SetContextParams) error {
@@ -640,4 +640,4 @@ func (rc *ReconnectingClient) ConnDone() <-chan struct{} {
 	return conn.Done()
 }
 
-var _ shogunateapi.Client = (*ReconnectingClient)(nil)
+var _ courtapi.Client = (*ReconnectingClient)(nil)

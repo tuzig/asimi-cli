@@ -26,7 +26,7 @@ const (
 )
 
 // ExportableSession is an interface for that can be exported.
-// Implemented by shogunate.Session.
+// Implemented by court.Session.
 type ExportableSession interface {
 	// GetID returns the session ID
 	GetID() string

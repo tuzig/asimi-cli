@@ -14,7 +14,7 @@ type Config struct {
 	History   HistoryConfig   `koanf:"history"`
 	Session   SessionConfig   `koanf:"session"`
 	Sandbox   SandboxConfig   `koanf:"sandbox"`
-	Shogunate ShogunateConfig `koanf:"shogunate"`
+	Court CourtConfig `koanf:"court"`
 }
 
 // StorageConfig holds storage configuration
@@ -29,7 +29,7 @@ type LoggingConfig struct {
 }
 
 // LLMConfig holds LLM provider settings.
-// This type is shared between main, storage, and shogunate packages.
+// This type is shared between main, storage, and court packages.
 type LLMConfig struct {
 	Provider                   string `koanf:"provider"`
 	Model                      string `koanf:"model"`
@@ -103,22 +103,23 @@ type SandboxConfig struct {
 	PlatformOverlays []string `koanf:"platform_overlays"`
 }
 
-// ShogunateConfig holds configuration for the Shogunate.
-type ShogunateConfig struct {
-	RitualTimeout time.Duration `koanf:"ritual_timeout"`
-	Username      string        `koanf:"username"` // OS username for edict scoping
-	Project       string        `koanf:"project"`  // project slug for edict scoping
+// CourtConfig holds configuration for the Court.
+type CourtConfig struct {
+	RitualTimeout    time.Duration `koanf:"ritual_timeout"`      // legacy, unused
+	StepIdleTimeout  time.Duration `koanf:"step_idle_timeout"`    // max silence before aborting a ritual step (default 5m)
+	Username         string         `koanf:"username"`            // OS username for edict scoping
+	Project          string         `koanf:"project"`             // project slug for edict scoping
 }
 
-// DefaultShogunateConfig returns the default configuration.
-func DefaultShogunateConfig() *ShogunateConfig {
+// DefaultCourtConfig returns the default configuration.
+func DefaultCourtConfig() *CourtConfig {
 	username := "guest"
 	if u, err := user.Current(); err == nil {
 		username = u.Username
 	}
-	return &ShogunateConfig{
-		RitualTimeout: 30 * time.Second,
-		Username:      username,
+	return &CourtConfig{
+		StepIdleTimeout: 5 * time.Minute,
+		Username:         username,
 	}
 }
 

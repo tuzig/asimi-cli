@@ -5,6 +5,17 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Renamed `shogunate/` package to `court/` — type `Shogunate` → `Court`, `NewShogunate` → `NewCourt`
+- Renamed `ShogunateEvent` → `CourtEvent`, event string values `shogunate_started` → `court_started`, `shogunate_ready` → `court_ready`
+- Renamed config section `[shogunate]` → `[court]` (backward-compatible reading of old `[shogunate]` sections)
+- Renamed RPC types: `ShogunateClient` → `CourtClient`, `RegisterShogunateHandlers` → `RegisterCourtHandlers`, etc.
+- Renamed `internal/shogunateapi/` → `internal/courtapi/`
+- Extracted daemon server code from root `daemon.go` into `internal/daemon/` package
+- DB schema migration v4→v5 updates old event string values in `tian_events` and `tian_event_dlq`
+
 ## [0.8.1] - 2026-07-09
 
 ### Changed

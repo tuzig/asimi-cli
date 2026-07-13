@@ -6,11 +6,11 @@
 
 ## You Are the Ruler
 
-In Asimi's Shogunate, **you** are the Ruler (君主). The AI ministers work for you. You speak intent; they execute. This guide gets you productive in 10 minutes.
+In Asimi's Court, **you** are the Ruler (君主). The AI ministers work for you. You speak intent; they execute. This guide gets you productive in 10 minutes.
 
 ## The Three Realms (三界) — Your Mental Model
 
-Think of the Shogunate as mediating between three realms:
+Think of the Court as mediating between three realms:
 
 ```
 Ren (人) — Your Will
@@ -30,7 +30,7 @@ Heaven (天) — Truth - logs & test runs
 
 **Harmony** = Your intent (Ren) flows through verification (Heaven) into code (Earth) without friction.
 
-**Zhengming (正名)** = "Rectification of Names." When the Shogunate doesn't understand your intent, it **stops and asks**. It never guesses. *To guess is treason.*
+**Zhengming (正名)** = "Rectification of Names." When the Court doesn't understand your intent, it **stops and asks**. It never guesses. *To guess is treason.*
 
 ---
 
@@ -140,7 +140,7 @@ The Sage sees all code, edicts, tests, and precedents.
 
 ## Zhengming — When Asimi Asks Questions
 
-When the Shogunate encounters ambiguity, it **halts** and asks:
+When the Court encounters ambiguity, it **halts** and asks:
 
 ```
 Zhengming from Chancellor:
@@ -155,7 +155,7 @@ Options:
 
 **You respond.** Your answer is appended to the edict's intent, and work resumes.
 
-**Why this matters:** The Shogunate never guesses. If it's unclear, it stops. This prevents wasted work and ensures the code matches your intent.
+**Why this matters:** The Court never guesses. If it's unclear, it stops. This prevents wasted work and ensures the code matches your intent.
 
 To keep the number of zhengmings low, we make it the goal of your Chancellor to free you to hunt for future edicts. There's a healthy tension between not guessing and freeing you, one that keeps the Chancellor on his toes.
 
@@ -195,7 +195,7 @@ Ruling tab: "Why is edict-123 stuck in judging?"
 
 ### Ritual Failed After Retries
 
-The Shogunate will invoke a `report_failure` ritual:
+The Court will invoke a `report_failure` ritual:
 
 ```
 A ritual failed after 3 retries for edict-123.
@@ -206,7 +206,7 @@ Suggested next steps:
   3. Cancel the edict and create a new one
 ```
 
-**You decide.** The Shogunate waits for your direction.
+**You decide.** The Court waits for your direction.
 
 ### "I Want to Take Over"
 
@@ -215,7 +215,7 @@ You can always:
 2. **Fix it yourself:** Edit the code, commit, and ask the Sage to review
 3. **Create a new edict:** With corrected scope
 
-The Shogunate serves you — not the other way around.
+The Court serves you — not the other way around.
 
 ---
 
@@ -241,7 +241,7 @@ As Confucius taught:
 > "If names be not correct, language is not in accordance with the truth of things.
 > If language be not in accordance with the truth of things, affairs cannot be carried on to success."
 
-**Translation:** Clear intent → clear execution. The Shogunate exists to make your intent clear before code is written.
+**Translation:** Clear intent → clear execution. The Court exists to make your intent clear before code is written.
 
 ---
 
@@ -250,9 +250,9 @@ As Confucius taught:
 1. **Try a small edict** — Fix a typo, add a log statement
 2. **Explore the Hunting tab** — Ask the Sage about the codebase
 3. **Watch a ritual execute** — See how ministers coordinate
-4. **Read the full guide** — `docs/shogunate_guide.md` for deep dives
+4. **Read the full guide** — `docs/court_guide.md` for deep dives
 
-Welcome to the Shogunate, Ruler. The court awaits your command.
+Welcome to the Court, Ruler. The court awaits your command.
 
 ---
 

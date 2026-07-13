@@ -8,8 +8,8 @@ import (
 
 // MockProvider is a mock implementation of LLMProvider for testing.
 // It allows tests to simulate LLM responses without requiring actual API keys.
-// Note: This mock implements the shogunate.LLMProvider interface by method signature.
-// The compile-time interface check is in shogunate/mocks_test.go to avoid import cycles.
+// Note: This mock implements the court.LLMProvider interface by method signature.
+// The compile-time interface check is in court/mocks_test.go to avoid import cycles.
 type MockProvider struct {
 	StreamingChunks    []StreamingChunk
 	StaticResponse     *schemas.BifrostChatResponse

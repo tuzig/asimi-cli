@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/daemon"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
@@ -115,7 +116,7 @@ func runInteractiveMode() error {
 			ProvideSessionHistory,
 			ProvideTUIModel,
 			StartTUI,
-			ProvideShogunate,
+			ProvideCourt,
 		),
 		fx.Populate(&tuiModel),
 	)
@@ -160,7 +161,7 @@ func runInteractiveMode() error {
 
 	subCtx, cancelSub := context.WithCancel(ctx)
 	defer cancelSub()
-	events := tuiModel.shogunate.Subscribe(subCtx)
+	events := tuiModel.court.Subscribe(subCtx)
 	go func() {
 		for {
 			select {
@@ -193,7 +194,7 @@ func runInteractiveMode() error {
 		}()
 	}
 
-	// fire an event to get the shogunate going
+	// fire an event to get the court going
 	// to avoid race condition where health check runs before model is ready
 	_, runErr := tuiProgram.Run()
 
@@ -261,7 +262,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
 		os.Args = append(os.Args[:1], os.Args[2:]...)
 		kong.Parse(&cli)
-		if err := runDaemonMode(); err != nil {
+		if err := daemon.Run(initDaemonShared); err != nil {
 			fmt.Fprintln(os.Stderr, "daemon:", err)
 			os.Exit(1)
 		}

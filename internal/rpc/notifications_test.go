@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 )
 
@@ -43,23 +43,23 @@ func TestNotificationPipeline(t *testing.T) {
 
 	// Feed a mix of notification types.
 	want := []any{
-		shogunate.StreamStartMsg{ChannelID: "ruling", EdictID: 9},
-		shogunate.StreamChunkMsg{ChannelID: "ruling", Text: "hello "},
-		shogunate.StreamChunkMsg{ChannelID: "ruling", Text: "world"},
-		shogunate.StreamChunkMsg{ChannelID: "sage", Text: "thinking"},
-		shogunate.StreamCompleteMsg{ChannelID: "ruling"},
-		shogunate.StreamErrorMsg{ChannelID: "forge", Err: errors.New("boom")},
-		shogunate.EventsDrainedMsg{Events: []shogunate.DrainedEvent{
+		court.StreamStartMsg{ChannelID: "ruling", EdictID: 9},
+		court.StreamChunkMsg{ChannelID: "ruling", Text: "hello "},
+		court.StreamChunkMsg{ChannelID: "ruling", Text: "world"},
+		court.StreamChunkMsg{ChannelID: "sage", Text: "thinking"},
+		court.StreamCompleteMsg{ChannelID: "ruling"},
+		court.StreamErrorMsg{ChannelID: "forge", Err: errors.New("boom")},
+		court.EventsDrainedMsg{Events: []court.DrainedEvent{
 			{EventType: storage.EventEdictCreated, EdictKey: storage.EdictKey{ID: 9}},
 		}},
-		shogunate.MinisterInvokingMsg{ChannelID: "ruling", MinisterID: "forge", EdictKey: storage.EdictKey{ID: 9}, Task: "write code"},
-		shogunate.MinisterCompletedMsg{ChannelID: "ruling", MinisterID: "forge", EdictKey: storage.EdictKey{ID: 9}, Output: "done", Sealed: true},
-		shogunate.EventNotificationMsg{ChannelID: "ruling", EventType: storage.EventSealGranted, EdictKey: storage.EdictKey{ID: 9}, Message: "sealed"},
-		shogunate.ZhengmingPendingMsg{RequestID: "z-1", MinisterID: "sage", EdictKey: storage.EdictKey{ID: 9}},
-		shogunate.ZhengmingAnsweredMsg{RequestID: "z-1", Answer: "yes"},
-		shogunate.RitualStepMsg{ChannelID: "ruling", RitualName: "swift-strike", StepIndex: 1, TotalSteps: 3, Status: "ok"},
+		court.MinisterInvokingMsg{ChannelID: "ruling", MinisterID: "forge", EdictKey: storage.EdictKey{ID: 9}, Task: "write code"},
+		court.MinisterCompletedMsg{ChannelID: "ruling", MinisterID: "forge", EdictKey: storage.EdictKey{ID: 9}, Output: "done", Sealed: true},
+		court.EventNotificationMsg{ChannelID: "ruling", EventType: storage.EventSealGranted, EdictKey: storage.EdictKey{ID: 9}, Message: "sealed"},
+		court.ZhengmingPendingMsg{RequestID: "z-1", MinisterID: "sage", EdictKey: storage.EdictKey{ID: 9}},
+		court.ZhengmingAnsweredMsg{RequestID: "z-1", Answer: "yes"},
+		court.RitualStepMsg{ChannelID: "ruling", RitualName: "swift-strike", StepIndex: 1, TotalSteps: 3, Status: "ok"},
 		runners.ContainerLaunchedMsg{Message: "up", ContainerID: "abc123"},
-		shogunate.StreamDoneMsg{ChannelID: "ruling"},
+		court.StreamDoneMsg{ChannelID: "ruling"},
 		runners.ToolCallScheduledMsg{ChannelID: "ruling", CallID: "tc1", ToolName: "read_file", Input: "test.go", Status: "scheduled", Formatted: "read_file: test.go"},
 		runners.ToolCallExecutingMsg{ChannelID: "ruling", CallID: "tc1", ToolName: "read_file", Input: "test.go", Status: "executing", Formatted: "read_file: test.go"},
 		runners.ToolCallSuccessMsg{ChannelID: "ruling", CallID: "tc1", ToolName: "read_file", Input: "test.go", Status: "success", Result: "ok", Formatted: "read_file: ok"},
@@ -95,8 +95,8 @@ func TestNotificationPipeline(t *testing.T) {
 // is compared.
 func matchesNotification(want, got any) bool {
 	switch w := want.(type) {
-	case shogunate.StreamErrorMsg:
-		g, ok := got.(shogunate.StreamErrorMsg)
+	case court.StreamErrorMsg:
+		g, ok := got.(court.StreamErrorMsg)
 		if !ok {
 			return false
 		}
@@ -110,8 +110,8 @@ func matchesNotification(want, got any) bool {
 			return false
 		}
 		return true
-	case shogunate.MinisterCompletedMsg:
-		g, ok := got.(shogunate.MinisterCompletedMsg)
+	case court.MinisterCompletedMsg:
+		g, ok := got.(court.MinisterCompletedMsg)
 		if !ok {
 			return false
 		}
@@ -125,8 +125,8 @@ func matchesNotification(want, got any) bool {
 			return false
 		}
 		return true
-	case shogunate.EventsDrainedMsg:
-		g, ok := got.(shogunate.EventsDrainedMsg)
+	case court.EventsDrainedMsg:
+		g, ok := got.(court.EventsDrainedMsg)
 		if !ok || len(g.Events) != len(w.Events) {
 			return false
 		}
@@ -145,38 +145,38 @@ func matchesNotification(want, got any) bool {
 
 func comparableEqual(a, b any) bool {
 	switch at := a.(type) {
-	case shogunate.StreamStartMsg:
-		bt, ok := b.(shogunate.StreamStartMsg)
+	case court.StreamStartMsg:
+		bt, ok := b.(court.StreamStartMsg)
 		return ok && at == bt
-	case shogunate.StreamChunkMsg:
-		bt, ok := b.(shogunate.StreamChunkMsg)
+	case court.StreamChunkMsg:
+		bt, ok := b.(court.StreamChunkMsg)
 		return ok && at == bt
-	case shogunate.StreamCompleteMsg:
-		bt, ok := b.(shogunate.StreamCompleteMsg)
+	case court.StreamCompleteMsg:
+		bt, ok := b.(court.StreamCompleteMsg)
 		return ok && at == bt
-	case shogunate.StreamDoneMsg:
-		bt, ok := b.(shogunate.StreamDoneMsg)
+	case court.StreamDoneMsg:
+		bt, ok := b.(court.StreamDoneMsg)
 		return ok && at == bt
-	case shogunate.StreamInterruptedMsg:
-		bt, ok := b.(shogunate.StreamInterruptedMsg)
+	case court.StreamInterruptedMsg:
+		bt, ok := b.(court.StreamInterruptedMsg)
 		return ok && at == bt
-	case shogunate.StreamMaxTokensReachedMsg:
-		bt, ok := b.(shogunate.StreamMaxTokensReachedMsg)
+	case court.StreamMaxTokensReachedMsg:
+		bt, ok := b.(court.StreamMaxTokensReachedMsg)
 		return ok && at == bt
-	case shogunate.MinisterInvokingMsg:
-		bt, ok := b.(shogunate.MinisterInvokingMsg)
+	case court.MinisterInvokingMsg:
+		bt, ok := b.(court.MinisterInvokingMsg)
 		return ok && at == bt
-	case shogunate.EventNotificationMsg:
-		bt, ok := b.(shogunate.EventNotificationMsg)
+	case court.EventNotificationMsg:
+		bt, ok := b.(court.EventNotificationMsg)
 		return ok && at.ChannelID == bt.ChannelID && at.EventType == bt.EventType && at.EdictKey == bt.EdictKey && at.Message == bt.Message
-	case shogunate.ZhengmingPendingMsg:
-		bt, ok := b.(shogunate.ZhengmingPendingMsg)
+	case court.ZhengmingPendingMsg:
+		bt, ok := b.(court.ZhengmingPendingMsg)
 		return ok && at.RequestID == bt.RequestID && at.MinisterID == bt.MinisterID && at.EdictKey == bt.EdictKey
-	case shogunate.ZhengmingAnsweredMsg:
-		bt, ok := b.(shogunate.ZhengmingAnsweredMsg)
+	case court.ZhengmingAnsweredMsg:
+		bt, ok := b.(court.ZhengmingAnsweredMsg)
 		return ok && at == bt
-	case shogunate.RitualStepMsg:
-		bt, ok := b.(shogunate.RitualStepMsg)
+	case court.RitualStepMsg:
+		bt, ok := b.(court.RitualStepMsg)
 		return ok && at == bt
 	case runners.ContainerLaunchedMsg:
 		bt, ok := b.(runners.ContainerLaunchedMsg)

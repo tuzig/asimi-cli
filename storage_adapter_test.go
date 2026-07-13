@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/shogunate"
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ func TestSessionStore_RoundTrip(t *testing.T) {
 
 	// Create session with various message types
 	now := time.Now()
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:          "test-roundtrip-1",
 		CreatedAt:   now,
 		LastUpdated: now,
@@ -107,7 +107,7 @@ func TestSessionStore_RoundTrip_EmptyMessages(t *testing.T) {
 	defer store.Close()
 
 	// Create session with no user/AI messages (should be skipped on save)
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:          "test-empty-1",
 		FirstPrompt: "empty session",
 		Provider:    "openai",
@@ -144,7 +144,7 @@ func TestSessionStore_RoundTrip_SystemMessages(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:          "test-system-only",
 		FirstPrompt: "system message only",
 		Provider:    "openai",
@@ -181,7 +181,7 @@ func TestSessionStore_ListSessions(t *testing.T) {
 	defer store.Close()
 
 	// Save a session
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:          "test-list-1",
 		FirstPrompt: "List test",
 		Provider:    "openai",
@@ -203,7 +203,7 @@ func TestSessionStore_ListSessions(t *testing.T) {
 	require.GreaterOrEqual(t, len(sessions), 1, "should have at least one session")
 
 	// Find our session
-	var found *shogunate.Session
+	var found *court.Session
 	for i := range sessions {
 		if sessions[i].ID == session.ID {
 			found = &sessions[i]
@@ -259,7 +259,7 @@ func TestSessionStore_IncrementalUpsert_PreservesHistory(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:          "test-incremental-adapter",
 		FirstPrompt: "Hello",
 		Provider:    "openai",
@@ -329,7 +329,7 @@ func TestSaveWithRetry_EventuallySucceeds(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:          "test-retry",
 		FirstPrompt: "retry test",
 		Provider:    "openai",
@@ -344,7 +344,7 @@ func TestSaveWithRetry_EventuallySucceeds(t *testing.T) {
 
 	// Simulate a transient SQLITE_BUSY: fail the first 2 attempts, succeed on the 3rd.
 	var callCount int
-	store.saveHook = func(s *shogunate.Session) error {
+	store.saveHook = func(s *court.Session) error {
 		callCount++
 		if callCount < 3 {
 			return fmt.Errorf("The database file is locked (SQLITE_BUSY) (5) (SQLITE_BUSY)")
@@ -383,7 +383,7 @@ func TestSaveWithRetry_ExhaustsRetries(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:          "test-retry-exhaust",
 		FirstPrompt: "retry exhaust test",
 		Provider:    "openai",
@@ -397,7 +397,7 @@ func TestSaveWithRetry_ExhaustsRetries(t *testing.T) {
 
 	// Always fail with SQLITE_BUSY
 	var callCount int
-	store.saveHook = func(s *shogunate.Session) error {
+	store.saveHook = func(s *court.Session) error {
 		callCount++
 		return fmt.Errorf("The database file is locked (SQLITE_BUSY) (5) (SQLITE_BUSY)")
 	}
@@ -428,7 +428,7 @@ func TestSaveWithRetry_NonBusyErrorNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	session := &shogunate.Session{
+	session := &court.Session{
 		ID:          "test-retry-nonbusy",
 		FirstPrompt: "non-busy test",
 		Provider:    "openai",
@@ -442,7 +442,7 @@ func TestSaveWithRetry_NonBusyErrorNoRetry(t *testing.T) {
 
 	// Fail with a non-BUSY error
 	var callCount int
-	store.saveHook = func(s *shogunate.Session) error {
+	store.saveHook = func(s *court.Session) error {
 		callCount++
 		return fmt.Errorf("disk I/O error")
 	}

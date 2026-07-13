@@ -82,6 +82,17 @@ func InitDB(dbPath string) (*DB, error) {
 			conn.Close()
 			return nil, fmt.Errorf("failed to create schema: %w", err)
 		}
+		// Mark all migrations as applied — the fresh Schema SQL already
+		// creates tables with all current columns.
+		for v := 2; v <= SchemaVersion; v++ {
+			if _, err := conn.Exec(
+				"INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, unixepoch())",
+				v,
+			); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("failed to record schema version %d: %w", v, err)
+			}
+		}
 		slog.Debug("SQLite database initialized with fresh schema", "path", dbPath, "version", SchemaVersion)
 	} else if currentVersion < SchemaVersion {
 		// Run migrations
@@ -128,6 +139,10 @@ func (db *DB) runMigrations(currentVersion int) error {
 		case 4:
 			if err := db.migrateV3toV4(); err != nil {
 				return fmt.Errorf("migration v3→v4 failed: %w", err)
+			}
+		case 5:
+			if err := db.migrateV4toV5(); err != nil {
+				return fmt.Errorf("migration v4→v5 failed: %w", err)
 			}
 		default:
 			return fmt.Errorf("unknown migration version: %d", v)
@@ -215,6 +230,36 @@ func (db *DB) migrateV3toV4() error {
 		return fmt.Errorf("record version 4: %w", err)
 	}
 	slog.Debug("migrated schema v3→v4: unique index on messages(session_id, sequence)")
+	return nil
+}
+
+// migrateV4toV5 renames stored event string values from the old
+// "shogunate_started"/"shogunate_ready" to "court_started"/"court_ready"
+// in both tian_events and tian_event_dlq tables. These tables are created
+// by GORM AutoMigrate, not by the raw Schema SQL, so they may not exist
+// when the migration runs on a DB that hasn't been opened by the app yet.
+func (db *DB) migrateV4toV5() error {
+	migrations := []string{
+		`UPDATE tian_events SET event_type = 'court_started' WHERE event_type = 'shogunate_started'`,
+		`UPDATE tian_events SET event_type = 'court_ready' WHERE event_type = 'shogunate_ready'`,
+		`UPDATE tian_event_dlq SET event_type = 'court_started' WHERE event_type = 'shogunate_started'`,
+		`UPDATE tian_event_dlq SET event_type = 'court_ready' WHERE event_type = 'shogunate_ready'`,
+	}
+	for _, m := range migrations {
+		if _, err := db.conn.Exec(m); err != nil {
+			// Tables may not exist yet (created by GORM AutoMigrate).
+			// Skip gracefully — the rename will apply on the next app
+			// startup if old values are present.
+			continue
+		}
+	}
+	if _, err := db.conn.Exec(
+		"INSERT INTO schema_version (version, applied_at) VALUES (?, unixepoch())",
+		5,
+	); err != nil {
+		return fmt.Errorf("record version 5: %w", err)
+	}
+	slog.Debug("migrated schema v4→v5: renamed shogunate_* event values to court_*")
 	return nil
 }
 
