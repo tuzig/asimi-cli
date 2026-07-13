@@ -1112,7 +1112,8 @@ func enactRitualForEdict(model *TUIModel, edictID uint, ritualName string) tea.C
 			},
 		}
 		model.court.PublishEvent(key, storage.EventRitualEnacted, payload)
-		return showSystemMsg(fmt.Sprintf("Ritual '%s' enacted for edict %d — check the Chancellor for progress", ritualName, edictID))
+		// Stay silent — the ritual manager handles all user notifications
+		return nil
 	}
 }
 

@@ -162,11 +162,13 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 		GetMinister:     s.GetMinister,
 		OnRunnerUpgrade: s.SetRunner,
 		// Each ritual startup gets a fresh cancellable ctx registered
-		// under the chancellor channel. A subsequent ritual on the
-		// same channel replaces it; an explicit CancelTab("chancellor")
-		// from the TUI stops the current one.
-		StreamingCtx: func() context.Context {
-			return s.CancellableStreamCtx("chancellor")
+		// under the ritual's edict channel (e.g. "e123"). Edict 1
+		// (court infrastructure) uses "court" and routes to the
+		// chancellor tab. A subsequent ritual on the same channel
+		// replaces it; an explicit CancelTab from the TUI stops the
+		// current one.
+		StreamingCtx: func(channelID string) context.Context {
+			return s.CancellableStreamCtx(channelID)
 		},
 	})
 
@@ -774,8 +776,8 @@ func (s *Court) CancelEdict(edictID uint) error {
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("edict not found: %d", edictID)
 	}
-	// Stop any running ritual for the chancellor channel
-	s.CancelTab("chancellor")
+	// Stop any running ritual for this edict's channel
+	s.CancelTab(ritualChannelID(edictID))
 	return nil
 }
 

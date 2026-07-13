@@ -1783,13 +1783,13 @@ func setupRitualTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// TestInvokeRitualTool_Enacted verifies that enact_ritual returns immediately with "enacted" status
+// TestInvokeRitualTool_Requested verifies that enact_ritual returns immediately with "requested" status
 // and publishes an EventRitualEnacted event for the RitualGuard to pick up.
-func TestInvokeRitualTool_Enacted(t *testing.T) {
+func TestInvokeRitualTool_Requested(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	ritual := &RitualDef{
-		Name:        "test-enacted",
+		Name:        "test-requested",
 		Description: "A test ritual for async enactment",
 		Steps: []RitualStep{
 			{Name: "echo", Minister: "forge", Task: "echo hello"},
@@ -1805,7 +1805,7 @@ func TestInvokeRitualTool_Enacted(t *testing.T) {
 	}
 
 	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: base}
-	input := `{"ritual_name":"test-enacted","edict_id":1}`
+	input := `{"ritual_name":"test-requested","edict_id":1}`
 
 	result, err := tool.Call(context.Background(), input)
 	if err != nil {
@@ -1818,11 +1818,11 @@ func TestInvokeRitualTool_Enacted(t *testing.T) {
 		t.Fatalf("Failed to parse result JSON: %v", err)
 	}
 
-	if !strings.HasPrefix(res["status"].(string), "enacted") {
-		t.Errorf("expected status to start with 'enacted', got %q", res["status"])
+	if !strings.HasPrefix(res["status"].(string), "requested") {
+		t.Errorf("expected status to start with 'requested', got %q", res["status"])
 	}
-	if res["ritual_name"] != "test-enacted" {
-		t.Errorf("expected ritual_name 'test-enacted', got %q", res["ritual_name"])
+	if res["ritual_name"] != "test-requested" {
+		t.Errorf("expected ritual_name 'test-requested', got %q", res["ritual_name"])
 	}
 	// edict_id comes back as float64 from JSON unmarshaling
 	if res["edict_id"] != float64(1) {
@@ -1830,13 +1830,13 @@ func TestInvokeRitualTool_Enacted(t *testing.T) {
 	}
 }
 
-// TestInvokeRitualTool_EnactedEvenForBadRitual verifies that enact_ritual returns "enacted"
+// TestInvokeRitualTool_RequestedEvenForBadRitual verifies that enact_ritual returns "requested"
 // even for rituals that would fail — failure is reported asynchronously via events.
-func TestInvokeRitualTool_EnactedEvenForBadRitual(t *testing.T) {
+func TestInvokeRitualTool_RequestedEvenForBadRitual(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	ritual := &RitualDef{
-		Name: "test-fail-enacted",
+		Name: "test-fail-requested",
 		Steps: []RitualStep{
 			{Name: "fail", Minister: "forge", Task: "do something", OnFailure: "abort"},
 		},
@@ -1851,7 +1851,7 @@ func TestInvokeRitualTool_EnactedEvenForBadRitual(t *testing.T) {
 	}
 
 	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: base}
-	input := `{"ritual_name":"test-fail-enacted","edict_id":2}`
+	input := `{"ritual_name":"test-fail-requested","edict_id":2}`
 
 	result, err := tool.Call(context.Background(), input)
 	if err != nil {
@@ -1863,12 +1863,12 @@ func TestInvokeRitualTool_EnactedEvenForBadRitual(t *testing.T) {
 		t.Fatalf("Failed to parse result JSON: %v", err)
 	}
 
-	// Should still return "enacted" — failure happens async
-	if !strings.HasPrefix(res["status"].(string), "enacted") {
-		t.Errorf("expected status to start with 'enacted', got %q", res["status"])
+	// Should still return "requested" — failure happens async
+	if !strings.HasPrefix(res["status"].(string), "requested") {
+		t.Errorf("expected status to start with 'requested', got %q", res["status"])
 	}
-	if res["ritual_name"] != "test-fail-enacted" {
-		t.Errorf("expected ritual_name 'test-fail-enacted', got %q", res["ritual_name"])
+	if res["ritual_name"] != "test-fail-requested" {
+		t.Errorf("expected ritual_name 'test-fail-requested', got %q", res["ritual_name"])
 	}
 }
 
@@ -3930,3 +3930,75 @@ func TestRitualIdleTimeoutKeepsActiveStepAlive(t *testing.T) {
 	require.NoError(t, err, "step should complete despite short idle timeout — minister was active")
 }
 
+// TestRitualChannelID verifies that RitualExecution.ChannelID() returns
+// the correct per-edict channel ID, with the edict 1 special case.
+func TestRitualChannelID(t *testing.T) {
+	tests := []struct {
+		edictID uint
+		want    string
+	}{
+		{1, "court"},
+		{2, "e2"},
+		{100, "e100"},
+		{644, "e644"},
+	}
+	for _, tt := range tests {
+		e := &RitualExecution{EdictID: tt.edictID}
+		assert.Equal(t, tt.want, e.ChannelID(),
+			"ChannelID() for edict %d", tt.edictID)
+	}
+}
+
+// TestRitualChannelIDHelper verifies the standalone ritualChannelID function.
+func TestRitualChannelIDHelper(t *testing.T) {
+	tests := []struct {
+		edictID uint
+		want    string
+	}{
+		{1, "court"},
+		{2, "e2"},
+		{644, "e644"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, ritualChannelID(tt.edictID),
+			"ritualChannelID(%d)", tt.edictID)
+	}
+}
+
+// TestRitualNotifyUsesEdictChannelID verifies that Notify() sets the
+// ChannelID on RitualStepMsg to the edict's channel, not "chancellor".
+func TestRitualNotifyUsesEdictChannelID(t *testing.T) {
+	var got RitualStepMsg
+	e := &RitualExecution{
+		EdictID:    644,
+		RitualName: "test",
+		ID:         "exec-1",
+		notify: func(msg any) {
+			if m, ok := msg.(RitualStepMsg); ok {
+				got = m
+			}
+		},
+	}
+	e.Notify(RitualStepMsg{Status: "started"})
+	assert.Equal(t, "e644", got.ChannelID, "Notify should route to e644, not chancellor")
+	assert.Equal(t, "test", got.RitualName)
+	assert.Equal(t, uint(644), got.EdictID)
+}
+
+// TestRitualNotifyEdict1UsesCourtChannel verifies that edict 1 rituals
+// route to the "court" channel (chancellor tab) instead of "e1".
+func TestRitualNotifyEdict1UsesCourtChannel(t *testing.T) {
+	var got RitualStepMsg
+	e := &RitualExecution{
+		EdictID:    1,
+		RitualName: "bootstrap",
+		ID:         "exec-1",
+		notify: func(msg any) {
+			if m, ok := msg.(RitualStepMsg); ok {
+				got = m
+			}
+		},
+	}
+	e.Notify(RitualStepMsg{Status: "started"})
+	assert.Equal(t, "court", got.ChannelID, "edict 1 should route to court channel")
+}

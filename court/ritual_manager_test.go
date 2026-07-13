@@ -281,7 +281,7 @@ func TestStartRitualFailureNotifies(t *testing.T) {
 			nil, // publishEvent — emitEvent falls back to DB persistence
 			db, mockRunner, slog.Default(), repo.RepoInfo{},
 		),
-		streamingCtx: func() context.Context { return context.Background() },
+		streamingCtx: func(string) context.Context { return context.Background() },
 	}
 
 	var notified []RitualStepMsg
@@ -812,5 +812,137 @@ func TestRecoveryZhengmingHasPassOption(t *testing.T) {
 	db.Model(&RitualExecution{}).Where("state IN ?", []RitualState{RitualStateAborted, RitualStateFailed, RitualStateStopped}).Count(&count)
 	if count != 1 {
 		t.Errorf("expected 1 aborted ritual, got %d", count)
+	}
+}
+
+// TestStartRitualQueuedWhenLocked verifies that when the ritualMu is already
+// held, startRitual emits a "queued" notification before waiting for the lock.
+func TestStartRitualQueuedWhenLocked(t *testing.T) {
+	db := setupEventTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "queued-test",
+		Steps: []RitualStep{
+			{Name: "work", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "ok\n", ExitCode: "0"},
+		},
+	}
+	rg := &RitualGuard{
+		MinisterBase:   base,
+		ritualRegistry: registry,
+		ritualRunner: NewRitualRunner(
+			registry,
+			func(id string) Minister { return nil },
+			nil,
+			db, mockRunner, slog.Default(), repo.RepoInfo{},
+		),
+		streamingCtx: func(string) context.Context { return context.Background() },
+	}
+
+	var notified []RitualStepMsg
+	var mu sync.Mutex
+	rg.SetNotify(func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			mu.Lock()
+			notified = append(notified, stepMsg)
+			mu.Unlock()
+		}
+	})
+
+	key := storage.EdictKey{ID: 77, Username: "testuser", Project: "testproject"}
+
+	// Hold the lock so the next startRitual must queue
+	rg.ritualMu.Lock()
+
+	// Start ritual in a goroutine — it should emit "queued" then block on Lock()
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("panic: %v", r)
+			} else {
+				done <- nil
+			}
+		}()
+		rg.startRitual("queued-test", key, nil)
+	}()
+
+	// Wait for the "queued" notification (with timeout)
+	deadline := time.After(2 * time.Second)
+	var queuedMsg *RitualStepMsg
+	for {
+		mu.Lock()
+		for i := range notified {
+			if notified[i].Status == "queued" {
+				queuedMsg = &notified[i]
+				break
+			}
+		}
+		mu.Unlock()
+		if queuedMsg != nil {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for 'queued' notification, got: %+v", notified)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	if queuedMsg.RitualName != "queued-test" {
+		t.Errorf("expected RitualName 'queued-test', got %q", queuedMsg.RitualName)
+	}
+	if queuedMsg.EdictID != 77 {
+		t.Errorf("expected EdictID 77, got %d", queuedMsg.EdictID)
+	}
+
+	// Release the lock so the queued ritual can proceed
+	rg.ritualMu.Unlock()
+
+	// Wait for startRitual goroutine to finish
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("startRitual panicked: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("startRitual did not complete after lock release")
+	}
+
+	// After lock release, the ritual should have started running.
+	// The "started" notification from RitualRunner.Start proves the ritual
+	// was unblocked after being queued. Poll for it since the goroutine's
+	// completion may race with the notification delivery.
+	startDeadline := time.After(2 * time.Second)
+	for {
+		mu.Lock()
+		var foundStarted bool
+		for _, msg := range notified {
+			if msg.Status == "started" && msg.StepName == "" {
+				foundStarted = true
+				break
+			}
+		}
+		mu.Unlock()
+		if foundStarted {
+			break
+		}
+		select {
+		case <-startDeadline:
+			mu.Lock()
+			notifiedCopy := append([]RitualStepMsg(nil), notified...)
+			mu.Unlock()
+			t.Fatalf("expected 'started' notification after lock release, got: %+v", notifiedCopy)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }

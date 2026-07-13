@@ -3438,10 +3438,8 @@ func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
 	// pendingRitualEnact should be cleared
 	assert.Nil(t, updated.pendingRitualEnact)
 
-	// A success toast should be shown
-	require.Len(t, updated.commandLine.toasts, 1, "expected one toast for ritual enact")
-	assert.Equal(t, "success", updated.commandLine.toasts[0].Type)
-	assert.Contains(t, updated.commandLine.toasts[0].Message, "Ritual enact")
+	// No toast — the ritual manager handles user notifications
+	assert.Empty(t, updated.commandLine.toasts)
 }
 
 func TestPendingRitualEnact_NoDoesNotPublishEvent(t *testing.T) {
@@ -4415,19 +4413,14 @@ func TestDispatchEdictAction_Implement(t *testing.T) {
 	cmd := dispatchEdictAction(model, 42, []string{"Implement"})
 	require.NotNil(t, cmd)
 	msgs := extractBatchMsgs(t, cmd)
-	// Batch should contain showContextMsg (from enact) and edictsLoadedMsg (from reload)
-	var foundContext, foundReload bool
+	// Batch should contain edictsLoadedMsg (from reload); enactRitualForEdict
+	// returns nil since the ritual manager handles user notifications
+	var foundReload bool
 	for _, msg := range msgs {
-		if sysMsg, ok := msg.(showContextMsg); ok {
-			foundContext = true
-			assert.Contains(t, sysMsg.content, "swift-strike")
-			assert.Contains(t, sysMsg.content, "42")
-		}
 		if _, ok := msg.(edictsLoadedMsg); ok {
 			foundReload = true
 		}
 	}
-	assert.True(t, foundContext, "expected showContextMsg for Implement action")
 	assert.True(t, foundReload, "expected edictsLoadedMsg for reload in Implement action")
 }
 
@@ -4918,4 +4911,165 @@ func TestEditEdictIntentCmd_EdictNotFound(t *testing.T) {
 	sysMsg, ok := msg.(showContextMsg)
 	assert.True(t, ok, "expected showContextMsg for not-found edict")
 	assert.Contains(t, sysMsg.content, "not found")
+}
+
+func TestIsRitualChannel(t *testing.T) {
+	tests := []struct {
+		channelID string
+		want      bool
+	}{
+		{"e123", true},
+		{"e1", true},
+		{"e644", true},
+		{"court", false},
+		{"chancellor", false},
+		{"forge", false},
+		{"e", false},
+		{"eabc", false},
+		{"", false},
+		{"ritual", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.channelID, func(t *testing.T) {
+			assert.Equal(t, tt.want, isRitualChannel(tt.channelID))
+		})
+	}
+}
+
+// TestRitualStepMsg_AutoCreatesTab verifies that receiving a RitualStepMsg
+// from an unknown "e<N>" channel auto-creates a ritual tab.
+func TestRitualStepMsg_AutoCreatesTab(t *testing.T) {
+	model := newTestModel(t)
+
+	// No tab should exist for e999 yet
+	require.Nil(t, model.tabs.TabByTarget("e999"),
+		"no ritual tab should exist before first message")
+
+	msg := court.RitualStepMsg{
+		ChannelID:  "e999",
+		RitualName: "swift-strike",
+		StepName:   "forge",
+		StepIndex:  0,
+		TotalSteps: 2,
+		Status:     "started",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	tab := updatedModel.tabs.TabByTarget("e999")
+	require.NotNil(t, tab, "ritual tab should be auto-created for e999")
+	assert.Equal(t, "ritual", string(tab.Type))
+}
+
+// TestRitualStepMsg_NoAutoCreateForChancellor verifies that messages
+// from the "chancellor" channel do NOT auto-create a ritual tab.
+func TestRitualStepMsg_NoAutoCreateForChancellor(t *testing.T) {
+	model := newTestModel(t)
+
+	tabBefore := model.tabs.TabByTarget("chancellor")
+
+	msg := court.RitualStepMsg{
+		ChannelID:  "chancellor",
+		RitualName: "dawn-audience",
+		StepName:   "strategist",
+		StepIndex:  0,
+		TotalSteps: 3,
+		Status:     "started",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	// No "chancellor" ritual tab should have been auto-created
+	// (existing chancellor tab is the chat tab, not a ritual tab)
+	tab := updatedModel.tabs.TabByTarget("chancellor")
+	if tabBefore == nil {
+		assert.Nil(t, tab, "no ritual tab should be auto-created for chancellor channel")
+	}
+}
+
+// TestStreamChunkMsg_AutoCreatesRitualTab verifies that receiving a
+// StreamChunkMsg from an unknown "e<N>" channel auto-creates a ritual tab.
+func TestStreamChunkMsg_AutoCreatesRitualTab(t *testing.T) {
+	model := newTestModel(t)
+
+	require.Nil(t, model.tabs.TabByTarget("e644"),
+		"no ritual tab should exist before first stream chunk")
+
+	msg := court.StreamChunkMsg{
+		ChannelID: "e644",
+		Text:      "hello",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	tab := updatedModel.tabs.TabByTarget("e644")
+	require.NotNil(t, tab, "ritual tab should be auto-created for e644")
+	assert.Equal(t, "ritual", string(tab.Type))
+}
+
+// TestStreamChunkMsg_NoAutoCreateForNonRitualChannel verifies that stream
+// chunks from non-ritual channels (e.g. "forge") don't create a ritual tab.
+func TestStreamChunkMsg_NoAutoCreateForNonRitualChannel(t *testing.T) {
+	model := newTestModel(t)
+
+	// Use "censor" — a minister name, not a ritual channel pattern.
+	// No tab should exist for it yet (the default model has a "forge" tab).
+	require.Nil(t, model.tabs.TabByTarget("censor"),
+		"no tab should exist for censor yet")
+
+	msg := court.StreamChunkMsg{
+		ChannelID: "censor",
+		Text:      "hello",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	// No ritual tab should have been created for "censor"
+	tab := updatedModel.tabs.TabByTarget("censor")
+	assert.Nil(t, tab, "no ritual tab should be auto-created for non-ritual channel 'censor'")
+}
+
+// TestViewLayoutHeightInvariantAnsweringMode verifies that a model in
+// answering mode with multi-line options renders a View() with exactly
+// m.height lines and the tab bar is visible (not scrolled off-screen).
+func TestViewLayoutHeightInvariantAnsweringMode(t *testing.T) {
+	model := newTestModel(t)
+	model.width = 80
+	model.height = 40
+
+	// Dismiss welcome so the tab bar renders
+	model.tabs.DismissWelcome()
+	// Add a second tab so the tab bar is non-empty
+	model.tabs.Add("chat2", TabType("chat"), "target2")
+
+	// Enter answering mode with long options that wrap to multiple lines
+	longOption := strings.Repeat("word ", 28) // ~140 chars, wraps at width 74
+	state := &AnsweringState{
+		RequestID: "test-answering-height",
+		Title:     "Zhengming: Sage asks",
+		Questions: []AnsweringQuestion{
+			{
+				Text:    "Which approach do you prefer?",
+				Summary: "Which approach?",
+				Options: []string{longOption, "Short", longOption, "Edit"},
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	model.prompt().EnterAnsweringMode(state)
+
+	view := model.View()
+	lineCount := strings.Count(view, "\n") + 1
+	if view == "" {
+		lineCount = 0
+	}
+
+	assert.Equal(t, model.height, lineCount,
+		"View() output should have exactly m.height lines in answering mode (no overflow)")
+
+	// The tab bar text must be present — not scrolled off
+	tabBar := model.tabs.RenderTabBar(80)
+	require.NotEmpty(t, tabBar, "multi-tab should produce a tab bar")
+	assert.Contains(t, view, "Chancellor",
+		"tab bar text should be present in View() output (not scrolled off)")
 }

@@ -99,7 +99,7 @@ func newTestRitualGuard(t *testing.T, db *gorm.DB, getMinister func(id string) M
 	rg := NewRitualGuard(RitualGuardOpts{
 		Base:         base,
 		GetMinister:  getMinister,
-		StreamingCtx: func() context.Context { return context.Background() },
+		StreamingCtx: func(string) context.Context { return context.Background() },
 	})
 	return rg
 }
@@ -2299,7 +2299,7 @@ func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
 			}
 			return nil
 		},
-		StreamingCtx: func() context.Context { return context.Background() },
+		StreamingCtx: func(string) context.Context { return context.Background() },
 	})
 	rg.ritualRegistry.Register(ritual)
 	// Set a no-op notify so startRitual doesn't panic on failure

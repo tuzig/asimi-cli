@@ -149,7 +149,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	}
 
 	result := map[string]any{
-		"status":      "enacted and reported. stay quiet and trust the ritual to wake you up when done",
+		"status":      "requested and reported. stay quiet and trust the ritual to wake you up when done",
 		"ritual_name": params.RitualName,
 		"edict_id":    key.ID,
 	}

@@ -48,7 +48,7 @@ type RitualGuard struct {
 	flatlineAge    time.Duration
 	// Dependency injection (replaces *Court back-reference)
 	getMinister  func(id string) Minister
-	streamingCtx func() context.Context
+	streamingCtx func(string) context.Context
 	version      string // Application version for health checks
 
 	// recoveryMu blocks event-driven rituals during recovery prompts
@@ -62,7 +62,7 @@ type RitualGuardOpts struct {
 	Runner          runners.Runner
 	GetMinister     func(id string) Minister
 	OnRunnerUpgrade func(runners.Runner) // propagates runner changes back to court
-	StreamingCtx    func() context.Context
+	StreamingCtx    func(string) context.Context
 	Version         string // Application version for health checks
 }
 
@@ -146,7 +146,18 @@ func (rg *RitualGuard) PublishEvent(key storage.EdictKey, eventType storage.Cour
 	return key.ID
 }
 
-// startRitual starts and runs a ritual using the Chancellor tab's streaming context.
+// ritualChannelID returns the streaming channel ID for a ritual's edict.
+// Edict 1 (court infrastructure) uses "court" so its output routes to the
+// chancellor tab without creating a visible ritual tab. All other edicts
+// use the "e<N>" convention matching commit message suffixes.
+func ritualChannelID(edictID uint) string {
+	if edictID == 1 {
+		return "court"
+	}
+	return fmt.Sprintf("e%d", edictID)
+}
+
+// startRitual starts and runs a ritual using the edict's own streaming context.
 // It runs in a goroutine so ritual execution (including blocking waits for
 // zhengming during recovery) cannot stall the event loop. Rituals remain
 // serialized via ritualMu so only one runs at a time.
@@ -154,11 +165,18 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 	go func() {
 		// Try to acquire lock; if held, check for stale rituals and abort them
 		if !rg.ritualMu.TryLock() {
+			rg.notify(RitualStepMsg{
+				RitualName: ritualName,
+				EdictID:    key.ID,
+				Status:     "queued",
+				Message:    fmt.Sprintf("Ritual %s queued — waiting for another ritual to finish", ritualName),
+			})
 			rg.abortStaleRitualsIfLocked()
 			rg.ritualMu.Lock()
 		}
 		defer rg.ritualMu.Unlock()
-		ctx := rg.streamingCtx()
+		channelID := ritualChannelID(key.ID)
+		ctx := rg.streamingCtx(channelID)
 		exec, err := rg.ritualRunner.Start(ctx, ritualName, key, inputs, rg.notify)
 		if err != nil {
 			rg.logger.Warn("failed to start ritual", "ritual", ritualName, "error", err)

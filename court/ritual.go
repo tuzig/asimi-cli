@@ -17,11 +17,11 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -518,11 +518,22 @@ func (e *RitualExecution) EdictKey() storage.EdictKey {
 	return storage.EdictKey{ID: e.EdictID, Username: e.Username, Project: e.Project}
 }
 
+// ChannelID returns the streaming channel ID for this ritual's edict.
+// Edict 1 (court infrastructure) uses "court" so its output routes to the
+// chancellor tab without creating a visible ritual tab. All other edicts
+// use the "e<N>" convention matching commit message suffixes.
+func (e *RitualExecution) ChannelID() string {
+	if e.EdictID == 1 {
+		return "court"
+	}
+	return fmt.Sprintf("e%d", e.EdictID)
+}
+
 // Notify sends a ritual step message, pre-filling common fields from e.
 // If no notify function is set, this is a no-op.
 func (e *RitualExecution) Notify(msg RitualStepMsg) {
 	if e.notify != nil {
-		msg.ChannelID = "chancellor"
+		msg.ChannelID = e.ChannelID()
 		msg.RitualName = e.RitualName
 		msg.ExecutionID = e.ID
 		msg.EdictID = e.EdictID
@@ -689,7 +700,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		}
 		callID := GenerateID("ritualcmd", exec.ID, entry.Key, raw)
 		exec.notifyAny(runners.ToolCallScheduledMsg{
-			ChannelID: "chancellor",
+			ChannelID: exec.ChannelID(),
 			CallID:    callID,
 			ToolName:  entry.Key,
 			Input:     raw,
@@ -700,7 +711,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			exec.State = RitualStateFailed
 			r.saveExecution(exec)
 			exec.notifyAny(runners.ToolCallErrorMsg{
-				ChannelID: "chancellor",
+				ChannelID: exec.ChannelID(),
 				CallID:    callID,
 				ToolName:  entry.Key,
 				Input:     raw,
@@ -721,7 +732,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
 		exec.notifyAny(runners.ToolCallSuccessMsg{
-			ChannelID: "chancellor",
+			ChannelID: exec.ChannelID(),
 			CallID:    callID,
 			ToolName:  entry.Key,
 			Input:     raw,
@@ -836,7 +847,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		}
 		callID := GenerateID("ritualcmd", exec.ID, entry.Key, raw)
 		exec.notifyAny(runners.ToolCallScheduledMsg{
-			ChannelID: "chancellor",
+			ChannelID: exec.ChannelID(),
 			CallID:    callID,
 			ToolName:  entry.Key,
 			Input:     raw,
@@ -859,7 +870,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			}
 		} else if err != nil {
 			exec.notifyAny(runners.ToolCallErrorMsg{
-				ChannelID: "chancellor",
+				ChannelID: exec.ChannelID(),
 				CallID:    callID,
 				ToolName:  entry.Key,
 				Input:     raw,
@@ -870,7 +881,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			continue
 		}
 		exec.notifyAny(runners.ToolCallSuccessMsg{
-			ChannelID: "chancellor",
+			ChannelID: exec.ChannelID(),
 			CallID:    callID,
 			ToolName:  entry.Key,
 			Input:     raw,
@@ -939,7 +950,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			}
 			callID := GenerateID("ritualcmd", exec.ID, entry.Key, raw)
 			exec.notifyAny(runners.ToolCallScheduledMsg{
-				ChannelID: "chancellor",
+				ChannelID: exec.ChannelID(),
 				CallID:    callID,
 				ToolName:  entry.Key,
 				Input:     raw,
@@ -947,8 +958,9 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			})
 			result, err := r.runGivenStep(ctx, exec, entry)
 			if err != nil {
+				// TODO: trim `raw` to 60 chars
 				exec.notifyAny(runners.ToolCallErrorMsg{
-					ChannelID: "chancellor",
+					ChannelID: exec.ChannelID(),
 					CallID:    callID,
 					ToolName:  entry.Key,
 					Input:     raw,
@@ -958,7 +970,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 				return "", fmt.Errorf("given %q failed: %w", raw, err)
 			}
 			exec.notifyAny(runners.ToolCallSuccessMsg{
-				ChannelID: "chancellor",
+				ChannelID: exec.ChannelID(),
 				CallID:    callID,
 				ToolName:  entry.Key,
 				Input:     raw,
@@ -1032,7 +1044,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		}
 		callID := GenerateID("ritualcmd", exec.ID, entry.Key, raw)
 		exec.notifyAny(runners.ToolCallScheduledMsg{
-			ChannelID: "chancellor",
+			ChannelID: exec.ChannelID(),
 			CallID:    callID,
 			ToolName:  entry.Key,
 			Input:     raw,
@@ -1054,7 +1066,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			}
 		} else if err != nil {
 			exec.notifyAny(runners.ToolCallErrorMsg{
-				ChannelID: "chancellor",
+				ChannelID: exec.ChannelID(),
 				CallID:    callID,
 				ToolName:  entry.Key,
 				Input:     raw,
@@ -1064,7 +1076,7 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 			return actResult, err
 		}
 		exec.notifyAny(runners.ToolCallSuccessMsg{
-			ChannelID: "chancellor",
+			ChannelID: exec.ChannelID(),
 			CallID:    callID,
 			ToolName:  entry.Key,
 			Input:     raw,
@@ -1714,7 +1726,7 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		case RitualStepMsg:
 			exec.Notify(m)
 		case StreamChunkMsg:
-			m.ChannelID = "chancellor"
+			m.ChannelID = exec.ChannelID()
 			exec.notify(m)
 		default:
 			exec.notify(msg)
@@ -1782,13 +1794,13 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		cfg := minister.GetConfig()
 		sessionConfig := &SessionConfig{LLM: cfg, WorkingDir: minister.RepoInfo().ProjectRoot}
 		var err error
-		actSession, err = CreateSession(minister, minister.Model(), sessionConfig, notify, "chancellor", exec.EdictKey())
+		actSession, err = CreateSession(minister, minister.Model(), sessionConfig, notify, exec.ChannelID(), exec.EdictKey())
 		if err != nil {
 			return "", fmt.Errorf("failed to create session for %s: %w", step.Minister, err)
 		}
 		exec.stepStates[exec.CurrentStep].Session = actSession
 	}
-	actSession.SetNotify(notify, "chancellor")
+	actSession.SetNotify(notify, exec.ChannelID())
 	effort := step.Effort
 	if effort == "" {
 		effort = "medium"

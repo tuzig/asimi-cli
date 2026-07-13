@@ -1455,6 +1455,17 @@ func isConnError(err error) bool {
 	return connErrorStrings[err.Error()]
 }
 
+// isRitualChannel returns true if channelID matches the "e<digits>" pattern
+// used by per-edict ritual channels (e.g. "e123"). Edict 1 uses "court"
+// and does not match, so court infrastructure rituals stay on the chancellor tab.
+func isRitualChannel(channelID string) bool {
+	if len(channelID) < 2 || channelID[0] != 'e' {
+		return false
+	}
+	_, err := strconv.ParseUint(channelID[1:], 10, 64)
+	return err == nil
+}
+
 // friendlyConnError converts a raw RPC connection error string into a
 // user-friendly message.
 func friendlyConnError(err error) string {
@@ -2054,6 +2065,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Court streaming message handlers
 	case court.StreamChunkMsg:
+		// Auto-create a ritual tab for "e<N>" channels that don't have one yet
+		if isRitualChannel(msg.ChannelID) && m.tabs.TabByTarget(msg.ChannelID) == nil {
+			m.tabs.Add(msg.ChannelID, "ritual", msg.ChannelID)
+		}
 		// Drop chunks for tabs the user already cancelled; daemon may still
 		// emit a few in-flight chunks before its ctx-cancel takes effect.
 		if tab := m.tabs.TabByTarget(msg.ChannelID); tab != nil && !tab.Streaming {
@@ -2121,6 +2136,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case court.RitualStepMsg:
+		// Auto-create a ritual tab for "e<N>" channels that don't have one yet
+		if isRitualChannel(msg.ChannelID) && m.tabs.TabByTarget(msg.ChannelID) == nil {
+			m.tabs.Add(msg.ChannelID, "ritual", msg.ChannelID)
+		}
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("RITUAL_STEP",
 			fmt.Sprintf("Ritual %s step %s [%d/%d] %s",
@@ -2129,6 +2148,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// TODO: remove this and use a different Msg type
 		case "info":
 			chat.AddMessage(fmt.Sprintf("  %s", msg.Message))
+		case "queued":
+			text := fmt.Sprintf("⏳ Ritual %s queued for edict %d — waiting for another ritual to finish",
+				msg.RitualName, msg.EdictID)
+			if msg.EdictID == 1 {
+				text = fmt.Sprintf("⏳ Ritual %s queued — waiting for another ritual to finish",
+					msg.RitualName)
+			}
+			m.commandLine.AddToast(text, "warning", 3*time.Second)
 		case "started":
 			text := ""
 			if msg.StepName == "" {
@@ -2554,7 +2581,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				slog.Info("Got user confiramtion, sending an even to enact ritual")
 				m.court.PublishEvent(key, storage.EventRitualEnacted, payload)
-				m.commandLine.AddToast("Ritual enact, check the Chancellor for its progress", "success", 4*time.Second)
+			// Stay silent — the ritual manager notifies when the ritual starts or is queued
 			}
 			// No explicit "declined" message needed; the 📜 notification already shows
 			m.pendingRitualEnact = nil

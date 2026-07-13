@@ -1257,7 +1257,7 @@ func (m *MinisterBase) StartRitual(name string, key storage.EdictKey, inputs map
 		return err
 	}
 
-	logger.Info("ritual enacted", "ritual", name, "edict_id", key.ID)
+	logger.Info("ritual requested", "ritual", name, "edict_id", key.ID)
 	return nil
 }
 
