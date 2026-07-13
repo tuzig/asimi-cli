@@ -64,7 +64,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{
 			"forge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "forge", tasksCh: make(chan *Task, 1)},
 			"judge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "judge", tasksCh: make(chan *Task, 1)},
@@ -73,7 +73,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	// === PHASE 1: START AND ABORT ===
 	ctx1, cancel1 := context.WithCancel(context.Background())
@@ -90,7 +90,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// === PHASE 2: RESTART AND RECOVER ===
-	shog.ministers["judge"] = &blockingTestMinister{
+	court.ministers["judge"] = &blockingTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "judge",
 		tasksCh:      make(chan *Task, 1),
@@ -163,7 +163,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{
 			"forge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "forge", tasksCh: make(chan *Task, 1)},
 			"judge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "judge", tasksCh: make(chan *Task, 1)},
@@ -172,7 +172,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 		logger: slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	// === PHASE 1: Start and abort during judge step ===
 	ctx1, cancel1 := context.WithCancel(context.Background())
@@ -189,7 +189,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// === PHASE 2: Restart and verify skip ===
-	shog.ministers["judge"] = &blockingTestMinister{
+	court.ministers["judge"] = &blockingTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
 		id:           "judge",
 		tasksCh:      make(chan *Task, 1),

@@ -61,12 +61,12 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 	}
 	go forgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"strategist": strategistM, "forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-parallel-test", ek(1), nil, nil)
 	if err != nil {
@@ -135,12 +135,12 @@ func TestExecuteForkStep_Sequential(t *testing.T) {
 	}
 	go forgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-sequential-test", ek(2), nil, nil)
 	if err != nil {
@@ -217,12 +217,12 @@ func TestExecuteForkStep_WithLimit(t *testing.T) {
 	}
 	go forgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-limit-test", ek(3), nil, nil)
 	if err != nil {
@@ -408,12 +408,12 @@ func TestExecuteForkItem(t *testing.T) {
 	}
 	go judgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-item-test", ek(4), nil, nil)
 	if err != nil {
@@ -481,12 +481,12 @@ func TestExecuteForkStep_FailureHandling(t *testing.T) {
 	go forgeM.Run(ctx)
 	defer cancel()
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-failure-test", ek(5), nil, nil)
 	if err != nil {
@@ -552,12 +552,12 @@ func TestExecuteForkStep_Notification(t *testing.T) {
 	}
 	go forgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	var messages []RitualStepMsg
 	notify := func(msg any) {
@@ -674,12 +674,12 @@ func TestExecuteForkStep_TemplateExpansion(t *testing.T) {
 	}
 	go forgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-template-test", ek(7), nil, nil)
 	if err != nil {
@@ -757,12 +757,12 @@ func TestExecuteForkStep_Cancelation(t *testing.T) {
 	}
 	go forgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-cancel-test", ek(8), nil, nil)
 	if err != nil {

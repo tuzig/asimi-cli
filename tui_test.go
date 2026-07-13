@@ -2581,16 +2581,16 @@ func TestInitCommandE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	shog := court.NewCourt(db, nil, runner, slog.Default())
-	shog.SetRepoInfo(repo.RepoInfo{
+	c := court.NewCourt(db, nil, runner, slog.Default())
+	c.SetRepoInfo(repo.RepoInfo{
 		ProjectRoot: tmpDir,
 		Slug:        "testorg/ror-demo",
 	})
-	require.NoError(t, shog.Start(ctx))
+	require.NoError(t, c.Start(ctx))
 	t.Cleanup(func() {
-		shog.Stop()
+		c.Stop()
 		// Safety net: ensure the runner's sandbox container is torn down
-		if r := shog.GetRunner(); r != nil {
+		if r := c.GetRunner(); r != nil {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cleanupCancel()
 			r.Close(cleanupCtx)
@@ -2599,7 +2599,7 @@ func TestInitCommandE2E(t *testing.T) {
 
 	// Keep only project-init ritual — clear startup/event-driven rituals
 	// so they don't interfere with the test
-	reg := shog.GetRitualRegistry()
+	reg := c.GetRitualRegistry()
 	initDef := reg.Get("project-init")
 	require.NotNil(t, initDef, "project-init ritual should be registered")
 	reg.Clear()
@@ -2609,13 +2609,13 @@ func TestInitCommandE2E(t *testing.T) {
 	sessionCfg := &court.SessionConfig{
 		LLM: config.LLMConfig{MaxTurns: 1},
 	}
-	shog.ConfigureModel(nil, sessionCfg, repo.RepoInfo{})
+	c.ConfigureModel(nil, sessionCfg, repo.RepoInfo{})
 
 	// 5. Create TUI model wired to the Court
 	tuiConfig := mockConfig()
 	tuiConfig.LLM.Provider = "none" // Prevent Init() from overwriting test LLM
 	ri := &repo.RepoInfo{}
-	model := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, shog)
+	model := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, c)
 	model.persistentPromptHistory = nil
 	model.initHistory()
 
@@ -2623,7 +2623,7 @@ func TestInitCommandE2E(t *testing.T) {
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(200, 50))
 
 	// 7. Wire Court notifications to the Bubble Tea program
-	shog.SetNotify(func(msg any) { tm.Send(msg) })
+	c.SetNotify(func(msg any) { tm.Send(msg) })
 
 	// 8. Type :init and press Enter
 	tm.Type(":init")
@@ -2723,16 +2723,16 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	shog := court.NewCourt(db, nil, runner, slog.Default())
-	shog.SetRepoInfo(repo.RepoInfo{
+	c := court.NewCourt(db, nil, runner, slog.Default())
+	c.SetRepoInfo(repo.RepoInfo{
 		ProjectRoot: tmpDir,
 		Slug:        "testorg/ror-demo",
 	})
-	require.NoError(t, shog.Start(ctx))
+	require.NoError(t, c.Start(ctx))
 	t.Cleanup(func() {
-		shog.Stop()
+		c.Stop()
 		// Safety net: ensure the runner's sandbox container is torn down
-		if r := shog.GetRunner(); r != nil {
+		if r := c.GetRunner(); r != nil {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cleanupCancel()
 			r.Close(cleanupCtx)
@@ -2741,7 +2741,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 
 	// Keep only project-init ritual — clear before Init() fires
 	// EventCourtStarted so startup rituals don't interfere
-	reg := shog.GetRitualRegistry()
+	reg := c.GetRitualRegistry()
 	initDef := reg.Get("project-init")
 	require.NotNil(t, initDef, "project-init ritual should be registered")
 	reg.Clear()
@@ -2755,7 +2755,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	tuiConfig.LLM.MaxTurns = 10
 	tuiConfig.Court.Project = "testorg/ror-demo"
 	ri := &repo.RepoInfo{}
-	tuiModel := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, shog)
+	tuiModel := NewTUIModel(tuiConfig, ri, nil, nil, nil, nil, nil, c)
 	tuiModel.persistentPromptHistory = nil
 	tuiModel.initHistory()
 
@@ -2765,7 +2765,7 @@ func TestInitRitualWithLLM_E2E(t *testing.T) {
 	// tea.ExecProcess does not run external commands, so any tool that sends an
 	// EditorRequest (e.g. sage.suggest_edict → approve_doc for large payloads)
 	// would otherwise block forever waiting on ResultChan.
-	shog.SetNotify(func(msg any) {
+	c.SetNotify(func(msg any) {
 		if req, ok := msg.(tools.EditorRequest); ok {
 			req.ResultChan <- tools.EditorResult{Err: errors.New("editor not available in test environment")}
 			return

@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"go.uber.org/fx"
@@ -268,7 +268,7 @@ type TUIModelParams struct {
 	SessionStore   *SessionStore
 	DB             *storage.DB
 	Scheduler      *runners.CoreToolScheduler
-	Court      *court.Court
+	Court          *court.Court
 	Logger         *slog.Logger
 }
 

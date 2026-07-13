@@ -1394,12 +1394,12 @@ func TestForkWithGiven_LoadsLingsBeforeFork(t *testing.T) {
 	}
 	go forgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "fork-lings-test", ek(edict.ID), nil, nil)
 	require.NoError(t, err)

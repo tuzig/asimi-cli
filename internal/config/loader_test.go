@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1316,4 +1317,69 @@ func TestValidateConfigFile_EmptyFile(t *testing.T) {
 
 	err := ValidateConfigFile(path)
 	assert.NoError(t, err, "empty config file should be valid")
+}
+
+// =============================================================================
+// Backward-compat: [shogunate] section reading (Edict 638, Phase 3)
+// =============================================================================
+
+// TestLoadProjectConfig_ShogunateBackwardCompat verifies that a config file
+// with an old [shogunate] section is read as [court] when [court] is absent.
+func TestLoadProjectConfig_ShogunateBackwardCompat(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	projectDir := t.TempDir()
+	agentsDir := filepath.Join(projectDir, ".agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+
+	// Old-format config with [shogunate] instead of [court]
+	projectConfig := `[shogunate]
+username = "legacy-user"
+project = "legacy-project"
+ritual_timeout = "10m"
+step_idle_timeout = "3m"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
+
+	cfg, err := LoadProjectConfig(projectDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "legacy-user", cfg.Court.Username)
+	assert.Equal(t, "legacy-project", cfg.Court.Project)
+	assert.Equal(t, 10*time.Minute, cfg.Court.RitualTimeout)
+	assert.Equal(t, 3*time.Minute, cfg.Court.StepIdleTimeout)
+}
+
+// TestLoadProjectConfig_CourtOverridesShogunate verifies that [court] takes
+// precedence over [shogunate] when both sections are present.
+func TestLoadProjectConfig_CourtOverridesShogunate(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	projectDir := t.TempDir()
+	agentsDir := filepath.Join(projectDir, ".agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+
+	projectConfig := `[shogunate]
+username = "old-user"
+project = "old-project"
+
+[court]
+username = "new-user"
+project = "new-project"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "asimi.conf"), []byte(projectConfig), 0o644))
+
+	cfg, err := LoadProjectConfig(projectDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "new-user", cfg.Court.Username)
+	assert.Equal(t, "new-project", cfg.Court.Project)
 }

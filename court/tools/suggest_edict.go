@@ -17,7 +17,7 @@ import (
 //
 // NotifyFn is a getter, not a snapshot: it returns the *current* notify each
 // time the tool runs. This matters in daemon mode where the live notify
-// channel is installed lazily by shog.Subscribe() on each client connect, and
+// channel is installed lazily by court.Subscribe() on each client connect, and
 // can be swapped out when a client reconnects. A snapshot captured at
 // Tools()-construction would be nil (or stale) and silently bypass the
 // editor branch.

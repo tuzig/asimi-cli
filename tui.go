@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/court"
-	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -198,7 +198,7 @@ type resumeEdictSessionMsg struct {
 
 // NewTUIModel creates a new TUI model
 // NewTUIModelWithStores creates a new TUI model with provided stores (for fx injection)
-func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *runners.CoreToolScheduler, shog courtapi.Client) *TUIModel {
+func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *runners.CoreToolScheduler, courtClient courtapi.Client) *TUIModel {
 
 	registry := NewCommandRegistry()
 	theme := NewTheme()
@@ -241,7 +241,7 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 		sessionStore:             sessionStore,
 		db:                       db,
 		scheduler:                scheduler,
-		court:                shog,
+		court:                    courtClient,
 		waitingForResponse:       false,
 		persistentPromptHistory:  promptHistory,
 		persistentCommandHistory: commandHistory,
@@ -1472,12 +1472,12 @@ func friendlyConnError(err error) string {
 // channel and emits a connectionLostMsg when it fires, then polls for
 // reconnect and emits connectionRestoredMsg. In loopback/in-process
 // mode the channel never fires, so the goroutine idles.
-func watchConnDrop(shog courtapi.Client) tea.Cmd {
-	if shog == nil {
+func watchConnDrop(courtClient courtapi.Client) tea.Cmd {
+	if courtClient == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		done := shog.ConnDone()
+		done := courtClient.ConnDone()
 		<-done
 		slog.Debug("tui: connection dropped, watching for reconnect")
 		// Poll for reconnect: ConnDone returns a new channel after
@@ -1487,7 +1487,7 @@ func watchConnDrop(shog courtapi.Client) tea.Cmd {
 		// We poll at 200ms intervals — reconnect has backoff up to 5s.
 		for i := 0; i < 150; i++ { // 30s max
 			time.Sleep(200 * time.Millisecond)
-			newDone := shog.ConnDone()
+			newDone := courtClient.ConnDone()
 			select {
 			case <-newDone:
 				// Still down, keep polling

@@ -847,12 +847,12 @@ func TestRitualGotoPassesErrorMessage(t *testing.T) {
 		err:          fmt.Errorf("Here goes the error message"),
 	}
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -903,12 +903,12 @@ func TestRitualGotoPassesOutputAndError(t *testing.T) {
 		err:          fmt.Errorf("review failed"),
 	}
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -959,12 +959,12 @@ func TestRitualGotoCreatesEphemeralSessions(t *testing.T) {
 		err:          fmt.Errorf("review failed"),
 	}
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM, "judge": judgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1009,12 +1009,12 @@ func TestRitualStepPreservesOutputOnFailure(t *testing.T) {
 
 	ctx := context.Background()
 	go forgeM.Run(ctx)
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forgeM},
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "preserve-output-test", testEK(7), nil, nil)
 	if err != nil {
@@ -2680,7 +2680,7 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 	go forge.Run(ctx)
 	go chancellor.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{
 			"forge":      forge,
 			"chancellor": chancellor,
@@ -2688,12 +2688,12 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 		logger: slog.Default(),
 	}
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
-	shog.ritualGuard = NewRitualGuard(RitualGuardOpts{
+	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
-		GetMinister: shog.GetMinister,
+		GetMinister: court.GetMinister,
 	})
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	// Run the ritual
 	exec, err := runner.Start(ctx, "test-pollution", testEK(1), nil, nil)
@@ -2758,17 +2758,17 @@ func TestRitualEphemeralSessionIsDiscarded(t *testing.T) {
 	ctx := context.Background()
 	go forge.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": forge},
 		logger:    slog.Default(),
 	}
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
-	shog.ritualGuard = NewRitualGuard(RitualGuardOpts{
+	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
-		GetMinister: shog.GetMinister,
+		GetMinister: court.GetMinister,
 	})
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "test-discard", testEK(1), nil, nil)
 	if err != nil {
@@ -2844,16 +2844,16 @@ func TestRitualStepActResultIsAvailableInNextStepTemplate(t *testing.T) {
 	defer cancel()
 	go captureMinister.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: map[string]Minister{"forge": captureMinister},
 		logger:    slog.Default(),
 	}
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
-	shog.ritualGuard = NewRitualGuard(RitualGuardOpts{
+	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
-		GetMinister: shog.GetMinister,
+		GetMinister: court.GetMinister,
 	})
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 
 	exec, err := runner.Start(ctx, "step-cross-ref", testEK(1), nil, nil)
 	require.NoError(t, err)

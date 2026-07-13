@@ -411,11 +411,11 @@ func (r *msgForwardingRunner) RunnerType() string            { return "msg_forwa
 func TestClearAllSchedulers_NoSessions(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultCourtConfig()
-	shog := NewCourt(db, cfg, nil, nil)
-	require.NotNil(t, shog)
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
-	count := shog.clearAllSchedulers()
+	count := court.clearAllSchedulers()
 	assert.Equal(t, 0, count, "clearAllSchedulers should return 0 when no sessions have schedulers")
 }
 
@@ -425,9 +425,9 @@ func TestClearAllSchedulers_NoSessions(t *testing.T) {
 func TestClearAllSchedulers_WithQueuedItems(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultCourtConfig()
-	shog := NewCourt(db, cfg, nil, nil)
-	require.NotNil(t, shog)
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	// Create blocking tools so items stay in-flight when ClearQueue() runs.
 	doneA := make(chan struct{})
@@ -453,19 +453,19 @@ func TestClearAllSchedulers_WithQueuedItems(t *testing.T) {
 	require.NoError(t, err)
 
 	// Attach sessions to ministers
-	chancellor := shog.GetMinister("chancellor")
+	chancellor := court.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
 		base.SetSession(sess1)
 	}
 
-	forge := shog.GetMinister("forge")
+	forge := court.GetMinister("forge")
 	require.NotNil(t, forge)
 	if base, ok := forge.(interface{ SetSession(*Session) }); ok {
 		base.SetSession(sess2)
 	}
 
-	count := shog.clearAllSchedulers()
+	count := court.clearAllSchedulers()
 	assert.Equal(t, 3, count, "should abort 2+1 = 3 queued items across two schedulers")
 
 	// Verify the schedulers are now empty
@@ -478,9 +478,9 @@ func TestClearAllSchedulers_WithQueuedItems(t *testing.T) {
 func TestClearAllSchedulers_MinistersWithNilScheduler(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultCourtConfig()
-	shog := NewCourt(db, cfg, nil, nil)
-	require.NotNil(t, shog)
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	mockLLM := mocks.NewLLMProvider()
 
@@ -491,14 +491,14 @@ func TestClearAllSchedulers_MinistersWithNilScheduler(t *testing.T) {
 	// Manually nil out the scheduler
 	sess.scheduler = nil
 
-	chancellor := shog.GetMinister("chancellor")
+	chancellor := court.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
 		base.SetSession(sess)
 	}
 
 	// Should not panic and return 0
-	count := shog.clearAllSchedulers()
+	count := court.clearAllSchedulers()
 	assert.Equal(t, 0, count)
 }
 
@@ -511,9 +511,9 @@ func TestSubscribe_HandlesClearSchedulerMsg(t *testing.T) {
 	cfg := config.DefaultCourtConfig()
 
 	runner := &msgForwardingRunner{}
-	shog := NewCourt(db, cfg, runner, nil)
-	require.NotNil(t, shog)
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court := NewCourt(db, cfg, runner, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	// Create blocking tools so items stay in-flight for ClearSchedulerMsg to abort.
 	doneX := make(chan struct{})
@@ -529,7 +529,7 @@ func TestSubscribe_HandlesClearSchedulerMsg(t *testing.T) {
 	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, sched, nil, "test", "chancellor")
 	require.NoError(t, err)
 
-	chancellor := shog.GetMinister("chancellor")
+	chancellor := court.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
 		base.SetSession(sess)
@@ -538,7 +538,7 @@ func TestSubscribe_HandlesClearSchedulerMsg(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	out := shog.Subscribe(ctx)
+	out := court.Subscribe(ctx)
 	require.NotNil(t, out)
 	require.NotNil(t, runner.msgChan, "Subscribe should set the runner msg channel")
 
@@ -573,14 +573,14 @@ func TestSubscribe_ForwardsNormalMessages(t *testing.T) {
 	cfg := config.DefaultCourtConfig()
 
 	runner := &msgForwardingRunner{}
-	shog := NewCourt(db, cfg, runner, nil)
-	require.NotNil(t, shog)
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court := NewCourt(db, cfg, runner, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	out := shog.Subscribe(ctx)
+	out := court.Subscribe(ctx)
 	require.NotNil(t, out)
 	require.NotNil(t, runner.msgChan)
 

@@ -73,11 +73,11 @@ func TestStrategist_ZhengmingRoutesToStrategist(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&storage.Edict{}))
 
 	cfg := config.DefaultCourtConfig()
-	shog := NewCourt(db, cfg, nil, nil)
-	require.NotNil(t, shog)
-	shog.ConfigureModel(nil, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
-	strategist := shog.GetMinister("strategist")
+	strategist := court.GetMinister("strategist")
 	require.NotNil(t, strategist)
 
 	tools := strategist.Tools()
@@ -194,22 +194,22 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 		go m.Run(ctx)
 	}
 
-	shog := &Court{ministers: ministers, logger: slog.Default()}
+	court := &Court{ministers: ministers, logger: slog.Default()}
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
-	shog.ritualGuard = NewRitualGuard(RitualGuardOpts{
+	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
-		GetMinister: shog.GetMinister,
+		GetMinister: court.GetMinister,
 	})
 
 	// Load the builtin rituals so castle-siege is available
-	registry := shog.GetRitualRegistry()
+	registry := court.GetRitualRegistry()
 	builtins, err := LoadEmbeddedRituals()
 	require.NoError(t, err)
 	for _, r := range builtins {
 		registry.Register(r)
 	}
 
-	runner := shog.GetRitualRunner()
+	runner := court.GetRitualRunner()
 	require.NotNil(t, runner)
 
 	// Use a timeout so test doesn't hang if later steps block

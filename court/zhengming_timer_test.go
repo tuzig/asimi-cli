@@ -111,12 +111,12 @@ func TestZhengmingCallbacksWiredDuringStep(t *testing.T) {
 	t.Cleanup(cancel)
 	go forgeM.Run(ctx)
 
-	shog := &Court{
+	court := &Court{
 		ministers: ministers,
 		logger:    slog.Default(),
 	}
 
-	runner := NewRitualRunner(registry, shog.GetMinister, shog.PublishEvent, db, nil, nil, repo.RepoInfo{})
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
 	notify := func(msg any) {}
 
 	exec, err := runner.Start(ctx, "callback-wire-test", testEK(50), nil, notify)

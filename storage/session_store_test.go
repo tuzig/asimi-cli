@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -578,4 +579,99 @@ func TestSchemaMigration_V3toV4(t *testing.T) {
 	).Scan(&oldIdxCount)
 	require.NoError(t, err)
 	require.Equal(t, 0, oldIdxCount, "old non-unique index should be dropped after migration")
+}
+
+// TestMigrateV4toV5_ShogunateToCourtEventRename verifies that the v4→v5
+// migration renames stored event string values from the old
+// "shogunate_started"/"shogunate_ready" to "court_started"/"court_ready"
+// in both tian_events and tian_event_dlq tables.
+func TestMigrateV4toV5_ShogunateToCourtEventRename(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "migration_v4v5_test.db")
+
+	// Manually create a database at schema v4 with old shogunate event values
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Create the schema_version table at v4
+	_, err = conn.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER)`)
+	require.NoError(t, err)
+	_, err = conn.Exec(`INSERT INTO schema_version (version, applied_at) VALUES (4, unixepoch())`)
+	require.NoError(t, err)
+
+	// Create tian_events and tian_event_dlq with old event values
+	_, err = conn.Exec(`CREATE TABLE tian_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		event_type TEXT NOT NULL,
+		edict_id INTEGER,
+		payload TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+	_, err = conn.Exec(`CREATE TABLE tian_event_dlq (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		event_type TEXT NOT NULL,
+		edict_id INTEGER,
+		payload TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+
+	// Insert old-format events
+	_, err = conn.Exec(`INSERT INTO tian_events (event_type, edict_id, payload) VALUES
+		('shogunate_started', 1, '{}'),
+		('shogunate_ready', 1, '{}'),
+		('court_started', 2, '{}'),
+		('other_event', 3, '{}')`)
+	require.NoError(t, err)
+	_, err = conn.Exec(`INSERT INTO tian_event_dlq (event_type, edict_id, payload) VALUES
+		('shogunate_started', 1, '{}'),
+		('shogunate_ready', 1, '{}')`)
+	require.NoError(t, err)
+
+	conn.Close()
+
+	// Now open with InitDB — this should detect v4 < v5 and run migration
+	db, err := InitDB(dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Verify tian_events: old values renamed, other values untouched
+	rows, err := db.conn.Query(`SELECT event_type FROM tian_events WHERE event_type LIKE '%started%' OR event_type LIKE '%ready%' OR event_type = 'other_event' ORDER BY id`)
+	require.NoError(t, err)
+	var eventTypes []string
+	for rows.Next() {
+		var et string
+		require.NoError(t, rows.Scan(&et))
+		eventTypes = append(eventTypes, et)
+	}
+	rows.Close()
+	require.Contains(t, eventTypes, "court_started", "shogunate_started should be renamed to court_started")
+	require.Contains(t, eventTypes, "court_ready", "shogunate_ready should be renamed to court_ready")
+	require.Contains(t, eventTypes, "other_event", "unrelated events should be untouched")
+	for _, et := range eventTypes {
+		require.NotContains(t, et, "shogunate", "no event should contain 'shogunate' after migration")
+	}
+
+	// Verify tian_event_dlq
+	rows, err = db.conn.Query(`SELECT event_type FROM tian_event_dlq ORDER BY id`)
+	require.NoError(t, err)
+	var dlqTypes []string
+	for rows.Next() {
+		var et string
+		require.NoError(t, rows.Scan(&et))
+		dlqTypes = append(dlqTypes, et)
+	}
+	rows.Close()
+	require.NotEmpty(t, dlqTypes)
+	for _, et := range dlqTypes {
+		require.NotContains(t, et, "shogunate", "no DLQ event should contain 'shogunate' after migration")
+	}
+
+	// Verify schema version is now 5
+	var version int
+	err = db.conn.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version)
+	require.NoError(t, err)
+	require.Equal(t, 5, version, "schema should be at version 5 after migration")
 }

@@ -1079,20 +1079,20 @@ func TestMinisterBase_SessionMethods(t *testing.T) {
 func TestRestoreMinisterSession_AllTabs(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultCourtConfig()
-	shog := NewCourt(db, cfg, nil, nil)
-	require.NotNil(t, shog)
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
 
 	// Ministers need a SessionConfig to build tool sets — without it,
 	// Chancellor.Tools panics on a nil config dereference. No LLM client
 	// is required; the test only exercises session restore wiring.
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	for _, id := range []string{"chancellor", "sage", "forge", "judge"} {
 		t.Run(id, func(t *testing.T) {
-			err := shog.RestoreMinisterSession(id, nil)
+			err := court.RestoreMinisterSession(id, nil)
 			require.NoError(t, err, "%s tab should be resumable", id)
 
-			m := shog.GetMinister(id)
+			m := court.GetMinister(id)
 			require.NotNil(t, m)
 			sess := m.GetSession()
 			require.NotNil(t, sess, "%s should have a restored session", id)
@@ -1130,9 +1130,9 @@ func TestReadProjectContext_FileNotFound(t *testing.T) {
 func TestRestoreMinisterSession_UnknownTabType(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultCourtConfig()
-	shog := NewCourt(db, cfg, nil, nil)
+	court := NewCourt(db, cfg, nil, nil)
 
-	err := shog.RestoreMinisterSession("not-a-minister", nil)
+	err := court.RestoreMinisterSession("not-a-minister", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "minister not found")
 }
@@ -1142,21 +1142,21 @@ func TestRestoreMinisterSession_UnknownTabType(t *testing.T) {
 func TestRestoreSession_SetsPersister(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultCourtConfig()
-	shog := NewCourt(db, cfg, nil, nil)
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court := NewCourt(db, cfg, nil, nil)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	// Wire a persister into the court so all ministers get it.
 	rec := &recordingPersister{}
-	shog.SetSessionPersister(rec)
+	court.SetSessionPersister(rec)
 
 	// Restore a session for the chancellor — this calls the exported
 	// RestoreSession path.
-	err := shog.RestoreMinisterSession("chancellor", []schemas.ChatMessage{
+	err := court.RestoreMinisterSession("chancellor", []schemas.ChatMessage{
 		{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
 	})
 	require.NoError(t, err)
 
-	chancellor := shog.GetMinister("chancellor")
+	chancellor := court.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
 	sess := chancellor.GetSession()
 	require.NotNil(t, sess, "chancellor should have a restored session")

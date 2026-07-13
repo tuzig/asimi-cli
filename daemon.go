@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/afittestide/asimi/court"

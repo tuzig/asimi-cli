@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -171,7 +171,7 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 
 	var contentParts []string
 	contentParts = append(contentParts, lipgloss.JoinVertical(
-		lipgloss.Left, commandViews...,))
+		lipgloss.Left, commandViews...))
 
 	contentParts = append(contentParts, lipgloss.JoinVertical(
 		lipgloss.Left, subtitleStyle.Render("👑 Use the royal `We` 👑")))

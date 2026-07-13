@@ -1,4 +1,4 @@
-The recent change to add username and project to edict keys went too far by requiring tools to accept these parameters. A Shogunate instance is scoped to a single (username, project) context, so tools should use the stored context rather than requiring parameters.
+The recent change to add username and project to edict keys went too far by requiring tools to accept these parameters. A Court instance is scoped to a single (username, project) context, so tools should use the stored context rather than requiring parameters.
 
 **Changes needed:**
 
@@ -15,17 +15,17 @@ The recent change to add username and project to edict keys went too far by requ
 
 3. **Update all database queries:**
    - Ensure all tool queries use `WHERE edict_id = ? AND username = ? AND project = ?`
-   - Use stored username/project from MinisterBase/Shogunate context
+   - Use stored username/project from MinisterBase/Court context
 
 4. **Test fixes:**
    - Update test helpers to use proper EdictKey construction
    - Ensure all tests pass with composite PK
 
-**Design principle:** A Shogunate works within a specific context. Tools inherit this context rather than requiring explicit parameters for every call.
+**Design principle:** A Court works within a specific context. Tools inherit this context rather than requiring explicit parameters for every call.
 
-Evidence: - shogunate/shogunate.go:320: `EdictKey()` method constructs keys from config
-- shogunate/minister.go:206: MinisterBase now stores username and project fields
-- shogunate/tools/edict.go: Parameter schemas don't include username/project but Call() methods accept them
-- shogunate/tools/zhengming.go: Same inconsistency
-- storage/shogunate_schema.go: Edict has composite primary key (edict_id, username, project)
+Evidence: - court/court.go:320: `EdictKey()` method constructs keys from config
+- court/minister.go:206: MinisterBase now stores username and project fields
+- court/tools/edict.go: Parameter schemas don't include username/project but Call() methods accept them
+- court/tools/zhengming.go: Same inconsistency
+- storage/court_schema.go: Edict has composite primary key (edict_id, username, project)
 - missing-169.log:244: Shows "Edict not found" error when username/project are empty

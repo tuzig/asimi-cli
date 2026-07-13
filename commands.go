@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

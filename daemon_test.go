@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	courtTools "github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	courtTools "github.com/afittestide/asimi/court/tools"
 )
 
 // TestInitShellRunnerMustNotFallbackToHost verifies that on a system

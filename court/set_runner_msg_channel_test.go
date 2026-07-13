@@ -37,24 +37,24 @@ func TestSetRunnerMessageChannel_PropagatesToMinisters(t *testing.T) {
 	cfg := config.DefaultCourtConfig()
 
 	runner := &recordingMsgChanRunner{}
-	shog := NewCourt(db, cfg, runner, nil)
-	require.NotNil(t, shog)
+	court := NewCourt(db, cfg, runner, nil)
+	require.NotNil(t, court)
 
 	// ConfigureModel is needed so ministers get a SessionConfig (avoids nil
 	// dereference in some minister internals).
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	// Create a message channel and call SetRunnerMessageChannel.
 	ch := make(chan runners.Msg, 10)
 	var msgChan chan<- runners.Msg = ch
-	shog.SetRunnerMessageChannel(msgChan)
+	court.SetRunnerMessageChannel(msgChan)
 
 	// Verify the runner got the channel.
 	assert.NotNil(t, runner.msgChan, "runner should receive a non-nil msg channel")
 
 	// Verify every minister that supports SetMessageChannel received the channel.
 	for _, id := range []string{"chancellor", "sage", "forge", "judge"} {
-		m := shog.GetMinister(id)
+		m := court.GetMinister(id)
 		require.NotNil(t, m, "minister %s should exist", id)
 
 		getter, ok := m.(interface {
@@ -76,13 +76,13 @@ func TestSetRunnerMessageChannel_NilRunner(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultCourtConfig()
 
-	shog := NewCourt(db, cfg, nil, nil)
-	require.NotNil(t, shog)
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
 
 	ch := make(chan runners.Msg, 10)
 	var msgChan chan<- runners.Msg = ch
 	// Must not panic.
-	shog.SetRunnerMessageChannel(msgChan)
+	court.SetRunnerMessageChannel(msgChan)
 }
 
 // TestSubscribe_CallsSetRunnerMessageChannel verifies that Subscribe()
@@ -94,9 +94,9 @@ func TestSubscribe_CallsSetRunnerMessageChannel(t *testing.T) {
 	cfg := config.DefaultCourtConfig()
 
 	runner := &recordingMsgChanRunner{}
-	shog := NewCourt(db, cfg, runner, nil)
-	require.NotNil(t, shog)
-	shog.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+	court := NewCourt(db, cfg, runner, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -104,6 +104,6 @@ func TestSubscribe_CallsSetRunnerMessageChannel(t *testing.T) {
 	// Subscribe creates the runner msg channel internally and calls
 	// SetRunnerMessageChannel. The runner should end up with a non-nil
 	// msgChan.
-	_ = shog.Subscribe(ctx)
+	_ = court.Subscribe(ctx)
 	assert.NotNil(t, runner.msgChan, "Subscribe should set a non-nil msgChan on the runner via SetRunnerMessageChannel")
 }
