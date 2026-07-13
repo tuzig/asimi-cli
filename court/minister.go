@@ -219,9 +219,11 @@ type MinisterBase struct {
 	pendingZhengming   map[string]chan ZhengmingAnswer
 	pendingZhengmingMu sync.Mutex
 
+	sessionMu sync.RWMutex
+	session   *Session // Embedded session for interactive use cases
+
 	username string
 	project  string
-	session  *Session // Embedded session for interactive use cases
 
 	// persister is attached to interactive sessions when they are created
 	// in ProcessPrompt (and in the minister-specific RestoreSession /
@@ -299,11 +301,13 @@ func (m *MinisterBase) RunLoop(
 	m.logger.Info("minister started", "minister_id", m.ministerID)
 
 	var taskWg sync.WaitGroup
+	var promptWg sync.WaitGroup
 
 	for {
 		select {
 		case <-ctx.Done():
-			m.logger.Info("minister stopping, waiting for in-flight tasks", "minister_id", m.ministerID)
+			m.logger.Info("minister stopping, waiting for in-flight prompts and tasks", "minister_id", m.ministerID)
+			promptWg.Wait()
 			taskWg.Wait()
 			m.logger.Info("minister stopped", "minister_id", m.ministerID)
 			return
@@ -312,8 +316,12 @@ func (m *MinisterBase) RunLoop(
 			if prompt.Ctx != nil {
 				context.AfterFunc(prompt.Ctx, func() { mergedCancel() })
 			}
-			processPrompt(merged, prompt)
-			mergedCancel()
+			promptWg.Add(1)
+			go func() {
+				defer promptWg.Done()
+				defer mergedCancel()
+				processPrompt(merged, prompt)
+			}()
 		case task := <-m.tasks:
 			if processTask == nil {
 				m.logger.Warn("received task but no handler", "minister_id", m.ministerID)
@@ -343,10 +351,12 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 		return
 	}
 
+	m.sessionMu.Lock()
 	if m.session == nil {
 		var err error
 		m.session, err = CreateSession(minister, m.client, m.config, m.notify, m.ministerID)
 		if err != nil {
+			m.sessionMu.Unlock()
 			m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
@@ -354,6 +364,8 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 		m.session.SetPersister(m.persister)
 		m.logger.Info("created interactive session", "minister_id", m.ministerID)
 	}
+	session := m.session
+	m.sessionMu.Unlock()
 
 	message := prompt.Message
 	if m.promptPreprocessor != nil {
@@ -362,7 +374,7 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 
 	m.notify(StreamStartMsg{ChannelID: m.ministerID, EdictID: prompt.EdictKey.ID})
 
-	_, err := m.session.AskWithStreaming(ctx, message, prompt.ContextFiles)
+	_, err := session.AskWithStreaming(ctx, message, prompt.ContextFiles)
 	if err != nil && ctx.Err() == nil {
 		m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: err})
 		return
@@ -617,6 +629,8 @@ func (m *MinisterBase) SetRitualSummaries(fn func() string) {
 // sage.go) via base.Persister().
 func (m *MinisterBase) SetSessionPersister(p SessionPersister) {
 	m.persister = p
+	m.sessionMu.Lock()
+	defer m.sessionMu.Unlock()
 	if m.session != nil {
 		m.session.SetPersister(p)
 	}
@@ -775,16 +789,22 @@ func (m *MinisterBase) GetConfig() internalconfig.LLMConfig {
 
 // Session returns the minister's embedded session (may be nil).
 func (m *MinisterBase) Session() *Session {
+	m.sessionMu.RLock()
+	defer m.sessionMu.RUnlock()
 	return m.session
 }
 
 // SetSession sets the minister's embedded session.
 func (m *MinisterBase) SetSession(s *Session) {
+	m.sessionMu.Lock()
+	defer m.sessionMu.Unlock()
 	m.session = s
 }
 
 // ResetSession clears the minister's embedded session.
 func (m *MinisterBase) ResetSession() {
+	m.sessionMu.Lock()
+	defer m.sessionMu.Unlock()
 	m.session = nil
 }
 
@@ -1132,7 +1152,7 @@ func (m *MinisterBase) InvokeMinister(ctx context.Context, ministerID string, ke
 	}
 
 	// Wrap notify with WithChannelID so the invoked minister's session routes to caller's tab
-	wrappedNotify := WithChannelID(m.notify, m.session, m.ministerID)
+	wrappedNotify := WithChannelID(m.notify, m.Session(), m.ministerID)
 
 	// Create per-call done channel (synchronous blocking pattern)
 	doneChan := make(chan Result, 1)
@@ -1322,6 +1342,8 @@ func (m *MinisterBase) ResumeEdict(ctx context.Context, key storage.EdictKey, wo
 	}
 }
 func (m *MinisterBase) GetSession() *Session {
+	m.sessionMu.RLock()
+	defer m.sessionMu.RUnlock()
 	return m.session
 }
 

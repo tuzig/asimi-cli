@@ -21,13 +21,13 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"github.com/afittestide/asimi/internal/config"
-	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/courtapi"
-	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/court/tools"
+	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/courtapi"
+	"github.com/afittestide/asimi/internal/repo"
+	"github.com/afittestide/asimi/internal/runners"
+	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/storage"
 
 	_ "modernc.org/sqlite"
@@ -3323,7 +3323,7 @@ func TestSetContextParams_ProjectEmptyWhenNeitherConfigNorRepoInfoProvides(t *te
 // --- mockCourtClient records PublishEvent calls for test assertions ---
 
 type mockCourtClient struct {
-	courtapi.Client // embed to satisfy interface; nil receivers panic on unused methods
+	courtapi.Client     // embed to satisfy interface; nil receivers panic on unused methods
 	publishedEvents     []publishedEvent
 	edictKeyFn          func(uint) storage.EdictKey
 	zhengmingResponses  []zhengmingResponse

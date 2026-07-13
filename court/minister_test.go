@@ -1731,3 +1731,83 @@ func TestStreamTask_ExistingSessionStillReused(t *testing.T) {
 
 	assert.Equal(t, existing, session, "existing session should be reused")
 }
+
+// TestRunLoop_SlowPromptDoesNotBlockTaskDispatch verifies that a slow prompt
+// does not block task dispatch: while ProcessPrompt is blocked (simulating a
+// slow LLM stream or interactive WaitForAnswer), a dispatched task should
+// start processing immediately.
+func TestRunLoop_SlowPromptDoesNotBlockTaskDispatch(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base.ministerID = "test"
+	strategist := NewStrategist(base)
+	strategist.SetNotify(func(any) {})
+
+	var promptStarted sync.WaitGroup
+	var promptRelease sync.WaitGroup
+	promptStarted.Add(1)
+	promptRelease.Add(1)
+
+	slowPromptHandler := func(ctx context.Context, prompt *Prompt) {
+		promptStarted.Done()
+		promptRelease.Wait() // simulate slow LLM / interactive blocking
+	}
+
+	var taskStarted sync.WaitGroup
+	taskStarted.Add(1)
+
+	taskHandler := func(ctx context.Context, task *Task) {
+		taskStarted.Done()
+		base.sendResult(task, Result{MinisterID: "test", Sealed: true, Output: "done"})
+	}
+
+	go base.RunLoop(ctx, strategist, slowPromptHandler, taskHandler)
+
+	// Send a slow prompt
+	base.SubmitPrompt(&Prompt{
+		Ctx:      ctx,
+		Message:  "slow prompt",
+		EdictKey: storage.EdictKey{ID: 0, Username: "testuser", Project: "testproject"},
+	})
+
+	// Wait for the prompt to start processing
+	promptStarted.Wait()
+
+	// Now send a task — it should start immediately even though the prompt is still blocked
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+		Work:     "task while prompt blocked",
+		Done:     doneCh,
+	}
+	base.tasks <- task
+
+	// Verify the task starts within a reasonable timeout.
+	// If ProcessPrompt were called synchronously, the loop would be blocked
+	// and this task would never start until the prompt completes.
+	taskDone := make(chan struct{})
+	go func() {
+		taskStarted.Wait()
+		close(taskDone)
+	}()
+
+	select {
+	case <-taskDone:
+		// Task started successfully while prompt was still blocked
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("task did not start — slow prompt blocked task dispatch")
+	}
+
+	// Release the prompt and verify the task completes
+	promptRelease.Done()
+	select {
+	case r := <-doneCh:
+		assert.Equal(t, "done", r.Output)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task result")
+	}
+}
