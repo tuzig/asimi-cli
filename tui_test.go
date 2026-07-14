@@ -1644,15 +1644,14 @@ func TestStreamErrorMsg_ShowsPartialContent(t *testing.T) {
 	updatedModel := newModel.(TUIModel)
 
 	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
-	// Should add: dimmed partial + error message + hint line = 3
-	assert.Equal(t, msgCountBefore+3, msgCountAfter,
-		"StreamErrorMsg with PartialContent should add 3 messages: partial, error, hint")
+	// Should add: dimmed partial + error message = 2
+	assert.Equal(t, msgCountBefore+2, msgCountAfter,
+		"StreamErrorMsg with PartialContent should add 2 messages: partial, error")
 
 	messages := updatedModel.tabs.Content().Chat.Messages
 	// Find the partial content message (it's rendered with lipgloss styling)
 	foundPartial := false
 	foundError := false
-	foundHint := false
 	for _, m := range messages[msgCountBefore:] {
 		if strings.Contains(m.Content, "Partial text before failure") {
 			foundPartial = true
@@ -1660,13 +1659,9 @@ func TestStreamErrorMsg_ShowsPartialContent(t *testing.T) {
 		if strings.Contains(m.Content, "upstream blew up") {
 			foundError = true
 		}
-		if strings.Contains(m.Content, "upstream provider error") {
-			foundHint = true
-		}
 	}
 	assert.True(t, foundPartial, "partial content should appear in chat")
 	assert.True(t, foundError, "error message should appear in chat")
-	assert.True(t, foundHint, "hint line should appear in chat")
 }
 
 func TestStreamErrorMsg_NoPartialContent(t *testing.T) {
@@ -1682,9 +1677,9 @@ func TestStreamErrorMsg_NoPartialContent(t *testing.T) {
 	updatedModel := newModel.(TUIModel)
 
 	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
-	// Without partial content: only error + hint = 2
-	assert.Equal(t, msgCountBefore+2, msgCountAfter,
-		"StreamErrorMsg without PartialContent should add 2 messages: error, hint")
+	// Without partial content: only error = 1
+	assert.Equal(t, msgCountBefore+1, msgCountAfter,
+		"StreamErrorMsg without PartialContent should add 1 message: error")
 }
 
 // --- Connection error classification tests (edict 552) ---
@@ -1802,17 +1797,12 @@ func TestStreamErrorMsg_ModelError_StillShowsModelError(t *testing.T) {
 
 	// Genuine model error should still show "Model Error"
 	foundModelError := false
-	foundUpstreamHint := false
 	for _, m := range updatedModel.tabs.Content().Chat.Messages {
 		if strings.Contains(m.Content, "Model Error") {
 			foundModelError = true
 		}
-		if strings.Contains(m.Content, "upstream provider error") {
-			foundUpstreamHint = true
-		}
 	}
 	assert.True(t, foundModelError, "genuine model error should show 'Model Error'")
-	assert.True(t, foundUpstreamHint, "genuine model error should show upstream hint")
 }
 
 // --- Connection drop detection tests (edict 552) ---

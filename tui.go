@@ -2035,7 +2035,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			fullError := fmt.Sprintf("Model Error: %v", msg.Err)
 			chat.AddMessage(fmt.Sprintf("\n%s❌ %s", systemPrefix, fullError))
-			chat.AddMessage(fmt.Sprintf("%s[This is an upstream provider error. You can retry or switch models.]", systemPrefix))
 			m.commandLine.AddToast(fullError, "error", time.Second*5)
 			m.status.SetError()
 			m.clearStreamingTab(msg.ChannelID)
