@@ -2984,7 +2984,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
 
 		// Fire court_started event to trigger wakeup ritual and health checks
-		latest, hasUpdate, err := utils.CheckForUpdates()
+		latest, hasUpdate, err := utils.CheckForUpdates(context.Background())
 		latestVersion := ""
 		if err == nil {
 			latestVersion = latest.Version

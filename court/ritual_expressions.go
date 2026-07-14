@@ -292,7 +292,7 @@ func (r *RitualRunner) getHeavenSnapshot(ctx context.Context) (interface{}, erro
 }
 
 func (r *RitualRunner) checkAsimiVersion(ctx context.Context) (interface{}, error) {
-	latest, hasUpdate, err := utils.CheckForUpdates()
+	latest, hasUpdate, err := utils.CheckForUpdates(ctx)
 	if err != nil {
 		r.logger.Debug("asimi version check failed", "error", err)
 		return map[string]interface{}{

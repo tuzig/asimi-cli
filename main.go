@@ -182,15 +182,15 @@ func runInteractiveMode() error {
 		hasUpdate bool
 	}
 	resultCh := make(chan updateResult, 1)
+	updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer updateCancel()
 	go func() {
-		hasUpdate := AutoCheckForUpdates(utils.AsimiVersion)
+		hasUpdate := AutoCheckForUpdates(updateCtx, utils.AsimiVersion)
 		resultCh <- updateResult{hasUpdate: hasUpdate}
 	}()
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
-	timeout := time.NewTimer(5 * time.Second)
-	defer timeout.Stop()
 
 	var updateAvailable bool
 checkLoop:
@@ -201,7 +201,7 @@ checkLoop:
 			break checkLoop
 		case <-ticker.C:
 			fmt.Print(".")
-		case <-timeout.C:
+		case <-updateCtx.Done():
 			slog.Debug("pre-TUI update check timed out")
 			break checkLoop
 		}
@@ -211,9 +211,7 @@ checkLoop:
 	fmt.Print("\r" + strings.Repeat(" ", 40) + "\r")
 
 	if updateAvailable {
-		go func() {
-			tuiProgram.Send(updateAvailableMsg{})
-		}()
+		tuiModel.updateAvailable = true
 	}
 
 	// If profile-exit-ms is set, schedule an exit after that duration

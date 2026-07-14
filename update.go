@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,14 +13,76 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/afittestide/asimi/internal/utils"
 )
 
+// extractBinaryFromTarball reads a gzip-compressed tarball from r and returns
+// the contents of the first regular file named "asimi".
+func extractBinaryFromTarball(r io.Reader) ([]byte, error) {
+	gzr, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open gzip: %w", err)
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read tarball: %w", err)
+		}
+		base := filepath.Base(hdr.Name)
+		if base == "asimi" && hdr.Typeflag == tar.TypeReg {
+			return io.ReadAll(tr)
+		}
+	}
+	return nil, fmt.Errorf("asimi binary not found in tarball")
+}
+
+// fetchChecksum downloads checksums.txt from the release and returns the
+// expected SHA256 for the given asset name. Returns empty string if
+// checksums.txt is not available (graceful degradation for older releases).
+func fetchChecksum(ctx context.Context, checksumURL, assetName string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create checksum request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to download checksums: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil // checksums.txt not available — skip verification
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read checksums: %w", err)
+	}
+
+	for _, line := range strings.Split(string(body), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) == 2 && parts[1] == assetName {
+			return parts[0], nil
+		}
+	}
+	return "", nil
+}
+
 // SelfUpdate performs the self-update to the latest version
 func SelfUpdate(currentVersion string) error {
-	latest, hasUpdate, err := utils.CheckForUpdates()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	latest, hasUpdate, err := utils.CheckForUpdates(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
@@ -33,7 +97,11 @@ func SelfUpdate(currentVersion string) error {
 	}
 
 	// Download the tar.gz
-	resp, err := http.Get(latest.AssetURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latest.AssetURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create download request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download update: %w", err)
 	}
@@ -44,34 +112,24 @@ func SelfUpdate(currentVersion string) error {
 	}
 
 	// Extract the asimi binary from the tarball
-	gzr, err := gzip.NewReader(resp.Body)
+	binaryContent, err := extractBinaryFromTarball(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to open gzip: %w", err)
-	}
-	defer gzr.Close()
-
-	tr := tar.NewReader(gzr)
-	var binaryContent []byte
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("failed to read tarball: %w", err)
-		}
-		base := filepath.Base(hdr.Name)
-		if base == "asimi" && hdr.Typeflag == tar.TypeReg {
-			binaryContent, err = io.ReadAll(tr)
-			if err != nil {
-				return fmt.Errorf("failed to read binary from tarball: %w", err)
-			}
-			break
-		}
+		return err
 	}
 
-	if binaryContent == nil {
-		return fmt.Errorf("asimi binary not found in tarball")
+	// Verify checksum if checksums.txt is available
+	assetName := filepath.Base(latest.AssetURL)
+	checksumURL := strings.Replace(latest.AssetURL, assetName, "checksums.txt", 1)
+	expectedHash, err := fetchChecksum(ctx, checksumURL, assetName)
+	if err != nil {
+		slog.Warn("failed to fetch checksums, skipping verification", "error", err)
+	}
+	if expectedHash != "" {
+		actualHash := sha256.Sum256(binaryContent)
+		if hex.EncodeToString(actualHash[:]) != expectedHash {
+			return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, hex.EncodeToString(actualHash[:]))
+		}
+		slog.Debug("checksum verified", "hash", expectedHash)
 	}
 
 	// Get current executable path
@@ -109,43 +167,27 @@ func SelfUpdate(currentVersion string) error {
 	return nil
 }
 
-// AutoCheckForUpdates checks for updates in the background (non-blocking)
-// Returns true if an update is available
-func AutoCheckForUpdates(currentVersion string) bool {
+// AutoCheckForUpdates checks for updates with the given context controlling
+// timeout and cancellation. Returns true if an update is available.
+func AutoCheckForUpdates(ctx context.Context, currentVersion string) bool {
 	// Skip if version is "dev" or empty
 	if currentVersion == "" || currentVersion == "dev" {
 		return false
 	}
 
-	// Check in background with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	done := make(chan bool, 1)
-	go func() {
-		latest, hasUpdate, err := utils.CheckForUpdates()
-		if err != nil {
-			slog.Debug("update check failed", "error", err)
-			done <- false
-			return
-		}
-		if hasUpdate {
-			slog.Info("update available",
-				"current", currentVersion,
-				"latest", latest.Version,
-				"url", latest.URL,
-			)
-		}
-		done <- hasUpdate
-	}()
-
-	select {
-	case hasUpdate := <-done:
-		return hasUpdate
-	case <-ctx.Done():
-		slog.Debug("update check timed out")
+	latest, hasUpdate, err := utils.CheckForUpdates(ctx)
+	if err != nil {
+		slog.Debug("update check failed", "error", err)
 		return false
 	}
+	if hasUpdate {
+		slog.Info("update available",
+			"current", currentVersion,
+			"latest", latest.Version,
+			"url", latest.URL,
+		)
+	}
+	return hasUpdate
 }
 
 // GetUpdateCommand returns the command string to update asimi

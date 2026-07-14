@@ -2,8 +2,10 @@
 package utils
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -17,7 +19,8 @@ const (
 	githubRepo  = "asimi-cli"
 )
 
-var AsimiVersion = "0.8.1" // Update this before each release
+// Update this before each release
+var AsimiVersion = "0.9.0-alpha" 
 
 // ReleaseInfo holds information about a GitHub release.
 type ReleaseInfo struct {
@@ -50,12 +53,17 @@ func ParseVersion(v string) (semver.Version, error) {
 	return semver.Parse(v)
 }
 
-// CheckForUpdates checks if a newer version is available on GitHub
-func CheckForUpdates() (ReleaseInfo, bool, error) {
+// CheckForUpdates checks if a newer version is available on GitHub.
+// The ctx controls the HTTP request timeout and cancellation.
+func CheckForUpdates(ctx context.Context) (ReleaseInfo, bool, error) {
 	slog.Debug("Checking updates", "project", GetAsimiSlug())
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return ReleaseInfo{}, false, fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return ReleaseInfo{}, false, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
@@ -65,8 +73,19 @@ func CheckForUpdates() (ReleaseInfo, bool, error) {
 		return ReleaseInfo{}, false, fmt.Errorf("github API returned status %d", resp.StatusCode)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ReleaseInfo{}, false, fmt.Errorf("failed to read release response: %w", err)
+	}
+
+	return ParseGitHubRelease(body, AsimiVersion)
+}
+
+// ParseGitHubRelease parses a GitHub releases API JSON body and determines
+// whether an update is available relative to currentVersion.
+func ParseGitHubRelease(body []byte, currentVersion string) (ReleaseInfo, bool, error) {
 	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if err := json.Unmarshal(body, &release); err != nil {
 		return ReleaseInfo{}, false, fmt.Errorf("failed to parse release response: %w", err)
 	}
 
@@ -75,7 +94,7 @@ func CheckForUpdates() (ReleaseInfo, bool, error) {
 		return ReleaseInfo{}, false, fmt.Errorf("failed to parse latest version: %w", err)
 	}
 
-	current, err := ParseVersion(AsimiVersion)
+	current, err := ParseVersion(currentVersion)
 	if err != nil {
 		return ReleaseInfo{}, false, fmt.Errorf("invalid current version: %w", err)
 	}
@@ -98,7 +117,7 @@ func CheckForUpdates() (ReleaseInfo, bool, error) {
 	}
 
 	if latestVersion.LTE(current) {
-		slog.Debug("current version is up to date", "current", AsimiVersion, "latest", info.Version)
+		slog.Debug("current version is up to date", "current", currentVersion, "latest", info.Version)
 		return info, false, nil
 	}
 

@@ -1,7 +1,10 @@
 package utils
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -20,7 +23,7 @@ func TestCheckForUpdates(t *testing.T) {
 
 	// This test makes real HTTP calls to GitHub API
 	// It verifies the full flow works end-to-end
-	release, updated, err := CheckForUpdates()
+	release, updated, err := CheckForUpdates(context.Background())
 	if err != nil {
 		// "no release found" is acceptable if repo has no releases
 		if err.Error() != "no release found" {
@@ -34,6 +37,155 @@ func TestCheckForUpdates(t *testing.T) {
 	}
 
 	t.Logf("Release info: version=%s, url=%s", release.Version, release.URL)
+}
+
+func TestParseGitHubRelease(t *testing.T) {
+	// Save and restore AsimiVersion
+	orig := AsimiVersion
+	defer func() { AsimiVersion = orig }()
+
+	tests := []struct {
+		name           string
+		body           string
+		currentVersion string
+		wantUpdate     bool
+		wantErr        bool
+		wantVersion    string
+		wantURL        string
+		wantAssetURL   string
+	}{
+		{
+			name: "update available with matching asset",
+			body: `{
+				"tag_name": "v0.9.0",
+				"html_url": "https://github.com/afittestide/asimi-cli/releases/v0.9.0",
+				"body": "Release notes here",
+				"assets": [
+					{"name": "asimi_v0.9.0_darwin_amd64.tar.gz", "browser_download_url": "https://example.com/darwin_amd64.tar.gz"},
+					{"name": "asimi_v0.9.0_linux_amd64.tar.gz", "browser_download_url": "https://example.com/linux_amd64.tar.gz"}
+				]
+			}`,
+			currentVersion: "0.8.1",
+			wantUpdate:     true,
+			wantErr:        false,
+			wantVersion:    "v0.9.0",
+			wantURL:        "https://github.com/afittestide/asimi-cli/releases/v0.9.0",
+		},
+		{
+			name: "no update needed - same version",
+			body: `{
+				"tag_name": "v0.8.1",
+				"html_url": "https://github.com/afittestide/asimi-cli/releases/v0.8.1",
+				"body": "",
+				"assets": []
+			}`,
+			currentVersion: "0.8.1",
+			wantUpdate:     false,
+			wantErr:        false,
+			wantVersion:    "v0.8.1",
+			wantURL:        "https://github.com/afittestide/asimi-cli/releases/v0.8.1",
+		},
+		{
+			name: "no update needed - older release",
+			body: `{
+				"tag_name": "v0.7.0",
+				"html_url": "https://github.com/afittestide/asimi-cli/releases/v0.7.0",
+				"body": "",
+				"assets": []
+			}`,
+			currentVersion: "0.8.1",
+			wantUpdate:     false,
+			wantErr:        false,
+			wantVersion:    "v0.7.0",
+			wantURL:        "https://github.com/afittestide/asimi-cli/releases/v0.7.0",
+		},
+		{
+			name:           "invalid JSON",
+			body:           `{invalid json`,
+			currentVersion: "0.8.1",
+			wantUpdate:     false,
+			wantErr:        true,
+		},
+		{
+			name: "invalid tag name",
+			body: `{
+				"tag_name": "not-a-version",
+				"html_url": "https://example.com",
+				"body": "",
+				"assets": []
+			}`,
+			currentVersion: "0.8.1",
+			wantUpdate:     false,
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, hasUpdate, err := ParseGitHubRelease([]byte(tt.body), tt.currentVersion)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseGitHubRelease() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if hasUpdate != tt.wantUpdate {
+				t.Errorf("ParseGitHubRelease() hasUpdate = %v, want %v", hasUpdate, tt.wantUpdate)
+			}
+			if info.Version != tt.wantVersion {
+				t.Errorf("ParseGitHubRelease() version = %q, want %q", info.Version, tt.wantVersion)
+			}
+			if info.URL != tt.wantURL {
+				t.Errorf("ParseGitHubRelease() url = %q, want %q", info.URL, tt.wantURL)
+			}
+			if info.ReleaseNotes != "Release notes here" && tt.wantVersion == "v0.9.0" {
+				t.Errorf("ParseGitHubRelease() releaseNotes = %q, want 'Release notes here'", info.ReleaseNotes)
+			}
+		})
+	}
+}
+
+func TestParseGitHubRelease_AssetMatching(t *testing.T) {
+	assetName := fmt.Sprintf("asimi_v0.9.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	body := fmt.Sprintf(`{
+		"tag_name": "v0.9.0",
+		"html_url": "https://example.com/release",
+		"body": "",
+		"assets": [
+			{"name": "asimi_v0.9.0_other_os.tar.gz", "browser_download_url": "https://example.com/wrong.tar.gz"},
+			{"name": %q, "browser_download_url": "https://example.com/correct.tar.gz"}
+		]
+	}`, assetName)
+
+	info, _, err := ParseGitHubRelease([]byte(body), "0.8.1")
+	if err != nil {
+		t.Fatalf("ParseGitHubRelease() unexpected error: %v", err)
+	}
+	if info.AssetURL != "https://example.com/correct.tar.gz" {
+		t.Errorf("ParseGitHubRelease() assetURL = %q, want correct URL", info.AssetURL)
+	}
+}
+
+func TestParseGitHubRelease_NoMatchingAsset(t *testing.T) {
+	body := `{
+		"tag_name": "v0.9.0",
+		"html_url": "https://example.com/release",
+		"body": "",
+		"assets": [
+			{"name": "asimi_v0.9.0_other_os.tar.gz", "browser_download_url": "https://example.com/wrong.tar.gz"}
+		]
+	}`
+
+	info, hasUpdate, err := ParseGitHubRelease([]byte(body), "0.8.1")
+	if err != nil {
+		t.Fatalf("ParseGitHubRelease() unexpected error: %v", err)
+	}
+	if info.AssetURL != "" {
+		t.Errorf("ParseGitHubRelease() assetURL = %q, want empty", info.AssetURL)
+	}
+	if !hasUpdate {
+		t.Error("ParseGitHubRelease() should report update available even without matching asset")
+	}
 }
 
 func TestParseVersion(t *testing.T) {

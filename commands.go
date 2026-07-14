@@ -821,7 +821,7 @@ func handleUpdateCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 
 		// Check for updates
-		latest, hasUpdate, err := utils.CheckForUpdates()
+		latest, hasUpdate, err := utils.CheckForUpdates(context.Background())
 		if err != nil {
 			return updateCheckMsg{hasUpdate: false, err: err}
 		}
