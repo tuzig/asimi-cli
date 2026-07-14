@@ -1456,8 +1456,8 @@ func isConnError(err error) bool {
 }
 
 // isRitualChannel returns true if channelID matches the "e<digits>" pattern
-// used by per-edict ritual channels (e.g. "e123"). Edict 1 uses "court"
-// and does not match, so court infrastructure rituals stay on the chancellor tab.
+// used by per-edict ritual channels (e.g. "e123"). All edicts, including
+// edict 1 ("e1"), use this pattern for per-edict ritual tabs.
 func isRitualChannel(channelID string) bool {
 	if len(channelID) < 2 || channelID[0] != 'e' {
 		return false
@@ -2184,10 +2184,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "queued":
 			text := fmt.Sprintf("⏳ Ritual %s queued for edict %d — waiting for another ritual to finish",
 				msg.RitualName, msg.EdictID)
-			if msg.EdictID == 1 {
-				text = fmt.Sprintf("⏳ Ritual %s queued — waiting for another ritual to finish",
-					msg.RitualName)
-			}
 			m.commandLine.AddToast(text, "warning", 3*time.Second)
 		case "started":
 			// Track the minister running the current step for ruler interjection
@@ -2243,10 +2239,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tabs.SetTabChatMode(msg.ChannelID, false)
 			text := fmt.Sprintf("%sRitual %s for edict %d completed in %s",
 				ritualPrefix, msg.RitualName, msg.EdictID, msg.Message)
-			if msg.EdictID == 1 {
-				text = fmt.Sprintf("%sRitual %s for the court completed in %s",
-					ritualPrefix, msg.RitualName, msg.Message)
-			}
 			chat.AddMessage(text)
 			chat.Indent--
 		case "ritual_failed":

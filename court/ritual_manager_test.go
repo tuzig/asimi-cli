@@ -319,6 +319,9 @@ func TestStartRitualFailureNotifies(t *testing.T) {
 	if failedMsg.EdictID != 99 {
 		t.Errorf("expected EdictID 99, got %d", failedMsg.EdictID)
 	}
+	if failedMsg.ChannelID != "e99" {
+		t.Errorf("expected ChannelID 'e99' for ritual_failed message, got %q", failedMsg.ChannelID)
+	}
 
 	// Verify EventRitualFailed was persisted to DB
 	var events []storage.TianEvent
@@ -413,8 +416,8 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if notifications[0].EventType != storage.EventEdictCreated {
 		t.Errorf("expected EventType EventEdictCreated, got %s", notifications[0].EventType)
 	}
-	if notifications[0].ChannelID != "chancellor" {
-		t.Errorf("expected ChannelID chancellor, got %s", notifications[0].ChannelID)
+	if notifications[0].ChannelID != "e1" {
+		t.Errorf("expected ChannelID e1, got %s", notifications[0].ChannelID)
 	}
 	mu.Unlock()
 
@@ -438,6 +441,9 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if notifications[0].Payload["minister_id"] != "judge" {
 		t.Errorf("expected minister_id judge in payload, got %v", notifications[0].Payload["minister_id"])
 	}
+	if notifications[0].ChannelID != "e2" {
+		t.Errorf("expected ChannelID e2, got %s", notifications[0].ChannelID)
+	}
 	mu.Unlock()
 
 	// Test EventEdictSealed notification
@@ -460,6 +466,9 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	if notifications[0].EdictKey.ID != 3 {
 		t.Errorf("expected EdictID 3, got %d", notifications[0].EdictKey.ID)
 	}
+	if notifications[0].ChannelID != "e3" {
+		t.Errorf("expected ChannelID e3, got %s", notifications[0].ChannelID)
+	}
 	mu.Unlock()
 
 	// All events are forwarded to the TUI
@@ -478,6 +487,9 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	}
 	if notifications[0].EventType != storage.EventStepCompleted {
 		t.Errorf("expected EventType EventStepCompleted, got %s", notifications[0].EventType)
+	}
+	if notifications[0].ChannelID != "e4" {
+		t.Errorf("expected ChannelID e4, got %s", notifications[0].ChannelID)
 	}
 	mu.Unlock()
 
@@ -504,6 +516,9 @@ func TestRitualGuard_EventNotification(t *testing.T) {
 	expected := "Ritual swift-strike aborted: edict cancelled"
 	if notifications[0].Message != expected {
 		t.Errorf("expected message %q, got %q", expected, notifications[0].Message)
+	}
+	if notifications[0].ChannelID != "e5" {
+		t.Errorf("expected ChannelID e5, got %s", notifications[0].ChannelID)
 	}
 	mu.Unlock()
 }
@@ -903,6 +918,9 @@ func TestStartRitualQueuedWhenLocked(t *testing.T) {
 	}
 	if queuedMsg.EdictID != 77 {
 		t.Errorf("expected EdictID 77, got %d", queuedMsg.EdictID)
+	}
+	if queuedMsg.ChannelID != "e77" {
+		t.Errorf("expected ChannelID 'e77' for queued message, got %q", queuedMsg.ChannelID)
 	}
 
 	// Release the lock so the queued ritual can proceed

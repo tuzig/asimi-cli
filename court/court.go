@@ -163,8 +163,8 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 		OnRunnerUpgrade: s.SetRunner,
 		// Each ritual startup gets a fresh cancellable ctx registered
 		// under the ritual's edict channel (e.g. "e123"). Edict 1
-		// (court infrastructure) uses "court" and routes to the
-		// chancellor tab. A subsequent ritual on the same channel
+		// (court infrastructure) uses "e1" and routes to its own
+		// per-edict tab. A subsequent ritual on the same channel
 		// replaces it; an explicit CancelTab from the TUI stops the
 		// current one.
 		StreamingCtx: func(channelID string) context.Context {

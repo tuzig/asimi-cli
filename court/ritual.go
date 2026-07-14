@@ -534,13 +534,9 @@ func (e *RitualExecution) EdictKey() storage.EdictKey {
 }
 
 // ChannelID returns the streaming channel ID for this ritual's edict.
-// Edict 1 (court infrastructure) uses "court" so its output routes to the
-// chancellor tab without creating a visible ritual tab. All other edicts
-// use the "e<N>" convention matching commit message suffixes.
+// All edicts use the "e<N>" convention matching commit message suffixes,
+// including edict 1 (court infrastructure), which uses "e1".
 func (e *RitualExecution) ChannelID() string {
-	if e.EdictID == 1 {
-		return "court"
-	}
 	return fmt.Sprintf("e%d", e.EdictID)
 }
 

@@ -147,13 +147,9 @@ func (rg *RitualGuard) PublishEvent(key storage.EdictKey, eventType storage.Cour
 }
 
 // ritualChannelID returns the streaming channel ID for a ritual's edict.
-// Edict 1 (court infrastructure) uses "court" so its output routes to the
-// chancellor tab without creating a visible ritual tab. All other edicts
-// use the "e<N>" convention matching commit message suffixes.
+// All edicts use the "e<N>" convention matching commit message suffixes,
+// including edict 1 (court infrastructure), which uses "e1".
 func ritualChannelID(edictID uint) string {
-	if edictID == 1 {
-		return "court"
-	}
 	return fmt.Sprintf("e%d", edictID)
 }
 
@@ -166,6 +162,7 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 		// Try to acquire lock; if held, check for stale rituals and abort them
 		if !rg.ritualMu.TryLock() {
 			rg.notify(RitualStepMsg{
+				ChannelID:  ritualChannelID(key.ID),
 				RitualName: ritualName,
 				EdictID:    key.ID,
 				Status:     "queued",
@@ -185,6 +182,7 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 		if err := rg.ritualRunner.Run(ctx, exec); err != nil {
 			rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
 			rg.notify(RitualStepMsg{
+				ChannelID:  ritualChannelID(key.ID),
 				RitualName:  ritualName,
 				ExecutionID: exec.ID,
 				EdictID:     key.ID,
@@ -291,7 +289,7 @@ func (rg *RitualGuard) notifyEvent(event Event) {
 // buildEventNotification maps event types to user-friendly notification messages
 func (rg *RitualGuard) buildEventNotification(event Event) EventNotificationMsg {
 	msg := EventNotificationMsg{
-		ChannelID: "chancellor", // Default to chancellor/ruling tab
+		ChannelID: ritualChannelID(event.EdictKey.ID),
 		EventType: event.Type,
 		EdictKey:  event.EdictKey,
 		Payload:   event.Payload,

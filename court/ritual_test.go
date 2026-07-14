@@ -3931,13 +3931,13 @@ func TestRitualIdleTimeoutKeepsActiveStepAlive(t *testing.T) {
 }
 
 // TestRitualChannelID verifies that RitualExecution.ChannelID() returns
-// the correct per-edict channel ID, with the edict 1 special case.
+// the correct per-edict channel ID, including edict 1.
 func TestRitualChannelID(t *testing.T) {
 	tests := []struct {
 		edictID uint
 		want    string
 	}{
-		{1, "court"},
+		{1, "e1"},
 		{2, "e2"},
 		{100, "e100"},
 		{644, "e644"},
@@ -3955,7 +3955,7 @@ func TestRitualChannelIDHelper(t *testing.T) {
 		edictID uint
 		want    string
 	}{
-		{1, "court"},
+		{1, "e1"},
 		{2, "e2"},
 		{644, "e644"},
 	}
@@ -3985,9 +3985,9 @@ func TestRitualNotifyUsesEdictChannelID(t *testing.T) {
 	assert.Equal(t, uint(644), got.EdictID)
 }
 
-// TestRitualNotifyEdict1UsesCourtChannel verifies that edict 1 rituals
-// route to the "court" channel (chancellor tab) instead of "e1".
-func TestRitualNotifyEdict1UsesCourtChannel(t *testing.T) {
+// TestRitualNotifyEdict1UsesE1Channel verifies that edict 1 rituals
+// route to the "e1" channel (per-edict tab) like every other edict.
+func TestRitualNotifyEdict1UsesE1Channel(t *testing.T) {
 	var got RitualStepMsg
 	e := &RitualExecution{
 		EdictID:    1,
@@ -4000,7 +4000,7 @@ func TestRitualNotifyEdict1UsesCourtChannel(t *testing.T) {
 		},
 	}
 	e.Notify(RitualStepMsg{Status: "started"})
-	assert.Equal(t, "court", got.ChannelID, "edict 1 should route to court channel")
+	assert.Equal(t, "e1", got.ChannelID, "edict 1 should route to e1 channel")
 }
 
 // pauseTestMinister blocks on each task until the task context is cancelled,
