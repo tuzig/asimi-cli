@@ -225,6 +225,16 @@ func (p *PromptComponent) SetExpandedHeight(height int) {
 	p.ExpandedHeight = height
 }
 
+// countVisualLines returns the number of visual lines a (possibly multi-line)
+// string occupies when rendered. Each \n-separated line counts as one row
+// minimum. Empty strings count as one line.
+func countVisualLines(s string) int {
+	if s == "" {
+		return 1
+	}
+	return strings.Count(s, "\n") + 1
+}
+
 // CalculateDesiredHeight returns the desired height based on content
 // When user input is more than one line (including wrapped lines), grows to ExpandedHeight lines (if screen allows)
 // Goes back to 2-line height when in scroll mode or when prompt is cleared
@@ -234,11 +244,36 @@ func (p *PromptComponent) CalculateDesiredHeight() int {
 		return 2
 	}
 
-	// In answering mode, size for: title + question + options + padding
+	// In answering mode, size for: title + question + options (accounting for word-wrap)
 	if p.answering != nil && p.answering.Current < len(p.answering.Questions) {
 		q := p.answering.Questions[p.answering.Current]
-		// 1 title + 1 blank + question lines + option count + 1 padding
-		h := 3 + len(q.Options)
+
+		// Content width inside the border
+		contentWidth := p.Width - 2
+		if contentWidth <= 0 {
+			contentWidth = 1
+		}
+		// Options are indented by 4 chars ("▶ " or "    ")
+		optionWidth := contentWidth - 4
+		if optionWidth <= 0 {
+			optionWidth = 1
+		}
+
+		// 1 title + 1 blank + question visual lines + sum of option visual lines
+		h := 2
+
+		// Count visual lines for question text (prefer summary)
+		displayText := q.Text
+		if q.Summary != "" {
+			displayText = q.Summary
+		}
+		h += countVisualLines(wordwrap.String(displayText, contentWidth))
+
+		// Count visual lines for each option
+		for _, opt := range q.Options {
+			h += countVisualLines(wordwrap.String(opt, optionWidth))
+		}
+
 		if p.MaxHeight > 0 && h > p.MaxHeight {
 			return p.MaxHeight
 		}
@@ -821,6 +856,15 @@ func (p PromptComponent) viewAnswering() string {
 	}
 	q := a.Questions[a.Current]
 
+	contentWidth := p.Width - 2
+	if contentWidth <= 0 {
+		contentWidth = 1
+	}
+	optionWidth := contentWidth - 4
+	if optionWidth <= 0 {
+		optionWidth = 1
+	}
+
 	var b strings.Builder
 	// Title
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render(a.Title))
@@ -830,15 +874,16 @@ func (p PromptComponent) viewAnswering() string {
 	if q.Summary != "" {
 		displayText = q.Summary
 	}
-	b.WriteString(displayText)
+	b.WriteString(wordwrap.String(displayText, contentWidth))
 	b.WriteByte('\n')
 
 	// Render options
 	for i, opt := range q.Options {
+		wrappedOpt := wordwrap.String(opt, optionWidth)
 		if i == q.Selected {
-			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptOnBorder).Render(fmt.Sprintf("  ▶ %s", opt)))
+			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(globalTheme.PromptOnBorder).Render(fmt.Sprintf("  ▶ %s", wrappedOpt)))
 		} else {
-			b.WriteString(fmt.Sprintf("    %s", opt))
+			b.WriteString(fmt.Sprintf("    %s", wrappedOpt))
 		}
 		if i < len(q.Options)-1 {
 			b.WriteByte('\n')

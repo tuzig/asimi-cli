@@ -690,3 +690,97 @@ func TestWordBackwardDoesNotInterfereWithDB(t *testing.T) {
 		t.Error("Should still be in normal mode after db")
 	}
 }
+
+// TestCalculateDesiredHeightAnsweringModeLongOptions tests that the height
+// calculation accounts for word-wrapped multi-line option text.
+func TestCalculateDesiredHeightAnsweringModeLongOptions(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+	prompt.SetScreenHeight(40) // MaxHeight = 20
+
+	// Width = 80, contentWidth = 78, optionWidth = 74
+	// A 140-char option should wrap to 2 lines at width 74
+	longOption := strings.Repeat("word ", 28) // ~140 chars
+	shortQuestion := "Pick one"
+
+	state := &AnsweringState{
+		RequestID: "test-long-opts",
+		Title:     "Zhengming",
+		Questions: []AnsweringQuestion{
+			{
+				Text:    shortQuestion,
+				Summary: shortQuestion,
+				Options: []string{longOption, "Short", longOption},
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	// title(1) + blank(1) + question(1) + option[0](2) + option[1](1) + option[2](2) = 8
+	height := prompt.CalculateDesiredHeight()
+	if height != 8 {
+		t.Errorf("Expected height 8 (accounting for wrapped options), got %d", height)
+	}
+}
+
+// TestViewAnsweringHeightMatchesCalculateDesiredHeight verifies that the
+// rendered viewAnswering() output height matches CalculateDesiredHeight()
+// when options are long and wrap to multiple lines.
+func TestViewAnsweringHeightMatchesCalculateDesiredHeight(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+	prompt.SetScreenHeight(40)
+
+	longOption := strings.Repeat("word ", 28) // ~140 chars
+
+	state := &AnsweringState{
+		RequestID: "test-view-height",
+		Title:     "Zhengming: Sage asks",
+		Questions: []AnsweringQuestion{
+			{
+				Text:    "Which approach do you prefer for handling the edge case?",
+				Summary: "Which approach?",
+				Options: []string{longOption, "Short option", longOption},
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	desired := prompt.CalculateDesiredHeight()
+	prompt.SetHeight(desired) // simulate what View() in TUIModel does
+
+	// Render the view and count content lines (inside the border)
+	view := prompt.View()
+	// The view is rendered with a bordered style. Strip ANSI and count lines.
+	plain := stripANSI(view)
+	// lipgloss adds border lines (top and bottom), so content lines = total - 2
+	totalLines := strings.Count(plain, "\n") + 1
+	contentLines := totalLines - 2 // subtract top and bottom border
+
+	if contentLines != desired {
+		t.Errorf("viewAnswering content height %d != CalculateDesiredHeight %d", contentLines, desired)
+	}
+}
+
+// stripANSI removes ANSI escape sequences from a string for line counting.
+func stripANSI(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			// Skip escape sequence
+			i += 2
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			if i < len(s) {
+				i++ // skip 'm'
+			}
+		} else {
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String()
+}
