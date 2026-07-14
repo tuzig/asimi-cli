@@ -72,6 +72,42 @@ func TestResolveStepDef(t *testing.T) {
 		t.Errorf("expected command 'just test', got %q", entry.Command)
 	}
 
+	// Test bash command with `# variable_name` suffix
+	entry, err = runner.resolveStepDef("!git log -1 --format='%H %s'  # head_commit")
+	if err != nil {
+		t.Fatalf("resolveStepDef with comment error: %v", err)
+	}
+	if entry.Kind != StepDefBash {
+		t.Errorf("expected StepDefBash, got %d", entry.Kind)
+	}
+	if entry.Key != "head_commit" {
+		t.Errorf("expected key 'head_commit', got %q", entry.Key)
+	}
+	if entry.Command != "git log -1 --format='%H %s'" {
+		t.Errorf("expected command without comment, got %q", entry.Command)
+	}
+
+	// Test that # inside arguments is not treated as a comment
+	entry, err = runner.resolveStepDef("!echo 'a#b'")
+	if err != nil {
+		t.Fatalf("resolveStepDef('!echo a#b') error: %v", err)
+	}
+	if entry.Key != "echo" {
+		t.Errorf("expected key 'echo', got %q", entry.Key)
+	}
+	if entry.Command != "echo 'a#b'" {
+		t.Errorf("expected command unchanged, got %q", entry.Command)
+	}
+
+	// Test bash command without comment still works (key = first word)
+	entry, err = runner.resolveStepDef("!just test")
+	if err != nil {
+		t.Fatalf("resolveStepDef('!just test') error: %v", err)
+	}
+	if entry.Key != "just" {
+		t.Errorf("expected key 'just', got %q", entry.Key)
+	}
+
 	// Test builtin resolution
 	entry, err = runner.resolveStepDef("the edict details")
 	if err != nil {

@@ -206,7 +206,7 @@
         {{ .summarize }}
 
         Call request_zhengming with question "What's our next step?" and
-        a few clear options. e.g, "review borderlands"
+        a few clear options. e.g, "review borderlands" or "clean-slate"
         
 - name: review-borderlands
   description: |
@@ -253,12 +253,88 @@
         ## Verdicts
         {{ .verdicts }}
 
+- name: clean-slate
+  description: |
+    Review all uncommitted changes (staged and unstaged), split them
+    into logical commits, determine if any should amend HEAD, and
+    link commits to edicts for the seal chain.
+  background:
+    - the earth status
+    - the unsealed edicts
+  steps:
+    - name: survey
+      minister: strategist
+      given:
+        - "!git log -1 --format='%H %s'  # head_commit"
+      act: |
+        Analyze the uncommitted changes below and produce a commit plan.
+
+        ## Earth Status (all uncommitted work)
+        {{ .earth_borderlands }}
+        {{ .earth_middle_kingdom }}
+
+        ## Current HEAD
+        {{ .head_commit }}
+
+        ## Unsealed Edicts
+        {{ .unsealed_edicts }}
+
+        Propose how to split the changes into logical commits. For each commit:
+        - Which files belong together (by logical change, not just file type)
+        - A concise commit message (start with "bug:", "feat:", or "chore:")
+        - If the changes fulfill an unsealed edict, end the commit message
+          with "e{edict_id}" (e.g. "e526") to link the commit to that edict
+
+        Also determine: should any proposed commit amend HEAD instead of
+        being a new commit? This is appropriate when the changes fix or
+        refine the HEAD commit rather than introducing something new.
+
+        Return the plan as a structured list. If there are no changes,
+        say so and stop.
+    - name: commit
+      minister: chancellor
+      act: |
+        Execute the commit plan from the survey step:
+
+        {{ .survey }}
+
+        1. For each proposed commit: `git add` the specified files,
+           then `git commit -m "message"` (message must end with "e{id}" 
+           if it fulfills an edict).
+        2. If the plan calls for amending HEAD: `git add` those files
+           first, then `git commit --amend --no-edit` to fold them in.
+
+        If there are no changes to commit, report that and stop.
+    - name: link-edicts
+      minister: chancellor
+      given:
+        - "!git log --format='%H %s' HEAD..HEAD~10  # recent_commits"
+      act: |
+        Link commits to edicts for the seal chain.
+
+        ## Previous HEAD (before clean-slate)
+        {{ .head_commit }}
+
+        ## Recent commits
+        {{ .recent_commits }}
+
+        ## Unsealed Edicts
+        {{ .unsealed_edicts }}
+
+        For each recent commit whose message ends with "e{edict_id}":
+        1. Find the matching unsealed edict by ID
+        2. Use get_manifest_by_commit to check if a manifest already exists
+        3. If no manifest exists, create one for that edict with the commit hash
+           and the changed file paths
+
+        Report which commits were linked to which edicts.
+        If no commits match any edict, say so.
+
 - name: fix-lint
   description: "Fix linter errors in parallel using fork/join"
   max_retries: 2
   background:
     # TODO:
-    # - a clean slate
     - the earth status
   steps:
     - name: lint

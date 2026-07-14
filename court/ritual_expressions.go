@@ -1164,6 +1164,18 @@ func (r *RitualRunner) resolveStepDef(raw string) (StepDefEntry, error) {
 		// Sanitize command into a key: take first word
 		key := strings.Fields(cmd)[0]
 		key = strings.ReplaceAll(key, "/", "_")
+
+		// Check for ` # variable_name` suffix to override the storage key.
+		// Only treat # as a comment when preceded by whitespace (bash convention)
+		// so that # inside arguments (e.g., sed 's/#//') is not mistaken.
+		if idx := strings.Index(cmd, " #"); idx >= 0 {
+			comment := strings.TrimSpace(cmd[idx+2:])
+			if parts := strings.Fields(comment); len(parts) > 0 {
+				key = parts[0]
+			}
+			cmd = strings.TrimSpace(cmd[:idx])
+		}
+
 		return StepDefEntry{
 			Kind:    StepDefBash,
 			Key:     key,

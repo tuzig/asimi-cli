@@ -406,7 +406,7 @@ Here's `swift-strike`, one of the built-in rituals — a tight forge/judge/sage 
 
 ## Built-in Rituals
 
-Asimi ships with six built-in rituals in [`builtin_rituals.yaml`](../court/builtin_rituals.yaml).
+Asimi ships with seven built-in rituals in [`builtin_rituals.yaml`](../court/builtin_rituals.yaml).
 
 ### swift-strike
 
@@ -432,11 +432,11 @@ A code review ritual for unstaged changes. The judge verifies test coverage for 
 
 **Steps:** judging → reviewing
 
-### lint-fix
+### clean-slate
 
-Fixes linter errors in parallel using the [fork/join pattern](#the-forkjoin-pattern). The forge runs the linter and returns a JSON list of files with errors, then a fork fans out over those files — fixing each one and verifying with tests. Finally, all changes are committed together.
+Reviews all uncommitted changes (staged and unstaged), splits them into logical commits, determines if any should amend HEAD, and links commits to edicts for the seal chain. The strategist surveys the changes and produces a commit plan. The chancellor executes the commits, then links edict-tagged commits to their edicts by creating manifests.
 
-**Steps:** lint → fix-all-files (fork: fix-file → verify-file) → commit-all
+**Steps:** survey → commit → link-edicts
 
 ### project-init
 
