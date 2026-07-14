@@ -80,6 +80,8 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [hunting|<minister>|ritual <run_id>])", handleTabNewCommand)
 	registry.RegisterCommand("tabclose", "Close the current tab", handleTabCloseCommand)
 	registry.RegisterCommand("edicts", "Manage edicts: read, enact, seal, resume, or cancel (usage: :edict [id] [enact|seal|resume|cancel])", handleEdictCommand)
+	registry.RegisterCommand("continue", "Resume a paused ritual on the current tab", handleContinueCommand)
+	registry.RegisterCommand("abort", "Abort a paused ritual on the current tab", handleAbortCommand)
 
 	return registry
 }
@@ -910,6 +912,54 @@ func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
 		return nil
 	}
 	model.commandLine.AddToast("Tab closed", "success", time.Second*2)
+	return nil
+}
+
+// handleContinueCommand resumes a paused ritual on the current tab.
+func handleContinueCommand(model *TUIModel, args []string) tea.Cmd {
+	tab := model.tabs.ActiveTab()
+	if tab.Type != "ritual" || !isRitualChannel(tab.Target) {
+		model.commandLine.AddToast(":continue only works on a paused ritual tab", "warning", 3*time.Second)
+		return nil
+	}
+	if !tab.ChatMode {
+		model.commandLine.AddToast("Ritual is not paused", "warning", 3*time.Second)
+		return nil
+	}
+	if model.court == nil {
+		model.commandLine.AddToast("Court not active", "error", 3*time.Second)
+		return nil
+	}
+	if model.court.ResumeRitual(tab.Target) {
+		model.tabs.SetTabChatMode(tab.Target, false)
+		chat := model.tabs.ChatByTab(tab.Target)
+		chat.AddMessage(fmt.Sprintf("%s▶ Ritual resuming...", systemPrefix))
+	} else {
+		model.commandLine.AddToast("No paused ritual found on this tab", "warning", 3*time.Second)
+	}
+	return nil
+}
+
+// handleAbortCommand aborts a paused ritual on the current tab.
+func handleAbortCommand(model *TUIModel, args []string) tea.Cmd {
+	tab := model.tabs.ActiveTab()
+	if tab.Type != "ritual" || !isRitualChannel(tab.Target) {
+		model.commandLine.AddToast(":abort only works on a ritual tab", "warning", 3*time.Second)
+		return nil
+	}
+	if model.court == nil {
+		model.commandLine.AddToast("Court not active", "error", 3*time.Second)
+		return nil
+	}
+	// Resume the ritual goroutine (unblocks it) then cancel the tab context
+	// to abort the ritual entirely — same as CTRL-C.
+	if tab.ChatMode {
+		model.court.ResumeRitual(tab.Target)
+		model.tabs.SetTabChatMode(tab.Target, false)
+	}
+	model.stopStreamingTab(tab.Target)
+	chat := model.tabs.ChatByTab(tab.Target)
+	chat.AddMessage(fmt.Sprintf("%s✋ Ritual aborted by ruler", systemPrefix))
 	return nil
 }
 

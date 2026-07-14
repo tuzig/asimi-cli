@@ -6,6 +6,8 @@ COMMAND-LINE mode, then type the command and press Enter.
   :new              - Start a new conversation
   :resume           - Resume a previous session
   :edicts            - Manage edicts (read, enact, seal, resume, cancel)
+  :continue         - Resume a paused ritual on the current tab
+  :abort            - Abort a paused ritual on the current tab
   :quit             - Quit Asimi (also saves session)
   :update           - Check for and install updates
 

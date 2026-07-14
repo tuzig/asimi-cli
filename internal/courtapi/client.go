@@ -91,6 +91,14 @@ type Client interface {
 	// per-channel cancel registry populated by CancellableStreamCtx.
 	CancelTab(channelID string)
 
+	// PauseRitual pauses the ritual running on channelID for ruler
+	// interjection. The step's LLM stream is interrupted but the
+	// ritual goroutine stays alive, waiting for ResumeRitual.
+	PauseRitual(channelID string) bool
+
+	// ResumeRitual resumes a paused ritual on channelID.
+	ResumeRitual(channelID string) bool
+
 	// CancellableStreamCtx mints a context registered under channelID
 	// in the server-side cancel registry. Server-side only — used by
 	// the RPC SubmitPrompt handler to give each prompt a ctx that a

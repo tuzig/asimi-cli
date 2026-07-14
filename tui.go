@@ -1533,6 +1533,40 @@ func (m *TUIModel) submitToCourt(ctx context.Context, prompt string, contextFile
 		ContextFiles: contextFiles,
 	}
 
+	// On a ritual tab, route the prompt to the minister running the current
+	// step (ruler interjection). The ritual is paused so the ruler can chat
+	// with the minister. Stream output routes back to the ritual tab via
+	// ChannelID = tab.Target (e.g. "e633").
+	if tab.Type == "ritual" && isRitualChannel(tab.Target) {
+		ministerID := tab.CurrentMinister
+		if ministerID == "" {
+			ministerID = "chancellor" // fallback
+		}
+
+		// Try to pause the ritual — cancels the step's LLM stream but keeps
+		// the ritual goroutine alive waiting for :continue or :abort.
+		paused := false
+		if m.court != nil {
+			paused = m.court.PauseRitual(tab.Target)
+		}
+		if paused {
+			m.tabs.SetTabChatMode(tab.Target, true)
+			chat := m.tabs.ChatByTab(tab.Target)
+			chat.AddMessage(fmt.Sprintf("%s💬 Now chatting with %s — use `:continue` to resume the ritual or `:abort` to cancel",
+				systemPrefix, ministerID))
+		}
+
+		// Submit the prompt to the minister, not the channel ID.
+		// ChannelID stays as tab.Target so stream chunks route to the ritual tab.
+		if err := m.court.SubmitPrompt(ministerID, p); err != nil {
+			return func() tea.Msg {
+				return court.StreamErrorMsg{Err: err}
+			}
+		}
+		m.tabs.SetStreamingTabByTab(tab.Target)
+		return nil
+	}
+
 	if err := m.court.SubmitPrompt(tab.Target, p); err != nil {
 		return func() tea.Msg {
 			return court.StreamErrorMsg{Err: err}
@@ -2156,6 +2190,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.commandLine.AddToast(text, "warning", 3*time.Second)
 		case "started":
+			// Track the minister running the current step for ruler interjection
+			if msg.MinisterID != "" {
+				m.tabs.SetTabMinister(msg.ChannelID, msg.MinisterID)
+			}
 			text := ""
 			if msg.StepName == "" {
 				text = fmt.Sprintf("%sRitual %s started",
@@ -2202,6 +2240,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "retrying":
 			chat.AddMessage(fmt.Sprintf("  Retrying: %s of %s", msg.StepName, msg.RitualName))
 		case "ritual_completed":
+			m.tabs.SetTabChatMode(msg.ChannelID, false)
 			text := fmt.Sprintf("%sRitual %s for edict %d completed in %s",
 				ritualPrefix, msg.RitualName, msg.EdictID, msg.Message)
 			if msg.EdictID == 1 {
@@ -2211,6 +2250,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			chat.AddMessage(text)
 			chat.Indent--
 		case "ritual_failed":
+			m.tabs.SetTabChatMode(msg.ChannelID, false)
 			chat.AddMessage(fmt.Sprintf("%s Ritual %s failed: %s", completeFailurePrefix, msg.RitualName, msg.Message))
 			if chat.Indent > 0 {
 				chat.Indent--
@@ -3822,7 +3862,7 @@ func editEdictIntentCmd(m *TUIModel, edictID uint) tea.Cmd {
 			return edictIntentUpdatedMsg{edictID: edictID, message: "No changes made to edict intent"}
 		}
 
-		if err := m.court.AppendToIntent(edictID, modified); err != nil {
+		if err := m.court.SetIntent(edictID, modified); err != nil {
 			return edictIntentUpdatedMsg{edictID: edictID, message: fmt.Sprintf("Failed to update edict: %v", err)}
 		}
 		return edictIntentUpdatedMsg{edictID: edictID, message: fmt.Sprintf("Edict %d intent updated", edictID)}

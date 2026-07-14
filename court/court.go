@@ -1040,6 +1040,31 @@ func (s *Court) CancelTab(channelID string) {
 	}
 }
 
+// PauseRitual pauses the ritual running on channelID for ruler interjection.
+// The step's LLM stream is interrupted but the ritual goroutine stays alive.
+func (s *Court) PauseRitual(channelID string) bool {
+	if s == nil {
+		return false
+	}
+	runner := s.GetRitualRunner()
+	if runner == nil {
+		return false
+	}
+	return runner.PauseRitual(channelID)
+}
+
+// ResumeRitual resumes a paused ritual on channelID.
+func (s *Court) ResumeRitual(channelID string) bool {
+	if s == nil {
+		return false
+	}
+	runner := s.GetRitualRunner()
+	if runner == nil {
+		return false
+	}
+	return runner.ResumeRitual(channelID)
+}
+
 // SubmitPrompt routes a prompt to the specified minister by ID.
 func (s *Court) SubmitPrompt(targetID string, p *Prompt) error {
 	if s == nil {

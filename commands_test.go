@@ -69,14 +69,14 @@ func TestFindCommand(t *testing.T) {
 			name:            "ambiguous match - c",
 			input:           ":c",
 			expectFound:     false,
-			expectMatches:   2, // compact and context
+			expectMatches:   3, // compact, context, continue
 			expectAmbiguous: true,
 		},
 		{
 			name:            "ambiguous match - co",
 			input:           ":co",
 			expectFound:     false,
-			expectMatches:   2, // compact and context
+			expectMatches:   3, // compact, context, continue
 			expectAmbiguous: true,
 		},
 		{
@@ -87,11 +87,11 @@ func TestFindCommand(t *testing.T) {
 			expectMatches: 1,
 		},
 		{
-			name:          "partial disambiguated - con",
-			input:         ":con",
-			expectFound:   true,
-			expectCommand: "context",
-			expectMatches: 1,
+			name:            "ambiguous match - con",
+			input:           ":con",
+			expectFound:     false,
+			expectMatches:   2, // context, continue
+			expectAmbiguous: true,
 		},
 		{
 			name:          "no match",

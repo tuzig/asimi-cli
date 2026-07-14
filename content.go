@@ -20,14 +20,16 @@ type TabType string
 
 // Tab represents a TUI tab with its own content buffer and stream target
 type Tab struct {
-	Label     string
-	Type      TabType
-	Target    string             // minister ID, edict ID, or ritual run ID
-	Content   ContentComponent   // Own content buffer per tab
-	EdictID   uint               // Current edict ID for this tab
-	Streaming bool               // True when this tab is actively receiving stream data
-	Ctx       context.Context    // per-tab context, flows to rituals for ruling tab
-	Cancel    context.CancelFunc // per-tab streaming cancellation
+	Label           string
+	Type            TabType
+	Target          string             // minister ID, edict ID, or ritual run ID
+	Content         ContentComponent   // Own content buffer per tab
+	EdictID         uint               // Current edict ID for this tab
+	Streaming       bool               // True when this tab is actively receiving stream data
+	Ctx             context.Context    // per-tab context, flows to rituals for ruling tab
+	Cancel          context.CancelFunc // per-tab streaming cancellation
+	CurrentMinister string             // For ritual tabs: the minister running the current step
+	ChatMode        bool               // For ritual tabs: true when ruler is chatting (ritual paused)
 }
 
 // NewTab creates a Tab with its own context and cancellation.
@@ -286,6 +288,26 @@ func (tm *TabManager) ClearStreamingByTab(tabID string) {
 	for i := range tm.tabs {
 		if tm.tabs[i].Target == tabID {
 			tm.tabs[i].Streaming = false
+			return
+		}
+	}
+}
+
+// SetTabMinister sets the CurrentMinister field on the tab matching tabID.
+func (tm *TabManager) SetTabMinister(tabID, ministerID string) {
+	for i := range tm.tabs {
+		if tm.tabs[i].Target == tabID {
+			tm.tabs[i].CurrentMinister = ministerID
+			return
+		}
+	}
+}
+
+// SetTabChatMode sets the ChatMode flag on the tab matching tabID.
+func (tm *TabManager) SetTabChatMode(tabID string, chatMode bool) {
+	for i := range tm.tabs {
+		if tm.tabs[i].Target == tabID {
+			tm.tabs[i].ChatMode = chatMode
 			return
 		}
 	}

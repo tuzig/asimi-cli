@@ -52,6 +52,7 @@ type RitualStepMsg struct {
 	ExecutionID string `msgpack:"execution_id"`
 	EdictID     uint   `msgpack:"edict_id,omitempty"`
 	StepName    string `msgpack:"step_name,omitempty"`
+	MinisterID  string `msgpack:"minister_id,omitempty"` // minister running the current step
 	StepIndex   int    `msgpack:"step_index"`
 	TotalSteps  int    `msgpack:"total_steps"`
 	ForkItem    string `msgpack:"fork_item,omitempty"` // e.g. "1/3" — item index within the fork
@@ -86,6 +87,12 @@ const (
 // ErrZhengmingPending is returned by runBuiltinThen when a zhengming request
 // has been created and the ritual must block until the ruler answers.
 var ErrZhengmingPending = errors.New("zhengming pending")
+
+// ErrRitualPaused is returned by executeMinisterStep when the step was
+// interrupted by a ruler interjection (PauseRitual). It signals that the
+// ritual should retry the step from the beginning rather than treating
+// the interruption as a real failure.
+var ErrRitualPaused = errors.New("ritual paused for ruler interjection")
 
 // ZhengmingAnswer carries the ruler's response to a pending zhengming request.
 type ZhengmingAnswer struct {
@@ -389,6 +396,14 @@ type RitualRunner struct {
 	sandboxConfig   *config.SandboxConfig // injected by ConfigureModel
 	projectSlug     string                // injected by ConfigureModel
 	idleTimeout     time.Duration         // max silence before a step is aborted (0 = default)
+
+	// Pause/resume for ruler interjection. When the ruler prompts on a ritual
+	// tab, the ritual pauses: the step context is cancelled (stopping the
+	// LLM stream) but the ritual goroutine blocks on pauseChan until
+	// resumeChan fires (:continue) or the parent context is cancelled (:abort).
+	pauseMu     sync.Mutex
+	pauseChans  map[string]chan struct{}      // keyed by channelID ("e633")
+	stepCancels map[string]context.CancelFunc // keyed by channelID — cancels the active step's context
 }
 
 // NewRitualRunner creates a new ritual runner
@@ -763,12 +778,20 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			exec.stepStates[exec.CurrentStep].Output = result
 
 			// Context cancelled (user interrupt) — the session layer already
-			// sent StreamInterruptedMsg which surfaces as 🛠️ ABORTED in the
+			// sent StreamInterruptedMsg which surfaces as 🛑 ABORTED in the
 			// TUI.
 			if ctx.Err() != nil {
 				exec.State = RitualStateAborted
 				r.saveExecution(exec)
 				return err
+			}
+
+			// Ritual was paused for ruler interjection and resumed via
+			// :continue. Re-run the current step from scratch.
+			if errors.Is(err, ErrRitualPaused) {
+				exec.stepStates[exec.CurrentStep].Status = "pending"
+				exec.stepStates[exec.CurrentStep].Message = ""
+				continue
 			}
 
 			exec.Notify(RitualStepMsg{
@@ -1011,9 +1034,10 @@ func (r *RitualRunner) executeStep(ctx context.Context, exec *RitualExecution, s
 		"minister", step.Minister)
 
 	exec.Notify(RitualStepMsg{
-		StepName:  step.Name,
-		StepIndex: exec.CurrentStep,
-		Status:    "started",
+		StepName:   step.Name,
+		MinisterID: step.Minister,
+		StepIndex:  exec.CurrentStep,
+		Status:     "started",
 	})
 	// Emit step_started Tian event
 	r.emitEvent(execKey, storage.EventStepStarted, storage.JSON{
@@ -1828,6 +1852,21 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	stepCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Register the step cancel so PauseRitual can interrupt the LLM stream
+	// without cancelling the parent ritual context.
+	channelID := exec.ChannelID()
+	r.pauseMu.Lock()
+	if r.stepCancels == nil {
+		r.stepCancels = make(map[string]context.CancelFunc)
+	}
+	r.stepCancels[channelID] = cancel
+	r.pauseMu.Unlock()
+	defer func() {
+		r.pauseMu.Lock()
+		delete(r.stepCancels, channelID)
+		r.pauseMu.Unlock()
+	}()
+
 	go func() {
 		select {
 		case <-stepTimer.C:
@@ -1856,6 +1895,23 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		if !ok {
 			return "", fmt.Errorf("task done channel closed for step %s", step.Name)
 		}
+
+		// If the ritual was paused for ruler interjection, block here until
+		// resumed (:continue) or the parent context is cancelled (:abort).
+		// The step's LLM stream was interrupted by PauseRitual cancelling
+		// stepCtx, so result.Err will be a context-cancelled error.
+		if r.pauseChannel(channelID) != nil {
+			pausedErr := r.waitIfPaused(ctx, channelID)
+			r.clearPause(channelID)
+			if pausedErr != nil {
+				// Parent context cancelled (:abort) — return the original error
+				return result.Output, result.Err
+			}
+			// Resumed via :continue — return ErrRitualPaused so the ritual
+			// loop retries the step from scratch.
+			return result.Output, ErrRitualPaused
+		}
+
 		if result.Err != nil {
 			return result.Output, result.Err
 		}
@@ -2104,6 +2160,80 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 		return text
 	}
 	return strings.TrimSpace(buf.String())
+}
+
+// PauseRitual signals the ritual running on channelID to pause.
+// It cancels the active step's context (stopping the LLM stream) and
+// creates a pause channel that the ritual goroutine will block on.
+// Returns false if no ritual step is running on that channel.
+func (r *RitualRunner) PauseRitual(channelID string) bool {
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
+	if r.pauseChans == nil {
+		r.pauseChans = make(map[string]chan struct{})
+	}
+	if r.stepCancels == nil {
+		r.stepCancels = make(map[string]context.CancelFunc)
+	}
+	if _, ok := r.pauseChans[channelID]; ok {
+		return false // already paused
+	}
+	// Only pause if a step is actively running (has a registered step cancel).
+	if _, ok := r.stepCancels[channelID]; !ok {
+		return false
+	}
+	r.pauseChans[channelID] = make(chan struct{})
+	// Cancel the active step's context to interrupt the LLM stream.
+	// The ritual goroutine stays alive because we don't cancel the parent context.
+	if cancel, ok := r.stepCancels[channelID]; ok {
+		cancel()
+	}
+	return true
+}
+
+// ResumeRitual signals the paused ritual on channelID to continue.
+// Returns false if no ritual is paused on that channel.
+func (r *RitualRunner) ResumeRitual(channelID string) bool {
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
+	ch, ok := r.pauseChans[channelID]
+	if !ok {
+		return false
+	}
+	close(ch)
+	delete(r.pauseChans, channelID)
+	return true
+}
+
+// waitIfPaused blocks if the ritual on channelID has been asked to pause.
+// Returns nil when resumed, or ctx.Err() if the context is cancelled.
+func (r *RitualRunner) waitIfPaused(ctx context.Context, channelID string) error {
+	r.pauseMu.Lock()
+	ch, ok := r.pauseChans[channelID]
+	r.pauseMu.Unlock()
+	if !ok {
+		return nil
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// pauseChannel returns the pause channel for channelID, or nil if none.
+func (r *RitualRunner) pauseChannel(channelID string) chan struct{} {
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
+	return r.pauseChans[channelID]
+}
+
+// clearPause removes the pause channel for channelID (cleanup on step exit).
+func (r *RitualRunner) clearPause(channelID string) {
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
+	delete(r.pauseChans, channelID)
 }
 
 // saveExecution persists execution state to database

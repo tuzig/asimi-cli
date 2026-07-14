@@ -305,6 +305,22 @@ func RegisterCourtHandlers(c *Conn, impl courtapi.Client) {
 		return nil, nil
 	})
 
+	c.Handle(MethodPauseRitual, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p PauseRitualParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		return wire.Encode(PauseRitualResult{Paused: impl.PauseRitual(p.ChannelID)})
+	})
+
+	c.Handle(MethodResumeRitual, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p ResumeRitualParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		return wire.Encode(ResumeRitualResult{Resumed: impl.ResumeRitual(p.ChannelID)})
+	})
+
 	c.Handle(MethodGetSessionExport, func(ctx context.Context, params []byte) ([]byte, error) {
 		var p GetSessionExportParams
 		if err := wire.Decode(params, &p); err != nil {

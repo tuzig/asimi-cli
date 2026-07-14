@@ -256,6 +256,26 @@ func (c *CourtClient) CancelTab(channelID string) {
 	_ = c.callVoid(context.Background(), MethodCancelTab, CancelTabParams{ChannelID: channelID})
 }
 
+func (c *CourtClient) PauseRitual(channelID string) bool {
+	raw, err := c.conn.Call(context.Background(), MethodPauseRitual, PauseRitualParams{ChannelID: channelID})
+	if err != nil {
+		return false
+	}
+	var r PauseRitualResult
+	_ = wire.Decode(raw, &r)
+	return r.Paused
+}
+
+func (c *CourtClient) ResumeRitual(channelID string) bool {
+	raw, err := c.conn.Call(context.Background(), MethodResumeRitual, ResumeRitualParams{ChannelID: channelID})
+	if err != nil {
+		return false
+	}
+	var r ResumeRitualResult
+	_ = wire.Decode(raw, &r)
+	return r.Resumed
+}
+
 func (c *CourtClient) SetContext(ctx context.Context, params types.SetContextParams) error {
 	return c.callVoid(ctx, MethodSetContext, params)
 }

@@ -171,6 +171,22 @@ type CancelTabParams struct {
 	ChannelID string `msgpack:"channel_id"`
 }
 
+type PauseRitualParams struct {
+	ChannelID string `msgpack:"channel_id"`
+}
+
+type PauseRitualResult struct {
+	Paused bool `msgpack:"paused"`
+}
+
+type ResumeRitualParams struct {
+	ChannelID string `msgpack:"channel_id"`
+}
+
+type ResumeRitualResult struct {
+	Resumed bool `msgpack:"resumed"`
+}
+
 type GetSessionExportParams struct {
 	TabTarget string `msgpack:"tab_target"`
 }

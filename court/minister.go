@@ -21,12 +21,12 @@ import (
 
 	"regexp"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/vmihailenco/msgpack/v5"
@@ -209,8 +209,8 @@ type MinisterBase struct {
 	prompts      chan *Prompt
 	tasks        chan *Task
 	publish      func(key storage.EdictKey, eventType storage.CourtEvent, payload storage.JSON) uint // routes events through Court when set
-	toolRegistry *tools.ToolRegistry                                                                     // central tool registry with permission classifications
-	getMinister  func(string) Minister                                                                   // minister lookup injected by Court
+	toolRegistry *tools.ToolRegistry                                                                 // central tool registry with permission classifications
+	getMinister  func(string) Minister                                                               // minister lookup injected by Court
 
 	zhengmingMu         sync.Mutex
 	onZhengmingRaised   func()
@@ -351,18 +351,30 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 		return
 	}
 
+	// Use the prompt's ChannelID for stream routing when set (e.g. when
+	// the ruler prompts on a ritual tab, ChannelID is "e633" so stream
+	// chunks route to the ritual tab, not the minister's own tab).
+	channelID := prompt.ChannelID
+	if channelID == "" {
+		channelID = m.ministerID
+	}
+
 	m.sessionMu.Lock()
 	if m.session == nil {
 		var err error
-		m.session, err = CreateSession(minister, m.client, m.config, m.notify, m.ministerID)
+		m.session, err = CreateSession(minister, m.client, m.config, m.notify, channelID)
 		if err != nil {
 			m.sessionMu.Unlock()
-			m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: fmt.Errorf("failed to create session: %w", err)})
+			m.notify(StreamErrorMsg{ChannelID: channelID, Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
 		m.session.TabType = m.ministerID
 		m.session.SetPersister(m.persister)
-		m.logger.Info("created interactive session", "minister_id", m.ministerID)
+		m.logger.Info("created interactive session", "minister_id", m.ministerID, "channel_id", channelID)
+	} else {
+		// Override the session's channel so stream chunks route to the
+		// prompt's target tab (e.g. a ritual tab "e633").
+		m.session.SetChannelID(channelID)
 	}
 	session := m.session
 	m.sessionMu.Unlock()
@@ -372,14 +384,14 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 		message = m.promptPreprocessor(prompt.EdictKey, message)
 	}
 
-	m.notify(StreamStartMsg{ChannelID: m.ministerID, EdictID: prompt.EdictKey.ID})
+	m.notify(StreamStartMsg{ChannelID: channelID, EdictID: prompt.EdictKey.ID})
 
 	_, err := session.AskWithStreaming(ctx, message, prompt.ContextFiles)
 	if err != nil && ctx.Err() == nil {
-		m.notify(StreamErrorMsg{ChannelID: m.ministerID, Err: err})
+		m.notify(StreamErrorMsg{ChannelID: channelID, Err: err})
 		return
 	}
-	m.notify(StreamDoneMsg{ChannelID: m.ministerID})
+	m.notify(StreamDoneMsg{ChannelID: channelID})
 }
 
 // Runner returns the shell runner (may be nil)

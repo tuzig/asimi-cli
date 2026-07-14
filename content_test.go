@@ -237,3 +237,50 @@ func TestHandleTabNewCommand_SageArgOpensSageTab(t *testing.T) {
 	sageDef := ministers.LookupByID(defs, ministers.Sage)
 	assert.Contains(t, newTab.Label, sageDef.Title)
 }
+
+func TestSetTabMinister_SetsMinisterOnMatchingTab(t *testing.T) {
+	tm := newTestTabManager()
+	tm.DismissWelcome()
+
+	tm.Add("Ritual:e647", "ritual", "e647")
+
+	tm.SetTabMinister("e647", "forge")
+	tab := tm.TabByTarget("e647")
+	require.NotNil(t, tab)
+	assert.Equal(t, "forge", tab.CurrentMinister)
+}
+
+func TestSetTabMinister_NoMatchIsNoOp(t *testing.T) {
+	tm := newTestTabManager()
+	tm.DismissWelcome()
+
+	tm.SetTabMinister("nonexistent", "forge")
+	for i := range tm.tabs {
+		assert.Empty(t, tm.tabs[i].CurrentMinister, "no tab should have CurrentMinister set")
+	}
+}
+
+func TestSetTabChatMode_SetsChatModeOnMatchingTab(t *testing.T) {
+	tm := newTestTabManager()
+	tm.DismissWelcome()
+
+	tm.Add("Ritual:e647", "ritual", "e647")
+
+	tm.SetTabChatMode("e647", true)
+	tab := tm.TabByTarget("e647")
+	require.NotNil(t, tab)
+	assert.True(t, tab.ChatMode)
+
+	tm.SetTabChatMode("e647", false)
+	assert.False(t, tab.ChatMode)
+}
+
+func TestSetTabChatMode_NoMatchIsNoOp(t *testing.T) {
+	tm := newTestTabManager()
+	tm.DismissWelcome()
+
+	tm.SetTabChatMode("nonexistent", true)
+	for i := range tm.tabs {
+		assert.False(t, tm.tabs[i].ChatMode, "no tab should have ChatMode set")
+	}
+}

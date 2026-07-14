@@ -595,6 +595,22 @@ func (rc *ReconnectingClient) CancelTab(channelID string) {
 	}
 }
 
+func (rc *ReconnectingClient) PauseRitual(channelID string) bool {
+	client := rc.getClient()
+	if client == nil {
+		return false
+	}
+	return client.PauseRitual(channelID)
+}
+
+func (rc *ReconnectingClient) ResumeRitual(channelID string) bool {
+	client := rc.getClient()
+	if client == nil {
+		return false
+	}
+	return client.ResumeRitual(channelID)
+}
+
 func (rc *ReconnectingClient) GetSessionExport(tabTarget string) (*court.SessionExport, error) {
 	client := rc.getClient()
 	if client == nil {

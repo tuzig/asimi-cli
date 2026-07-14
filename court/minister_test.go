@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/mocks"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 
@@ -208,6 +208,79 @@ func TestProcessPrompt_NoPreprocessor(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Equal(t, 1, doneCount, "should complete streaming without error")
+}
+
+// TestProcessPrompt_ChannelIDRouting verifies that when a prompt has a
+// ChannelID set (e.g. "e633" for a ritual tab), stream notifications
+// use that ChannelID instead of the minister's own ID.
+func TestProcessPrompt_ChannelIDRouting(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	var mu sync.Mutex
+	var startChannelID, doneChannelID string
+	sage.SetNotify(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch m := msg.(type) {
+		case StreamStartMsg:
+			startChannelID = m.ChannelID
+		case StreamDoneMsg:
+			doneChannelID = m.ChannelID
+		}
+	})
+
+	prompt := &Prompt{
+		EdictKey:  storage.EdictKey{ID: 0, Username: "testuser", Project: "testproject"},
+		Message:   "hello",
+		ChannelID: "e633",
+	}
+	base.ProcessPrompt(ctx, sage, prompt)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, "e633", startChannelID, "StreamStartMsg should use prompt ChannelID")
+	assert.Equal(t, "e633", doneChannelID, "StreamDoneMsg should use prompt ChannelID")
+}
+
+// TestProcessPrompt_DefaultChannelID verifies that when ChannelID is empty,
+// stream notifications fall back to the minister's own ID (existing behavior).
+func TestProcessPrompt_DefaultChannelID(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	var mu sync.Mutex
+	var doneChannelID string
+	sage.SetNotify(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if m, ok := msg.(StreamDoneMsg); ok {
+			doneChannelID = m.ChannelID
+		}
+	})
+
+	prompt := &Prompt{
+		EdictKey:  storage.EdictKey{ID: 0, Username: "testuser", Project: "testproject"},
+		Message:   "hello",
+		ChannelID: "", // empty — should fall back to minister ID
+	}
+	base.ProcessPrompt(ctx, sage, prompt)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, "sage", doneChannelID, "StreamDoneMsg should use minister ID when ChannelID is empty")
 }
 
 func TestStrategist_CircularDependencyDetection(t *testing.T) {

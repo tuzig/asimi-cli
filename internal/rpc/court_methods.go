@@ -33,6 +33,8 @@ const (
 	MethodCompactSession       = "CompactSession"
 	MethodTakeSnapshot         = "TakeSnapshot"
 	MethodCancelTab            = "CancelTab"
+	MethodPauseRitual          = "PauseRitual"
+	MethodResumeRitual         = "ResumeRitual"
 	MethodGetSessionExport     = "GetSessionExport"
 	MethodSetContext           = "SetContext"
 )

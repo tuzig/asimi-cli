@@ -3413,6 +3413,37 @@ func (m *mockCourtClient) GrantRulerSeal(edictID uint, notes string) error {
 	return nil
 }
 
+func (m *mockCourtClient) PauseRitual(channelID string) bool {
+	m.pausedChannels = append(m.pausedChannels, channelID)
+	if m.pauseRitualFn != nil {
+		return m.pauseRitualFn(channelID)
+	}
+	return true
+}
+
+func (m *mockCourtClient) ResumeRitual(channelID string) bool {
+	m.resumedChannels = append(m.resumedChannels, channelID)
+	if m.resumeRitualFn != nil {
+		return m.resumeRitualFn(channelID)
+	}
+	return true
+}
+
+func (m *mockCourtClient) CancelTab(channelID string) {
+	// no-op for tests
+}
+
+func (m *mockCourtClient) SessionState(target string) court.SessionState {
+	return court.SessionState{}
+}
+
+func (m *mockCourtClient) SubmitPrompt(targetID string, p *court.Prompt) error {
+	m.submitPromptTarget = targetID
+	m.submitPromptMsg = p.Message
+	m.submitPromptChanID = p.ChannelID
+	return nil
+}
+
 // --- Tests for pendingRitualEnact YESNO flow ---
 
 func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
@@ -5131,4 +5162,301 @@ func TestViewLayoutHeightInvariantAnsweringMode(t *testing.T) {
 	require.NotEmpty(t, tabBar, "multi-tab should produce a tab bar")
 	assert.Contains(t, view, "Chancellor",
 		"tab bar text should be present in View() output (not scrolled off)")
+}
+
+func TestHandleContinueCommand_ResumesPausedRitual(t *testing.T) {
+	mock := &mockCourtClient{
+		resumeRitualFn: func(channelID string) bool { return true },
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab in chat mode (paused)
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.ChatMode = true
+	tab.CurrentMinister = "forge"
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	cmd := handleContinueCommand(model, []string{})
+	// handleContinueCommand returns nil (no tea.Cmd) on success
+	require.Nil(t, cmd)
+
+	// ResumeRitual should have been called on the court
+	require.Len(t, mock.resumedChannels, 1)
+	assert.Equal(t, "e647", mock.resumedChannels[0])
+
+	// ChatMode should be cleared
+	tab = model.tabs.TabByTarget("e647")
+	assert.False(t, tab.ChatMode, "ChatMode should be cleared after :continue")
+}
+
+func TestHandleContinueCommand_WarnsWhenNotPaused(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab but NOT in chat mode (not paused)
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	cmd := handleContinueCommand(model, []string{})
+	require.Nil(t, cmd)
+
+	// ResumeRitual should NOT have been called
+	assert.Empty(t, mock.resumedChannels, "ResumeRitual should not be called when ritual is not paused")
+}
+
+func TestHandleContinueCommand_WarnsOnNonRitualTab(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Active tab is the default chancellor tab (not a ritual tab)
+	cmd := handleContinueCommand(model, []string{})
+	require.Nil(t, cmd)
+
+	assert.Empty(t, mock.resumedChannels, "ResumeRitual should not be called on non-ritual tab")
+}
+
+func TestHandleContinueCommand_NoCourt(t *testing.T) {
+	model := newTestModel(t)
+	model.court = nil
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab in chat mode
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	tab.ChatMode = true
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Should not panic when court is nil
+	cmd := handleContinueCommand(model, []string{})
+	require.Nil(t, cmd)
+}
+
+func TestHandleAbortCommand_AbortsPausedRitual(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab in chat mode (paused)
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.ChatMode = true
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	cmd := handleAbortCommand(model, []string{})
+	require.Nil(t, cmd)
+
+	// ResumeRitual should have been called to unblock the ritual goroutine
+	require.Len(t, mock.resumedChannels, 1)
+	assert.Equal(t, "e647", mock.resumedChannels[0])
+
+	// ChatMode should be cleared
+	tab = model.tabs.TabByTarget("e647")
+	assert.False(t, tab.ChatMode, "ChatMode should be cleared after :abort")
+}
+
+func TestHandleAbortCommand_AbortsRunningRitual(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab NOT in chat mode (ritual is running, not paused)
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.ChatMode = false
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	cmd := handleAbortCommand(model, []string{})
+	require.Nil(t, cmd)
+
+	// ResumeRitual should NOT be called (ritual wasn't paused)
+	assert.Empty(t, mock.resumedChannels, "ResumeRitual should not be called when ritual is not paused")
+}
+
+func TestHandleAbortCommand_NoCourt(t *testing.T) {
+	model := newTestModel(t)
+	model.court = nil
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Should not panic when court is nil
+	cmd := handleAbortCommand(model, []string{})
+	require.Nil(t, cmd)
+}
+
+func TestHandleAbortCommand_WarnsOnNonRitualTab(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Active tab is the default chancellor tab (not a ritual tab)
+	cmd := handleAbortCommand(model, []string{})
+	require.Nil(t, cmd)
+
+	assert.Empty(t, mock.resumedChannels, "ResumeRitual should not be called on non-ritual tab")
+}
+
+func TestRitualStepMsg_SetsTabMinisterOnStart(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+
+	msg := court.RitualStepMsg{
+		ChannelID:  "e647",
+		RitualName: "swift-strike",
+		StepName:   "forge-step",
+		MinisterID: "forge",
+		StepIndex:  0,
+		TotalSteps: 2,
+		Status:     "started",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	tab := updatedModel.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	assert.Equal(t, "forge", tab.CurrentMinister,
+		"CurrentMinister should be set from RitualStepMsg.MinisterID on step start")
+}
+
+func TestRitualCompleted_ClearsChatMode(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab in chat mode
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.ChatMode = true
+
+	msg := court.RitualStepMsg{
+		ChannelID:  "e647",
+		RitualName: "swift-strike",
+		Status:     "ritual_completed",
+		EdictID:    647,
+		Message:    "done",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	tab = updatedModel.tabs.TabByTarget("e647")
+	assert.False(t, tab.ChatMode, "ChatMode should be cleared on ritual_completed")
+}
+
+func TestRitualFailed_ClearsChatMode(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab in chat mode
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.ChatMode = true
+
+	msg := court.RitualStepMsg{
+		ChannelID:  "e647",
+		RitualName: "swift-strike",
+		Status:     "ritual_failed",
+		Message:    "something went wrong",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	tab = updatedModel.tabs.TabByTarget("e647")
+	assert.False(t, tab.ChatMode, "ChatMode should be cleared on ritual_failed")
+}
+
+func TestSubmitToCourt_RitualTab_PausesAndRoutesToMinister(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return true },
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab with a known minister
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "forge"
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	ctx := context.Background()
+	cmd := model.submitToCourt(ctx, "hey forge", nil)
+	// On success, submitToCourt returns nil
+	require.Nil(t, cmd)
+
+	// PauseRitual should have been called
+	require.Len(t, mock.pausedChannels, 1)
+	assert.Equal(t, "e647", mock.pausedChannels[0])
+
+	// SubmitPrompt should route to the minister, not the channel ID
+	assert.Equal(t, "forge", mock.submitPromptTarget)
+	assert.Equal(t, "hey forge", mock.submitPromptMsg)
+	// ChannelID should be the tab target so stream routes to ritual tab
+	assert.Equal(t, "e647", mock.submitPromptChanID)
+
+	// ChatMode should be set
+	tab = model.tabs.TabByTarget("e647")
+	assert.True(t, tab.ChatMode, "ChatMode should be set after pause")
+}
+
+func TestSubmitToCourt_RitualTab_NotPaused_StillRoutesToMinister(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return false },
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "forge"
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	ctx := context.Background()
+	cmd := model.submitToCourt(ctx, "hello", nil)
+	require.Nil(t, cmd)
+
+	// Even when pause fails, the prompt should still go to the minister
+	assert.Equal(t, "forge", mock.submitPromptTarget)
+	assert.Equal(t, "e647", mock.submitPromptChanID)
+
+	// ChatMode should NOT be set when pause fails
+	tab = model.tabs.TabByTarget("e647")
+	assert.False(t, tab.ChatMode, "ChatMode should not be set when pause fails")
+}
+
+func TestSubmitToCourt_NonRitualTab_RoutesToTabTarget(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Default tab is "chancellor" (non-ritual)
+	ctx := context.Background()
+	cmd := model.submitToCourt(ctx, "hello chancellor", nil)
+	require.Nil(t, cmd)
+
+	// Should route to the tab target (chancellor), not a minister
+	assert.Equal(t, "chancellor", mock.submitPromptTarget)
+	assert.Empty(t, mock.pausedChannels, "PauseRitual should not be called on non-ritual tab")
 }

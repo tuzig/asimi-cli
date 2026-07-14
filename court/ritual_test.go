@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 
 	"github.com/stretchr/testify/assert"
@@ -3774,12 +3774,12 @@ func TestExecuteForkDAG_NoEarlyDispatch(t *testing.T) {
 // while working, or stays silent, depending on configuration.
 type idleTestMinister struct {
 	MinisterBase
-	id           string
-	tasksCh      chan *Task
+	id             string
+	tasksCh        chan *Task
 	notifyInterval time.Duration // if >0, send notifications at this interval
-	totalDuration time.Duration  // how long to work before completing
-	result       string
-	err          error
+	totalDuration  time.Duration // how long to work before completing
+	result         string
+	err            error
 }
 
 func (m *idleTestMinister) ID() string                  { return m.id }
@@ -3789,7 +3789,7 @@ func (m *idleTestMinister) Tools() []Tool               { return nil }
 func (m *idleTestMinister) Tasks() chan<- *Task         { return m.tasksCh }
 func (m *idleTestMinister) Model() LLMProvider          { return nil }
 func (m *idleTestMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
-func (m *idleTestMinister) RepoInfo() repo.RepoInfo      { return repo.RepoInfo{} }
+func (m *idleTestMinister) RepoInfo() repo.RepoInfo     { return repo.RepoInfo{} }
 func (m *idleTestMinister) Run(ctx context.Context) {
 	for {
 		select {
@@ -3847,12 +3847,12 @@ func TestRitualIdleTimeoutAbortsSilentStep(t *testing.T) {
 
 	// Minister that accepts task but never sends notifications and takes long
 	silentMinister := &idleTestMinister{
-		MinisterBase:   MinisterBase{logger: slog.Default()},
-		id:             "forge",
-		tasksCh:        make(chan *Task, 1),
-		totalDuration:  10 * time.Second, // would take 10s if not aborted
-		result:         "done",
-		err:            nil,
+		MinisterBase:  MinisterBase{logger: slog.Default()},
+		id:            "forge",
+		tasksCh:       make(chan *Task, 1),
+		totalDuration: 10 * time.Second, // would take 10s if not aborted
+		result:        "done",
+		err:           nil,
 	}
 
 	ministers := map[string]Minister{"forge": silentMinister}
@@ -3898,13 +3898,13 @@ func TestRitualIdleTimeoutKeepsActiveStepAlive(t *testing.T) {
 	// The idle timeout is 200ms, but it should never fire because the
 	// minister is actively producing output.
 	chattyMinister := &idleTestMinister{
-		MinisterBase:    MinisterBase{logger: slog.Default()},
-		id:              "forge",
-		tasksCh:         make(chan *Task, 1),
-		notifyInterval:  50 * time.Millisecond,
-		totalDuration:   500 * time.Millisecond,
-		result:          "done",
-		err:             nil,
+		MinisterBase:   MinisterBase{logger: slog.Default()},
+		id:             "forge",
+		tasksCh:        make(chan *Task, 1),
+		notifyInterval: 50 * time.Millisecond,
+		totalDuration:  500 * time.Millisecond,
+		result:         "done",
+		err:            nil,
 	}
 
 	ministers := map[string]Minister{"forge": chattyMinister}
@@ -4001,4 +4001,189 @@ func TestRitualNotifyEdict1UsesCourtChannel(t *testing.T) {
 	}
 	e.Notify(RitualStepMsg{Status: "started"})
 	assert.Equal(t, "court", got.ChannelID, "edict 1 should route to court channel")
+}
+
+// pauseTestMinister blocks on each task until the task context is cancelled,
+// then returns context.Canceled. Used for pause/resume testing.
+type pauseTestMinister struct {
+	MinisterBase
+	id      string
+	tasksCh chan *Task
+}
+
+func (m *pauseTestMinister) ID() string                  { return m.id }
+func (m *pauseTestMinister) SystemPrompt() string        { return "" }
+func (m *pauseTestMinister) Title() string               { return m.id }
+func (m *pauseTestMinister) Tools() []Tool               { return nil }
+func (m *pauseTestMinister) Tasks() chan<- *Task         { return m.tasksCh }
+func (m *pauseTestMinister) Model() LLMProvider          { return nil }
+func (m *pauseTestMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
+func (m *pauseTestMinister) RepoInfo() repo.RepoInfo     { return repo.RepoInfo{} }
+
+func (m *pauseTestMinister) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-m.tasksCh:
+			// Block until the task context is cancelled
+			<-t.Ctx.Done()
+			t.Done <- Result{Output: "", Err: context.Canceled}
+		}
+	}
+}
+
+// TestRitualPauseResume verifies the pause/resume mechanism for ruler
+// interjection. When PauseRitual is called during a running step, the
+// step's context is cancelled (interrupting the LLM stream). When
+// ResumeRitual is called, the step is retried from scratch.
+func TestRitualPauseResume(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name:        "pause-test",
+		Description: "Test pause and resume",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	slowMinister := &pauseTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 1),
+	}
+
+	ministers := map[string]Minister{"forge": slowMinister}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go slowMinister.Run(ctx)
+
+	court := &Court{
+		ministers: ministers,
+		logger:    slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
+
+	notify := func(msg any) {}
+
+	exec, err := runner.Start(ctx, "pause-test", testEK(50), nil, notify)
+	require.NoError(t, err)
+
+	// Run the ritual in a goroutine
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- runner.Run(ctx, exec)
+	}()
+
+	// Wait for the step to start
+	time.Sleep(500 * time.Millisecond)
+
+	// Pause the ritual
+	channelID := exec.ChannelID()
+	paused := runner.PauseRitual(channelID)
+	assert.True(t, paused, "PauseRitual should return true when a step is running")
+
+	// Wait for the step to be interrupted
+	time.Sleep(500 * time.Millisecond)
+
+	// Resume the ritual
+	resumed := runner.ResumeRitual(channelID)
+	assert.True(t, resumed, "ResumeRitual should return true when a ritual is paused")
+
+	// The step retries after resume. It will block again — cancel the
+	// parent context to end the ritual.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		cancel()
+	}()
+
+	// Wait for the ritual to complete (aborted by context cancellation)
+	select {
+	case err := <-runDone:
+		_ = err // expected — ritual aborted
+	case <-time.After(5 * time.Second):
+		t.Fatal("ritual did not complete after resume")
+	}
+}
+
+// TestRitualPauseAbort verifies that when a ritual is paused and then
+// the context is cancelled (simulating :abort), the ritual goroutine
+// exits with an error.
+func TestRitualPauseAbort(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name:        "pause-abort-test",
+		Description: "Test pause and abort",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	slowMinister := &pauseTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 1),
+	}
+
+	ministers := map[string]Minister{"forge": slowMinister}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go slowMinister.Run(ctx)
+
+	court := &Court{
+		ministers: ministers,
+		logger:    slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
+
+	notify := func(msg any) {}
+	exec, err := runner.Start(ctx, "pause-abort-test", testEK(51), nil, notify)
+	require.NoError(t, err)
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- runner.Run(ctx, exec)
+	}()
+
+	// Wait for the step to start
+	time.Sleep(200 * time.Millisecond)
+
+	// Pause the ritual
+	channelID := exec.ChannelID()
+	paused := runner.PauseRitual(channelID)
+	assert.True(t, paused, "PauseRitual should return true")
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Abort: cancel the parent context (simulates :abort → CancelTab)
+	cancel()
+
+	select {
+	case err := <-runDone:
+		assert.Error(t, err, "ritual should fail after abort")
+	case <-time.After(5 * time.Second):
+		t.Fatal("ritual did not complete after abort")
+	}
+}
+
+// TestRitualPauseNotRunning verifies that PauseRitual returns false when
+// no step is actively running.
+func TestRitualPauseNotRunning(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, nil, repo.RepoInfo{})
+
+	assert.False(t, runner.PauseRitual("e999"), "PauseRitual should return false when no step is running")
+	assert.False(t, runner.ResumeRitual("e999"), "ResumeRitual should return false when nothing is paused")
 }

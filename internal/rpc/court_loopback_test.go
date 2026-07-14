@@ -31,6 +31,8 @@ type fakeCourt struct {
 	fallback  bool
 	cancels   []string
 	clears    []string
+	pauses    []string
+	resumes   []string
 	messages  []string // "target/role/content"
 	ctxFiles  []string // "target/path/content"
 	rollbacks []string // "target/snapshot"
@@ -257,6 +259,20 @@ func (f *fakeCourt) CancelTab(channelID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cancels = append(f.cancels, "tab:"+channelID)
+}
+
+func (f *fakeCourt) PauseRitual(channelID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pauses = append(f.pauses, channelID)
+	return true
+}
+
+func (f *fakeCourt) ResumeRitual(channelID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumes = append(f.resumes, channelID)
+	return true
 }
 
 func (f *fakeCourt) CancellableStreamCtx(_ string) context.Context {
@@ -553,6 +569,25 @@ func TestCourtRPCLoopback(t *testing.T) {
 	}
 	if !sawCancelTab {
 		t.Errorf("CancelTab not recorded: %v", impl.cancels)
+	}
+	impl.mu.Unlock()
+
+	// PauseRitual / ResumeRitual round-trip.
+	if !client.PauseRitual("e633") {
+		t.Error("PauseRitual(e633) = false")
+	}
+	impl.mu.Lock()
+	if len(impl.pauses) != 1 || impl.pauses[0] != "e633" {
+		t.Errorf("pauses = %v", impl.pauses)
+	}
+	impl.mu.Unlock()
+
+	if !client.ResumeRitual("e633") {
+		t.Error("ResumeRitual(e633) = false")
+	}
+	impl.mu.Lock()
+	if len(impl.resumes) != 1 || impl.resumes[0] != "e633" {
+		t.Errorf("resumes = %v", impl.resumes)
 	}
 	impl.mu.Unlock()
 }
