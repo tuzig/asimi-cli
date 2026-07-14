@@ -11,11 +11,11 @@ import (
 
 	cucumberexpressions "github.com/cucumber/cucumber-expressions/go/v19"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
-	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 )
 
@@ -304,7 +304,7 @@ func (r *RitualRunner) checkAsimiVersion(ctx context.Context) (interface{}, erro
 
 	result := map[string]interface{}{
 		"current_version": utils.AsimiVersion,
-		"latest_version":  latest.Version.String(),
+		"latest_version":  latest.Version,
 		"has_update":      hasUpdate,
 		"url":             latest.URL,
 	}

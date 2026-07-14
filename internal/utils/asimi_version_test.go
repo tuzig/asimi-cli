@@ -33,9 +33,7 @@ func TestCheckForUpdates(t *testing.T) {
 		t.Log("Current version is up to date")
 	}
 
-	if release != nil {
-		t.Logf("Update available: %s (current: %s)", release.Version, AsimiVersion)
-	}
+	t.Logf("Release info: version=%s, url=%s", release.Version, release.URL)
 }
 
 func TestParseVersion(t *testing.T) {

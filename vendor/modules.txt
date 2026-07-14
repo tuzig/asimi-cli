@@ -631,15 +631,9 @@ github.com/golang/protobuf/proto
 github.com/google/go-containerregistry/pkg/name
 github.com/google/go-containerregistry/pkg/v1
 github.com/google/go-containerregistry/pkg/v1/types
-# github.com/google/go-github/v30 v30.1.0
-## explicit; go 1.13
-github.com/google/go-github/v30/github
 # github.com/google/go-intervals v0.0.2
 ## explicit; go 1.12
 github.com/google/go-intervals/intervalset
-# github.com/google/go-querystring v1.1.0
-## explicit; go 1.10
-github.com/google/go-querystring/query
 # github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
@@ -658,11 +652,6 @@ github.com/hashicorp/errwrap
 # github.com/hashicorp/go-multierror v1.1.1
 ## explicit; go 1.13
 github.com/hashicorp/go-multierror
-# github.com/inconshreveable/go-update v0.0.0-20160112193335-8152e7eb6ccf
-## explicit
-github.com/inconshreveable/go-update
-github.com/inconshreveable/go-update/internal/binarydist
-github.com/inconshreveable/go-update/internal/osext
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
@@ -977,9 +966,6 @@ github.com/proglottis/gpgme
 # github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec
 ## explicit; go 1.12
 github.com/remyoudompheng/bigfft
-# github.com/rhysd/go-github-selfupdate v1.2.3
-## explicit; go 1.13
-github.com/rhysd/go-github-selfupdate/selfupdate
 # github.com/rivo/uniseg v0.4.7
 ## explicit; go 1.18
 github.com/rivo/uniseg
@@ -1041,9 +1027,6 @@ github.com/sylabs/sif/v2/pkg/sif
 # github.com/tchap/go-patricia/v2 v2.3.3
 ## explicit; go 1.16
 github.com/tchap/go-patricia/v2/patricia
-# github.com/tcnksm/go-gitconfig v0.1.2
-## explicit
-github.com/tcnksm/go-gitconfig
 # github.com/tidwall/gjson v1.18.0
 ## explicit; go 1.12
 github.com/tidwall/gjson

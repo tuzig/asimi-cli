@@ -2,11 +2,14 @@
 package utils
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/blang/semver"
-	"github.com/rhysd/go-github-selfupdate/selfupdate"
 	"log/slog"
+	"net/http"
+	"runtime"
 	"strings"
+
+	"github.com/blang/semver"
 )
 
 const (
@@ -15,6 +18,25 @@ const (
 )
 
 var AsimiVersion = "0.8.1" // Update this before each release
+
+// ReleaseInfo holds information about a GitHub release.
+type ReleaseInfo struct {
+	Version      string
+	URL          string
+	AssetURL     string
+	ReleaseNotes string
+}
+
+// githubRelease is the JSON structure returned by the GitHub releases API.
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+	HTMLURL string `json:"html_url"`
+	Body    string `json:"body"`
+	Assets  []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+	} `json:"assets"`
+}
 
 // GetAsimiSlug gets the slug for asimi's repo
 func GetAsimiSlug() string {
@@ -29,27 +51,56 @@ func ParseVersion(v string) (semver.Version, error) {
 }
 
 // CheckForUpdates checks if a newer version is available on GitHub
-func CheckForUpdates() (*selfupdate.Release, bool, error) {
-	slug := GetAsimiSlug()
-	slog.Debug("Checking updates", "project", slug)
-	latest, found, err := selfupdate.DetectLatest(slug)
+func CheckForUpdates() (ReleaseInfo, bool, error) {
+	slog.Debug("Checking updates", "project", GetAsimiSlug())
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
+	resp, err := http.Get(url)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to detect latest version: %w", err)
+		return ReleaseInfo{}, false, fmt.Errorf("failed to fetch latest release: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ReleaseInfo{}, false, fmt.Errorf("github API returned status %d", resp.StatusCode)
 	}
 
-	if !found {
-		return nil, false, fmt.Errorf("no release found")
+	var release githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return ReleaseInfo{}, false, fmt.Errorf("failed to parse release response: %w", err)
+	}
+
+	latestVersion, err := ParseVersion(release.TagName)
+	if err != nil {
+		return ReleaseInfo{}, false, fmt.Errorf("failed to parse latest version: %w", err)
 	}
 
 	current, err := ParseVersion(AsimiVersion)
 	if err != nil {
-		return nil, false, fmt.Errorf("invalid current version: %w", err)
+		return ReleaseInfo{}, false, fmt.Errorf("invalid current version: %w", err)
 	}
 
-	if latest.Version.LTE(current) {
-		slog.Debug("current version is up to date", "current", AsimiVersion, "latest", latest.Version)
-		return latest, false, nil
+	// Find the matching asset for this OS/arch
+	assetName := fmt.Sprintf("asimi_%s_%s_%s.tar.gz", release.TagName, runtime.GOOS, runtime.GOARCH)
+	assetURL := ""
+	for _, asset := range release.Assets {
+		if asset.Name == assetName {
+			assetURL = asset.BrowserDownloadURL
+			break
+		}
 	}
 
-	return latest, true, nil
+	info := ReleaseInfo{
+		Version:      release.TagName,
+		URL:          release.HTMLURL,
+		AssetURL:     assetURL,
+		ReleaseNotes: release.Body,
+	}
+
+	if latestVersion.LTE(current) {
+		slog.Debug("current version is up to date", "current", AsimiVersion, "latest", info.Version)
+		return info, false, nil
+	}
+
+	return info, true, nil
 }

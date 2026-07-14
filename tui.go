@@ -2581,7 +2581,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				slog.Info("Got user confiramtion, sending an even to enact ritual")
 				m.court.PublishEvent(key, storage.EventRitualEnacted, payload)
-			// Stay silent — the ritual manager notifies when the ritual starts or is queued
+				// Stay silent — the ritual manager notifies when the ritual starts or is queued
 			}
 			// No explicit "declined" message needed; the 📜 notification already shows
 			m.pendingRitualEnact = nil
@@ -2985,9 +2985,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status.SetProvider(m.config.LLM.Provider, m.config.LLM.Model, false)
 
 		// Fire court_started event to trigger wakeup ritual and health checks
-		latest, hasUpdate, _ := utils.CheckForUpdates()
+		latest, hasUpdate, err := utils.CheckForUpdates()
+		latestVersion := ""
+		if err == nil {
+			latestVersion = latest.Version
+		}
 		m.raiseCourtEvent(storage.EventCourtStarted, storage.JSON{
-			"latest_version":  latest.Version,
+			"latest_version":  latestVersion,
 			"has_update":      hasUpdate,
 			"current_version": utils.AsimiVersion})
 

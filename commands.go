@@ -831,7 +831,7 @@ func handleUpdateCommand(model *TUIModel, args []string) tea.Cmd {
 		}
 
 		// Update available - show confirmation
-		return updateCheckMsg{hasUpdate: true, latest: latest.Version.String()}
+		return updateCheckMsg{hasUpdate: true, latest: latest.Version}
 	}
 }
 

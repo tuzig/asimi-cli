@@ -176,12 +176,45 @@ func runInteractiveMode() error {
 
 	slog.Debug("[TIMING] fx app initialized", "duration", time.Since(startTime))
 
-	// Check for updates in background (non-blocking)
+	// Check for updates with visual feedback before TUI enters alt-screen
+	fmt.Print("Checking for Updates...")
+	type updateResult struct {
+		hasUpdate bool
+	}
+	resultCh := make(chan updateResult, 1)
 	go func() {
-		if AutoCheckForUpdates(utils.AsimiVersion) {
-			tuiProgram.Send(updateAvailableMsg{})
-		}
+		hasUpdate := AutoCheckForUpdates(utils.AsimiVersion)
+		resultCh <- updateResult{hasUpdate: hasUpdate}
 	}()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+
+	var updateAvailable bool
+checkLoop:
+	for {
+		select {
+		case res := <-resultCh:
+			updateAvailable = res.hasUpdate
+			break checkLoop
+		case <-ticker.C:
+			fmt.Print(".")
+		case <-timeout.C:
+			slog.Debug("pre-TUI update check timed out")
+			break checkLoop
+		}
+	}
+
+	// Clear the line
+	fmt.Print("\r" + strings.Repeat(" ", 40) + "\r")
+
+	if updateAvailable {
+		go func() {
+			tuiProgram.Send(updateAvailableMsg{})
+		}()
+	}
 
 	// If profile-exit-ms is set, schedule an exit after that duration
 	if cli.ProfileExitMs > 0 {
