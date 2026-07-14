@@ -153,9 +153,11 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 	commands := []string{
 		"▶ Mode base UI, starting in INSERT",
 		"▶ `ESC` to switch modes",
+		// TODO: make the next 2 lines work
+		"▶ `:help tutorial` for the tut",
+		"▶ `:qa` to quit",
 		"▶ `CTRL-B` for SCROLL mode",
 		"▶ `CTRL-C` to stop the model, twice to exit",
-		"▶ `:help` for COMMAND mode",
 		"▶ `:!uname` to run uname in the sandbox's shell",
 		"⇒ `TAB` to switch ministers",
 	}
