@@ -369,17 +369,6 @@ func (s StatusComponent) renderMiddleSection() string {
 	statusStyle := lipgloss.NewStyle().Foreground(globalTheme.TextColor)
 
 	statusStr := fmt.Sprintf("🪣 %.0f%%", s.ContextPercent)
-	if bar := s.rateBar(); bar != "" {
-		rate := int(s.streamRate)
-		avail := s.Width - 40 // rough estimate of space used by other sections
-		if avail > 20 {
-			statusStr += fmt.Sprintf("  %s %dc/s", bar, rate)
-		} else if avail > 15 {
-			statusStr += fmt.Sprintf("  %s %d", bar, rate)
-		} else {
-			statusStr += fmt.Sprintf("  %s", bar)
-		}
-	}
 	if s.waitingForResponse && !s.waitingSince.IsZero() {
 		waitSeconds := int(time.Since(s.waitingSince).Seconds())
 		if waitSeconds >= 3 {
