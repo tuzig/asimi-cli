@@ -7,11 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/internal/types"
-	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -373,6 +373,23 @@ func (rc *ReconnectingClient) AppendToIntent(edictID uint, clarification string)
 	if rc.reconnectIfError(err, rc.shouldRetry) {
 		if client = rc.getClient(); client != nil {
 			return client.AppendToIntent(edictID, clarification)
+		}
+	}
+	return err
+}
+
+// SetIntent is a mutating method. It does NOT retry on
+// ErrPeerDisconnected because the intent may have already been set
+// on the server — only on ErrClosed (the call never left the client).
+func (rc *ReconnectingClient) SetIntent(edictID uint, intent string) error {
+	client := rc.getClient()
+	if client == nil {
+		return ErrClosed
+	}
+	err := client.SetIntent(edictID, intent)
+	if rc.reconnectIfError(err, rc.shouldRetry) {
+		if client = rc.getClient(); client != nil {
+			return client.SetIntent(edictID, intent)
 		}
 	}
 	return err

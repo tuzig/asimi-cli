@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/internal/courtapi"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -94,6 +94,15 @@ func (f *fakeCourt) AppendToIntent(edictID uint, clarification string) error {
 	defer f.mu.Unlock()
 	if e, ok := f.edicts[edictID]; ok {
 		e.Intent += "\n\n---\n**Clarification:**\n" + clarification
+	}
+	return nil
+}
+
+func (f *fakeCourt) SetIntent(edictID uint, intent string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e, ok := f.edicts[edictID]; ok {
+		e.Intent = intent
 	}
 	return nil
 }
@@ -353,6 +362,18 @@ func TestCourtRPCLoopback(t *testing.T) {
 	if ed := impl.edicts[e.ID]; ed != nil {
 		if !strings.Contains(ed.Intent, "additional context") {
 			t.Errorf("intent after AppendToIntent = %q", ed.Intent)
+		}
+	}
+	impl.mu.Unlock()
+
+	// SetIntent round-trip — should replace, not append.
+	if err := client.SetIntent(e.ID, "brand new intent"); err != nil {
+		t.Fatalf("SetIntent: %v", err)
+	}
+	impl.mu.Lock()
+	if ed := impl.edicts[e.ID]; ed != nil {
+		if ed.Intent != "brand new intent" {
+			t.Errorf("intent after SetIntent = %q, want %q", ed.Intent, "brand new intent")
 		}
 	}
 	impl.mu.Unlock()

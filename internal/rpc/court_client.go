@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/types"
 	"github.com/afittestide/asimi/internal/wire"
-	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -113,6 +113,10 @@ func (c *CourtClient) CancelEdict(edictID uint) error {
 
 func (c *CourtClient) AppendToIntent(edictID uint, clarification string) error {
 	return c.callVoid(context.Background(), MethodAppendToIntent, AppendToIntentParams{EdictID: edictID, Clarification: clarification})
+}
+
+func (c *CourtClient) SetIntent(edictID uint, intent string) error {
+	return c.callVoid(context.Background(), MethodSetIntent, SetIntentParams{EdictID: edictID, Intent: intent})
 }
 
 func (c *CourtClient) ListActiveEdicts() ([]storage.ActiveEdict, error) {

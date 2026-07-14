@@ -7,10 +7,10 @@ package courtapi
 import (
 	"context"
 
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/types"
-	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -41,6 +41,7 @@ type Client interface {
 	GetEdict(edictID uint) (*storage.Edict, error)
 	CancelEdict(edictID uint) error
 	AppendToIntent(edictID uint, clarification string) error
+	SetIntent(edictID uint, intent string) error
 	PublishEvent(key storage.EdictKey, eventType storage.CourtEvent, payload storage.JSON) uint
 
 	// Seals.

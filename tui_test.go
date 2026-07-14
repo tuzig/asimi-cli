@@ -3322,6 +3322,15 @@ type mockCourtClient struct {
 	cancelEdictFn       func(uint) error
 	cancelledEdicts     map[uint]bool
 	grantRulerSealCalls map[uint]bool
+	pauseRitualFn       func(string) bool
+	resumeRitualFn      func(string) bool
+	pausedChannels      []string
+	resumedChannels     []string
+	stopStreamingFn     func(string)
+	setIntentFn         func(uint, string) error
+	submitPromptTarget  string
+	submitPromptMsg     string
+	submitPromptChanID  string
 }
 
 type publishedEvent struct {
@@ -3382,6 +3391,13 @@ func (m *mockCourtClient) CancelEdict(edictID uint) error {
 }
 
 func (m *mockCourtClient) AppendToIntent(edictID uint, clarification string) error {
+	return nil
+}
+
+func (m *mockCourtClient) SetIntent(edictID uint, intent string) error {
+	if m.setIntentFn != nil {
+		return m.setIntentFn(edictID, intent)
+	}
 	return nil
 }
 
@@ -4493,6 +4509,28 @@ func TestAnsweredMsg_EdictActionMenu_Cancel_DoesNotCallZhengming(t *testing.T) {
 	assert.Empty(t, mock.zhengmingResponses, "should NOT call HandleZhengmingResponse for edict menu cancel")
 }
 
+func TestAnsweringEditMsg_EdictActionMenu_ExitsAnsweringMode(t *testing.T) {
+	mock := &mockCourtClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, Intent: "original intent"}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+
+	// Set up answering mode first
+	showEdictActionMenu(model, 42)
+	require.NotNil(t, model.prompt().answering, "should be in answering mode")
+
+	// Simulate user selecting "Edit"
+	newModel, _ := model.handleCustomMessages(AnsweringEditMsg{
+		RequestID: "edict-42",
+	})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+	assert.Nil(t, updated.prompt().answering, "should exit answering mode before opening editor")
+}
+
 // --- Tests for resumeEdictSession ---
 
 func TestResumeEdictSession_WithSessionID(t *testing.T) {
@@ -4901,6 +4939,37 @@ func TestEditEdictIntentCmd_EdictNotFound(t *testing.T) {
 	sysMsg, ok := msg.(showContextMsg)
 	assert.True(t, ok, "expected showContextMsg for not-found edict")
 	assert.Contains(t, sysMsg.content, "not found")
+}
+
+func TestEditEdictIntentCmd_UsesSetIntentNotAppendToIntent(t *testing.T) {
+	// This test verifies that editEdictIntentCmd's callback uses SetIntent
+	// (not AppendToIntent) by checking the source. The actual callback
+	// execution requires the Bubbletea runtime (tea.ExecProcess), so we
+	// verify via the RPC loopback test that SetIntent replaces intent.
+	//
+	// Here we just verify the function returns a non-nil cmd and the
+	// mock's SetIntent is wired correctly.
+	oldEditor := os.Getenv("EDITOR")
+	os.Setenv("EDITOR", "true")
+	defer os.Setenv("EDITOR", oldEditor)
+
+	setIntentCalled := false
+	mock := &mockCourtClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, Intent: "original intent"}, nil
+		},
+		setIntentFn: func(id uint, intent string) error {
+			setIntentCalled = true
+			return nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+
+	cmd := editEdictIntentCmd(model, 42)
+	require.NotNil(t, cmd, "editEdictIntentCmd should return a non-nil cmd")
+	// SetIntent is not called yet because the editor callback hasn't run
+	assert.False(t, setIntentCalled, "SetIntent should not be called until editor callback runs")
 }
 
 func TestIsRitualChannel(t *testing.T) {

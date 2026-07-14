@@ -14,6 +14,7 @@ const (
 	MethodGetEdict             = "GetEdict"
 	MethodCancelEdict          = "CancelEdict"
 	MethodAppendToIntent       = "AppendToIntent"
+	MethodSetIntent            = "SetIntent"
 	MethodPublishEvent         = "PublishEvent"
 	MethodGrantRulerSeal       = "GrantRulerSeal"
 	MethodGetEdictSeals        = "GetEdictSeals"

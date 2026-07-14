@@ -1,8 +1,8 @@
 package rpc
 
 import (
-	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -60,6 +60,11 @@ type CancelEdictParams struct {
 type AppendToIntentParams struct {
 	EdictID       uint   `msgpack:"edict_id"`
 	Clarification string `msgpack:"clarification,omitempty"`
+}
+
+type SetIntentParams struct {
+	EdictID uint   `msgpack:"edict_id"`
+	Intent  string `msgpack:"intent,omitempty"`
 }
 
 type GrantRulerSealParams struct {
@@ -128,9 +133,9 @@ type GetEdictSealsResult struct {
 }
 
 type PublishEventParams struct {
-	Key       storage.EdictKey       `msgpack:"key"`
+	Key       storage.EdictKey   `msgpack:"key"`
 	EventType storage.CourtEvent `msgpack:"event_type"`
-	Payload   storage.JSON           `msgpack:"payload,omitempty"`
+	Payload   storage.JSON       `msgpack:"payload,omitempty"`
 }
 type PublishEventResult struct {
 	EventID uint `msgpack:"event_id"`

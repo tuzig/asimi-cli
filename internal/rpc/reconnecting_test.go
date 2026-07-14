@@ -428,6 +428,9 @@ func TestReconnectingClient_NilClientReturnsErrClosed(t *testing.T) {
 	if err := rc.AppendToIntent(1, "clarification"); !errors.Is(err, ErrClosed) {
 		t.Errorf("AppendToIntent with nil client should return ErrClosed, got %v", err)
 	}
+	if err := rc.SetIntent(1, "new intent"); !errors.Is(err, ErrClosed) {
+		t.Errorf("SetIntent with nil client should return ErrClosed, got %v", err)
+	}
 }
 
 // --- Verify shouldRetry and shouldRetryReadOnly for wrapped errors ---

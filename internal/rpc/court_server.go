@@ -4,9 +4,9 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/internal/wire"
-	"github.com/afittestide/asimi/court"
 )
 
 // RegisterCourtHandlers binds every supported Court RPC method
@@ -97,6 +97,17 @@ func RegisterCourtHandlers(c *Conn, impl courtapi.Client) {
 			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
 		}
 		if err := impl.AppendToIntent(p.EdictID, p.Clarification); err != nil {
+			return nil, err
+		}
+		return wire.Encode(nil)
+	})
+
+	c.Handle(MethodSetIntent, func(ctx context.Context, params []byte) ([]byte, error) {
+		var p SetIntentParams
+		if err := wire.Decode(params, &p); err != nil {
+			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
+		}
+		if err := impl.SetIntent(p.EdictID, p.Intent); err != nil {
 			return nil, err
 		}
 		return wire.Encode(nil)

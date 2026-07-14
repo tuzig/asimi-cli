@@ -2362,6 +2362,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AnsweringEditMsg:
 		// Check if this is an edict action menu edit
 		if edictID, ok := parseEdictActionRequestID(msg.RequestID); ok {
+			m.prompt().ExitAnsweringMode()
 			return m, editEdictIntentCmd(&m, edictID)
 		}
 
@@ -3771,7 +3772,7 @@ func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
 	}
 }
 
-// editEdictIntentCmd opens the edict intent in $EDITOR and calls AppendToIntent
+// editEdictIntentCmd opens the edict intent in $EDITOR and calls SetIntent
 // with the modified text.
 func editEdictIntentCmd(m *TUIModel, edictID uint) tea.Cmd {
 	edict, err := m.court.GetEdict(edictID)

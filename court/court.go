@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/types"
-	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
@@ -63,7 +63,7 @@ func (r *EventRegistry) Dispatch(event Event) {
 
 // DrainedEvent describes a single event recovered from the DB at startup.
 type DrainedEvent struct {
-	EventType storage.CourtEvent `msgpack:"event_type"`
+	EventType storage.CourtEvent     `msgpack:"event_type"`
 	EdictKey  storage.EdictKey       `msgpack:"edict_key"`
 	Payload   map[string]interface{} `msgpack:"payload,omitempty"`
 }
@@ -321,16 +321,16 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 	s.hostChecker = hostChecker
 
 	opts := tools.ToolRegistrationOpts{
-		Ctx:                  ctx,
-		DBPath:               dbPath,
-		Runner:               s.runner,
-		HostChecker:          hostChecker,
-		MsgChan:              s.msgChan,
-		EdictManager:         edictManager,
-		ZhengmingRequester:   zhengmingRequester,
-		WaitForZhengming:     waitForZhengming,
-		NotifyFn:             notifyFn,
-		SessionIDFn:          sessionIDFn,
+		Ctx:                ctx,
+		DBPath:             dbPath,
+		Runner:             s.runner,
+		HostChecker:        hostChecker,
+		MsgChan:            s.msgChan,
+		EdictManager:       edictManager,
+		ZhengmingRequester: zhengmingRequester,
+		WaitForZhengming:   waitForZhengming,
+		NotifyFn:           notifyFn,
+		SessionIDFn:        sessionIDFn,
 
 		// MinisterInvoker / RitualLauncher — chancellor-backed
 		MinisterInvoker: func() tools.MinisterInvoker {
@@ -784,6 +784,19 @@ func (s *Court) CancelEdict(edictID uint) error {
 func (s *Court) AppendToIntent(edictID uint, clarification string) error {
 	key := s.EdictKey(edictID)
 	return s.appendToIntent(key, clarification)
+}
+
+// SetIntent replaces an edict's intent with the given text.
+func (s *Court) SetIntent(edictID uint, intent string) error {
+	key := s.EdictKey(edictID)
+	var edict storage.Edict
+	if err := s.db.Where("id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).First(&edict).Error; err != nil {
+		return fmt.Errorf("get edict: %w", err)
+	}
+	if err := s.db.Model(&storage.Edict{}).Where("id = ?", edict.ID).Update("intent", intent).Error; err != nil {
+		return fmt.Errorf("update edict intent: %w", err)
+	}
+	return nil
 }
 
 // appendToIntent is the shared implementation used by both the Ruler-facing
