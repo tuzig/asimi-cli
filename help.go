@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/glamour"
+	"github.com/muesli/reflow/wordwrap"
 )
 
 //go:embed help/*.md
@@ -14,18 +15,27 @@ var helpFS embed.FS
 // HelpWindow is a simplified component for displaying help documentation
 // Navigation is handled by ContentComponent
 type HelpWindow struct {
-	width  int
-	height int
-	topic  string
+	width    int
+	height   int
+	topic    string
+	renderer *glamour.TermRenderer
 }
 
 // NewHelpWindow creates a new help window
 func NewHelpWindow() HelpWindow {
-	return HelpWindow{
+	hw := HelpWindow{
 		width:  80,
 		height: 20,
 		topic:  "index",
 	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(0), // 0 disables glamour's word wrapping
+	)
+	if err == nil {
+		hw.renderer = r
+	}
+	return hw
 }
 
 // SetSize updates the dimensions of the help window
@@ -49,69 +59,27 @@ func (h *HelpWindow) GetTopic() string {
 
 // RenderContent generates the styled help content for the current topic
 func (h *HelpWindow) RenderContent() string {
-	return h.renderHelpContent(h.topic)
-}
+	content := h.getHelpTopic(h.topic)
 
-// renderHelpContent generates the help content for a given topic
-func (h *HelpWindow) renderHelpContent(topic string) string {
-	// Style definitions
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(globalTheme.ChatBorder).
-		MarginTop(1).
-		MarginBottom(1)
-
-	subheaderStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(globalTheme.TextColor).
-		MarginTop(1)
-
-	codeStyle := lipgloss.NewStyle().
-		Foreground(globalTheme.PromptBorder).
-		Background(globalTheme.CodeBackground).
-		Padding(0, 1)
-
-	keyStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(globalTheme.PromptBorder)
-
-	// Get help content based on topic
-	content := h.getHelpTopic(topic)
-
-	// Apply styling to the content
-	lines := strings.Split(content, "\n")
-	var styledLines []string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Headers (lines starting with #)
-		if strings.HasPrefix(trimmed, "# ") {
-			styledLines = append(styledLines, headerStyle.Render(strings.TrimPrefix(trimmed, "# ")))
-		} else if strings.HasPrefix(trimmed, "## ") {
-			styledLines = append(styledLines, subheaderStyle.Render(strings.TrimPrefix(trimmed, "## ")))
-		} else if strings.HasPrefix(trimmed, "```") {
-			// Code blocks - skip the markers
-			continue
-		} else if strings.HasPrefix(trimmed, "  ") && strings.Contains(trimmed, "-") {
-			// Key bindings (indented lines with dashes)
-			parts := strings.SplitN(trimmed, "-", 2)
-			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
-				desc := strings.TrimSpace(parts[1])
-				styledLines = append(styledLines, "  "+keyStyle.Render(key)+" - "+desc)
-			} else {
-				styledLines = append(styledLines, line)
-			}
-		} else if strings.HasPrefix(trimmed, ":") || strings.HasPrefix(trimmed, "/") {
-			// Commands
-			styledLines = append(styledLines, "  "+codeStyle.Render(trimmed))
-		} else {
-			styledLines = append(styledLines, line)
-		}
+	if h.renderer == nil {
+		return h.wrap(content)
 	}
 
-	return strings.Join(styledLines, "\n")
+	rendered, err := h.renderer.Render(content)
+	if err != nil {
+		return h.wrap(content)
+	}
+
+	return strings.TrimSpace(h.wrap(rendered))
+}
+
+// wrap applies word wrapping to the given content using the window width
+func (h *HelpWindow) wrap(content string) string {
+	width := h.width - 2 // -2 for padding
+	if width < 1 {
+		width = 1
+	}
+	return wordwrap.String(content, width)
 }
 
 // getHelpTopic returns the help content for a specific topic
@@ -143,6 +111,9 @@ Type :help followed by one of these topics:
   :help models      - Model selection and LLM configuration
   :help login       - Provider authentication
   :help quickref    - Quick reference guide
+  :help quickstart   - Tutorial: getting started as the Ruler
+  :help workflows    - Tutorial: common workflows and rituals
+  :help troubleshooting - Tutorial: troubleshooting and philosophy
 
 Press 'q' or ESC to close this help window.
 `, topic)

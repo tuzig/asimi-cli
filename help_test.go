@@ -11,6 +11,7 @@ func TestHelpTopicFromEmbed(t *testing.T) {
 	topics := []string{
 		"index", "modes", "commands", "navigation", "editing",
 		"files", "sessions", "context", "models", "login", "config", "quickref",
+		"quickstart", "workflows", "troubleshooting",
 	}
 
 	for _, topic := range topics {
@@ -70,5 +71,47 @@ func TestHelpRenderContent(t *testing.T) {
 	rendered := hw.RenderContent()
 	if rendered == "" {
 		t.Fatal("RenderContent() returned empty string")
+	}
+}
+
+func TestHelpRenderContentAllTopics(t *testing.T) {
+	topics := []string{
+		"index", "modes", "commands", "navigation", "editing",
+		"files", "sessions", "context", "models", "login", "config", "quickref",
+		"quickstart", "workflows", "troubleshooting",
+	}
+	for _, topic := range topics {
+		t.Run(topic, func(t *testing.T) {
+			hw := NewHelpWindow()
+			hw.SetTopic(topic)
+			rendered := hw.RenderContent()
+			if rendered == "" {
+				t.Fatalf("RenderContent() returned empty for topic %q", topic)
+			}
+			// Glamour renders headers, tables, bold, blockquotes, code blocks.
+			// In a TTY context, ** markers are converted to ANSI bold;
+			// in a no-TTY context (like CI), the ASCII style keeps them.
+			// We only verify non-empty output and no crashes here.
+		})
+	}
+}
+
+func TestHelpRenderContentWordWrap(t *testing.T) {
+	hw := NewHelpWindow()
+	hw.SetSize(40, 20)
+	hw.SetTopic("index")
+
+	rendered := hw.RenderContent()
+	if rendered == "" {
+		t.Fatal("RenderContent() returned empty string")
+	}
+
+	// No line should exceed the wrap width (40 - 2 for padding = 38)
+	// We allow some tolerance for ANSI codes by stripping them
+	for _, line := range strings.Split(rendered, "\n") {
+		stripped := stripANSI(line)
+		if len(stripped) > 40 {
+			t.Errorf("line length %d exceeds width 40: %q", len(stripped), stripped[:min(40, len(stripped))])
+		}
 	}
 }

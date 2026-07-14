@@ -28,6 +28,9 @@ Asimi uses ':' for sending commmands and starts in INSERT mode.
   :help login       - Provider authentication
   :help config      - Configuration options
   :help quickref    - Quick reference guide
+  :help quickstart   - Tutorial: getting started as the Ruler
+  :help workflows    - Tutorial: common workflows and rituals
+  :help troubleshooting - Tutorial: troubleshooting and philosophy
 
 ## Navigation in Help
 
