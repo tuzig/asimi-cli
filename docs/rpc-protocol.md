@@ -1,4 +1,4 @@
-# Shogunate RPC Protocol
+# Asimi's RPC Protocol
 
 This is the wire protocol between the `asimi` TUI and the `asimi daemon`
 when the two run as separate processes. It is **standard msgpack-RPC**
