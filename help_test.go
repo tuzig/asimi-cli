@@ -11,7 +11,7 @@ func TestHelpTopicFromEmbed(t *testing.T) {
 	topics := []string{
 		"index", "modes", "commands", "navigation", "editing",
 		"files", "sessions", "context", "models", "login", "config", "quickref",
-		"quickstart", "workflows", "troubleshooting",
+		"tutorial",
 	}
 
 	for _, topic := range topics {
@@ -78,7 +78,7 @@ func TestHelpRenderContentAllTopics(t *testing.T) {
 	topics := []string{
 		"index", "modes", "commands", "navigation", "editing",
 		"files", "sessions", "context", "models", "login", "config", "quickref",
-		"quickstart", "workflows", "troubleshooting",
+		"tutorial",
 	}
 	for _, topic := range topics {
 		t.Run(topic, func(t *testing.T) {

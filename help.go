@@ -111,9 +111,7 @@ Type :help followed by one of these topics:
   :help models      - Model selection and LLM configuration
   :help login       - Provider authentication
   :help quickref    - Quick reference guide
-  :help quickstart   - Tutorial: getting started as the Ruler
-  :help workflows    - Tutorial: common workflows and rituals
-  :help troubleshooting - Tutorial: troubleshooting and philosophy
+  :help tutorial    - Tutorial: getting started as a Ruler
 
 Press 'q' or ESC to close this help window.
 `, topic)
