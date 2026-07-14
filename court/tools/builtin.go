@@ -30,10 +30,6 @@ type ToolRegistrationOpts struct {
 
 	MinisterInvoker MinisterInvoker
 	RitualLauncher  RitualLauncher
-
-	// ZhengmingMinisterIDs lists minister IDs that should get a private
-	// request_zhengming tool with their own MinisterID for correct routing.
-	ZhengmingMinisterIDs []string
 }
 
 // RegisterBuiltinTools populates the registry with all builtin tools,
@@ -42,7 +38,7 @@ func RegisterBuiltinTools(registry *ToolRegistry, opts ToolRegistrationOpts) {
 	registerEarthTools(registry, opts)
 	registerHeavenTools(registry, opts)
 	registerIntentTools(registry, opts)
-	registerPrivateTools(registry, opts)
+	registerExtraTools(registry, opts)
 }
 
 // registerEarthTools registers source code operation tools.
@@ -113,15 +109,6 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 	r.Register(CreateIncidentTool{Ctx: opts.Ctx}, intentWrite)
 	r.Register(ResolveIncidentTool{Ctx: opts.Ctx}, intentWrite)
 
-	for _, mid := range opts.ZhengmingMinisterIDs {
-		r.RegisterPrivate(mid, RequestZhengmingTool{
-			MinisterID:    mid,
-			Requester:     opts.ZhengmingRequester,
-			WaitForAnswer: opts.WaitForZhengming,
-			Username:      opts.Ctx.Username,
-			Project:       opts.Ctx.Project,
-		})
-	}
 	if opts.ZhengmingRequester != nil && opts.NotifyFn != nil {
 		r.Register(SuggestEdictTool{
 			Ctx:         opts.Ctx,
@@ -136,12 +123,27 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 	r.Register(ApproveDocTool{}, intentExec)
 }
 
-// registerPrivateTools registers minister-exclusive tools.
-func registerPrivateTools(r *ToolRegistry, opts ToolRegistrationOpts) {
+// registerExtraTools registers static and factory-based extra tools.
+// Static extra tools (invoke_minister, enact_ritual) are registered once
+// and returned to any minister whose def lists them in extra_tools.
+// Factory extra tools (request_zhengming) produce a per-minister instance
+// so the tool carries the correct MinisterID for routing.
+func registerExtraTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 	if opts.MinisterInvoker != nil {
-		r.RegisterPrivate("chancellor", InvokeMinisterTool{Ctx: opts.Ctx, Invoker: opts.MinisterInvoker})
+		r.RegisterExtra("invoke_minister", InvokeMinisterTool{Ctx: opts.Ctx, Invoker: opts.MinisterInvoker})
 	}
 	if opts.RitualLauncher != nil {
-		r.RegisterPrivate("chancellor", InvokeRitualTool{Ctx: opts.Ctx, Launcher: opts.RitualLauncher})
+		r.RegisterExtra("enact_ritual", InvokeRitualTool{Ctx: opts.Ctx, Launcher: opts.RitualLauncher})
+	}
+	if opts.ZhengmingRequester != nil {
+		r.RegisterExtraFactory("request_zhengming", func(mid string) Tool {
+			return RequestZhengmingTool{
+				MinisterID:    mid,
+				Requester:     opts.ZhengmingRequester,
+				WaitForAnswer: opts.WaitForZhengming,
+				Username:      opts.Ctx.Username,
+				Project:       opts.Ctx.Project,
+			}
+		})
 	}
 }

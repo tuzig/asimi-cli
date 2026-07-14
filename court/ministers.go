@@ -67,10 +67,14 @@ func (m *ministerImpl) Tools() []Tool {
 		m.logger.Warn("invalid permissions in minister def", "id", m.def.ID, "perm", m.def.Permissions, "error", err)
 		return nil
 	}
-	registered := m.toolRegistry.ForPermissions(m.def.ID, perm)
-	result := make([]Tool, len(registered))
-	for i, t := range registered {
-		result[i] = t
+	public := m.toolRegistry.ForPermissions(perm)
+	extra := m.toolRegistry.ExtraTools(m.def.ID, m.def.ExtraTools)
+	result := make([]Tool, 0, len(public)+len(extra))
+	for _, t := range public {
+		result = append(result, t)
+	}
+	for _, t := range extra {
+		result = append(result, t)
 	}
 	return result
 }

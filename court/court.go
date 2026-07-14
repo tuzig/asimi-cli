@@ -329,7 +329,6 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 		EdictManager:         edictManager,
 		ZhengmingRequester:   zhengmingRequester,
 		WaitForZhengming:     waitForZhengming,
-		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
 		NotifyFn:             notifyFn,
 		SessionIDFn:          sessionIDFn,
 

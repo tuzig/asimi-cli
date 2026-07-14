@@ -56,7 +56,7 @@ func TestRegisterBuiltinToolsEarthRead(t *testing.T) {
 
 	// Strategist: r-----rw- — has earth Read
 	strategistPerm, _ := ParsePermissions("r-----rw-")
-	tools := r.ForPermissions("strategist", strategistPerm)
+	tools := r.ForPermissions(strategistPerm)
 	names := toolNames(tools)
 
 	assertHas(t, names, "read_file")
@@ -71,7 +71,7 @@ func TestRegisterBuiltinToolsEarthWrite(t *testing.T) {
 
 	// Forge: rwxr---w- — has earth Write
 	forgePerm, _ := ParsePermissions("rwxr---w-")
-	tools := r.ForPermissions("forge", forgePerm)
+	tools := r.ForPermissions(forgePerm)
 	names := toolNames(tools)
 
 	assertHas(t, names, "write_file")
@@ -89,7 +89,7 @@ func TestRegisterBuiltinToolsEarthExecute(t *testing.T) {
 
 	// Forge: rwxr---w- — has earth Execute
 	forgePerm, _ := ParsePermissions("rwxr---w-")
-	tools := r.ForPermissions("forge", forgePerm)
+	tools := r.ForPermissions(forgePerm)
 	names := toolNames(tools)
 
 	assertHas(t, names, "run_shell_command")
@@ -101,7 +101,7 @@ func TestRegisterBuiltinToolsNoRunnerNoShell(t *testing.T) {
 
 	// Forge: rwxr---w- — would match earth Execute, but tool not registered
 	forgePerm, _ := ParsePermissions("rwxr---w-")
-	tools := r.ForPermissions("forge", forgePerm)
+	tools := r.ForPermissions(forgePerm)
 	names := toolNames(tools)
 
 	assertNotHas(t, names, "run_shell_command")
@@ -116,7 +116,7 @@ func TestRegisterBuiltinToolsHeavenTools(t *testing.T) {
 
 	// Judge: rwxrwxr-- — has heaven Read, Write, Execute
 	judgePerm, _ := ParsePermissions("rwxrwxr--")
-	tools := r.ForPermissions("judge", judgePerm)
+	tools := r.ForPermissions(judgePerm)
 	names := toolNames(tools)
 
 	assertHas(t, names, "list_pending_manifests")
@@ -136,7 +136,7 @@ func TestRegisterBuiltinToolsHeavenReadNoWrite(t *testing.T) {
 
 	// Sage: r--r--rwx — has heaven Read but NOT Write
 	sagePerm, _ := ParsePermissions("r--r--rwx")
-	tools := r.ForPermissions("sage", sagePerm)
+	tools := r.ForPermissions(sagePerm)
 	names := toolNames(tools)
 
 	// Heaven/Read tools should be visible (shared Read flag)
@@ -161,7 +161,7 @@ func TestRegisterBuiltinToolsIntentRead(t *testing.T) {
 
 	// Strategist: r-----rw- — has intent Read
 	strategistPerm, _ := ParsePermissions("r-----rw-")
-	tools := r.ForPermissions("strategist", strategistPerm)
+	tools := r.ForPermissions(strategistPerm)
 	names := toolNames(tools)
 
 	assertHas(t, names, "list_ling")
@@ -178,7 +178,7 @@ func TestRegisterBuiltinToolsIntentWrite(t *testing.T) {
 
 	// Strategist: r-----rw- — has intent Write
 	strategistPerm, _ := ParsePermissions("r-----rw-")
-	tools := r.ForPermissions("strategist", strategistPerm)
+	tools := r.ForPermissions(strategistPerm)
 	names := toolNames(tools)
 
 	assertHas(t, names, "insert_ling")
@@ -196,14 +196,14 @@ func TestRegisterBuiltinToolsIntentExecute(t *testing.T) {
 
 	// Sage: r--r--rwx — has intent Execute
 	sagePerm, _ := ParsePermissions("r--r--rwx")
-	tools := r.ForPermissions("sage", sagePerm)
+	tools := r.ForPermissions(sagePerm)
 	names := toolNames(tools)
 
 	// approve_doc is always registered
 	assertHas(t, names, "approve_doc")
 }
 
-func TestRegisterBuiltinToolsPrivateChancellor(t *testing.T) {
+func TestRegisterBuiltinToolsExtraChancellor(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
 		Ctx:             testCtx(),
@@ -211,22 +211,37 @@ func TestRegisterBuiltinToolsPrivateChancellor(t *testing.T) {
 		RitualLauncher:  mockLauncher{},
 	})
 
+	// ForPermissions no longer returns extra tools — only permission-matched ones.
+	// Extra tools are resolved via ExtraTools(ministerID, names).
 	chancellorPerm, _ := ParsePermissions("rwxr--rwx")
-	tools := r.ForPermissions("chancellor", chancellorPerm)
-	names := toolNames(tools)
+	publicTools := r.ForPermissions(chancellorPerm)
+	publicNames := toolNames(publicTools)
 
-	assertHas(t, names, "invoke_minister")
-	assertHas(t, names, "enact_ritual")
+	// Extra tools should NOT appear in ForPermissions
+	assertNotHas(t, publicNames, "invoke_minister")
+	assertNotHas(t, publicNames, "enact_ritual")
 
-	// Forge should NOT see chancellor's private tools
-	forgePerm, _ := ParsePermissions("rwxr---w-")
-	forgeTools := r.ForPermissions("forge", forgePerm)
-	forgeNames := toolNames(forgeTools)
-	assertNotHas(t, forgeNames, "invoke_minister")
-	assertNotHas(t, forgeNames, "enact_ritual")
+	// Extra tools should appear when resolved via ExtraTools
+	chancellorExtras := r.ExtraTools("chancellor", []string{"invoke_minister", "enact_ritual"})
+	extraNames := toolNames(chancellorExtras)
+	assertHas(t, extraNames, "invoke_minister")
+	assertHas(t, extraNames, "enact_ritual")
+
+	// Forge should also get the same extra tools if its def lists them
+	// (the registry doesn't gate on minister ID anymore — the YAML def decides)
+	forgeExtras := r.ExtraTools("forge", []string{"invoke_minister", "enact_ritual"})
+	forgeExtraNames := toolNames(forgeExtras)
+	assertHas(t, forgeExtraNames, "invoke_minister")
+	assertHas(t, forgeExtraNames, "enact_ritual")
+
+	// But if a minister's def doesn't list extra tools, it gets none
+	noExtras := r.ExtraTools("forge", nil)
+	if len(noExtras) != 0 {
+		t.Errorf("forge with no extra_tools should get 0 tools, got %d", len(noExtras))
+	}
 }
 
-func TestRegisterBuiltinToolsPrivateConditionalRitual(t *testing.T) {
+func TestRegisterBuiltinToolsExtraConditionalRitual(t *testing.T) {
 	// Without ritual launcher — tool not registered
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
@@ -235,12 +250,11 @@ func TestRegisterBuiltinToolsPrivateConditionalRitual(t *testing.T) {
 		// RitualLauncher is nil
 	})
 
-	chancellorPerm, _ := ParsePermissions("rwxr--rwx")
-	tools := r.ForPermissions("chancellor", chancellorPerm)
-	names := toolNames(tools)
+	chancellorExtras := r.ExtraTools("chancellor", []string{"invoke_minister", "enact_ritual"})
+	extraNames := toolNames(chancellorExtras)
 
-	assertHas(t, names, "invoke_minister")
-	assertNotHas(t, names, "enact_ritual")
+	assertHas(t, extraNames, "invoke_minister")
+	assertNotHas(t, extraNames, "enact_ritual")
 }
 
 func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
@@ -265,7 +279,7 @@ func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 	for minister, permStr := range ministerPerms {
 		t.Run(minister, func(t *testing.T) {
 			perm, _ := ParsePermissions(permStr)
-			tools := r.ForPermissions(minister, perm)
+			tools := r.ForPermissions(perm)
 			if len(tools) == 0 {
 				t.Errorf("%s should have at least one tool", minister)
 			}
@@ -281,7 +295,7 @@ func TestRegisterBuiltinToolsStrategistNoHeaven(t *testing.T) {
 
 	// Strategist: r-----rw- — NO heaven access at all
 	strategistPerm, _ := ParsePermissions("r-----rw-")
-	tools := r.ForPermissions("strategist", strategistPerm)
+	tools := r.ForPermissions(strategistPerm)
 	names := toolNames(tools)
 
 	assertNotHas(t, names, "list_pending_manifests")

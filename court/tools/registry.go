@@ -111,18 +111,20 @@ func (p Permissions) String() string {
 }
 
 // ToolRegistry holds tool registrations with permission classifications
-// and private tool mappings per minister.
+// and extra tool mappings for per-minister tool resolution.
 type ToolRegistry struct {
-	mu      sync.RWMutex
-	entries map[string]ToolPermission // key = tool name
-	private map[string][]Tool         // key = minister ID
+	mu        sync.RWMutex
+	entries   map[string]ToolPermission    // key = tool name
+	extras    map[string]Tool              // static extra tools (key = name)
+	factories map[string]func(string) Tool // factory extra tools (key = name)
 }
 
 // NewToolRegistry creates an empty tool registry.
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
-		entries: make(map[string]ToolPermission),
-		private: make(map[string][]Tool),
+		entries:   make(map[string]ToolPermission),
+		extras:    make(map[string]Tool),
+		factories: make(map[string]func(string) Tool),
 	}
 }
 
@@ -152,42 +154,58 @@ func (r *ToolRegistry) Update(tool Tool) {
 	}
 }
 
-// RegisterPrivate adds a tool exclusively for a specific minister.
-// Private tools are returned by ForPermissions in addition to
-// any permission-matched public tools.
-// TODO: Replace this with "extra_tools" array on the minister's yaml
-func (r *ToolRegistry) RegisterPrivate(ministerID string, tool Tool) {
+// RegisterExtra registers a static extra tool by name. Extra tools are
+// resolved per-minister via ExtraTools(ministerID, names) and are not
+// subject to permission matching.
+func (r *ToolRegistry) RegisterExtra(name string, tool Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	r.private[ministerID] = append(r.private[ministerID], tool)
+	r.extras[name] = tool
 }
 
-// ForPermissions returns all tools the given minister may access:
-//   - public tools whose permissions match the minister's permissions
-//   - private tools registered for the given ministerID
-//
-// Duplicates (by tool name) are removed; private tools take precedence.
-func (r *ToolRegistry) ForPermissions(ministerID string, perm Permissions) []Tool {
+// RegisterExtraFactory registers a factory that produces a tool instance
+// for a given ministerID. Used for per-minister tools like request_zhengming
+// that need the MinisterID embedded in the tool.
+func (r *ToolRegistry) RegisterExtraFactory(name string, factory func(string) Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.factories[name] = factory
+}
+
+// ExtraTools resolves the given extra tool names for the given minister.
+// If a factory is registered for a name, it is invoked with ministerID to
+// produce the tool instance. Otherwise, the static registration is used.
+// Unknown names are silently skipped.
+func (r *ToolRegistry) ExtraTools(ministerID string, names []string) []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []Tool
+	for _, name := range names {
+		if factory, ok := r.factories[name]; ok {
+			result = append(result, factory(ministerID))
+			continue
+		}
+		if tool, ok := r.extras[name]; ok {
+			result = append(result, tool)
+		}
+	}
+	return result
+}
+
+// ForPermissions returns all public tools whose permissions match the
+// given minister permissions. Extra tools are resolved separately via
+// ExtraTools(ministerID, names).
+func (r *ToolRegistry) ForPermissions(perm Permissions) []Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	seen := make(map[string]bool)
 	var result []Tool
 
-	// Add private tools first (they take precedence on duplicates)
-	for _, t := range r.private[ministerID] {
-		name := t.Name()
-		if !seen[name] {
-			seen[name] = true
-			result = append(result, t)
-		}
-	}
-
-	// Add permission-matched public tools
 	for name, tp := range r.entries {
 		if seen[name] {
-			continue // private tool already covers this name
+			continue
 		}
 		if perm.Match(tp.Permissions) {
 			seen[name] = true
@@ -211,12 +229,27 @@ func (r *ToolRegistry) Tools() []ToolPermission {
 	return result
 }
 
-// PrivateTools returns all private tools registered for a given minister.
-func (r *ToolRegistry) PrivateTools(ministerID string) []Tool {
+// ExtraToolNames returns the names of all registered extra tools and
+// factories. Useful for debugging and introspection.
+func (r *ToolRegistry) ExtraToolNames() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	return append([]Tool{}, r.private[ministerID]...)
+	seen := make(map[string]bool)
+	var result []string
+	for name := range r.extras {
+		if !seen[name] {
+			seen[name] = true
+			result = append(result, name)
+		}
+	}
+	for name := range r.factories {
+		if !seen[name] {
+			seen[name] = true
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 // String returns a human-readable summary of the registry contents.
@@ -229,12 +262,14 @@ func (r *ToolRegistry) String() string {
 	for name, tp := range r.entries {
 		fmt.Fprintf(&b, "  %s  %s\n", tp.Permissions.String(), name)
 	}
-	if len(r.private) > 0 {
-		b.WriteString("  private:\n")
-		for ministerID, tools := range r.private {
-			for _, t := range tools {
-				fmt.Fprintf(&b, "    [%s] %s\n", ministerID, t.Name())
-			}
+	if len(r.extras) > 0 || len(r.factories) > 0 {
+		b.WriteString("  extra:\n")
+		for name, t := range r.extras {
+			fmt.Fprintf(&b, "    [static] %s\n", name)
+			_ = t
+		}
+		for name := range r.factories {
+			fmt.Fprintf(&b, "    [factory] %s\n", name)
 		}
 	}
 	return b.String()

@@ -18,7 +18,7 @@ func TestTabGreetingsAllPresent(t *testing.T) {
 		greetings[d.ID] = d.Greeting
 	}
 
-	for _, target := range []string{"chancellor", "sage", "forge", "judge"} {
+	for _, target := range ministers.DefaultTabIDs {
 		g := greetings[target]
 		if g == "" {
 			t.Errorf("missing greeting for minister %q", target)
@@ -159,46 +159,52 @@ func TestTabManager_RenderTabBar_NoActiveInWelcome(t *testing.T) {
 	tm := newTestTabManager()
 	assert.True(t, tm.IsWelcome())
 
+	defs, err := ministers.LoadMinisters()
+	require.NoError(t, err)
+
 	bar := tm.RenderTabBar(80)
 	assert.NotEmpty(t, bar)
 	// In welcome state, no tab should be bold (active)
-	// We can't easily assert style, but verify the labels are present
-	assert.Contains(t, bar, "Chancellor")
-	assert.Contains(t, bar, "Sage")
-	assert.Contains(t, bar, "Forge")
-	assert.Contains(t, bar, "Judge")
+	// Verify tab titles are present, derived from loaded defs
+	for _, id := range ministers.DefaultTabIDs {
+		def := ministers.LookupByID(defs, id)
+		assert.Contains(t, bar, def.Title)
+	}
 }
 
 func TestTabManager_RenderTabBar_ActiveAfterDismiss(t *testing.T) {
 	tm := newTestTabManager()
 	tm.DismissWelcome()
 
+	defs, err := ministers.LoadMinisters()
+	require.NoError(t, err)
+
 	bar := tm.RenderTabBar(80)
 	assert.NotEmpty(t, bar)
-	assert.Contains(t, bar, "Chancellor")
+	chancellorDef := ministers.LookupByID(defs, ministers.Chancellor)
+	assert.Contains(t, bar, chancellorDef.Title)
 	//TODO: need to asser it's color is highlighted
 }
 
 func TestTabManager_DefaultTabsUseKanjiLabels(t *testing.T) {
 	tm := newTestTabManager()
+	defs, err := ministers.LoadMinisters()
+	require.NoError(t, err)
+
 	bar := tm.RenderTabBar(80)
 	// Labels should be derived from defs (Kanji + " " + Title)
-	assert.Contains(t, bar, "宰相")
-	assert.Contains(t, bar, "聖人")
-	assert.Contains(t, bar, "工部")
-	assert.Contains(t, bar, "刑部")
+	for _, id := range ministers.DefaultTabIDs {
+		def := ministers.LookupByID(defs, id)
+		assert.Contains(t, bar, def.Kanji)
+	}
 }
 
 func TestTabManager_DefaultTabIDs(t *testing.T) {
 	tm := newTestTabManager()
-	assert.Equal(t, "chancellor", string(tm.tabs[0].Type))
-	assert.Equal(t, "chancellor", tm.tabs[0].Target)
-	assert.Equal(t, "sage", string(tm.tabs[1].Type))
-	assert.Equal(t, "sage", tm.tabs[1].Target)
-	assert.Equal(t, "forge", string(tm.tabs[2].Type))
-	assert.Equal(t, "forge", tm.tabs[2].Target)
-	assert.Equal(t, "judge", string(tm.tabs[3].Type))
-	assert.Equal(t, "judge", tm.tabs[3].Target)
+	for i, expectedID := range ministers.DefaultTabIDs {
+		assert.Equal(t, expectedID, string(tm.tabs[i].Type))
+		assert.Equal(t, expectedID, tm.tabs[i].Target)
+	}
 }
 
 func TestHandleTabNewCommand_DefaultOpensSageTabWithDerivedLabel(t *testing.T) {
@@ -209,21 +215,25 @@ func TestHandleTabNewCommand_DefaultOpensSageTabWithDerivedLabel(t *testing.T) {
 
 	assert.Len(t, model.tabs.tabs, initialTabCount+1)
 	newTab := model.tabs.tabs[initialTabCount]
-	assert.Equal(t, "sage", string(newTab.Type))
-	assert.Equal(t, "sage", newTab.Target)
-	// Label should be derived from defs, not hardcoded "Sage"
-	assert.Contains(t, newTab.Label, "Sage")
+	assert.Equal(t, ministers.Sage, string(newTab.Type))
+	assert.Equal(t, ministers.Sage, newTab.Target)
+	// Label should be derived from defs, not hardcoded
+	defs, _ := ministers.LoadMinisters()
+	sageDef := ministers.LookupByID(defs, ministers.Sage)
+	assert.Contains(t, newTab.Label, sageDef.Title)
 }
 
 func TestHandleTabNewCommand_SageArgOpensSageTab(t *testing.T) {
 	model := newTestModel(t)
 	initialTabCount := len(model.tabs.tabs)
 
-	handleTabNewCommand(model, []string{"sage"})
+	handleTabNewCommand(model, []string{ministers.Sage})
 
 	assert.Len(t, model.tabs.tabs, initialTabCount+1)
 	newTab := model.tabs.tabs[initialTabCount]
-	assert.Equal(t, "sage", string(newTab.Type))
-	assert.Equal(t, "sage", newTab.Target)
-	assert.Contains(t, newTab.Label, "Sage")
+	assert.Equal(t, ministers.Sage, string(newTab.Type))
+	assert.Equal(t, ministers.Sage, newTab.Target)
+	defs, _ := ministers.LoadMinisters()
+	sageDef := ministers.LookupByID(defs, ministers.Sage)
+	assert.Contains(t, newTab.Label, sageDef.Title)
 }

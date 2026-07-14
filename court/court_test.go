@@ -893,7 +893,7 @@ func TestUpdateProjectRootTools_PreservesHostChecker(t *testing.T) {
 
 	// Get the registered shell tool from the registry
 	forgePerm, _ := tools.ParsePermissions("rwxr---w-")
-	ts := s.toolRegistry.ForPermissions("forge", forgePerm)
+	ts := s.toolRegistry.ForPermissions(forgePerm)
 	var shellTool *tools.RunShellCommand
 	for _, t := range ts {
 		if st, ok := t.(*tools.RunShellCommand); ok {

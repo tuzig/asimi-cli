@@ -296,8 +296,8 @@ func TestNewToolRegistry(t *testing.T) {
 	if len(r.Tools()) != 0 {
 		t.Error("new registry should have no public tools")
 	}
-	if len(r.PrivateTools("any")) != 0 {
-		t.Error("new registry should have no private tools")
+	if len(r.ExtraToolNames()) != 0 {
+		t.Error("new registry should have no extra tools")
 	}
 }
 
@@ -377,28 +377,86 @@ func TestUpdateNonExistentNoOp(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ToolRegistry — RegisterPrivate
+// ToolRegistry — RegisterExtra / RegisterExtraFactory / ExtraTools
 // ---------------------------------------------------------------------------
 
-func TestRegisterPrivate(t *testing.T) {
+func TestRegisterExtra(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterPrivate("chancellor", mockTool{name: "invoke_minister"})
-	r.RegisterPrivate("chancellor", mockTool{name: "enact_ritual"})
+	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
+	r.RegisterExtra("enact_ritual", mockTool{name: "enact_ritual"})
 
-	privs := r.PrivateTools("chancellor")
-	if len(privs) != 2 {
-		t.Fatalf("expected 2 private tools, got %d", len(privs))
+	// Any minister that lists these names gets the same static tool instances
+	chancellorExtras := r.ExtraTools("chancellor", []string{"invoke_minister", "enact_ritual"})
+	if len(chancellorExtras) != 2 {
+		t.Fatalf("expected 2 extra tools, got %d", len(chancellorExtras))
 	}
-	names := toolNames(privs)
+	names := toolNames(chancellorExtras)
 	assertHas(t, names, "invoke_minister")
 	assertHas(t, names, "enact_ritual")
 
-	// Other ministers see no private tools
-	if len(r.PrivateTools("forge")) != 0 {
-		t.Error("forge should have no private tools")
+	// Forge also gets them if its def lists them
+	forgeExtras := r.ExtraTools("forge", []string{"invoke_minister", "enact_ritual"})
+	if len(forgeExtras) != 2 {
+		t.Fatalf("expected 2 extra tools for forge, got %d", len(forgeExtras))
 	}
-	if len(r.PrivateTools("judge")) != 0 {
-		t.Error("judge should have no private tools")
+
+	// A minister with no extra_tools gets nothing
+	noExtras := r.ExtraTools("forge", nil)
+	if len(noExtras) != 0 {
+		t.Errorf("forge with no extra_tools should get 0 tools, got %d", len(noExtras))
+	}
+
+	// Unknown names are silently skipped
+	unknownExtras := r.ExtraTools("chancellor", []string{"nonexistent"})
+	if len(unknownExtras) != 0 {
+		t.Errorf("unknown extra tool name should be skipped, got %d", len(unknownExtras))
+	}
+}
+
+func TestRegisterExtraFactory(t *testing.T) {
+	r := NewToolRegistry()
+	r.RegisterExtraFactory("request_zhengming", func(mid string) Tool {
+		return mockTool{name: "request_zhengming_" + mid}
+	})
+
+	// Each minister gets its own instance via the factory
+	sageExtras := r.ExtraTools("sage", []string{"request_zhengming"})
+	require := len(sageExtras)
+	if require != 1 {
+		t.Fatalf("expected 1 factory extra tool, got %d", require)
+	}
+	if sageExtras[0].Name() != "request_zhengming_sage" {
+		t.Errorf("factory should produce per-minister tool, got %q", sageExtras[0].Name())
+	}
+
+	strategistExtras := r.ExtraTools("strategist", []string{"request_zhengming"})
+	if len(strategistExtras) != 1 || strategistExtras[0].Name() != "request_zhengming_strategist" {
+		t.Errorf("factory should produce per-minister tool for strategist, got %v", strategistExtras)
+	}
+}
+
+func TestExtraToolsMixedStaticAndFactory(t *testing.T) {
+	r := NewToolRegistry()
+	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
+	r.RegisterExtraFactory("request_zhengming", func(mid string) Tool {
+		return mockTool{name: "request_zhengming_" + mid}
+	})
+
+	// A minister listing both gets both
+	all := r.ExtraTools("chancellor", []string{"invoke_minister", "request_zhengming"})
+	names := toolNames(all)
+	assertHas(t, names, "invoke_minister")
+	assertHas(t, names, "request_zhengming_chancellor")
+}
+
+func TestExtraToolsNotInPublicEntries(t *testing.T) {
+	// Extra tools are separate from public entries
+	r := NewToolRegistry()
+	r.RegisterExtra("secret", mockTool{name: "secret"})
+
+	// Public tools should be empty
+	if len(r.Tools()) != 0 {
+		t.Error("extra tools should not appear in public Tools()")
 	}
 }
 
@@ -410,7 +468,7 @@ func TestForPermissionsEmptyRegistry(t *testing.T) {
 	r := NewToolRegistry()
 	perm, _ := ParsePermissions("rwxrwxrwx")
 
-	tools := r.ForPermissions("chancellor", perm)
+	tools := r.ForPermissions(perm)
 	if len(tools) != 0 {
 		t.Errorf("empty registry should return no tools, got %d", len(tools))
 	}
@@ -426,7 +484,7 @@ func TestForPermissionsMatchByRead(t *testing.T) {
 
 	// Minister with earth Read should see read_file
 	perm := Permissions{Earth: Access{Read: true}}
-	tools := r.ForPermissions("forge", perm)
+	tools := r.ForPermissions(perm)
 	names := toolNames(tools)
 	assertHas(t, names, "read_file")
 }
@@ -437,7 +495,7 @@ func TestForPermissionsMatchByWrite(t *testing.T) {
 
 	// Minister with intent Write should see create_manifest
 	perm := Permissions{Intent: Access{Write: true}}
-	tools := r.ForPermissions("forge", perm)
+	tools := r.ForPermissions(perm)
 	names := toolNames(tools)
 	assertHas(t, names, "create_manifest")
 }
@@ -448,7 +506,7 @@ func TestForPermissionsMatchByExecute(t *testing.T) {
 
 	// Minister with earth Execute should see run_shell_command
 	perm := Permissions{Earth: Access{Execute: true}}
-	tools := r.ForPermissions("forge", perm)
+	tools := r.ForPermissions(perm)
 	names := toolNames(tools)
 	assertHas(t, names, "run_shell_command")
 }
@@ -459,7 +517,7 @@ func TestForPermissionsNoMatch(t *testing.T) {
 
 	// Strategist: r-----rw- (no earth Execute)
 	strategistPerm, _ := ParsePermissions("r-----rw-")
-	tools := r.ForPermissions("strategist", strategistPerm)
+	tools := r.ForPermissions(strategistPerm)
 	names := toolNames(tools)
 	assertNotHas(t, names, "run_shell_command")
 }
@@ -479,16 +537,16 @@ func TestForPermissionsMultiToolFiltering(t *testing.T) {
 
 	// Strategist: r-----rw- (earth: r--, intent: rw-)
 	strategistPerm, _ := ParsePermissions("r-----rw-")
-	strategistTools := r.ForPermissions("strategist", strategistPerm)
+	strategistTools := r.ForPermissions(strategistPerm)
 	strategistNames := toolNames(strategistTools)
 	assertHas(t, strategistNames, "read_file")            // earth Read matches
-	assertHas(t, strategistNames, "write_file")           // earth Read matches (shared Read)
-	assertHas(t, strategistNames, "create_manifest")      // intent Write matches
+	assertHas(t, strategistNames, "write_file")            // earth Read matches (shared Read)
+	assertHas(t, strategistNames, "create_manifest")       // intent Write matches
 	assertNotHas(t, strategistNames, "run_shell_command") // strategist has no earth Execute
 
 	// Forge: rwxr---w- (earth: rwx, intent: -w-)
 	forgePerm, _ := ParsePermissions("rwxr---w-")
-	forgeTools := r.ForPermissions("forge", forgePerm)
+	forgeTools := r.ForPermissions(forgePerm)
 	forgeNames := toolNames(forgeTools)
 	assertHas(t, forgeNames, "read_file")
 	assertHas(t, forgeNames, "write_file")
@@ -497,69 +555,45 @@ func TestForPermissionsMultiToolFiltering(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ToolRegistry — ForPermissions with private tools
+// ToolRegistry — ForPermissions does not return extra tools
 // ---------------------------------------------------------------------------
 
-func TestForPermissionsWithPrivateTools(t *testing.T) {
+func TestForPermissionsDoesNotReturnExtraTools(t *testing.T) {
 	r := NewToolRegistry()
 	r.Register(mockTool{name: "read_file"}, Permissions{Earth: Access{Read: true}})
-	r.RegisterPrivate("chancellor", mockTool{name: "invoke_minister"})
+	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
 
 	chancellorPerm, _ := ParsePermissions("rwxr--rwx")
-	tools := r.ForPermissions("chancellor", chancellorPerm)
+	tools := r.ForPermissions(chancellorPerm)
 	names := toolNames(tools)
 	assertHas(t, names, "read_file")
-	assertHas(t, names, "invoke_minister")
+	// Extra tools are NOT returned by ForPermissions — only by ExtraTools
+	assertNotHas(t, names, "invoke_minister")
 
-	// Forge should NOT get chancellor's private tool
-	forgePerm, _ := ParsePermissions("rwxr---w-")
-	forgeTools := r.ForPermissions("forge", forgePerm)
-	forgeNames := toolNames(forgeTools)
-	assertHas(t, forgeNames, "read_file")
-	assertNotHas(t, forgeNames, "invoke_minister")
+	// Extra tools are resolved separately
+	extras := r.ExtraTools("chancellor", []string{"invoke_minister"})
+	extraNames := toolNames(extras)
+	assertHas(t, extraNames, "invoke_minister")
 }
 
-func TestForPermissionsPrivatePrecedence(t *testing.T) {
-	// If a private tool has the same name as a public tool,
-	// the private one wins (no duplicate).
+func TestForPermissionsPureFunction(t *testing.T) {
+	// ForPermissions is now a pure function of Permissions → []Tool.
+	// The same permissions always yield the same tools regardless of minister ID.
 	r := NewToolRegistry()
-	r.Register(mockTool{name: "shared_tool"}, Permissions{Earth: Access{Read: true}})
-	r.RegisterPrivate("chancellor", mockTool{name: "shared_tool"})
+	r.Register(mockTool{name: "read_file"}, Permissions{Earth: Access{Read: true}})
+	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
 
-	chancellorPerm, _ := ParsePermissions("r-----rw-")
-	tools := r.ForPermissions("chancellor", chancellorPerm)
+	perm := Permissions{Earth: Access{Read: true}}
+	chancellorTools := r.ForPermissions(perm)
+	forgeTools := r.ForPermissions(perm)
 
-	count := 0
-	for _, t := range tools {
-		if t.Name() == "shared_tool" {
-			count++
+	if len(chancellorTools) != len(forgeTools) {
+		t.Errorf("ForPermissions should return same tools for same perm regardless of minister")
+	}
+	for i := range chancellorTools {
+		if chancellorTools[i].Name() != forgeTools[i].Name() {
+			t.Errorf("tool mismatch at index %d: %q vs %q", i, chancellorTools[i].Name(), forgeTools[i].Name())
 		}
-	}
-	if count != 1 {
-		t.Errorf("expected exactly 1 shared_tool (private wins), got %d", count)
-	}
-}
-
-func TestForPermissionsMultiplePrivateTools(t *testing.T) {
-	r := NewToolRegistry()
-	r.RegisterPrivate("chancellor", mockTool{name: "invoke_minister"})
-	r.RegisterPrivate("chancellor", mockTool{name: "enact_ritual"})
-
-	perm, _ := ParsePermissions("rwxr--rwx")
-	tools := r.ForPermissions("chancellor", perm)
-	names := toolNames(tools)
-	assertHas(t, names, "invoke_minister")
-	assertHas(t, names, "enact_ritual")
-}
-
-func TestForPermissionsPrivateNotInPublicEntries(t *testing.T) {
-	// Private tools are separate from public entries — PrivateTools returns a copy
-	r := NewToolRegistry()
-	r.RegisterPrivate("chancellor", mockTool{name: "secret"})
-
-	// Public tools should be empty
-	if len(r.Tools()) != 0 {
-		t.Error("private tools should not appear in public Tools()")
 	}
 }
 
@@ -695,7 +729,7 @@ func TestStrategistPermissions(t *testing.T) {
 func TestToolRegistryString(t *testing.T) {
 	r := NewToolRegistry()
 	r.Register(mockTool{name: "read_file"}, Permissions{Earth: Access{Read: true}})
-	r.RegisterPrivate("chancellor", mockTool{name: "invoke_minister"})
+	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
 
 	s := r.String()
 	if s == "" {
@@ -705,9 +739,9 @@ func TestToolRegistryString(t *testing.T) {
 	if !contains(s, "r--") || !contains(s, "read_file") {
 		t.Errorf("String() should mention read_file with permission, got:\n%s", s)
 	}
-	// Should mention the private tool
-	if !contains(s, "chancellor") || !contains(s, "invoke_minister") {
-		t.Errorf("String() should mention chancellor private tool, got:\n%s", s)
+	// Should mention the extra tool
+	if !contains(s, "invoke_minister") {
+		t.Errorf("String() should mention invoke_minister extra tool, got:\n%s", s)
 	}
 }
 

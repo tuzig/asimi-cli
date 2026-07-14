@@ -37,9 +37,9 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 		}
 	})
 
-	// Build tool registry with per-minister private request_zhengming
+	// Build tool registry — request_zhengming is now a factory extra tool,
+	// resolved per-minister via ExtraTools(ministerID, names).
 	registry := tools.NewToolRegistry()
-	sagePerm, _ := tools.ParsePermissions("r--r--rwx")
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
 			RepoInfo: &repo.RepoInfo{ProjectRoot: "/tmp"},
@@ -47,17 +47,16 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 			Project:  "testproject",
 			DB:       db,
 		},
-		ZhengmingRequester:   base,
-		WaitForZhengming:     nil, // no WaitForAnswer — Call returns immediately with "pending" status
-		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
+		ZhengmingRequester: base,
+		WaitForZhengming:    nil, // no WaitForAnswer — Call returns immediately with "pending" status
 	})
 
-	// Get Sage's tools from registry
-	sageTools := registry.ForPermissions("sage", sagePerm)
+	// Get Sage's extra tools — request_zhengming is a factory tool
+	sageExtras := registry.ExtraTools("sage", []string{"request_zhengming"})
 
 	// Find the request_zhengming tool
 	var zhengmingTool tools.Tool
-	for _, tool := range sageTools {
+	for _, tool := range sageExtras {
 		if tool.Name() == "request_zhengming" {
 			zhengmingTool = tool
 			break
@@ -99,9 +98,8 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 		}
 	})
 
-	// Build tool registry with per-minister private request_zhengming
+	// Build tool registry — request_zhengming is now a factory extra tool
 	registry := tools.NewToolRegistry()
-	strategistPerm, _ := tools.ParsePermissions("r-----rwx")
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
 			RepoInfo: &repo.RepoInfo{ProjectRoot: "/tmp"},
@@ -109,17 +107,16 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 			Project:  "testproject",
 			DB:       db,
 		},
-		ZhengmingRequester:   base,
-		WaitForZhengming:     nil, // no WaitForAnswer — Call returns immediately
-		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
+		ZhengmingRequester: base,
+		WaitForZhengming:    nil, // no WaitForAnswer — Call returns immediately
 	})
 
-	// Get Strategist's tools from registry
-	strategistTools := registry.ForPermissions("strategist", strategistPerm)
+	// Get Strategist's extra tools
+	strategistExtras := registry.ExtraTools("strategist", []string{"request_zhengming"})
 
 	// Find the request_zhengming tool
 	var zhengmingTool tools.Tool
-	for _, tool := range strategistTools {
+	for _, tool := range strategistExtras {
 		if tool.Name() == "request_zhengming" {
 			zhengmingTool = tool
 			break
@@ -150,9 +147,8 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
 	base.SetNotify(func(msg any) {}) // discard notifications
 
-	// Build tool registry with per-minister private request_zhengming
+	// Build tool registry — request_zhengming is now a factory extra tool
 	registry := tools.NewToolRegistry()
-	sagePerm, _ := tools.ParsePermissions("r--r--rwx")
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
 			RepoInfo: &repo.RepoInfo{ProjectRoot: "/tmp"},
@@ -160,15 +156,14 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 			Project:  "testproject",
 			DB:       db,
 		},
-		ZhengmingRequester:   base,
-		WaitForZhengming:     nil, // no WaitForAnswer — Call returns immediately
-		ZhengmingMinisterIDs: []string{"chancellor", "sage", "strategist", "judge"},
+		ZhengmingRequester: base,
+		WaitForZhengming:    nil, // no WaitForAnswer — Call returns immediately
 	})
 
-	// Get Sage's tools and find request_zhengming
-	sageTools := registry.ForPermissions("sage", sagePerm)
+	// Get Sage's extra tools and find request_zhengming
+	sageExtras := registry.ExtraTools("sage", []string{"request_zhengming"})
 	var zhengmingTool tools.Tool
-	for _, tool := range sageTools {
+	for _, tool := range sageExtras {
 		if tool.Name() == "request_zhengming" {
 			zhengmingTool = tool
 			break
