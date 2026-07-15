@@ -707,29 +707,6 @@ func (c *ContentComponent) ShowHelp(topic string) tea.Cmd {
 	}
 }
 
-// ShowModels switches to models view (legacy - for backward compatibility)
-func (c *ContentComponent) ShowModels(models []AnthropicModel, currentModel string) tea.Cmd {
-	// Convert AnthropicModel to unified Model type
-	unifiedModels := make([]Model, len(models))
-	for i, m := range models {
-		status := "ready"
-		if m.ID == currentModel {
-			status = "active"
-		}
-		displayName := m.DisplayName
-		if displayName == "" {
-			displayName = m.ID
-		}
-		unifiedModels[i] = Model{
-			ID:          m.ID,
-			DisplayName: displayName,
-			Provider:    "anthropic",
-			Status:      status,
-		}
-	}
-	return c.ShowUnifiedModels(unifiedModels, currentModel)
-}
-
 // ShowUnifiedModels switches to models view with unified model list
 func (c *ContentComponent) ShowUnifiedModels(models []Model, currentModel string) tea.Cmd {
 	c.activeView = ViewModels

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	koanftoml "github.com/knadh/koanf/parsers/toml/v2"
@@ -126,27 +127,16 @@ func EnsureUserConfigExists() (bool, error) {
 // environment variables. It is called by LoadProjectConfig when
 // resolveKeys is true (e.g. TUI boot); the daemon deliberately passes
 // false because it receives keys via its APIKeys mechanism.
+//
+// Uses convention: strings.ToUpper(provider) + "_API_KEY".
+// Special cases:
+//   - googleai → GEMINI_API_KEY (also checks GOOGLE_API_KEY)
 func resolveAPIKeys(cfg *Config) {
 	if cfg.LLM.Provider != "" && cfg.LLM.APIKey == "" {
-		switch cfg.LLM.Provider {
-		case "anthropic":
-			if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-				cfg.LLM.APIKey = key
-			}
-		case "openai":
-			if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-				cfg.LLM.APIKey = key
-			}
-		case "openrouter":
-			if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-				cfg.LLM.APIKey = key
-			}
-		case "googleai":
-			if key := os.Getenv("GEMINI_API_KEY"); key != "" {
-				cfg.LLM.APIKey = key
-			} else if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
-				cfg.LLM.APIKey = key
-			}
+		// Convention: PROVIDER_API_KEY
+		envVar := strings.ToUpper(cfg.LLM.Provider) + "_API_KEY"
+		if key := os.Getenv(envVar); key != "" {
+			cfg.LLM.APIKey = key
 		}
 	}
 }

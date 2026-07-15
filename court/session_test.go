@@ -1408,6 +1408,14 @@ func (hangingLLMProvider) ChatCompletionStreamRequest(ctx *schemas.BifrostContex
 	return make(chan *schemas.BifrostStreamChunk), nil
 }
 
+func (hangingLLMProvider) ListAllModels(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	return &schemas.BifrostListModelsResponse{}, nil
+}
+
+func (hangingLLMProvider) ListModelsRequest(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	return &schemas.BifrostListModelsResponse{}, nil
+}
+
 // TestSession_AskWithStreaming_HonorsContextCancellation verifies that a
 // hung provider stream does not wedge the caller. Cancelling ctx must
 // return promptly with ctx.Err() instead of blocking on the chunk channel.

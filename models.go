@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // Model represents a unified model across all providers
@@ -23,585 +24,6 @@ type Model struct {
 	Description string // Optional description
 	Status      string // "active" (currently selected), "ready" (key found), "login_required", "manual_entry"
 	OnSelect    tea.Cmd
-}
-
-// AnthropicModel represents a model from the Anthropic API
-type AnthropicModel struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
-	CreatedAt   string `json:"created_at"`
-	Type        string `json:"type"`
-}
-
-// AnthropicModelsResponse represents the response from /v1/models endpoint
-type AnthropicModelsResponse struct {
-	Data    []AnthropicModel `json:"data"`
-	FirstID string           `json:"first_id,omitempty"`
-	LastID  string           `json:"last_id,omitempty"`
-	HasMore bool             `json:"has_more"`
-}
-
-// OpenAIModel represents a model from the OpenAI API
-type OpenAIModel struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
-}
-
-// OpenAIModelsResponse represents the response from OpenAI /v1/models endpoint
-type OpenAIModelsResponse struct {
-	Object string        `json:"object"`
-	Data   []OpenAIModel `json:"data"`
-}
-
-// GoogleModel represents a model from the Google AI API
-type GoogleModel struct {
-	Name                       string   `json:"name"`
-	DisplayName                string   `json:"displayName"`
-	Description                string   `json:"description"`
-	SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
-}
-
-// GoogleModelsResponse represents the response from Google AI models endpoint
-type GoogleModelsResponse struct {
-	Models        []GoogleModel `json:"models"`
-	NextPageToken string        `json:"nextPageToken,omitempty"`
-}
-
-// OllamaModel represents a model from the Ollama API
-type OllamaModel struct {
-	Name       string `json:"name"`
-	Model      string `json:"model"`
-	ModifiedAt string `json:"modified_at"`
-	Size       int64  `json:"size"`
-	Digest     string `json:"digest"`
-}
-
-// OllamaModelsResponse represents the response from Ollama /api/tags endpoint
-type OllamaModelsResponse struct {
-	Models []OllamaModel `json:"models"`
-}
-
-// checkProviderAuth checks if a provider has an API key configured (env var or keyring)
-func checkProviderAuth(provider string) bool {
-	// Check environment variable
-	switch provider {
-	case "anthropic":
-		if os.Getenv("ANTHROPIC_API_KEY") != "" {
-			return true
-		}
-	case "openai":
-		if os.Getenv("OPENAI_API_KEY") != "" {
-			return true
-		}
-	case "googleai":
-		if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
-			return true
-		}
-	case "openrouter":
-		if os.Getenv("OPENROUTER_API_KEY") != "" {
-			return true
-		}
-	}
-
-	// Check keyring
-	apiKey, err := GetAPIKeyFromKeyring(provider)
-	if err == nil && apiKey != "" {
-		// For openai, the keyring value may be a JSON OAuth credential or a plain API key.
-		// A value that is neither (e.g. JSON with an empty access token) must not
-		// count as authenticated, otherwise fetchAllModels will attempt API calls
-		// with invalid credentials.
-		if provider == "openai" {
-			if _, ok := parseCodexOAuthCredential(apiKey); ok {
-				return true // valid OAuth credential
-			}
-			// If it looks like JSON but failed to parse as a valid credential, reject
-			if strings.HasPrefix(strings.TrimSpace(apiKey), "{") {
-				return false
-			}
-			// Non-JSON, non-empty → treat as a plain API key
-			return true
-		}
-		return true
-	}
-
-	return false
-}
-
-// providerEnvVar returns the primary environment variable name for a provider
-func providerEnvVar(provider string) string {
-	switch provider {
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "googleai":
-		return "GEMINI_API_KEY"
-	case "openrouter":
-		return "OPENROUTER_API_KEY"
-	default:
-		return strings.ToUpper(provider) + "_API_KEY"
-	}
-}
-
-// providerDisplayName returns a human-readable provider name
-func providerDisplayName(provider string) string {
-	switch provider {
-	case "anthropic":
-		return "Anthropic"
-	case "openai":
-		return "OpenAI"
-	case "googleai":
-		return "Google AI"
-	case "openrouter":
-		return "OpenRouter"
-	default:
-		return provider
-	}
-}
-
-// fetchAllModels aggregates models from all providers that have API keys configured
-func fetchAllModels(config *Config) []Model {
-	var allModels []Model
-	currentProvider := config.LLM.Provider
-	currentModel := config.LLM.Model
-	ollamaAvailable := checkOllamaAvailable()
-
-	// Fetch Anthropic models if key is configured
-	if checkProviderAuth("anthropic") {
-		anthropicModels, err := fetchAnthropicModels(config)
-		if err == nil && len(anthropicModels) > 0 {
-			for _, m := range anthropicModels {
-				status := "ready"
-				if currentProvider == "anthropic" && m.ID == currentModel {
-					status = "active"
-				}
-				displayName := m.DisplayName
-				if displayName == "" {
-					displayName = m.ID
-				}
-				allModels = append(allModels, Model{
-					ID:          m.ID,
-					DisplayName: displayName,
-					Provider:    "anthropic",
-					Status:      status,
-				})
-			}
-		} else if err != nil {
-			slog.Warn("failed to fetch Anthropic models", "error", err)
-			allModels = append(allModels, Model{
-				DisplayName: "Enter model name for " + providerDisplayName("anthropic"),
-				Provider:    "anthropic",
-				Status:      "manual_entry",
-				Description: err.Error(),
-			})
-		}
-	}
-
-	// Fetch OpenAI models if key is configured
-	if checkProviderAuth("openai") {
-		openaiModels, err := fetchOpenAIModels(config)
-		if err == nil && len(openaiModels) > 0 {
-			for _, m := range openaiModels {
-				status := "ready"
-				if currentProvider == "openai" && m.ID == currentModel {
-					status = "active"
-				}
-				allModels = append(allModels, Model{
-					ID:          m.ID,
-					DisplayName: m.ID,
-					Provider:    "openai",
-					Status:      status,
-				})
-			}
-		} else if err != nil {
-			slog.Warn("failed to fetch OpenAI models", "error", err)
-			allModels = append(allModels, Model{
-				DisplayName: "Enter model name for " + providerDisplayName("openai"),
-				Provider:    "openai",
-				Status:      "manual_entry",
-				Description: err.Error(),
-			})
-		}
-	}
-
-	// Fetch Google AI models if key is configured
-	if checkProviderAuth("googleai") {
-		googleModels, err := fetchGoogleModels(config)
-		if err == nil && len(googleModels) > 0 {
-			for _, m := range googleModels {
-				status := "ready"
-				if currentProvider == "googleai" && m.Name == currentModel {
-					status = "active"
-				}
-				displayName := m.DisplayName
-				if displayName == "" {
-					displayName = m.Name
-				}
-				allModels = append(allModels, Model{
-					ID:          m.Name,
-					DisplayName: displayName,
-					Provider:    "googleai",
-					Description: m.Description,
-					Status:      status,
-				})
-			}
-		} else if err != nil {
-			slog.Warn("failed to fetch Google AI models", "error", err)
-			allModels = append(allModels, Model{
-				DisplayName: "Enter model name for " + providerDisplayName("googleai"),
-				Provider:    "googleai",
-				Status:      "manual_entry",
-				Description: err.Error(),
-			})
-		}
-	}
-
-	// Fetch OpenRouter models if key is configured
-	if checkProviderAuth("openrouter") {
-		openrouterModels, err := fetchOpenRouterModels(config)
-		if err == nil && len(openrouterModels) > 0 {
-			for _, m := range openrouterModels {
-				status := "ready"
-				if currentProvider == "openrouter" && m.ID == currentModel {
-					status = "active"
-				}
-				allModels = append(allModels, Model{
-					ID:          m.ID,
-					DisplayName: m.ID,
-					Provider:    "openrouter",
-					Status:      status,
-				})
-			}
-		} else if err != nil {
-			slog.Warn("failed to fetch OpenRouter models", "error", err)
-			allModels = append(allModels, Model{
-				DisplayName: "Enter model name for " + providerDisplayName("openrouter"),
-				Provider:    "openrouter",
-				Status:      "manual_entry",
-				Description: err.Error(),
-			})
-		}
-	}
-
-	// Fetch Ollama models (local, no auth required)
-	if ollamaAvailable {
-		ollamaModels, err := fetchOllamaModels(config)
-		if err == nil && len(ollamaModels) > 0 {
-			for _, m := range ollamaModels {
-				status := "ready"
-				if currentProvider == "ollama" && m.Name == currentModel {
-					status = "active"
-				}
-				allModels = append(allModels, Model{
-					ID:          m.Name,
-					DisplayName: m.Name,
-					Provider:    "ollama",
-					Status:      status,
-				})
-			}
-		} else if err != nil {
-			slog.Warn("failed to fetch Ollama models", "error", err)
-			allModels = append(allModels, Model{
-				DisplayName: "Enter model name for " + providerDisplayName("ollama"),
-				Provider:    "ollama",
-				Status:      "manual_entry",
-				Description: err.Error(),
-			})
-		}
-	}
-
-	// Sort models: active first, then ready, then manual_entry
-	sort.Slice(allModels, func(i, j int) bool {
-		statusPriority := map[string]int{"active": 0, "ready": 1, "manual_entry": 2, "error": 3}
-		if statusPriority[allModels[i].Status] != statusPriority[allModels[j].Status] {
-			return statusPriority[allModels[i].Status] < statusPriority[allModels[j].Status]
-		}
-		if allModels[i].Provider != allModels[j].Provider {
-			return allModels[i].Provider < allModels[j].Provider
-		}
-		return allModels[i].DisplayName < allModels[j].DisplayName
-	})
-
-	return allModels
-}
-
-// fetchAnthropicModels fetches available models from the Anthropic API
-func fetchAnthropicModels(config *Config) ([]AnthropicModel, error) {
-	var apiKey string
-
-	// Try API key from keyring first
-	apiKey, err := GetAPIKeyFromKeyring("anthropic")
-	if err != nil {
-		apiKey = ""
-	}
-	if apiKey != "" {
-		slog.Debug("Using API key from keyring for Anthropic")
-	}
-
-	// If still no credentials, try environment variable
-	if apiKey == "" {
-		apiKey = os.Getenv("ANTHROPIC_API_KEY")
-		if apiKey != "" {
-			slog.Debug("Using API key from environment for Anthropic")
-		}
-	}
-
-	if apiKey == "" {
-		return nil, fmt.Errorf("no API key configured for anthropic provider")
-	}
-
-	// Create HTTP client with API key authentication
-	client := &http.Client{
-		Transport: &apiKeyTransport{base: http.DefaultTransport},
-	}
-
-	// Determine base URL
-	baseURL := "https://api.anthropic.com"
-	if envBaseURL := os.Getenv("ANTHROPIC_BASE_URL"); envBaseURL != "" {
-		baseURL = strings.TrimSuffix(envBaseURL, "/")
-	}
-
-	// Create request
-	req, err := http.NewRequest("GET", baseURL+"/v1/models", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("anthropic-version", "2023-06-01")
-	if apiKey != "" {
-		req.Header.Set("x-api-key", apiKey)
-	}
-
-	// Make request
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch models: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-	}
-
-	// Parse response
-	var modelsResponse AnthropicModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&modelsResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return modelsResponse.Data, nil
-}
-
-// fetchOpenAIModels fetches available models from the OpenAI API
-func fetchOpenAIModels(config *Config) ([]OpenAIModel, error) {
-	var apiKey string
-
-	// Try environment variable first
-	apiKey = os.Getenv("OPENAI_API_KEY")
-	if apiKey != "" {
-		slog.Debug("Using API key from environment for OpenAI")
-	}
-
-	// If no env var, try keyring
-	if apiKey == "" {
-		var err error
-		apiKey, err = GetAPIKeyFromKeyring("openai")
-		if err != nil || apiKey == "" {
-			return nil, fmt.Errorf("no API key configured for OpenAI")
-		}
-		slog.Debug("Using API key from keyring for OpenAI")
-	}
-
-	// Create request
-	baseURL := "https://api.openai.com"
-	if envBaseURL := os.Getenv("OPENAI_BASE_URL"); envBaseURL != "" {
-		baseURL = strings.TrimSuffix(envBaseURL, "/")
-	}
-
-	req, err := http.NewRequest("GET", baseURL+"/v1/models", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	// Make request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch models: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-	}
-
-	// Parse response
-	var modelsResponse OpenAIModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&modelsResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Filter to only include chat-capable models. When OPENAI_BASE_URL points
-	// at a non-OpenAI gateway (e.g. AWS Bedrock's bedrock-mantle endpoint),
-	// keep all listed models — the codex filter is OpenAI-specific.
-	customBaseURL := os.Getenv("OPENAI_BASE_URL") != ""
-	var chatModels []OpenAIModel
-	for _, m := range modelsResponse.Data {
-		if customBaseURL || strings.Contains(m.ID, "codex") {
-			chatModels = append(chatModels, m)
-		}
-	}
-
-	// Sort by ID for consistent ordering
-	sort.Slice(chatModels, func(i, j int) bool {
-		return chatModels[i].ID < chatModels[j].ID
-	})
-
-	return chatModels, nil
-}
-
-// fetchGoogleModels fetches available models from the Google AI API
-func fetchGoogleModels(config *Config) ([]GoogleModel, error) {
-	var apiKey string
-
-	// Try environment variables first (both GEMINI_API_KEY and GOOGLE_API_KEY)
-	apiKey = os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		apiKey = os.Getenv("GOOGLE_API_KEY")
-	}
-	if apiKey != "" {
-		slog.Debug("Using API key from environment for Google AI")
-	}
-
-	// If no env var, try keyring
-	if apiKey == "" {
-		var err error
-		apiKey, err = GetAPIKeyFromKeyring("googleai")
-		if err != nil || apiKey == "" {
-			return nil, fmt.Errorf("no API key configured for Google AI")
-		}
-		slog.Debug("Using API key from keyring for Google AI")
-	}
-
-	// Create request - Google AI uses query parameter for API key
-	baseURL := "https://generativelanguage.googleapis.com/v1beta/models"
-	req, err := http.NewRequest("GET", baseURL+"?key="+apiKey, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Make request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch models: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-	}
-
-	// Parse response
-	var modelsResponse GoogleModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&modelsResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Filter to only include models that support generateContent (chat)
-	var chatModels []GoogleModel
-	for _, m := range modelsResponse.Models {
-		for _, method := range m.SupportedGenerationMethods {
-			if method == "generateContent" {
-				name := m.Name
-				if strings.HasPrefix(name, "models/") {
-					name = strings.TrimPrefix(name, "models/")
-				}
-				m.Name = name
-				chatModels = append(chatModels, m)
-				break
-			}
-		}
-	}
-
-	// Sort by name for consistent ordering
-	sort.Slice(chatModels, func(i, j int) bool {
-		return chatModels[i].Name < chatModels[j].Name
-	})
-
-	return chatModels, nil
-}
-
-// fetchOpenRouterModels fetches available models from the OpenRouter API
-func fetchOpenRouterModels(config *Config) ([]OpenAIModel, error) {
-	var apiKey string
-
-	// Try environment variable first
-	apiKey = os.Getenv("OPENROUTER_API_KEY")
-	if apiKey != "" {
-		slog.Debug("Using API key from environment for OpenRouter")
-	}
-
-	// If no env var, try keyring
-	if apiKey == "" {
-		var err error
-		apiKey, err = GetAPIKeyFromKeyring("openrouter")
-		if err != nil || apiKey == "" {
-			return nil, fmt.Errorf("no API key configured for OpenRouter")
-		}
-		slog.Debug("Using API key from keyring for OpenRouter")
-	}
-
-	// Determine base URL
-	baseURL := "https://openrouter.ai/api/v1"
-	if envBaseURL := os.Getenv("OPENROUTER_BASE_URL"); envBaseURL != "" {
-		baseURL = strings.TrimSuffix(envBaseURL, "/")
-	}
-
-	req, err := http.NewRequest("GET", baseURL+"/models", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("HTTP-Referer", "https://github.com/afittestide/asimi")
-	req.Header.Set("X-Title", "asimi")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch models: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-	}
-
-	var modelsResponse OpenAIModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&modelsResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Filter to chat models — skip embedding/image models
-	var chatModels []OpenAIModel
-	for _, m := range modelsResponse.Data {
-		if strings.Contains(m.ID, "embedding") || strings.Contains(m.ID, "tts") || strings.Contains(m.ID, "dall-e") {
-			continue
-		}
-		chatModels = append(chatModels, m)
-	}
-
-	sort.Slice(chatModels, func(i, j int) bool {
-		return chatModels[i].ID < chatModels[j].ID
-	})
-
-	return chatModels, nil
 }
 
 // getOllamaBaseURL returns the Ollama API base URL
@@ -628,36 +50,147 @@ func checkOllamaAvailable() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// fetchOllamaModels fetches available models from the local Ollama instance
-func fetchOllamaModels(config *Config) ([]OllamaModel, error) {
-	baseURL := getOllamaBaseURL()
+// fetchAllModels aggregates models from all configured providers via bifrost's
+// ListModelsRequest (per-provider). It maps schemas.Model to asimi's Model
+// struct, preserving the active/ready/manual_entry status semantics.
+func fetchAllModels(config *Config, court courtapi.Client) []Model {
+	var allModels []Model
+	currentProvider := config.LLM.Provider
+	currentModel := config.LLM.Model
+	ollamaAvailable := checkOllamaAvailable()
 
-	req, err := http.NewRequest("GET", baseURL+"/api/tags", nil)
+	// Build the set of configured providers to check auth for.
+	configuredProviders := getConfiguredProviderKeys(ollamaAvailable)
+
+	if len(configuredProviders) == 0 {
+		return allModels
+	}
+
+	for _, provider := range configuredProviders {
+		models, err := fetchModelsForProvider(config, court, provider)
+		if err != nil {
+			slog.Warn("failed to fetch models for provider", "provider", provider, "error", err)
+			allModels = append(allModels, Model{
+				DisplayName: "Enter model name for " + providerDisplayName(provider),
+				Provider:    provider,
+				Status:      "manual_entry",
+				Description: err.Error(),
+			})
+			continue
+		}
+		for _, m := range models {
+			status := "ready"
+			if currentProvider == provider && m.ID == currentModel {
+				status = "active"
+			}
+			displayName := m.DisplayName
+			if displayName == "" {
+				displayName = m.ID
+			}
+			allModels = append(allModels, Model{
+				ID:          m.ID,
+				DisplayName: displayName,
+				Provider:    provider,
+				Description: m.Description,
+				Status:      status,
+			})
+		}
+	}
+
+	sortModels(allModels)
+	return allModels
+}
+
+// fetchModelsForProvider fetches models from a single provider via bifrost
+// through the court's ListModels method. This is a variable so tests can
+// override it.
+var fetchModelsForProvider = func(config *Config, court courtapi.Client, provider string) ([]Model, error) {
+	if court == nil {
+		return nil, fmt.Errorf("no court available")
+	}
+	resp, err := court.ListModels(provider)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch models: %w", err)
+	var models []Model
+	for _, m := range resp.Data {
+		displayName := m.ID
+		if m.Name != nil && *m.Name != "" {
+			displayName = *m.Name
+		}
+		description := ""
+		if m.Description != nil {
+			description = *m.Description
+		}
+		models = append(models, Model{
+			ID:          m.ID,
+			DisplayName: displayName,
+			Description: description,
+		})
 	}
-	defer resp.Body.Close()
+	return models, nil
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+// getConfiguredProviderKeys returns the list of provider keys (asimi naming)
+// that have credentials configured or are locally available.
+func getConfiguredProviderKeys(ollamaAvailable bool) []string {
+	var providers []string
+
+	// Check all standard providers for credentials.
+	// Skip ollama here — it's keyless so checkProviderAuth always returns
+	// true; it's handled by the local availability check below.
+	for _, sp := range schemas.StandardProviders {
+		providerKey := bifrostProviderToAsimi(string(sp))
+		if providerKey == "ollama" {
+			continue
+		}
+		if checkProviderAuth(providerKey) {
+			providers = append(providers, providerKey)
+		}
 	}
 
-	var modelsResponse OllamaModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&modelsResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	// Ollama is checked via local availability, not credentials
+	if ollamaAvailable {
+		providers = append(providers, "ollama")
 	}
 
-	sort.Slice(modelsResponse.Models, func(i, j int) bool {
-		return modelsResponse.Models[i].Name < modelsResponse.Models[j].Name
+	return providers
+}
+
+// bifrostProviderToAsimi maps a bifrost provider string to asimi's provider key.
+// Most are identical; "gemini" maps to "googleai" for backward compatibility.
+func bifrostProviderToAsimi(bifrostProvider string) string {
+	switch bifrostProvider {
+	case "gemini":
+		return "googleai"
+	default:
+		return bifrostProvider
+	}
+}
+
+// asimiProviderToBifrost maps an asimi provider key to bifrost's provider string.
+func asimiProviderToBifrost(asimiProvider string) string {
+	switch asimiProvider {
+	case "googleai":
+		return "gemini"
+	default:
+		return asimiProvider
+	}
+}
+
+// sortModels sorts models: active first, then ready, then manual_entry, by provider and display name.
+func sortModels(models []Model) {
+	sort.Slice(models, func(i, j int) bool {
+		statusPriority := map[string]int{"active": 0, "ready": 1, "manual_entry": 2, "error": 3}
+		if statusPriority[models[i].Status] != statusPriority[models[j].Status] {
+			return statusPriority[models[i].Status] < statusPriority[models[j].Status]
+		}
+		if models[i].Provider != models[j].Provider {
+			return models[i].Provider < models[j].Provider
+		}
+		return models[i].DisplayName < models[j].DisplayName
 	})
-
-	return modelsResponse.Models, nil
 }
 
 // ModelsWindow is a component for displaying unified model selection across all providers
@@ -841,24 +374,6 @@ func (m *ModelsWindow) ClearSearch() {
 	m.searchDirection = 0
 	m.matchIndices = nil
 	m.matchCursor = 0
-}
-
-// getProviderIcon returns an icon for the provider
-func getProviderIcon(provider string) string {
-	switch provider {
-	case "anthropic":
-		return "🅰️ "
-	case "openai":
-		return "🤖"
-	case "googleai":
-		return "🔷"
-	case "ollama":
-		return "🦙"
-	case "openrouter":
-		return "🔀"
-	default:
-		return "  "
-	}
 }
 
 // getStatusIcon returns an icon for the status
@@ -1071,7 +586,7 @@ func handleModelsCommand(model *TUIModel, args []string) tea.Cmd {
 	model.tabs.Content().models.SetLoading(true)
 
 	loadCmd := func() tea.Msg {
-		models := fetchAllModels(model.config)
+		models := fetchAllModels(model.config, model.court)
 
 		// Set OnSelect for manual_entry entries
 		for i := range models {

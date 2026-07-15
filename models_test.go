@@ -1,13 +1,16 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/afittestide/asimi/internal/courtapi"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,6 +75,13 @@ func TestFetchAllModels_ReturnsEmptyWithoutAuth(t *testing.T) {
 		}
 	}()
 
+	// Override fetch to return empty for Ollama (keyless, no court in test)
+	origFetch := fetchModelsForProvider
+	defer func() { fetchModelsForProvider = origFetch }()
+	fetchModelsForProvider = func(config *Config, court courtapi.Client, provider string) ([]Model, error) {
+		return nil, nil // no models, no error
+	}
+
 	config := &Config{
 		LLM: LLMConfig{
 			Provider: "anthropic",
@@ -79,10 +89,9 @@ func TestFetchAllModels_ReturnsEmptyWithoutAuth(t *testing.T) {
 		},
 	}
 
-	models := fetchAllModels(config)
+	models := fetchAllModels(config, nil)
 
 	// With no auth and empty Ollama, should return no models
-	// (login_required entries are now handled by :login, not :models)
 	assert.Equal(t, 0, len(models), "Expected 0 models when no auth and empty Ollama")
 }
 
@@ -131,145 +140,38 @@ func TestCheckProviderAuth_OpenRouter(t *testing.T) {
 	assert.True(t, checkProviderAuth("openrouter"), "Expected true when OPENROUTER_API_KEY is set")
 }
 
-// TestFetchAnthropicModels_NoCredentials verifies error when no credentials available
-func TestFetchAnthropicModels_NoCredentials(t *testing.T) {
-	config := &Config{
-		LLM: LLMConfig{
-			Provider: "anthropic",
-			Model:    "claude-3-5-sonnet-20241022",
-		},
-	}
+// TestCheckProviderAuth_Convention verifies convention-based env var resolution
+// for providers not explicitly listed in the old switch statements.
+func TestCheckProviderAuth_Convention(t *testing.T) {
+	// Clear keyring
+	DeleteAPIKeyFromKeyring("cohere")
 
-	// Make sure no credentials are in keyring
-	DeleteAPIKeyFromKeyring("anthropic")
-
-	// Clear environment variable
-	originalKey := os.Getenv("ANTHROPIC_API_KEY")
-	os.Unsetenv("ANTHROPIC_API_KEY")
+	originalKey := os.Getenv("COHERE_API_KEY")
+	os.Unsetenv("COHERE_API_KEY")
 	defer func() {
 		if originalKey != "" {
-			os.Setenv("ANTHROPIC_API_KEY", originalKey)
+			os.Setenv("COHERE_API_KEY", originalKey)
 		}
 	}()
 
-	_, err := fetchAnthropicModels(config)
-	assert.Error(t, err, "Expected error when no credentials available")
-
-	expectedError := "no API key configured for anthropic provider"
-	assert.Equal(t, expectedError, err.Error())
+	assert.False(t, checkProviderAuth("cohere"), "Expected false when no credentials")
+	t.Setenv("COHERE_API_KEY", "test-key")
+	assert.True(t, checkProviderAuth("cohere"), "Expected true when COHERE_API_KEY is set")
 }
 
-func TestFetchOpenRouterModels_NoCredentials(t *testing.T) {
-	config := &Config{
-		LLM: LLMConfig{
-			Provider: "openrouter",
-			Model:    "anthropic/claude-3.5-sonnet",
-		},
-	}
-
-	// Make sure no credentials are in keyring
-	DeleteAPIKeyFromKeyring("openrouter")
-
-	// Clear environment variable
-	originalKey := os.Getenv("OPENROUTER_API_KEY")
-	os.Unsetenv("OPENROUTER_API_KEY")
-	defer func() {
-		if originalKey != "" {
-			os.Setenv("OPENROUTER_API_KEY", originalKey)
-		}
-	}()
-
-	_, err := fetchOpenRouterModels(config)
-	assert.Error(t, err, "Expected error when no credentials available")
-
-	expectedError := "no API key configured for OpenRouter"
-	assert.Equal(t, expectedError, err.Error())
+// TestCheckProviderAuth_Keyless verifies that keyless providers (Ollama) are always authed
+func TestCheckProviderAuth_Keyless(t *testing.T) {
+	assert.True(t, checkProviderAuth("ollama"), "Expected true for keyless provider ollama")
 }
 
-// TestFetchOpenRouterModels_WithMockServer verifies fetching models from a mock OpenRouter server
-func TestFetchOpenRouterModels_WithMockServer(t *testing.T) {
+// TestFetchAllModels_ManualEntryOnError verifies that when a provider's API returns
+// an error, a manual_entry entry is produced (not an error entry).
+func TestFetchAllModels_ManualEntryOnError(t *testing.T) {
 	DeleteAPIKeyFromKeyring("openrouter")
-
-	// Create mock OpenRouter server
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify headers
-		assert.Equal(t, "Bearer test-openrouter-key", r.Header.Get("Authorization"))
-		assert.Equal(t, "https://github.com/afittestide/asimi", r.Header.Get("HTTP-Referer"))
-		assert.Equal(t, "asimi", r.Header.Get("X-Title"))
-		assert.Equal(t, "/models", r.URL.Path)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
-			"object": "list",
-			"data": [
-				{"id": "anthropic/claude-3.5-sonnet", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-				{"id": "openai/gpt-4o", "object": "model", "created": 1700000001, "owned_by": "openai"},
-				{"id": "openai/text-embedding-3-large", "object": "model", "created": 1700000002, "owned_by": "openai"},
-				{"id": "openai/dall-e-3", "object": "model", "created": 1700000003, "owned_by": "openai"},
-				{"id": "openai/tts-1", "object": "model", "created": 1700000004, "owned_by": "openai"},
-				{"id": "google/gemini-2.5-pro", "object": "model", "created": 1700000005, "owned_by": "google"}
-			]
-		}`))
-	}))
-	defer mockServer.Close()
-
-	// Set env vars
-	originalKey := os.Getenv("OPENROUTER_API_KEY")
-	originalBaseURL := os.Getenv("OPENROUTER_BASE_URL")
-	t.Setenv("OPENROUTER_API_KEY", "test-openrouter-key")
-	os.Setenv("OPENROUTER_BASE_URL", mockServer.URL)
-	defer func() {
-		if originalKey != "" {
-			os.Setenv("OPENROUTER_API_KEY", originalKey)
-		} else {
-			os.Unsetenv("OPENROUTER_API_KEY")
-		}
-		if originalBaseURL != "" {
-			os.Setenv("OPENROUTER_BASE_URL", originalBaseURL)
-		} else {
-			os.Unsetenv("OPENROUTER_BASE_URL")
-		}
-	}()
-
-	config := &Config{
-		LLM: LLMConfig{
-			Provider: "openrouter",
-			Model:    "openai/gpt-4o",
-		},
-	}
-
-	models, err := fetchOpenRouterModels(config)
-	require.NoError(t, err)
-
-	// Should have 3 models — embedding, dall-e, and tts filtered out
-	assert.Equal(t, 3, len(models), "Expected 3 chat models (embedding, dall-e, tts filtered)")
-
-	// Verify filtering: no embedding/tts/dall-e models
-	for _, m := range models {
-		assert.NotContains(t, m.ID, "embedding", "embedding model should be filtered")
-		assert.NotContains(t, m.ID, "tts", "tts model should be filtered")
-		assert.NotContains(t, m.ID, "dall-e", "dall-e model should be filtered")
-	}
-
-	// Verify sorted by ID
-	assert.Equal(t, "anthropic/claude-3.5-sonnet", models[0].ID)
-	assert.Equal(t, "google/gemini-2.5-pro", models[1].ID)
-	assert.Equal(t, "openai/gpt-4o", models[2].ID)
-}
-
-// TestFetchOpenRouterModels_APIError verifies error handling on non-200 response
-func TestFetchOpenRouterModels_APIError(t *testing.T) {
-	DeleteAPIKeyFromKeyring("openrouter")
-
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer mockServer.Close()
 
 	originalKey := os.Getenv("OPENROUTER_API_KEY")
 	originalBaseURL := os.Getenv("OPENROUTER_BASE_URL")
 	t.Setenv("OPENROUTER_API_KEY", "bad-key")
-	os.Setenv("OPENROUTER_BASE_URL", mockServer.URL)
 	defer func() {
 		if originalKey != "" {
 			os.Setenv("OPENROUTER_API_KEY", originalKey)
@@ -283,6 +185,58 @@ func TestFetchOpenRouterModels_APIError(t *testing.T) {
 		}
 	}()
 
+	// Clear other providers
+	DeleteAPIKeyFromKeyring("anthropic")
+	DeleteAPIKeyFromKeyring("openai")
+	DeleteAPIKeyFromKeyring("googleai")
+	originalAnthropic := os.Getenv("ANTHROPIC_API_KEY")
+	originalOpenAI := os.Getenv("OPENAI_API_KEY")
+	originalGemini := os.Getenv("GEMINI_API_KEY")
+	originalGoogle := os.Getenv("GOOGLE_API_KEY")
+	originalOllamaHost := os.Getenv("OLLAMA_HOST")
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("OPENAI_API_KEY")
+	os.Unsetenv("GEMINI_API_KEY")
+	os.Unsetenv("GOOGLE_API_KEY")
+
+	// Mock Ollama to return empty
+	mockOllama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":[]}`))
+	}))
+	defer mockOllama.Close()
+	os.Setenv("OLLAMA_HOST", mockOllama.URL)
+
+	defer func() {
+		if originalAnthropic != "" {
+			os.Setenv("ANTHROPIC_API_KEY", originalAnthropic)
+		}
+		if originalOpenAI != "" {
+			os.Setenv("OPENAI_API_KEY", originalOpenAI)
+		}
+		if originalGemini != "" {
+			os.Setenv("GEMINI_API_KEY", originalGemini)
+		}
+		if originalGoogle != "" {
+			os.Setenv("GOOGLE_API_KEY", originalGoogle)
+		}
+		if originalOllamaHost != "" {
+			os.Setenv("OLLAMA_HOST", originalOllamaHost)
+		} else {
+			os.Unsetenv("OLLAMA_HOST")
+		}
+	}()
+
+	// Override the fetch function to simulate an error from bifrost
+	origFetch := fetchModelsForProvider
+	defer func() { fetchModelsForProvider = origFetch }()
+	fetchModelsForProvider = func(config *Config, court courtapi.Client, provider string) ([]Model, error) {
+		if provider == "openrouter" {
+			return nil, fmt.Errorf("API returned status 401")
+		}
+		return nil, nil
+	}
+
 	config := &Config{
 		LLM: LLMConfig{
 			Provider: "openrouter",
@@ -290,94 +244,30 @@ func TestFetchOpenRouterModels_APIError(t *testing.T) {
 		},
 	}
 
-	_, err := fetchOpenRouterModels(config)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "API returned status 401")
+	models := fetchAllModels(config, nil)
+
+	var manualEntry *Model
+	for i := range models {
+		if models[i].Provider == "openrouter" && models[i].Status == "manual_entry" {
+			manualEntry = &models[i]
+			break
+		}
+	}
+
+	require.NotNil(t, manualEntry, "Expected a manual_entry entry for openrouter")
+	assert.Contains(t, manualEntry.DisplayName, "Enter model name for")
+	assert.Contains(t, manualEntry.DisplayName, "OpenRouter")
+	assert.NotEmpty(t, manualEntry.Description, "Expected error description to be preserved")
 }
 
-// TestFetchOpenRouterModels_EmptyResponse verifies handling when server returns empty model list
-func TestFetchOpenRouterModels_EmptyResponse(t *testing.T) {
-	DeleteAPIKeyFromKeyring("openrouter")
+// TestIsModelSelectable_ManualEntry verifies that manual_entry models are selectable
+func TestIsModelSelectable_ManualEntry(t *testing.T) {
+	model := Model{Status: "manual_entry", Provider: "openai"}
+	assert.True(t, IsModelSelectable(model), "Expected manual_entry to be selectable")
 
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"object":"list","data":[]}`))
-	}))
-	defer mockServer.Close()
-
-	originalKey := os.Getenv("OPENROUTER_API_KEY")
-	originalBaseURL := os.Getenv("OPENROUTER_BASE_URL")
-	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	os.Setenv("OPENROUTER_BASE_URL", mockServer.URL)
-	defer func() {
-		if originalKey != "" {
-			os.Setenv("OPENROUTER_API_KEY", originalKey)
-		} else {
-			os.Unsetenv("OPENROUTER_API_KEY")
-		}
-		if originalBaseURL != "" {
-			os.Setenv("OPENROUTER_BASE_URL", originalBaseURL)
-		} else {
-			os.Unsetenv("OPENROUTER_BASE_URL")
-		}
-	}()
-
-	config := &Config{
-		LLM: LLMConfig{
-			Provider: "openrouter",
-			Model:    "test",
-		},
-	}
-
-	models, err := fetchOpenRouterModels(config)
-	require.NoError(t, err)
-	assert.Equal(t, 0, len(models), "Expected 0 models from empty response")
-}
-
-// TestFetchOpenRouterModels_AllFiltered verifies that when all models are non-chat, result is empty
-func TestFetchOpenRouterModels_AllFiltered(t *testing.T) {
-	DeleteAPIKeyFromKeyring("openrouter")
-
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
-			"object": "list",
-			"data": [
-				{"id": "openai/text-embedding-3-large", "object": "model", "created": 1700000000, "owned_by": "openai"},
-				{"id": "openai/dall-e-3", "object": "model", "created": 1700000001, "owned_by": "openai"},
-				{"id": "openai/tts-1-hd", "object": "model", "created": 1700000002, "owned_by": "openai"}
-			]
-		}`))
-	}))
-	defer mockServer.Close()
-
-	originalKey := os.Getenv("OPENROUTER_API_KEY")
-	originalBaseURL := os.Getenv("OPENROUTER_BASE_URL")
-	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	os.Setenv("OPENROUTER_BASE_URL", mockServer.URL)
-	defer func() {
-		if originalKey != "" {
-			os.Setenv("OPENROUTER_API_KEY", originalKey)
-		} else {
-			os.Unsetenv("OPENROUTER_API_KEY")
-		}
-		if originalBaseURL != "" {
-			os.Setenv("OPENROUTER_BASE_URL", originalBaseURL)
-		} else {
-			os.Unsetenv("OPENROUTER_BASE_URL")
-		}
-	}()
-
-	config := &Config{
-		LLM: LLMConfig{
-			Provider: "openrouter",
-			Model:    "test",
-		},
-	}
-
-	models, err := fetchOpenRouterModels(config)
-	require.NoError(t, err)
-	assert.Equal(t, 0, len(models), "Expected 0 models when all are filtered")
+	// error should still not be selectable
+	errorModel := Model{Status: "error", Provider: "openai"}
+	assert.False(t, IsModelSelectable(errorModel), "Expected error to NOT be selectable")
 }
 
 // Tests from models_window_test.go
@@ -595,8 +485,8 @@ func TestHandleModelsCommandShowsConfiguredModels(t *testing.T) {
 	require.NotNil(t, msg, "Command should return a message")
 }
 
-// TestFetchAllModels_WithAPIKey verifies that models show as ready when API key is available
-// or error items are added when API fails
+// TestFetchAllModels_WithAPIKey verifies that models show as ready or manual_entry
+// when API key is available but the court/bifrost is nil (simulating test env)
 func TestFetchAllModels_WithAPIKey(t *testing.T) {
 	// Clear any existing credentials
 	DeleteAPIKeyFromKeyring("openai")
@@ -612,6 +502,13 @@ func TestFetchAllModels_WithAPIKey(t *testing.T) {
 		}
 	}()
 
+	// Override fetch to simulate error (no court available in test)
+	origFetch := fetchModelsForProvider
+	defer func() { fetchModelsForProvider = origFetch }()
+	fetchModelsForProvider = func(config *Config, court courtapi.Client, provider string) ([]Model, error) {
+		return nil, fmt.Errorf("LLM client not initialized")
+	}
+
 	config := &Config{
 		LLM: LLMConfig{
 			Provider: "openai",
@@ -619,15 +516,15 @@ func TestFetchAllModels_WithAPIKey(t *testing.T) {
 		},
 	}
 
-	models := fetchAllModels(config)
+	models := fetchAllModels(config, nil)
 
-	// With an API key set, we should get either models or an error item
+	// With an API key set but no court, we should get manual_entry
 	hasOpenAI := false
 	for _, m := range models {
 		if m.Provider == "openai" {
 			hasOpenAI = true
 			if m.Status != "ready" && m.Status != "active" && m.Status != "manual_entry" {
-				t.Errorf("Expected OpenAI model %s to be 'ready', 'active', or 'error', got %s", m.ID, m.Status)
+				t.Errorf("Expected OpenAI model %s to be 'ready', 'active', or 'manual_entry', got %s", m.ID, m.Status)
 			}
 		}
 	}
@@ -688,6 +585,13 @@ func TestFetchAllModels_LoginRequiredEntryContents(t *testing.T) {
 		}
 	}()
 
+	// Override fetch to return empty for Ollama (which is keyless and thus "configured")
+	origFetch := fetchModelsForProvider
+	defer func() { fetchModelsForProvider = origFetch }()
+	fetchModelsForProvider = func(config *Config, court courtapi.Client, provider string) ([]Model, error) {
+		return nil, nil // no models, no error
+	}
+
 	config := &Config{
 		LLM: LLMConfig{
 			Provider: "anthropic",
@@ -695,9 +599,10 @@ func TestFetchAllModels_LoginRequiredEntryContents(t *testing.T) {
 		},
 	}
 
-	models := fetchAllModels(config)
+	models := fetchAllModels(config, nil)
 
-	// login_required entries should no longer be in fetchAllModels output
+	// With no auth and empty Ollama, should return no models
+	// (login_required entries are now handled by :login, not :models)
 	assert.Equal(t, 0, len(models), "Expected 0 entries — login_required moved to :login")
 
 	for _, m := range models {
@@ -775,7 +680,6 @@ func TestHandleModelsCommand_NoLoginRequiredOnSelect(t *testing.T) {
 	require.NotNil(t, msg)
 
 	// Verify no login_required entries exist in the models list
-	// (they moved to :login)
 	if modelsMsg, ok := msg.(modelsLoadedMsg); ok {
 		for _, m := range modelsMsg.models {
 			assert.NotEqual(t, "login_required", m.Status,
@@ -784,132 +688,18 @@ func TestHandleModelsCommand_NoLoginRequiredOnSelect(t *testing.T) {
 	}
 }
 
-// TestFetchAllModels_ManualEntryOnError verifies that when a provider's API returns
-// an error, a manual_entry entry is produced (not an error entry).
-func TestFetchAllModels_ManualEntryOnError(t *testing.T) {
-	DeleteAPIKeyFromKeyring("openrouter")
-
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer mockServer.Close()
-
-	originalKey := os.Getenv("OPENROUTER_API_KEY")
-	originalBaseURL := os.Getenv("OPENROUTER_BASE_URL")
-	t.Setenv("OPENROUTER_API_KEY", "bad-key")
-	os.Setenv("OPENROUTER_BASE_URL", mockServer.URL)
-	defer func() {
-		if originalKey != "" {
-			os.Setenv("OPENROUTER_API_KEY", originalKey)
-		} else {
-			os.Unsetenv("OPENROUTER_API_KEY")
-		}
-		if originalBaseURL != "" {
-			os.Setenv("OPENROUTER_BASE_URL", originalBaseURL)
-		} else {
-			os.Unsetenv("OPENROUTER_BASE_URL")
-		}
-	}()
-
-	// Clear other providers
-	DeleteAPIKeyFromKeyring("anthropic")
-	DeleteAPIKeyFromKeyring("openai")
-	DeleteAPIKeyFromKeyring("googleai")
-	originalAnthropic := os.Getenv("ANTHROPIC_API_KEY")
-	originalOpenAI := os.Getenv("OPENAI_API_KEY")
-	originalGemini := os.Getenv("GEMINI_API_KEY")
-	originalGoogle := os.Getenv("GOOGLE_API_KEY")
-	originalOllamaHost := os.Getenv("OLLAMA_HOST")
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	os.Unsetenv("OPENAI_API_KEY")
-	os.Unsetenv("GEMINI_API_KEY")
-	os.Unsetenv("GOOGLE_API_KEY")
-
-	// Mock Ollama to return empty
-	mockOllama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"models":[]}`))
-	}))
-	defer mockOllama.Close()
-	os.Setenv("OLLAMA_HOST", mockOllama.URL)
-
-	defer func() {
-		if originalAnthropic != "" {
-			os.Setenv("ANTHROPIC_API_KEY", originalAnthropic)
-		}
-		if originalOpenAI != "" {
-			os.Setenv("OPENAI_API_KEY", originalOpenAI)
-		}
-		if originalGemini != "" {
-			os.Setenv("GEMINI_API_KEY", originalGemini)
-		}
-		if originalGoogle != "" {
-			os.Setenv("GOOGLE_API_KEY", originalGoogle)
-		}
-		if originalOllamaHost != "" {
-			os.Setenv("OLLAMA_HOST", originalOllamaHost)
-		} else {
-			os.Unsetenv("OLLAMA_HOST")
-		}
-	}()
-
-	config := &Config{
-		LLM: LLMConfig{
-			Provider: "openrouter",
-			Model:    "test",
-		},
-	}
-
-	models := fetchAllModels(config)
-
-	var manualEntry *Model
-	for i := range models {
-		if models[i].Provider == "openrouter" && models[i].Status == "manual_entry" {
-			manualEntry = &models[i]
-			break
-		}
-	}
-
-	require.NotNil(t, manualEntry, "Expected a manual_entry entry for openrouter")
-	assert.Contains(t, manualEntry.DisplayName, "Enter model name for")
-	assert.Contains(t, manualEntry.DisplayName, "OpenRouter")
-	assert.NotEmpty(t, manualEntry.Description, "Expected error description to be preserved")
-}
-
-// TestIsModelSelectable_ManualEntry verifies that manual_entry models are selectable
-func TestIsModelSelectable_ManualEntry(t *testing.T) {
-	model := Model{Status: "manual_entry", Provider: "openai"}
-	assert.True(t, IsModelSelectable(model), "Expected manual_entry to be selectable")
-
-	// error should still not be selectable
-	errorModel := Model{Status: "error", Provider: "openai"}
-	assert.False(t, IsModelSelectable(errorModel), "Expected error to NOT be selectable")
-}
-
 // TestHandleModelsCommand_SetsOnSelectForManualEntry verifies that handleModelsCommand
 // sets OnSelect callbacks for manual_entry entries
 func TestHandleModelsCommand_SetsOnSelectForManualEntry(t *testing.T) {
 	DeleteAPIKeyFromKeyring("openrouter")
 
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer mockServer.Close()
-
 	originalKey := os.Getenv("OPENROUTER_API_KEY")
-	originalBaseURL := os.Getenv("OPENROUTER_BASE_URL")
 	t.Setenv("OPENROUTER_API_KEY", "bad-key")
-	os.Setenv("OPENROUTER_BASE_URL", mockServer.URL)
 	defer func() {
 		if originalKey != "" {
 			os.Setenv("OPENROUTER_API_KEY", originalKey)
 		} else {
 			os.Unsetenv("OPENROUTER_API_KEY")
-		}
-		if originalBaseURL != "" {
-			os.Setenv("OPENROUTER_BASE_URL", originalBaseURL)
-		} else {
-			os.Unsetenv("OPENROUTER_BASE_URL")
 		}
 	}()
 
@@ -953,6 +743,16 @@ func TestHandleModelsCommand_SetsOnSelectForManualEntry(t *testing.T) {
 			os.Unsetenv("OLLAMA_HOST")
 		}
 	}()
+
+	// Override fetch to simulate error from bifrost
+	origFetch := fetchModelsForProvider
+	defer func() { fetchModelsForProvider = origFetch }()
+	fetchModelsForProvider = func(config *Config, court courtapi.Client, provider string) ([]Model, error) {
+		if provider == "openrouter" {
+			return nil, fmt.Errorf("API returned status 401")
+		}
+		return nil, nil
+	}
 
 	config := &Config{
 		LLM: LLMConfig{
@@ -962,7 +762,7 @@ func TestHandleModelsCommand_SetsOnSelectForManualEntry(t *testing.T) {
 	}
 
 	// Replicate the handleModelsCommand logic to verify OnSelect is set
-	models := fetchAllModels(config)
+	models := fetchAllModels(config, nil)
 	for i := range models {
 		m := &models[i]
 		if m.Status == "manual_entry" {
@@ -977,4 +777,258 @@ func TestHandleModelsCommand_SetsOnSelectForManualEntry(t *testing.T) {
 			assert.NotNil(t, m.OnSelect, "Expected OnSelect to be set for manual_entry entry (provider: %s)", m.Provider)
 		}
 	}
+}
+
+// TestProviderEnvVar_Convention verifies convention-based env var resolution
+func TestProviderEnvVar_Convention(t *testing.T) {
+	assert.Equal(t, "ANTHROPIC_API_KEY", providerEnvVar("anthropic"))
+	assert.Equal(t, "OPENAI_API_KEY", providerEnvVar("openai"))
+	assert.Equal(t, "GEMINI_API_KEY", providerEnvVar("googleai"))
+	assert.Equal(t, "OPENROUTER_API_KEY", providerEnvVar("openrouter"))
+	assert.Equal(t, "COHERE_API_KEY", providerEnvVar("cohere"))
+	assert.Equal(t, "MISTRAL_API_KEY", providerEnvVar("mistral"))
+}
+
+// TestProviderDisplayName verifies display names from the metadata table
+func TestProviderDisplayName(t *testing.T) {
+	assert.Equal(t, "Anthropic", providerDisplayName("anthropic"))
+	assert.Equal(t, "OpenAI", providerDisplayName("openai"))
+	assert.Equal(t, "Google AI", providerDisplayName("googleai"))
+	assert.Equal(t, "OpenRouter", providerDisplayName("openrouter"))
+	assert.Equal(t, "Ollama", providerDisplayName("ollama"))
+	// Unknown providers return the provider name itself
+	assert.Equal(t, "unknown", providerDisplayName("unknown"))
+}
+
+// TestProviderMeta_AuthType verifies auth type classification
+func TestProviderMeta_AuthType(t *testing.T) {
+	assert.Equal(t, AuthTypeAPIKey, providerAuthType("anthropic"))
+	assert.Equal(t, AuthTypeOAuth, providerAuthType("openai"))
+	assert.Equal(t, AuthTypeKeyless, providerAuthType("ollama"))
+	assert.Equal(t, AuthTypeAPIKey, providerAuthType("cohere"))
+}
+
+// TestFetchAllModels_WithMockBifrost verifies that fetchAllModels correctly
+// maps schemas.Model from bifrost to asimi's Model struct.
+func TestFetchAllModels_WithMockBifrost(t *testing.T) {
+	DeleteAPIKeyFromKeyring("anthropic")
+	DeleteAPIKeyFromKeyring("openai")
+	DeleteAPIKeyFromKeyring("googleai")
+	DeleteAPIKeyFromKeyring("openrouter")
+
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+	originalOllamaHost := os.Getenv("OLLAMA_HOST")
+	mockOllama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":[]}`))
+	}))
+	defer mockOllama.Close()
+	os.Setenv("OLLAMA_HOST", mockOllama.URL)
+	defer func() {
+		if originalOllamaHost != "" {
+			os.Setenv("OLLAMA_HOST", originalOllamaHost)
+		} else {
+			os.Unsetenv("OLLAMA_HOST")
+		}
+	}()
+
+	// Override fetch to return mock models
+	origFetch := fetchModelsForProvider
+	defer func() { fetchModelsForProvider = origFetch }()
+	fetchModelsForProvider = func(config *Config, court courtapi.Client, provider string) ([]Model, error) {
+		if provider == "anthropic" {
+			return []Model{
+				{ID: "claude-3-5-sonnet", DisplayName: "Claude 3.5 Sonnet"},
+				{ID: "claude-3-5-haiku", DisplayName: "Claude 3.5 Haiku"},
+			}, nil
+		}
+		return nil, nil
+	}
+
+	config := &Config{
+		LLM: LLMConfig{
+			Provider: "anthropic",
+			Model:    "claude-3-5-sonnet",
+		},
+	}
+
+	models := fetchAllModels(config, nil)
+	assert.GreaterOrEqual(t, len(models), 2)
+
+	// Verify the active model is marked
+	for _, m := range models {
+		if m.Provider == "anthropic" && m.ID == "claude-3-5-sonnet" {
+			assert.Equal(t, "active", m.Status)
+		}
+	}
+}
+
+// TestBifrostProviderToAsimi verifies the provider key mapping
+func TestBifrostProviderToAsimi(t *testing.T) {
+	assert.Equal(t, "googleai", bifrostProviderToAsimi("gemini"))
+	assert.Equal(t, "anthropic", bifrostProviderToAsimi("anthropic"))
+	assert.Equal(t, "openai", bifrostProviderToAsimi("openai"))
+}
+
+// TestAsimiProviderToBifrost verifies the inverse mapping of asimi → bifrost
+func TestAsimiProviderToBifrost(t *testing.T) {
+	assert.Equal(t, "gemini", asimiProviderToBifrost("googleai"))
+	assert.Equal(t, "anthropic", asimiProviderToBifrost("anthropic"))
+	assert.Equal(t, "openai", asimiProviderToBifrost("openai"))
+	assert.Equal(t, "cohere", asimiProviderToBifrost("cohere"))
+}
+
+// TestAsimiProviderToBifrostRoundTrip verifies that the two mapping functions
+// are inverses when starting from the bifrost side.
+func TestAsimiProviderToBifrostRoundTrip(t *testing.T) {
+	// bifrost → asimi → bifrost should be identity
+	bifrostProviders := []string{"anthropic", "openai", "gemini", "cohere", "mistral"}
+	for _, p := range bifrostProviders {
+		asimi := bifrostProviderToAsimi(p)
+		bifrost := asimiProviderToBifrost(asimi)
+		assert.Equal(t, p, bifrost, "round-trip should be identity for %s", p)
+	}
+
+	// asimi → bifrost → asimi should be identity
+	asimiProviders := []string{"anthropic", "openai", "googleai", "cohere", "mistral"}
+	for _, p := range asimiProviders {
+		bifrost := asimiProviderToBifrost(p)
+		asimi := bifrostProviderToAsimi(bifrost)
+		assert.Equal(t, p, asimi, "reverse round-trip should be identity for %s", p)
+	}
+}
+
+// mockListModelsCourt is a minimal courtapi.Client that returns canned
+// ListModels responses. It embeds courtapi.Client so all other methods
+// panic if called (which is fine for these tests).
+type mockListModelsCourt struct {
+	courtapi.Client
+	resp *schemas.BifrostListModelsResponse
+	err  error
+}
+
+func (m *mockListModelsCourt) ListModels(provider string) (*schemas.BifrostListModelsResponse, error) {
+	return m.resp, m.err
+}
+
+// TestFetchModelsForProvider_MapsBifrostModels verifies that the real
+// fetchModelsForProvider correctly maps schemas.Model fields to asimi's Model,
+// including nil-to-empty-string handling for Name and Description pointers.
+func TestFetchModelsForProvider_MapsBifrostModels(t *testing.T) {
+	name1 := "Claude 3.5 Sonnet"
+	desc1 := "Most intelligent model"
+	models := []schemas.Model{
+		{ID: "claude-3-5-sonnet", Name: &name1, Description: &desc1},
+		{ID: "claude-3-5-haiku"}, // nil Name and Description
+	}
+	court := &mockListModelsCourt{
+		resp: &schemas.BifrostListModelsResponse{Data: models},
+	}
+
+	result, err := fetchModelsForProvider(&Config{}, court, "anthropic")
+	require.NoError(t, err)
+	require.Len(t, result, 2)
+
+	assert.Equal(t, "claude-3-5-sonnet", result[0].ID)
+	assert.Equal(t, "Claude 3.5 Sonnet", result[0].DisplayName)
+	assert.Equal(t, "Most intelligent model", result[0].Description)
+
+	// nil Name falls back to ID; nil Description falls back to ""
+	assert.Equal(t, "claude-3-5-haiku", result[1].ID)
+	assert.Equal(t, "claude-3-5-haiku", result[1].DisplayName)
+	assert.Equal(t, "", result[1].Description)
+}
+
+// TestFetchModelsForProvider_NilCourtReturnsError verifies the nil court guard
+func TestFetchModelsForProvider_NilCourtReturnsError(t *testing.T) {
+	_, err := fetchModelsForProvider(&Config{}, nil, "anthropic")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no court available")
+}
+
+// TestFetchModelsForProvider_CourtError verifies error propagation
+func TestFetchModelsForProvider_CourtError(t *testing.T) {
+	court := &mockListModelsCourt{err: fmt.Errorf("provider unavailable")}
+	_, err := fetchModelsForProvider(&Config{}, court, "openai")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "provider unavailable")
+}
+
+// TestFetchModelsForProvider_EmptyResponse verifies empty responses are handled
+func TestFetchModelsForProvider_EmptyResponse(t *testing.T) {
+	court := &mockListModelsCourt{
+		resp: &schemas.BifrostListModelsResponse{Data: nil},
+	}
+	result, err := fetchModelsForProvider(&Config{}, court, "cohere")
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+// TestProviderBaseURLEnvVar_Convention verifies convention-based base URL env var
+func TestProviderBaseURLEnvVar_Convention(t *testing.T) {
+	assert.Equal(t, "ANTHROPIC_BASE_URL", providerBaseURLEnvVar("anthropic"))
+	assert.Equal(t, "OPENAI_BASE_URL", providerBaseURLEnvVar("openai"))
+	assert.Equal(t, "GEMINI_BASE_URL", providerBaseURLEnvVar("googleai"))
+	assert.Equal(t, "AZURE_OPENAI_BASE_URL", providerBaseURLEnvVar("azure"))
+	assert.Equal(t, "COHERE_BASE_URL", providerBaseURLEnvVar("cohere"))
+	assert.Equal(t, "MISTRAL_BASE_URL", providerBaseURLEnvVar("mistral"))
+}
+
+// TestProviderBaseURLFromEnv verifies that base URL env vars are resolved
+func TestProviderBaseURLFromEnv(t *testing.T) {
+	t.Setenv("COHERE_BASE_URL", "https://api.cohere.ai")
+	assert.Equal(t, "https://api.cohere.ai", providerBaseURLFromEnv("cohere"))
+
+	t.Setenv("GEMINI_BASE_URL", "https://custom-gemini.example.com")
+	assert.Equal(t, "https://custom-gemini.example.com", providerBaseURLFromEnv("googleai"))
+
+	os.Unsetenv("COHERE_BASE_URL")
+	assert.Equal(t, "", providerBaseURLFromEnv("cohere"))
+}
+
+// TestGetConfiguredProviderKeys_NoAuth verifies that without auth, only
+// keyless providers are included
+func TestGetConfiguredProviderKeys_NoAuth(t *testing.T) {
+	DeleteAPIKeyFromKeyring("anthropic")
+	DeleteAPIKeyFromKeyring("openai")
+	DeleteAPIKeyFromKeyring("googleai")
+	DeleteAPIKeyFromKeyring("openrouter")
+	DeleteAPIKeyFromKeyring("cohere")
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("OPENAI_API_KEY")
+	os.Unsetenv("GEMINI_API_KEY")
+	os.Unsetenv("GOOGLE_API_KEY")
+	os.Unsetenv("OPENROUTER_API_KEY")
+	os.Unsetenv("COHERE_API_KEY")
+	os.Unsetenv("AWS_ACCESS_KEY_ID")
+	os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+
+	// Without Ollama available, no providers
+	providers := getConfiguredProviderKeys(false)
+	assert.Empty(t, providers)
+}
+
+// TestGetConfiguredProviderKeys_ConventionAuth verifies that a convention-based
+// env var for a new provider (not in the old hardcoded switches) is detected
+func TestGetConfiguredProviderKeys_ConventionAuth(t *testing.T) {
+	DeleteAPIKeyFromKeyring("anthropic")
+	DeleteAPIKeyFromKeyring("openai")
+	DeleteAPIKeyFromKeyring("googleai")
+	DeleteAPIKeyFromKeyring("openrouter")
+	DeleteAPIKeyFromKeyring("cohere")
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("OPENAI_API_KEY")
+	os.Unsetenv("GEMINI_API_KEY")
+	os.Unsetenv("GOOGLE_API_KEY")
+	os.Unsetenv("OPENROUTER_API_KEY")
+	os.Unsetenv("AWS_ACCESS_KEY_ID")
+	os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+
+	t.Setenv("COHERE_API_KEY", "test-key")
+	defer os.Unsetenv("COHERE_API_KEY")
+
+	providers := getConfiguredProviderKeys(false)
+	assert.Contains(t, providers, "cohere")
 }

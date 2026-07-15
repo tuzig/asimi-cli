@@ -116,6 +116,10 @@ type Court struct {
 	// corresponding cancel func. Populated by CancellableStreamCtx.
 	tabCancelsMu sync.Mutex
 	tabCancels   map[string]context.CancelFunc
+
+	// llmClient holds the current LLM provider (typically *bifrost.Bifrost)
+	// so the court can serve ListAllModels requests from the TUI.
+	llmClient LLMProvider
 }
 
 // NewCourt creates a new Court coordinator.
@@ -563,6 +567,7 @@ func (s *Court) ConfigureModel(client LLMProvider, config *SessionConfig, repoIn
 	if s == nil {
 		return
 	}
+	s.llmClient = client
 	for _, minister := range s.Ministers() {
 		if base, ok := minister.(interface {
 			SetMinisterConfig(LLMProvider, *SessionConfig, repo.RepoInfo)
@@ -667,6 +672,34 @@ func (s *Court) SetContext(ctx context.Context, params types.SetContextParams) e
 
 	s.ConfigureModel(bifrostClient, sessionCfg, repoInfo)
 	return nil
+}
+
+// ListModels delegates to the configured LLM provider (bifrost) to list
+// models for a specific provider. Returns an error if the LLM client has
+// not been initialized yet.
+func (s *Court) ListModels(provider string) (*schemas.BifrostListModelsResponse, error) {
+	if s.llmClient == nil {
+		return nil, fmt.Errorf("LLM client not initialized — use :login to configure a provider")
+	}
+	ctx := schemas.NewBifrostContext(s.ctx, schemas.NoDeadline)
+	bifrostProvider := schemas.ModelProvider(asimiProviderToBifrostCourt(provider))
+	resp, bifrostErr := s.llmClient.ListModelsRequest(ctx, &schemas.BifrostListModelsRequest{
+		Provider: bifrostProvider,
+	})
+	if bifrostErr != nil {
+		return nil, bifrostErrorToGoError(bifrostErr)
+	}
+	return resp, nil
+}
+
+// asimiProviderToBifrostCourt maps an asimi provider key to bifrost's provider string.
+func asimiProviderToBifrostCourt(asimiProvider string) string {
+	switch asimiProvider {
+	case "googleai":
+		return "gemini"
+	default:
+		return asimiProvider
+	}
 }
 
 // Ministers returns the active ministers.

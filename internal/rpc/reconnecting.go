@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -671,6 +672,15 @@ func (rc *ReconnectingClient) ConnDone() <-chan struct{} {
 		return make(chan struct{})
 	}
 	return conn.Done()
+}
+
+// ListModels delegates to the local court since the bifrost client
+// lives in-process, not on the daemon side.
+func (rc *ReconnectingClient) ListModels(provider string) (*schemas.BifrostListModelsResponse, error) {
+	if rc.local == nil {
+		return nil, fmt.Errorf("no local court available")
+	}
+	return rc.local.ListModels(provider)
 }
 
 var _ courtapi.Client = (*ReconnectingClient)(nil)

@@ -76,6 +76,10 @@ type Client interface {
 	// each call reconfigures the LLM client.
 	SetContext(ctx context.Context, params types.SetContextParams) error
 
+	// ListModels lists models for a specific provider via the court's LLM
+	// client (bifrost). Used by the TUI's :models command.
+	ListModels(provider string) (*schemas.BifrostListModelsResponse, error)
+
 	// In-process only; LLM client setup. Kept for in-process callers;
 	// the wire-safe path is SetContext above.
 	//

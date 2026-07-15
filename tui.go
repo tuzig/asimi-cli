@@ -23,6 +23,7 @@ import (
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // TUIModel represents the bubbletea model for the TUI
@@ -502,40 +503,67 @@ func (m *TUIModel) setContextParams() types.SetContextParams {
 // for all supported providers. Environment variables take precedence over keyring.
 // This runs in the TUI process and passes keys to the daemon via SetContext,
 // since the daemon no longer reads env vars directly.
+//
+// Uses convention: PROVIDER_API_KEY for env vars, with special cases for
+// googleai (GEMINI_API_KEY / GOOGLE_API_KEY) and bedrock (AWS credential pair).
+// The map uses Bifrost provider strings ("gemini" for Google AI).
 func collectAPIKeys() map[string]string {
 	keys := make(map[string]string)
 
-	// Standard provider API keys — env var first, then keyring fallback.
-	// The map uses Bifrost provider strings ("gemini" for Google AI).
-	if key := getAPIKeyForProvider("anthropic", "ANTHROPIC_API_KEY"); key != "" {
-		keys["anthropic"] = key
-	}
-	if key := getAPIKeyForProvider("openai", "OPENAI_API_KEY"); key != "" {
-		// If the keyring value is a JSON OAuth credential, extract just the
-		// access token for the API key map. The account ID is handled
-		// separately via getCodexAccountID().
-		if cred, ok := parseCodexOAuthCredential(key); ok {
-			keys["openai"] = cred.AccessToken
-		} else {
-			keys["openai"] = key
+	// Collect keys for all standard providers using convention-based env vars
+	for _, sp := range schemas.StandardProviders {
+		bifrostProvider := string(sp)
+		asimiProvider := bifrostProviderToAsimi(bifrostProvider)
+		envVar := providerEnvVar(asimiProvider)
+
+		// Bedrock uses AWS credential pairs, not single API keys
+		if bifrostProvider == "bedrock" {
+			continue
 		}
-	}
-	if key := getAPIKeyForProvider("openrouter", "OPENROUTER_API_KEY"); key != "" {
-		keys["openrouter"] = key
-	}
-	// Google: env vars first, then keyring. Keyring stores under "googleai"
-	// (matching the model selection UI), but the map uses "gemini" (Bifrost).
-	geminiKey := os.Getenv("GEMINI_API_KEY")
-	if geminiKey == "" {
-		geminiKey = os.Getenv("GOOGLE_API_KEY")
-	}
-	if geminiKey == "" {
-		if krKey, err := GetAPIKeyFromKeyring("googleai"); err == nil {
-			geminiKey = krKey
+		// Ollama is keyless
+		if bifrostProvider == "ollama" {
+			continue
 		}
-	}
-	if geminiKey != "" {
-		keys["gemini"] = geminiKey
+
+		// Google AI: check both GEMINI_API_KEY and GOOGLE_API_KEY
+		if asimiProvider == "googleai" {
+			key := os.Getenv("GEMINI_API_KEY")
+			if key == "" {
+				key = os.Getenv("GOOGLE_API_KEY")
+			}
+			if key == "" {
+				if krKey, err := GetAPIKeyFromKeyring("googleai"); err == nil {
+					key = krKey
+				}
+			}
+			if key != "" {
+				keys["gemini"] = key
+			}
+			continue
+		}
+
+		// Standard convention: env var first, then keyring
+		key := os.Getenv(envVar)
+		if key == "" {
+			if krKey, err := GetAPIKeyFromKeyring(asimiProvider); err == nil && krKey != "" {
+				key = krKey
+			}
+		}
+
+		if key != "" {
+			// OpenAI: if the keyring value is a JSON OAuth credential, extract
+			// just the access token. The account ID is handled separately
+			// via getCodexAccountID().
+			if asimiProvider == "openai" {
+				if cred, ok := parseCodexOAuthCredential(key); ok {
+					keys["openai"] = cred.AccessToken
+				} else {
+					keys["openai"] = key
+				}
+			} else {
+				keys[bifrostProvider] = key
+			}
+		}
 	}
 
 	// AWS credentials for Bedrock
@@ -550,19 +578,6 @@ func collectAPIKeys() map[string]string {
 	}
 
 	return keys
-}
-
-// getAPIKeyForProvider checks the environment variable first, then the keyring.
-// provider is the keyring key name (e.g., "anthropic", "openai", "openrouter").
-// envVar is the environment variable name to check first.
-func getAPIKeyForProvider(provider, envVar string) string {
-	if key := os.Getenv(envVar); key != "" {
-		return key
-	}
-	if key, err := GetAPIKeyFromKeyring(provider); err == nil && key != "" {
-		return key
-	}
-	return ""
 }
 
 // getCodexAccountID extracts the Codex account ID from the OpenAI keyring

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -429,35 +430,29 @@ func TestHandleLoginCommand_ProviderListContents(t *testing.T) {
 	}
 
 	// Build the same provider list that handleLoginCommand constructs
-	providers := []Model{
-		{
-			ID:          "codex-login",
-			DisplayName: "Login with OpenAI (Codex OAuth)",
-			Provider:    "openai",
-			Status:      "login_required",
-			OnSelect:    model.performCodexLogin(),
-		},
-		{
-			ID:          "anthropic-apikey",
-			DisplayName: "Set API key for " + providerDisplayName("anthropic"),
-			Provider:    "anthropic",
-			Status:      "login_required",
-			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "anthropic"} },
-		},
-		{
-			ID:          "googleai-apikey",
-			DisplayName: "Set API key for " + providerDisplayName("googleai"),
-			Provider:    "googleai",
-			Status:      "login_required",
-			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "googleai"} },
-		},
-		{
-			ID:          "openrouter-apikey",
-			DisplayName: "Set API key for " + providerDisplayName("openrouter"),
-			Provider:    "openrouter",
-			Status:      "login_required",
-			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "openrouter"} },
-		},
+	var providers []Model
+	for _, sp := range schemas.StandardProviders {
+		providerKey := bifrostProviderToAsimi(string(sp))
+		meta := getProviderMeta(providerKey)
+
+		switch meta.AuthType {
+		case AuthTypeOAuth:
+			providers = append(providers, Model{
+				ID:          providerKey + "-login",
+				DisplayName: "Login with " + meta.DisplayName + " (OAuth)",
+				Provider:    providerKey,
+				Status:      "login_required",
+				OnSelect:    model.performCodexLogin(),
+			})
+		case AuthTypeAPIKey:
+			providers = append(providers, Model{
+				ID:          providerKey + "-apikey",
+				DisplayName: "Set API key for " + meta.DisplayName,
+				Provider:    providerKey,
+				Status:      "login_required",
+				OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: providerKey} },
+			})
+		}
 	}
 
 	// Verify all providers have OnSelect set
@@ -465,16 +460,31 @@ func TestHandleLoginCommand_ProviderListContents(t *testing.T) {
 		assert.NotNil(t, p.OnSelect, "Expected OnSelect for %s", p.ID)
 	}
 
-	// Verify the OpenAI entry has the codex-login ID
-	openaiEntry := providers[0]
-	assert.Equal(t, "codex-login", openaiEntry.ID)
+	// Find the OpenAI entry — it should have OAuth auth type
+	var openaiEntry *Model
+	for i := range providers {
+		if providers[i].Provider == "openai" {
+			openaiEntry = &providers[i]
+			break
+		}
+	}
+	require.NotNil(t, openaiEntry, "Expected an OpenAI login entry")
+	assert.Contains(t, openaiEntry.ID, "-login")
 	assert.Contains(t, openaiEntry.DisplayName, "Login with OpenAI")
-	assert.Contains(t, openaiEntry.DisplayName, "Codex OAuth")
+	assert.Contains(t, openaiEntry.DisplayName, "OAuth")
 
-	// Verify API key entries
-	for _, p := range providers[1:] {
-		assert.Contains(t, p.DisplayName, "Set API key")
-		assert.Contains(t, p.ID, "-apikey")
+	// Verify API key entries exist for known API key providers
+	apiKeyProviders := map[string]bool{"anthropic": false, "googleai": false, "openrouter": false}
+	for _, p := range providers {
+		if strings.Contains(p.ID, "-apikey") {
+			if _, ok := apiKeyProviders[p.Provider]; ok {
+				apiKeyProviders[p.Provider] = true
+				assert.Contains(t, p.DisplayName, "Set API key")
+			}
+		}
+	}
+	for provider, found := range apiKeyProviders {
+		assert.True(t, found, "Expected API key entry for %s", provider)
 	}
 }
 

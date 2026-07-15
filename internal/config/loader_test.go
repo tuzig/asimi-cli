@@ -1383,3 +1383,56 @@ project = "new-project"
 	assert.Equal(t, "new-user", cfg.Court.Username)
 	assert.Equal(t, "new-project", cfg.Court.Project)
 }
+
+// TestResolveAPIKeys_Convention verifies that convention-based env var resolution
+// works for providers that were not in the old hardcoded switch (e.g. cohere).
+func TestResolveAPIKeys_Convention(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "cohere"
+model = "command-r-plus"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	t.Setenv("COHERE_API_KEY", "cohere-test-key")
+
+	projectDir := t.TempDir()
+	cfg, err := LoadProjectConfig(projectDir, true)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "cohere", cfg.LLM.Provider)
+	assert.Equal(t, "cohere-test-key", cfg.LLM.APIKey)
+}
+
+// TestResolveAPIKeys_ConventionMistral verifies another non-hardcoded provider
+func TestResolveAPIKeys_ConventionMistral(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "mistral"
+model = "mistral-large"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	t.Setenv("MISTRAL_API_KEY", "mistral-test-key")
+
+	projectDir := t.TempDir()
+	cfg, err := LoadProjectConfig(projectDir, true)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "mistral", cfg.LLM.Provider)
+	assert.Equal(t, "mistral-test-key", cfg.LLM.APIKey)
+}

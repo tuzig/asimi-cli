@@ -13,6 +13,7 @@ import (
 type MockProvider struct {
 	StreamingChunks    []StreamingChunk
 	StaticResponse     *schemas.BifrostChatResponse
+	ModelsResponse     []schemas.Model
 	Error              *schemas.BifrostError
 	DelayBetweenChunks time.Duration
 }
@@ -151,6 +152,28 @@ func (m *MockProvider) ChatCompletionStreamRequest(ctx *schemas.BifrostContext, 
 	}()
 
 	return ch, nil
+}
+
+// ListAllModels implements the LLMProvider interface.
+// Returns a ModelsResponse with the configured models, or an empty response.
+func (m *MockProvider) ListAllModels(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	if m.Error != nil {
+		return nil, m.Error
+	}
+	return &schemas.BifrostListModelsResponse{
+		Data: m.ModelsResponse,
+	}, nil
+}
+
+// ListModelsRequest implements the LLMProvider interface.
+// Returns a ModelsResponse with the configured models, or an empty response.
+func (m *MockProvider) ListModelsRequest(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	if m.Error != nil {
+		return nil, m.Error
+	}
+	return &schemas.BifrostListModelsResponse{
+		Data: m.ModelsResponse,
+	}, nil
 }
 
 // SetStreamingChunks configures the chunks returned by ChatCompletionStreamRequest.

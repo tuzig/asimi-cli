@@ -2,10 +2,12 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/court"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // LoopbackCourt composes a *CourtClient with a direct reference
@@ -59,6 +61,15 @@ func (l *LoopbackCourt) CancellableStreamCtx(channelID string) context.Context {
 		return context.Background()
 	}
 	return l.Local.CancellableStreamCtx(channelID)
+}
+
+// ListModels delegates to the local court since the bifrost client
+// lives in-process.
+func (l *LoopbackCourt) ListModels(provider string) (*schemas.BifrostListModelsResponse, error) {
+	if l.Local == nil {
+		return nil, fmt.Errorf("no local court available")
+	}
+	return l.Local.ListModels(provider)
 }
 
 // ConnDone delegates to the underlying Conn's Done channel so the TUI

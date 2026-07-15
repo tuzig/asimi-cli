@@ -7,6 +7,7 @@ import (
 
 	"github.com/afittestide/asimi/internal/keyring"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHasAWSEnvCredentials(t *testing.T) {
@@ -94,9 +95,16 @@ func TestGetConfiguredProviders_WithAWSEnvCredentials(t *testing.T) {
 		t.Error("expected Bedrock provider when AWS credentials are set")
 	}
 
-	// Should still have other providers
-	if len(providers) < 5 {
-		t.Errorf("expected at least 5 providers, got %d", len(providers))
+	// Should include Ollama (keyless provider)
+	foundOllama := false
+	for _, p := range providers {
+		if p == schemas.Ollama {
+			foundOllama = true
+			break
+		}
+	}
+	if !foundOllama {
+		t.Error("expected Ollama provider (keyless, always configured)")
 	}
 }
 
@@ -145,9 +153,28 @@ func TestGetConfiguredProviders_WithAWSKeysInMap(t *testing.T) {
 		t.Error("expected Bedrock provider when AWS credentials are in apiKeys map")
 	}
 
-	// Should still have all 5 base providers
-	if len(providers) < 6 {
-		t.Errorf("expected at least 6 providers (5 base + Bedrock), got %d", len(providers))
+	// Should include OpenAI (key in map)
+	foundOpenAI := false
+	for _, p := range providers {
+		if p == schemas.OpenAI {
+			foundOpenAI = true
+			break
+		}
+	}
+	if !foundOpenAI {
+		t.Error("expected OpenAI provider when key is in apiKeys map")
+	}
+
+	// Should include Ollama (keyless)
+	foundOllama := false
+	for _, p := range providers {
+		if p == schemas.Ollama {
+			foundOllama = true
+			break
+		}
+	}
+	if !foundOllama {
+		t.Error("expected Ollama provider (keyless, always configured)")
 	}
 }
 
@@ -521,4 +548,58 @@ func TestGetConfigForProvider_NoCodexAccountID(t *testing.T) {
 	if headers["originator"] != "asimi" {
 		t.Errorf("expected originator header 'asimi', got %q", headers["originator"])
 	}
+}
+
+// TestGetConfigForProvider_CustomProvider verifies that a non-standard
+// provider with a base URL env var is configured as a custom provider
+// with an OpenAI-compatible base provider type.
+func TestGetConfigForProvider_CustomProvider(t *testing.T) {
+	t.Setenv("ZAI_BASE_URL", "https://api.z.ai/v1")
+	defer os.Unsetenv("ZAI_BASE_URL")
+
+	account := NewAccount(30, 60, 0, "")
+	cfg, err := account.GetConfigForProvider(schemas.ModelProvider("zai"))
+	if err != nil {
+		t.Fatalf("GetConfigForProvider() error = %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.CustomProviderConfig == nil {
+		t.Fatal("expected CustomProviderConfig for non-standard provider")
+	}
+	if cfg.CustomProviderConfig.CustomProviderKey != "zai" {
+		t.Errorf("expected CustomProviderKey 'zai', got %q", cfg.CustomProviderConfig.CustomProviderKey)
+	}
+	if cfg.CustomProviderConfig.BaseProviderType != schemas.OpenAI {
+		t.Errorf("expected BaseProviderType OpenAI, got %q", cfg.CustomProviderConfig.BaseProviderType)
+	}
+}
+
+// TestGetConfigForProvider_CustomProviderNoBaseURL verifies that a non-standard
+// provider without a base URL env var does NOT get a CustomProviderConfig.
+func TestGetConfigForProvider_CustomProviderNoBaseURL(t *testing.T) {
+	os.Unsetenv("UNKNOWNPROVIDER_BASE_URL")
+
+	account := NewAccount(30, 60, 0, "")
+	cfg, err := account.GetConfigForProvider(schemas.ModelProvider("unknownprovider"))
+	if err != nil {
+		t.Fatalf("GetConfigForProvider() error = %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.CustomProviderConfig != nil {
+		t.Error("expected nil CustomProviderConfig when no base URL configured")
+	}
+}
+
+// TestIsStandardProvider verifies the isStandardProvider helper
+func TestIsStandardProvider(t *testing.T) {
+	assert.True(t, isStandardProvider(schemas.OpenAI))
+	assert.True(t, isStandardProvider(schemas.Anthropic))
+	assert.True(t, isStandardProvider(schemas.Ollama))
+	assert.True(t, isStandardProvider(schemas.Bedrock))
+	assert.False(t, isStandardProvider(schemas.ModelProvider("zai")))
+	assert.False(t, isStandardProvider(schemas.ModelProvider("custom")))
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -407,19 +406,3 @@ func main() {
 
 	slog.Debug("[TIMING] Total execution time", "duration", time.Since(startTime))
 }
-
-// apiKeyTransport is used by models.go for list_models
-type apiKeyTransport struct {
-	base http.RoundTripper
-}
-
-func (t *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	r := req.Clone(req.Context())
-	r.Header.Set("anthropic-beta", "claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
-	if t.base == nil {
-		t.base = http.DefaultTransport
-	}
-	return t.base.RoundTrip(r)
-}
-
-var _ = (http.RoundTripper)(&apiKeyTransport{})

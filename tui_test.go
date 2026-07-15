@@ -3935,6 +3935,54 @@ func TestCollectAPIKeys_EnvVarTakesPrecedence(t *testing.T) {
 	assert.Equal(t, "env-key", keys["anthropic"], "env var should take precedence over keyring")
 }
 
+// TestCollectAPIKeys_ConventionProvider verifies that convention-based env var
+// resolution works for a new provider not in the old hardcoded list.
+func TestCollectAPIKeys_ConventionProvider(t *testing.T) {
+	// Clean keyring and env for all known providers
+	for _, p := range []string{"anthropic", "openai", "openrouter", "googleai", "cohere", "mistral"} {
+		DeleteAPIKeyFromKeyring(p)
+	}
+	for _, ev := range []string{
+		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+		"GEMINI_API_KEY", "GOOGLE_API_KEY", "COHERE_API_KEY", "MISTRAL_API_KEY",
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+	} {
+		os.Unsetenv(ev)
+	}
+
+	t.Setenv("COHERE_API_KEY", "cohere-convention-key")
+	defer os.Unsetenv("COHERE_API_KEY")
+
+	keys := collectAPIKeys()
+	assert.Equal(t, "cohere-convention-key", keys["cohere"])
+}
+
+// TestCollectAPIKeys_ConventionProviderFromKeyring verifies keyring fallback
+// for convention-based providers
+func TestCollectAPIKeys_ConventionProviderFromKeyring(t *testing.T) {
+	if err := SaveAPIKeyToKeyring("test-availability", "probe"); err != nil {
+		t.Skipf("keyring not available: %v", err)
+	}
+	DeleteAPIKeyFromKeyring("test-availability")
+
+	for _, p := range []string{"anthropic", "openai", "openrouter", "googleai", "cohere"} {
+		DeleteAPIKeyFromKeyring(p)
+	}
+	for _, ev := range []string{
+		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+		"GEMINI_API_KEY", "GOOGLE_API_KEY", "COHERE_API_KEY",
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+	} {
+		os.Unsetenv(ev)
+	}
+
+	require.NoError(t, SaveAPIKeyToKeyring("cohere", "kr-cohere-key"))
+	defer DeleteAPIKeyFromKeyring("cohere")
+
+	keys := collectAPIKeys()
+	assert.Equal(t, "kr-cohere-key", keys["cohere"])
+}
+
 // --- Tests for in-app API key input flow ---
 
 // TestHandleAPIKeyInput_CancelReturnsModelSelection verifies that when the user

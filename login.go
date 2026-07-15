@@ -21,6 +21,7 @@ import (
 	"github.com/afittestide/asimi/storage"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // Message types for login flow
@@ -545,37 +546,36 @@ func updateAPIKeyInFile(provider, apiKey, model string) error {
 }
 
 // handleLoginCommand shows a provider selection list for authentication.
-// openai triggers the Codex OAuth flow; other providers prompt for an API key.
+// Providers with AuthType "oauth" (OpenAI/Codex) trigger the OAuth flow.
+// Providers with AuthType "apikey" prompt for a key.
+// Providers with AuthType "keyless" (Ollama) need no login.
 func handleLoginCommand(model *TUIModel, args []string) tea.Cmd {
-	providers := []Model{
-		{
-			ID:          "codex-login",
-			DisplayName: "Login with OpenAI (Codex OAuth)",
-			Provider:    "openai",
-			Status:      "login_required",
-			OnSelect:    model.performCodexLogin(),
-		},
-		{
-			ID:          "anthropic-apikey",
-			DisplayName: "Set API key for " + providerDisplayName("anthropic"),
-			Provider:    "anthropic",
-			Status:      "login_required",
-			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "anthropic"} },
-		},
-		{
-			ID:          "googleai-apikey",
-			DisplayName: "Set API key for " + providerDisplayName("googleai"),
-			Provider:    "googleai",
-			Status:      "login_required",
-			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "googleai"} },
-		},
-		{
-			ID:          "openrouter-apikey",
-			DisplayName: "Set API key for " + providerDisplayName("openrouter"),
-			Provider:    "openrouter",
-			Status:      "login_required",
-			OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: "openrouter"} },
-		},
+	var providers []Model
+
+	for _, sp := range schemas.StandardProviders {
+		providerKey := bifrostProviderToAsimi(string(sp))
+		meta := getProviderMeta(providerKey)
+
+		switch meta.AuthType {
+		case AuthTypeOAuth:
+			providers = append(providers, Model{
+				ID:          providerKey + "-login",
+				DisplayName: "Login with " + meta.DisplayName + " (OAuth)",
+				Provider:    providerKey,
+				Status:      "login_required",
+				OnSelect:    model.performCodexLogin(),
+			})
+		case AuthTypeAPIKey:
+			providers = append(providers, Model{
+				ID:          providerKey + "-apikey",
+				DisplayName: "Set API key for " + meta.DisplayName,
+				Provider:    providerKey,
+				Status:      "login_required",
+				OnSelect:    func() tea.Msg { return apiKeyPromptMsg{provider: providerKey} },
+			})
+		case AuthTypeKeyless:
+			// Keyless providers (Ollama) don't need login — skip
+		}
 	}
 
 	return model.tabs.Content().ShowUnifiedModels(providers, "")

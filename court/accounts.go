@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/afittestide/asimi/internal/keyring"
 	"github.com/afittestide/asimi/internal/utils"
@@ -68,32 +69,58 @@ func NewAccountWithKeys(requestTimeout, streamIdleTimeout, maxRetries int, baseU
 }
 
 // GetConfiguredProviders returns providers that have credentials configured.
-// When apiKeys is populated, only providers present in the map are reported.
-// Otherwise (in-process mode), all standard providers plus Bedrock (if AWS
-// env vars are present) are returned for backward compatibility.
+// Iterates over schemas.StandardProviders, returning providers that have
+// credentials in the apiKeys map or keyring. Bedrock is included when AWS
+// credential pairs are present.
 func (a *Account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	providers := []schemas.ModelProvider{
-		schemas.OpenAI,
-		schemas.Anthropic,
-		schemas.Azure,
-		schemas.Gemini,
-		schemas.OpenRouter,
-	}
+	var providers []schemas.ModelProvider
 
-	// Check for Bedrock credentials
-	if a.apiKeys != nil {
-		// Daemon mode: check the apiKeys map for AWS credentials
-		if a.apiKeys["AWS_ACCESS_KEY_ID"] != "" && a.apiKeys["AWS_SECRET_ACCESS_KEY"] != "" {
-			providers = append(providers, schemas.Bedrock)
+	for _, sp := range schemas.StandardProviders {
+		providerStr := string(sp)
+
+		// Bedrock uses AWS credential pairs, not single API keys
+		if providerStr == "bedrock" {
+			if a.hasBedrockCredentials() {
+				providers = append(providers, sp)
+			}
+			continue
 		}
-	} else {
-		// In-process mode: check environment variables for AWS credentials
-		if hasAWSEnvCredentials() {
-			providers = append(providers, schemas.Bedrock)
+		if a.hasProviderCredentials(providerStr) {
+			providers = append(providers, sp)
 		}
 	}
+	// TODO: add local llama when port available
 
 	return providers, nil
+}
+
+// hasBedrockCredentials checks for AWS credential pairs in the apiKeys map
+// or environment variables.
+func (a *Account) hasBedrockCredentials() bool {
+	if a.apiKeys != nil {
+		return a.apiKeys["AWS_ACCESS_KEY_ID"] != "" && a.apiKeys["AWS_SECRET_ACCESS_KEY"] != ""
+	}
+	return hasAWSEnvCredentials()
+}
+
+// hasProviderCredentials checks if a provider has credentials in the apiKeys
+// map or keyring. For daemon mode (apiKeys != nil), only the map is checked.
+// For in-process mode, keyring is checked as fallback.
+func (a *Account) hasProviderCredentials(providerStr string) bool {
+	if a.apiKeys != nil {
+		// Daemon mode: check the apiKeys map
+		if apiKey, ok := a.apiKeys[providerStr]; ok && apiKey != "" {
+			return true
+		}
+		// Provider not in map — skip keyring fallback in daemon mode
+		return false
+	}
+
+	// In-process mode: check keyring
+	// Resolve the keyring key name (gemini → googleai for backward compat)
+	krProvider := providerStr
+	apiKey, err := keyring.GetAPIKey(krProvider)
+	return err == nil && apiKey != ""
 }
 
 // hasAWSEnvCredentials checks if standard AWS environment variables are set.
@@ -183,22 +210,12 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 	return []schemas.Key{}, nil
 }
 
-// getBaseURLFromEnv returns the base URL from provider-specific environment variable
+// getBaseURLFromEnv returns the base URL from the provider's convention-based
+// environment variable: strings.ToUpper(provider) + "_BASE_URL".
+// Special cases: azure uses AZURE_OPENAI_BASE_URL, gemini uses GEMINI_BASE_URL.
 func getBaseURLFromEnv(provider string) string {
-	envVarNames := map[string]string{
-		"openai":     "OPENAI_BASE_URL",
-		"anthropic":  "ANTHROPIC_BASE_URL",
-		"azure":      "AZURE_OPENAI_BASE_URL",
-		"gemini":     "GEMINI_BASE_URL",
-		"openrouter": "OPENROUTER_BASE_URL",
-		"bedrock":    "AWS_BEDROCK_BASE_URL",
-	}
-	if envName, ok := envVarNames[provider]; ok {
-		if url := os.Getenv(envName); url != "" {
-			return url
-		}
-	}
-	return ""
+	envVar := strings.ToUpper(provider) + "_BASE_URL"
+	return os.Getenv(envVar)
 }
 
 // GetConfigForProvider returns network configuration for a provider
@@ -241,8 +258,35 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	}
 	networkConfig.ExtraHeaders = headers
 
-	return &schemas.ProviderConfig{
+	config := &schemas.ProviderConfig{
 		NetworkConfig: networkConfig,
 		Logger:        NewBifrostLogger(slog.Default()),
-	}, nil
+	}
+
+	// Custom provider support: if the provider is not a standard bifrost
+	// provider, configure it as a custom provider with an OpenAI-compatible
+	// base provider type. This allows providers like z-ai to be added via
+	// configuration without code changes.
+	if !isStandardProvider(provider) {
+		baseURL := getBaseURLFromEnv(string(provider))
+		if baseURL != "" {
+			config.CustomProviderConfig = &schemas.CustomProviderConfig{
+				CustomProviderKey: string(provider),
+				BaseProviderType:  schemas.OpenAI,
+			}
+			slog.Debug("configured custom provider", "provider", provider, "base_url", baseURL)
+		}
+	}
+
+	return config, nil
+}
+
+// isStandardProvider returns true if the provider is in schemas.StandardProviders.
+func isStandardProvider(provider schemas.ModelProvider) bool {
+	for _, sp := range schemas.StandardProviders {
+		if sp == provider {
+			return true
+		}
+	}
+	return false
 }
