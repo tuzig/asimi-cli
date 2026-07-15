@@ -1902,3 +1902,57 @@ func TestGetCourtStatus_SageSealChecksSageMinisterID(t *testing.T) {
 	require.True(t, ok)
 	assert.Empty(t, rows, "edict with ruler seal should not appear in court status")
 }
+
+func TestRunGivenStep_BashFailure_TruncatesOutput(t *testing.T) {
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+	longOutput := strings.Repeat("x", 2000)
+	failRunner := &mockCmdRunner{output: longOutput, exitCode: "1"}
+	runner := NewRitualRunner(registry, nil, nil, db, failRunner, nil, repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		ID:         "test-exec",
+		RitualName: "test",
+		EdictID:    100,
+	}
+
+	entry := StepDefEntry{
+		Kind:    StepDefBash,
+		Key:     "test",
+		Command: "exit 1",
+	}
+
+	_, err := runner.runGivenStep(context.Background(), exec, entry)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exit 1")
+	assert.Contains(t, err.Error(), "…")
+	assert.Less(t, len(err.Error()), 600,
+		"error message should be truncated, not contain the full 2000-char output")
+}
+
+func TestRunThenStep_BashFailure_TruncatesOutput(t *testing.T) {
+	db := setupRitualTestDB(t)
+	registry := NewRitualRegistry()
+	longOutput := strings.Repeat("y", 2000)
+	failRunner := &mockCmdRunner{output: longOutput, exitCode: "1"}
+	runner := NewRitualRunner(registry, nil, nil, db, failRunner, nil, repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		ID:         "test-exec",
+		RitualName: "test",
+		EdictID:    100,
+	}
+
+	entry := StepDefEntry{
+		Kind:    StepDefBash,
+		Key:     "just",
+		Command: "just test",
+	}
+
+	err := runner.runThenStep(context.Background(), exec, entry)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exit 1")
+	assert.Contains(t, err.Error(), "…")
+	assert.Less(t, len(err.Error()), 600,
+		"error message should be truncated, not contain the full 2000-char output")
+}

@@ -1229,7 +1229,7 @@ func (r *RitualRunner) runGivenStep(ctx context.Context, exec *RitualExecution, 
 			return nil, err
 		}
 		if output.ExitCode != "0" {
-			return nil, fmt.Errorf("given failed (exit %s): %s", output.ExitCode, output.Output)
+			return nil, fmt.Errorf("given failed (exit %s): %s", output.ExitCode, utils.TruncateMiddle(output.Output, 500))
 		}
 		return output.Output, nil
 	case StepDefBuiltin:
@@ -1256,7 +1256,7 @@ func (r *RitualRunner) runThenStep(ctx context.Context, exec *RitualExecution, e
 			return err
 		}
 		if output.ExitCode != "0" {
-			return fmt.Errorf("then failed (exit %s): %s", output.ExitCode, output.Output)
+			return fmt.Errorf("then failed (exit %s): %s", output.ExitCode, utils.TruncateMiddle(output.Output, 500))
 		}
 		return nil
 	case StepDefBuiltin:
