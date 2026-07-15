@@ -35,6 +35,7 @@ require (
 )
 
 require (
+	cyphar.com/go-pathrs v0.2.4 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/containerd/typeurl/v2 v2.2.3 // indirect
 	github.com/fsouza/go-dockerclient v1.13.1 // indirect
@@ -267,5 +268,3 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 	tags.cncf.io/container-device-interface v1.1.0 // indirect
 )
-
-replace github.com/cyphar/filepath-securejoin => github.com/cyphar/filepath-securejoin v0.5.2

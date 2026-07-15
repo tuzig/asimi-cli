@@ -11,13 +11,13 @@ install:
 
 # Build the binary
 build:
-    go build -o asimi .
+    go build -tags containers_image_openpgp -o asimi .
 
 # Run with debug logging
 run:
     pkill -9 asimi || true
     rm -f asimi.log asimi-daemon.log
-    go build .
+    go build -tags containers_image_openpgp .
     ./asimi --debug
 
 # Run all tests (CI mode when CI env var is set)
@@ -26,15 +26,15 @@ test:
     set -o pipefail
     export GOTOOLCHAIN=auto
     if [ -n "$CI" ]; then
-        go test -timeout 5m -v ./...
+        go test -tags containers_image_openpgp -timeout 5m -v ./...
         just vuln
     else
-        go test -timeout 1m ./... | tee test.out
+        go test -tags containers_image_openpgp -timeout 1m ./... | tee test.out
     fi
 
 # Run tests with coverage
 test-coverage:
-    go test -v -coverprofile=coverage.out ./...
+    go test -tags containers_image_openpgp -v -coverprofile=coverage.out ./...
     go tool cover -html=coverage.out -o coverage.html
 
 # Run linting
@@ -73,7 +73,7 @@ vuln:
         echo "ERROR: govulncheck is not installed. Run 'just bootstrap' first."
         exit 1
     fi
-    go build -o /tmp/asimi-vuln .
+    go build -tags containers_image_openpgp -o /tmp/asimi-vuln .
     govulncheck -mode=binary /tmp/asimi-vuln
     rm -f /tmp/asimi-vuln
 
@@ -95,4 +95,4 @@ measure:
     @echo ""
     @echo "Sending performance test prompt to asimi..."
     @echo ""
-    go run . -p 'Performance test: measure the run_shell_command tool overhead by executiing exactly 12 run_shell_command commands in a SINGLE function_calls block (all at once, not sequentially): 1. First command: date +%s%N, 2-11. Ten commands: : (colon command, does nothing), 12. Last command: date +%s%N. After receiving both the timestamps, calculates the per call overhead'
+    go run -tags containers_image_openpgp . -p 'Performance test: measure the run_shell_command tool overhead by executiing exactly 12 run_shell_command commands in a SINGLE function_calls block (all at once, not sequentially): 1. First command: date +%s%N, 2-11. Ten commands: : (colon command, does nothing), 12. Last command: date +%s%N. After receiving both the timestamps, calculates the per call overhead'
