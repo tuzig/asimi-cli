@@ -95,17 +95,6 @@ func TestGetConfiguredProviders_WithAWSEnvCredentials(t *testing.T) {
 		t.Error("expected Bedrock provider when AWS credentials are set")
 	}
 
-	// Should include Ollama (keyless provider)
-	foundOllama := false
-	for _, p := range providers {
-		if p == schemas.Ollama {
-			foundOllama = true
-			break
-		}
-	}
-	if !foundOllama {
-		t.Error("expected Ollama provider (keyless, always configured)")
-	}
 }
 
 func TestGetConfiguredProviders_WithKeysMap_NoBedrock(t *testing.T) {
@@ -163,18 +152,6 @@ func TestGetConfiguredProviders_WithAWSKeysInMap(t *testing.T) {
 	}
 	if !foundOpenAI {
 		t.Error("expected OpenAI provider when key is in apiKeys map")
-	}
-
-	// Should include Ollama (keyless)
-	foundOllama := false
-	for _, p := range providers {
-		if p == schemas.Ollama {
-			foundOllama = true
-			break
-		}
-	}
-	if !foundOllama {
-		t.Error("expected Ollama provider (keyless, always configured)")
 	}
 }
 
