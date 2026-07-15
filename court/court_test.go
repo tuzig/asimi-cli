@@ -755,6 +755,68 @@ func TestZhengmingAnswered_AnswerConstants(t *testing.T) {
 	assert.Equal(t, "Let me clarify", tools.AnswerLetMeClarify)
 }
 
+// TestZhengmingAnswered_ApproveEdictRefinesExistingEdict verifies that when
+// a zhengming request has EdictID > 0, approving it appends the suggestion
+// to the existing edict's intent instead of creating a new edict.
+func TestZhengmingAnswered_ApproveEdictRefinesExistingEdict(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	go s.ritualGuard.Run(ctx)
+
+	// Create an existing edict with the right user/project scoping
+	edict := storage.Edict{
+		ID:       42,
+		Username: cfg.Username,
+		Project:  cfg.Project,
+		Intent:   "Original intent",
+	}
+	require.NoError(t, db.Create(&edict).Error)
+
+	// Store a zhengming request linked to the existing edict
+	req := storage.Zhengming{
+		RequestID:  "test-refine-1",
+		EdictID:    42,
+		Username:   cfg.Username,
+		Project:    cfg.Project,
+		MinisterID: "sage",
+		Questions: storage.ZhengmingQuestions{{
+			Text:    "Add better error handling",
+			Summary: "refine error handling",
+			Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
+		}},
+		Status:   storage.ZhengmingPending,
+		Priority: storage.PriorityNormal,
+	}
+	require.NoError(t, db.Create(&req).Error)
+
+	s.PublishEvent(storage.EdictKey{ID: 42, Username: cfg.Username, Project: cfg.Project},
+		storage.EventZhengmingAnswered, storage.JSON{
+			"request_id": "test-refine-1",
+			"answer":     tools.AnswerApproveEdict,
+		})
+
+	// Poll for the intent to be updated (async handler)
+	require.Eventually(t, func() bool {
+		var fresh storage.Edict
+		if db.First(&fresh, 42).Error != nil {
+			return false
+		}
+		return strings.Contains(fresh.Intent, "Original intent") &&
+			strings.Contains(fresh.Intent, "Add better error handling")
+	}, 2*time.Second, 50*time.Millisecond, "edict intent should contain both original and appended suggestion")
+
+	// Verify no new edict was created (edict 1 is the auto-created court infrastructure edict)
+	var count int64
+	db.Model(&storage.Edict{}).Where("id != ? AND id != ?", 1, 42).Count(&count)
+	assert.Equal(t, int64(0), count, "no new edict should be created when refining")
+}
+
 // TestZhengmingAnswered_NonSentinelAnswerWithEdictID0CreatesEdict verifies that
 // a system-ritual answer (edict_id=0, non-sentinel answer) still creates an
 // edict — this is the legitimate catch-all path that should NOT be broken

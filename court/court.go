@@ -192,7 +192,7 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 			}
 		}
 
-		// 2. Handle "Approve edict" for suggestion-based edict creation
+		// 2. Handle "Approve edict" for suggestion-based edict creation or refinement
 		if answer == tools.AnswerApproveEdict {
 			var req storage.Zhengming
 			if err := s.db.First(&req, "request_id = ?", requestID).Error; err == nil {
@@ -203,12 +203,26 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 					if idx := strings.Index(suggestion, "\n\nEvidence:"); idx != -1 {
 						suggestion = suggestion[:idx]
 					}
-					edict, err := s.CreateEdict("", suggestion, req.SessionID)
-					if err != nil {
-						s.logger.Warn("failed to create edict from zhengming approval", "error", err)
-					} else if summary != "" {
-						if saveErr := s.db.Model(edict).Update("summary", summary).Error; saveErr != nil {
-							s.logger.Warn("failed to save edict summary", "edict_id", edict.ID, "error", saveErr)
+					if req.EdictID > 0 {
+						// Refine existing edict: append suggestion to intent
+						if err := s.appendToIntent(storage.EdictKey{
+							ID:       req.EdictID,
+							Username: req.Username,
+							Project:  req.Project,
+						}, suggestion); err != nil {
+							s.logger.Warn("failed to append suggestion to edict intent", "edict_id", req.EdictID, "error", err)
+						} else {
+							s.logger.Info("appended suggestion to edict intent", "edict_id", req.EdictID, "request_id", requestID)
+						}
+					} else {
+						// Create new edict from the suggestion
+						edict, err := s.CreateEdict("", suggestion, req.SessionID)
+						if err != nil {
+							s.logger.Warn("failed to create edict from zhengming approval", "error", err)
+						} else if summary != "" {
+							if saveErr := s.db.Model(edict).Update("summary", summary).Error; saveErr != nil {
+								s.logger.Warn("failed to save edict summary", "edict_id", edict.ID, "error", saveErr)
+							}
 						}
 					}
 				}

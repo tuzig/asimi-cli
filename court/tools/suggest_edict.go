@@ -31,11 +31,15 @@ type SuggestEdictTool struct {
 func (t SuggestEdictTool) Name() string { return "suggest_edict" }
 
 func (t SuggestEdictTool) Description() string {
-	return `Suggest a new edict to the Ruler via Zhengming. Use this when you identify
-an improvement opportunity, naming inconsistency, or refactoring need.
-You cannot create edicts directly — only the Ruler can do that.
+	return `Suggest a new edict or a refinement to an existing edict to the Ruler via Zhengming.
+Use this when you identify an improvement opportunity, naming inconsistency, or refactoring need.
+You cannot create or modify edicts directly — only the Ruler can do that.
 This creates a Zhengming request that the Ruler can approve or dismiss.
-Returns immediately with status='suggested' - the edict will be created if approved via event.
+Returns immediately with status='suggested' - the edict will be created (or refined) if approved via event.
+
+When edict_id is provided and non-zero, the suggestion is treated as a refinement
+to the existing edict. On Ruler approval, the suggestion text is appended to the
+edict's intent via AppendToIntent instead of creating a new edict.
 
 For large suggestions (>500 chars), the Ruler reviews the text in $EDITOR.
 If the tool returns status='ruler_modified', the Ruler has edited your suggestion.
@@ -50,6 +54,7 @@ func (t SuggestEdictTool) Call(ctx context.Context, input string) (string, error
 		Summary    string `json:"summary"`
 		Priority   string `json:"priority"`
 		Evidence   string `json:"evidence"`
+		EdictID    uint   `json:"edict_id"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -59,6 +64,18 @@ func (t SuggestEdictTool) Call(ctx context.Context, input string) (string, error
 	}
 	if params.Summary == "" {
 		return "", fmt.Errorf("summary is required")
+	}
+
+	// When edict_id is provided, validate the edict exists and belongs to
+	// the current user/project before proceeding.
+	if params.EdictID > 0 {
+		var count int64
+		t.Ctx.DB.Model(&storage.Edict{}).
+			Where("id = ? AND username = ? AND project = ?", params.EdictID, t.Ctx.Username, t.Ctx.Project).
+			Count(&count)
+		if count == 0 {
+			return "", fmt.Errorf("edict %d not found for user %q project %q", params.EdictID, t.Ctx.Username, t.Ctx.Project)
+		}
 	}
 
 	priority := storage.PriorityNormal
@@ -116,7 +133,7 @@ func (t SuggestEdictTool) Call(ctx context.Context, input string) (string, error
 	}}
 
 	key := storage.EdictKey{
-		ID:       0, // no edict yet - created on approval
+		ID:       params.EdictID, // 0 = new edict; >0 = refine existing
 		Username: t.Ctx.Username,
 		Project:  t.Ctx.Project,
 	}
@@ -177,6 +194,10 @@ func (t SuggestEdictTool) ParameterSchema() map[string]any {
 			"evidence": map[string]any{
 				"type":        "string",
 				"description": "Supporting evidence: file:line references, patterns found, etc.",
+			},
+			"edict_id": map[string]any{
+				"type":        "integer",
+				"description": "Optional. When provided and non-zero, the suggestion refines the existing edict instead of creating a new one. On Ruler approval, the suggestion is appended to the edict's intent.",
 			},
 		},
 		"required": []string{"suggestion", "summary"},

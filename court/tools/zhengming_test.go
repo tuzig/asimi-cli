@@ -2,9 +2,12 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/afittestide/asimi/storage"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // mockRequester captures the EdictKey passed to RequestZhengming
@@ -108,5 +111,154 @@ func TestRequestZhengmingTool_CallPassesMinisterIDAsCallerMinisterID_ForDifferen
 				t.Errorf("expected callerMinisterID %q, got %q", tt.ministerID, mock.capturedCallerMinisterID)
 			}
 		})
+	}
+}
+
+func setupSuggestEdictTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	if err := db.AutoMigrate(&storage.Edict{}, &storage.Seal{}, &storage.Zhengming{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	return db
+}
+
+func TestSuggestEdictTool_PassesEdictIDInKey(t *testing.T) {
+	db := setupSuggestEdictTestDB(t)
+
+	// Create an existing edict
+	edict := storage.Edict{
+		ID:       10,
+		Username: "sageuser",
+		Project:  "myproject",
+		Intent:   "Original intent",
+	}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	mock := &mockRequester{}
+	tool := SuggestEdictTool{
+		Ctx: ToolContext{
+			DB:        db,
+			Username:  "sageuser",
+			Project:   "myproject",
+			MinisterID: "sage",
+		},
+		Requester: mock,
+	}
+
+	input := `{
+		"suggestion": "Add more tests",
+		"summary": "improve test coverage",
+		"edict_id": 10
+	}`
+
+	_, err := tool.Call(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mock.capturedKey.ID != 10 {
+		t.Errorf("expected edict_id 10 in key, got %d", mock.capturedKey.ID)
+	}
+	if mock.capturedKey.Username != "sageuser" {
+		t.Errorf("expected username 'sageuser', got %q", mock.capturedKey.Username)
+	}
+	if mock.capturedKey.Project != "myproject" {
+		t.Errorf("expected project 'myproject', got %q", mock.capturedKey.Project)
+	}
+}
+
+func TestSuggestEdictTool_EdictIDZeroDefaultsToNewEdict(t *testing.T) {
+	db := setupSuggestEdictTestDB(t)
+	mock := &mockRequester{}
+	tool := SuggestEdictTool{
+		Ctx: ToolContext{
+			DB:        db,
+			Username:  "sageuser",
+			Project:   "myproject",
+			MinisterID: "sage",
+		},
+		Requester: mock,
+	}
+
+	input := `{
+		"suggestion": "Create a new edict for something",
+		"summary": "new edict"
+	}`
+
+	_, err := tool.Call(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mock.capturedKey.ID != 0 {
+		t.Errorf("expected edict_id 0 for new edict, got %d", mock.capturedKey.ID)
+	}
+}
+
+func TestSuggestEdictTool_NonexistentEdictReturnsError(t *testing.T) {
+	db := setupSuggestEdictTestDB(t)
+	mock := &mockRequester{}
+	tool := SuggestEdictTool{
+		Ctx: ToolContext{
+			DB:        db,
+			Username:  "sageuser",
+			Project:   "myproject",
+			MinisterID: "sage",
+		},
+		Requester: mock,
+	}
+
+	input := `{
+		"suggestion": "Refine something",
+		"summary": "refinement",
+		"edict_id": 999
+	}`
+
+	_, err := tool.Call(context.Background(), input)
+	if err == nil {
+		t.Fatal("expected error for nonexistent edict, got nil")
+	}
+}
+
+func TestSuggestEdictTool_WrongUserProjectReturnsError(t *testing.T) {
+	db := setupSuggestEdictTestDB(t)
+
+	// Create an edict belonging to a different user/project
+	edict := storage.Edict{
+		ID:       5,
+		Username: "otheruser",
+		Project:  "otherproject",
+		Intent:   "Someone else's edict",
+	}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	mock := &mockRequester{}
+	tool := SuggestEdictTool{
+		Ctx: ToolContext{
+			DB:        db,
+			Username:  "sageuser",
+			Project:   "myproject",
+			MinisterID: "sage",
+		},
+		Requester: mock,
+	}
+
+	input := fmt.Sprintf(`{
+		"suggestion": "Refine edict",
+		"summary": "refinement",
+		"edict_id": %d
+	}`, edict.ID)
+
+	_, err := tool.Call(context.Background(), input)
+	if err == nil {
+		t.Fatal("expected error for edict belonging to different user/project, got nil")
 	}
 }
