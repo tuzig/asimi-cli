@@ -2,11 +2,13 @@ package runners
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1127,16 +1129,14 @@ func makeConnCtx(t *testing.T, host string) context.Context {
 	return connCtx
 }
 
-// scaffoldSandboxFiles creates a temp dir with .agents/sandbox/{Dockerfile,bashrc}
-// so that preflightSandbox's checkSandboxFiles passes during tests.
-func scaffoldSandboxFiles(t *testing.T) string {
+// makeSandboxFiles creates the .agents/sandbox directory structure required by
+// checkSandboxFiles() so that preflightSandbox() passes in tests using mock servers.
+func makeSandboxFiles(t *testing.T, root string) {
 	t.Helper()
-	dir := t.TempDir()
-	for _, rel := range []string{".agents/sandbox/Dockerfile", ".agents/sandbox/bashrc"} {
-		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte("FROM scratch"), 0o644))
-	}
-	return dir
+	sandboxDir := filepath.Join(root, ".agents", "sandbox")
+	require.NoError(t, os.MkdirAll(sandboxDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "Dockerfile"), nil, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sandboxDir, "bashrc"), nil, 0o644))
 }
 
 // TestFastPathDetectsStoppedContainer verifies Edict 589: when containerStarted==true
@@ -1151,12 +1151,14 @@ func TestFastPathDetectsStoppedContainer(t *testing.T) {
 	host := mock.start(t)
 	connCtx := makeConnCtx(t, host)
 
-	projectRoot := scaffoldSandboxFiles(t)
+	projectRoot := t.TempDir()
+	makeSandboxFiles(t, projectRoot)
 	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/fastpath-stopped"}, 0, nil)
 	runner.conn = connCtx
 	runner.containerStarted = true
 	stalePipe := &nopWriteCloser{}
 	runner.stdinPipe = stalePipe // non-nil: fast path condition
+	runner.checkImage = func(context.Context) error { return nil }
 
 	err := runner.initialize(context.Background())
 	require.NoError(t, err)
@@ -1186,12 +1188,14 @@ func TestFastPathInspectFailureTriggersRecreation(t *testing.T) {
 	host := mock.start(t)
 	connCtx := makeConnCtx(t, host)
 
-	projectRoot := scaffoldSandboxFiles(t)
+	projectRoot := t.TempDir()
+	makeSandboxFiles(t, projectRoot)
 	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/fastpath-removed"}, 0, nil)
 	runner.conn = connCtx
 	runner.containerStarted = true
 	stalePipe := &nopWriteCloser{}
 	runner.stdinPipe = stalePipe // non-nil: fast path condition
+	runner.checkImage = func(context.Context) error { return nil }
 
 	err := runner.initialize(context.Background())
 	require.NoError(t, err)
@@ -1221,11 +1225,13 @@ func TestFastPathRunningContainerNoRecreation(t *testing.T) {
 	host := mock.start(t)
 	connCtx := makeConnCtx(t, host)
 
-	projectRoot := scaffoldSandboxFiles(t)
+	projectRoot := t.TempDir()
+	makeSandboxFiles(t, projectRoot)
 	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/fastpath-running"}, 0, nil)
 	runner.conn = connCtx
 	runner.containerStarted = true
 	runner.stdinPipe = &nopWriteCloser{} // non-nil: fast path condition
+	runner.checkImage = func(context.Context) error { return nil }
 
 	err := runner.initialize(context.Background())
 	require.NoError(t, err)
@@ -1254,8 +1260,11 @@ func TestContainerLaunchedMsgAllPaths(t *testing.T) {
 		host := mock.start(t)
 		connCtx := makeConnCtx(t, host)
 
-		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/launch-a"}, 0, nil)
+		projectRoot := t.TempDir()
+		makeSandboxFiles(t, projectRoot)
+		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/launch-a"}, 0, nil)
 		runner.conn = connCtx
+		runner.checkImage = func(context.Context) error { return nil }
 		msgChan := make(chan Msg, 10)
 		runner.SetMessageChannel(msgChan)
 
@@ -1280,8 +1289,11 @@ func TestContainerLaunchedMsgAllPaths(t *testing.T) {
 		host := mock.start(t)
 		connCtx := makeConnCtx(t, host)
 
-		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/launch-b"}, 0, nil)
+		projectRoot := t.TempDir()
+		makeSandboxFiles(t, projectRoot)
+		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/launch-b"}, 0, nil)
 		runner.conn = connCtx
+		runner.checkImage = func(context.Context) error { return nil }
 		msgChan := make(chan Msg, 10)
 		runner.SetMessageChannel(msgChan)
 
@@ -1306,8 +1318,11 @@ func TestContainerLaunchedMsgAllPaths(t *testing.T) {
 		host := mock.start(t)
 		connCtx := makeConnCtx(t, host)
 
-		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/launch-c"}, 0, nil)
+		projectRoot := t.TempDir()
+		makeSandboxFiles(t, projectRoot)
+		runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/launch-c"}, 0, nil)
 		runner.conn = connCtx
+		runner.checkImage = func(context.Context) error { return nil }
 		msgChan := make(chan Msg, 10)
 		runner.SetMessageChannel(msgChan)
 
@@ -1332,4 +1347,73 @@ func TestSendContainerLaunchedNoChannel(t *testing.T) {
 	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/nochan"}, 0, nil)
 	// msgChan is nil by default
 	runner.sendContainerLaunched("test-id") // should not panic
+}
+
+func TestPodmanImageExistsErrorPodmanMachineDown(t *testing.T) {
+	err := podmanImageExistsError(nil, []byte("Cannot connect to Podman. try `podman machine start`"), errors.New("exit status 125"), "test-image", "/tmp/test")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if _, ok := err.(PodmanUnavailableError); !ok {
+		t.Fatalf("error = %T, want PodmanUnavailableError", err)
+	}
+	if !strings.Contains(err.Error(), "podman machine start") {
+		t.Fatalf("error = %q, want podman machine start guidance", err)
+	}
+}
+
+func TestPodmanImageExistsErrorMissingImage(t *testing.T) {
+	err := podmanImageExistsError(nil, nil, errors.New("exit status 1"), "test-image", "/tmp/test")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if _, ok := err.(SandboxMissingError); !ok {
+		t.Fatalf("error = %T, want SandboxMissingError", err)
+	}
+	// With projectRoot set but no .agents/ dir, the error guides to :init
+	if !strings.Contains(err.Error(), ":init") {
+		t.Fatalf("error = %q, want :init guidance", err)
+	}
+}
+
+func TestPodmanImageExistsErrorMissingImageWithAgentsDir(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(dir+"/.agents", 0o755))
+
+	err := podmanImageExistsError(nil, nil, errors.New("exit status 1"), "test-image", dir)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if _, ok := err.(SandboxMissingError); !ok {
+		t.Fatalf("error = %T, want SandboxMissingError", err)
+	}
+	if !strings.Contains(err.Error(), "just build-sandbox") {
+		t.Fatalf("error = %q, want build-sandbox guidance", err)
+	}
+}
+
+func TestPodmanImageExistsErrorPodmanTimeout(t *testing.T) {
+	err := podmanImageExistsError(context.DeadlineExceeded, nil, context.DeadlineExceeded, "test-image", "/tmp/test")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if _, ok := err.(PodmanUnavailableError); !ok {
+		t.Fatalf("error = %T, want PodmanUnavailableError", err)
+	}
+	if !strings.Contains(err.Error(), "podman machine start") {
+		t.Fatalf("error = %q, want podman machine start guidance", err)
+	}
+}
+
+func TestPodmanImageExistsErrorPodmanMissing(t *testing.T) {
+	err := podmanImageExistsError(nil, nil, exec.ErrNotFound, "test-image", "/tmp/test")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if _, ok := err.(PodmanUnavailableError); !ok {
+		t.Fatalf("error = %T, want PodmanUnavailableError", err)
+	}
+	if !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("error = %q, want install guidance", err)
+	}
 }

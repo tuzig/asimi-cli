@@ -90,14 +90,35 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 			return "", runErr
 		}
 
-		// If sandbox is missing (e.g., during project-init), fall back to host execution.
-		// Don't attempt restart since this is a permanent state until sandbox is built.
+		// PodmanUnavailableError means podman itself is down (not installed,
+		// not running, or timed out). Propagate the error — restarting the
+		// container won't help.
+		if _, isPodmanDown := runErr.(runners.PodmanUnavailableError); isPodmanDown {
+			return "", runErr
+		}
+
+		// SandboxMissingError and SandboxSetupMissingError are permanent
+		// states (missing image or missing .agents/sandbox files). Fall
+		// back to host execution without attempting a restart.
 		if _, isMissing := runErr.(runners.SandboxMissingError); isMissing {
 			slog.Warn("sandbox not available, running on host", "command", runnerInput.Command)
 			hostRunner := runners.NewHostRunner(0, t.projectRoot)
 			hostRunner.SetMessageChannel(t.msgChan)
 			// When no approval channel is available, bypass approval since the
 			// user implicitly approved by running the ritual.
+			bypassApproval := t.msgChan == nil
+			hostOutput, hostErr := hostRunner.Run(ctx, runners.Input{
+				Command:        runnerInput.Command,
+				Description:    runnerInput.Description,
+				BypassApproval: bypassApproval,
+			})
+			output.Output = hostOutput.Output
+			output.ExitCode = hostOutput.ExitCode
+			runErr = hostErr
+		} else if _, isSetupMissing := runErr.(runners.SandboxSetupMissingError); isSetupMissing {
+			slog.Warn("sandbox setup missing, running on host", "command", runnerInput.Command)
+			hostRunner := runners.NewHostRunner(0, t.projectRoot)
+			hostRunner.SetMessageChannel(t.msgChan)
 			bypassApproval := t.msgChan == nil
 			hostOutput, hostErr := hostRunner.Run(ctx, runners.Input{
 				Command:        runnerInput.Command,

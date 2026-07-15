@@ -1,6 +1,0 @@
-Some bash commands produce too much output. The bash tool should not pass through very long output and Instead report back to the LLM, that he better tries a better command.
-
-Current error after long shell command:
-
-Error: anthropic: failed to create message: API returned unexpected status code: 400: prompt is too long: 215609 tokens > 200000 maximum
-

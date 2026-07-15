@@ -11,12 +11,13 @@ import (
 
 // CheckSandboxImageAvailable checks if the podman daemon is running and
 // the specified sandbox image exists. Pass the full image name
-// (e.g., "localhost/asimi-sandbox-myproject:latest").
-func CheckSandboxImageAvailable(ctx context.Context, imageName string) error {
+// (e.g., "localhost/asimi-sandbox-myproject:latest") and projectRoot
+// (for contextual error messages in SandboxMissingError).
+func CheckSandboxImageAvailable(ctx context.Context, imageName, projectRoot string) error {
 	cmd := exec.CommandContext(ctx, "podman", "image", "exists", imageName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return podmanImageExistsError(ctx.Err(), output, err, imageName)
+		return podmanImageExistsError(ctx.Err(), output, err, imageName, projectRoot)
 	}
 
 	return nil
@@ -28,7 +29,7 @@ func IsPodmanAvailable(imageName string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := CheckSandboxImageAvailable(ctx, imageName); err != nil {
+	if err := CheckSandboxImageAvailable(ctx, imageName, ""); err != nil {
 		slog.Debug("podman not available or image missing", "image", imageName, "error", err)
 		return false
 	}
@@ -37,7 +38,7 @@ func IsPodmanAvailable(imageName string) bool {
 	return true
 }
 
-func podmanImageExistsError(ctxErr error, output []byte, err error, imageName string, projectRoot ...string) error {
+func podmanImageExistsError(ctxErr error, output []byte, err error, imageName, projectRoot string) error {
 	if errors.Is(ctxErr, context.DeadlineExceeded) {
 		return PodmanUnavailableError{Reason: "Podman did not respond. Start it with `podman machine start`, then try again."}
 	}
@@ -50,11 +51,7 @@ func podmanImageExistsError(ctxErr error, output []byte, err error, imageName st
 		return PodmanUnavailableError{Reason: "Podman is not running. Start it with `podman machine start`, then try again."}
 	}
 
-	pr := ""
-	if len(projectRoot) > 0 {
-		pr = projectRoot[0]
-	}
-	return SandboxMissingError{ImageName: imageName, ProjectRoot: pr}
+	return SandboxMissingError{ImageName: imageName, ProjectRoot: projectRoot}
 }
 
 func isPodmanConnectionError(message string) bool {

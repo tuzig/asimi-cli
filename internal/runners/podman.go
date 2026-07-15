@@ -36,6 +36,7 @@ type PodmanRunner struct {
 	mu               sync.Mutex
 	conn             context.Context
 	establishConn    func(ctx context.Context) (context.Context, error)
+	checkImage       func(ctx context.Context) error
 	containerStarted bool
 	stdinPipe        io.WriteCloser
 	stdoutPipe       io.ReadCloser
@@ -90,6 +91,7 @@ func NewPodmanRunner(cfg *Config, repoInfo repo.RepoInfo, connID uint64, fallbac
 		nextCommandID: 1,
 	}
 	r.establishConn = r.establishConnection
+	r.checkImage = r.defaultCheckImage
 	return r
 }
 
@@ -124,7 +126,14 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 	r.mu.Lock()
 	hasConnection := r.conn != nil
+	containerStarted := r.containerStarted
 	r.mu.Unlock()
+
+	if !hasConnection || !containerStarted {
+		if err := r.preflightSandbox(ctx); err != nil {
+			return err
+		}
+	}
 
 	if !hasConnection {
 		if err := r.preflightSandbox(ctx); err != nil {
@@ -371,7 +380,12 @@ func (r *PodmanRunner) preflightSandbox(ctx context.Context) error {
 
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return CheckSandboxImageAvailable(probeCtx, r.imageName)
+	return r.checkImage(probeCtx)
+}
+
+// defaultCheckImage checks that the sandbox image exists in podman.
+func (r *PodmanRunner) defaultCheckImage(ctx context.Context) error {
+	return CheckSandboxImageAvailable(ctx, r.imageName, r.repoInfo.ProjectRoot)
 }
 
 func (r *PodmanRunner) checkSandboxFiles() error {
@@ -748,7 +762,7 @@ func (r *PodmanRunner) Run(ctx context.Context, input Input) (Output, error) {
 			out, fallbackErr := r.fallback.Run(ctx, input)
 			return out, SandboxFallbackError{Err: err, FallbackErr: fallbackErr}
 		}
-		return Output{}, SandboxMissingError{ImageName: r.imageName, ProjectRoot: r.repoInfo.ProjectRoot}
+		return Output{}, err
 	}
 
 	r.outputsMu.Lock()

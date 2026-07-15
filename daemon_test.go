@@ -79,10 +79,10 @@ func TestPodmanRunnerHostFallbackMustNotLeak(t *testing.T) {
 	}
 }
 
-// TestShellCommandFallbackWithoutSandbox verifies that when the sandbox
-// image is missing (e.g., during project-init), RunShellCommand falls
-// back to host execution rather than failing completely.
-func TestShellCommandFallbackWithoutSandbox(t *testing.T) {
+// TestShellCommandMustFailWithoutSandbox verifies that when the
+// RunShellCommand tool has a PodmanRunner with no sandbox files,
+// the tool falls back to host execution (permanent state, no restart).
+func TestShellCommandMustFailWithoutSandbox(t *testing.T) {
 	cfg := &config.SandboxConfig{}
 	repoInfo := repo.RepoInfo{
 		ProjectRoot: t.TempDir(),
@@ -111,7 +111,6 @@ func TestShellCommandFallbackWithoutSandbox(t *testing.T) {
 		t.Fatalf("failed to parse output: %v", err)
 	}
 
-	// Output should come from host execution
 	if !strings.Contains(output.Output, "hello") {
 		t.Errorf("output = %q, want to contain 'hello'", output.Output)
 	}
@@ -187,5 +186,68 @@ func TestDaemonSafeRunOnHostUsesClientProjectRoot(t *testing.T) {
 	}
 	if !strings.Contains(toolOutput.Output, markerA) {
 		t.Errorf("RunShellCommand safe_run_on_host did NOT run in client ProjectRoot.\nGot: %q\nWant: %q\nprojectRoot: %s", toolOutput.Output, markerA, projectA)
+	}
+}
+
+// errorRunner is a mock Runner that always returns a specific error from Run.
+type errorRunner struct {
+	err    runners.Runner // store the error to return
+	runErr error
+}
+
+func (m *errorRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
+	return runners.Output{}, m.runErr
+}
+func (m *errorRunner) Restart(ctx context.Context) error     { return nil }
+func (m *errorRunner) Close(ctx context.Context) error       { return nil }
+func (m *errorRunner) AllowFallback(bool)                    {}
+func (m *errorRunner) RunnerType() string                    { return "podman" }
+func (m *errorRunner) SetMessageChannel(chan<- runners.Msg)  {}
+func (m *errorRunner) HealthCheck(ctx context.Context) error { return nil }
+
+// TestShellCommandPodmanUnavailablePropagatesError verifies that when
+// PodmanUnavailableError is returned from the runner, shell.go propagates
+// the error instead of falling back to host or retrying.
+func TestShellCommandPodmanUnavailablePropagatesError(t *testing.T) {
+	runner := &errorRunner{runErr: runners.PodmanUnavailableError{Reason: "podman is down"}}
+	shellTool := courtTools.NewRunShellCommand(nil, runner, nil, t.TempDir())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := shellTool.Call(ctx, `{"command":"echo hello","description":"test podman unavailable"}`)
+	if err == nil {
+		t.Fatal("expected error to be propagated, got nil")
+	}
+	if _, ok := err.(runners.PodmanUnavailableError); !ok {
+		t.Fatalf("expected PodmanUnavailableError, got %T: %v", err, err)
+	}
+}
+
+// TestShellCommandSandboxSetupMissingFallsBackToHost verifies that when
+// SandboxSetupMissingError is returned from the runner, shell.go falls
+// back to host execution (same as SandboxMissingError).
+func TestShellCommandSandboxSetupMissingFallsBackToHost(t *testing.T) {
+	runner := &errorRunner{runErr: runners.SandboxSetupMissingError{}}
+	shellTool := courtTools.NewRunShellCommand(nil, runner, nil, t.TempDir())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := shellTool.Call(ctx, `{"command":"echo hello","description":"test setup missing fallback"}`)
+	if err != nil {
+		t.Fatalf("expected successful fallback to host, got error: %v", err)
+	}
+
+	var output runners.Output
+	if err := json.Unmarshal([]byte(result), &output); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	if !strings.Contains(output.Output, "hello") {
+		t.Errorf("output = %q, want to contain 'hello'", output.Output)
+	}
+	if output.ExitCode != "0" {
+		t.Errorf("exitCode = %q, want '0'", output.ExitCode)
 	}
 }
