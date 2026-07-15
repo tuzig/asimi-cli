@@ -80,7 +80,7 @@ func GetRepoInfo() RepoInfo {
 			} else {
 				// Detached HEAD — check if we're in a rebase, which preserves
 				// the original branch name in .git/rebase-merge/head-name.
-				branch = branchFromRebase(projectRoot)
+				branch = branchFromDetachedHead(projectRoot)
 				if branch == "" {
 					branch = ref.Hash().String()[:7]
 				}
@@ -167,7 +167,7 @@ func GetRepoInfoForRoot(root string) RepoInfo {
 			} else {
 				// Detached HEAD — check if we're in a rebase, which preserves
 				// the original branch name in .git/rebase-merge/head-name.
-				branch = branchFromRebase(projectRoot)
+				branch = branchFromDetachedHead(projectRoot)
 				if branch == "" {
 					branch = ref.Hash().String()[:7]
 				}
@@ -394,17 +394,26 @@ func readBranchFromWorktreeAt(dir string) string {
 	return ""
 }
 
-// branchFromRebase reads the original branch name from .git/rebase-merge/head-name
-// during an interactive rebase, when HEAD is detached. Returns "" if not in a rebase.
-func branchFromRebase(projectRoot string) string {
-	headNamePath := filepath.Join(projectRoot, ".git", "rebase-merge", "head-name")
-	content, err := os.ReadFile(headNamePath)
-	if err != nil {
-		return ""
-	}
-	ref := strings.TrimSpace(string(content))
-	if strings.HasPrefix(ref, "refs/heads/") {
-		return strings.TrimPrefix(ref, "refs/heads/")
+// branchFromDetachedHead recovers the original branch name when HEAD is detached
+// during git operations that preserve it (rebase, bisect). Returns "" if the
+// branch can't be recovered.
+func branchFromDetachedHead(projectRoot string) string {
+	for _, candidate := range []struct {
+	 subdir, file string
+	}{
+		{".git/rebase-merge", "head-name"},  // rebase --merge (default)
+		{".git/rebase-apply", "head-name"},  // rebase --apply (legacy)
+		{".git", "BISECT_START"},            // git bisect
+	} {
+		path := filepath.Join(projectRoot, candidate.subdir, candidate.file)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		ref := strings.TrimSpace(string(content))
+		if strings.HasPrefix(ref, "refs/heads/") {
+			return strings.TrimPrefix(ref, "refs/heads/")
+		}
 	}
 	return ""
 }

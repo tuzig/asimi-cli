@@ -208,18 +208,45 @@ func TestGetRepoInfoForRoot_NonExistentDir(t *testing.T) {
 	require.Empty(t, info.Slug, "Slug should be empty when no git remote")
 }
 
-func TestBranchFromRebase(t *testing.T) {
-	tmp := t.TempDir()
+func TestBranchFromDetachedHead(t *testing.T) {
+	t.Run("not in any state", func(t *testing.T) {
+		require.Equal(t, "", branchFromDetachedHead(t.TempDir()))
+	})
 
-	// No rebase dir — returns ""
-	require.Equal(t, "", branchFromRebase(tmp))
+	t.Run("rebase-merge", func(t *testing.T) {
+		tmp := t.TempDir()
+		dir := filepath.Join(tmp, ".git", "rebase-merge")
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "head-name"), []byte("refs/heads/main"), 0o644))
+		require.Equal(t, "main", branchFromDetachedHead(tmp))
+	})
 
-	// Create rebase-merge/head-name
-	rebaseDir := filepath.Join(tmp, ".git", "rebase-merge")
-	require.NoError(t, os.MkdirAll(rebaseDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(rebaseDir, "head-name"), []byte("refs/heads/main"), 0o644))
+	t.Run("rebase-apply", func(t *testing.T) {
+		tmp := t.TempDir()
+		dir := filepath.Join(tmp, ".git", "rebase-apply")
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "head-name"), []byte("refs/heads/feature"), 0o644))
+		require.Equal(t, "feature", branchFromDetachedHead(tmp))
+	})
 
-	require.Equal(t, "main", branchFromRebase(tmp))
+	t.Run("bisect", func(t *testing.T) {
+		tmp := t.TempDir()
+		dir := filepath.Join(tmp, ".git")
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "BISECT_START"), []byte("refs/heads/develop"), 0o644))
+		require.Equal(t, "develop", branchFromDetachedHead(tmp))
+	})
+
+	t.Run("rebase-merge takes precedence", func(t *testing.T) {
+		tmp := t.TempDir()
+		for _, p := range []string{".git/rebase-merge", ".git/rebase-apply", ".git"} {
+			require.NoError(t, os.MkdirAll(filepath.Join(tmp, p), 0o755))
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, ".git/rebase-merge/head-name"), []byte("refs/heads/main"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, ".git/rebase-apply/head-name"), []byte("refs/heads/wrong"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, ".git/BISECT_START"), []byte("refs/heads/wrong"), 0o644))
+		require.Equal(t, "main", branchFromDetachedHead(tmp))
+	})
 }
 
 func TestSanitizeSegment(t *testing.T) {
