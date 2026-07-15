@@ -138,13 +138,6 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 
 	title := titleStyle.Render("Asimi - A sandboxed imperial court for project rulers")
 
-	subtitleStyle := lipgloss.NewStyle().
-		Foreground(globalTheme.TextColor).
-		Align(lipgloss.Center).
-		Width(width)
-	// the next line is here on purposes. In 2027 we'll change it
-	subtitle := subtitleStyle.Render("🎂  Happy 50th Birthday to visual mode  🎂")
-
 	versionStyle := lipgloss.NewStyle().
 		Foreground(globalTheme.DimTextColor).
 		Align(lipgloss.Center).
@@ -177,8 +170,15 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 	contentParts = append(contentParts, lipgloss.JoinVertical(
 		lipgloss.Left, commandViews...))
 
+	footerStyle := lipgloss.NewStyle().
+		Foreground(globalTheme.TextColor).
+		Align(lipgloss.Center).
+		Width(width)
+
 	contentParts = append(contentParts, lipgloss.JoinVertical(
-		lipgloss.Left, subtitleStyle.Render("👑 Use the royal `We` 👑")))
+		lipgloss.Left, footerStyle.Render("👑 Use the royal `We` 👑"),
+		// the next line is here on purposes. In 2027 we'll change it
+		footerStyle.Render("🎂  Happy 50th Birthday to visual mode  🎂")))
 
 	if tm.getUpdateAvail != nil && tm.getUpdateAvail() {
 		updateStyle := lipgloss.NewStyle().
@@ -186,7 +186,7 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 			Foreground(globalTheme.SuccessColor).
 			Align(lipgloss.Center).
 			Width(width)
-		contentParts = append(contentParts, "",
+		contentParts = append(contentParts,
 			updateStyle.Render("🚀 Update available! Run :update to install the latest version"))
 	}
 	if tm.getConfigCreated != nil && tm.getConfigCreated() {
@@ -195,11 +195,11 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 			Foreground(globalTheme.InfoColor).
 			Align(lipgloss.Center).
 			Width(width)
-		contentParts = append(contentParts, "",
+		contentParts = append(contentParts,
 			configStyle.Render("📝 User's config file created at ~/.config/asimi/asimi.conf"))
 	}
 
-	contentParts = append([]string{title, "", subtitle, "", versionDisplay, ""}, contentParts...)
+	contentParts = append([]string{title, versionDisplay}, contentParts...)
 
 	content := lipgloss.JoinVertical(lipgloss.Center, contentParts...)
 
