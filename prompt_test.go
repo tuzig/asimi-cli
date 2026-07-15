@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/muesli/reflow/wordwrap"
 
 	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/court/tools"
@@ -759,6 +760,124 @@ func TestViewAnsweringHeightMatchesCalculateDesiredHeight(t *testing.T) {
 
 	if contentLines != desired {
 		t.Errorf("viewAnswering content height %d != CalculateDesiredHeight %d", contentLines, desired)
+	}
+}
+
+// TestCalculateDesiredHeightAnsweringModeLongQuestion tests that the height
+// calculation accounts for word-wrapped multi-line question text. This is
+// the case the original e643 fix was feared to miss — when the question
+// itself (not just the options) spans more than one line.
+func TestCalculateDesiredHeightAnsweringModeLongQuestion(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+	prompt.SetScreenHeight(40) // MaxHeight = 20
+
+	// Width = 80, contentWidth = 78
+	// A 200-char question wraps to 3 lines at width 78
+	longQuestion := strings.Repeat("word ", 40) // ~200 chars
+
+	state := &AnsweringState{
+		RequestID: "test-long-q",
+		Title:     "Zhengming",
+		Questions: []AnsweringQuestion{
+			{
+				Text:    longQuestion,
+				Summary: longQuestion,
+				Options: []string{"Yes", "No"},
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	// Count the wrapped question lines
+	wrapped := wordwrap.String(longQuestion, 78)
+	questionLines := strings.Count(wrapped, "\n") + 1
+
+	// title(1) + blank(1) + questionLines + option[0](1) + option[1](1)
+	expected := 2 + questionLines + 2
+
+	height := prompt.CalculateDesiredHeight()
+	if height != expected {
+		t.Errorf("Expected height %d (2 + %d question lines + 2 options), got %d",
+			expected, questionLines, height)
+	}
+}
+
+// TestViewAnsweringHeightMatchesCalculateDesiredHeightLongQuestion verifies
+// that the rendered viewAnswering() output height matches
+// CalculateDesiredHeight() when the question text wraps to multiple lines.
+func TestViewAnsweringHeightMatchesCalculateDesiredHeightLongQuestion(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+	prompt.SetScreenHeight(40)
+
+	longQuestion := strings.Repeat("word ", 40) // ~200 chars, wraps to 3 lines
+
+	state := &AnsweringState{
+		RequestID: "test-view-long-q",
+		Title:     "Zhengming: Sage asks",
+		Questions: []AnsweringQuestion{
+			{
+				Text:    longQuestion,
+				Summary: longQuestion,
+				Options: []string{"Accept", "Reject", "Edit", "Chat"},
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	desired := prompt.CalculateDesiredHeight()
+	prompt.SetHeight(desired)
+
+	view := prompt.View()
+	plain := stripANSI(view)
+	totalLines := strings.Count(plain, "\n") + 1
+	contentLines := totalLines - 2 // subtract borders
+
+	if contentLines != desired {
+		t.Errorf("viewAnswering content height %d != CalculateDesiredHeight %d (long question)",
+			contentLines, desired)
+	}
+}
+
+// TestCalculateDesiredHeightAnsweringModeExplicitNewlineQuestion tests that
+// a question with explicit \n characters is properly counted as multi-line.
+func TestCalculateDesiredHeightAnsweringModeExplicitNewlineQuestion(t *testing.T) {
+	prompt := NewPromptComponent(80, 10)
+	prompt.SetScreenHeight(40)
+
+	multiLineQuestion := "First line of question\nSecond line of question\nThird line of question"
+
+	state := &AnsweringState{
+		RequestID: "test-newline-q",
+		Title:     "Zhengming",
+		Questions: []AnsweringQuestion{
+			{
+				Text:    multiLineQuestion,
+				Summary: multiLineQuestion,
+				Options: []string{"Yes", "No"},
+			},
+		},
+		Answers: make([]string, 1),
+	}
+	prompt.EnterAnsweringMode(state)
+
+	// 3 explicit lines + 2 (title+blank) + 2 (options) = 7
+	height := prompt.CalculateDesiredHeight()
+	if height != 7 {
+		t.Errorf("Expected height 7 (2 + 3 question lines + 2 options), got %d", height)
+	}
+
+	// Verify rendered output matches
+	prompt.SetHeight(height)
+	view := prompt.View()
+	plain := stripANSI(view)
+	totalLines := strings.Count(plain, "\n") + 1
+	contentLines := totalLines - 2
+
+	if contentLines != height {
+		t.Errorf("viewAnswering content height %d != CalculateDesiredHeight %d (explicit newlines)",
+			contentLines, height)
 	}
 }
 
