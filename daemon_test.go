@@ -191,7 +191,6 @@ func TestDaemonSafeRunOnHostUsesClientProjectRoot(t *testing.T) {
 
 // errorRunner is a mock Runner that always returns a specific error from Run.
 type errorRunner struct {
-	err    runners.Runner // store the error to return
 	runErr error
 }
 

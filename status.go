@@ -88,23 +88,6 @@ func (s *StatusComponent) ResetStreamRate() {
 	s.streamRate = 0
 }
 
-// rateBar returns a block character representing the current stream rate
-func (s StatusComponent) rateBar() string {
-	if s.streamRate <= 0 {
-		return ""
-	}
-	blocks := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-	thresholds := []float64{25, 50, 75, 100, 150, 200, 300}
-	idx := len(blocks) - 1
-	for i, t := range thresholds {
-		if s.streamRate <= t {
-			idx = i
-			break
-		}
-	}
-	return string(blocks[idx])
-}
-
 // SetVerified marks the provider as verified (confirmed working via a session)
 func (s *StatusComponent) SetVerified() { s.Verified = true }
 

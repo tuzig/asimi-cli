@@ -1269,53 +1269,6 @@ func (m *MinisterBase) StartRitual(name string, key storage.EdictKey, inputs map
 	return nil
 }
 
-// grantSeal records the minister's seal on an edict
-func (m *MinisterBase) grantSeal(key storage.EdictKey, metadata storage.JSON) error {
-	hasSeal, err := m.hasSeal(key)
-	if err != nil {
-		return fmt.Errorf("check existing seal: %w", err)
-	}
-	if hasSeal {
-		m.logger.Debug("seal already granted", "edict_id", key.ID, "minister_id", m.ministerID)
-		return nil
-	}
-
-	sealID := GenerateID("seal", fmt.Sprintf("%d", key.ID), key.Username, key.Project, m.ministerID)
-	seal := storage.Seal{
-		SealID:     sealID,
-		EdictID:    key.ID,
-		Username:   key.Username,
-		Project:    key.Project,
-		MinisterID: m.ministerID,
-		SealedAt:   time.Now(),
-		Metadata:   metadata,
-	}
-
-	if err := m.db.Create(&seal).Error; err != nil {
-		return fmt.Errorf("failed to grant seal: %w", err)
-	}
-
-	m.EmitEvent(key, storage.EventSealGranted, storage.JSON{
-		"minister_id": m.ministerID,
-		"seal_id":     sealID,
-	})
-
-	m.logger.Info("seal granted", "edict_id", key.ID, "seal_id", sealID)
-	return nil
-}
-
-// hasSeal checks if the minister has already sealed this edict
-func (m *MinisterBase) hasSeal(key storage.EdictKey) (bool, error) {
-	var count int64
-	err := m.db.Model(&storage.Seal{}).
-		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.ID, key.Username, key.Project, m.ministerID).
-		Count(&count).Error
-	if err != nil {
-		return false, fmt.Errorf("failed to check seal: %w", err)
-	}
-	return count > 0, nil
-}
-
 // GetEdict retrieves an edict by composite key
 func (m *MinisterBase) GetEdict(key storage.EdictKey) (*storage.Edict, error) {
 	var edict storage.Edict

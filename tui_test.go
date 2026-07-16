@@ -3326,7 +3326,7 @@ type mockCourtClient struct {
 	resumeRitualFn      func(string) bool
 	pausedChannels      []string
 	resumedChannels     []string
-	stopStreamingFn     func(string)
+
 	setIntentFn         func(uint, string) error
 	submitPromptTarget  string
 	submitPromptMsg     string

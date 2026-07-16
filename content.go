@@ -60,9 +60,6 @@ type TabManager struct {
 	getConfigCreated func() bool // Returns whether config was created on first run
 }
 
-// bt is a backtick character, used inside raw string literals where ` cannot appear.
-const bt = "`"
-
 // initTabGreetings seeds each tab's ChatComponent with its minister welcome
 // message, sourced from the Greeting field of each MinisterDef.
 func initTabGreetings(tm *TabManager, defs []ministers.MinisterDef) {

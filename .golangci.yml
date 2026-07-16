@@ -1,4 +1,4 @@
-version: 2
+version: "2"
 
 # Phase 1: Minimal linter set — catches real bugs with low false-positive rate.
 # Additional linters (errcheck, gosec, revive, misspell, unconvert, unparam)
@@ -7,6 +7,7 @@ version: 2
 run:
   timeout: 5m
   modules-download-mode: vendor
+  concurrency: 1  # avoid OOM — container has ~1.5GB RAM, no swap
 
 linters:
   default: none
@@ -15,12 +16,17 @@ linters:
     - ineffassign   # detect ineffectual assignments
     - staticcheck   # go vet on steroids
     - unused        # check for unused constants, variables, functions and types
-
   settings:
     govet:
       enable-all: true
       disable:
         - shadow  # can be too strict
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - govet  # some govet analyzers (e.g. testinggoroutine) are noisy in tests
 
 issues:
   max-issues-per-linter: 0
