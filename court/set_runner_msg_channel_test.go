@@ -5,11 +5,14 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"reflect"
 )
 
 // recordingMsgChanRunner captures the msgChan passed via SetMessageChannel.
@@ -28,13 +31,11 @@ func (r *recordingMsgChanRunner) AllowFallback(bool)            {}
 func (r *recordingMsgChanRunner) RunnerType() string            { return "recording" }
 func (r *recordingMsgChanRunner) GetOS() string                 { return runtime.GOOS }
 
-// TestSetRunnerMessageChannel_PropagatesToMinisters verifies that
-// SetRunnerMessageChannel sets the msg channel on the runner AND on every
-// minister that implements SetMessageChannel. This is the fix for edict 411:
-// Subscribe() must call SetRunnerMessageChannel (not s.runner.SetMessageChannel
-// directly) so ephemeral HostRunner instances created by RunShellCommand
-// inherit the channel from their parent minister.
-func TestSetRunnerMessageChannel_PropagatesToMinisters(t *testing.T) {
+// TestSetRunnerMessageChannel_UpdatesPointerHolders verifies that
+// SetRunnerMessageChannel updates s.msgChan on the Court. Since ministers
+// and tools hold a *chan<- runners.Msg pointing to &s.msgChan, they
+// automatically see the new value without explicit propagation.
+func TestSetRunnerMessageChannel_UpdatesPointerHolders(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	cfg := config.DefaultCourtConfig()
 
@@ -46,6 +47,9 @@ func TestSetRunnerMessageChannel_PropagatesToMinisters(t *testing.T) {
 	// dereference in some minister internals).
 	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
+	// Before SetRunnerMessageChannel, s.msgChan is nil (and all pointer holders see nil).
+	assert.Nil(t, court.msgChan, "msgChan should be nil before SetRunnerMessageChannel")
+
 	// Create a message channel and call SetRunnerMessageChannel.
 	ch := make(chan runners.Msg, 10)
 	var msgChan chan<- runners.Msg = ch
@@ -54,21 +58,31 @@ func TestSetRunnerMessageChannel_PropagatesToMinisters(t *testing.T) {
 	// Verify the runner got the channel.
 	assert.NotNil(t, runner.msgChan, "runner should receive a non-nil msg channel")
 
-	// Verify every minister that supports SetMessageChannel received the channel.
+	// Verify every minister's msgChan pointer dereferences to the new channel.
 	for _, id := range []string{"chancellor", "sage", "forge", "judge"} {
 		m := court.GetMinister(id)
 		require.NotNil(t, m, "minister %s should exist", id)
 
-		getter, ok := m.(interface {
-			SetMessageChannel(chan<- runners.Msg)
-			MessageChannel() chan<- runners.Msg
-		})
-		require.True(t, ok, "minister %s should implement SetMessageChannel/MessageChannel", id)
+		// Use reflection to read the unexported msgChan field (*chan<- runners.Msg).
+		// Walk the embedded *MinisterBase to find the field.
+		val := reflect.ValueOf(m)
+		for val.Kind() == reflect.Ptr {
+			val = val.Elem()
+		}
+		baseField := val.FieldByName("MinisterBase")
+		if !baseField.IsValid() || baseField.IsNil() {
+			t.Fatalf("minister %s does not have MinisterBase", id)
+		}
+		baseElem := baseField.Elem()
+		msgChanField := baseElem.FieldByName("msgChan")
+		require.True(t, msgChanField.IsValid(), "minister %s should have msgChan field", id)
 
-		// The critical assertion: the channel must have been propagated, not just
-		// that the interface exists. This is what edict 411 fixes — Subscribe()
-		// previously called s.runner.SetMessageChannel directly, skipping propagation.
-		assert.NotNil(t, getter.MessageChannel(), "minister %s should have a non-nil msg channel after SetRunnerMessageChannel", id)
+		// msgChan is *chan<- runners.Msg — verify it's non-nil and points to a non-nil channel.
+		require.False(t, msgChanField.IsNil(), "minister %s msgChan pointer should be non-nil", id)
+
+		// Dereference the pointer and check the channel is not nil.
+		derefChan := msgChanField.Elem()
+		require.False(t, derefChan.IsNil(), "minister %s *msgChan should point to a non-nil channel", id)
 	}
 }
 
@@ -88,7 +102,7 @@ func TestSetRunnerMessageChannel_NilRunner(t *testing.T) {
 }
 
 // TestSubscribe_CallsSetRunnerMessageChannel verifies that Subscribe()
-// uses SetRunnerMessageChannel (which propagates to ministers) rather than
+// uses SetRunnerMessageChannel (which sets s.msgChan) rather than
 // calling s.runner.SetMessageChannel directly. We confirm this by checking
 // that after Subscribe(), the runner has a non-nil msgChan.
 func TestSubscribe_CallsSetRunnerMessageChannel(t *testing.T) {
@@ -108,4 +122,49 @@ func TestSubscribe_CallsSetRunnerMessageChannel(t *testing.T) {
 	// msgChan.
 	_ = court.Subscribe(ctx)
 	assert.NotNil(t, runner.msgChan, "Subscribe should set a non-nil msgChan on the runner via SetRunnerMessageChannel")
+}
+
+// TestBuildToolRegistry_PointerPropagatesToShellTool verifies the core fix:
+// buildToolRegistry runs when msgChan is nil, then SetRunnerMessageChannel
+// sets the real channel. The shell tool in the registry must see the new
+// channel via the pointer — this would fail with the old value-copy approach.
+func TestBuildToolRegistry_PointerPropagatesToShellTool(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+
+	runner := &recordingMsgChanRunner{}
+	court := NewCourt(db, cfg, runner, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+
+	// At this point, buildToolRegistry has already run (in NewCourt).
+	// s.msgChan is still nil — the shell tool's *msgChan points to &s.msgChan.
+	require.Nil(t, court.msgChan, "msgChan should be nil before SetRunnerMessageChannel")
+
+	// Now set the real channel.
+	ch := make(chan runners.Msg, 10)
+	var msgChan chan<- runners.Msg = ch
+	court.SetRunnerMessageChannel(msgChan)
+	require.NotNil(t, court.msgChan, "msgChan should be set after SetRunnerMessageChannel")
+
+	// Retrieve the RunShellCommand tool from the registry.
+	forgePerm, _ := tools.ParsePermissions("rwxr---w-")
+	ts := court.toolRegistry.ForPermissions(forgePerm)
+	var shellImpl *tools.RunShellCommand
+	for _, tool := range ts {
+		if st, ok := tool.(*tools.RunShellCommand); ok {
+			shellImpl = st
+			break
+		}
+	}
+	require.NotNil(t, shellImpl, "run_shell_command should be registered")
+
+	// Verify the shell tool sees the non-nil channel via its pointer.
+	// Use reflection since msgChan is unexported.
+	shellVal := reflect.ValueOf(shellImpl).Elem()
+	msgChanField := shellVal.FieldByName("msgChan")
+	require.True(t, msgChanField.IsValid(), "RunShellCommand should have msgChan field")
+	require.False(t, msgChanField.IsNil(), "shell tool's msgChan pointer should be non-nil")
+	derefChan := msgChanField.Elem()
+	assert.False(t, derefChan.IsNil(), "shell tool should see the non-nil msgChan via pointer after SetRunnerMessageChannel")
 }

@@ -91,7 +91,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	// Create chancellor
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	// Create an edict (starts in brewing phase)
@@ -111,7 +111,7 @@ func TestStrategist_ProcessTask(t *testing.T) {
 	ctx := context.Background()
 
 	// Create edict
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	edict, err := CreateEdictForTest(db, "Implement user authentication with login and logout")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
@@ -141,7 +141,7 @@ func TestJudge_VerdictFlow(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	// Setup: create edict and manifest
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	edict, err := CreateEdictForTest(db, "Test feature")
 	assert.NoError(t, err)
 	assert.NotNil(t, edict)
@@ -182,7 +182,7 @@ func TestProcessPrompt_NoPreprocessor(t *testing.T) {
 	defer cancel()
 
 	mockLLM := mocks.NewLLMProvider()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	sage := NewSage(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
@@ -220,7 +220,7 @@ func TestProcessPrompt_ChannelIDRouting(t *testing.T) {
 	defer cancel()
 
 	mockLLM := mocks.NewLLMProvider()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	sage := NewSage(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
@@ -258,7 +258,7 @@ func TestProcessPrompt_DefaultChannelID(t *testing.T) {
 	defer cancel()
 
 	mockLLM := mocks.NewLLMProvider()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	sage := NewSage(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
@@ -320,7 +320,7 @@ func TestHappyFlowE2E(t *testing.T) {
 	defer cancel()
 
 	// Create Chancellor and Court
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	// Create a simple Court with just Forge for this test
@@ -391,7 +391,7 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 	court := &Court{
 		db: db,
@@ -416,7 +416,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
@@ -431,7 +431,7 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 
 // TestInvokeMinisterTool_InvalidJSON tests error handling for malformed JSON input
 func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
@@ -446,7 +446,7 @@ func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
 
 // TestInvokeMinisterTool_MissingMinisterID tests error handling for missing minister_id
 func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
@@ -461,7 +461,7 @@ func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
 
 // TestInvokeMinisterTool_MissingEdictID tests error handling for missing edict_id
 func TestInvokeMinisterTool_MissingEdictID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
 
@@ -480,7 +480,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister that returns an error in Result
@@ -514,7 +514,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister with a full task channel (buffer 0, no reader)
@@ -543,7 +543,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	// Create a fake minister that accepts but never replies
@@ -579,7 +579,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	// Collect notifications
@@ -644,7 +644,7 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	var mu sync.Mutex
@@ -714,7 +714,7 @@ func TestInvokeMinisterTool_Format(t *testing.T) {
 
 // TestBuildSystemPrompt_EdictID verifies the edict ID is injected into the scratchpad
 func TestBuildSystemPrompt_EdictID(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
@@ -740,7 +740,7 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 // TestBuildSystemPrompt_MinisterIntro verifies the template renders the
 // minister ID with the corrected "known as" phrasing (was "knwon").
 func TestBuildSystemPrompt_MinisterIntro(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 	fake := &fakeMinister{MinisterBase: base, id: "judge"}
 
 	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{})
@@ -754,7 +754,7 @@ func TestBuildSystemPrompt_MinisterIntro(t *testing.T) {
 
 // TestBuildSystemPrompt_Scratchpad verifies scratchpad is included with minister ID heading
 func TestBuildSystemPrompt_Scratchpad(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 
 	fake := &fakeMinisterWithScratchpad{
 		fakeMinister: fakeMinister{MinisterBase: base, id: "strategist"},
@@ -801,14 +801,14 @@ func (f *fakeMinister) Run(ctx context.Context)     {}
 // contains ritual names and descriptions from the registry.
 func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
 	court := &Court{
 		db:        db,
 		ministers: map[string]Minister{chancellor.ID(): chancellor},
 	}
-	rgBase := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	rgBase := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	court.ritualGuard = NewRitualGuard(RitualGuardOpts{Base: rgBase})
 	court.GetRitualRegistry().Register(&RitualDef{Name: "swift-strike", Description: "The Swift Strike (S)"})
 	court.GetRitualRegistry().Register(&RitualDef{Name: "castle-siege", Description: "The Castle Siege (L)"})
@@ -1046,7 +1046,7 @@ func TestFormatGivenContext_StringValues(t *testing.T) {
 // TestBuildSystemPrompt_GivenContext verifies that pre-formatted given context
 // from a ritual is included in the system prompt when passed to buildSystemPrompt.
 func TestBuildSystemPrompt_GivenContext(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 	fake := &fakeMinister{MinisterBase: base, id: "forge"}
 
 	// Simulate what the ritual does: format given context map → markdown string
@@ -1128,7 +1128,7 @@ func TestCreateEdict_DoesNotReserveEdict1(t *testing.T) {
 
 // TestMinisterBase_SessionMethods tests the session getter, setter, and reset methods.
 func TestMinisterBase_SessionMethods(t *testing.T) {
-	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 
 	// Initially nil
 	assert.Nil(t, base.Session())
@@ -1382,7 +1382,7 @@ func TestJudge_ProcessTask_NoLLM(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "Feature to judge")
 	assert.NoError(t, err)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	manifestID := stageManifestForTest(t, db, edict.Key(), "", "feature.go", "Feat", "sha1")
 	_ = manifestID
 
@@ -1416,7 +1416,7 @@ func TestStrategist_ProcessTask_NoLLM_NoHookError(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "Plan with cycle")
 	assert.NoError(t, err)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	strategist := NewStrategist(base)
 
 	// Insert lings with a circular dependency — the postTaskHook is gone,
@@ -1470,7 +1470,7 @@ func TestStrategist_ProcessTask_ValidDAG_NoHookError(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "Plan with valid DAG")
 	assert.NoError(t, err)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	strategist := NewStrategist(base)
 
 	lingA := &storage.Ling{
@@ -1521,7 +1521,7 @@ func TestSage_ProcessTask_NoHooks(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "Sage review edict")
 	assert.NoError(t, err)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	sage := NewSage(base)
 
 	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
@@ -1553,7 +1553,7 @@ func TestForge_ProcessTask_PreTaskHookSkipsStream(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "Forge pre-hook edict")
 	assert.NoError(t, err)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	forge := NewForge(base)
 
 	// Override the preTaskHook with a simple one that returns handled=true
@@ -1592,7 +1592,7 @@ func TestProcessTask_NoLLM_NoFallback_Acknowledges(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "No-config edict")
 	assert.NoError(t, err)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	strategist := NewStrategist(base)
 
 	// Strategist has no LLM and no taskFallback
@@ -1623,7 +1623,7 @@ func TestProcessTask_SendResult_NonBlocking(t *testing.T) {
 	edict, err := CreateEdictForTest(db, "Full channel edict")
 	assert.NoError(t, err)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	strategist := NewStrategist(base)
 
 	// Create a done channel with buffer 1 and fill it
@@ -1658,7 +1658,7 @@ func TestRunLoop_ConcurrentTaskDispatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.ministerID = "test"
 	strategist := NewStrategist(base)
 	strategist.SetNotify(func(any) {})
@@ -1720,7 +1720,7 @@ func TestRunLoop_ConcurrentTaskDispatch(t *testing.T) {
 func TestRunLoop_GracefulShutdownWaitsInFlightTasks(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.ministerID = "test"
 	strategist := NewStrategist(base)
 	strategist.SetNotify(func(any) {})
@@ -1779,7 +1779,7 @@ func TestStreamTask_RitualTaskCreatesOwnSession(t *testing.T) {
 	ctx := context.Background()
 
 	mockLLM := mocks.NewLLMProvider()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.ministerID = "sage"
 	sage := NewSage(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
@@ -1810,7 +1810,7 @@ func TestStreamTask_ExistingSessionStillReused(t *testing.T) {
 	ctx := context.Background()
 
 	mockLLM := mocks.NewLLMProvider()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.ministerID = "sage"
 	sage := NewSage(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
@@ -1834,7 +1834,7 @@ func TestRunLoop_SlowPromptDoesNotBlockTaskDispatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.ministerID = "test"
 	strategist := NewStrategist(base)
 	strategist.SetNotify(func(any) {})

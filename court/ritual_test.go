@@ -550,10 +550,116 @@ func TestLoadAllRituals_MissingProjectDir(t *testing.T) {
 	}
 }
 
+// findProjectRoot returns the project root directory by walking up from the
+// test's working directory until it finds go.mod.
+func findProjectRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not find project root (go.mod)")
+		}
+		dir = parent
+	}
+}
+
+func TestLoadAllRituals_ProjectReleaseVersionRitual(t *testing.T) {
+	// The real .agents/rituals.yaml must load and validate, including
+	// the release-version ritual added in edict 665.
+	projectDir := findProjectRoot(t)
+	rituals, err := LoadAllRituals(projectDir)
+	if err != nil {
+		t.Fatalf("LoadAllRituals(%q) error = %v", projectDir, err)
+	}
+
+	var release *RitualDef
+	for _, r := range rituals {
+		if r.Name == "release-version" {
+			release = r
+			break
+		}
+	}
+	if release == nil {
+		t.Fatal("release-version ritual not found in loaded rituals")
+	}
+
+	// Must have exactly 7 steps per the edict spec
+	if len(release.Steps) != 7 {
+		t.Fatalf("expected 7 steps, got %d", len(release.Steps))
+	}
+
+	// Verify step names match the edict spec
+	expectedSteps := []string{
+		"prepare-changelog",
+		"bump-version",
+		"update-roadmap",
+		"verify-release-readiness",
+		"sage-reviews",
+		"commit-and-tag",
+		"confirm-push",
+	}
+	for i, want := range expectedSteps {
+		if release.Steps[i].Name != want {
+			t.Errorf("step %d: expected name %q, got %q", i, want, release.Steps[i].Name)
+		}
+	}
+
+	// Verify ministers are assigned correctly
+	expectedMinisters := map[string]string{
+		"prepare-changelog":      "strategist",
+		"bump-version":           "forge",
+		"update-roadmap":         "forge",
+		"verify-release-readiness": "judge",
+		"sage-reviews":           "sage",
+		"commit-and-tag":         "chancellor",
+		"confirm-push":           "chancellor",
+	}
+	for _, step := range release.Steps {
+		if want, ok := expectedMinisters[step.Name]; ok {
+			if step.Minister != want {
+				t.Errorf("step %q: expected minister %q, got %q", step.Name, want, step.Minister)
+			}
+		}
+	}
+
+	// Verify the version input is required
+	v, ok := release.Inputs["version"]
+	if !ok {
+		t.Fatal("expected 'version' input on release-version ritual")
+	}
+	if !v.Required {
+		t.Error("expected 'version' input to be required")
+	}
+
+	// Verify on_failure goto targets reference real steps
+	for _, step := range release.Steps {
+		if step.OnFailure == "goto" {
+			found := false
+			for _, s := range release.Steps {
+				if s.Name == step.OnFailureTarget {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("step %q on_failure_target %q does not match any step name",
+					step.Name, step.OnFailureTarget)
+			}
+		}
+	}
+}
+
 func TestRitualGuardLoadRituals(t *testing.T) {
 	// Test that RitualGuard.LoadRituals correctly loads and registers rituals
 	db := setupRitualTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	base.repoInfo = repo.RepoInfo{ProjectRoot: t.TempDir()}
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 
@@ -577,7 +683,7 @@ func TestRitualGuardLoadRituals(t *testing.T) {
 func TestRitualGuardLoadRituals_EmptyProjectRoot(t *testing.T) {
 	// LoadRituals must return an error when projectRoot is empty
 	db := setupRitualTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 
 	err := rg.LoadRituals()
@@ -1722,7 +1828,7 @@ func newRitualTestCourtWithDB(t *testing.T, db *gorm.DB, output string, err erro
 		ministers: ministers,
 		logger:    slog.Default(),
 	}
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	s.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
 		GetMinister: s.GetMinister,
@@ -2150,7 +2256,7 @@ func TestRitualMinisterStepRoutesThroughTaskPattern(t *testing.T) {
 		ministers: ministers,
 		logger:    slog.Default(),
 	}
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
 		GetMinister: court.GetMinister,
@@ -2690,7 +2796,7 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 		},
 		logger: slog.Default(),
 	}
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
 		GetMinister: court.GetMinister,
@@ -2765,7 +2871,7 @@ func TestRitualEphemeralSessionIsDiscarded(t *testing.T) {
 		ministers: map[string]Minister{"forge": forge},
 		logger:    slog.Default(),
 	}
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
 		GetMinister: court.GetMinister,
@@ -2851,7 +2957,7 @@ func TestRitualStepActResultIsAvailableInNextStepTemplate(t *testing.T) {
 		ministers: map[string]Minister{"forge": captureMinister},
 		logger:    slog.Default(),
 	}
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
 		GetMinister: court.GetMinister,

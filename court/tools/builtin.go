@@ -17,7 +17,7 @@ import (
 type ToolRegistrationOpts struct {
 	Ctx         ToolContext
 	Runner      runners.Runner
-	MsgChan     chan<- runners.Msg
+	MsgChan     *chan<- runners.Msg
 	HostChecker func(cmd string) (runOnHost, needsApproval bool)
 	DBPath      string
 

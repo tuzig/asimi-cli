@@ -314,7 +314,7 @@ func TestSetContext_NonEmptyProjectUsesExplicitSlug(t *testing.T) {
 
 func TestGetSandboxImageName_EmptyWhenNoRunner(t *testing.T) {
 	db := setupCourtTestDB(t)
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 
 	imageName := rg.getSandboxImageName()
@@ -976,8 +976,13 @@ func TestUpdateProjectRootTools_PreservesHostChecker(t *testing.T) {
 	require.True(t, shouldRunOnHost.IsValid(), "RunShellCommand should have shouldRunOnHost field")
 	assert.False(t, shouldRunOnHost.IsNil(), "shell tool's shouldRunOnHost must be non-nil after updateProjectRootTools")
 
-	// Verify the shell tool's internal msgChan field is non-nil.
+	// Verify the shell tool's internal msgChan pointer is non-nil and
+	// dereferences to a non-nil channel. With the pointer approach,
+	// updateProjectRootTools passes &s.msgChan — after Subscribe sets
+	// s.msgChan, the tool should see the non-nil channel.
 	msgChanField := shellVal.FieldByName("msgChan")
 	require.True(t, msgChanField.IsValid(), "RunShellCommand should have msgChan field")
-	assert.False(t, msgChanField.IsNil(), "shell tool's msgChan must be non-nil after updateProjectRootTools")
+	assert.False(t, msgChanField.IsNil(), "shell tool's msgChan pointer must be non-nil after updateProjectRootTools")
+	derefChan := msgChanField.Elem()
+	assert.False(t, derefChan.IsNil(), "shell tool's *msgChan must point to a non-nil channel after Subscribe")
 }

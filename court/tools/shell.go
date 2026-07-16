@@ -15,8 +15,8 @@ import (
 type RunShellCommand struct {
 	shouldRunOnHost func(cmd string) (runOnHost, needsApproval bool)
 	runner          runners.Runner
-	msgChan         chan<- runners.Msg // for ephemeral HostRunner approval
-	projectRoot     string             // working directory for ephemeral HostRunner
+	msgChan         *chan<- runners.Msg // pointer to Court.msgChan — single source of truth
+	projectRoot     string              // working directory for ephemeral HostRunner
 }
 
 // NewRunShellCommand creates a new RunShellCommand tool.
@@ -25,7 +25,7 @@ type RunShellCommand struct {
 func NewRunShellCommand(
 	hostChecker func(string) (bool, bool),
 	runner runners.Runner,
-	msgChan chan<- runners.Msg,
+	msgChan *chan<- runners.Msg,
 	projectRoot string,
 ) *RunShellCommand {
 	return &RunShellCommand{
@@ -42,6 +42,15 @@ func (t *RunShellCommand) Name() string {
 
 func (t *RunShellCommand) Description() string {
 	return "Executes a shell command in a persistent shell session inside a container. Current working directory is maintained between commands. IMPORTANT: Each command runs in an isolated subshell for stability and predictability."
+}
+
+// msgChanValue safely dereferences the msgChan pointer, returning a nil
+// channel if the pointer itself is nil.
+func (t *RunShellCommand) msgChanValue() chan<- runners.Msg {
+	if t.msgChan == nil {
+		return nil
+	}
+	return *t.msgChan
 }
 
 func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error) {
@@ -72,7 +81,7 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 
 		// Create ephemeral host runner and run directly on host
 		hostRunner := runners.NewHostRunner(0, t.projectRoot)
-		hostRunner.SetMessageChannel(t.msgChan)
+		hostRunner.SetMessageChannel(t.msgChanValue())
 		runnerOutput, err := hostRunner.Run(ctx, runnerInput)
 		output.Output = runnerOutput.Output
 		output.ExitCode = runnerOutput.ExitCode
@@ -103,10 +112,8 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		if _, isMissing := runErr.(runners.SandboxMissingError); isMissing {
 			slog.Warn("sandbox not available, running on host", "command", runnerInput.Command)
 			hostRunner := runners.NewHostRunner(0, t.projectRoot)
-			hostRunner.SetMessageChannel(t.msgChan)
-			// When no approval channel is available, bypass approval since the
-			// user implicitly approved by running the ritual.
-			bypassApproval := t.msgChan == nil
+			hostRunner.SetMessageChannel(t.msgChanValue())
+			bypassApproval := t.msgChan == nil || *t.msgChan == nil
 			hostOutput, hostErr := hostRunner.Run(ctx, runners.Input{
 				Command:        runnerInput.Command,
 				Description:    runnerInput.Description,
@@ -118,8 +125,8 @@ func (t *RunShellCommand) Call(ctx context.Context, input string) (string, error
 		} else if _, isSetupMissing := runErr.(runners.SandboxSetupMissingError); isSetupMissing {
 			slog.Warn("sandbox setup missing, running on host", "command", runnerInput.Command)
 			hostRunner := runners.NewHostRunner(0, t.projectRoot)
-			hostRunner.SetMessageChannel(t.msgChan)
-			bypassApproval := t.msgChan == nil
+			hostRunner.SetMessageChannel(t.msgChanValue())
+			bypassApproval := t.msgChan == nil || *t.msgChan == nil
 			hostOutput, hostErr := hostRunner.Run(ctx, runners.Input{
 				Command:        runnerInput.Command,
 				Description:    runnerInput.Description,

@@ -17,7 +17,7 @@ import (
 // is invoked when RequestZhengming is called on a MinisterBase.
 func TestOnZhengmingRaisedCallbackFired(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	base.SetNotify(func(msg any) {})
 
 	var raisedMu sync.Mutex
@@ -41,7 +41,7 @@ func TestOnZhengmingRaisedCallbackFired(t *testing.T) {
 // is invoked when AnswerZhengming is called on a MinisterBase.
 func TestOnZhengmingResolvedCallbackFired(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	base.SetNotify(func(msg any) {})
 
 	var resolvedMu sync.Mutex
@@ -70,7 +70,7 @@ func TestOnZhengmingResolvedCallbackFired(t *testing.T) {
 // is NOT called when AnswerZhengming fails (e.g., request not found).
 func TestOnZhengmingResolvedNotCalledOnMissingRequest(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 
 	resolvedCalled := false
 	base.SetOnZhengmingResolved(func() {

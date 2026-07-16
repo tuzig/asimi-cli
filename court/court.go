@@ -107,6 +107,8 @@ type Court struct {
 
 	// msgChan is the approval channel for ephemeral HostRunner instances
 	// used by the shell tool. Set by SetRunnerMessageChannel (via Subscribe).
+	// All holders (tools, ministers) access this via pointer so they see
+	// the updated value without explicit propagation.
 	msgChan chan<- runners.Msg
 
 	ctx    context.Context
@@ -139,7 +141,7 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 	// Create all ministers — each needs its own base (channels/maps are reference types).
 	// publish uses a closure so it works even before ritualGuard is assigned.
 	newBase := func() *MinisterBase {
-		base := NewMinisterBase(db, runner, logger, s.config.Username, s.config.Project)
+		base := NewMinisterBase(db, runner, logger, s.config.Username, s.config.Project, &s.msgChan)
 		base.publish = func(key storage.EdictKey, eventType storage.CourtEvent, payload storage.JSON) uint {
 			return s.PublishEvent(key, eventType, payload)
 		}
@@ -343,7 +345,7 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 		DBPath:             dbPath,
 		Runner:             s.runner,
 		HostChecker:        hostChecker,
-		MsgChan:            s.msgChan,
+		MsgChan:            &s.msgChan,
 		EdictManager:       edictManager,
 		ZhengmingRequester: zhengmingRequester,
 		WaitForZhengming:   waitForZhengming,
@@ -401,7 +403,7 @@ func (s *Court) updateProjectRootTools(projectRoot string) {
 
 	// Earth/Execute — shell command execution (needs runner)
 	if s.runner != nil {
-		s.toolRegistry.Update(tools.NewRunShellCommand(s.hostChecker, s.runner, s.msgChan, projectRoot))
+		s.toolRegistry.Update(tools.NewRunShellCommand(s.hostChecker, s.runner, &s.msgChan, projectRoot))
 	}
 
 	s.logger.Debug("updated project-root-dependent tools", "projectRoot", projectRoot)
@@ -935,21 +937,15 @@ func (s *Court) SetRunner(r runners.Runner) {
 	}
 }
 
-// SetRunnerMessageChannel sets the message channel on the runner for approval requests
-// and propagates it to all ministers so ephemeral HostRunner instances can use it too.
+// SetRunnerMessageChannel sets the message channel on the runner for approval requests.
+// Ministers and tools hold a pointer to s.msgChan, so updating s.msgChan here
+// is automatically visible to all of them — no explicit propagation loop needed.
 func (s *Court) SetRunnerMessageChannel(msgChan chan<- runners.Msg) {
 	if s == nil || s.runner == nil {
 		return
 	}
 	s.msgChan = msgChan
 	s.runner.SetMessageChannel(msgChan)
-	// Propagate to all ministers so their shell tools can pass msgChan
-	// to ephemeral HostRunner instances
-	for _, m := range s.ministers {
-		if setter, ok := m.(interface{ SetMessageChannel(chan<- runners.Msg) }); ok {
-			setter.SetMessageChannel(msgChan)
-		}
-	}
 }
 
 // Subscribe returns a channel carrying every TUI-bound notification produced

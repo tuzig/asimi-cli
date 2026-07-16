@@ -95,7 +95,7 @@ func (m *mockChancellorMinister) WaitForZhengming(ctx context.Context, requestID
 // newTestRitualGuard creates a RitualGuard wired for promptForAbortedRituals tests.
 func newTestRitualGuard(t *testing.T, db *gorm.DB, getMinister func(id string) Minister) *RitualGuard {
 	t.Helper()
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	rg := NewRitualGuard(RitualGuardOpts{
 		Base:         base,
 		GetMinister:  getMinister,
@@ -982,7 +982,7 @@ func TestPromptForAbortedRituals_NoAbortedRituals(t *testing.T) {
 // TestPromptForAbortedRituals_NilDB verifies that promptForAbortedRituals
 // returns safely when db is nil.
 func TestPromptForAbortedRituals_NilDB(t *testing.T) {
-	base := NewMinisterBase(nil, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(nil, nil, slog.Default(), "testuser", "testproject", nil)
 	rg := &RitualGuard{
 		MinisterBase: base,
 		getMinister:  nil,
@@ -2290,7 +2290,7 @@ func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
 		},
 	}
 
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	rg := NewRitualGuard(RitualGuardOpts{
 		Base: base,
 		GetMinister: func(id string) Minister {

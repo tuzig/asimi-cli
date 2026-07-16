@@ -23,7 +23,7 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	// Create a MinisterBase acting as the zhengming requester (chancellor's role)
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	// Capture ZhengmingPendingMsg notifications
 	var mu sync.Mutex
@@ -84,7 +84,7 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	// Create a MinisterBase acting as the zhengming requester
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	// Capture ZhengmingPendingMsg notifications
 	var mu sync.Mutex
@@ -144,7 +144,7 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	// Create a MinisterBase acting as the zhengming requester
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.SetNotify(func(msg any) {}) // discard notifications
 
 	// Build tool registry — request_zhengming is now a factory extra tool

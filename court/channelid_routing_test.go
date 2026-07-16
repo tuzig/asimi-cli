@@ -29,7 +29,7 @@ func TestForgeChannelID_Routing(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 
 	// Create Forge with mock LLM client
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	forge := NewForge(base)
 	forge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
@@ -84,7 +84,7 @@ func TestForgeChannelID_DirectStreamTask(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 
 	// Create Forge with mock LLM client
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	forge := NewForge(base)
 	forge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
@@ -140,7 +140,7 @@ func TestJudgeChannelID_Routing(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 
 	// Create Judge with mock LLM client
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	judge := NewJudge(base, nil)
 	judge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
@@ -196,7 +196,7 @@ func TestSageChannelID_Routing(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 
 	// Create Sage with mock LLM client
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	sage := NewSage(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 

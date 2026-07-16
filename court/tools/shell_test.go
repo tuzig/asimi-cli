@@ -116,8 +116,9 @@ func TestRunShellCommandHostOverrideWithMsgChan(t *testing.T) {
 	hostChecker := func(cmd string) (bool, bool) { return true, true }
 
 	// Create a message channel to capture approval requests
-	msgChan := make(chan runners.Msg, 1)
-	tool := NewRunShellCommand(hostChecker, mockRunner, msgChan, t.TempDir())
+	ch := make(chan runners.Msg, 1)
+	var msgChan chan<- runners.Msg = ch
+	tool := NewRunShellCommand(hostChecker, mockRunner, &msgChan, t.TempDir())
 
 	// Run in a goroutine since it blocks waiting for approval
 	done := make(chan struct{})
@@ -132,7 +133,7 @@ func TestRunShellCommandHostOverrideWithMsgChan(t *testing.T) {
 
 	// Wait for the approval request to arrive on msgChan
 	select {
-	case msg := <-msgChan:
+	case msg := <-ch:
 		// Verify it's an approval request
 		approvalMsg, ok := msg.(runners.ApprovalRequestMsg)
 		require.True(t, ok, "expected ApprovalRequestMsg, got %T", msg)
@@ -155,8 +156,9 @@ func TestRunShellCommandSandboxMissingFallbackWithMsgChan(t *testing.T) {
 		},
 	}
 
-	msgChan := make(chan runners.Msg, 1)
-	tool := NewRunShellCommand(nil, mockRunner, msgChan, t.TempDir())
+	ch := make(chan runners.Msg, 1)
+	var msgChan chan<- runners.Msg = ch
+	tool := NewRunShellCommand(nil, mockRunner, &msgChan, t.TempDir())
 
 	done := make(chan struct{})
 	go func() {
@@ -170,7 +172,7 @@ func TestRunShellCommandSandboxMissingFallbackWithMsgChan(t *testing.T) {
 
 	// Wait for the approval request
 	select {
-	case msg := <-msgChan:
+	case msg := <-ch:
 		approvalMsg, ok := msg.(runners.ApprovalRequestMsg)
 		require.True(t, ok, "expected ApprovalRequestMsg, got %T", msg)
 		assert.Equal(t, "echo hello", approvalMsg.Command)
@@ -180,6 +182,77 @@ func TestRunShellCommandSandboxMissingFallbackWithMsgChan(t *testing.T) {
 	}
 
 	<-done
+}
+
+// TestRunShellCommandSandboxMissingFallback_NonNilPointerNilChannel tests the
+// critical production path: buildToolRegistry passes &s.msgChan (non-nil pointer)
+// but before Subscribe(), s.msgChan is still nil. If a sandbox-missing fallback
+// fires in this state, bypassApproval must be true — the command must NOT block
+// waiting for approval on a nil channel.
+func TestRunShellCommandSandboxMissingFallback_NonNilPointerNilChannel(t *testing.T) {
+	mockRunner := &mockRunner{
+		runFn: func(ctx context.Context, input runners.Input) (runners.Output, error) {
+			return runners.Output{}, runners.SandboxMissingError{}
+		},
+	}
+
+	// Non-nil pointer to a nil channel — the exact state after buildToolRegistry
+	// but before Subscribe(). bypassApproval must be true so the host runner
+	// doesn't block on a nil channel.
+	var msgChan chan<- runners.Msg // nil channel
+	tool := NewRunShellCommand(nil, mockRunner, &msgChan, t.TempDir())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
+		require.NoError(t, err)
+		var output runners.Output
+		require.NoError(t, json.Unmarshal([]byte(result), &output))
+		assert.Contains(t, output.Output, "hello")
+		assert.Equal(t, "0", output.ExitCode)
+	}()
+
+	select {
+	case <-done:
+		// Success — command ran on host with bypassApproval=true, no hang.
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out — command likely blocked waiting for approval on nil channel (bypassApproval was not set)")
+	}
+}
+
+// TestRunShellCommandHostOverride_NonNilPointerNilChannel tests the same
+// nil-pointer-to-nil-channel scenario but through the host-override path
+// (shouldRunOnHost=true, needsApproval=false).
+func TestRunShellCommandHostOverride_NonNilPointerNilChannel(t *testing.T) {
+	mockRunner := &mockRunner{
+		runFn: func(ctx context.Context, input runners.Input) (runners.Output, error) {
+			return runners.Output{Output: "should not be called", ExitCode: "0"}, nil
+		},
+	}
+
+	hostChecker := func(cmd string) (bool, bool) { return true, false }
+
+	var msgChan chan<- runners.Msg // nil channel
+	tool := NewRunShellCommand(hostChecker, mockRunner, &msgChan, t.TempDir())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		result, err := tool.Call(context.Background(), `{"command":"echo hello","description":"test"}`)
+		require.NoError(t, err)
+		var output runners.Output
+		require.NoError(t, json.Unmarshal([]byte(result), &output))
+		assert.Contains(t, output.Output, "hello")
+		assert.Equal(t, "0", output.ExitCode)
+	}()
+
+	select {
+	case <-done:
+		// Success — host override ran without blocking.
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out — host override likely blocked waiting for approval on nil channel")
+	}
 }
 
 // mockRunner implements runners.Runner for testing

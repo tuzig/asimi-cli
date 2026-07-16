@@ -195,7 +195,7 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 	}
 
 	court := &Court{ministers: ministers, logger: slog.Default()}
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	court.ritualGuard = NewRitualGuard(RitualGuardOpts{
 		Base:        base,
 		GetMinister: court.GetMinister,

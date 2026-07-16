@@ -204,7 +204,7 @@ type MinisterBase struct {
 	config       *SessionConfig
 	repoInfo     repo.RepoInfo
 	runner       runners.Runner
-	msgChan      chan<- runners.Msg // channel for host-side approval requests
+	msgChan      *chan<- runners.Msg // pointer to Court.msgChan — single source of truth
 	logger       *slog.Logger
 	notify       internal.NotifyFunc
 	prompts      chan *Prompt
@@ -251,7 +251,7 @@ type MinisterBase struct {
 }
 
 // NewMinisterBase creates a base for all ministers with shared dependencies.
-func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, username string, project string) *MinisterBase {
+func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, username string, project string, msgChan *chan<- runners.Msg) *MinisterBase {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -259,6 +259,7 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, us
 		db:               db,
 		runner:           runner,
 		logger:           logger,
+		msgChan:          msgChan,
 		prompts:          make(chan *Prompt),
 		tasks:            make(chan *Task, 10),
 		username:         username,
@@ -425,18 +426,6 @@ func (m *MinisterBase) Scratchpad() string {
 		return ""
 	}
 	return "# Available Rituals\n" + m.getRitualSummaries()
-}
-
-// SetMessageChannel sets the message channel for approval requests.
-// Ephemeral HostRunner instances created by shell tools use this channel
-// to request user approval for host-side commands.
-func (m *MinisterBase) SetMessageChannel(msgChan chan<- runners.Msg) {
-	m.msgChan = msgChan
-}
-
-// MessageChannel returns the message channel (may be nil).
-func (m *MinisterBase) MessageChannel() chan<- runners.Msg {
-	return m.msgChan
 }
 
 // SetRunner updates the shell runner

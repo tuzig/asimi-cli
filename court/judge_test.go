@@ -51,7 +51,7 @@ func toolContextForTest(base *MinisterBase) tools.ToolContext {
 // the tools' RecordVerdictTool.sealIfComplete checks for edict-level verdicts as a completion signal.
 func TestAllManifestsQuenched_NoManifests_EdictLevelVerdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	// Create edict without any manifests
 	edict, err := CreateEdictForTest(db, "Project init edict")
@@ -86,7 +86,7 @@ func TestAllManifestsQuenched_NoManifests_EdictLevelVerdict(t *testing.T) {
 func TestRecordVerdictTool_EdictLevelVerdict(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	// Create edict without manifests
 	edict, err := CreateEdictForTest(db, "Init ritual")
@@ -115,7 +115,7 @@ func TestRecordVerdictTool_EdictLevelVerdict(t *testing.T) {
 func TestRecordVerdictTool_ManifestVerdicts(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	// Create edict with manifest
 	edict, err := CreateEdictForTest(db, "Feature with tests")
@@ -146,7 +146,7 @@ func TestRecordVerdictTool_ManifestVerdicts(t *testing.T) {
 func TestRecordVerdictTool_ManifestVerdictsFailed(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	// Create edict with manifest
 	edict, err := CreateEdictForTest(db, "Feature with failing tests")
@@ -177,7 +177,7 @@ func TestRecordVerdictTool_ManifestVerdictsFailed(t *testing.T) {
 func TestRecordVerdictTool_EdictLevelFailed(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	// Create edict without manifests
 	edict, err := CreateEdictForTest(db, "Init ritual failing")
@@ -203,7 +203,7 @@ func TestRecordVerdictTool_EdictLevelFailed(t *testing.T) {
 // edict-level verdict does NOT result in sealing.
 func TestRecordVerdictTool_EdictLevelFailedNotSealed(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	edict, err := CreateEdictForTest(db, "Failed init edict")
 	assert.NoError(t, err)
@@ -220,7 +220,7 @@ func TestRecordVerdictTool_EdictLevelFailedNotSealed(t *testing.T) {
 // a failed verdict after a passed one should not be sealed.
 func TestRecordVerdictTool_EdictLevelPassedThenFailed(t *testing.T) {
 	db := setupMinisterTestDB(t)
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject")
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 
 	edict, err := CreateEdictForTest(db, "Retried init edict")
 	assert.NoError(t, err)

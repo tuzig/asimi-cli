@@ -37,7 +37,7 @@ func TestLoadMinisters_FieldsPopulated(t *testing.T) {
 
 func TestNewMinister_KanjiInSystemPrompt(t *testing.T) {
 	def := MinisterDef{ID: "test", Kanji: "工部", Role: "You are forge.", Permissions: "rwxrwxrwx"}
-	base := NewMinisterBase(nil, nil, nil, "u", "p")
+	base := NewMinisterBase(nil, nil, nil, "u", "p", nil)
 	m := NewMinister(def, base)
 
 	expected := "工部\n\nYou are forge."
@@ -46,7 +46,7 @@ func TestNewMinister_KanjiInSystemPrompt(t *testing.T) {
 
 func TestNewMinister_SystemPromptNoKanji(t *testing.T) {
 	def := MinisterDef{ID: "test", Role: "You are a test minister.", Permissions: "rwxrwxrwx"}
-	base := NewMinisterBase(nil, nil, nil, "u", "p")
+	base := NewMinisterBase(nil, nil, nil, "u", "p", nil)
 	m := NewMinister(def, base)
 
 	assert.Equal(t, "You are a test minister.", m.SystemPrompt())
@@ -78,7 +78,7 @@ func TestLoadMinisters_KanjiNotInRole(t *testing.T) {
 
 func TestNewMinister_ToolsNilWithoutRegistry(t *testing.T) {
 	def := MinisterDef{ID: "test", Permissions: "rwxrwxrwx"}
-	base := NewMinisterBase(nil, nil, nil, "u", "p")
+	base := NewMinisterBase(nil, nil, nil, "u", "p", nil)
 	m := NewMinister(def, base)
 
 	assert.Nil(t, m.Tools())

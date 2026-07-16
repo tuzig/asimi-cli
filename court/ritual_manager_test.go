@@ -61,7 +61,7 @@ func newTestCourt(t *testing.T, db *gorm.DB) *Court {
 		logger:    slog.Default(),
 		ministers: make(map[string]Minister),
 	}
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 	s.ritualGuard = rg
 	return s
@@ -149,7 +149,7 @@ func TestDBPersistence(t *testing.T) {
 func TestBackpressure(t *testing.T) {
 	db := setupEventTestDB(t)
 	// Use a tiny channel to force backpressure
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 	// Replace the default channel with a tiny one
 	rg.eventCh = make(chan Event, 2)
@@ -267,7 +267,7 @@ func TestStartRitualFailureNotifies(t *testing.T) {
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	mockRunner := &mockCallCountRunner{
 		results: []runners.Output{
 			{Output: "boom\n", ExitCode: "1"},
@@ -336,7 +336,7 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 	db := setupEventTestDB(t)
 	s := newTestCourt(t, db)
 
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	base.publish = s.PublishEvent
 
 	err := base.EmitEvent(storage.EdictKey{ID: 10}, "edict_assigned", storage.JSON{"from": "minister"})
@@ -365,7 +365,7 @@ func TestMinisterBaseEmitEvent_WithPublish(t *testing.T) {
 func TestMinisterBaseEmitEvent_Fallback(t *testing.T) {
 	db := setupEventTestDB(t)
 
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	// No publish set — should fall back to DB-only
 
 	err := base.EmitEvent(storage.EdictKey{ID: 20}, "edict_created", storage.JSON{"from": "fallback"})
@@ -384,7 +384,7 @@ func TestMinisterBaseEmitEvent_Fallback(t *testing.T) {
 // Message formatting is handled by the TUI layer; ritual_manager only routes notifiable events.
 func TestRitualGuard_EventNotification(t *testing.T) {
 	db := setupEventTestDB(t)
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	rg := NewRitualGuard(RitualGuardOpts{Base: base})
 
 	// Collect notifications
@@ -551,7 +551,7 @@ func TestAbortStaleRitualsOnStart(t *testing.T) {
 	}
 
 	// Create RitualGuard with 5 minute flatlineAge and matching username/project
-	base := NewMinisterBase(db, nil, logger, "test", "test/project")
+	base := NewMinisterBase(db, nil, logger, "test", "test/project", nil)
 	rg := &RitualGuard{
 		MinisterBase: base,
 		flatlineAge:  5 * time.Minute,
@@ -592,7 +592,7 @@ func TestNoAbortForFreshRituals(t *testing.T) {
 	}
 
 	// Create RitualGuard with 5 minute flatlineAge and matching username/project
-	base := NewMinisterBase(db, nil, logger, "test", "test/project")
+	base := NewMinisterBase(db, nil, logger, "test", "test/project", nil)
 	rg := &RitualGuard{
 		MinisterBase: base,
 		flatlineAge:  5 * time.Minute,
@@ -655,7 +655,7 @@ func TestAbortStaleRituals_OtherProjectExcluded(t *testing.T) {
 	}
 
 	// Create RitualGuard with the local user/project
-	base := NewMinisterBase(db, nil, logger, "test", "test/project")
+	base := NewMinisterBase(db, nil, logger, "test", "test/project", nil)
 	rg := &RitualGuard{
 		MinisterBase: base,
 		flatlineAge:  5 * time.Minute,
@@ -750,7 +750,7 @@ func TestScanForStaleRituals_OtherProjectExcluded(t *testing.T) {
 	}
 
 	// Create RitualGuard with the local user/project
-	scanBase := NewMinisterBase(db, nil, logger, "test", "test/project")
+	scanBase := NewMinisterBase(db, nil, logger, "test", "test/project", nil)
 	rg := &RitualGuard{
 		MinisterBase: scanBase,
 		ritualRunner: NewRitualRunner(
@@ -846,7 +846,7 @@ func TestStartRitualQueuedWhenLocked(t *testing.T) {
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 	mockRunner := &mockCallCountRunner{
 		results: []runners.Output{
 			{Output: "ok\n", ExitCode: "0"},
@@ -1003,7 +1003,7 @@ func TestStartRitualContextCancelNoFailedNotification(t *testing.T) {
 	registry := NewRitualRegistry()
 	registry.Register(ritual)
 
-	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
 
 	// streamingCtx returns a cancellable context we control
 	ctx, cancel := context.WithCancel(context.Background())
