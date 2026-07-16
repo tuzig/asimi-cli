@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1751,6 +1752,7 @@ func (m *mockCallCountRunner) Restart(ctx context.Context) error    { return nil
 func (m *mockCallCountRunner) Close(ctx context.Context) error      { return nil }
 func (m *mockCallCountRunner) AllowFallback(bool)                   {}
 func (m *mockCallCountRunner) RunnerType() string                   { return "mock" }
+func (m *mockCallCountRunner) GetOS() string                        { return runtime.GOOS }
 func (m *mockCallCountRunner) SetMessageChannel(chan<- runners.Msg) {}
 
 func (m *mockCallCountRunner) HealthCheck(ctx context.Context) error { return nil }
@@ -1903,6 +1905,7 @@ func (m *mockCmdRunner) Restart(ctx context.Context) error    { return nil }
 func (m *mockCmdRunner) Close(ctx context.Context) error      { return nil }
 func (m *mockCmdRunner) AllowFallback(bool)                   {}
 func (m *mockCmdRunner) RunnerType() string                   { return "mock" }
+func (m *mockCmdRunner) GetOS() string                        { return runtime.GOOS }
 func (m *mockCmdRunner) SetMessageChannel(chan<- runners.Msg) {}
 
 func (m *mockCmdRunner) HealthCheck(ctx context.Context) error { return nil }

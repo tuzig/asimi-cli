@@ -202,6 +202,7 @@ func (m *errorRunner) Restart(ctx context.Context) error     { return nil }
 func (m *errorRunner) Close(ctx context.Context) error       { return nil }
 func (m *errorRunner) AllowFallback(bool)                    {}
 func (m *errorRunner) RunnerType() string                    { return "podman" }
+func (m *errorRunner) GetOS() string                         { return "linux" }
 func (m *errorRunner) SetMessageChannel(chan<- runners.Msg)  {}
 func (m *errorRunner) HealthCheck(ctx context.Context) error { return nil }
 

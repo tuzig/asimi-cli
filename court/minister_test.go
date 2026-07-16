@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -949,6 +950,7 @@ func (m *mockHealthCheckRunner) AllowFallback(bool)                           {}
 func (m *mockHealthCheckRunner) Close(context.Context) error                  { return nil }
 func (m *mockHealthCheckRunner) Restart(context.Context) error                { return nil }
 func (m *mockHealthCheckRunner) RunnerType() string                           { return "mock" }
+func (m *mockHealthCheckRunner) GetOS() string                                { return runtime.GOOS }
 func (m *mockHealthCheckRunner) SetMessageChannel(msgChan chan<- runners.Msg) {}
 
 // HealthCheck implements runners.Runner.HealthCheck
@@ -1300,10 +1302,9 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 			ProjectRoot: "/custom/project/root",
 			Branch:      "feature-branch",
 		}
-		result := sessBuildEnvBlock(info)
-		assert.Contains(t, result, "/custom/project/root", "should contain project root from repoInfo")
+		result := sessBuildEnvBlock(info, nil)
 		assert.Contains(t, result, "feature-branch", "should contain branch from repoInfo")
-		assert.Contains(t, result, "Working copy path:", "should include working copy path label")
+		assert.Contains(t, result, "CWD:", "should include working copy path label")
 	})
 
 	t.Run("empty ProjectRoot omits working copy path", func(t *testing.T) {
@@ -1311,7 +1312,7 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 			ProjectRoot: "",
 			Branch:      "main",
 		}
-		result := sessBuildEnvBlock(info)
+		result := sessBuildEnvBlock(info, nil)
 		assert.NotContains(t, result, "Working copy path:", "should not include working copy path when empty")
 		assert.Contains(t, result, "main", "should still contain branch")
 	})
@@ -1321,9 +1322,28 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 			ProjectRoot: "/test/root",
 			Branch:      "main",
 		}
-		result := sessBuildEnvBlock(info)
+		result := sessBuildEnvBlock(info, nil)
 		assert.Contains(t, result, "**OS:**", "should include OS info")
 		assert.Contains(t, result, "**Shell:**", "should include Shell info")
+	})
+
+	t.Run("OS from runner GetOS", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/test/root",
+			Branch:      "main",
+		}
+		runner := &mockHealthCheckRunner{}
+		result := sessBuildEnvBlock(info, runner)
+		assert.Contains(t, result, fmt.Sprintf("**OS:** %s", runtime.GOOS), "should use runner GetOS for OS info")
+	})
+
+	t.Run("OS is unknown when runner is nil", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/test/root",
+			Branch:      "main",
+		}
+		result := sessBuildEnvBlock(info, nil)
+		assert.Contains(t, result, "**OS:** unknown", "should show unknown when runner is nil")
 	})
 
 	t.Run("worktree info when IsWorktree is true", func(t *testing.T) {
@@ -1332,7 +1352,7 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 			Branch:      "feature",
 			IsWorktree:  true,
 		}
-		result := sessBuildEnvBlock(info)
+		result := sessBuildEnvBlock(info, nil)
 		assert.Contains(t, result, "worktree", "should mention worktree when IsWorktree is true")
 	})
 
@@ -1342,7 +1362,7 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 			Branch:      "main",
 			IsWorktree:  false,
 		}
-		result := sessBuildEnvBlock(info)
+		result := sessBuildEnvBlock(info, nil)
 		assert.NotContains(t, result, "worktree", "should not mention worktree when not a worktree")
 	})
 }

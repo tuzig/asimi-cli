@@ -55,6 +55,7 @@ type Runner interface {
 	Close(ctx context.Context) error
 	AllowFallback(bool)
 	RunnerType() string // Returns "podman" or "host"
+	GetOS() string      // Returns the OS where commands execute ("linux" for sandbox, runtime.GOOS for host)
 	SetMessageChannel(msgChan chan<- Msg)
 	HealthCheck(ctx context.Context) error
 }

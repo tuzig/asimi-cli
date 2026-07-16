@@ -2,6 +2,7 @@ package court
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/afittestide/asimi/internal/config"
@@ -25,6 +26,7 @@ func (r *recordingMsgChanRunner) Close(context.Context) error   { return nil }
 func (r *recordingMsgChanRunner) Restart(context.Context) error { return nil }
 func (r *recordingMsgChanRunner) AllowFallback(bool)            {}
 func (r *recordingMsgChanRunner) RunnerType() string            { return "recording" }
+func (r *recordingMsgChanRunner) GetOS() string                 { return runtime.GOOS }
 
 // TestSetRunnerMessageChannel_PropagatesToMinisters verifies that
 // SetRunnerMessageChannel sets the msg channel on the runner AND on every

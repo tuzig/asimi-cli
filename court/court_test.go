@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -405,6 +406,7 @@ func (r *msgForwardingRunner) Close(context.Context) error   { return nil }
 func (r *msgForwardingRunner) Restart(context.Context) error { return nil }
 func (r *msgForwardingRunner) AllowFallback(bool)            {}
 func (r *msgForwardingRunner) RunnerType() string            { return "msg_forwarding" }
+func (r *msgForwardingRunner) GetOS() string                 { return runtime.GOOS }
 
 // TestClearAllSchedulers_NoSessions verifies that clearAllSchedulers returns 0
 // when ministers exist but have no sessions.

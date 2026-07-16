@@ -96,6 +96,10 @@ func (r *HostRunner) RunnerType() string {
 	return "host"
 }
 
+func (r *HostRunner) GetOS() string {
+	return runtime.GOOS
+}
+
 func (r *HostRunner) AllowFallback(allow bool) {
 }
 

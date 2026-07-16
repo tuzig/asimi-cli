@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/afittestide/asimi/internal/repo"
@@ -19,6 +20,7 @@ func (n *noopRunner) Restart(_ context.Context) error        { return nil }
 func (n *noopRunner) Close(_ context.Context) error          { return nil }
 func (n *noopRunner) AllowFallback(_ bool)                   {}
 func (n *noopRunner) RunnerType() string                     { return "test" }
+func (n *noopRunner) GetOS() string                          { return runtime.GOOS }
 func (n *noopRunner) SetMessageChannel(_ chan<- runners.Msg) {}
 func (n *noopRunner) HealthCheck(_ context.Context) error    { return nil }
 

@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -103,6 +102,8 @@ type Minister interface {
 	SubmitPrompt(p *Prompt)
 	// RepoInfo returns the repository information
 	RepoInfo() repo.RepoInfo
+	// Runner returns the shell runner (may be nil)
+	Runner() runners.Runner
 	// Model returns the minister's LLM client
 	Model() LLMProvider
 	// GetConfig returns the minister's LLM configuration
@@ -542,7 +543,7 @@ func buildSystemPrompt(minister Minister, config *SessionConfig, key storage.Edi
 	}
 
 	// Get repo info and build environment block
-	envBlock := sessBuildEnvBlock(minister.RepoInfo())
+	envBlock := sessBuildEnvBlock(minister.RepoInfo(), minister.Runner())
 
 	var buf bytes.Buffer
 	ministerTmpl.Execute(&buf, map[string]string{
@@ -1360,13 +1361,15 @@ func (m *MinisterBase) GetSession() *Session {
 }
 
 // sessBuildEnvBlock constructs a markdown summary of the OS, shell, and key paths.
-func sessBuildEnvBlock(repoInfo repo.RepoInfo) string {
+func sessBuildEnvBlock(repoInfo repo.RepoInfo, runner runners.Runner) string {
 	var env strings.Builder
 
-	env.WriteString(fmt.Sprintf("- **OS:** %s\n", runtime.GOOS))
-	if cwd := repoInfo.ProjectRoot; cwd != "" {
-		env.WriteString(fmt.Sprintf("- **Working copy path:** %s\n", cwd))
+	goos := "unknown"
+	if runner != nil {
+		goos = runner.GetOS()
 	}
+	env.WriteString(fmt.Sprintf("- **OS:** %s\n", goos))
+	env.WriteString(fmt.Sprintf("- **CWD:** project's root\n"))
 
 	shell := os.Getenv("SHELL")
 	if shell == "" {

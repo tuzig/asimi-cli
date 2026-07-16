@@ -985,6 +985,10 @@ func (r *PodmanRunner) RunnerType() string {
 	return "podman"
 }
 
+func (r *PodmanRunner) GetOS() string {
+	return "linux"
+}
+
 // ContainerID returns the container name if the container has been started
 func (r *PodmanRunner) ContainerID() string {
 	r.mu.Lock()

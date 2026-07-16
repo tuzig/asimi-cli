@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -977,6 +978,7 @@ func (m *blockingRunner) Restart(ctx context.Context) error    { return nil }
 func (m *blockingRunner) Close(ctx context.Context) error      { return nil }
 func (m *blockingRunner) AllowFallback(bool)                   {}
 func (m *blockingRunner) RunnerType() string                   { return "blocking" }
+func (m *blockingRunner) GetOS() string                        { return runtime.GOOS }
 func (m *blockingRunner) SetMessageChannel(chan<- runners.Msg) {}
 func (m *blockingRunner) HealthCheck(ctx context.Context) error { return nil }
 

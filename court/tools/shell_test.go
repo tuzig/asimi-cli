@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"testing"
 	"time"
 
@@ -221,6 +222,10 @@ func (m *mockRunner) RunnerType() string {
 		return m.runnerType
 	}
 	return "mock"
+}
+
+func (m *mockRunner) GetOS() string {
+	return runtime.GOOS
 }
 
 func (m *mockRunner) SetMessageChannel(msgChan chan<- runners.Msg) {
