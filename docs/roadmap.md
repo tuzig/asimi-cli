@@ -7,9 +7,6 @@ Below is what is left to develop:
 ### Bug Fixes & Polish (active, close to done)
 
 - Fix Zhengming answering-mode height calculation e643 *(needs ruler seal)*
-- Fix double notification on ritual cancellation e651
-- Fix await_ruler_seal comma-separated manifest paths e637
-- Pre-create ritual tab on "Implement" e654
 - Fix "minister not found" on ritual tabs e647
 - PodmanRunner: per-command exec + concurrent scheduler e657
 

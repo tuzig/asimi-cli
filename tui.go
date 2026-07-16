@@ -2051,7 +2051,18 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Session already stopped — just reset UI state, don't re-cancel ctx.
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("STREAM_INTERRUPTED", fmt.Sprintf("AI streaming interrupted, partial content: %s", msg.PartialContent))
-		chat.AddMessage(systemPrefix + "ABORTED")
+		// Suppress the "ABORTED" message when the ritual tab is in chat mode
+		// (paused for ruler interjection) — the step was intentionally
+		// interrupted, not aborted. The pause message already told the user.
+		if isRitualChannel(msg.ChannelID) {
+			if tab := m.tabs.TabByTarget(msg.ChannelID); tab != nil && tab.ChatMode {
+				slog.Debug("streamInterruptedMsg suppressed (ritual paused)", "channel", msg.ChannelID)
+			} else {
+				chat.AddMessage(systemPrefix + "ABORTED")
+			}
+		} else {
+			chat.AddMessage(systemPrefix + "ABORTED")
+		}
 		slog.Debug("streamInterruptedMsg", "partial_content_length", len(msg.PartialContent))
 		m.tabs.ClearStreamingByTab(msg.ChannelID)
 		if !m.tabs.AnyStreaming() {
@@ -3805,6 +3816,16 @@ func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
 	case "Status":
 		return loadEdictDashboardCmd(m, edictID)
 	case "Implement":
+		// Pre-create the ritual tab immediately so the user sees instant
+		// feedback rather than waiting for the daemon-side ritual manager
+		// to send the first RitualStepMsg back. The ritual channel ID
+		// follows the "e<N>" convention (see ritualChannelID).
+		channelID := fmt.Sprintf("e%d", edictID)
+		if m.tabs.TabByTarget(channelID) == nil {
+			m.tabs.Add(channelID, "ritual", channelID)
+			chat := m.tabs.ChatByTab(channelID)
+			chat.AddMessage(fmt.Sprintf("%sPreparing ritual for edict %d…", ritualPrefix, edictID))
+		}
 		return tea.Batch(enactRitualForEdict(m, edictID, "swift-strike"), reloadEdictsListCmd(m))
 	case "Seal":
 		return handleEdictSeal(m, edictID, "")

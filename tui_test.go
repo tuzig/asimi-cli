@@ -4497,6 +4497,19 @@ func TestDispatchEdictAction_Implement(t *testing.T) {
 
 	cmd := dispatchEdictAction(model, 42, []string{"Implement"})
 	require.NotNil(t, cmd)
+
+	// Pre-created ritual tab should exist immediately with "e42" target
+	tab := model.tabs.TabByTarget("e42")
+	require.NotNil(t, tab, "ritual tab should be pre-created for edict 42")
+	assert.Equal(t, TabType("ritual"), tab.Type)
+
+	// The placeholder message should be in the tab's chat history
+	chat := model.tabs.ChatByTab("e42")
+	require.NotEmpty(t, chat.Messages, "placeholder message should be added to ritual tab")
+	last := chat.Messages[len(chat.Messages)-1]
+	assert.Contains(t, last.Content, "Preparing ritual for edict 42")
+	assert.Equal(t, MessageTypeSystem, last.Type)
+
 	msgs := extractBatchMsgs(t, cmd)
 	// Batch should contain edictsLoadedMsg (from reload); enactRitualForEdict
 	// returns nil since the ritual manager handles user notifications
@@ -4507,6 +4520,21 @@ func TestDispatchEdictAction_Implement(t *testing.T) {
 		}
 	}
 	assert.True(t, foundReload, "expected edictsLoadedMsg for reload in Implement action")
+}
+
+func TestDispatchEdictAction_Implement_NoDuplicateTab(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+
+	// First call creates the ritual tab
+	_ = dispatchEdictAction(model, 42, []string{"Implement"})
+	tabCount := model.tabs.TabCount()
+	require.NotNil(t, model.tabs.TabByTarget("e42"), "ritual tab should exist after first call")
+
+	// Second call must NOT create a duplicate tab
+	_ = dispatchEdictAction(model, 42, []string{"Implement"})
+	assert.Equal(t, tabCount, model.tabs.TabCount(), "tab count should not increase on duplicate Implement")
 }
 
 func TestDispatchEdictAction_Cancel(t *testing.T) {
@@ -5507,4 +5535,89 @@ func TestSubmitToCourt_NonRitualTab_RoutesToTabTarget(t *testing.T) {
 	// Should route to the tab target (chancellor), not a minister
 	assert.Equal(t, "chancellor", mock.submitPromptTarget)
 	assert.Empty(t, mock.pausedChannels, "PauseRitual should not be called on non-ritual tab")
+}
+
+func TestStreamInterruptedMsg_SuppressedWhenRitualPaused(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab in chat mode (paused)
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.ChatMode = true
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	chat := model.tabs.ChatByTab("e647")
+	chat.Messages = nil // start clean
+
+	msg := court.StreamInterruptedMsg{
+		ChannelID:      "e647",
+		PartialContent: "partial...",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	chat = updatedModel.tabs.ChatByTab("e647")
+	// No "ABORTED" message should be added when ritual is paused
+	for _, m := range chat.Messages {
+		assert.NotContains(t, m.Content, "ABORTED",
+			"ABORTED should not be shown when ritual tab is in chat mode (paused)")
+	}
+}
+
+func TestStreamInterruptedMsg_ShownWhenRitualNotPaused(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab NOT in chat mode (running, not paused)
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	chat := model.tabs.ChatByTab("e647")
+	chat.Messages = nil // start clean
+
+	msg := court.StreamInterruptedMsg{
+		ChannelID:      "e647",
+		PartialContent: "partial...",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	chat = updatedModel.tabs.ChatByTab("e647")
+	// "ABORTED" should be shown when ritual is not paused
+	found := false
+	for _, m := range chat.Messages {
+		if strings.Contains(m.Content, "ABORTED") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "ABORTED should be shown when ritual tab is not in chat mode")
+}
+
+func TestStreamInterruptedMsg_ShownOnNonRitualTab(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Default tab is chancellor (non-ritual)
+	chat := model.tabs.ChatByTab("chancellor")
+	chat.Messages = nil // start clean
+
+	msg := court.StreamInterruptedMsg{
+		ChannelID:      "chancellor",
+		PartialContent: "partial...",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	chat = updatedModel.tabs.ChatByTab("chancellor")
+	found := false
+	for _, m := range chat.Messages {
+		if strings.Contains(m.Content, "ABORTED") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "ABORTED should be shown on non-ritual tabs")
 }
