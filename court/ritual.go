@@ -699,13 +699,13 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			exec.Notify(RitualStepMsg{
 				StepName: raw,
 				Status:   "ritual_failed",
-				Message:  err.Error(),
+				Message:  getRulersError(err),
 			})
 			r.emitEvent(execKey, storage.EventRitualFailed, storage.JSON{
 				"ritual":       exec.RitualName,
 				"execution_id": exec.ID,
 				"step":         raw,
-				"error":        err.Error(),
+				"error":        getRulersError(err),
 			})
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
@@ -719,6 +719,14 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		})
 		result, err := r.runGivenStep(ctx, exec, entry)
 		if err != nil {
+			// Context cancelled (user interrupt) — the session layer already
+			// sent StreamInterruptedMsg which surfaces as 🛑 ABORTED in the
+			// TUI. Skip the ritual_failed notification.
+			if errors.Is(err, context.Canceled) {
+				exec.State = RitualStateAborted
+				r.saveExecution(exec)
+				return fmt.Errorf("background given %q failed: %w", raw, err)
+			}
 			exec.State = RitualStateFailed
 			r.saveExecution(exec)
 			exec.notifyAny(runners.ToolCallErrorMsg{
@@ -732,13 +740,13 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			exec.Notify(RitualStepMsg{
 				StepName: entry.Key,
 				Status:   "ritual_failed",
-				Message:  err.Error(),
+				Message:  getRulersError(err),
 			})
 			r.emitEvent(execKey, storage.EventRitualFailed, storage.JSON{
 				"ritual":       exec.RitualName,
 				"execution_id": exec.ID,
 				"step":         entry.Key,
-				"error":        err.Error(),
+				"error":        getRulersError(err),
 			})
 			return fmt.Errorf("background given %q failed: %w", raw, err)
 		}
@@ -759,7 +767,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 			exec.State = RitualStateAborted
 			r.saveExecution(exec)
 			exec.Notify(RitualStepMsg{
-				Status:  "ritual_failed",
+				Status:  "ritual_aborted",
 				Message: "aborted by user",
 			})
 			return ctx.Err()
@@ -823,7 +831,7 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 					"ritual":           exec.RitualName,
 					"execution_id":     exec.ID,
 					"step":             step.Name,
-					"error":            err.Error(),
+					"error":            getRulersError(err),
 					"last_step_output": lastStepOutput,
 				})
 				return err

@@ -180,6 +180,13 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 			return
 		}
 		if err := rg.ritualRunner.Run(ctx, exec); err != nil {
+			if errors.Is(err, context.Canceled) {
+				// Context cancelled (user interrupt) — StreamInterruptedMsg
+				// already surfaces as 🛑 ABORTED in the TUI. No duplicate
+				// ritual_failed notification needed.
+				rg.logger.Info("ritual cancelled by ruler", "ritual", ritualName)
+				return
+			}
 			rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
 			rg.notify(RitualStepMsg{
 				ChannelID:  ritualChannelID(key.ID),
@@ -187,12 +194,12 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 				ExecutionID: exec.ID,
 				EdictID:     key.ID,
 				Status:      "ritual_failed",
-				Message:     err.Error(),
+				Message:     getRulersError(err),
 			})
 			rg.ritualRunner.emitEvent(key, storage.EventRitualFailed, storage.JSON{
 				"ritual":       ritualName,
 				"execution_id": exec.ID,
-				"error":        err.Error(),
+				"error":        getRulersError(err),
 			})
 		}
 	}()

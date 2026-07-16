@@ -964,3 +964,113 @@ func TestStartRitualQueuedWhenLocked(t *testing.T) {
 		}
 	}
 }
+
+// blockingRunner blocks on the context until it is cancelled, then returns
+// a non-zero exit code so the ritual step fails with the cancelled context.
+type blockingRunner struct{}
+
+func (m *blockingRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
+	<-ctx.Done()
+	return runners.Output{Output: "interrupted\n", ExitCode: "1"}, ctx.Err()
+}
+func (m *blockingRunner) Restart(ctx context.Context) error    { return nil }
+func (m *blockingRunner) Close(ctx context.Context) error      { return nil }
+func (m *blockingRunner) AllowFallback(bool)                   {}
+func (m *blockingRunner) RunnerType() string                   { return "blocking" }
+func (m *blockingRunner) SetMessageChannel(chan<- runners.Msg) {}
+func (m *blockingRunner) HealthCheck(ctx context.Context) error { return nil }
+
+// TestStartRitualContextCancelNoFailedNotification verifies that when a
+// ritual is cancelled via context cancellation (user abort), startRitual
+// does NOT send a "ritual_failed" notification. StreamInterruptedMsg already
+// surfaces as 🛑 ABORTED in the TUI.
+func TestStartRitualContextCancelNoFailedNotification(t *testing.T) {
+	db := setupEventTestDB(t)
+
+	ritual := &RitualDef{
+		Name:      "cancel-test",
+		Background: []string{"!sleep 30"},
+		Steps: []RitualStep{
+			{Name: "work", Minister: "forge", Task: "do work"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject")
+
+	// streamingCtx returns a cancellable context we control
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rg := &RitualGuard{
+		MinisterBase:   base,
+		ritualRegistry: registry,
+		ritualRunner: NewRitualRunner(
+			registry,
+			func(id string) Minister { return nil },
+			nil,
+			db, &blockingRunner{}, slog.Default(), repo.RepoInfo{},
+		),
+		streamingCtx: func(string) context.Context { return ctx },
+	}
+
+	var notified []RitualStepMsg
+	var mu sync.Mutex
+	rg.SetNotify(func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			mu.Lock()
+			notified = append(notified, stepMsg)
+			mu.Unlock()
+		}
+	})
+
+	key := storage.EdictKey{ID: 88, Username: "testuser", Project: "testproject"}
+	rg.startRitual("cancel-test", key, nil)
+
+	// Give the ritual time to start and block on the runner
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel the context (simulates user abort)
+	cancel()
+
+	// Wait for the goroutine to process the cancellation
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// No "ritual_failed" notification should have been sent
+	for _, msg := range notified {
+		if msg.Status == "ritual_failed" {
+			t.Errorf("expected no ritual_failed notification on context cancel, got: %+v", msg)
+		}
+	}
+
+	// The inner ctx.Done() path should send "ritual_aborted" (not "ritual_failed")
+	// only when cancellation happens between steps. When cancellation occurs
+	// during a background step, no notification is needed (StreamInterruptedMsg
+	// already surfaces as 🛑 ABORTED).
+	var abortedMsg *RitualStepMsg
+	for i := range notified {
+		if notified[i].Status == "ritual_aborted" {
+			abortedMsg = &notified[i]
+			break
+		}
+	}
+	if abortedMsg == nil {
+		// Acceptable: cancellation occurred during a background step, which
+		// skips the between-steps ctx.Done() path that sends "ritual_aborted".
+		// As long as no "ritual_failed" was sent, the fix is correct.
+	} else if abortedMsg.Message != "aborted by user" {
+		t.Errorf("expected message 'aborted by user', got %q", abortedMsg.Message)
+	}
+
+	// No EventRitualFailed should be persisted to DB
+	var events []storage.TianEvent
+	db.Where("event_type = ?", storage.EventRitualFailed).Find(&events)
+	if len(events) != 0 {
+		t.Errorf("expected 0 EventRitualFailed in DB on context cancel, got %d", len(events))
+	}
+}

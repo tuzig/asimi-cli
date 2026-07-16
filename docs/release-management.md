@@ -41,19 +41,8 @@ Edit line 17 in `internal/utils/asimi_version.go`:
 var AsimiVersion = "0.2.1" // Update this before each release
 ```
 
-### 3. Update README.md Roadmap
+### 3. Update docs/roadmap.md
 
-Replace completed roadmap items with new ones:
-
-1. Remove issues that are now closed
-2. Add new planned features from [open issues](https://github.com/afittestide/asimi-cli/issues)
-3. Keep the table format:
-
-```markdown
-| Feature | Description |
-|---------|-------------|
-| [#XX - Feature Name](https://github.com/afittestide/asimi-cli/issues/XX) | Brief description |
-```
 
 ### 4. Commit the Release
 

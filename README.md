@@ -144,18 +144,9 @@ Asimi mimics the vi/vim/neovim interface and extends the traditional modes:
 - **Scroll Mode** Use CTRL-B to enter the mode and scroll with your keys
 - **Select Mode** For choosing a session to resume, a model to connect to, etc.
 
-## 🗺️ Roadmap
-
-Here is what's on the drawing board:
-
-- Ministers are written in yaml and the user can change them - .agents/ministers.yaml 
-- Upgrade ministers to do multi-tasking
-- Improved ministers and workflow to follow more closely the imperial gov
-- Deep git integration
-- Ruler seal interface - reviewing and commenting on code changes
-- 3-realm based permission system to connect tools with ministers
-
 ## 🛠️ Development
+
+Asimi's roadmap can be found in ./docs/roadmap.md .
 
 ### Contributor Installation
 
