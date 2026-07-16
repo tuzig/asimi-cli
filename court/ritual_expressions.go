@@ -1213,6 +1213,9 @@ func storeGivenResult(exec *RitualExecution, key string, result interface{}) {
 }
 
 // runGivenStep executes a single given step and returns its result
+// Ported from PR #135 (Nanook contribution): cmd_running/cmd_done
+// notifications for shell steps, complementary to ToolCallScheduled/Success.
+
 func (r *RitualRunner) runGivenStep(ctx context.Context, exec *RitualExecution, entry StepDefEntry) (interface{}, error) {
 	switch entry.Kind {
 	case StepDefBash:
@@ -1220,10 +1223,20 @@ func (r *RitualRunner) runGivenStep(ctx context.Context, exec *RitualExecution, 
 			return nil, fmt.Errorf("no runner configured for bash given step")
 		}
 		cmd := r.expandTemplate(entry.Command, exec)
+		exec.Notify(RitualStepMsg{
+			StepName: entry.Key,
+			Status:   "cmd_running",
+			Message:  cmd,
+		})
 		output, err := r.runner.Run(ctx, runners.Input{
 			Command:        cmd,
 			Description:    fmt.Sprintf("given: %s", entry.Command),
 			BypassApproval: true,
+		})
+		exec.Notify(RitualStepMsg{
+			StepName: entry.Key,
+			Status:   "cmd_done",
+			Message:  output.Output,
 		})
 		if err != nil {
 			return nil, err
@@ -1247,10 +1260,20 @@ func (r *RitualRunner) runThenStep(ctx context.Context, exec *RitualExecution, e
 			return fmt.Errorf("no runner configured for bash then step")
 		}
 		cmd := r.expandTemplate(entry.Command, exec)
+		exec.Notify(RitualStepMsg{
+			StepName: entry.Key,
+			Status:   "cmd_running",
+			Message:  cmd,
+		})
 		output, err := r.runner.Run(ctx, runners.Input{
 			Command:        cmd,
 			Description:    fmt.Sprintf("then: %s", entry.Command),
 			BypassApproval: true,
+		})
+		exec.Notify(RitualStepMsg{
+			StepName: entry.Key,
+			Status:   "cmd_done",
+			Message:  output.Output,
 		})
 		if err != nil {
 			return err

@@ -4187,3 +4187,168 @@ func TestRitualPauseNotRunning(t *testing.T) {
 	assert.False(t, runner.PauseRitual("e999"), "PauseRitual should return false when no step is running")
 	assert.False(t, runner.ResumeRitual("e999"), "ResumeRitual should return false when nothing is paused")
 }
+
+// Ported from PR #135 (Nanook contribution): verify cmd_running/cmd_done
+// notifications are emitted for shell (bash) given and then steps.
+
+// TestThenStepEmitsCmdRunningDone verifies that a bash then step emits
+// RitualStepMsg{Status:"cmd_running"} before and {Status:"cmd_done"} after.
+func TestThenStepEmitsCmdRunningDone(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "then-cmd-test",
+		Steps: []RitualStep{
+			{
+				Name:     "work",
+				Minister: "forge",
+				Task:     "do work",
+				Then:     []string{"!echo then-output"},
+			},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	court := newRitualTestCourt(t, "step-done\n", nil)
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "then-output\n", ExitCode: "0"},
+		},
+	}
+	runner := NewRitualRunner(registry, court.GetMinister, nil, db, mockRunner, nil, repo.RepoInfo{})
+
+	var messages []RitualStepMsg
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			messages = append(messages, stepMsg)
+		}
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "then-cmd-test", testEK(12), nil, notify)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	var cmdRunning, cmdDone *RitualStepMsg
+	var cmdRunningIdx, cmdDoneIdx int = -1, -1
+	for i := range messages {
+		switch messages[i].Status {
+		case "cmd_running":
+			cmdRunning = &messages[i]
+			cmdRunningIdx = i
+		case "cmd_done":
+			cmdDone = &messages[i]
+			cmdDoneIdx = i
+		}
+	}
+	if cmdRunning == nil {
+		t.Fatalf("expected a cmd_running RitualStepMsg, got: %+v", messages)
+	}
+	if cmdDone == nil {
+		t.Fatalf("expected a cmd_done RitualStepMsg, got: %+v", messages)
+	}
+	if cmdRunningIdx >= cmdDoneIdx {
+		t.Errorf("expected cmd_running (idx %d) before cmd_done (idx %d)", cmdRunningIdx, cmdDoneIdx)
+	}
+	if cmdRunning.StepName != "echo" {
+		t.Errorf("expected cmd_running StepName 'echo', got %q", cmdRunning.StepName)
+	}
+	if cmdRunning.Message != "echo then-output" {
+		t.Errorf("expected cmd_running Message 'echo then-output', got %q", cmdRunning.Message)
+	}
+	if cmdDone.StepName != "echo" {
+		t.Errorf("expected cmd_done StepName 'echo', got %q", cmdDone.StepName)
+	}
+	if cmdDone.Message != "then-output\n" {
+		t.Errorf("expected cmd_done Message 'then-output\\n', got %q", cmdDone.Message)
+	}
+}
+
+// TestStepLevelGivenEmitsCmdRunningDone verifies that a bash given step emits
+// RitualStepMsg{Status:"cmd_running"} before and {Status:"cmd_done"} after.
+func TestStepLevelGivenEmitsCmdRunningDone(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "step-given-cmd-test",
+		Steps: []RitualStep{
+			{
+				Name:     "work",
+				Minister: "forge",
+				Task:     "do work",
+				Given:    []string{"!echo step-given-data"},
+			},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	court := newRitualTestCourt(t, "step-done\n", nil)
+	mockRunner := &mockCallCountRunner{
+		results: []runners.Output{
+			{Output: "step-given-data\n", ExitCode: "0"},
+		},
+	}
+	runner := NewRitualRunner(registry, court.GetMinister, nil, db, mockRunner, nil, repo.RepoInfo{})
+
+	var messages []RitualStepMsg
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok {
+			messages = append(messages, stepMsg)
+		}
+	}
+
+	ctx := context.Background()
+	exec, err := runner.Start(ctx, "step-given-cmd-test", testEK(13), nil, notify)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	err = runner.Run(ctx, exec)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	var cmdRunning, cmdDone *RitualStepMsg
+	var cmdRunningIdx, cmdDoneIdx int = -1, -1
+	for i := range messages {
+		switch messages[i].Status {
+		case "cmd_running":
+			cmdRunning = &messages[i]
+			cmdRunningIdx = i
+		case "cmd_done":
+			cmdDone = &messages[i]
+			cmdDoneIdx = i
+		}
+	}
+	if cmdRunning == nil {
+		t.Fatalf("expected a cmd_running RitualStepMsg, got: %+v", messages)
+	}
+	if cmdDone == nil {
+		t.Fatalf("expected a cmd_done RitualStepMsg, got: %+v", messages)
+	}
+	if cmdRunningIdx >= cmdDoneIdx {
+		t.Errorf("expected cmd_running (idx %d) before cmd_done (idx %d)", cmdRunningIdx, cmdDoneIdx)
+	}
+	if cmdRunning.StepName != "echo" {
+		t.Errorf("expected cmd_running StepName 'echo', got %q", cmdRunning.StepName)
+	}
+	if cmdRunning.Message != "echo step-given-data" {
+		t.Errorf("expected cmd_running Message 'echo step-given-data', got %q", cmdRunning.Message)
+	}
+	if cmdDone.StepName != "echo" {
+		t.Errorf("expected cmd_done StepName 'echo', got %q", cmdDone.StepName)
+	}
+	if cmdDone.Message != "step-given-data\n" {
+		t.Errorf("expected cmd_done Message 'step-given-data\\n', got %q", cmdDone.Message)
+	}
+}
