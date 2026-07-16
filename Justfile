@@ -32,6 +32,11 @@ test:
         go test -tags containers_image_openpgp -timeout 1m ./... | tee test.out
     fi
 
+# Run performance benchmarks and guardrail tests
+test-performance:
+    go test -tags containers_image_openpgp -run TestSchedulerConcurrencyGuardrail -timeout 30s ./internal/runners/
+    go test -tags containers_image_openpgp -bench BenchmarkScheduler -benchmem -run '^$' -timeout 5m ./internal/runners/
+
 # Run tests with coverage
 test-coverage:
     go test -tags containers_image_openpgp -v -coverprofile=coverage.out ./...
