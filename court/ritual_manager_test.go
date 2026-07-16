@@ -923,6 +923,9 @@ func TestStartRitualQueuedWhenLocked(t *testing.T) {
 	if queuedMsg.ChannelID != "e77" {
 		t.Errorf("expected ChannelID 'e77' for queued message, got %q", queuedMsg.ChannelID)
 	}
+	if queuedMsg.QueueLen != 1 {
+		t.Errorf("expected QueueLen 1 for first queued ritual, got %d", queuedMsg.QueueLen)
+	}
 
 	// Release the lock so the queued ritual can proceed
 	rg.ritualMu.Unlock()

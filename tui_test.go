@@ -5459,6 +5459,63 @@ func TestRitualFailed_ClearsChatMode(t *testing.T) {
 	assert.False(t, tab.ChatMode, "ChatMode should be cleared on ritual_failed")
 }
 
+// TestRitualStepMsg_QueuedAddsSystemMessage verifies that when a ritual is
+// queued (court is busy), a system message with the time and queue position
+// is added to the chat — not just a toast.
+func TestRitualStepMsg_QueuedAddsSystemMessage(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Pre-create the ritual tab (as dispatchEdictAction does)
+	model.tabs.Add("Ritual:e888", "ritual", "e888")
+
+	msg := court.RitualStepMsg{
+		ChannelID:  "e888",
+		RitualName: "swift-strike",
+		EdictID:    888,
+		Status:     "queued",
+		QueueLen:   2,
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	chat := updatedModel.tabs.ChatByTab("e888")
+	require.NotNil(t, chat)
+	require.NotEmpty(t, chat.Messages, "queued message should be added to chat")
+
+	last := chat.Messages[len(chat.Messages)-1]
+	assert.Contains(t, last.Content, "Queued at")
+	assert.Contains(t, last.Content, "position 2 in queue")
+}
+
+// TestRitualStepMsg_QueuedSingleInQueue verifies the message text when the
+// ritual is the only one waiting.
+func TestRitualStepMsg_QueuedSingleInQueue(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	model.tabs.Add("Ritual:e889", "ritual", "e889")
+
+	msg := court.RitualStepMsg{
+		ChannelID:  "e889",
+		RitualName: "swift-strike",
+		EdictID:    889,
+		Status:     "queued",
+		QueueLen:   1,
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	chat := updatedModel.tabs.ChatByTab("e889")
+	require.NotNil(t, chat)
+	require.NotEmpty(t, chat.Messages)
+
+	last := chat.Messages[len(chat.Messages)-1]
+	assert.Contains(t, last.Content, "Queued at")
+	assert.Contains(t, last.Content, "waiting for active ritual to finish")
+	assert.NotContains(t, last.Content, "position")
+}
+
 func TestSubmitToCourt_RitualTab_PausesAndRoutesToMinister(t *testing.T) {
 	mock := &mockCourtClient{
 		pauseRitualFn: func(channelID string) bool { return true },

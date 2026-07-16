@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
@@ -43,6 +44,7 @@ type RitualGuard struct {
 	eventRegistry  *EventRegistry
 	eventCh        chan Event
 	ritualMu       sync.Mutex // serializes ritual execution without blocking the event loop
+	queuedCount    atomic.Int32 // number of rituals waiting for the lock
 	maxRetries     int
 	batchSize      int
 	flatlineAge    time.Duration
@@ -161,15 +163,18 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 	go func() {
 		// Try to acquire lock; if held, check for stale rituals and abort them
 		if !rg.ritualMu.TryLock() {
+			queueLen := int(rg.queuedCount.Add(1))
 			rg.notify(RitualStepMsg{
 				ChannelID:  ritualChannelID(key.ID),
 				RitualName: ritualName,
 				EdictID:    key.ID,
 				Status:     "queued",
 				Message:    fmt.Sprintf("Ritual %s queued — waiting for another ritual to finish", ritualName),
+				QueueLen:   queueLen,
 			})
 			rg.abortStaleRitualsIfLocked()
 			rg.ritualMu.Lock()
+			rg.queuedCount.Add(-1)
 		}
 		defer rg.ritualMu.Unlock()
 		channelID := ritualChannelID(key.ID)

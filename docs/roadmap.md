@@ -6,7 +6,6 @@ Below is what is left to develop:
 
 ### Bug Fixes & Polish (active, close to done)
 
-- Fix Zhengming answering-mode height calculation e643 *(needs ruler seal)*
 - Fix "minister not found" on ritual tabs e647
 - PodmanRunner: per-command exec + concurrent scheduler e657
 
@@ -53,6 +52,12 @@ Below is what is left to develop:
 - Skill marketplace discovery via `https://agentskills.io/llms.txt`
 - Fetch and cache remote skills into `.agents/skills/`
 - Skill versioning and update detection
+
+## v1.2
+
+Improved realms alignment. The repo is not only earth, but earth and intent.
+Tests and docs are two examples for Intent content in the repo. 
+Earth is just part of the repo, the part with code that is part of the program e637.
 
 ## V2.0
 

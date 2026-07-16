@@ -140,6 +140,14 @@ Example:
 ASIMI_VERSION=v0.2.0 ASIMI_INSTALL_DIR=~/bin curl -fsSL https://asimi.dev/installer | bash
 ```
 
+## Automated Release
+
+The `release-version` ritual (defined in `.agents/rituals.yaml`) automates this
+process end-to-end. The Chancellor enacts it via `enact_ritual` with a target
+version (e.g. `0.9.0`). The ritual runs through changelog preparation, version
+bump, roadmap update, verification, sage review, commit-and-tag, and finally
+asks the Ruler to confirm the push via zhengming.
+
 ## See Also
 
 - [RELEASE_CHECKLIST.md](../RELEASE_CHECKLIST.md) - Detailed Homebrew release checklist

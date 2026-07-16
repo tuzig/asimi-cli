@@ -58,6 +58,7 @@ type RitualStepMsg struct {
 	ForkItem    string `msgpack:"fork_item,omitempty"` // e.g. "1/3" — item index within the fork
 	Status      string `msgpack:"status,omitempty"`
 	Message     string `msgpack:"message,omitempty"`
+	QueueLen    int    `msgpack:"queue_len,omitempty"` // number of rituals waiting (including this one), when Status=="queued"
 }
 
 // RitualState represents the current state of a ritual execution

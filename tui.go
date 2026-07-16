@@ -2211,6 +2211,13 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			text := fmt.Sprintf("⏳ Ritual %s queued for edict %d — waiting for another ritual to finish",
 				msg.RitualName, msg.EdictID)
 			m.commandLine.AddToast(text, "warning", 3*time.Second)
+			queueMsg := fmt.Sprintf("⏳ Queued at %s", time.Now().Format("15:04:05"))
+			if msg.QueueLen > 1 {
+				queueMsg += fmt.Sprintf(" — position %d in queue", msg.QueueLen)
+			} else {
+				queueMsg += " — waiting for active ritual to finish"
+			}
+			chat.AddMessage(queueMsg)
 		case "started":
 			// Track the minister running the current step for ruler interjection
 			if msg.MinisterID != "" {
