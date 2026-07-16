@@ -3327,10 +3327,10 @@ type mockCourtClient struct {
 	pausedChannels      []string
 	resumedChannels     []string
 
-	setIntentFn         func(uint, string) error
-	submitPromptTarget  string
-	submitPromptMsg     string
-	submitPromptChanID  string
+	setIntentFn        func(uint, string) error
+	submitPromptTarget string
+	submitPromptMsg    string
+	submitPromptChanID string
 }
 
 type publishedEvent struct {

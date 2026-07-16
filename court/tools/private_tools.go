@@ -123,7 +123,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	var params struct {
 		RitualName string            `json:"ritual_name"`
 		EdictID    uint              `json:"edict_id"`
-		Inputs     map[string]string `json:"inputs"`
+		Inputs     map[string]any `json:"inputs"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -140,11 +140,15 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	}
 
 	if params.Inputs == nil {
-		params.Inputs = make(map[string]string)
+		params.Inputs = make(map[string]any)
 	}
 	params.Inputs["edict_id"] = fmt.Sprintf("%d", key.ID)
-
-	if err := t.Launcher.StartRitual(params.RitualName, key, params.Inputs); err != nil {
+	// Convert to map[string]string for StartRitual
+	inputs := make(map[string]string, len(params.Inputs))
+	for k, v := range params.Inputs {
+		inputs[k] = fmt.Sprintf("%v", v)
+	}
+    if err := t.Launcher.StartRitual(params.RitualName, key, inputs); err != nil {
 		return "", err
 	}
 
@@ -207,6 +211,7 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 			"inputs": map[string]any{
 				"type":        "object",
 				"description": "Optional inputs for the ritual (key-value pairs)",
+				"AdditionalProperties": true,
 			},
 		},
 		"required": []string{"ritual_name"},
