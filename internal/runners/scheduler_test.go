@@ -2,10 +2,13 @@ package runners
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockTool struct {
@@ -39,8 +42,11 @@ func (t *mockTool) ParameterSchema() map[string]any {
 
 func TestCoreToolScheduler(t *testing.T) {
 	var msgs []any
+	var msgMu sync.Mutex
 	scheduler := NewCoreToolScheduler(func(msg any) {
+		msgMu.Lock()
 		msgs = append(msgs, msg)
+		msgMu.Unlock()
 	})
 
 	tool := &mockTool{
@@ -54,14 +60,13 @@ func TestCoreToolScheduler(t *testing.T) {
 
 	resultChan := scheduler.Schedule(context.Background(), tool, "test-input")
 
-	// Wait for the result
 	result := <-resultChan
 
-	// Assertions
 	assert.NoError(t, result.Error)
 	assert.Equal(t, "output for test-input", result.Output)
 
-	// Check messages sent to the model
+	msgMu.Lock()
+	defer msgMu.Unlock()
 	assert.GreaterOrEqual(t, len(msgs), 3)
 	_, ok := msgs[0].(ToolCallScheduledMsg)
 	assert.True(t, ok)
@@ -73,14 +78,16 @@ func TestCoreToolScheduler(t *testing.T) {
 
 func TestCoreToolScheduler_ClearQueue(t *testing.T) {
 	var abortedCalls []ToolCallAbortedMsg
+	var abortedMu sync.Mutex
 
 	scheduler := NewCoreToolScheduler(func(msg any) {
 		if aborted, ok := msg.(ToolCallAbortedMsg); ok {
+			abortedMu.Lock()
 			abortedCalls = append(abortedCalls, aborted)
+			abortedMu.Unlock()
 		}
 	})
 
-	// Create a slow tool that will block the scheduler
 	slowTool := &mockTool{
 		name:        "slow-tool",
 		description: "A slow tool",
@@ -109,13 +116,11 @@ func TestCoreToolScheduler_ClearQueue(t *testing.T) {
 	fastResult2 := scheduler.Schedule(context.Background(), fastTool, "fast-input-2")
 	fastResult3 := scheduler.Schedule(context.Background(), fastTool, "fast-input-3")
 
-	// Clear the queue - this should abort all calls: the active slow tool + 3 queued fast tools
+	// Clear the queue — aborts all calls: the active slow tool + 3 queued fast tools
 	abortedCount := scheduler.ClearQueue()
 
-	// Verify that 4 calls were aborted (active + queued)
 	assert.Equal(t, 4, abortedCount, "should have aborted 1 active + 3 queued tool calls")
 
-	// Check that all aborted calls received the SandboxRestartedError
 	for _, result := range []<-chan ToolCallResult{fastResult1, fastResult2, fastResult3, slowResult} {
 		res := <-result
 		assert.Error(t, res.Error)
@@ -123,7 +128,8 @@ func TestCoreToolScheduler_ClearQueue(t *testing.T) {
 		assert.True(t, ok, "error should be SandboxRestartedError")
 	}
 
-	// Verify notifications were sent for each aborted call (including the active slow one)
+	abortedMu.Lock()
+	defer abortedMu.Unlock()
 	assert.Equal(t, 4, len(abortedCalls), "should have received 4 aborted notifications")
 
 	toolNames := make(map[string]int)
@@ -138,7 +144,170 @@ func TestCoreToolScheduler_ClearQueue(t *testing.T) {
 func TestCoreToolScheduler_ClearQueue_EmptyQueue(t *testing.T) {
 	scheduler := NewCoreToolScheduler(nil)
 
-	// Clear an empty queue - should return 0 and not panic
 	abortedCount := scheduler.ClearQueue()
 	assert.Equal(t, 0, abortedCount, "clearing empty queue should return 0")
+}
+
+// TestCoreToolScheduler_ConcurrentDispatch verifies that multiple tool calls
+// run concurrently (up to maxConcurrency) rather than serially.
+func TestCoreToolScheduler_ConcurrentDispatch(t *testing.T) {
+	scheduler := NewCoreToolScheduler(nil)
+
+	var concurrentCount int32
+	var maxConcurrent int32
+
+	started := make(chan struct{})
+	var startedOnce sync.Once
+
+	tool := &mockTool{
+		name: "concurrent-tool",
+		callFunc: func(ctx context.Context, input string) (string, error) {
+			cur := atomic.AddInt32(&concurrentCount, 1)
+			for {
+				max := atomic.LoadInt32(&maxConcurrent)
+				if cur <= max || atomic.CompareAndSwapInt32(&maxConcurrent, max, cur) {
+					break
+				}
+			}
+			startedOnce.Do(func() { close(started) })
+			time.Sleep(50 * time.Millisecond)
+			atomic.AddInt32(&concurrentCount, -1)
+			return input, nil
+		},
+	}
+
+	// Schedule 4 tools — all should run concurrently
+	chans := make([]<-chan ToolCallResult, 4)
+	for i := 0; i < 4; i++ {
+		chans[i] = scheduler.Schedule(context.Background(), tool, string(rune('A'+i)))
+	}
+
+	// Wait until at least one tool starts so we know dispatch has begun
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tools did not start within timeout")
+	}
+
+	// Wait for all to complete
+	for _, ch := range chans {
+		<-ch
+	}
+
+	// maxConcurrent should be >= 2 (with maxConcurrency=4, all 4 should run at once)
+	assert.GreaterOrEqual(t, atomic.LoadInt32(&maxConcurrent), int32(2),
+		"at least 2 tools should have run concurrently")
+}
+
+// TestCoreToolScheduler_ConcurrentClearQueueWithMultipleActive verifies that
+// ClearQueue correctly aborts multiple in-flight calls (not just one).
+func TestCoreToolScheduler_ConcurrentClearQueueWithMultipleActive(t *testing.T) {
+	scheduler := NewCoreToolScheduler(nil)
+
+	slowTool := &mockTool{
+		name: "slow-tool",
+		callFunc: func(ctx context.Context, input string) (string, error) {
+			time.Sleep(500 * time.Millisecond)
+			return "done", nil
+		},
+	}
+
+	// Schedule 3 slow tools — with maxConcurrency=4, all should start immediately
+	r1 := scheduler.Schedule(context.Background(), slowTool, "a")
+	r2 := scheduler.Schedule(context.Background(), slowTool, "b")
+	r3 := scheduler.Schedule(context.Background(), slowTool, "c")
+
+	// Give them time to start
+	time.Sleep(20 * time.Millisecond)
+
+	abortedCount := scheduler.ClearQueue()
+	assert.Equal(t, 3, abortedCount, "should have aborted 3 active calls")
+
+	for _, ch := range []<-chan ToolCallResult{r1, r2, r3} {
+		res := <-ch
+		_, ok := res.Error.(SandboxRestartedError)
+		assert.True(t, ok, "error should be SandboxRestartedError")
+	}
+}
+
+// TestCoreToolScheduler_AbortCancelsContext verifies that ClearQueue cancels
+// the context of in-flight tool calls, allowing tools to detect cancellation.
+func TestCoreToolScheduler_AbortCancelsContext(t *testing.T) {
+	scheduler := NewCoreToolScheduler(nil)
+
+	cancelled := make(chan struct{})
+
+	tool := &mockTool{
+		name: "ctx-tool",
+		callFunc: func(ctx context.Context, input string) (string, error) {
+			<-ctx.Done()
+			close(cancelled)
+			return "", ctx.Err()
+		},
+	}
+
+	scheduler.Schedule(context.Background(), tool, "test")
+	time.Sleep(20 * time.Millisecond) // let it start
+
+	scheduler.ClearQueue()
+
+	select {
+	case <-cancelled:
+		// success — context was cancelled
+	case <-time.After(2 * time.Second):
+		t.Fatal("tool context was not cancelled within timeout")
+	}
+}
+
+// TestCoreToolScheduler_QueueExceedsMaxConcurrency verifies that when more
+// tools are scheduled than maxConcurrency, excess tools are queued and
+// dispatched as active ones complete.
+func TestCoreToolScheduler_QueueExceedsMaxConcurrency(t *testing.T) {
+	scheduler := NewCoreToolScheduler(nil)
+	scheduler.maxConcurrency = 2
+
+	var concurrentCount int32
+	var maxConcurrent int32
+	var orderMu sync.Mutex
+	var executionOrder []string
+
+	tool := &mockTool{
+		name: "ordered-tool",
+		callFunc: func(ctx context.Context, input string) (string, error) {
+			cur := atomic.AddInt32(&concurrentCount, 1)
+			for {
+				max := atomic.LoadInt32(&maxConcurrent)
+				if cur <= max || atomic.CompareAndSwapInt32(&maxConcurrent, max, cur) {
+					break
+				}
+			}
+			time.Sleep(30 * time.Millisecond)
+			atomic.AddInt32(&concurrentCount, -1)
+			orderMu.Lock()
+			executionOrder = append(executionOrder, input)
+			orderMu.Unlock()
+			return input, nil
+		},
+	}
+
+	// Schedule 4 tools with maxConcurrency=2
+	chans := make([]<-chan ToolCallResult, 4)
+	for i := 0; i < 4; i++ {
+		chans[i] = scheduler.Schedule(context.Background(), tool, string(rune('A'+i)))
+	}
+
+	// Wait for all to complete
+	for _, ch := range chans {
+		<-ch
+	}
+
+	orderMu.Lock()
+	defer orderMu.Unlock()
+	require.Len(t, executionOrder, 4, "all 4 tools should have executed")
+
+	// At no point should more than maxConcurrency (2) tools run simultaneously
+	assert.LessOrEqual(t, atomic.LoadInt32(&maxConcurrent), int32(2),
+		"concurrent execution should never exceed maxConcurrency=2")
+	assert.GreaterOrEqual(t, atomic.LoadInt32(&maxConcurrent), int32(1),
+		"at least 1 tool should have run")
 }

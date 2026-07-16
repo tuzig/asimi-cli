@@ -2,6 +2,7 @@ package court
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1833,4 +1834,124 @@ func TestSession_ToolCallLoopHits_ResetsOnPrepareUserMessage(t *testing.T) {
 	assert.Equal(t, 0, sess.toolCallLoopHits, "loop hits should be reset on new user message")
 	assert.Equal(t, 0, sess.toolCallRepetitionCount, "repetition count should be reset on new user message")
 	assert.Equal(t, "", sess.lastToolCallKey, "last tool call key should be reset on new user message")
+}
+
+// TestSession_ProcessToolCalls_ConcurrentDispatch verifies that multiple tool
+// calls are dispatched concurrently rather than sequentially. If calls were
+// serial, 3 tools each sleeping 100ms would take ~300ms. With concurrent
+// dispatch, the total should be closer to ~100ms.
+func TestSession_ProcessToolCalls_ConcurrentDispatch(t *testing.T) {
+	t.Parallel()
+
+	tool := &mockToolSlow{name: "slow_tool"}
+	sess, err := NewSession(nil, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	// Use distinct args to avoid loop detection
+	toolCalls := make([]schemas.ChatAssistantMessageToolCall, 3)
+	for i := range toolCalls {
+		toolCalls[i] = schemas.ChatAssistantMessageToolCall{
+			ID:   strPtr(fmt.Sprintf("tc%d", i)),
+			Type: strPtr("function"),
+			Function: schemas.ChatAssistantMessageToolCallFunction{
+				Name:      strPtr("slow_tool"),
+				Arguments: fmt.Sprintf("{\"i\":%d}", i),
+			},
+		}
+	}
+
+	start := time.Now()
+	messages, shouldReturn := sess.processToolCalls(context.Background(), toolCalls)
+	elapsed := time.Since(start)
+
+	assert.False(t, shouldReturn)
+	require.Len(t, messages, 3)
+
+	// Each tool sleeps 100ms. If serial, ~300ms. If concurrent, ~100ms.
+	// Use 250ms as threshold (allows scheduling overhead but catches serial).
+	assert.Less(t, elapsed, 250*time.Millisecond,
+		"3 x 100ms tools should complete in ~100ms with concurrent dispatch, took %v", elapsed)
+}
+
+// TestSession_ProcessToolCalls_PreservesOrder verifies that even though tool
+// calls execute concurrently, the response messages are returned in the same
+// order as the input tool calls.
+func TestSession_ProcessToolCalls_PreservesOrder(t *testing.T) {
+	t.Parallel()
+
+	tools := []Tool{
+		&mockTool{name: "tool_a", output: "result_a"},
+		&mockTool{name: "tool_b", output: "result_b"},
+		&mockTool{name: "tool_c", output: "result_c"},
+	}
+	sess, err := NewSession(nil, &SessionConfig{}, tools, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	// Register all tools in catalog
+	sess.AddTools(tools)
+
+	toolCalls := []schemas.ChatAssistantMessageToolCall{
+		{ID: strPtr("tc0"), Type: strPtr("function"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("tool_a"), Arguments: "{}"}},
+		{ID: strPtr("tc1"), Type: strPtr("function"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("tool_b"), Arguments: "{}"}},
+		{ID: strPtr("tc2"), Type: strPtr("function"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("tool_c"), Arguments: "{}"}},
+	}
+
+	messages, shouldReturn := sess.processToolCalls(context.Background(), toolCalls)
+
+	assert.False(t, shouldReturn)
+	require.Len(t, messages, 3)
+
+	// Verify order is preserved
+	assert.Equal(t, "result_a", msgContentStr(messages[0]))
+	assert.Equal(t, "result_b", msgContentStr(messages[1]))
+	assert.Equal(t, "result_c", msgContentStr(messages[2]))
+}
+
+// TestSession_ProcessToolCalls_MixedValidAndUnknown verifies that a mix of
+// unknown and valid tool calls produces correct messages — unknown tools get
+// error messages (added during pre-validation), valid tools get their results
+// (added after concurrent dispatch), and order is preserved.
+func TestSession_ProcessToolCalls_MixedValidAndUnknown(t *testing.T) {
+	t.Parallel()
+
+	tool := &mockTool{name: "known_tool", output: "ok"}
+	sess, err := NewSession(nil, &SessionConfig{}, []Tool{tool}, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	toolCalls := []schemas.ChatAssistantMessageToolCall{
+		{ID: strPtr("tc0"), Type: strPtr("function"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("known_tool"), Arguments: "{}"}},
+		{ID: strPtr("tc1"), Type: strPtr("function"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("unknown_tool"), Arguments: "{}"}},
+		{ID: strPtr("tc2"), Type: strPtr("function"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: strPtr("known_tool"), Arguments: "{}"}},
+	}
+
+	messages, shouldReturn := sess.processToolCalls(context.Background(), toolCalls)
+
+	assert.False(t, shouldReturn)
+	require.Len(t, messages, 3)
+
+	// First message: known tool result
+	assert.Equal(t, "ok", msgContentStr(messages[0]))
+	// Second message: unknown tool error
+	assert.Contains(t, msgContentStr(messages[1]), "unknown tool")
+	// Third message: known tool result
+	assert.Equal(t, "ok", msgContentStr(messages[2]))
+}
+
+// mockToolSlow is a tool that sleeps for a fixed duration to verify concurrent
+// dispatch in processToolCalls.
+type mockToolSlow struct {
+	name string
+}
+
+func (t *mockToolSlow) Name() string        { return t.name }
+func (t *mockToolSlow) Description() string { return "A slow mock tool" }
+func (t *mockToolSlow) Call(ctx context.Context, input string) (string, error) {
+	time.Sleep(100 * time.Millisecond)
+	return "done", nil
+}
+func (t *mockToolSlow) Format(input, result string, err error) string {
+	return t.name + ": " + result
+}
+func (t *mockToolSlow) ParameterSchema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{}}
 }

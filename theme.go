@@ -84,7 +84,7 @@ func NewTheme() *Theme {
 		PromptOffBorder: promptOffBorder,
 
 		// Semantic colors
-		SuccessColor:    lipgloss.Color("#00FF00"),
+		SuccessColor:    lipgloss.Color("#6A9955"),
 		InfoColor:       lipgloss.Color("#00BFFF"),
 		ThinkingColor:   lipgloss.Color("#6A9955"),
 		DimTextColor:    lipgloss.Color("#666666"),

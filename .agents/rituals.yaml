@@ -32,7 +32,6 @@
       minister: strategist
       effort: medium
       given:
-        - the earth status
         - "!git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~20)..HEAD --oneline  # recent_commits"
       act: |
         Review the git log since the last tag (below) and compare against the
@@ -65,7 +64,9 @@
       minister: forge
       effort: low
       act: |
-        Review docs/roadmap.md and update it to reflect what was accomplished
+        Review docs/roadmap.md wntry for {{ .version }}.
+        Move all lines that weren't done in the version to the next version.
+        Laastly, completly remove the roadmap entry for {{ .version }}
         in this release ({{ .version }}). Move completed items out of the
         "to develop" sections or mark them as done. Use replace_text for
         targeted edits — do NOT rewrite the file.

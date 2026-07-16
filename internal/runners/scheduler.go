@@ -8,8 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// defaultMaxConcurrency is the default concurrency limit for the scheduler.
+const defaultMaxConcurrency = 4
+
 // Tool defines a tool that can be invoked by the scheduler.
-// Defines the interface for tools that can be invoked by the scheduler.
 type Tool interface {
 	Name() string
 	Description() string
@@ -34,13 +36,14 @@ const (
 
 // ToolCall represents a single tool call task
 type ToolCall struct {
-	ID     string
-	Ctx    context.Context
-	Tool   Tool
-	Input  string
-	Status ToolCallStatus
-	Result string
-	Error  error
+	ID       string
+	Ctx      context.Context
+	Cancel   context.CancelFunc
+	Tool     Tool
+	Input    string
+	Status   ToolCallStatus
+	Result   string
+	Error    error
 }
 
 // ToolCallResult is used to send the result of a tool call back to the caller
@@ -49,31 +52,32 @@ type ToolCallResult struct {
 	Error  error
 }
 
-// CoreToolScheduler manages a queue of tool calls and orchestrates their execution
+// CoreToolScheduler manages a queue of tool calls and orchestrates their
+// concurrent execution with in-flight tracking for abort support.
 type CoreToolScheduler struct {
-	mu          sync.Mutex
-	toolCalls   map[string]*ToolCall
-	queue       []*ToolCall
-	activeCall  *ToolCall // currently executing call, nil when idle
-	isBusy      bool
-	resultChans map[string]chan ToolCallResult
-	// TODO: refator to a channel
-	notify    func(any)
-	channelID string
+	mu             sync.Mutex
+	toolCalls      map[string]*ToolCall
+	queue          []*ToolCall
+	activeCalls    map[string]*ToolCall
+	maxConcurrency int
+	resultChans    map[string]chan ToolCallResult
+	notify         func(any)
+	channelID      string
 }
 
 // NewCoreToolScheduler creates a new CoreToolScheduler
 func NewCoreToolScheduler(toolNotify func(any)) *CoreToolScheduler {
 	return &CoreToolScheduler{
-		toolCalls:   make(map[string]*ToolCall),
-		queue:       make([]*ToolCall, 0),
-		resultChans: make(map[string]chan ToolCallResult),
-		notify:      toolNotify,
+		toolCalls:      make(map[string]*ToolCall),
+		queue:          make([]*ToolCall, 0),
+		activeCalls:    make(map[string]*ToolCall),
+		maxConcurrency: defaultMaxConcurrency,
+		resultChans:    make(map[string]chan ToolCallResult),
+		notify:         toolNotify,
 	}
 }
 
 // SetNotify sets the notification function and channel ID for tool call status updates.
-// This allows the scheduler to be created before the notification target is ready.
 func (s *CoreToolScheduler) SetNotify(notify func(any), channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -81,16 +85,28 @@ func (s *CoreToolScheduler) SetNotify(notify func(any), channelID string) {
 	s.channelID = channelID
 }
 
+// sendNotifications dispatches notifications outside the scheduler mutex
+// to avoid deadlocks if the callback blocks.
+func (s *CoreToolScheduler) sendNotifications(msgs []any) {
+	if s.notify == nil {
+		return
+	}
+	for _, msg := range msgs {
+		s.notify(msg)
+	}
+}
+
 // Schedule adds a new tool call to the scheduler and returns a channel for the result
 func (s *CoreToolScheduler) Schedule(ctx context.Context, tool Tool, input string) <-chan ToolCallResult {
 	slog.Debug("scheduler.enqueue", "tool", tool.Name())
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	id := uuid.New().String()
+	callCtx, cancel := context.WithCancel(ctx)
 	call := &ToolCall{
 		ID:     id,
-		Ctx:    ctx,
+		Ctx:    callCtx,
+		Cancel: cancel,
 		Tool:   tool,
 		Input:  input,
 		Status: StatusScheduled,
@@ -101,8 +117,9 @@ func (s *CoreToolScheduler) Schedule(ctx context.Context, tool Tool, input strin
 	resultChan := make(chan ToolCallResult, 1)
 	s.resultChans[id] = resultChan
 
+	var notifications []any
 	if s.notify != nil {
-		s.notify(ToolCallScheduledMsg{
+		notifications = append(notifications, ToolCallScheduledMsg{
 			ChannelID: s.channelID,
 			CallID:    id,
 			ToolName:  call.Tool.Name(),
@@ -111,90 +128,95 @@ func (s *CoreToolScheduler) Schedule(ctx context.Context, tool Tool, input strin
 			Formatted: call.Tool.Format(call.Input, "", nil),
 		})
 	}
-	s.processQueue()
+	notifications = append(notifications, s.processQueue()...)
+	s.mu.Unlock()
 
+	s.sendNotifications(notifications)
 	return resultChan
 }
 
-func (s *CoreToolScheduler) processQueue() {
-	if s.isBusy || len(s.queue) == 0 {
-		slog.Debug("scheduler.idle_or_empty", "busy", s.isBusy, "queued", len(s.queue))
-		return
+// processQueue dispatches up to maxConcurrency calls simultaneously.
+// Must be called with s.mu held. Returns notifications to send after unlock.
+func (s *CoreToolScheduler) processQueue() []any {
+	var notifications []any
+	for len(s.queue) > 0 && len(s.activeCalls) < s.maxConcurrency {
+		call := s.queue[0]
+		s.queue = s.queue[1:]
+		s.activeCalls[call.ID] = call
+
+		call.Status = StatusExecuting
+		if s.notify != nil {
+			notifications = append(notifications, ToolCallExecutingMsg{
+				ChannelID: s.channelID,
+				CallID:    call.ID,
+				ToolName:  call.Tool.Name(),
+				Input:     call.Input,
+				Status:    string(StatusExecuting),
+				Formatted: call.Tool.Format(call.Input, "", nil),
+			})
+		}
+
+		go s.executeCall(call)
 	}
-	s.isBusy = true
+	return notifications
+}
 
-	call := s.queue[0]
-	s.queue = s.queue[1:]
-	s.activeCall = call
+// executeCall runs a single tool call and handles its result.
+func (s *CoreToolScheduler) executeCall(call *ToolCall) {
+	slog.Debug("scheduler.exec", "tool", call.Tool.Name())
+	output, err := call.Tool.Call(call.Ctx, call.Input)
 
-	call.Status = StatusExecuting
-	if s.notify != nil {
-		s.notify(ToolCallExecutingMsg{
-			ChannelID: s.channelID,
-			CallID:    call.ID,
-			ToolName:  call.Tool.Name(),
-			Input:     call.Input,
-			Status:    string(StatusExecuting),
-			Formatted: call.Tool.Format(call.Input, "", nil),
-		})
-	}
+	s.mu.Lock()
 
-	go func() {
-		// NOTE: We are calling the tool's Call method directly here.
-		// The toolWrapper's Call method is what schedules the tool.
-		// This means the tool passed to Schedule should be the unwrapped tool.
-		slog.Debug("scheduler.exec", "tool", call.Tool.Name())
-		output, err := call.Tool.Call(call.Ctx, call.Input)
+	resultChan := s.resultChans[call.ID]
+	var notifications []any
 
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		resultChan := s.resultChans[call.ID]
-
-		if err != nil {
-			call.Status = StatusError
-			call.Error = err
-			if s.notify != nil {
-				s.notify(ToolCallErrorMsg{
-					ChannelID: s.channelID,
-					CallID:    call.ID,
-					ToolName:  call.Tool.Name(),
-					Input:     call.Input,
-					Status:    string(StatusError),
-					Error:     err.Error(),
-					Formatted: call.Tool.Format(call.Input, "", err),
-				})
-			}
-			if resultChan != nil {
-				resultChan <- ToolCallResult{Error: err}
-			}
-		} else {
-			call.Status = StatusSuccess
-			call.Result = output
-			if s.notify != nil {
-				s.notify(ToolCallSuccessMsg{
-					ChannelID: s.channelID,
-					CallID:    call.ID,
-					ToolName:  call.Tool.Name(),
-					Input:     call.Input,
-					Status:    string(StatusSuccess),
-					Result:    output,
-					Formatted: call.Tool.Format(call.Input, output, nil),
-				})
-			}
-			if resultChan != nil {
-				resultChan <- ToolCallResult{Output: output}
-			}
+	if err != nil {
+		call.Status = StatusError
+		call.Error = err
+		if s.notify != nil {
+			notifications = append(notifications, ToolCallErrorMsg{
+				ChannelID: s.channelID,
+				CallID:    call.ID,
+				ToolName:  call.Tool.Name(),
+				Input:     call.Input,
+				Status:    string(StatusError),
+				Error:     err.Error(),
+				Formatted: call.Tool.Format(call.Input, "", err),
+			})
 		}
 		if resultChan != nil {
-			close(resultChan)
-			delete(s.resultChans, call.ID)
+			resultChan <- ToolCallResult{Error: err}
 		}
+	} else {
+		call.Status = StatusSuccess
+		call.Result = output
+		if s.notify != nil {
+			notifications = append(notifications, ToolCallSuccessMsg{
+				ChannelID: s.channelID,
+				CallID:    call.ID,
+				ToolName:  call.Tool.Name(),
+				Input:     call.Input,
+				Status:    string(StatusSuccess),
+				Result:    output,
+				Formatted: call.Tool.Format(call.Input, output, nil),
+			})
+		}
+		if resultChan != nil {
+			resultChan <- ToolCallResult{Output: output}
+		}
+	}
+	if resultChan != nil {
+		close(resultChan)
+		delete(s.resultChans, call.ID)
+	}
 
-		s.isBusy = false
-		s.activeCall = nil
-		s.processQueue()
-	}()
+	delete(s.activeCalls, call.ID)
+	delete(s.toolCalls, call.ID)
+	notifications = append(notifications, s.processQueue()...)
+	s.mu.Unlock()
+
+	s.sendNotifications(notifications)
 }
 
 // SandboxRestartedError is returned when a tool call is aborted due to sandbox restart
@@ -206,59 +228,32 @@ func (e SandboxRestartedError) Error() string {
 
 // ClearQueue aborts all pending and in-flight tool calls. This should be called
 // when the sandbox needs to be reinitialized (e.g., after a timeout).
-// It returns an error for all pending operations and notifies the UI.
+// It returns the number of aborted calls.
 func (s *CoreToolScheduler) ClearQueue() int {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
-	// Count queued items plus the active call (if any)
-	abortedCount := len(s.queue)
-	if s.activeCall != nil {
-		abortedCount++
-	}
+	abortedCount := len(s.queue) + len(s.activeCalls)
 	if abortedCount == 0 {
 		slog.Debug("scheduler.clear_queue", "aborted", 0)
+		s.mu.Unlock()
 		return 0
 	}
 
 	slog.Info("scheduler.clear_queue", "aborting", abortedCount)
 
 	abortErr := SandboxRestartedError{}
+	var notifications []any
 
-	// Abort the currently executing call (if any)
-	if s.activeCall != nil {
-		s.activeCall.Status = StatusAborted
-		s.activeCall.Error = abortErr
-
-		if s.notify != nil {
-			s.notify(ToolCallAbortedMsg{
-				ChannelID: s.channelID,
-				CallID:    s.activeCall.ID,
-				ToolName:  s.activeCall.Tool.Name(),
-				Input:     s.activeCall.Input,
-				Status:    string(StatusAborted),
-				Reason:    abortErr.Error(),
-				Formatted: s.activeCall.Tool.Format(s.activeCall.Input, "", abortErr),
-			})
-		}
-
-		if resultChan, exists := s.resultChans[s.activeCall.ID]; exists {
-			resultChan <- ToolCallResult{Error: abortErr}
-			close(resultChan)
-			delete(s.resultChans, s.activeCall.ID)
-		}
-		s.activeCall = nil
-		s.isBusy = false
-	}
-
-	// Abort all queued tool calls
-	for _, call := range s.queue {
+	// Abort all active (in-flight) calls via context cancellation
+	for _, call := range s.activeCalls {
 		call.Status = StatusAborted
 		call.Error = abortErr
+		if call.Cancel != nil {
+			call.Cancel()
+		}
 
-		// Notify the UI about the aborted call
 		if s.notify != nil {
-			s.notify(ToolCallAbortedMsg{
+			notifications = append(notifications, ToolCallAbortedMsg{
 				ChannelID: s.channelID,
 				CallID:    call.ID,
 				ToolName:  call.Tool.Name(),
@@ -269,18 +264,45 @@ func (s *CoreToolScheduler) ClearQueue() int {
 			})
 		}
 
-		// Send error to the result channel
 		if resultChan, exists := s.resultChans[call.ID]; exists {
 			resultChan <- ToolCallResult{Error: abortErr}
 			close(resultChan)
 			delete(s.resultChans, call.ID)
 		}
+		delete(s.toolCalls, call.ID)
 	}
+	s.activeCalls = make(map[string]*ToolCall)
 
-	// Clear the queue
+	// Abort all queued tool calls
+	for _, call := range s.queue {
+		call.Status = StatusAborted
+		call.Error = abortErr
+
+		if s.notify != nil {
+			notifications = append(notifications, ToolCallAbortedMsg{
+				ChannelID: s.channelID,
+				CallID:    call.ID,
+				ToolName:  call.Tool.Name(),
+				Input:     call.Input,
+				Status:    string(StatusAborted),
+				Reason:    abortErr.Error(),
+				Formatted: call.Tool.Format(call.Input, "", abortErr),
+			})
+		}
+
+		if resultChan, exists := s.resultChans[call.ID]; exists {
+			resultChan <- ToolCallResult{Error: abortErr}
+			close(resultChan)
+			delete(s.resultChans, call.ID)
+		}
+		delete(s.toolCalls, call.ID)
+	}
 	s.queue = make([]*ToolCall, 0)
 
 	slog.Info("scheduler.queue_cleared", "aborted_count", abortedCount)
+	s.mu.Unlock()
+
+	s.sendNotifications(notifications)
 	return abortedCount
 }
 

@@ -6,8 +6,6 @@ Below is what is left to develop:
 
 ### Bug Fixes & Polish (active, close to done)
 
-- PodmanRunner: per-command exec + concurrent scheduler e657
-
 ### Court Alignment (low-hanging v1.0 foundations)
 
 - Rename `invoke_minister` → `consult_minister`, available to all e653

@@ -1,7 +1,3 @@
-# NOTE: __asimi_run lives in /etc/bash.bashrc (installed by the Dockerfile from
-# .agents/sandbox/asimi_runtime.sh) so it is sourced before this file and cannot
-# be overridden by edits here. Do not redefine __asimi_run below.
-
 # Git shim: enforce Li (礼) - proper conduct for git operations
 git() {
   # Block forbidden flags on all subcommands
@@ -35,5 +31,3 @@ export GIT_TERMINAL_PROMPT=0
 set +m  # Disable job control
 bind 'set disable-completion on' 2>/dev/null || true  # Disable tab completion
 bind 'set pagination off' 2>/dev/null || true  # Disable pagination in readline
-# for ruby projects:
-# export BUNDLE_RETRY=0

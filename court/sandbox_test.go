@@ -1,55 +1,15 @@
 package court
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestAsimiRuntimeRedirectsStdin verifies that __asimi_run redirects stdin from
-// /dev/null so subcommands that read stdin get immediate EOF instead of blocking
-// the persistent bash session. This is the core fix for edict 369.
-func TestAsimiRuntimeRedirectsStdin(t *testing.T) {
+// TestAsimiRuntimeNotEmpty verifies that the embedded asimi_runtime.sh is present.
+func TestAsimiRuntimeNotEmpty(t *testing.T) {
 	require.NotEmpty(t, dotagentsAsimiRuntime, "embedded asimi_runtime.sh must not be empty")
-	assert.Contains(t, dotagentsAsimiRuntime, "</dev/null",
-		"__asimi_run must redirect stdin from /dev/null to prevent blocking")
-	assert.Contains(t, dotagentsAsimiRuntime, "__asimi_run()",
-		"__asimi_run function must be defined")
-
-	// Verify the redirect is inside the subshell, not just floating
-	lines := strings.Split(dotagentsAsimiRuntime, "\n")
-	var foundRedirect bool
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "eval") && strings.Contains(trimmed, "</dev/null") {
-			foundRedirect = true
-			break
-		}
-	}
-	assert.True(t, foundRedirect,
-		"the </dev/null redirect must be on the same line as eval inside __asimi_run")
-}
-
-// TestAsimiRuntimeExitCodePreserved verifies that __asimi_run captures the exit
-// code from the subcommand and returns it, so the protocol markers are accurate.
-func TestAsimiRuntimeExitCodePreserved(t *testing.T) {
-	require.NotEmpty(t, dotagentsAsimiRuntime)
-	assert.Contains(t, dotagentsAsimiRuntime, "local exit_code=$?",
-		"__asimi_run must capture the exit code immediately after eval")
-	assert.Contains(t, dotagentsAsimiRuntime, "return $exit_code",
-		"__asimi_run must return the captured exit code")
-}
-
-// TestAsimiRuntimeProtocolMarkers verifies the stdout protocol markers that the
-// podman runner parses are present and correctly formatted.
-func TestAsimiRuntimeProtocolMarkers(t *testing.T) {
-	require.NotEmpty(t, dotagentsAsimiRuntime)
-	assert.Contains(t, dotagentsAsimiRuntime, "__ASIMI_STDOUT_START",
-		"__asimi_run must emit __ASIMI_STDOUT_START marker")
-	assert.Contains(t, dotagentsAsimiRuntime, "__ASIMI_STDOUT_END",
-		"__asimi_run must emit __ASIMI_STDOUT_END marker")
 }
 
 // TestBashrcSetsGitTerminalPrompt verifies that bashrc exports GIT_TERMINAL_PROMPT=0
@@ -67,17 +27,6 @@ func TestBashrcSetsTermDumb(t *testing.T) {
 	require.NotEmpty(t, dotagentsBashrc)
 	assert.Contains(t, dotagentsBashrc, `export TERM="dumb"`,
 		"bashrc must export TERM=dumb for non-interactive sandbox")
-}
-
-// TestBashrcDoesNotRedefineAsimiRun verifies that bashrc does not redefine
-// __asimi_run, which is installed into /etc/bash.bashrc by the Dockerfile.
-func TestBashrcDoesNotRedefineAsimiRun(t *testing.T) {
-	require.NotEmpty(t, dotagentsBashrc)
-	// The comment explicitly says "Do not redefine __asimi_run below"
-	assert.Contains(t, dotagentsBashrc, "Do not redefine __asimi_run",
-		"bashrc must contain the comment prohibiting __asimi_run redefinition")
-	assert.NotContains(t, dotagentsBashrc, "__asimi_run()",
-		"bashrc must NOT define __asimi_run function")
 }
 
 // TestBashrcGitShimPresent verifies that the git function wrapper (Li enforcement)

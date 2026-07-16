@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/afittestide/asimi/internal"
@@ -1400,8 +1401,22 @@ func (s *Session) executeToolCall(ctx context.Context, tool Tool, toolCallID, to
 }
 
 // processToolCalls handles executing tool calls and building response messages.
+// Valid tool calls are dispatched concurrently using a fan-out/collect pattern,
+// preserving the original message order in the result.
 func (s *Session) processToolCalls(ctx context.Context, toolCalls []schemas.ChatAssistantMessageToolCall) ([]schemas.ChatMessage, bool) {
-	toolMessages := make([]schemas.ChatMessage, 0, len(toolCalls))
+	// results[i] holds the response for toolCalls[i], or nil if skipped.
+	results := make([]*schemas.ChatMessage, len(toolCalls))
+
+	// Phase 1: Pre-validation — filter, check for loops, unknown tools, and
+	// context cancellation. This must be sequential because loop detection
+	// depends on stateful counters.
+	type pendingCall struct {
+		index int
+		id    string
+		tool  Tool
+		args  string
+	}
+	var pending []pendingCall
 
 	for i := range toolCalls {
 		tc := &toolCalls[i]
@@ -1423,7 +1438,8 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []schemas.Chat
 		case <-ctx.Done():
 			slog.Debug("context cancelled during tool execution", "completed", i, "total", len(toolCalls))
 
-			for _, remainingTC := range toolCalls {
+			for j := i; j < len(toolCalls); j++ {
+				remainingTC := &toolCalls[j]
 				if remainingTC.Function.Name == nil {
 					continue
 				}
@@ -1431,46 +1447,81 @@ func (s *Session) processToolCalls(ctx context.Context, toolCalls []schemas.Chat
 				if remainingTC.ID != nil {
 					remainingID = *remainingTC.ID
 				}
-				if !hasToolCallResponse(toolMessages, remainingID) {
-					toolMessages = append(toolMessages, schemas.ChatMessage{
+				if results[j] == nil {
+					msg := schemas.ChatMessage{
 						Role:            schemas.ChatMessageRoleTool,
 						Content:         textContent("error: session aborted by user"),
 						ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: strPtr(remainingID)},
-					})
+					}
+					results[j] = &msg
 				}
 			}
 
-			return toolMessages, true
+			return collectMessages(results), true
 		default:
 		}
 
 		// Check for tool call loops
 		if s.checkToolCallLoop(name, argsJSON) {
-			toolMessages = append(toolMessages, schemas.ChatMessage{
+			msg := schemas.ChatMessage{
 				Role:            schemas.ChatMessageRoleTool,
 				Content:         textContent(fmt.Sprintf("error: tool call loop detected (intervention #%d), please try a different approach", s.toolCallLoopHits)),
 				ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: tc.ID},
-			})
-			return toolMessages, false
+			}
+			results[i] = &msg
+			return collectMessages(results), false
 		}
 
 		tool, ok := s.toolCatalog[name]
 		if !ok {
-			toolMessages = append(toolMessages, schemas.ChatMessage{
+			msg := schemas.ChatMessage{
 				Role:            schemas.ChatMessageRoleTool,
 				Content:         textContent(fmt.Sprintf("error: unknown tool %q", name)),
 				ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: tc.ID},
-			})
+			}
+			results[i] = &msg
 			continue
 		}
 
-		response := s.executeToolCall(ctx, tool, *tc.ID, name, argsJSON)
-		slog.Debug("Called a tool", "tool", name, "args", argsJSON)
-		slog.Debug("creating tool response message", "tool_call_id", *tc.ID, "tool_name", name)
-		toolMessages = append(toolMessages, response)
+		pending = append(pending, pendingCall{
+			index: i,
+			id:    *tc.ID,
+			tool:  tool,
+			args:  argsJSON,
+		})
 	}
 
-	return toolMessages, false
+	// Phase 2: Concurrent dispatch — execute all validated tool calls in parallel.
+	if len(pending) > 0 {
+		var wg sync.WaitGroup
+
+		for _, pc := range pending {
+			wg.Add(1)
+			go func(p pendingCall) {
+				defer wg.Done()
+				msg := s.executeToolCall(ctx, p.tool, p.id, p.tool.Name(), p.args)
+				results[p.index] = &msg
+				slog.Debug("Called a tool", "tool", p.tool.Name(), "args", p.args)
+				slog.Debug("creating tool response message", "tool_call_id", p.id, "tool_name", p.tool.Name())
+			}(pc)
+		}
+
+		wg.Wait()
+	}
+
+	return collectMessages(results), false
+}
+
+// collectMessages gathers non-nil entries from a slice of message pointers,
+// preserving order.
+func collectMessages(results []*schemas.ChatMessage) []schemas.ChatMessage {
+	msgs := make([]schemas.ChatMessage, 0, len(results))
+	for _, m := range results {
+		if m != nil {
+			msgs = append(msgs, *m)
+		}
+	}
+	return msgs
 }
 
 // --- Main API Methods ---
