@@ -22,10 +22,9 @@ import (
 // Tools()-construction would be nil (or stale) and silently bypass the
 // editor branch.
 type SuggestEdictTool struct {
-	Ctx         ToolContext
-	Requester   ZhengmingRequester
-	NotifyFn    func() func(any)
-	SessionIDFn func() string
+	Ctx       ToolContext
+	Requester ZhengmingRequester
+	NotifyFn  func() func(any)
 }
 
 func (t SuggestEdictTool) Name() string { return "suggest_edict" }
@@ -140,16 +139,6 @@ func (t SuggestEdictTool) Call(ctx context.Context, input string) (string, error
 	requestID, err := t.Requester.RequestZhengming(key, questions, priority, "sage")
 	if err != nil {
 		return "", fmt.Errorf("failed to suggest edict: %w", err)
-	}
-
-	// Store the session ID on the zhengming record so the edict created
-	// from this suggestion can be linked back to the originating session.
-	if t.SessionIDFn != nil {
-		if sid := t.SessionIDFn(); sid != "" {
-			t.Ctx.DB.Model(&storage.Zhengming{}).
-				Where("request_id = ?", requestID).
-				Update("session_id", sid)
-		}
 	}
 
 	return fmt.Sprintf(`{"status":"suggested","request_id":"%s"}`, requestID), nil

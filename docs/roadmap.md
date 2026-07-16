@@ -6,7 +6,6 @@ Below is what is left to develop:
 
 ### Bug Fixes & Polish (active, close to done)
 
-- Fix "minister not found" on ritual tabs e647
 - PodmanRunner: per-command exec + concurrent scheduler e657
 
 ### Court Alignment (low-hanging v1.0 foundations)

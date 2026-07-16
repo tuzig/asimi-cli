@@ -12,19 +12,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/mocks"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/types"
-	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
-	"reflect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"reflect"
 
 	_ "modernc.org/sqlite"
 )
@@ -985,4 +985,126 @@ func TestUpdateProjectRootTools_PreservesHostChecker(t *testing.T) {
 	assert.False(t, msgChanField.IsNil(), "shell tool's msgChan pointer must be non-nil after updateProjectRootTools")
 	derefChan := msgChanField.Elem()
 	assert.False(t, derefChan.IsNil(), "shell tool's *msgChan must point to a non-nil channel after Subscribe")
+}
+
+// TestRequestZhengming_SetsSessionID verifies that RequestZhengming records
+// the minister's current session ID on the zhengming record. This is the root
+// fix for edict 667: every zhengming record should carry the session of the
+// minister that created it.
+func TestRequestZhengming_SetsSessionID(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+
+	// Create and attach a session to the chancellor
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	require.NoError(t, err)
+	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+		base.SetSession(sess)
+	}
+
+	// Call RequestZhengming via the ZhengmingRequester interface
+	zr, ok := chancellor.(tools.ZhengmingRequester)
+	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+
+	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Should we proceed?",
+		Summary: "proceed check",
+		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
+	}}
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	require.NoError(t, err)
+
+	// Verify the zhengming record has the session ID
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Equal(t, sess.ID, req.SessionID, "zhengming record should carry the minister's session ID")
+}
+
+// TestRequestZhengming_NilSessionLeavesSessionIDEmpty verifies that when no
+// session is active, the zhengming record gets an empty session ID (not a
+// panic or error).
+func TestRequestZhengming_NilSessionLeavesSessionIDEmpty(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+
+	// No session attached — Session() returns nil
+
+	zr, ok := chancellor.(tools.ZhengmingRequester)
+	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+
+	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Should we proceed?",
+		Summary: "proceed check",
+		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
+	}}
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	require.NoError(t, err)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Empty(t, req.SessionID, "zhengming record should have empty session ID when no session is active")
+}
+
+// TestZhengmingAnswered_NonSentinelCreatesEdictWithSessionID verifies that
+// the system path (key.ID == 0, non-approve answer) creates an edict linked
+// to the zhengming's session_id, not hardcoded "".
+func TestZhengmingAnswered_NonSentinelCreatesEdictWithSessionID(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	go s.ritualGuard.Run(ctx)
+
+	// Store a zhengming request with a known session_id
+	sessionID := "test-session-667"
+	req := storage.Zhengming{
+		RequestID:  "test-session-edict-1",
+		EdictID:    0,
+		Username:   cfg.Username,
+		Project:    cfg.Project,
+		MinisterID: "chancellor",
+		SessionID:  sessionID,
+		Questions:  storage.ZhengmingQuestions{{Text: "?", Summary: "?", Options: []string{"A", "B"}}},
+		Status:     storage.ZhengmingPending,
+		Priority:   storage.PriorityNormal,
+	}
+	require.NoError(t, db.Create(&req).Error)
+
+	customAnswer := "Build something new"
+	s.PublishEvent(storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project},
+		storage.EventZhengmingAnswered, storage.JSON{
+			"request_id": "test-session-edict-1",
+			"answer":     customAnswer,
+		})
+
+	// Poll for the edict to appear (async handler)
+	var edict storage.Edict
+	require.Eventually(t, func() bool {
+		return db.Where("intent = ?", customAnswer).First(&edict).Error == nil
+	}, 2*time.Second, 50*time.Millisecond, "edict should be created from the zhengming answer")
+
+	assert.Equal(t, sessionID, edict.SessionID, "edict should carry the zhengming's session_id")
 }

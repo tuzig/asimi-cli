@@ -859,10 +859,16 @@ func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.
 		Username:   key.Username,
 		Project:    key.Project,
 		MinisterID: callerMinisterID,
-		Questions:  questions,
-		Priority:   priority,
-		Status:     storage.ZhengmingPending,
-		TimeoutAt:  time.Now().Add(24 * time.Hour), // Default 24h timeout
+		SessionID: func() string {
+			if s := m.Session(); s != nil {
+				return s.ID
+			}
+			return ""
+		}(),
+		Questions: questions,
+		Priority:  priority,
+		Status:    storage.ZhengmingPending,
+		TimeoutAt: time.Now().Add(24 * time.Hour), // Default 24h timeout
 	}
 
 	if priority == storage.PriorityUrgent {

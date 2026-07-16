@@ -26,7 +26,6 @@ type ToolRegistrationOpts struct {
 	ZhengmingRequester ZhengmingRequester
 	WaitForZhengming   func(ctx context.Context, requestID string) (string, error)
 	NotifyFn           func() func(any)
-	SessionIDFn        func() string
 
 	MinisterInvoker MinisterInvoker
 	RitualLauncher  RitualLauncher
@@ -111,10 +110,9 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 
 	if opts.ZhengmingRequester != nil && opts.NotifyFn != nil {
 		r.Register(SuggestEdictTool{
-			Ctx:         opts.Ctx,
-			Requester:   opts.ZhengmingRequester,
-			NotifyFn:    opts.NotifyFn,
-			SessionIDFn: opts.SessionIDFn,
+			Ctx:       opts.Ctx,
+			Requester: opts.ZhengmingRequester,
+			NotifyFn:  opts.NotifyFn,
 		}, intentExec)
 	}
 	r.Register(RecordPrecedentTool{

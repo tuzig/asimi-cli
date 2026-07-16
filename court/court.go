@@ -244,7 +244,12 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 
 		// 3. Handle system ritual path (e.g., wakeup) — no edict, user chose a path forward
 		if key.ID == 0 && answer != "" {
-			if edict, err := s.CreateEdict("", answer, ""); err != nil {
+			var req storage.Zhengming
+			sessionID := ""
+			if err := s.db.First(&req, "request_id = ?", requestID).Error; err == nil {
+				sessionID = req.SessionID
+			}
+			if edict, err := s.CreateEdict("", answer, sessionID); err != nil {
 				s.logger.Warn("failed to create edict from zhengming answer", "error", err)
 			} else {
 				s.logger.Info("created edict from zhengming answer", "edict_id", edict.ID, "answer", answer)
@@ -253,7 +258,7 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 		}
 
 		// 4. Forward to chancellor as fallback for legacy path
-		s.logger.Info("Default forwarding zhengming answer to chancellot")
+		s.logger.Info("Default forwarding zhengming answer to chancellor")
 		work := fmt.Sprintf("Resume edict %d with clarification: %s", key.ID, answer)
 		if ch := s.GetMinister("chancellor"); ch != nil {
 			if rs, ok := ch.(interface {
@@ -313,20 +318,6 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 	// NotifyFn — lazy getter for the current notify, used by suggest_edict
 	notifyFn := func() func(any) { return s.notify }
 
-	// SessionIDFn — lazy getter for the chancellor's current session ID,
-	// used by suggest_edict to link edicts to their originating session.
-	var sessionIDFn func() string
-	if chancellor != nil {
-		if ss, ok := chancellor.(interface{ Session() *Session }); ok {
-			sessionIDFn = func() string {
-				if sess := ss.Session(); sess != nil {
-					return sess.ID
-				}
-				return ""
-			}
-		}
-	}
-
 	// Extract CheckHostCommand from the chancellor's MinisterBase so
 	// the shell tool honors run_on_host/safe_run_on_host config patterns.
 	// Same extraction pattern as EdictManager/ZhengmingRequester above.
@@ -350,7 +341,6 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 		ZhengmingRequester: zhengmingRequester,
 		WaitForZhengming:   waitForZhengming,
 		NotifyFn:           notifyFn,
-		SessionIDFn:        sessionIDFn,
 
 		// MinisterInvoker / RitualLauncher — chancellor-backed
 		MinisterInvoker: func() tools.MinisterInvoker {
