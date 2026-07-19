@@ -75,7 +75,7 @@ func initTabGreetings(tm *TabManager, defs []ministers.MinisterDef) {
 }
 
 // NewTabManager creates a TabManager with default tabs built from the given
-// minister defs. The default tabs are Chancellor, Sage, Forge, Judge —
+// minister defs. The default tabs are Forge, Sage, Judge, Chancellor —
 // using "Kanji Title" as the label, derived from the defs.
 func NewTabManager(w, h int, mdEnabled bool, getStatus func() string, defs []ministers.MinisterDef) TabManager {
 	defsByID := ministers.LookupMap(defs)
@@ -119,7 +119,6 @@ func (tm *TabManager) IsWelcome() bool {
 }
 
 // DismissWelcome hides the welcome screen and ensures the default tab
-// (Chancellor, index 0) is active.
 func (tm *TabManager) DismissWelcome() {
 	tm.showWelcome = false
 	tm.activeTab = 0
@@ -250,11 +249,6 @@ func (tm *TabManager) ChatByTab(tabID string) *ChatComponent {
 		}
 	}
 	return tm.tabs[tm.activeTab].Content.Chat
-}
-
-// Chancellor returns the Chancellor tab's ChatComponent (always index 0)
-func (tm *TabManager) Chancellor() *ChatComponent {
-	return tm.tabs[0].Content.Chat
 }
 
 // FlushDirtyChats calls UpdateContent on every dirty tab chat. Used by the

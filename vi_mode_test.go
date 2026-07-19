@@ -279,9 +279,9 @@ func TestViNormalModeGtSwitchesTab(t *testing.T) {
 	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true
 
-	// App starts with 4 tabs (Chancellor, Sage, Forge, Judge), active tab 0 (Chancellor)
+	// App starts with 4 tabs (Forge, Sage, Judge, Chancellor), active tab 0 (Forge)
 	assert.Equal(t, 4, model.tabs.TabCount(), "Should start with 4 tabs")
-	assert.Equal(t, 0, model.tabs.activeTab, "Should start on Chancellor tab")
+	assert.Equal(t, 0, model.tabs.activeTab, "Should start on Forge tab")
 
 	// Enter normal mode
 	model.prompt().EnterViNormalMode()
@@ -306,8 +306,8 @@ func TestViNormalModeGTSwitchesPrevTab(t *testing.T) {
 	model := NewTUIModel(config, nil, nil, nil, nil, nil, nil, nil)
 	model.sessionActive = true
 
-	// Start on Chancellor tab (index 0), switch to Forge (index 2)
-	model.tabs.SwitchTo(2)
+	// Start on Forge tab (index 0), switch to Sage (index 1)
+	model.tabs.SwitchTo(1)
 	model.prompt().EnterViNormalMode()
 	model.Mode = "normal"
 
@@ -319,7 +319,7 @@ func TestViNormalModeGTSwitchesPrevTab(t *testing.T) {
 	newModel, _ = updatedModel.handleViNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
 	updatedModel, ok = newModel.(TUIModel)
 	require.True(t, ok)
-	assert.Equal(t, 1, updatedModel.tabs.activeTab, "Active tab should switch to 1 after gT")
+	assert.Equal(t, 0, updatedModel.tabs.activeTab, "Active tab should switch to 0 after gT")
 }
 
 func TestScrollModeGtSwitchesTab(t *testing.T) {
@@ -328,7 +328,7 @@ func TestScrollModeGtSwitchesTab(t *testing.T) {
 	model.sessionActive = true
 	model.Mode = "scroll"
 
-	// App starts with 4 tabs, active tab 0 (Chancellor)
+	// App starts with 4 tabs, active tab 0 (Forge)
 	assert.Equal(t, 0, model.tabs.activeTab)
 
 	// Press 'g' to set pending g-prefix in scroll mode

@@ -388,7 +388,7 @@ func ProvideCourt(params CourtParams) *court.Court {
 	// notify is set later via s.SetNotify(program.Send) once the TUI program is created
 
 	// Persist sessions to the DB as messages are added. Every minister
-	// that owns a UI tab (chancellor, sage, forge, judge) gets the
+	// that owns a UI tab (forge, sage, judge, chancellor) gets the
 	// persister attached when it creates an interactive session; ephemeral
 	// ritual-task sessions don't receive one and skip storage. Wiring here
 	// covers both the daemon binary and the in-process TUI — same provider.

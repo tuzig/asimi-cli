@@ -1114,7 +1114,6 @@ func (s *Court) SubmitPrompt(targetID string, p *Prompt) error {
 // RestoreMinisterSession rebuilds the session of the minister identified
 // by tabType (matches the saved Session.TabType, which is the minister id)
 // and seeds it with msgs. Works for any minister that implements
-// RestoreSession — currently chancellor, sage, forge, judge.
 func (s *Court) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
 	if s == nil {
 		return fmt.Errorf("court not initialized")

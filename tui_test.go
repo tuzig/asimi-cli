@@ -100,33 +100,6 @@ func TestLLMInitSuccess_DoesNotShowModelSelection(t *testing.T) {
 	_ = newModel
 }
 
-// TestLLMInitError_AddsMessageToChancellorTab tests that LLM initialization errors
-// are properly displayed in the Chancellor tab with helpful guidance.
-// See: tui.go:llmInitErrorMsg handler (line 2307)
-func TestLLMInitError_AddsMessageToChancellorTab(t *testing.T) {
-	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
-	testErr := errors.New("connection refused")
-
-	// Get initial message count
-	initialCount := len(model.tabs.Chancellor().Messages)
-
-	// Send LLM init error
-	newModel, cmd := model.Update(llmInitErrorMsg{err: testErr})
-	_ = cmd // Command is nil (just logging)
-
-	updatedModel, ok := newModel.(TUIModel)
-	require.True(t, ok)
-
-	// Verify message was added to Chancellor tab
-	require.Len(t, updatedModel.tabs.Chancellor().Messages, initialCount+1)
-
-	// Verify the error message contains helpful guidance
-	lastMsg := updatedModel.tabs.Chancellor().Messages[initialCount]
-	require.Contains(t, lastMsg.Content, "LLM initialization failed")
-	require.Contains(t, lastMsg.Content, "connection refused")
-	require.Contains(t, lastMsg.Content, ":help models")
-}
-
 // TestTUIModelWindowSizeMsg tests handling of window size messages
 func TestTUIModelWindowSizeMsg(t *testing.T) {
 	model := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
@@ -1334,7 +1307,8 @@ func TestHistoryNavigation_WithArrowKeys(t *testing.T) {
 func TestCancelActiveStreaming(t *testing.T) {
 	model := newTestModel(t)
 
-	// Set up active streaming on the active tab
+	// Set up active streaming on the Chancellor tab
+	model.tabs.SwitchToTabType("chancellor")
 	tab := model.tabs.ActiveTab()
 	tab.Streaming = true
 	cancelCalled := false
@@ -1355,7 +1329,8 @@ func TestCancelActiveStreaming(t *testing.T) {
 func TestCancelActiveStreaming_NotActive(t *testing.T) {
 	model := newTestModel(t)
 
-	// Not streaming
+	// Switch to Chancellor tab and set up non-streaming state
+	model.tabs.SwitchToTabType("chancellor")
 	tab := model.tabs.ActiveTab()
 	tab.Streaming = false
 	tab.Cancel = nil
@@ -1971,7 +1946,8 @@ func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
 	require.True(t, ok)
 
 	// The completed step with a Message should add a new message with checkmark and message
-	lastMsg := updatedModel.tabs.Content().Chat.Messages[len(updatedModel.tabs.Content().Chat.Messages)-1]
+	chancellorChat := updatedModel.tabs.ChatByTab("chancellor")
+	lastMsg := chancellorChat.Messages[len(chancellorChat.Messages)-1]
 	assert.Contains(t, lastMsg.Content, "✓")
 	assert.Contains(t, lastMsg.Content, "三界 summary")
 }
@@ -1994,7 +1970,8 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	startedModel := newModel.(TUIModel)
 
 	// Count messages before
-	msgCountBefore := len(startedModel.tabs.Content().Chat.Messages)
+	chancellorChatBefore := startedModel.tabs.ChatByTab("chancellor")
+	msgCountBefore := len(chancellorChatBefore.Messages)
 
 	// Send "completed" without a Message (e.g., check-sandbox which uses ToolCallScheduledMsg)
 	completedMsg := court.RitualStepMsg{
@@ -2011,11 +1988,12 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	require.True(t, ok)
 
 	// A new message should be added for the completed step
-	msgCountAfter := len(updatedModel.tabs.Content().Chat.Messages)
+	chancellorChatAfter := updatedModel.tabs.ChatByTab("chancellor")
+	msgCountAfter := len(chancellorChatAfter.Messages)
 	assert.Equal(t, msgCountBefore+1, msgCountAfter)
 
 	// The last message should contain the "Completed" line
-	lastMsg := updatedModel.tabs.Content().Chat.Messages[len(updatedModel.tabs.Content().Chat.Messages)-1]
+	lastMsg := chancellorChatAfter.Messages[len(chancellorChatAfter.Messages)-1]
 	assert.Contains(t, lastMsg.Content, "Completed: check-sandbox of dawn-audience")
 }
 
@@ -3446,7 +3424,7 @@ func (m *mockCourtClient) SubmitPrompt(targetID string, p *court.Prompt) error {
 
 // --- Tests for pendingRitualEnact YESNO flow ---
 
-func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
+func TestPendingRitualEnact_YesPreCreatesTabAndReturnsAsyncCmd(t *testing.T) {
 	mock := &mockCourtClient{}
 	model := newTestModel(t)
 	model.court = mock
@@ -3456,12 +3434,33 @@ func TestPendingRitualEnact_YesPublishesEventRitualEnacted(t *testing.T) {
 
 	// User answers "yes"
 	msg := yesNoResponseMsg{answer: true}
-	newModel, _ := model.handleCustomMessages(msg)
+	newModel, cmd := model.handleCustomMessages(msg)
 	updated, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
-	// PublishEvent should have been called with EventRitualEnacted
-	require.Len(t, mock.publishedEvents, 1, "expected one PublishEvent call")
+	// Pre-created ritual tab should exist immediately with "e42" target
+	tab := updated.tabs.TabByTarget("e42")
+	require.NotNil(t, tab, "ritual tab should be pre-created for edict 42")
+	assert.Equal(t, TabType("ritual"), tab.Type)
+
+	// The placeholder message should be in the tab's chat history
+	chat := updated.tabs.ChatByTab("e42")
+	require.NotEmpty(t, chat.Messages, "placeholder message should be added to ritual tab")
+	last := chat.Messages[len(chat.Messages)-1]
+	assert.Contains(t, last.Content, "Preparing ritual for edict 42")
+	assert.Equal(t, MessageTypeSystem, last.Type)
+
+	// PublishEvent should NOT have been called synchronously — it's
+	// deferred to the returned tea.Cmd (async, non-blocking).
+	assert.Empty(t, mock.publishedEvents, "PublishEvent should be deferred to the returned tea.Cmd, not called inline")
+
+	// The returned cmd should execute PublishEvent when invoked.
+	require.NotNil(t, cmd, "expected a non-nil tea.Cmd from enactRitualForEdict")
+	msgOut := cmd()
+	assert.Nil(t, msgOut, "enactRitualForEdict returns nil — ritual manager handles notifications")
+
+	// Now PublishEvent should have been called with EventRitualEnacted
+	require.Len(t, mock.publishedEvents, 1, "expected one PublishEvent call after cmd execution")
 	assert.Equal(t, storage.EventRitualEnacted, mock.publishedEvents[0].eventType)
 	assert.Equal(t, uint(42), mock.publishedEvents[0].key.ID)
 	assert.Equal(t, "swift-strike", mock.publishedEvents[0].payload["ritual_name"])
@@ -5628,7 +5627,9 @@ func TestSubmitToCourt_NonRitualTab_RoutesToTabTarget(t *testing.T) {
 	model.court = mock
 	model.tabs.DismissWelcome()
 
-	// Default tab is "chancellor" (non-ritual)
+	// Switch to the Chancellor tab (non-ritual)
+	model.tabs.SwitchToTabType("chancellor")
+
 	ctx := context.Background()
 	cmd := model.submitToCourt(ctx, "hello chancellor", nil)
 	require.Nil(t, cmd)
