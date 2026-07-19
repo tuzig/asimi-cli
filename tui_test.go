@@ -4469,7 +4469,7 @@ func TestShowEdictActionMenu_EntersAnsweringMode(t *testing.T) {
 	assert.NotNil(t, model.prompt().answering, "prompt should be in answering mode")
 	assert.Equal(t, "edict-42", model.prompt().answering.RequestID)
 	require.Len(t, model.prompt().answering.Questions, 1)
-	assert.Equal(t, []string{"Status", "Implement", "Seal", "Cancel", "Edit", "Back"},
+	assert.Equal(t, []string{"Status", "Implement", "Chat", "Seal", "Cancel", "Edit", "Back"},
 		model.prompt().answering.Questions[0].Options)
 }
 
@@ -5106,7 +5106,7 @@ func TestRitualTabLabel(t *testing.T) {
 		channelID string
 		want      string
 	}{
-		{"e1", "Court"},
+		{"e1", "e1·Court"},
 		{"e123", "e123"},
 		{"e644", "e644"},
 		{"e647", "e647"},
@@ -5145,7 +5145,7 @@ func TestRitualStepMsg_AutoCreatesTab(t *testing.T) {
 }
 
 // TestRitualStepMsg_Edict1TabLabelCourt verifies that the ritual tab for
-// edict 1 (channel "e1") displays the label "Court" while the target
+// edict 1 (channel "e1") displays the label "e1·Court" while the target
 // remains "e1" so that TabByTarget lookups still work.
 func TestRitualStepMsg_Edict1TabLabelCourt(t *testing.T) {
 	model := newTestModel(t)
@@ -5166,7 +5166,7 @@ func TestRitualStepMsg_Edict1TabLabelCourt(t *testing.T) {
 
 	tab := updatedModel.tabs.TabByTarget("e1")
 	require.NotNil(t, tab, "ritual tab should be auto-created for e1")
-	assert.Equal(t, "Court", tab.Label, "edict 1 tab should display 'Court'")
+	assert.Equal(t, "e1·Court", tab.Label, "edict 1 tab should display 'e1·Court'")
 	assert.Equal(t, "e1", tab.Target, "target should remain 'e1' for lookups")
 }
 

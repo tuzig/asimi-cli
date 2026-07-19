@@ -5,7 +5,7 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.0] - 2026-07-16
+## [0.9.1] - 2026-07-19
 
 ### Added
 - **Parallel shell command execution** — sandbox shell now executes commands concurrently for faster builds (e657)
@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unify ritual channel IDs** — ritual channels now use the `e<N>` convention consistently
 
 ### Changed
+- **Ministers Order** - easier for the uninitiated, starting with Forge
 - **Shogunate → Court rename** — renamed `shogunate/` package to `court/` (type `Shogunate` → `Court`, `NewShogunate` → `NewCourt`), config section `[shogunate]` → `[court]` (backward-compatible), event strings `shogunate_started` → `court_started`, `shogunate_ready` → `court_ready`, RPC types `ShogunateClient` → `CourtClient`, `internal/shogunateapi/` → `internal/courtapi/`
 - **RPC protocol renamed** — "Shogunate RPC Protocol" → "Asimi's RPC Protocol"
 - **Daemon extraction** — extracted daemon server code from root `daemon.go` into `internal/daemon/` package
