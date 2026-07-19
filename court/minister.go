@@ -364,7 +364,7 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 	m.sessionMu.Lock()
 	if m.session == nil {
 		var err error
-		m.session, err = CreateSession(minister, m.client, m.config, m.notify, channelID)
+		m.session, err = CreateSession(minister, m.client, m.config, m.notify, channelID, prompt.EdictKey)
 		if err != nil {
 			m.sessionMu.Unlock()
 			m.notify(StreamErrorMsg{ChannelID: channelID, Err: fmt.Errorf("failed to create session: %w", err)})
@@ -373,6 +373,17 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 		m.session.TabType = m.ministerID
 		m.session.SetPersister(m.persister)
 		m.logger.Info("created interactive session", "minister_id", m.ministerID, "channel_id", channelID)
+
+		// Link the new session to the edict so future prompts on the same
+		// edict tab can restore it. Only runs when a new session is created
+		// AND the prompt carries an edict key (i.e. the fallback path).
+		if prompt.EdictKey.ID != 0 {
+			if err := m.db.Model(&storage.Edict{}).Where("id = ? AND username = ? AND project = ?",
+				prompt.EdictKey.ID, prompt.EdictKey.Username, prompt.EdictKey.Project).
+				Update("session_id", m.session.ID).Error; err != nil {
+				m.logger.Warn("failed to link session to edict", "edict_id", prompt.EdictKey.ID, "error", err)
+			}
+		}
 	} else {
 		// Override the session's channel so stream chunks route to the
 		// prompt's target tab (e.g. a ritual tab "e633").

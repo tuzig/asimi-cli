@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -259,24 +260,100 @@ func formatRelativeTime(t time.Time) string {
 // handleSessionSelected processes a resumed session and updates the TUI model.
 // It rebuilds the chat UI from messages, switches to the correct tab, and
 // re-hydrates the minister session for full conversation continuity.
+//
+// When m.pendingRitualPrompt is set, this is a ritual-tab restoration: the
+// Ruler prompted on an edict's ritual tab with no active ritual, and we're
+// restoring the edict's birth session. We stay on the ritual tab, set the
+// edict key, and submit the pending prompt after restoring the session.
 func (m *TUIModel) handleSessionSelected(session *court.Session) {
 	if session == nil {
 		return
 	}
 
-	// Clear current edict ID (resumed sessions are edict-free)
-	m.currentEdictKey = storage.EdictKey{}
+	ritualRestore := m.pendingRitualPrompt != ""
 
-	// Switch to the tab matching this session's type before rebuilding chat
-	if session.TabType != "" {
-		m.tabs.SwitchToTabType(TabType(session.TabType))
+	if ritualRestore {
+		// Set edict context instead of clearing it
+		m.currentEdictKey = m.pendingRitualEdictKey
+		// Stay on the ritual tab — don't switch to the session's original tab
+	} else {
+		// Clear current edict ID (resumed sessions are edict-free)
+		m.currentEdictKey = storage.EdictKey{}
+
+		// Switch to the tab matching this session's type before rebuilding chat
+		if session.TabType != "" {
+			m.tabs.SwitchToTabType(TabType(session.TabType))
+		}
 	}
 
-	// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
+	// Clear and rebuild chat UI from messages
 	m.tabs.Content().Chat.Clear()
+	m.rebuildChatFromMessages(session.GetMessages())
+	m.sessionActive = true
 
+	// Flush any debounced content from the rebuild loop above
+	m.tabs.Content().Chat.FlushDirty()
+
+	// Re-hydrate the minister session so follow-up prompts continue the
+	// conversation. TabType holds the minister id (chancellor/sage/forge/judge);
+	// legacy rows with no TabType predate per-minister persistence and are
+	// treated as chancellor sessions.
+	if m.court != nil {
+		tabType := session.TabType
+		if tabType == "" {
+			tabType = "chancellor"
+		}
+		if err := m.court.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
+			slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
+		}
+
+		if ritualRestore {
+			// Submit the pending prompt to the minister, routed to the ritual tab
+			tab := m.tabs.ActiveTab()
+			ministerID := session.TabType
+			if ministerID == "" {
+				ministerID = "chancellor"
+			}
+			p := &court.Prompt{
+				Ctx:       context.Background(),
+				Message:   m.pendingRitualPrompt,
+				EdictKey:  m.pendingRitualEdictKey,
+				ChannelID: tab.Target,
+			}
+			if err := m.court.SubmitPrompt(ministerID, p); err != nil {
+				slog.Warn("failed to submit pending ritual prompt", "error", err)
+			} else {
+				m.tabs.SetStreamingTabByTab(tab.Target)
+			}
+		}
+	}
+
+	// Reset in-session prompt history state to prevent rollback issues
+	// when the user enters a new prompt after resuming.
+	// We keep the persistent history (loaded from disk) but clear the
+	// session-specific rollback state.
+	m.sessionPromptHistory = make([]promptHistoryEntry, 0)
+	m.historyCursor = 0
+	m.historySaved = false
+	m.historyPendingPrompt = ""
+	m.historyPresentSessionSnapshot = 0
+	m.historyPresentChatSnapshot = 0
+
+	if ritualRestore {
+		// Clear pending fields — the prompt has been submitted
+		m.pendingRitualPrompt = ""
+		m.pendingRitualEdictKey = storage.EdictKey{}
+	} else {
+		timeStr := formatRelativeTime(session.LastUpdated)
+		m.commandLine.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
+	}
+}
+
+// rebuildChatFromMessages renders chat messages into the active tab's chat UI.
+// It builds a tool-results map, then iterates all messages adding user,
+// assistant (with thinking and tool calls), and tool messages.
+func (m *TUIModel) rebuildChatFromMessages(allMessages []schemas.ChatMessage) {
 	// Build a map of tool call IDs to their responses for matching
-	allMessages := session.GetMessages()
 	toolResults := make(map[string]string)
 	for _, msgContent := range allMessages {
 		if msgContent.Role == schemas.ChatMessageRoleTool {
@@ -357,36 +434,4 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 			continue
 		}
 	}
-	m.sessionActive = true
-
-	// Flush any debounced content from the rebuild loop above
-	m.tabs.Content().Chat.FlushDirty()
-
-	// Re-hydrate the minister session so follow-up prompts continue the
-	// conversation. TabType holds the minister id (chancellor/sage/forge/judge);
-	// legacy rows with no TabType predate per-minister persistence and are
-	// treated as chancellor sessions.
-	if m.court != nil {
-		tabType := session.TabType
-		if tabType == "" {
-			tabType = "chancellor"
-		}
-		if err := m.court.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
-			slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
-		}
-	}
-
-	// Reset in-session prompt history state to prevent rollback issues
-	// when the user enters a new prompt after resuming.
-	// We keep the persistent history (loaded from disk) but clear the
-	// session-specific rollback state.
-	m.sessionPromptHistory = make([]promptHistoryEntry, 0)
-	m.historyCursor = 0
-	m.historySaved = false
-	m.historyPendingPrompt = ""
-	m.historyPresentSessionSnapshot = 0
-	m.historyPresentChatSnapshot = 0
-
-	timeStr := formatRelativeTime(session.LastUpdated)
-	m.commandLine.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
 }
