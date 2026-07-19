@@ -6,31 +6,31 @@ Below is what is left to develop:
 
 ### Court Alignment
 
-- Rename `invoke_minister` → `consult_minister`, make available to all ministers (#155)
-- Realign ministers to full 三省 (Three Departments) alignment (#154)
+- Rename `invoke_minister` → `consult_minister`, make available to all ministers (https://github.com/afittestide/asimi-cli/issues/155)
+- Realign ministers to full 三省 (Three Departments) alignment (https://github.com/afittestide/asimi-cli/issues/154)
 - Sharpen:
-  - Roles: Improving definitions & translating to 文言文 (#156)
-  - Tools (#155)
-  - DB Schema — sharpen edicts, manifests, verdicts, precedents & seals (#152)
+  - Roles: Improving definitions & translating to 文言文 (https://github.com/afittestide/asimi-cli/issues/156)
+  - Tools (https://github.com/afittestide/asimi-cli/issues/155)
+  - DB Schema — sharpen edicts, manifests, verdicts, precedents & seals (https://github.com/afittestide/asimi-cli/issues/152)
 
 ### Full Parallelism
 
-- Use git worktrees to enable concurrent ritual execution (#153)
+- Use git worktrees to enable concurrent ritual execution (https://github.com/afittestide/asimi-cli/issues/153)
 - Seal edict command with a UI for the user to review and approve or chat about changes
 - Multiple minister tabs
 
 ### UI Improvements
 
-- Sharpen the modes (#157)
+- Sharpen the modes (https://github.com/afittestide/asimi-cli/issues/157)
 - Replace the external $EDITOR with an internal vim clone
 - Thinking has 5 rows of live scrolling reasoning
 - "Stick" important messages to the top so they don't scroll away — the ruler always knows what step the ritual is in
 - Support folding of steps — when a ritual runs, only the current step should be open, the rest folded
 - Replace file should show what was replaced
 
-### MCP Support (#158)
+### MCP Support (https://github.com/afittestide/asimi-cli/issues/158)
 
-### Skills Support (#159)
+### Skills Support (https://github.com/afittestide/asimi-cli/issues/159)
 
 ## V1.1
 
@@ -44,7 +44,7 @@ Below is what is left to develop:
 
 Improved realms alignment. The repo is not only earth, but earth and intent.
 Tests and docs are two examples for Intent content in the repo.
-Earth is just part of the repo, the part with code that is part of the program (#160).
+Earth is just part of the repo, the part with code that is part of the program (https://github.com/afittestide/asimi-cli/issues/160).
 
 ## V2.0
 
