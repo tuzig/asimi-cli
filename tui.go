@@ -3841,6 +3841,8 @@ func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
 			chat.AddMessage(fmt.Sprintf("%sPreparing ritual for edict %d…", ritualPrefix, edictID))
 		}
 		return tea.Batch(enactRitualForEdict(m, edictID, "swift-strike"), reloadEdictsListCmd(m))
+	case "Chat":
+		return resumeEdictSession(m, edictID)
 	case "Seal":
 		return handleEdictSeal(m, edictID, "")
 	case "Cancel":

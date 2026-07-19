@@ -1077,7 +1077,7 @@ func showEdictActionMenu(model *TUIModel, edictID uint) tea.Cmd {
 			{
 				Text:    "Choose an action",
 				Summary: "Choose an action",
-				Options: []string{"Status", "Implement", "Seal", "Cancel", "Edit", "Back"},
+				Options: []string{"Status", "Implement", "Chat", "Seal", "Cancel", "Edit", "Back"},
 			},
 		},
 		Answers: []string{""},

@@ -4560,6 +4560,90 @@ func TestDispatchEdictAction_Back(t *testing.T) {
 	assert.True(t, ok, "expected edictsLoadedMsg for Back action")
 }
 
+func TestDispatchEdictAction_Chat(t *testing.T) {
+	mock := &mockCourtClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, SessionID: "sess-123"}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+
+	cmd := dispatchEdictAction(model, 42, []string{"Chat"})
+	require.NotNil(t, cmd)
+	msg := cmd()
+	resumed, ok := msg.(resumeEdictSessionMsg)
+	assert.True(t, ok, "expected resumeEdictSessionMsg for Chat action")
+	assert.Equal(t, "sess-123", resumed.sessionID)
+}
+
+func TestDispatchEdictAction_Chat_NoSession(t *testing.T) {
+	mock := &mockCourtClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, SessionID: ""}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+
+	cmd := dispatchEdictAction(model, 42, []string{"Chat"})
+	require.NotNil(t, cmd)
+	msg := cmd()
+	sysMsg, ok := msg.(showContextMsg)
+	assert.True(t, ok, "expected showContextMsg when edict has no linked session")
+	assert.Contains(t, sysMsg.content, "No session linked to edict 42")
+}
+
+func TestHandleSessionSelected_SwitchesToSessionTab(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Start on the chancellor tab
+	model.tabs.SwitchToTabType("chancellor")
+	require.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type))
+
+	// Simulate a session that belongs to the sage tab
+	session := &court.Session{
+		ID:      "sess-sage-1",
+		TabType: "sage",
+	}
+	model.handleSessionSelected(session)
+
+	// The active tab should now be sage, not chancellor
+	assert.Equal(t, "sage", string(model.tabs.ActiveTab().Type),
+		"handleSessionSelected should switch to the session's tab type")
+}
+
+func TestHandleSessionSelected_EmptyTabTypeStaysOnCurrentTab(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Start on the chancellor tab
+	model.tabs.SwitchToTabType("chancellor")
+	require.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type))
+
+	// Session with no TabType — should not switch
+	session := &court.Session{
+		ID:      "sess-no-tab",
+		TabType: "",
+	}
+	model.handleSessionSelected(session)
+
+	assert.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type),
+		"empty TabType should not cause a tab switch")
+}
+
+func TestHandleSessionSelected_NilSessionIsNoOp(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	model.tabs.SwitchToTabType("chancellor")
+	model.handleSessionSelected(nil)
+
+	assert.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type),
+		"nil session should not change the active tab")
+}
+
 func TestEdictSelectedMsg_ShowsActionMenu(t *testing.T) {
 	mock := &mockCourtClient{}
 	model := newTestModel(t)

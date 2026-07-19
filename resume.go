@@ -267,6 +267,11 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 	// Clear current edict ID (resumed sessions are edict-free)
 	m.currentEdictKey = storage.EdictKey{}
 
+	// Switch to the tab matching this session's type before rebuilding chat
+	if session.TabType != "" {
+		m.tabs.SwitchToTabType(TabType(session.TabType))
+	}
+
 	// Clear and rebuild chat UI from messages (reuses existing markdown renderer)
 	m.tabs.Content().Chat.Clear()
 
