@@ -5,6 +5,12 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Self-update asset name mismatch** — asset names in GitHub releases don't include the "v" prefix (e.g. `asimi_0.9.1_darwin_arm64.tar.gz`), but the code was looking for `asimi_v0.9.1_darwin_arm64.tar.gz`. The "v" is now stripped from the tag name before matching, fixing the "no matching asset found" error on `asimi update`
+
 ## [0.9.1] - 2026-07-19
 
 ### Added

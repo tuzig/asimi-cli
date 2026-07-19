@@ -99,8 +99,10 @@ func ParseGitHubRelease(body []byte, currentVersion string) (ReleaseInfo, bool, 
 		return ReleaseInfo{}, false, fmt.Errorf("invalid current version: %w", err)
 	}
 
-	// Find the matching asset for this OS/arch
-	assetName := fmt.Sprintf("asimi_%s_%s_%s.tar.gz", release.TagName, runtime.GOOS, runtime.GOARCH)
+	// Find the matching asset for this OS/arch.
+	// GitHub tags include a "v" prefix (e.g. "v0.9.1") but asset names don't.
+	tag := strings.TrimPrefix(release.TagName, "v")
+	assetName := fmt.Sprintf("asimi_%s_%s_%s.tar.gz", tag, runtime.GOOS, runtime.GOARCH)
 	assetURL := ""
 	for _, asset := range release.Assets {
 		if asset.Name == assetName {

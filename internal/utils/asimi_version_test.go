@@ -146,13 +146,13 @@ func TestParseGitHubRelease(t *testing.T) {
 }
 
 func TestParseGitHubRelease_AssetMatching(t *testing.T) {
-	assetName := fmt.Sprintf("asimi_v0.9.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	assetName := fmt.Sprintf("asimi_0.9.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	body := fmt.Sprintf(`{
 		"tag_name": "v0.9.0",
 		"html_url": "https://example.com/release",
 		"body": "",
 		"assets": [
-			{"name": "asimi_v0.9.0_other_os.tar.gz", "browser_download_url": "https://example.com/wrong.tar.gz"},
+			{"name": "asimi_0.9.0_other_os.tar.gz", "browser_download_url": "https://example.com/wrong.tar.gz"},
 			{"name": %q, "browser_download_url": "https://example.com/correct.tar.gz"}
 		]
 	}`, assetName)
@@ -166,13 +166,35 @@ func TestParseGitHubRelease_AssetMatching(t *testing.T) {
 	}
 }
 
+func TestParseGitHubRelease_AssetMatchingVPrefixStripped(t *testing.T) {
+	// Regression: tag_name is "v0.9.0" but assets are named without "v".
+	// The code must strip the "v" from the tag when matching asset names.
+	body := `{
+		"tag_name": "v0.9.1",
+		"html_url": "https://example.com/release",
+		"body": "",
+		"assets": [
+			{"name": "asimi_v0.9.1_other_os.tar.gz", "browser_download_url": "https://example.com/wrong.tar.gz"},
+			{"name": "asimi_0.9.1_other_os.tar.gz", "browser_download_url": "https://example.com/wrong2.tar.gz"}
+		]
+	}`
+
+	info, _, err := ParseGitHubRelease([]byte(body), "0.8.1")
+	if err != nil {
+		t.Fatalf("ParseGitHubRelease() unexpected error: %v", err)
+	}
+	if info.AssetURL != "" {
+		t.Errorf("ParseGitHubRelease() assetURL = %q, want empty (no matching asset for this OS/arch)", info.AssetURL)
+	}
+}
+
 func TestParseGitHubRelease_NoMatchingAsset(t *testing.T) {
 	body := `{
 		"tag_name": "v0.9.0",
 		"html_url": "https://example.com/release",
 		"body": "",
 		"assets": [
-			{"name": "asimi_v0.9.0_other_os.tar.gz", "browser_download_url": "https://example.com/wrong.tar.gz"}
+			{"name": "asimi_0.9.0_other_os.tar.gz", "browser_download_url": "https://example.com/wrong.tar.gz"}
 		]
 	}`
 
