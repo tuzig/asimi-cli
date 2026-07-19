@@ -5,16 +5,49 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-07-16
+
+### Added
+- **Parallel shell command execution** — sandbox shell now executes commands concurrently for faster builds (e657)
+- **20+ LLM provider support** — expanded from 5 to 20+ supported providers (e658)
+- **Clean-slate ritual** — review uncommitted changes, split them into logical commits, and link them to edicts
+- **Glamour-based help rendering** — consolidated help topics into a single tutorial with rich formatting (e650)
+- **YAML-based minister definitions** — ministers are now configured via YAML for easier customization (e625-7)
+- **Parallel minister execution** — ministers can now perform tasks in parallel for faster rituals
+- **Ritual tab routing** — ritual prompt routing with pause/resume interjection (e647)
+- **Ritual queue reporting** — clear feedback when a ritual is queued
+- **Sandbox OS detection** — `GetOS` on Runner interface for accurate sandbox OS reporting
+- **suggest_edict intent replacement** — `suggest_edict` can now replace the edict intent (e634)
+- **Unify ritual channel IDs** — ritual channels now use the `e<N>` convention consistently
 
 ### Changed
-- Renamed `shogunate/` package to `court/` — type `Shogunate` → `Court`, `NewShogunate` → `NewCourt`
-- Renamed `ShogunateEvent` → `CourtEvent`, event string values `shogunate_started` → `court_started`, `shogunate_ready` → `court_ready`
-- Renamed config section `[shogunate]` → `[court]` (backward-compatible reading of old `[shogunate]` sections)
-- Renamed RPC types: `ShogunateClient` → `CourtClient`, `RegisterShogunateHandlers` → `RegisterCourtHandlers`, etc.
-- Renamed `internal/shogunateapi/` → `internal/courtapi/`
-- Extracted daemon server code from root `daemon.go` into `internal/daemon/` package
-- DB schema migration v4→v5 updates old event string values in `tian_events` and `tian_event_dlq`
+- **Shogunate → Court rename** — renamed `shogunate/` package to `court/` (type `Shogunate` → `Court`, `NewShogunate` → `NewCourt`), config section `[shogunate]` → `[court]` (backward-compatible), event strings `shogunate_started` → `court_started`, `shogunate_ready` → `court_ready`, RPC types `ShogunateClient` → `CourtClient`, `internal/shogunateapi/` → `internal/courtapi/`
+- **RPC protocol renamed** — "Shogunate RPC Protocol" → "Asimi's RPC Protocol"
+- **Daemon extraction** — extracted daemon server code from root `daemon.go` into `internal/daemon/` package
+- **DB schema migration v4→v5** — updates old event string values in `tian_events` and `tian_event_dlq`
+- **Direct GitHub API for updates** — replaced `go-github-selfupdate` with direct GitHub API calls
+- **Minister tool configuration** — replaced private tools with `extra_tools` in minister definitions
+- **Removed the marshal role** (e624)
+- **Simplified minister architecture** — streamlined minister definitions and removed dead code
+- **Improved welcome screen** — updated with tutorial and quit commands
+- **Improved ritual notifications** — better messaging and progress reporting (e664, e651)
+
+### Fixed
+- **Ritual extra params** — properly handling rituals extra parameters
+- **run_on_host approval** — fixed approval request for `run_on_host` commands (e666)
+- **Shell progress display** — fixed showing shell progress in rituals
+- **Linux build** — fixed build on Linux (e663)
+- **Detached HEAD project name** — fixed getting the right project name when on a detached HEAD
+- **`:edicts` Edit flow** — fixed Edit action to exit answering mode and use `SetIntent` (e655)
+- **Update notification** — fixed the update notification logic (e646)
+- **Prompt height with word-wrapped options** — fixed prompt height calculation accounting for word-wrapped options
+- **Ritual message routing** — fixed routing of ritual messages to per-edict channels with auto-created tabs (e640)
+- **Zhengming minister blocking** — zhengming no longer stops all minister avatars (e642)
+- **Container ID in status bar** — fixed container ID display
+- **Post swift-strike staging** — fixed staging of changes after swift-strike (e637)
+- **Bubbletea wordLeft infinite loop** — fixed infinite loop in word navigation (e635)
+- **wire run_on_host** — fixed wiring of `run_on_host` (e631)
+- **Podman sandbox errors** — clarified podman sandbox error messages (e131)
 
 ## [0.8.1] - 2026-07-09
 

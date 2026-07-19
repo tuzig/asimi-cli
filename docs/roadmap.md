@@ -2,59 +2,49 @@
 
 Below is what is left to develop:
 
-## V0.9 
-
-### Bug Fixes & Polish (active, close to done)
-
-### Court Alignment (low-hanging v1.0 foundations)
-
-- Rename `invoke_minister` → `consult_minister`, available to all e653
-
 ## V1.0
 
 ### Court Alignment
 
-- Realign the ministers e629
+- Rename `invoke_minister` → `consult_minister`, make available to all ministers (#155)
+- Realign ministers to full 三省 (Three Departments) alignment (#154)
 - Sharpen:
--- Roles: Improving definitions & translating to imperial chinesse e660
--- Tools e653
--- DB Schema - sharpen edicts, manifests (e524), verdicts, precedents & seals
+  - Roles: Improving definitions & translating to 文言文 (#156)
+  - Tools (#155)
+  - DB Schema — sharpen edicts, manifests, verdicts, precedents & seals (#152)
 
-### Full parallalism
+### Full Parallelism
 
-- Use worktrees to enable concurrent ritual execution e531
-- Seal edict command with a UI for the user to review and aprrove or chat about changes
+- Use git worktrees to enable concurrent ritual execution (#153)
+- Seal edict command with a UI for the user to review and approve or chat about changes
 - Multiple minister tabs
 
-### UI improvments
+### UI Improvements
 
-- Sharpen the modes e645
+- Sharpen the modes (#157)
 - Replace the external $EDITOR with an internal vim clone
 - Thinking has 5 rows of live scrolling reasoning
-- "stick" to the top important messages so they don't scroll away. This way the ruler always know what step the ritual is in
-- Support folding of steps. When a ritual runs, only the current step should be open, the rest folder
+- "Stick" important messages to the top so they don't scroll away — the ruler always knows what step the ritual is in
+- Support folding of steps — when a ritual runs, only the current step should be open, the rest folded
 - Replace file should show what was replaced
 
-### MCP Support e661
+### MCP Support (#158)
 
-### Skills Support e662
+### Skills Support (#159)
 
 ## V1.1
 
-### Infrastructure
-- PodmanRunner: per-command exec + concurrent tool scheduler e657
-- Rename `shogunate/` Go package to `court/` (excluded from e629)
+### Skills Support
 
-### Remote Skills
 - Skill marketplace discovery via `https://agentskills.io/llms.txt`
 - Fetch and cache remote skills into `.agents/skills/`
 - Skill versioning and update detection
 
-## v1.2
+## V1.2
 
 Improved realms alignment. The repo is not only earth, but earth and intent.
-Tests and docs are two examples for Intent content in the repo. 
-Earth is just part of the repo, the part with code that is part of the program e637.
+Tests and docs are two examples for Intent content in the repo.
+Earth is just part of the repo, the part with code that is part of the program (#160).
 
 ## V2.0
 
@@ -69,4 +59,4 @@ checks, website analytics.
 The Court is a process engine (seal chain, ritual
 DAGs, permissions) that reads the spec at startup and pulls realm data from the
 Mandate server as ritual context.
-The second mandate server - for digital marketers - proves the abstraction.
+The second mandate server — for digital marketers — proves the abstraction.
