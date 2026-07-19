@@ -2644,22 +2644,22 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Check if this is a response to a ritual enactment request
 		if m.pendingRitualEnact != nil {
+			edictID := m.pendingRitualEnact.edictID
+			m.pendingRitualEnact = nil
 			if msg.answer {
-				// User confirmed - enact swift-strike
-				key := m.court.EdictKey(m.pendingRitualEnact.edictID)
-				payload := storage.JSON{
-					"ritual_name": "swift-strike",
-					"edict_id":    m.pendingRitualEnact.edictID,
-					"inputs": map[string]interface{}{
-						"edict_id": fmt.Sprintf("%d", m.pendingRitualEnact.edictID),
-					},
+				// User confirmed - pre-create the ritual tab immediately
+				// for instant visual feedback, then delegate PublishEvent
+				// to the async tea.Cmd wrapper (same pattern as the
+				// "Implement" action path).
+				channelID := fmt.Sprintf("e%d", edictID)
+				if m.tabs.TabByTarget(channelID) == nil {
+					m.tabs.Add(ritualTabLabel(channelID), "ritual", channelID)
+					chat := m.tabs.ChatByTab(channelID)
+					chat.AddMessage(fmt.Sprintf("%sPreparing ritual for edict %d…", ritualPrefix, edictID))
 				}
-				slog.Info("Got user confiramtion, sending an even to enact ritual")
-				m.court.PublishEvent(key, storage.EventRitualEnacted, payload)
-				// Stay silent — the ritual manager notifies when the ritual starts or is queued
+				return m, enactRitualForEdict(&m, edictID, "swift-strike")
 			}
 			// No explicit "declined" message needed; the 📜 notification already shows
-			m.pendingRitualEnact = nil
 			return m, nil
 		}
 
@@ -3073,9 +3073,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case llmInitErrorMsg:
-		// LLM initialization failed - show persistent message in Chancellor tab
-		m.tabs.Chancellor().AddMessage(fmt.Sprintf("%s%s LLM initialization failed: %v\n\nUse `:help models` to learn more.",
-			systemPrefix, completeFailurePrefix, msg.err))
 		slog.Warn("LLM initialization failed", "error", msg.err)
 		m.commandLine.AddToast("Running without a model, use `:help models` to configure", "warning", 5000)
 
