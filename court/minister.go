@@ -860,8 +860,13 @@ func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.
 		Project:    key.Project,
 		MinisterID: callerMinisterID,
 		SessionID: func() string {
-			if s := m.Session(); s != nil {
-				return s.ID
+			// Use the calling minister's session, not the requester's (chancellor's)
+			if m.getMinister != nil {
+				if caller := m.getMinister(callerMinisterID); caller != nil {
+					if s := caller.GetSession(); s != nil {
+						return s.ID
+					}
+				}
 			}
 			return ""
 		}(),

@@ -1000,6 +1000,13 @@ func TestRequestZhengming_SetsSessionID(t *testing.T) {
 	s.ctx, s.cancel = ctx, cancel
 	defer cancel()
 
+	// Wire minister lookup so RequestZhengming can resolve callerMinisterID
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
+			base.SetMinisterLookup(s.GetMinister)
+		}
+	}
+
 	chancellor := s.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
 
@@ -1062,6 +1069,218 @@ func TestRequestZhengming_NilSessionLeavesSessionIDEmpty(t *testing.T) {
 	var req storage.Zhengming
 	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
 	assert.Empty(t, req.SessionID, "zhengming record should have empty session ID when no session is active")
+}
+
+// TestRequestZhengming_UsesCallingMinisterSessionID verifies that when a non-chancellor
+// minister's session is active and the chancellor calls RequestZhengming with that
+// minister's ID as callerMinisterID, the zhengming record carries the calling minister's
+// session ID, not the chancellor's. (edict 674)
+func TestRequestZhengming_UsesCallingMinisterSessionID(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	// Wire minister lookup so RequestZhengming can resolve callerMinisterID
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
+			base.SetMinisterLookup(s.GetMinister)
+		}
+	}
+
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+
+	sage := s.GetMinister("sage")
+	require.NotNil(t, sage)
+
+	// Attach a session to the chancellor
+	mockLLM := mocks.NewLLMProvider()
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	require.NoError(t, err)
+	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+		base.SetSession(chancellorSess)
+	}
+
+	// Attach a DIFFERENT session to the sage
+	sageSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "sage")
+	require.NoError(t, err)
+	if base, ok := sage.(interface{ SetSession(*Session) }); ok {
+		base.SetSession(sageSess)
+	}
+
+	// The chancellor calls RequestZhengming on behalf of "sage"
+	zr, ok := chancellor.(tools.ZhengmingRequester)
+	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+
+	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Should we proceed?",
+		Summary: "proceed check",
+		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
+	}}
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	require.NoError(t, err)
+
+	// The zhengming record should carry the SAGE's session ID, not the chancellor's
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Equal(t, sageSess.ID, req.SessionID,
+		"zhengming record should carry the calling minister's (sage) session ID, not the chancellor's")
+	assert.NotEqual(t, chancellorSess.ID, req.SessionID,
+		"zhengming record must NOT carry the chancellor's session ID")
+}
+
+// TestRequestZhengming_EmptySessionIDWhenMinisterLookupNil verifies that when
+// getMinister is nil (lookup not wired), SessionID is empty string rather
+// than falling back to the requester's (chancellor's) session. (edict 674)
+func TestRequestZhengming_EmptySessionIDWhenMinisterLookupNil(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+
+	// Attach a session to the chancellor — this is the "wrong" session
+	// that the old code would have used as fallback
+	mockLLM := mocks.NewLLMProvider()
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	require.NoError(t, err)
+	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+		base.SetSession(chancellorSess)
+	}
+
+	// Note: SetMinisterLookup is NOT called — getMinister is nil
+
+	zr, ok := chancellor.(tools.ZhengmingRequester)
+	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+
+	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Should we proceed?",
+		Summary: "proceed check",
+		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
+	}}
+	// Caller is "sage" but getMinister is nil, so lookup fails
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	require.NoError(t, err)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Empty(t, req.SessionID,
+		"zhengming SessionID should be empty when minister lookup is nil, not the chancellor's session")
+	assert.NotEqual(t, chancellorSess.ID, req.SessionID,
+		"zhengming SessionID must NOT fall back to the chancellor's session")
+}
+
+// TestRequestZhengming_EmptySessionIDWhenMinisterNotFound verifies that when
+// getMinister returns nil for the callerMinisterID (minister not registered),
+// SessionID is empty string. (edict 674)
+func TestRequestZhengming_EmptySessionIDWhenMinisterNotFound(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	// Wire minister lookup — but "nonexistent" minister doesn't exist
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
+			base.SetMinisterLookup(s.GetMinister)
+		}
+	}
+
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+
+	// Chancellor has a session, but the caller ("nonexistent") does not
+	mockLLM := mocks.NewLLMProvider()
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	require.NoError(t, err)
+	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+		base.SetSession(chancellorSess)
+	}
+
+	zr, ok := chancellor.(tools.ZhengmingRequester)
+	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+
+	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Should we proceed?",
+		Summary: "proceed check",
+		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
+	}}
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "nonexistent")
+	require.NoError(t, err)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Empty(t, req.SessionID,
+		"zhengming SessionID should be empty when calling minister is not found")
+}
+
+// TestRequestZhengming_EmptySessionIDWhenMinisterHasNoSession verifies that
+// when the calling minister exists but has no active session, SessionID is
+// empty string. (edict 674)
+func TestRequestZhengming_EmptySessionIDWhenMinisterHasNoSession(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	// Wire minister lookup
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
+			base.SetMinisterLookup(s.GetMinister)
+		}
+	}
+
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+
+	sage := s.GetMinister("sage")
+	require.NotNil(t, sage)
+
+	// Chancellor has a session, sage does NOT
+	mockLLM := mocks.NewLLMProvider()
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	require.NoError(t, err)
+	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+		base.SetSession(chancellorSess)
+	}
+
+	zr, ok := chancellor.(tools.ZhengmingRequester)
+	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+
+	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Should we proceed?",
+		Summary: "proceed check",
+		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
+	}}
+	// "sage" exists but has no session → SessionID should be empty
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	require.NoError(t, err)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Empty(t, req.SessionID,
+		"zhengming SessionID should be empty when calling minister has no session")
+	assert.NotEqual(t, chancellorSess.ID, req.SessionID,
+		"zhengming SessionID must NOT fall back to the chancellor's session")
 }
 
 // TestZhengmingAnswered_NonSentinelCreatesEdictWithSessionID verifies that
