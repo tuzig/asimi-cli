@@ -1481,6 +1481,16 @@ func isRitualChannel(channelID string) bool {
 	return err == nil
 }
 
+// ritualTabLabel returns the display label for a ritual tab.
+// Edict 1 is the reserved Court Infrastructure edict, so its
+// tab shows as "Court" instead of "e1".
+func ritualTabLabel(channelID string) string {
+	if channelID == "e1" {
+		return "e1·Court"
+	}
+	return channelID
+}
+
 // friendlyConnError converts a raw RPC connection error string into a
 // user-friendly message.
 func friendlyConnError(err error) string {
@@ -2126,7 +2136,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case court.StreamChunkMsg:
 		// Auto-create a ritual tab for "e<N>" channels that don't have one yet
 		if isRitualChannel(msg.ChannelID) && m.tabs.TabByTarget(msg.ChannelID) == nil {
-			m.tabs.Add(msg.ChannelID, "ritual", msg.ChannelID)
+			m.tabs.Add(ritualTabLabel(msg.ChannelID), "ritual", msg.ChannelID)
 		}
 		// Drop chunks for tabs the user already cancelled; daemon may still
 		// emit a few in-flight chunks before its ctx-cancel takes effect.
@@ -2197,7 +2207,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case court.RitualStepMsg:
 		// Auto-create a ritual tab for "e<N>" channels that don't have one yet
 		if isRitualChannel(msg.ChannelID) && m.tabs.TabByTarget(msg.ChannelID) == nil {
-			m.tabs.Add(msg.ChannelID, "ritual", msg.ChannelID)
+			m.tabs.Add(ritualTabLabel(msg.ChannelID), "ritual", msg.ChannelID)
 		}
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("RITUAL_STEP",
@@ -3829,7 +3839,7 @@ func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
 		// follows the "e<N>" convention (see ritualChannelID).
 		channelID := fmt.Sprintf("e%d", edictID)
 		if m.tabs.TabByTarget(channelID) == nil {
-			m.tabs.Add(channelID, "ritual", channelID)
+			m.tabs.Add(ritualTabLabel(channelID), "ritual", channelID)
 			chat := m.tabs.ChatByTab(channelID)
 			chat.AddMessage(fmt.Sprintf("%sPreparing ritual for edict %d…", ritualPrefix, edictID))
 		}

@@ -5102,6 +5102,24 @@ func TestIsRitualChannel(t *testing.T) {
 	}
 }
 
+func TestRitualTabLabel(t *testing.T) {
+	tests := []struct {
+		channelID string
+		want      string
+	}{
+		{"e1", "Court"},
+		{"e123", "e123"},
+		{"e644", "e644"},
+		{"e647", "e647"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.channelID, func(t *testing.T) {
+			assert.Equal(t, tt.want, ritualTabLabel(tt.channelID))
+		})
+	}
+}
+
 // TestRitualStepMsg_AutoCreatesTab verifies that receiving a RitualStepMsg
 // from an unknown "e<N>" channel auto-creates a ritual tab.
 func TestRitualStepMsg_AutoCreatesTab(t *testing.T) {
@@ -5125,6 +5143,32 @@ func TestRitualStepMsg_AutoCreatesTab(t *testing.T) {
 	tab := updatedModel.tabs.TabByTarget("e999")
 	require.NotNil(t, tab, "ritual tab should be auto-created for e999")
 	assert.Equal(t, "ritual", string(tab.Type))
+}
+
+// TestRitualStepMsg_Edict1TabLabelCourt verifies that the ritual tab for
+// edict 1 (channel "e1") displays the label "Court" while the target
+// remains "e1" so that TabByTarget lookups still work.
+func TestRitualStepMsg_Edict1TabLabelCourt(t *testing.T) {
+	model := newTestModel(t)
+
+	require.Nil(t, model.tabs.TabByTarget("e1"),
+		"no ritual tab should exist before first message")
+
+	msg := court.RitualStepMsg{
+		ChannelID:  "e1",
+		RitualName: "swift-strike",
+		StepName:   "forge",
+		StepIndex:  0,
+		TotalSteps: 2,
+		Status:     "started",
+	}
+	newModel, _ := model.handleCustomMessages(msg)
+	updatedModel := newModel.(TUIModel)
+
+	tab := updatedModel.tabs.TabByTarget("e1")
+	require.NotNil(t, tab, "ritual tab should be auto-created for e1")
+	assert.Equal(t, "Court", tab.Label, "edict 1 tab should display 'Court'")
+	assert.Equal(t, "e1", tab.Target, "target should remain 'e1' for lookups")
 }
 
 // TestRitualStepMsg_NoAutoCreateForChancellor verifies that messages
