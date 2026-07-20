@@ -21,6 +21,11 @@ func LoadAllMinisters(projectDir string) ([]MinisterDef, error) {
 	return ministers.LoadAllMinisters(projectDir)
 }
 
+// commonTools lists tool names available to every minister, regardless of
+// their extra_tools definition. These are resolved via the tool registry's
+// ExtraTools mechanism (the minister ID is passed for factory tools).
+var commonTools = []string{"consult_minister"}
+
 // ministerImpl is the generic, YAML-driven minister type. It replaces the
 // five hand-coded minister structs (Chancellor, Forge, Judge, Sage,
 // Strategist) with a single implementation that derives its behaviour
@@ -69,11 +74,15 @@ func (m *ministerImpl) Tools() []Tool {
 	}
 	public := m.toolRegistry.ForPermissions(perm)
 	extra := m.toolRegistry.ExtraTools(m.def.ID, m.def.ExtraTools)
-	result := make([]Tool, 0, len(public)+len(extra))
+	common := m.toolRegistry.ExtraTools(m.def.ID, commonTools)
+	result := make([]Tool, 0, len(public)+len(extra)+len(common))
 	for _, t := range public {
 		result = append(result, t)
 	}
 	for _, t := range extra {
+		result = append(result, t)
+	}
+	for _, t := range common {
 		result = append(result, t)
 	}
 	return result

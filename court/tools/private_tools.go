@@ -4,31 +4,38 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/storage"
 )
 
-// --- InvokeMinisterTool ---
+// --- ConsultMinisterTool ---
 
-// InvokeMinisterTool allows the Chancellor to invoke any registered minister for an edict.
-type InvokeMinisterTool struct {
-	Ctx     ToolContext
-	Invoker MinisterInvoker
+// ConsultMinisterTool allows any minister to consult any registered minister for an edict.
+type ConsultMinisterTool struct {
+	Ctx         ToolContext
+	Consultant  MinisterConsultant
+	MinisterIDs []string
 }
 
-func (t InvokeMinisterTool) Name() string {
-	return "invoke_minister"
+func (t ConsultMinisterTool) Name() string {
+	return "consult_minister"
 }
 
-func (t InvokeMinisterTool) Description() string {
-	return `Invoke a minister by ID to execute its logic for an edict.
+func (t ConsultMinisterTool) Description() string {
+	examples := "strategist, forge, judge, sage"
+	if len(t.MinisterIDs) > 0 {
+		// Use the last two as examples, rest as a plain list
+		examples = strings.Join(t.MinisterIDs, ", ")
+	}
+	return fmt.Sprintf(`Consult a minister by ID to get its perspective or execute its logic for an edict.
 	Ministers process edicts through their specialized phase logic
-	(e.g., strategist for planning, forge for code generation, judge for testing and verification, sage for review).
-	Provide specific task instructions for what the minister should do.`
+	(e.g., %s).
+	Provide specific task instructions for what the minister should do.`, examples)
 }
 
-func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, error) {
+func (t ConsultMinisterTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		MinisterID string `json:"minister_id"`
 		EdictID    uint   `json:"edict_id"`
@@ -54,17 +61,17 @@ func (t InvokeMinisterTool) Call(ctx context.Context, input string) (string, err
 		Project:  t.Ctx.Project,
 	}
 
-	return t.Invoker.InvokeMinister(ctx, params.MinisterID, key, params.Work)
+	return t.Consultant.ConsultMinister(ctx, params.MinisterID, key, params.Work)
 }
 
-func (t InvokeMinisterTool) Format(input, result string, err error) string {
+func (t ConsultMinisterTool) Format(input, result string, err error) string {
 	var params struct {
 		MinisterID string `json:"minister_id"`
 		Task       string `json:"task"`
 	}
 	json.Unmarshal([]byte(input), &params)
 
-	msg := utils.NewMsgBlockBuilder("InvokeMinister")
+	msg := utils.NewMsgBlockBuilder("ConsultMinister")
 	msg.Writef(" %s", params.MinisterID)
 	msg.WriteLn()
 
@@ -81,13 +88,19 @@ func (t InvokeMinisterTool) Format(input, result string, err error) string {
 	return msg.String() + "\n"
 }
 
-func (t InvokeMinisterTool) ParameterSchema() map[string]any {
+func (t ConsultMinisterTool) ParameterSchema() map[string]any {
+	var examples string
+	if len(t.MinisterIDs) > 0 {
+		examples = strings.Join(t.MinisterIDs, ", ")
+	} else {
+		examples = "strategist, forge, judge, sage"
+	}
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"minister_id": map[string]any{
 				"type":        "string",
-				"description": "The minister to invoke (strategist, forge, judge, or sage)",
+				"description": fmt.Sprintf("The minister to consult (%s)", examples),
 			},
 			"edict_id": map[string]any{
 				"type":        "integer",
@@ -121,8 +134,8 @@ Rituals are predefined workflows that orchestrate ministers and commands through
 
 func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		RitualName string            `json:"ritual_name"`
-		EdictID    uint              `json:"edict_id"`
+		RitualName string         `json:"ritual_name"`
+		EdictID    uint           `json:"edict_id"`
 		Inputs     map[string]any `json:"inputs"`
 	}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
@@ -148,7 +161,7 @@ func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error
 	for k, v := range params.Inputs {
 		inputs[k] = fmt.Sprintf("%v", v)
 	}
-    if err := t.Launcher.StartRitual(params.RitualName, key, inputs); err != nil {
+	if err := t.Launcher.StartRitual(params.RitualName, key, inputs); err != nil {
 		return "", err
 	}
 
@@ -209,8 +222,8 @@ func (t InvokeRitualTool) ParameterSchema() map[string]any {
 				"description": "The edict ID this ritual is processing (optional for unbound rituals, like reviews)",
 			},
 			"inputs": map[string]any{
-				"type":        "object",
-				"description": "Optional inputs for the ritual (key-value pairs)",
+				"type":                 "object",
+				"description":          "Optional inputs for the ritual (key-value pairs)",
 				"AdditionalProperties": true,
 			},
 		},

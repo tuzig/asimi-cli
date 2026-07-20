@@ -63,14 +63,15 @@ type Prompt struct {
 
 // Task carries work from Chancellor to a Minister
 type Task struct {
-	Ctx        context.Context     // Per-task cancellation (e.g. CTRL-C)
-	EdictKey   storage.EdictKey    // The edict this task belongs to
-	Work       string              // Specific instructions for the minister (renamed from Task to avoid Task.Task)
-	Scratchpad string              // Pre-formatted markdown added to the context
-	Session    *Session            // Existing session for multi-turn (nil = create new)
-	Done       chan<- Result       // For completion signal
-	Notify     internal.NotifyFunc // Routing-aware notify override (nil = use minister's default)
-	ChannelID  string              // Routing target for stream messages (set by caller)
+	Ctx          context.Context     // Per-task cancellation (e.g. CTRL-C)
+	EdictKey     storage.EdictKey    // The edict this task belongs to
+	Work         string              // Specific instructions for the minister (renamed from Task to avoid Task.Task)
+	Scratchpad   string              // Pre-formatted markdown added to the context
+	Session      *Session            // Existing session for multi-turn (nil = create new)
+	Done         chan<- Result       // For completion signal
+	Notify       internal.NotifyFunc // Routing-aware notify override (nil = use minister's default)
+	ChannelID    string              // Routing target for stream messages (set by caller)
+	ExcludeTools []string            // Tool names to exclude from the minister's session (e.g. consult_minister to prevent recursion)
 }
 
 // Result signals a Minister has completed a Task
@@ -488,9 +489,10 @@ func (m *MinisterBase) GetToolRegistry() *tools.ToolRegistry {
 
 // CreateSessionOpts holds optional parameters for CreateSession.
 type CreateSessionOpts struct {
-	EdictKey   storage.EdictKey
-	ChannelID  string
-	Scratchpad string // Pre-formatted markdown context from ritual
+	EdictKey     storage.EdictKey
+	ChannelID    string
+	Scratchpad   string   // Pre-formatted markdown context from ritual
+	ExcludeTools []string // Tool names to exclude from the session's tool list
 }
 
 // WithChannelID wraps a notify function to auto-set Session's ChannelID on first invocation.
@@ -521,7 +523,21 @@ func CreateSession(minister Minister, client LLMProvider, config *SessionConfig,
 // CreateSessionWithOpts creates a session with extended options including given context.
 func CreateSessionWithOpts(minister Minister, client LLMProvider, config *SessionConfig, notify internal.NotifyFunc, opts CreateSessionOpts) (*Session, error) {
 	systemPrompt := buildSystemPrompt(minister, config, opts.EdictKey, opts.Scratchpad)
-	return NewSession(client, config, minister.Tools(), nil, notify, systemPrompt, opts.ChannelID)
+	tools := minister.Tools()
+	if len(opts.ExcludeTools) > 0 {
+		excludeSet := make(map[string]bool, len(opts.ExcludeTools))
+		for _, name := range opts.ExcludeTools {
+			excludeSet[name] = true
+		}
+		filtered := make([]Tool, 0, len(tools))
+		for _, t := range tools {
+			if !excludeSet[t.Name()] {
+				filtered = append(filtered, t)
+			}
+		}
+		tools = filtered
+	}
+	return NewSession(client, config, tools, nil, notify, systemPrompt, opts.ChannelID)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
@@ -690,7 +706,9 @@ func (m *MinisterBase) sendResult(task *Task, result Result) {
 
 // streamTask creates a session (or reuses existing) and streams the task through the LLM.
 // This is the unified version used by all ministers via MinisterBase.
-func (m *MinisterBase) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string) (*Session, string, error) {
+// excludeTools is a list of tool names to exclude from the session (e.g. consult_minister to prevent recursion).
+// TODO: Too many params. Maybe we need a `Task` type?
+func (m *MinisterBase) streamTask(ctx context.Context, work string, key storage.EdictKey, scratchpad string, notify internal.NotifyFunc, existingSession *Session, channelID string, excludeTools []string) (*Session, string, error) {
 	var session *Session
 	var output string
 	var err error
@@ -716,9 +734,10 @@ func (m *MinisterBase) streamTask(ctx context.Context, work string, key storage.
 			channelID = m.ministerID
 		}
 		session, err = CreateSessionWithOpts(m.self, m.client, m.config, notify, CreateSessionOpts{
-			EdictKey:   key,
-			ChannelID:  channelID,
-			Scratchpad: scratchpad,
+			EdictKey:     key,
+			ChannelID:    channelID,
+			Scratchpad:   scratchpad,
+			ExcludeTools: excludeTools,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create %s session: %w", m.ministerID, err)
@@ -763,7 +782,7 @@ func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
 	sealed := true
 
 	if m.client != nil {
-		session, output, taskErr = m.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID)
+		session, output, taskErr = m.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID, task.ExcludeTools)
 	} else if m.taskFallback != nil {
 		sealed, taskErr = m.taskFallback(ctx, task)
 		if sealed {
@@ -1077,7 +1096,7 @@ func (m *MinisterBase) EmitEvent(key storage.EdictKey, eventType storage.CourtEv
 	return nil
 }
 
-// --- Minister invocation and ritual launching (implements tools.MinisterInvoker, tools.RitualLauncher) ---
+// --- Minister consultation and ritual launching (implements tools.MinisterConsultant, tools.RitualLauncher) ---
 
 // MinisterInvokingMsg notifies the user that a minister is being invoked
 type MinisterInvokingMsg struct {
@@ -1139,9 +1158,9 @@ func (m *MinisterCompletedMsg) UnmarshalMsgpack(b []byte) error {
 	return nil
 }
 
-// InvokeMinister dispatches work to a registered minister for an edict (synchronous).
-// Implements tools.MinisterInvoker via MinisterBase embedding.
-func (m *MinisterBase) InvokeMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
+// ConsultMinister dispatches work to a registered minister for an edict (synchronous).
+// Implements tools.MinisterConsultant via MinisterBase embedding.
+func (m *MinisterBase) ConsultMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
 	logger := m.logger
 	if logger == nil {
 		logger = slog.Default()
@@ -1182,12 +1201,13 @@ func (m *MinisterBase) InvokeMinister(ctx context.Context, ministerID string, ke
 	doneChan := make(chan Result, 1)
 
 	task := &Task{
-		Ctx:       ctx,
-		EdictKey:  key,
-		Work:      work,
-		Done:      doneChan,
-		Notify:    wrappedNotify,
-		ChannelID: m.ministerID,
+		Ctx:          ctx,
+		EdictKey:     key,
+		Work:         work,
+		Done:         doneChan,
+		Notify:       wrappedNotify,
+		ChannelID:    m.ministerID,
+		ExcludeTools: []string{"consult_minister"},
 	}
 
 	// Send task to minister

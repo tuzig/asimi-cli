@@ -284,6 +284,111 @@ func TestProcessPrompt_DefaultChannelID(t *testing.T) {
 	assert.Equal(t, "sage", doneChannelID, "StreamDoneMsg should use minister ID when ChannelID is empty")
 }
 
+// TestProcessPrompt_NewSessionSavesEdictSessionID verifies that when a new
+// session is created (m.session == nil) and the prompt carries an edict key,
+// the session ID is saved to the edict's session_id column.
+func TestProcessPrompt_NewSessionSavesEdictSessionID(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create an edict with empty SessionID
+	edict := storage.Edict{
+		ID:       1,
+		Username: "testuser",
+		Project:  "testproject",
+		Intent:   "test intent",
+	}
+	require.NoError(t, db.Create(&edict).Error)
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	var mu sync.Mutex
+	var doneCount int
+	sage.SetNotify(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if _, ok := msg.(StreamDoneMsg); ok {
+			doneCount++
+		}
+	})
+
+	prompt := &Prompt{
+		EdictKey:  storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+		Message:   "hello",
+		ChannelID: "e1",
+	}
+	base.ProcessPrompt(ctx, sage, prompt)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, doneCount, "should complete streaming without error")
+
+	// Verify the edict's session_id was updated
+	var updated storage.Edict
+	require.NoError(t, db.First(&updated, "id = ? AND username = ? AND project = ?", 1, "testuser", "testproject").Error)
+	assert.NotEmpty(t, updated.SessionID, "edict session_id should be set after new session creation")
+}
+
+// TestProcessPrompt_ExistingSessionDoesNotOverwriteEdictSessionID verifies that
+// when m.session is already set (restored session), the edict's session_id is
+// NOT overwritten even if the prompt carries an edict key.
+func TestProcessPrompt_ExistingSessionDoesNotOverwriteEdictSessionID(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create an edict with an existing SessionID
+	edict := storage.Edict{
+		ID:        2,
+		Username:  "testuser",
+		Project:   "testproject",
+		Intent:    "test intent",
+		SessionID: "existing-session-id",
+	}
+	require.NoError(t, db.Create(&edict).Error)
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	// Pre-create a session so ProcessPrompt finds m.session != nil
+	existingSession, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "e2")
+	require.NoError(t, err)
+	base.session = existingSession
+
+	var mu sync.Mutex
+	var doneCount int
+	sage.SetNotify(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if _, ok := msg.(StreamDoneMsg); ok {
+			doneCount++
+		}
+	})
+
+	prompt := &Prompt{
+		EdictKey:  storage.EdictKey{ID: 2, Username: "testuser", Project: "testproject"},
+		Message:   "hello",
+		ChannelID: "e2",
+	}
+	base.ProcessPrompt(ctx, sage, prompt)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, doneCount, "should complete streaming without error")
+
+	// Verify the edict's session_id was NOT overwritten
+	var updated storage.Edict
+	require.NoError(t, db.First(&updated, "id = ? AND username = ? AND project = ?", 2, "testuser", "testproject").Error)
+	assert.Equal(t, "existing-session-id", updated.SessionID,
+		"edict session_id should not be overwritten when session already exists")
+}
+
 func TestStrategist_CircularDependencyDetection(t *testing.T) {
 	// Create ling with circular dependency
 	ling := []storage.Ling{
@@ -313,7 +418,7 @@ func TestStrategist_ValidDependencies(t *testing.T) {
 }
 
 // TestHappyFlowE2E tests the complete Task flow:
-// Chancellor -> invoke_minister tool -> Minister receives Task -> Minister sends Result (synchronous)
+// Chancellor -> consult_minister tool -> Minister receives Task -> Minister sends Result (synchronous)
 func TestHappyFlowE2E(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -341,8 +446,8 @@ func TestHappyFlowE2E(t *testing.T) {
 	// Start the Forge's Run loop in a goroutine
 	go forge.Run(ctx)
 
-	// Create the InvokeMinisterTool
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	// Create the ConsultMinisterTool
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 
 	// Invoke the Forge minister with a trivial task
 	// With synchronous blocking, this call blocks until minister replies
@@ -354,9 +459,9 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// Verify the tool returned success with completed status
 	if result == "" {
-		t.Error("Expected non-empty result from invoke_minister")
+		t.Error("Expected non-empty result from consult_minister")
 	}
-	t.Logf("invoke_minister result: %s", result)
+	t.Logf("consult_minister result: %s", result)
 
 	// Parse the result to verify it contains completion info
 	var response struct {
@@ -386,8 +491,8 @@ func TestHappyFlowE2E(t *testing.T) {
 		response.MinisterID, response.EdictID, response.Sealed, response.Output)
 }
 
-// TestInvokeMinisterTool_InvalidMinister tests error handling for unknown ministers
-func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
+// TestConsultMinisterTool_InvalidMinister tests error handling for unknown ministers
+func TestConsultMinisterTool_InvalidMinister(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -401,7 +506,7 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	}
 	chancellor.SetMinisterLookup(court.GetMinister)
 
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 
 	// Try to invoke a non-existent minister
 	taskInput := `{"minister_id": "unknown", "edict_id": 1, "task": "hello"}`
@@ -411,15 +516,15 @@ func TestInvokeMinisterTool_InvalidMinister(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_MissingTask tests error handling for missing task parameter
-func TestInvokeMinisterTool_MissingTask(t *testing.T) {
+// TestConsultMinisterTool_MissingTask tests error handling for missing task parameter
+func TestConsultMinisterTool_MissingTask(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
 
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 
 	// Missing task parameter
 	taskInput := `{"minister_id": "forge", "edict_id": 1}`
@@ -429,11 +534,11 @@ func TestInvokeMinisterTool_MissingTask(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_InvalidJSON tests error handling for malformed JSON input
-func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
+// TestConsultMinisterTool_InvalidJSON tests error handling for malformed JSON input
+func TestConsultMinisterTool_InvalidJSON(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 
 	_, err := tool.Call(context.Background(), `not json`)
 	if err == nil {
@@ -444,11 +549,11 @@ func TestInvokeMinisterTool_InvalidJSON(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_MissingMinisterID tests error handling for missing minister_id
-func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
+// TestConsultMinisterTool_MissingMinisterID tests error handling for missing minister_id
+func TestConsultMinisterTool_MissingMinisterID(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 
 	_, err := tool.Call(context.Background(), `{"edict_id": 1, "task": "do something"}`)
 	if err == nil {
@@ -459,11 +564,11 @@ func TestInvokeMinisterTool_MissingMinisterID(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_MissingEdictID tests error handling for missing edict_id
-func TestInvokeMinisterTool_MissingEdictID(t *testing.T) {
+// TestConsultMinisterTool_MissingEdictID tests error handling for missing edict_id
+func TestConsultMinisterTool_MissingEdictID(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 	chancellor := NewChancellor(base)
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 
 	_, err := tool.Call(context.Background(), `{"minister_id": "forge", "task": "do something"}`)
 	if err == nil {
@@ -474,8 +579,8 @@ func TestInvokeMinisterTool_MissingEdictID(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_MinisterReturnsError tests that a Result with Err is propagated
-func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
+// TestConsultMinisterTool_MinisterReturnsError tests that a Result with Err is propagated
+func TestConsultMinisterTool_MinisterReturnsError(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -500,7 +605,7 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 		}
 	}()
 
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 	_, err := tool.Call(ctx, `{"minister_id": "failing", "edict_id": 1, "task": "break"}`)
 	if err == nil {
 		t.Fatal("Expected error when minister returns Result.Err")
@@ -510,8 +615,8 @@ func TestInvokeMinisterTool_MinisterReturnsError(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_ContextCancelledDuringSend tests cancellation while sending task
-func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
+// TestConsultMinisterTool_ContextCancelledDuringSend tests cancellation while sending task
+func TestConsultMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
@@ -529,7 +634,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 	_, err := tool.Call(ctx, `{"minister_id": "blocked", "edict_id": 1, "task": "go"}`)
 	if err == nil {
 		t.Fatal("Expected error when context is cancelled during send")
@@ -539,8 +644,8 @@ func TestInvokeMinisterTool_ContextCancelledDuringSend(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_ContextCancelledDuringWait tests cancellation while waiting for result
-func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
+// TestConsultMinisterTool_ContextCancelledDuringWait tests cancellation while waiting for result
+func TestConsultMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
@@ -564,7 +669,7 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 		cancel()
 	}()
 
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 	_, err := tool.Call(ctx, `{"minister_id": "slow", "edict_id": 1, "task": "wait"}`)
 	if err == nil {
 		t.Fatal("Expected error when context is cancelled during wait")
@@ -573,8 +678,8 @@ func TestInvokeMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	assert.Contains(t, err.Error(), "context canceled")
 }
 
-// TestInvokeMinisterTool_Notifications verifies MinisterInvokingMsg and MinisterCompletedMsg are sent
-func TestInvokeMinisterTool_Notifications(t *testing.T) {
+// TestConsultMinisterTool_Notifications verifies MinisterInvokingMsg and MinisterCompletedMsg are sent
+func TestConsultMinisterTool_Notifications(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -604,7 +709,7 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 		task.Done <- Result{MinisterID: "notifier", Sealed: true, Output: "done"}
 	}()
 
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 	_, err := tool.Call(ctx, `{"minister_id": "notifier", "edict_id": 1, "task": "notify me"}`)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -639,8 +744,8 @@ func TestInvokeMinisterTool_Notifications(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_NotificationsOnError verifies error notifications are sent
-func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
+// TestConsultMinisterTool_NotificationsOnError verifies error notifications are sent
+func TestConsultMinisterTool_NotificationsOnError(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx := context.Background()
 
@@ -662,7 +767,7 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 	}
 	chancellor.SetMinisterLookup(court.GetMinister)
 
-	tool := tools.InvokeMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Invoker: chancellor}
+	tool := tools.ConsultMinisterTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Consultant: chancellor}
 	_, _ = tool.Call(ctx, `{"minister_id": "ghost", "edict_id": 1, "task": "haunt"}`)
 
 	mu.Lock()
@@ -682,14 +787,14 @@ func TestInvokeMinisterTool_NotificationsOnError(t *testing.T) {
 	}
 }
 
-// TestInvokeMinisterTool_Format tests the Format method
-func TestInvokeMinisterTool_Format(t *testing.T) {
-	tool := tools.InvokeMinisterTool{}
+// TestConsultMinisterTool_Format tests the Format method
+func TestConsultMinisterTool_Format(t *testing.T) {
+	tool := tools.ConsultMinisterTool{}
 
 	// Normal case
 	output := tool.Format(`{"minister_id": "forge", "task": "build it"}`, `{"status":"ok"}`, nil)
-	if !strings.Contains(output, "InvokeMinister") {
-		t.Errorf("Expected 'InvokeMinister' in output, got: %s", output)
+	if !strings.Contains(output, "ConsultMinister") {
+		t.Errorf("Expected 'ConsultMinister' in output, got: %s", output)
 	}
 	if !strings.Contains(output, "forge") {
 		t.Errorf("Expected 'forge' in output, got: %s", output)
@@ -1715,6 +1820,123 @@ func TestRunLoop_ConcurrentTaskDispatch(t *testing.T) {
 	}
 }
 
+// TestMinisterImpl_Tools_IncludesCommonTools verifies that every minister
+// gets consult_minister via the commonTools constant, even when their
+// extra_tools definition does not list it.
+func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
+	// Build a tool registry with consult_minister registered as an extra tool
+	registry := tools.NewToolRegistry()
+	registry.RegisterExtra("consult_minister", tools.ConsultMinisterTool{})
+	registry.RegisterExtra("enact_ritual", tools.InvokeRitualTool{})
+	registry.RegisterExtraFactory("request_zhengming", func(mid string) tools.Tool {
+		return tools.RequestZhengmingTool{MinisterID: mid}
+	})
+
+	// Test every minister defined in the YAML
+	defs, err := LoadMinisters()
+	require.NoError(t, err)
+
+	for _, def := range defs {
+		t.Run(def.ID, func(t *testing.T) {
+			base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
+			base.SetToolRegistry(registry)
+			m := NewMinister(def, base)
+
+			ts := m.Tools()
+			names := make(map[string]bool, len(ts))
+			for _, tool := range ts {
+				names[tool.Name()] = true
+			}
+
+			// Every minister should have consult_minister via commonTools
+			assert.True(t, names["consult_minister"],
+				"%s should have consult_minister via commonTools", def.ID)
+		})
+	}
+}
+
+// TestConsultMinister_SetsExcludeTools verifies that ConsultMinister
+// dispatches a Task with ExcludeTools set to ["consult_minister"] to
+// prevent recursive consultation.
+func TestConsultMinister_SetsExcludeTools(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
+	chancellor := NewChancellor(base)
+	chancellor.SetNotify(func(any) {})
+
+	// Create a fake minister that captures the task
+	fake := &fakeMinister{id: "target", tasks: make(chan *Task, 1)}
+	court := &Court{
+		db:        db,
+		ministers: map[string]Minister{"target": fake},
+	}
+	chancellor.SetMinisterLookup(court.GetMinister)
+
+	// Call ConsultMinister in a goroutine (it blocks until result is sent)
+	go func() {
+		task := <-fake.tasks
+		// Verify ExcludeTools is set
+		assert.ElementsMatch(t, []string{"consult_minister"}, task.ExcludeTools,
+			"ConsultMinister should set ExcludeTools to [consult_minister]")
+		task.Done <- Result{MinisterID: "target", Sealed: true, Output: "done"}
+	}()
+
+	_, err := chancellor.ConsultMinister(ctx, "target",
+		storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "do work")
+	assert.NoError(t, err)
+}
+
+// TestCreateSessionWithOpts_ExcludeTools verifies that excluded tools are
+// actually filtered from the session's tool catalog.
+func TestCreateSessionWithOpts_ExcludeTools(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	// Build a tool registry with consult_minister and other tools
+	registry := tools.NewToolRegistry()
+	registry.RegisterExtra("consult_minister", tools.ConsultMinisterTool{})
+
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
+	base.SetToolRegistry(registry)
+
+	// Create a forge minister (permissions rwxr---w-)
+	forge := NewForge(base)
+	forge.SetNotify(func(any) {})
+
+	// Use a no-op LLM mock
+	mockLLM := mocks.NewLLMProvider()
+	forge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	// Create session WITHOUT excluding tools — consult_minister should be present
+	session, err := CreateSessionWithOpts(forge, mockLLM,
+		&SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}},
+		func(any) {},
+		CreateSessionOpts{
+			EdictKey: storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+		})
+	require.NoError(t, err)
+	assert.NotNil(t, session)
+	_, hasConsult := session.toolCatalog["consult_minister"]
+	assert.True(t, hasConsult,
+		"session without ExcludeTools should have consult_minister in toolCatalog")
+
+	// Create session WITH ExcludeTools — consult_minister should be absent
+	session2, err := CreateSessionWithOpts(forge, mockLLM,
+		&SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}},
+		func(any) {},
+		CreateSessionOpts{
+			EdictKey:     storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+			ExcludeTools: []string{"consult_minister"},
+		})
+	require.NoError(t, err)
+	assert.NotNil(t, session2)
+	_, hasConsult2 := session2.toolCatalog["consult_minister"]
+	assert.False(t, hasConsult2,
+		"session with ExcludeTools=[consult_minister] should NOT have consult_minister in toolCatalog")
+}
+
 // TestRunLoop_GracefulShutdownWaitsInFlightTasks verifies that RunLoop's
 // context cancellation waits for in-flight tasks to complete before returning.
 func TestRunLoop_GracefulShutdownWaitsInFlightTasks(t *testing.T) {
@@ -1792,7 +2014,7 @@ func TestStreamTask_RitualTaskCreatesOwnSession(t *testing.T) {
 	interactiveMsgCount := len(interactiveSession.Messages())
 
 	// Call streamTask with existingSession=nil (ritual task scenario)
-	session, _, err := base.streamTask(ctx, "ritual work", storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}, "# scratch", func(any) {}, nil, "sage")
+	session, _, err := base.streamTask(ctx, "ritual work", storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}, "# scratch", func(any) {}, nil, "sage", nil)
 	require.NoError(t, err)
 
 	// The returned session must NOT be the interactive session
@@ -1819,7 +2041,7 @@ func TestStreamTask_ExistingSessionStillReused(t *testing.T) {
 	existing, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "sage")
 	require.NoError(t, err)
 
-	session, _, err := base.streamTask(ctx, "more work", storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "", func(any) {}, existing, "sage")
+	session, _, err := base.streamTask(ctx, "more work", storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "", func(any) {}, existing, "sage", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, existing, session, "existing session should be reused")

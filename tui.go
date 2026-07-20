@@ -64,6 +64,12 @@ type TUIModel struct {
 	// Court integration
 	currentEdictKey storage.EdictKey // Tracks current edict for multi-turn conversations
 
+	// Ritual tab session restoration: when the Ruler prompts on a ritual tab
+	// with no active ritual, we load the edict's birth session and replay the
+	// prompt after the session is restored.
+	pendingRitualPrompt   string           // Prompt waiting for session restoration on a ritual tab
+	pendingRitualEdictKey storage.EdictKey // Edict key for the pending ritual prompt
+
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
 	sessionPromptHistory          []promptHistoryEntry
@@ -1579,16 +1585,53 @@ func (m *TUIModel) submitToCourt(ctx context.Context, prompt string, contextFile
 			chat := m.tabs.ChatByTab(tab.Target)
 			chat.AddMessage(fmt.Sprintf("%s💬 Now chatting with %s — use `:continue` to resume the ritual or `:abort` to cancel",
 				systemPrefix, ministerID))
+
+			// Submit the prompt to the minister, not the channel ID.
+			// ChannelID stays as tab.Target so stream chunks route to the ritual tab.
+			if err := m.court.SubmitPrompt(ministerID, p); err != nil {
+				return func() tea.Msg {
+					return court.StreamErrorMsg{Err: err}
+				}
+			}
+			m.tabs.SetStreamingTabByTab(tab.Target)
+			return nil
 		}
 
-		// Submit the prompt to the minister, not the channel ID.
-		// ChannelID stays as tab.Target so stream chunks route to the ritual tab.
+		// No active ritual — restore the edict's birth session so the Ruler
+		// can continue the conversation that created the edict.
+		edictID, err := strconv.ParseUint(tab.Target[1:], 10, 64)
+		if err != nil {
+			return func() tea.Msg {
+				return showSystemMsg(fmt.Sprintf("Invalid edict channel: %s", tab.Target))
+			}
+		}
+		edict, err := m.court.GetEdict(uint(edictID))
+		if err != nil || edict == nil {
+			return func() tea.Msg {
+				return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
+			}
+		}
+
+		if edict.SessionID != "" {
+			// Store pending prompt and edict key for handleSessionSelected
+			m.pendingRitualPrompt = prompt
+			m.pendingRitualEdictKey = m.court.EdictKey(uint(edictID))
+			// Trigger session loading → sessionSelectedMsg → handleSessionSelected
+			return m.tabs.Content().resume.LoadSession(edict.SessionID, m.sessionStore)
+		}
+
+		// Fallback: no birth session — create a fresh session with edict context.
+		m.court.ResetMinisterSession(ministerID)
+		p.EdictKey = m.court.EdictKey(uint(edictID))
 		if err := m.court.SubmitPrompt(ministerID, p); err != nil {
 			return func() tea.Msg {
 				return court.StreamErrorMsg{Err: err}
 			}
 		}
 		m.tabs.SetStreamingTabByTab(tab.Target)
+		chat := m.tabs.ChatByTab(tab.Target)
+		chat.AddMessage(fmt.Sprintf("%sStarted new session for edict %d (no prior session found).",
+			systemPrefix, edictID))
 		return nil
 	}
 
@@ -2372,11 +2415,12 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			message = fmt.Sprintf("Zhengming requested for edict %d: %s", msg.EdictKey.ID, summary)
 		case storage.EventZhengmingAnswered:
-			icon = "💬"
+			icon = checkPrefix
 			if msg.EdictKey.ID == 0 {
 				message = "Zhengming answered for the court"
 			} else {
-				message = fmt.Sprintf("Zhengming answered for edict %d", msg.EdictKey.ID)
+				answer, _ := msg.Payload["answer"].(string)
+			message = fmt.Sprintf("Answered for e%d: %s", msg.EdictKey.ID, answer)
 			}
 		case storage.EventEdictCancelled:
 			icon = "⛔"

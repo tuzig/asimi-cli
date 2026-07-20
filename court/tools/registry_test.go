@@ -382,20 +382,20 @@ func TestUpdateNonExistentNoOp(t *testing.T) {
 
 func TestRegisterExtra(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
+	r.RegisterExtra("consult_minister", mockTool{name: "consult_minister"})
 	r.RegisterExtra("enact_ritual", mockTool{name: "enact_ritual"})
 
 	// Any minister that lists these names gets the same static tool instances
-	chancellorExtras := r.ExtraTools("chancellor", []string{"invoke_minister", "enact_ritual"})
+	chancellorExtras := r.ExtraTools("chancellor", []string{"consult_minister", "enact_ritual"})
 	if len(chancellorExtras) != 2 {
 		t.Fatalf("expected 2 extra tools, got %d", len(chancellorExtras))
 	}
 	names := toolNames(chancellorExtras)
-	assertHas(t, names, "invoke_minister")
+	assertHas(t, names, "consult_minister")
 	assertHas(t, names, "enact_ritual")
 
 	// Forge also gets them if its def lists them
-	forgeExtras := r.ExtraTools("forge", []string{"invoke_minister", "enact_ritual"})
+	forgeExtras := r.ExtraTools("forge", []string{"consult_minister", "enact_ritual"})
 	if len(forgeExtras) != 2 {
 		t.Fatalf("expected 2 extra tools for forge, got %d", len(forgeExtras))
 	}
@@ -437,15 +437,15 @@ func TestRegisterExtraFactory(t *testing.T) {
 
 func TestExtraToolsMixedStaticAndFactory(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
+	r.RegisterExtra("consult_minister", mockTool{name: "consult_minister"})
 	r.RegisterExtraFactory("request_zhengming", func(mid string) Tool {
 		return mockTool{name: "request_zhengming_" + mid}
 	})
 
 	// A minister listing both gets both
-	all := r.ExtraTools("chancellor", []string{"invoke_minister", "request_zhengming"})
+	all := r.ExtraTools("chancellor", []string{"consult_minister", "request_zhengming"})
 	names := toolNames(all)
-	assertHas(t, names, "invoke_minister")
+	assertHas(t, names, "consult_minister")
 	assertHas(t, names, "request_zhengming_chancellor")
 }
 
@@ -561,19 +561,19 @@ func TestForPermissionsMultiToolFiltering(t *testing.T) {
 func TestForPermissionsDoesNotReturnExtraTools(t *testing.T) {
 	r := NewToolRegistry()
 	r.Register(mockTool{name: "read_file"}, Permissions{Earth: Access{Read: true}})
-	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
+	r.RegisterExtra("consult_minister", mockTool{name: "consult_minister"})
 
 	chancellorPerm, _ := ParsePermissions("rwxr--rwx")
 	tools := r.ForPermissions(chancellorPerm)
 	names := toolNames(tools)
 	assertHas(t, names, "read_file")
 	// Extra tools are NOT returned by ForPermissions — only by ExtraTools
-	assertNotHas(t, names, "invoke_minister")
+	assertNotHas(t, names, "consult_minister")
 
 	// Extra tools are resolved separately
-	extras := r.ExtraTools("chancellor", []string{"invoke_minister"})
+	extras := r.ExtraTools("chancellor", []string{"consult_minister"})
 	extraNames := toolNames(extras)
-	assertHas(t, extraNames, "invoke_minister")
+	assertHas(t, extraNames, "consult_minister")
 }
 
 func TestForPermissionsPureFunction(t *testing.T) {
@@ -581,7 +581,7 @@ func TestForPermissionsPureFunction(t *testing.T) {
 	// The same permissions always yield the same tools regardless of minister ID.
 	r := NewToolRegistry()
 	r.Register(mockTool{name: "read_file"}, Permissions{Earth: Access{Read: true}})
-	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
+	r.RegisterExtra("consult_minister", mockTool{name: "consult_minister"})
 
 	perm := Permissions{Earth: Access{Read: true}}
 	chancellorTools := r.ForPermissions(perm)
@@ -729,7 +729,7 @@ func TestStrategistPermissions(t *testing.T) {
 func TestToolRegistryString(t *testing.T) {
 	r := NewToolRegistry()
 	r.Register(mockTool{name: "read_file"}, Permissions{Earth: Access{Read: true}})
-	r.RegisterExtra("invoke_minister", mockTool{name: "invoke_minister"})
+	r.RegisterExtra("consult_minister", mockTool{name: "consult_minister"})
 
 	s := r.String()
 	if s == "" {
@@ -740,8 +740,8 @@ func TestToolRegistryString(t *testing.T) {
 		t.Errorf("String() should mention read_file with permission, got:\n%s", s)
 	}
 	// Should mention the extra tool
-	if !contains(s, "invoke_minister") {
-		t.Errorf("String() should mention invoke_minister extra tool, got:\n%s", s)
+	if !contains(s, "consult_minister") {
+		t.Errorf("String() should mention consult_minister extra tool, got:\n%s", s)
 	}
 }
 

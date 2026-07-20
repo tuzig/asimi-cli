@@ -331,6 +331,27 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 	}
 	s.hostChecker = hostChecker
 
+	// Extract MinisterConsultant and RitualLauncher from the chancellor.
+	// Same extraction pattern as the interfaces above.
+	var ministerConsultant tools.MinisterConsultant
+	var ritualLauncher tools.RitualLauncher
+	if chancellor != nil {
+		if mc, ok := chancellor.(tools.MinisterConsultant); ok {
+			ministerConsultant = mc
+		}
+		if s.GetRitualRunner() != nil {
+			if rl, ok := chancellor.(tools.RitualLauncher); ok {
+				ritualLauncher = rl
+			}
+		}
+	}
+
+	// Collect registered minister IDs so tool descriptions can list them dynamically.
+	ministerIDs := make([]string, 0, len(s.ministers))
+	for id := range s.ministers {
+		ministerIDs = append(ministerIDs, id)
+	}
+
 	opts := tools.ToolRegistrationOpts{
 		Ctx:                ctx,
 		DBPath:             dbPath,
@@ -342,21 +363,10 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 		WaitForZhengming:   waitForZhengming,
 		NotifyFn:           notifyFn,
 
-		// MinisterInvoker / RitualLauncher — chancellor-backed
-		MinisterInvoker: func() tools.MinisterInvoker {
-			if mi, ok := chancellor.(tools.MinisterInvoker); ok {
-				return mi
-			}
-			return nil
-		}(),
-		RitualLauncher: func() tools.RitualLauncher {
-			if s.GetRitualRunner() != nil {
-				if rl, ok := chancellor.(tools.RitualLauncher); ok {
-					return rl
-				}
-			}
-			return nil
-		}(),
+		// MinisterConsultant / RitualLauncher — chancellor-backed
+		MinisterConsultant: ministerConsultant,
+		RitualLauncher:     ritualLauncher,
+		MinisterIDs:        ministerIDs,
 	}
 
 	tools.RegisterBuiltinTools(registry, opts)
@@ -463,7 +473,7 @@ func (s *Court) Start(ctx context.Context) error {
 		go minister.Run(s.ctx)
 	}
 
-	// Wire minister lookup into all MinisterBase instances so InvokeMinister works
+	// Wire minister lookup into all MinisterBase instances so ConsultMinister works
 	for _, minister := range s.Ministers() {
 		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
 			base.SetMinisterLookup(s.GetMinister)

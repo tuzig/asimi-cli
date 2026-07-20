@@ -32,7 +32,7 @@ type RitualLauncher interface {
 	StartRitual(name string, key storage.EdictKey, inputs map[string]string) error
 }
 
-// MinisterInvoker dispatches work to a minister (implemented by MinisterBase).
-type MinisterInvoker interface {
-	InvokeMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error)
+// MinisterConsultant dispatches work to a minister (implemented by MinisterBase).
+type MinisterConsultant interface {
+	ConsultMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error)
 }

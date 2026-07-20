@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -3305,10 +3306,14 @@ type mockCourtClient struct {
 	pausedChannels      []string
 	resumedChannels     []string
 
-	setIntentFn        func(uint, string) error
-	submitPromptTarget string
-	submitPromptMsg    string
-	submitPromptChanID string
+	setIntentFn             func(uint, string) error
+	submitPromptTarget      string
+	submitPromptMsg         string
+	submitPromptChanID      string
+	submitPromptEdictKey    storage.EdictKey
+	submitPromptCalls       int
+	resetMinisterSessionIDs []string
+	restoreMinisterSessions []string
 }
 
 type publishedEvent struct {
@@ -3419,6 +3424,17 @@ func (m *mockCourtClient) SubmitPrompt(targetID string, p *court.Prompt) error {
 	m.submitPromptTarget = targetID
 	m.submitPromptMsg = p.Message
 	m.submitPromptChanID = p.ChannelID
+	m.submitPromptEdictKey = p.EdictKey
+	m.submitPromptCalls++
+	return nil
+}
+
+func (m *mockCourtClient) ResetMinisterSession(id string) {
+	m.resetMinisterSessionIDs = append(m.resetMinisterSessionIDs, id)
+}
+
+func (m *mockCourtClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
+	m.restoreMinisterSessions = append(m.restoreMinisterSessions, tabType)
 	return nil
 }
 
@@ -3516,6 +3532,34 @@ func TestPendingRitualEnact_EscClearsPendingState(t *testing.T) {
 
 	assert.Empty(t, mock.publishedEvents)
 	assert.Nil(t, updated.pendingRitualEnact)
+}
+
+func TestEventZhengmingAnswered_ShowsAnswerInChat(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+
+	eventMsg := court.EventNotificationMsg{
+		ChannelID: "chancellor",
+		EventType: storage.EventZhengmingAnswered,
+		EdictKey:  storage.EdictKey{ID: 42, Username: "test", Project: "test"},
+		Payload: map[string]interface{}{
+			"answer": "yes, proceed with the plan",
+		},
+	}
+
+	newModel, _ := model.handleCustomMessages(eventMsg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	chat := updated.tabs.ChatByTab("chancellor")
+	var found bool
+	for _, m := range chat.Messages {
+		if strings.Contains(m.Content, "Answered for e42") && strings.Contains(m.Content, "yes, proceed with the plan") {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected chat message containing the answer for edict 42")
 }
 
 func TestEventEdictCreated_EntersYesNoMode(t *testing.T) {
@@ -5721,6 +5765,187 @@ func TestSubmitToCourt_NonRitualTab_RoutesToTabTarget(t *testing.T) {
 	// Should route to the tab target (chancellor), not a minister
 	assert.Equal(t, "chancellor", mock.submitPromptTarget)
 	assert.Empty(t, mock.pausedChannels, "PauseRitual should not be called on non-ritual tab")
+}
+
+func TestSubmitToCourt_RitualTabNoActiveRestoresSession(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return false },
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, SessionID: "sess-birth-123"}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "sage"
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	ctx := context.Background()
+	cmd := model.submitToCourt(ctx, "continue the chat", nil)
+
+	// Should return a tea.Cmd (LoadSession) — not nil
+	require.NotNil(t, cmd)
+
+	// Pending fields should be set
+	assert.Equal(t, "continue the chat", model.pendingRitualPrompt)
+	assert.Equal(t, uint(647), model.pendingRitualEdictKey.ID)
+
+	// SubmitPrompt should NOT have been called yet
+	assert.Equal(t, 0, mock.submitPromptCalls)
+}
+
+func TestSubmitToCourt_RitualTabNoActiveNoSessionID(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return false },
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, SessionID: ""}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "chancellor"
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	ctx := context.Background()
+	cmd := model.submitToCourt(ctx, "hello", nil)
+
+	// Fallback path: should have called ResetMinisterSession and SubmitPrompt
+	require.Len(t, mock.resetMinisterSessionIDs, 1)
+	assert.Equal(t, "chancellor", mock.resetMinisterSessionIDs[0])
+	assert.Equal(t, 1, mock.submitPromptCalls)
+	assert.Equal(t, "chancellor", mock.submitPromptTarget)
+	assert.Equal(t, uint(647), mock.submitPromptEdictKey.ID)
+
+	// Should return nil (no LoadSession)
+	require.Nil(t, cmd)
+
+	// Pending fields should NOT be set
+	assert.Empty(t, model.pendingRitualPrompt)
+}
+
+func TestSubmitToCourt_RitualTabNoActiveEdictNotFound(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return false },
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return nil, fmt.Errorf("edict not found")
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "chancellor"
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	ctx := context.Background()
+	cmd := model.submitToCourt(ctx, "hello", nil)
+
+	// Should return a showSystemMsg
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, ok := msg.(showContextMsg)
+	assert.True(t, ok, "expected showContextMsg when edict not found")
+
+	// Pending fields should NOT be set
+	assert.Empty(t, model.pendingRitualPrompt)
+
+	// SubmitPrompt should NOT have been called
+	assert.Equal(t, 0, mock.submitPromptCalls)
+}
+
+func TestHandleSessionSelected_RitualTabRestoration(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Set up a ritual tab as the active tab
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Simulate the pending state set by submitToCourt
+	model.pendingRitualPrompt = "continue the chat"
+	model.pendingRitualEdictKey = storage.EdictKey{ID: 647, Username: "test", Project: "test"}
+
+	// Create a session with a TabType matching the minister
+	session := &court.Session{
+		ID:      "sess-birth-123",
+		TabType: "sage",
+	}
+	model.handleSessionSelected(session)
+
+	// Should stay on the ritual tab (not switch to sage)
+	assert.Equal(t, "ritual", string(model.tabs.ActiveTab().Type),
+		"should stay on ritual tab during restoration")
+
+	// Should set the edict key (not clear it)
+	assert.Equal(t, uint(647), model.currentEdictKey.ID)
+
+	// Should have called RestoreMinisterSession
+	require.Len(t, mock.restoreMinisterSessions, 1)
+	assert.Equal(t, "sage", mock.restoreMinisterSessions[0])
+
+	// Should have submitted the pending prompt
+	assert.Equal(t, 1, mock.submitPromptCalls)
+	assert.Equal(t, "sage", mock.submitPromptTarget)
+	assert.Equal(t, "continue the chat", mock.submitPromptMsg)
+	assert.Equal(t, "e647", mock.submitPromptChanID)
+	assert.Equal(t, uint(647), mock.submitPromptEdictKey.ID)
+
+	// Pending fields should be cleared
+	assert.Empty(t, model.pendingRitualPrompt)
+	assert.Equal(t, uint(0), model.pendingRitualEdictKey.ID)
+}
+
+func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Start on the chancellor tab
+	model.tabs.SwitchToTabType("chancellor")
+	require.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type))
+
+	// Ensure no pending ritual prompt
+	model.pendingRitualPrompt = ""
+	model.pendingRitualEdictKey = storage.EdictKey{}
+
+	// Set a current edict key to verify it gets cleared
+	model.currentEdictKey = storage.EdictKey{ID: 999, Username: "test", Project: "test"}
+
+	session := &court.Session{
+		ID:      "sess-sage-1",
+		TabType: "sage",
+	}
+	model.handleSessionSelected(session)
+
+	// Should switch to sage tab (normal resume behavior)
+	assert.Equal(t, "sage", string(model.tabs.ActiveTab().Type),
+		"normal resume should switch to session's tab type")
+
+	// Should clear the edict key
+	assert.Equal(t, uint(0), model.currentEdictKey.ID,
+		"normal resume should clear edict key")
+
+	// Should have called RestoreMinisterSession
+	require.Len(t, mock.restoreMinisterSessions, 1)
+	assert.Equal(t, "sage", mock.restoreMinisterSessions[0])
+
+	// Should NOT have submitted a prompt
+	assert.Equal(t, 0, mock.submitPromptCalls)
 }
 
 func TestStreamInterruptedMsg_SuppressedWhenRitualPaused(t *testing.T) {

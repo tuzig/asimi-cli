@@ -11,7 +11,7 @@ import (
 // Username, Project, DB) — tools query the DB directly through Ctx.DB.
 //
 // Chancellor-backed interfaces (EdictManager, ZhengmingRequester,
-// MinisterInvoker, RitualLauncher) need runtime dispatch and are kept.
+// MinisterConsultant, RitualLauncher) need runtime dispatch and are kept.
 //
 // Nil fields are safe — the corresponding tools simply won't be registered.
 type ToolRegistrationOpts struct {
@@ -27,8 +27,12 @@ type ToolRegistrationOpts struct {
 	WaitForZhengming   func(ctx context.Context, requestID string) (string, error)
 	NotifyFn           func() func(any)
 
-	MinisterInvoker MinisterInvoker
-	RitualLauncher  RitualLauncher
+	MinisterConsultant MinisterConsultant
+	RitualLauncher     RitualLauncher
+
+	// MinisterIDs lists all registered minister IDs, used to build
+	// dynamic descriptions for tools like consult_minister.
+	MinisterIDs []string
 }
 
 // RegisterBuiltinTools populates the registry with all builtin tools,
@@ -122,13 +126,13 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 }
 
 // registerExtraTools registers static and factory-based extra tools.
-// Static extra tools (invoke_minister, enact_ritual) are registered once
+// Static extra tools (consult_minister, enact_ritual) are registered once
 // and returned to any minister whose def lists them in extra_tools.
 // Factory extra tools (request_zhengming) produce a per-minister instance
 // so the tool carries the correct MinisterID for routing.
 func registerExtraTools(r *ToolRegistry, opts ToolRegistrationOpts) {
-	if opts.MinisterInvoker != nil {
-		r.RegisterExtra("invoke_minister", InvokeMinisterTool{Ctx: opts.Ctx, Invoker: opts.MinisterInvoker})
+	if opts.MinisterConsultant != nil {
+		r.RegisterExtra("consult_minister", ConsultMinisterTool{Ctx: opts.Ctx, Consultant: opts.MinisterConsultant, MinisterIDs: opts.MinisterIDs})
 	}
 	if opts.RitualLauncher != nil {
 		r.RegisterExtra("enact_ritual", InvokeRitualTool{Ctx: opts.Ctx, Launcher: opts.RitualLauncher})

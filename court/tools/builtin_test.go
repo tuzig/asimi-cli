@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/afittestide/asimi/internal/repo"
@@ -38,10 +39,10 @@ func newRepoInfo(projectRoot string) *repo.RepoInfo {
 	return &repo.RepoInfo{ProjectRoot: projectRoot}
 }
 
-// mockInvoker satisfies MinisterInvoker for testing.
-type mockInvoker struct{}
+// mockConsultant satisfies MinisterConsultant for testing.
+type mockConsultant struct{}
 
-func (m mockInvoker) InvokeMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
+func (m mockConsultant) ConsultMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
 	return "ok", nil
 }
 
@@ -208,9 +209,9 @@ func TestRegisterBuiltinToolsIntentExecute(t *testing.T) {
 func TestRegisterBuiltinToolsExtraChancellor(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		Ctx:             testCtx(),
-		MinisterInvoker: mockInvoker{},
-		RitualLauncher:  mockLauncher{},
+		Ctx:                testCtx(),
+		MinisterConsultant: mockConsultant{},
+		RitualLauncher:     mockLauncher{},
 	})
 
 	// ForPermissions no longer returns extra tools — only permission-matched ones.
@@ -220,20 +221,20 @@ func TestRegisterBuiltinToolsExtraChancellor(t *testing.T) {
 	publicNames := toolNames(publicTools)
 
 	// Extra tools should NOT appear in ForPermissions
-	assertNotHas(t, publicNames, "invoke_minister")
+	assertNotHas(t, publicNames, "consult_minister")
 	assertNotHas(t, publicNames, "enact_ritual")
 
 	// Extra tools should appear when resolved via ExtraTools
-	chancellorExtras := r.ExtraTools("chancellor", []string{"invoke_minister", "enact_ritual"})
+	chancellorExtras := r.ExtraTools("chancellor", []string{"consult_minister", "enact_ritual"})
 	extraNames := toolNames(chancellorExtras)
-	assertHas(t, extraNames, "invoke_minister")
+	assertHas(t, extraNames, "consult_minister")
 	assertHas(t, extraNames, "enact_ritual")
 
 	// Forge should also get the same extra tools if its def lists them
 	// (the registry doesn't gate on minister ID anymore — the YAML def decides)
-	forgeExtras := r.ExtraTools("forge", []string{"invoke_minister", "enact_ritual"})
+	forgeExtras := r.ExtraTools("forge", []string{"consult_minister", "enact_ritual"})
 	forgeExtraNames := toolNames(forgeExtras)
-	assertHas(t, forgeExtraNames, "invoke_minister")
+	assertHas(t, forgeExtraNames, "consult_minister")
 	assertHas(t, forgeExtraNames, "enact_ritual")
 
 	// But if a minister's def doesn't list extra tools, it gets none
@@ -247,27 +248,27 @@ func TestRegisterBuiltinToolsExtraConditionalRitual(t *testing.T) {
 	// Without ritual launcher — tool not registered
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		Ctx:             testCtx(),
-		MinisterInvoker: mockInvoker{},
+		Ctx:                testCtx(),
+		MinisterConsultant: mockConsultant{},
 		// RitualLauncher is nil
 	})
 
-	chancellorExtras := r.ExtraTools("chancellor", []string{"invoke_minister", "enact_ritual"})
+	chancellorExtras := r.ExtraTools("chancellor", []string{"consult_minister", "enact_ritual"})
 	extraNames := toolNames(chancellorExtras)
 
-	assertHas(t, extraNames, "invoke_minister")
+	assertHas(t, extraNames, "consult_minister")
 	assertNotHas(t, extraNames, "enact_ritual")
 }
 
 func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
-		Ctx:             testCtx(),
-		DBPath:          "/tmp/test.db",
-		Runner:          &noopRunner{},
-		HostChecker:     func(string) (bool, bool) { return false, true },
-		MinisterInvoker: mockInvoker{},
-		RitualLauncher:  mockLauncher{},
+		Ctx:                testCtx(),
+		DBPath:             "/tmp/test.db",
+		Runner:             &noopRunner{},
+		HostChecker:        func(string) (bool, bool) { return false, true },
+		MinisterConsultant: mockConsultant{},
+		RitualLauncher:     mockLauncher{},
 	})
 
 	ministerPerms := map[string]string{
@@ -286,6 +287,63 @@ func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 				t.Errorf("%s should have at least one tool", minister)
 			}
 		})
+	}
+}
+
+func TestConsultMinisterTool_DynamicMinisterIDs(t *testing.T) {
+	ministerIDs := []string{"chancellor", "forge", "judge", "sage", "strategist"}
+	r := NewToolRegistry()
+	RegisterBuiltinTools(r, ToolRegistrationOpts{
+		Ctx:                testCtx(),
+		MinisterConsultant: mockConsultant{},
+		MinisterIDs:        ministerIDs,
+	})
+
+	extras := r.ExtraTools("chancellor", []string{"consult_minister"})
+	if len(extras) != 1 {
+		t.Fatalf("expected 1 extra tool, got %d", len(extras))
+	}
+
+	schema := extras[0].ParameterSchema()
+	ministerIDProp, ok := schema["properties"].(map[string]any)["minister_id"].(map[string]any)
+	if !ok {
+		t.Fatal("missing minister_id property in schema")
+	}
+	desc, ok := ministerIDProp["description"].(string)
+	if !ok {
+		t.Fatal("minister_id description is not a string")
+	}
+	for _, id := range ministerIDs {
+		if !strings.Contains(desc, id) {
+			t.Errorf("minister_id description should contain %q, got: %s", id, desc)
+		}
+	}
+}
+
+func TestConsultMinisterTool_DefaultMinisterIDs(t *testing.T) {
+	r := NewToolRegistry()
+	RegisterBuiltinTools(r, ToolRegistrationOpts{
+		Ctx:                testCtx(),
+		MinisterConsultant: mockConsultant{},
+		// MinisterIDs is nil — should fall back to hardcoded examples
+	})
+
+	extras := r.ExtraTools("chancellor", []string{"consult_minister"})
+	if len(extras) != 1 {
+		t.Fatalf("expected 1 extra tool, got %d", len(extras))
+	}
+
+	schema := extras[0].ParameterSchema()
+	ministerIDProp, ok := schema["properties"].(map[string]any)["minister_id"].(map[string]any)
+	if !ok {
+		t.Fatal("missing minister_id property in schema")
+	}
+	desc, ok := ministerIDProp["description"].(string)
+	if !ok {
+		t.Fatal("minister_id description is not a string")
+	}
+	if !strings.Contains(desc, "strategist") {
+		t.Errorf("default description should contain 'strategist', got: %s", desc)
 	}
 }
 
