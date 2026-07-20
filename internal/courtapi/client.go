@@ -29,7 +29,7 @@ type Client interface {
 
 	// Minister presence and reset. Fully wire-safe.
 	HasMinister(id string) bool
-	ResetMinisterSession(id string)
+	ResetMinisterSession(id string, channelID ...string)
 
 	// In-process only; needed by getCurrentSession(). Scheduled for a
 	// future session-narrowing phase.
@@ -51,7 +51,7 @@ type Client interface {
 
 	// Prompts and sessions.
 	SubmitPrompt(targetID string, p *court.Prompt) error
-	RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error
+	RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage, channelID ...string) error
 
 	// Session state (wire-safe bulk read + targeted mutators).
 	SessionState(tabTarget string) court.SessionState

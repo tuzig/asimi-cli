@@ -356,10 +356,10 @@ func TestProcessPrompt_ExistingSessionDoesNotOverwriteEdictSessionID(t *testing.
 	sage := NewSage(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
-	// Pre-create a session so ProcessPrompt finds m.session != nil
+	// Pre-create a session so ProcessPrompt finds m.sessions[channelID] != nil
 	existingSession, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "e2")
 	require.NoError(t, err)
-	base.session = existingSession
+	base.SetSession(existingSession, "e2")
 
 	var mu sync.Mutex
 	var doneCount int
@@ -1236,22 +1236,58 @@ func TestMinisterBase_SessionMethods(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 
 	// Initially nil
-	assert.Nil(t, base.Session())
+	assert.Nil(t, base.GetSession())
 
 	// Create a mock session
 	mockSess := &Session{ID: "test-session"}
 
 	// Set session
 	base.SetSession(mockSess)
-	assert.NotNil(t, base.Session())
-	assert.Equal(t, "test-session", base.Session().ID)
+	assert.NotNil(t, base.GetSession())
+	assert.Equal(t, "test-session", base.GetSession().ID)
 
 	// Reset session
 	base.ResetSession()
-	assert.Nil(t, base.Session())
+	assert.Nil(t, base.GetSession())
 }
 
-// TestRestoreMinisterSession_AllTabs proves the resume routing works for
+// TestMinisterBase_PerChannelSessionIsolation verifies that two sessions
+// on the same minister with different channel IDs are independent —
+// prompting on "e633" doesn't affect "sage".
+func TestMinisterBase_PerChannelSessionIsolation(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
+	base.ministerID = "sage"
+
+	sess1 := &Session{ID: "sess-sage"}
+	sess1.SetChannelID("sage")
+	sess2 := &Session{ID: "sess-e633"}
+	sess2.SetChannelID("e633")
+
+	base.SetSession(sess1, "sage")
+	base.SetSession(sess2, "e633")
+
+	// Both sessions exist under their respective channel keys
+	assert.NotNil(t, base.GetSession("sage"))
+	assert.NotNil(t, base.GetSession("e633"))
+	assert.Equal(t, "sess-sage", base.GetSession("sage").ID)
+	assert.Equal(t, "sess-e633", base.GetSession("e633").ID)
+
+	// Default (no channelID) returns the minister's own session
+	assert.Equal(t, "sess-sage", base.GetSession().ID)
+
+	// Resetting "e633" doesn't affect "sage"
+	base.ResetSession("e633")
+	assert.Nil(t, base.GetSession("e633"))
+	assert.NotNil(t, base.GetSession("sage"))
+	assert.Equal(t, "sess-sage", base.GetSession("sage").ID)
+
+	// GetSessions returns all remaining sessions
+	all := base.GetSessions()
+	assert.Len(t, all, 1)
+	assert.Contains(t, all, "sage")
+}
+
+
 // every minister that owns a UI tab. Each tab saves with TabType =
 // minister id; this test feeds those ids into RestoreMinisterSession and
 // verifies the right minister ends up with a populated session whose
@@ -2125,4 +2161,119 @@ func TestRunLoop_SlowPromptDoesNotBlockTaskDispatch(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for task result")
 	}
+}
+
+// TestProcessTask_EmitsStreamStartAndDone verifies that processTask emits
+// StreamStartMsg (with the correct ChannelID) before streaming begins and
+// StreamDoneMsg after streaming completes when an LLM is configured.
+func TestProcessTask_EmitsStreamStartAndDone(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	var mu sync.Mutex
+	var msgs []any
+	sage.SetNotify(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		msgs = append(msgs, msg)
+	})
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:       ctx,
+		EdictKey:  storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+		Work:      "do the work",
+		Done:      doneCh,
+		ChannelID: "e633",
+	}
+
+	sage.MinisterBase.processTask(ctx, task)
+
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for task result")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	var startIdx, doneIdx int = -1, -1
+	for i, msg := range msgs {
+		switch msg.(type) {
+		case StreamStartMsg:
+			if startIdx == -1 {
+				startIdx = i
+			}
+		case StreamDoneMsg:
+			if doneIdx == -1 {
+				doneIdx = i
+			}
+		}
+	}
+
+	require.NotEqual(t, -1, startIdx, "StreamStartMsg should be emitted")
+	require.NotEqual(t, -1, doneIdx, "StreamDoneMsg should be emitted")
+	assert.Less(t, startIdx, doneIdx, "StreamStartMsg should come before StreamDoneMsg")
+
+	startMsg, ok := msgs[startIdx].(StreamStartMsg)
+	require.True(t, ok)
+	assert.Equal(t, "e633", startMsg.ChannelID, "StreamStartMsg should use task ChannelID")
+	assert.Equal(t, uint(1), startMsg.EdictID, "StreamStartMsg should carry the edict ID")
+
+	doneMsg, ok := msgs[doneIdx].(StreamDoneMsg)
+	require.True(t, ok)
+	assert.Equal(t, "e633", doneMsg.ChannelID, "StreamDoneMsg should use task ChannelID")
+}
+
+// TestProcessTask_StreamStartDefaultChannelID verifies that when ChannelID is
+// empty, processTask falls back to the minister's own ID for stream routing.
+func TestProcessTask_StreamStartDefaultChannelID(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx := context.Background()
+
+	mockLLM := mocks.NewLLMProvider()
+	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
+	sage := NewSage(base)
+	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
+
+	var mu sync.Mutex
+	var startChannelID, doneChannelID string
+	sage.SetNotify(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch m := msg.(type) {
+		case StreamStartMsg:
+			startChannelID = m.ChannelID
+		case StreamDoneMsg:
+			doneChannelID = m.ChannelID
+		}
+	})
+
+	doneCh := make(chan Result, 1)
+	task := &Task{
+		Ctx:      ctx,
+		EdictKey: storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
+		Work:     "do the work",
+		Done:     doneCh,
+		// ChannelID left empty — should fall back to minister ID
+	}
+
+	sage.MinisterBase.processTask(ctx, task)
+
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for task result")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, "sage", startChannelID, "StreamStartMsg should fall back to minister ID")
+	assert.Equal(t, "sage", doneChannelID, "StreamDoneMsg should fall back to minister ID")
 }

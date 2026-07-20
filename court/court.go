@@ -1008,11 +1008,17 @@ func (s *Court) clearAllSchedulers() int {
 		if m == nil {
 			continue
 		}
-		sess := m.GetSession()
-		if sess == nil || sess.scheduler == nil {
+		// GetSessions is on MinisterBase, not the Minister interface
+		gs, ok := m.(interface{ GetSessions() map[string]*Session })
+		if !ok {
 			continue
 		}
-		total += sess.scheduler.ClearQueue()
+		for _, sess := range gs.GetSessions() {
+			if sess == nil || sess.scheduler == nil {
+				continue
+			}
+			total += sess.scheduler.ClearQueue()
+		}
 	}
 	return total
 }
@@ -1124,7 +1130,7 @@ func (s *Court) SubmitPrompt(targetID string, p *Prompt) error {
 // RestoreMinisterSession rebuilds the session of the minister identified
 // by tabType (matches the saved Session.TabType, which is the minister id)
 // and seeds it with msgs. Works for any minister that implements
-func (s *Court) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
+func (s *Court) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage, channelID ...string) error {
 	if s == nil {
 		return fmt.Errorf("court not initialized")
 	}
@@ -1132,7 +1138,7 @@ func (s *Court) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessag
 	if minister == nil {
 		return fmt.Errorf("minister not found: %s", tabType)
 	}
-	return minister.RestoreSession(minister, msgs)
+	return minister.RestoreSession(minister, msgs, channelID...)
 }
 
 // ResetChancellor resets the chancellor session
@@ -1165,8 +1171,10 @@ func (s *Court) HasMinister(id string) bool {
 }
 
 // ResetMinisterSession resets the session of the minister with the given id.
+// If channelID is provided, resets only that channel's session; otherwise
+// resets the minister's own interactive session.
 // No-op if the minister doesn't exist or doesn't expose ResetSession.
-func (s *Court) ResetMinisterSession(id string) {
+func (s *Court) ResetMinisterSession(id string, channelID ...string) {
 	if s == nil {
 		return
 	}
@@ -1174,8 +1182,8 @@ func (s *Court) ResetMinisterSession(id string) {
 	if m == nil {
 		return
 	}
-	if rs, ok := m.(interface{ ResetSession() }); ok {
-		rs.ResetSession()
+	if rs, ok := m.(interface{ ResetSession(channelID ...string) }); ok {
+		rs.ResetSession(channelID...)
 	}
 }
 
@@ -1307,11 +1315,21 @@ func (s *Court) sessionForTab(tabTarget string) *Session {
 	if s == nil {
 		return nil
 	}
+	// Try direct minister lookup first (interactive tabs: "sage", "chancellor")
 	m := s.GetMinister(tabTarget)
-	if m == nil {
-		return nil
+	if m != nil {
+		return m.GetSession(tabTarget)
 	}
-	return m.GetSession()
+	// Ritual/edict tabs: check all ministers for a session keyed by this channel
+	for _, m := range s.ministers {
+		if m == nil {
+			continue
+		}
+		if sess := m.GetSession(tabTarget); sess != nil {
+			return sess
+		}
+	}
+	return nil
 }
 
 // SessionState returns a snapshot of the session attached to the given tab.

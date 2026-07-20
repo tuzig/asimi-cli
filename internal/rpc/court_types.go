@@ -23,7 +23,8 @@ type HasMinisterResult struct {
 }
 
 type ResetMinisterSessionParams struct {
-	ID string `msgpack:"id"`
+	ID        string `msgpack:"id"`
+	ChannelID string `msgpack:"channel_id,omitempty"`
 }
 
 type EdictKeyParams struct {
@@ -159,8 +160,9 @@ type SubmitPromptParams struct {
 }
 
 type RestoreMinisterSessionParams struct {
-	TabType  string                `msgpack:"tab_type"`
-	Messages []schemas.ChatMessage `msgpack:"messages"`
+	TabType   string                `msgpack:"tab_type"`
+	Messages  []schemas.ChatMessage `msgpack:"messages"`
+	ChannelID string                `msgpack:"channel_id,omitempty"`
 }
 
 type TakeSnapshotResult struct {

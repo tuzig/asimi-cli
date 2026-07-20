@@ -261,10 +261,10 @@ func (rc *ReconnectingClient) HasMinister(id string) bool {
 	return client.HasMinister(id)
 }
 
-func (rc *ReconnectingClient) ResetMinisterSession(id string) {
+func (rc *ReconnectingClient) ResetMinisterSession(id string, channelID ...string) {
 	client := rc.getClient()
 	if client != nil {
-		client.ResetMinisterSession(id)
+		client.ResetMinisterSession(id, channelID...)
 	}
 }
 
@@ -567,15 +567,15 @@ func (rc *ReconnectingClient) SubmitPrompt(targetID string, p *court.Prompt) err
 	return err
 }
 
-func (rc *ReconnectingClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
+func (rc *ReconnectingClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage, channelID ...string) error {
 	client := rc.getClient()
 	if client == nil {
 		return ErrClosed
 	}
-	err := client.RestoreMinisterSession(tabType, msgs)
+	err := client.RestoreMinisterSession(tabType, msgs, channelID...)
 	if rc.reconnectIfError(err, rc.shouldRetry) {
 		if client = rc.getClient(); client != nil {
-			return client.RestoreMinisterSession(tabType, msgs)
+			return client.RestoreMinisterSession(tabType, msgs, channelID...)
 		}
 	}
 	return err

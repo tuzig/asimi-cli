@@ -47,8 +47,8 @@ func (c *CourtClient) HasMinister(id string) bool {
 	return r.Has
 }
 
-func (c *CourtClient) ResetMinisterSession(id string) {
-	_ = c.callVoid(context.Background(), MethodResetMinisterSession, ResetMinisterSessionParams{ID: id})
+func (c *CourtClient) ResetMinisterSession(id string, channelID ...string) {
+	_ = c.callVoid(context.Background(), MethodResetMinisterSession, ResetMinisterSessionParams{ID: id, ChannelID: firstOrEmpty(channelID)})
 }
 
 func (c *CourtClient) EdictKey(edictID uint) storage.EdictKey {
@@ -238,8 +238,8 @@ func (c *CourtClient) SubmitPrompt(targetID string, p *court.Prompt) error {
 	return c.callVoid(ctx, MethodSubmitPrompt, params)
 }
 
-func (c *CourtClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
-	return c.callVoid(context.Background(), MethodRestoreMinisterSess, RestoreMinisterSessionParams{TabType: tabType, Messages: msgs})
+func (c *CourtClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage, channelID ...string) error {
+	return c.callVoid(context.Background(), MethodRestoreMinisterSess, RestoreMinisterSessionParams{TabType: tabType, Messages: msgs, ChannelID: firstOrEmpty(channelID)})
 }
 
 func (c *CourtClient) TakeSnapshot() court.Snapshot {
@@ -250,6 +250,15 @@ func (c *CourtClient) TakeSnapshot() court.Snapshot {
 	var r TakeSnapshotResult
 	_ = wire.Decode(raw, &r)
 	return r.Snapshot
+}
+
+// firstOrEmpty returns the first element of a variadic string slice,
+// or "" if the slice is empty.
+func firstOrEmpty(s []string) string {
+	if len(s) > 0 {
+		return s[0]
+	}
+	return ""
 }
 
 func (c *CourtClient) CancelTab(channelID string) {

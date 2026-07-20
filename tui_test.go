@@ -3429,11 +3429,11 @@ func (m *mockCourtClient) SubmitPrompt(targetID string, p *court.Prompt) error {
 	return nil
 }
 
-func (m *mockCourtClient) ResetMinisterSession(id string) {
+func (m *mockCourtClient) ResetMinisterSession(id string, channelID ...string) {
 	m.resetMinisterSessionIDs = append(m.resetMinisterSessionIDs, id)
 }
 
-func (m *mockCourtClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
+func (m *mockCourtClient) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage, channelID ...string) error {
 	m.restoreMinisterSessions = append(m.restoreMinisterSessions, tabType)
 	return nil
 }
@@ -5818,9 +5818,9 @@ func TestSubmitToCourt_RitualTabNoActiveNoSessionID(t *testing.T) {
 	ctx := context.Background()
 	cmd := model.submitToCourt(ctx, "hello", nil)
 
-	// Fallback path: should have called ResetMinisterSession and SubmitPrompt
-	require.Len(t, mock.resetMinisterSessionIDs, 1)
-	assert.Equal(t, "chancellor", mock.resetMinisterSessionIDs[0])
+	// Fallback path: should NOT call ResetMinisterSession (per-channel sessions
+	// mean ProcessPrompt creates a new session without touching the interactive one).
+	require.Empty(t, mock.resetMinisterSessionIDs)
 	assert.Equal(t, 1, mock.submitPromptCalls)
 	assert.Equal(t, "chancellor", mock.submitPromptTarget)
 	assert.Equal(t, uint(647), mock.submitPromptEdictKey.ID)

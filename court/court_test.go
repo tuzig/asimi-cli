@@ -457,13 +457,13 @@ func TestClearAllSchedulers_WithQueuedItems(t *testing.T) {
 	// Attach sessions to ministers
 	chancellor := court.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
-	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess1)
 	}
 
 	forge := court.GetMinister("forge")
 	require.NotNil(t, forge)
-	if base, ok := forge.(interface{ SetSession(*Session) }); ok {
+	if base, ok := forge.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess2)
 	}
 
@@ -495,7 +495,7 @@ func TestClearAllSchedulers_MinistersWithNilScheduler(t *testing.T) {
 
 	chancellor := court.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
-	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess)
 	}
 
@@ -533,7 +533,7 @@ func TestSubscribe_HandlesClearSchedulerMsg(t *testing.T) {
 
 	chancellor := court.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
-	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess)
 	}
 
@@ -1014,7 +1014,7 @@ func TestRequestZhengming_SetsSessionID(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
 	require.NoError(t, err)
-	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess)
 	}
 
@@ -1101,14 +1101,14 @@ func TestRequestZhengming_UsesCallingMinisterSessionID(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
 	require.NoError(t, err)
-	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(chancellorSess)
 	}
 
 	// Attach a DIFFERENT session to the sage
 	sageSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "sage")
 	require.NoError(t, err)
-	if base, ok := sage.(interface{ SetSession(*Session) }); ok {
+	if base, ok := sage.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sageSess)
 	}
 
@@ -1154,7 +1154,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterLookupNil(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
 	require.NoError(t, err)
-	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(chancellorSess)
 	}
 
@@ -1207,7 +1207,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterNotFound(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
 	require.NoError(t, err)
-	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(chancellorSess)
 	}
 
@@ -1258,7 +1258,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterHasNoSession(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
 	require.NoError(t, err)
-	if base, ok := chancellor.(interface{ SetSession(*Session) }); ok {
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(chancellorSess)
 	}
 
@@ -1326,4 +1326,131 @@ func TestZhengmingAnswered_NonSentinelCreatesEdictWithSessionID(t *testing.T) {
 	}, 2*time.Second, 50*time.Millisecond, "edict should be created from the zhengming answer")
 
 	assert.Equal(t, sessionID, edict.SessionID, "edict should carry the zhengming's session_id")
+}
+
+// ---------------------------------------------------------------------------
+// Per-channel session tests (edict 676)
+// ---------------------------------------------------------------------------
+
+// TestSessionForTab_RitualTabFindsSessionOnMinister verifies that sessionForTab
+// resolves a ritual/edict tab target (e.g. "e633") by scanning all ministers
+// for a session keyed by that channel — the core fix for the per-channel
+// session isolation bug in edict 676.
+func TestSessionForTab_RitualTabFindsSessionOnMinister(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+
+	mockLLM := mocks.NewLLMProvider()
+
+	// Create a session on the sage minister under channel "e633"
+	ritualSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "", "e633")
+	require.NoError(t, err)
+
+	sage := court.GetMinister("sage")
+	require.NotNil(t, sage)
+	if base, ok := sage.(interface{ SetSession(*Session, ...string) }); ok {
+		base.SetSession(ritualSess, "e633")
+	}
+
+	// sessionForTab("e633") should find the session on the sage minister
+	sess := court.sessionForTab("e633")
+	require.NotNil(t, sess, "sessionForTab should find ritual session by scanning all ministers")
+	assert.Equal(t, ritualSess.ID, sess.ID)
+
+	// Also verify SessionState routes through sessionForTab
+	state := court.SessionState("e633")
+	assert.True(t, state.Exists, "SessionState should find the ritual session")
+	assert.Equal(t, "e633", state.ChannelID)
+}
+
+// TestSessionForTab_InteractiveTabUsesDirectLookup verifies that for
+// interactive tabs (e.g. "sage"), sessionForTab uses the direct minister
+// lookup path and returns that minister's session keyed by its own ID.
+func TestSessionForTab_InteractiveTabUsesDirectLookup(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+
+	mockLLM := mocks.NewLLMProvider()
+	interactiveSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "", "sage")
+	require.NoError(t, err)
+
+	sage := court.GetMinister("sage")
+	require.NotNil(t, sage)
+	if base, ok := sage.(interface{ SetSession(*Session, ...string) }); ok {
+		base.SetSession(interactiveSess)
+	}
+
+	sess := court.sessionForTab("sage")
+	require.NotNil(t, sess)
+	assert.Equal(t, interactiveSess.ID, sess.ID)
+}
+
+// TestSessionForTab_RitualTabDoesNotFindInteractiveSession verifies that
+// a ritual tab target does not accidentally return the minister's
+// interactive session (stored under the minister's own ID key).
+func TestSessionForTab_RitualTabDoesNotFindInteractiveSession(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+
+	mockLLM := mocks.NewLLMProvider()
+	interactiveSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "", "sage")
+	require.NoError(t, err)
+
+	sage := court.GetMinister("sage")
+	require.NotNil(t, sage)
+	if base, ok := sage.(interface{ SetSession(*Session, ...string) }); ok {
+		base.SetSession(interactiveSess) // stored under "sage" key
+	}
+
+	// "e633" is a ritual tab — should return nil since no session is keyed "e633"
+	sess := court.sessionForTab("e633")
+	assert.Nil(t, sess, "ritual tab should not find the interactive session")
+}
+
+// TestClearAllSchedulers_MultipleSessionsPerMinister verifies that
+// clearAllSchedulers iterates all sessions across all channels on a
+// single minister, not just the default interactive session.
+func TestClearAllSchedulers_MultipleSessionsPerMinister(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	court := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, court)
+	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
+
+	doneA := make(chan struct{})
+	doneB := make(chan struct{})
+	defer close(doneA)
+	defer close(doneB)
+
+	sched1 := runners.NewCoreToolScheduler(nil)
+	sched1.Schedule(context.Background(), &blockingTool{name: "tool_a", done: doneA}, `{}`)
+	sched2 := runners.NewCoreToolScheduler(nil)
+	sched2.Schedule(context.Background(), &blockingTool{name: "tool_b", done: doneB}, `{}`)
+
+	mockLLM := mocks.NewLLMProvider()
+
+	// Create two sessions on the SAME minister (chancellor) under different channel IDs
+	sess1, err := NewSession(mockLLM, &SessionConfig{}, nil, sched1, nil, "", "chancellor")
+	require.NoError(t, err)
+	sess2, err := NewSession(mockLLM, &SessionConfig{}, nil, sched2, nil, "", "e633")
+	require.NoError(t, err)
+
+	chancellor := court.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
+		base.SetSession(sess1)            // interactive session under "chancellor" key
+		base.SetSession(sess2, "e633")   // ritual session under "e633" key
+	}
+
+	count := court.clearAllSchedulers()
+	assert.Equal(t, 2, count, "should abort 1+1 = 2 queued items across two sessions on the same minister")
 }

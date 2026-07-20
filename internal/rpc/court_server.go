@@ -28,7 +28,7 @@ func RegisterCourtHandlers(c *Conn, impl courtapi.Client) {
 		if err := wire.Decode(params, &p); err != nil {
 			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
 		}
-		impl.ResetMinisterSession(p.ID)
+		impl.ResetMinisterSession(p.ID, p.ChannelID)
 		return nil, nil
 	})
 
@@ -286,7 +286,7 @@ func RegisterCourtHandlers(c *Conn, impl courtapi.Client) {
 		if err := wire.Decode(params, &p); err != nil {
 			return nil, wire.NewError(wire.CodeDecodeFailed, err.Error())
 		}
-		if err := impl.RestoreMinisterSession(p.TabType, p.Messages); err != nil {
+		if err := impl.RestoreMinisterSession(p.TabType, p.Messages, p.ChannelID); err != nil {
 			return nil, err
 		}
 		return nil, nil

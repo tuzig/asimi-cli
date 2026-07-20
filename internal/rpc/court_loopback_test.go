@@ -65,7 +65,7 @@ func (f *fakeCourt) HasMinister(id string) bool {
 	return f.hasIDs[id]
 }
 
-func (f *fakeCourt) ResetMinisterSession(id string) {
+func (f *fakeCourt) ResetMinisterSession(id string, channelID ...string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.resetLog = append(f.resetLog, id)
@@ -239,7 +239,7 @@ func (f *fakeCourt) SubmitPrompt(target string, p *court.Prompt) error {
 	return nil
 }
 
-func (f *fakeCourt) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage) error {
+func (f *fakeCourt) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessage, channelID ...string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.restored = append(f.restored, tabType+"/"+intString(len(msgs)))

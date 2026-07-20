@@ -181,7 +181,7 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 	if model.court != nil {
 		tab := model.tabs.ActiveTab()
 		if model.court.HasMinister(string(tab.Type)) {
-			model.court.ResetMinisterSession(string(tab.Type))
+			model.court.ResetMinisterSession(string(tab.Type), tab.Target)
 		} else {
 			slog.Debug("Failed to get session", "miniter", tab.Type)
 		}

@@ -338,11 +338,11 @@ func (m *TUIModel) getCurrentSession() *court.Session {
 		return nil
 	}
 	tab := m.tabs.ActiveTab()
-	minister := m.court.GetMinister(tab.Target)
+	minister := m.court.GetMinister(string(tab.Type))
 	if minister == nil {
 		return nil
 	}
-	return minister.GetSession()
+	return minister.GetSession(tab.Target)
 }
 
 // currentTabTarget returns the target identifier of the active tab, or "".
@@ -616,12 +616,12 @@ func (m *TUIModel) saveSession() {
 		return
 	}
 
-	minister := m.court.GetMinister(tab.Target)
+	minister := m.court.GetMinister(string(tab.Type))
 	if minister == nil {
 		return
 	}
 
-	session := minister.GetSession()
+	session := minister.GetSession(tab.Target)
 	if session == nil {
 		return
 	}
@@ -1621,7 +1621,8 @@ func (m *TUIModel) submitToCourt(ctx context.Context, prompt string, contextFile
 		}
 
 		// Fallback: no birth session — create a fresh session with edict context.
-		m.court.ResetMinisterSession(ministerID)
+		// ProcessPrompt will create a new session under channelID (e.g. "e633")
+		// without touching the minister's interactive session.
 		p.EdictKey = m.court.EdictKey(uint(edictID))
 		if err := m.court.SubmitPrompt(ministerID, p); err != nil {
 			return func() tea.Msg {
@@ -2420,7 +2421,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				message = "Zhengming answered for the court"
 			} else {
 				answer, _ := msg.Payload["answer"].(string)
-			message = fmt.Sprintf("Answered for e%d: %s", msg.EdictKey.ID, answer)
+				message = fmt.Sprintf("Answered for e%d: %s", msg.EdictKey.ID, answer)
 			}
 		case storage.EventEdictCancelled:
 			icon = "⛔"

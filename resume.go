@@ -303,13 +303,17 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 		if tabType == "" {
 			tabType = "chancellor"
 		}
-		if err := m.court.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
-			slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
-		}
 
 		if ritualRestore {
-			// Submit the pending prompt to the minister, routed to the ritual tab
+			// Pass the ritual tab's channel ID so the restored session is
+			// stored under the right key (e.g. "e633"), not the minister's
+			// interactive session key.
 			tab := m.tabs.ActiveTab()
+			if err := m.court.RestoreMinisterSession(tabType, session.GetMessages(), tab.Target); err != nil {
+				slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
+			}
+
+			// Submit the pending prompt to the minister, routed to the ritual tab
 			ministerID := session.TabType
 			if ministerID == "" {
 				ministerID = "chancellor"
@@ -324,6 +328,10 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 				slog.Warn("failed to submit pending ritual prompt", "error", err)
 			} else {
 				m.tabs.SetStreamingTabByTab(tab.Target)
+			}
+		} else {
+			if err := m.court.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
+				slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
 			}
 		}
 	}

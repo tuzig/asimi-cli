@@ -111,10 +111,11 @@ type Minister interface {
 	GetConfig() internalconfig.LLMConfig
 	// Run starts the minister's processing loop (blocks until context cancelled)
 	Run(ctx context.Context)
-	// GetSession returns the interactive session
-	GetSession() *Session
-	// RestoreSession creates a session and injects loaded history
-	RestoreSession(minister Minister, msgs []schemas.ChatMessage) error
+	// GetSession returns the interactive session for the given channel ID.
+	// If channelID is empty, returns the minister's own interactive session.
+	GetSession(channelID ...string) *Session
+	// RestoreSession creates a session and injects loaded history.
+	RestoreSession(minister Minister, msgs []schemas.ChatMessage, channelID ...string) error
 }
 
 // --- External Dependencies ---
@@ -222,7 +223,7 @@ type MinisterBase struct {
 	pendingZhengmingMu sync.Mutex
 
 	sessionMu sync.RWMutex
-	session   *Session // Embedded session for interactive use cases
+	sessions  map[string]*Session // Per-channel sessions: "sage", "e633", "i456", etc.
 
 	username string
 	project  string
@@ -266,6 +267,7 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, us
 		username:         username,
 		project:          project,
 		pendingZhengming: make(map[string]chan ZhengmingAnswer),
+		sessions:         make(map[string]*Session),
 	}
 }
 
@@ -363,16 +365,18 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 	}
 
 	m.sessionMu.Lock()
-	if m.session == nil {
+	sess := m.sessions[channelID]
+	if sess == nil {
 		var err error
-		m.session, err = CreateSession(minister, m.client, m.config, m.notify, channelID, prompt.EdictKey)
+		sess, err = CreateSession(minister, m.client, m.config, m.notify, channelID, prompt.EdictKey)
 		if err != nil {
 			m.sessionMu.Unlock()
 			m.notify(StreamErrorMsg{ChannelID: channelID, Err: fmt.Errorf("failed to create session: %w", err)})
 			return
 		}
-		m.session.TabType = m.ministerID
-		m.session.SetPersister(m.persister)
+		sess.TabType = m.ministerID
+		sess.SetPersister(m.persister)
+		m.sessions[channelID] = sess
 		m.logger.Info("created interactive session", "minister_id", m.ministerID, "channel_id", channelID)
 
 		// Link the new session to the edict so future prompts on the same
@@ -381,17 +385,17 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 		if prompt.EdictKey.ID != 0 {
 			if err := m.db.Model(&storage.Edict{}).Where("id = ? AND username = ? AND project = ?",
 				prompt.EdictKey.ID, prompt.EdictKey.Username, prompt.EdictKey.Project).
-				Update("session_id", m.session.ID).Error; err != nil {
+				Update("session_id", sess.ID).Error; err != nil {
 				m.logger.Warn("failed to link session to edict", "edict_id", prompt.EdictKey.ID, "error", err)
 			}
 		}
 	} else {
 		// Override the session's channel so stream chunks route to the
 		// prompt's target tab (e.g. a ritual tab "e633").
-		m.session.SetChannelID(channelID)
+		sess.SetChannelID(channelID)
 	}
-	session := m.session
 	m.sessionMu.Unlock()
+	session := sess
 
 	message := prompt.Message
 	if m.promptPreprocessor != nil {
@@ -660,8 +664,10 @@ func (m *MinisterBase) SetSessionPersister(p SessionPersister) {
 	m.persister = p
 	m.sessionMu.Lock()
 	defer m.sessionMu.Unlock()
-	if m.session != nil {
-		m.session.SetPersister(p)
+	for _, sess := range m.sessions {
+		if sess != nil {
+			sess.SetPersister(p)
+		}
 	}
 }
 
@@ -767,6 +773,15 @@ func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
 		notify = task.Notify
 	}
 
+	// Resolve channel ID for stream routing
+	channelID := task.ChannelID
+	if channelID == "" && task.Session != nil {
+		channelID = task.Session.ChannelID()
+	}
+	if channelID == "" {
+		channelID = m.ministerID
+	}
+
 	// Pre-task hook
 	if m.preTaskHook != nil {
 		if handled, result := m.preTaskHook(ctx, task, notify); handled {
@@ -782,7 +797,9 @@ func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
 	sealed := true
 
 	if m.client != nil {
+		notify(StreamStartMsg{ChannelID: channelID, EdictID: task.EdictKey.ID})
 		session, output, taskErr = m.streamTask(ctx, task.Work, task.EdictKey, task.Scratchpad, notify, task.Session, task.ChannelID, task.ExcludeTools)
+		notify(StreamDoneMsg{ChannelID: channelID})
 	} else if m.taskFallback != nil {
 		sealed, taskErr = m.taskFallback(ctx, task)
 		if sealed {
@@ -819,37 +836,68 @@ func (m *MinisterBase) GetConfig() internalconfig.LLMConfig {
 	return internalconfig.LLMConfig{}
 }
 
-// Session returns the minister's embedded session (may be nil).
-func (m *MinisterBase) Session() *Session {
+// GetSession returns the session for the given channel ID.
+// If channelID is empty, defaults to m.ministerID (backward compat for
+// callers that don't know the channel — e.g., clearAllSchedulers).
+func (m *MinisterBase) GetSession(channelID ...string) *Session {
+	key := m.ministerID
+	if len(channelID) > 0 && channelID[0] != "" {
+		key = channelID[0]
+	}
 	m.sessionMu.RLock()
 	defer m.sessionMu.RUnlock()
-	return m.session
+	return m.sessions[key]
 }
 
-// SetSession sets the minister's embedded session.
-func (m *MinisterBase) SetSession(s *Session) {
+// SetSession sets the session for the given channel ID.
+// If channelID is empty, defaults to m.ministerID.
+func (m *MinisterBase) SetSession(s *Session, channelID ...string) {
+	key := m.ministerID
+	if len(channelID) > 0 && channelID[0] != "" {
+		key = channelID[0]
+	}
 	m.sessionMu.Lock()
 	defer m.sessionMu.Unlock()
-	m.session = s
+	m.sessions[key] = s
 }
 
-// ResetSession clears the minister's embedded session.
-func (m *MinisterBase) ResetSession() {
+// ResetSession clears the session for the given channel ID.
+// If channelID is empty, clears the minister's own interactive session.
+func (m *MinisterBase) ResetSession(channelID ...string) {
+	key := m.ministerID
+	if len(channelID) > 0 && channelID[0] != "" {
+		key = channelID[0]
+	}
 	m.sessionMu.Lock()
 	defer m.sessionMu.Unlock()
-	m.session = nil
+	delete(m.sessions, key)
+}
+
+// GetSessions returns a snapshot copy of all sessions across all channels.
+func (m *MinisterBase) GetSessions() map[string]*Session {
+	m.sessionMu.RLock()
+	defer m.sessionMu.RUnlock()
+	out := make(map[string]*Session, len(m.sessions))
+	for k, v := range m.sessions {
+		out[k] = v
+	}
+	return out
 }
 
 // RestoreSession creates a fully-wired interactive session and injects loaded history.
-func (m *MinisterBase) RestoreSession(minister Minister, msgs []schemas.ChatMessage) error {
-	sess, err := CreateSession(minister, m.client, m.config, m.notify, m.ministerID)
+func (m *MinisterBase) RestoreSession(minister Minister, msgs []schemas.ChatMessage, channelID ...string) error {
+	key := m.ministerID
+	if len(channelID) > 0 && channelID[0] != "" {
+		key = channelID[0]
+	}
+	sess, err := CreateSession(minister, m.client, m.config, m.notify, key)
 	if err != nil {
 		return err
 	}
 	sess.SetMessages(msgs)
 	sess.TabType = m.ministerID
 	sess.SetPersister(m.persister)
-	m.SetSession(sess)
+	m.SetSession(sess, key)
 	return nil
 }
 
@@ -1195,7 +1243,7 @@ func (m *MinisterBase) ConsultMinister(ctx context.Context, ministerID string, k
 	}
 
 	// Wrap notify with WithChannelID so the invoked minister's session routes to caller's tab
-	wrappedNotify := WithChannelID(m.notify, m.Session(), m.ministerID)
+	wrappedNotify := WithChannelID(m.notify, m.GetSession(m.ministerID), m.ministerID)
 
 	// Create per-call done channel (synchronous blocking pattern)
 	doneChan := make(chan Result, 1)
@@ -1337,11 +1385,6 @@ func (m *MinisterBase) ResumeEdict(ctx context.Context, key storage.EdictKey, wo
 	default:
 		m.logger.Warn("task channel full", "edict_id", key.ID)
 	}
-}
-func (m *MinisterBase) GetSession() *Session {
-	m.sessionMu.RLock()
-	defer m.sessionMu.RUnlock()
-	return m.session
 }
 
 // sessBuildEnvBlock constructs a markdown summary of the OS, shell, and key paths.

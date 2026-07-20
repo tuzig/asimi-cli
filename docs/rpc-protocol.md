@@ -129,7 +129,7 @@ Every method name is a Go constant in
 | `GetEdictSeals`            | `{key EdictKey}`                                    | `{seals []Seal}`                |
 | `PublishEvent`             | `{key EdictKey, event_type, payload JSON}`          | `{event_id uint}`               |
 | `SubmitPrompt`             | `{target_id, message, edict_key, channel_id, context_files}` | —                      |
-| `RestoreMinisterSession`   | `{tab_type, messages []ChatMessage}`                | —                               |
+| `RestoreMinisterSession`   | `{tab_type, messages []ChatMessage, channel_id?}`   | —                               |
 | `HandleZhengmingResponse`  | `{request_id, answer}`                              | —                               |
 | `CancelZhengming`          | `{request_id}`                                      | —                               |
 | `AllowRunnerFallback`      | `{allow bool}`                                      | —                               |
