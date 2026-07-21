@@ -33,6 +33,7 @@ type RitualLauncher interface {
 }
 
 // MinisterConsultant dispatches work to a minister (implemented by MinisterBase).
+// callerID is the minister ID of the caller, used to route output to the caller's tab.
 type MinisterConsultant interface {
-	ConsultMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error)
+	ConsultMinister(ctx context.Context, callerID, ministerID string, key storage.EdictKey, work string) (string, error)
 }

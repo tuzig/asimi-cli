@@ -706,6 +706,100 @@ func TestConsultMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 	assert.Contains(t, err.Error(), "context canceled")
 }
 
+// TestCourt_ConsultMinister_RoutesToCallerTab verifies that when a non-chancellor
+// minister calls ConsultMinister, the ChannelID in notifications and the Task
+// dispatched to the target minister are set to the caller's ID, not "chancellor".
+// This is the core fix for edict 686.
+func TestCourt_ConsultMinister_RoutesToCallerTab(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var notifications []any
+	notifyFunc := internal.NotifyFunc(func(msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		notifications = append(notifications, msg)
+	})
+
+	// Target minister that captures the task and replies
+	var capturedTask *Task
+	fake := &fakeMinister{id: "target", tasks: make(chan *Task, 1)}
+	court := &Court{
+		db:        db,
+		ministers: map[string]Minister{"target": fake},
+		notify:    notifyFunc,
+	}
+
+	go func() {
+		task := <-fake.tasks
+		capturedTask = task
+		task.Done <- Result{MinisterID: "target", Sealed: true, Output: "done"}
+	}()
+
+	// Simulate the "judge" minister calling consult_minister
+	_, err := court.ConsultMinister(ctx, "judge", "target",
+		storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "do work")
+	assert.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Verify MinisterInvokingMsg is routed to the caller's tab
+	require.GreaterOrEqual(t, len(notifications), 1, "expected at least 1 notification")
+	invoking, ok := notifications[0].(MinisterInvokingMsg)
+	require.True(t, ok, "first notification should be MinisterInvokingMsg, got %T", notifications[0])
+	assert.Equal(t, "judge", invoking.ChannelID,
+		"MinisterInvokingMsg ChannelID should be callerID='judge', not 'chancellor'")
+
+	// Verify MinisterCompletedMsg is routed to the caller's tab
+	require.GreaterOrEqual(t, len(notifications), 2, "expected at least 2 notifications")
+	completed, ok := notifications[1].(MinisterCompletedMsg)
+	require.True(t, ok, "second notification should be MinisterCompletedMsg, got %T", notifications[1])
+	assert.Equal(t, "judge", completed.ChannelID,
+		"MinisterCompletedMsg ChannelID should be callerID='judge', not 'chancellor'")
+
+	// Verify the Task dispatched to the target has ChannelID set to callerID
+	require.NotNil(t, capturedTask, "task should have been captured")
+	assert.Equal(t, "judge", capturedTask.ChannelID,
+		"Task.ChannelID should be callerID='judge', not 'chancellor'")
+}
+
+// TestConsultMinisterTool_PassesMinisterIDAsCallerID verifies that
+// ConsultMinisterTool.Call passes its embedded Ctx.MinisterID as the
+// callerID to the consultant interface.
+func TestConsultMinisterTool_PassesMinisterIDAsCallerID(t *testing.T) {
+	var recordedCallerID, recordedMinisterID string
+
+	consultant := &callerIDCapturingConsultant{callerIDPtr: &recordedCallerID, ministerIDPtr: &recordedMinisterID}
+	tool := tools.ConsultMinisterTool{
+		Ctx:         tools.ToolContext{MinisterID: "judge", Username: "testuser", Project: "testproject"},
+		Consultant:  consultant,
+		MinisterIDs: []string{"forge"},
+	}
+
+	_, err := tool.Call(context.Background(), `{"minister_id": "forge", "edict_id": 1, "task": "do work"}`)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "judge", recordedCallerID,
+		"ConsultMinisterTool.Call should pass Ctx.MinisterID as callerID")
+	assert.Equal(t, "forge", recordedMinisterID,
+		"ConsultMinisterTool.Call should pass the target minister_id")
+}
+
+// callerIDCapturingConsultant records the callerID passed to ConsultMinister.
+type callerIDCapturingConsultant struct {
+	callerIDPtr   *string
+	ministerIDPtr *string
+}
+
+func (c *callerIDCapturingConsultant) ConsultMinister(ctx context.Context, callerID, ministerID string, key storage.EdictKey, work string) (string, error) {
+	*c.callerIDPtr = callerID
+	*c.ministerIDPtr = ministerID
+	return `{"status":"completed"}`, nil
+}
+
 // TestConsultMinisterTool_Notifications verifies MinisterInvokingMsg and MinisterCompletedMsg are sent
 func TestConsultMinisterTool_Notifications(t *testing.T) {
 	db := setupMinisterTestDB(t)
@@ -834,7 +928,7 @@ func TestCourt_ConsultMinister_SetsExcludeTools(t *testing.T) {
 		task.Done <- Result{MinisterID: "target", Sealed: true, Output: "done"}
 	}()
 
-	_, err := court.ConsultMinister(ctx, "target",
+	_, err := court.ConsultMinister(ctx, "chancellor", "target",
 		storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "do work")
 	assert.NoError(t, err)
 }
@@ -1858,7 +1952,9 @@ func TestRunLoop_ConcurrentTaskDispatch(t *testing.T) {
 func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
 	// Build a tool registry with consult_minister registered as an extra tool
 	registry := tools.NewToolRegistry()
-	registry.RegisterExtra("consult_minister", tools.ConsultMinisterTool{})
+	registry.RegisterExtraFactory("consult_minister", func(mid string) tools.Tool {
+		return tools.ConsultMinisterTool{Ctx: tools.ToolContext{MinisterID: mid}}
+	})
 	registry.RegisterExtra("enact_ritual", tools.InvokeRitualTool{})
 	registry.RegisterExtraFactory("request_zhengming", func(mid string) tools.Tool {
 		return tools.RequestZhengmingTool{MinisterID: mid}
@@ -1894,7 +1990,9 @@ func TestCreateSessionWithOpts_ExcludeTools(t *testing.T) {
 
 	// Build a tool registry with consult_minister and other tools
 	registry := tools.NewToolRegistry()
-	registry.RegisterExtra("consult_minister", tools.ConsultMinisterTool{})
+	registry.RegisterExtraFactory("consult_minister", func(mid string) tools.Tool {
+		return tools.ConsultMinisterTool{Ctx: tools.ToolContext{MinisterID: mid}}
+	})
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.SetToolRegistry(registry)

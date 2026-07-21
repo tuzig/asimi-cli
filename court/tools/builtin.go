@@ -127,7 +127,11 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 // so the tool carries the correct MinisterID for routing.
 func registerExtraTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 	if opts.MinisterConsultant != nil {
-		r.RegisterExtra("consult_minister", ConsultMinisterTool{Ctx: opts.Ctx, Consultant: opts.MinisterConsultant, MinisterIDs: opts.MinisterIDs})
+		r.RegisterExtraFactory("consult_minister", func(mid string) Tool {
+			ctx := opts.Ctx
+			ctx.MinisterID = mid
+			return ConsultMinisterTool{Ctx: ctx, Consultant: opts.MinisterConsultant, MinisterIDs: opts.MinisterIDs}
+		})
 	}
 	if opts.RitualLauncher != nil {
 		r.RegisterExtra("enact_ritual", InvokeRitualTool{Ctx: opts.Ctx, Launcher: opts.RitualLauncher})

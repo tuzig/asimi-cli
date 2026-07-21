@@ -61,7 +61,7 @@ func (t ConsultMinisterTool) Call(ctx context.Context, input string) (string, er
 		Project:  t.Ctx.Project,
 	}
 
-	return t.Consultant.ConsultMinister(ctx, params.MinisterID, key, params.Work)
+	return t.Consultant.ConsultMinister(ctx, t.Ctx.MinisterID, params.MinisterID, key, params.Work)
 }
 
 func (t ConsultMinisterTool) Format(input, result string, err error) string {

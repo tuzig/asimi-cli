@@ -42,7 +42,7 @@ func newRepoInfo(projectRoot string) *repo.RepoInfo {
 // mockConsultant satisfies MinisterConsultant for testing.
 type mockConsultant struct{}
 
-func (m mockConsultant) ConsultMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
+func (m mockConsultant) ConsultMinister(ctx context.Context, callerID, ministerID string, key storage.EdictKey, work string) (string, error) {
 	return "ok", nil
 }
 
@@ -389,4 +389,32 @@ func TestRegisterBuiltinToolsEmptyOpts(t *testing.T) {
 
 	// approve_doc is always registered (no dependencies)
 	assertHas(t, toolNames, "approve_doc")
+}
+
+// TestConsultMinisterTool_FactoryProducesPerMinisterInstances verifies that
+// the RegisterExtraFactory registration for consult_minister produces
+// separate tool instances with the correct MinisterID embedded per minister.
+func TestConsultMinisterTool_FactoryProducesPerMinisterInstances(t *testing.T) {
+	r := NewToolRegistry()
+	RegisterBuiltinTools(r, ToolRegistrationOpts{
+		Ctx:                testCtx(),
+		MinisterConsultant: mockConsultant{},
+		MinisterIDs:        []string{"chancellor", "forge", "judge"},
+	})
+
+	// Resolve the tool for different ministers
+	for _, mid := range []string{"judge", "forge", "chancellor"} {
+		extras := r.ExtraTools(mid, []string{"consult_minister"})
+		if len(extras) != 1 {
+			t.Fatalf("expected 1 extra tool for %s, got %d", mid, len(extras))
+		}
+
+		tool, ok := extras[0].(ConsultMinisterTool)
+		if !ok {
+			t.Fatalf("expected ConsultMinisterTool, got %T", extras[0])
+		}
+		if tool.Ctx.MinisterID != mid {
+			t.Errorf("minister %s: expected MinisterID=%s, got %s", mid, mid, tool.Ctx.MinisterID)
+		}
+	}
 }

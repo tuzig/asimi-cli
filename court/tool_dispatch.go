@@ -153,10 +153,8 @@ func (s *Court) CancelZhengmingDispatch(requestID string) {
 // --- MinisterConsultant (tools.MinisterConsultant) ---
 
 // ConsultMinister dispatches work to a registered minister synchronously.
-// Uses "chancellor" as the routing channel ID for notify wrapping (same
-// behavior as the previous MinisterBase implementation that was extracted
-// from the chancellor).
-func (s *Court) ConsultMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
+// callerID is the minister ID of the caller, used to route output to the caller's tab.
+func (s *Court) ConsultMinister(ctx context.Context, callerID, ministerID string, key storage.EdictKey, work string) (string, error) {
 	logger := s.logger
 	if logger == nil {
 		logger = slog.Default()
@@ -164,7 +162,7 @@ func (s *Court) ConsultMinister(ctx context.Context, ministerID string, key stor
 
 	if s.notify != nil {
 		s.notify(MinisterInvokingMsg{
-			ChannelID:  "chancellor",
+			ChannelID:  callerID,
 			MinisterID: ministerID,
 			EdictKey:   key,
 			Task:       work,
@@ -176,7 +174,7 @@ func (s *Court) ConsultMinister(ctx context.Context, ministerID string, key stor
 		err := fmt.Errorf("minister not found: %s", ministerID)
 		if s.notify != nil {
 			s.notify(MinisterCompletedMsg{
-				ChannelID:  "chancellor",
+				ChannelID:  callerID,
 				MinisterID: ministerID,
 				EdictKey:   key,
 				Error:      err,
@@ -189,10 +187,10 @@ func (s *Court) ConsultMinister(ctx context.Context, ministerID string, key stor
 	var wrappedNotify internal.NotifyFunc
 	if s.notify != nil {
 		var sess *Session
-		if chancellor := s.GetMinister("chancellor"); chancellor != nil {
-			sess = chancellor.GetSession()
+		if caller := s.GetMinister(callerID); caller != nil {
+			sess = caller.GetSession()
 		}
-		wrappedNotify = WithChannelID(s.notify, sess, "chancellor")
+		wrappedNotify = WithChannelID(s.notify, sess, callerID)
 	}
 
 	doneChan := make(chan Result, 1)
@@ -202,7 +200,7 @@ func (s *Court) ConsultMinister(ctx context.Context, ministerID string, key stor
 		Work:         work,
 		Done:         doneChan,
 		Notify:       wrappedNotify,
-		ChannelID:    "chancellor",
+		ChannelID:    callerID,
 		ExcludeTools: []string{"consult_minister"},
 	}
 
@@ -226,7 +224,7 @@ func (s *Court) ConsultMinister(ctx context.Context, ministerID string, key stor
 	if result.Err != nil {
 		if s.notify != nil {
 			s.notify(MinisterCompletedMsg{
-				ChannelID:  "chancellor",
+				ChannelID:  callerID,
 				MinisterID: ministerID,
 				EdictKey:   key,
 				Error:      result.Err,
@@ -241,7 +239,7 @@ func (s *Court) ConsultMinister(ctx context.Context, ministerID string, key stor
 
 	if s.notify != nil {
 		s.notify(MinisterCompletedMsg{
-			ChannelID:  "chancellor",
+			ChannelID:  callerID,
 			MinisterID: ministerID,
 			EdictKey:   key,
 			Output:     work,

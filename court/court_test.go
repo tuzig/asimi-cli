@@ -1710,7 +1710,7 @@ func TestCourt_ConsultMinister_NotFound(t *testing.T) {
 	require.NotNil(t, s)
 
 	key := storage.EdictKey{ID: 1, Username: cfg.Username, Project: cfg.Project}
-	_, err := s.ConsultMinister(context.Background(), "nonexistent", key, "do something")
+	_, err := s.ConsultMinister(context.Background(), "chancellor", "nonexistent", key, "do something")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "minister not found")
 }
