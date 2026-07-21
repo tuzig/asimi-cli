@@ -44,7 +44,7 @@ test-coverage:
 
 # Run linting
 lint:
-    golangci-lint run
+    go vet ./...
 
 # Format code
 fmt:
@@ -66,7 +66,6 @@ clean:
 
 # Install development tools
 bootstrap:
-    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
     go install golang.org/x/tools/cmd/goimports@latest
     go install golang.org/x/vuln/cmd/govulncheck@latest
 

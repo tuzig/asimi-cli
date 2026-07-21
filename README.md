@@ -160,7 +160,7 @@ To develop Asimi itself:
 
 2. **Install dependencies:**
    ```bash
-   just bootstrap    # Installs golangci-lint, goimports
+   just bootstrap    # Installs goimports, govulncheck
    ```
 
 3. **Build and run:**

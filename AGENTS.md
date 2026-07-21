@@ -28,11 +28,11 @@ just run              # Run with debug logging (writes to ./asimi.log)
 just build            # Build binary
 just test             # Run all tests
 just test-coverage    # Run tests with coverage report
-just lint             # Run golangci-lint
+just lint             # Run go vet
 just fmt              # Format code
 
 # Infrastructure
-just bootstrap        # Install dev tools (golangci-lint, goimports)
+just bootstrap        # Install dev tools (goimports, govulncheck)
 just build-sandbox    # Build container image for sandboxed execution
 just clean-sandbox    # Clean up container image
 
