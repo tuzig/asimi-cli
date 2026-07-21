@@ -869,7 +869,8 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 		if label == "" {
 			label = "Sage"
 		}
-		model.tabs.Add(label, TabType(ministers.Sage), ministers.Sage)
+		target := model.tabs.UniqueTarget(ministers.Sage)
+		model.tabs.Add(label, TabType(ministers.Sage), target)
 		model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 		return nil
 	}
@@ -882,7 +883,8 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 		if label == "" {
 			label = "Sage"
 		}
-		model.tabs.Add(label, TabType(ministers.Sage), ministers.Sage)
+		uniq := model.tabs.UniqueTarget(ministers.Sage)
+		model.tabs.Add(label, TabType(ministers.Sage), uniq)
 		model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 	case "ritual":
 		if len(args) < 2 {
@@ -896,7 +898,8 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 		// Treat as minister name
 		if model.court != nil && model.court.HasMinister(target) {
 			label := strings.ToUpper(target[:1]) + target[1:]
-			model.tabs.Add(label, TabType(target), target)
+			uniq := model.tabs.UniqueTarget(target)
+			model.tabs.Add(label, TabType(target), uniq)
 			model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 		} else {
 			model.commandLine.AddToast(fmt.Sprintf("Unknown minister: %s", target), "error", time.Second*3)

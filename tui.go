@@ -1636,7 +1636,7 @@ func (m *TUIModel) submitToCourt(ctx context.Context, prompt string, contextFile
 		return nil
 	}
 
-	if err := m.court.SubmitPrompt(tab.Target, p); err != nil {
+	if err := m.court.SubmitPrompt(string(tab.Type), p); err != nil {
 		return func() tea.Msg {
 			return court.StreamErrorMsg{Err: err}
 		}

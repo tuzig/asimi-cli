@@ -349,6 +349,26 @@ func (tm *TabManager) SwitchTo(index int) {
 	}
 }
 
+// UniqueTarget returns a target ID for the given minister ID that does not
+// collide with any existing tab's Target. The first occurrence uses the
+// bare minister ID (e.g. "sage"); subsequent ones get a suffix counter
+// (e.g. "sage-2", "sage-3").
+func (tm *TabManager) UniqueTarget(ministerID string) string {
+	existing := map[string]bool{}
+	for i := range tm.tabs {
+		existing[tm.tabs[i].Target] = true
+	}
+	if !existing[ministerID] {
+		return ministerID
+	}
+	for n := 2; ; n++ {
+		candidate := fmt.Sprintf("%s-%d", ministerID, n)
+		if !existing[candidate] {
+			return candidate
+		}
+	}
+}
+
 // Add creates a new tab and switches to it
 func (tm *TabManager) Add(label string, tabType TabType, target string) {
 	newContent := newContentComponent(tm.width, tm.height, tm.markdownEnabled, tm.getStatus)

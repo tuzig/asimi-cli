@@ -5762,9 +5762,32 @@ func TestSubmitToCourt_NonRitualTab_RoutesToTabTarget(t *testing.T) {
 	cmd := model.submitToCourt(ctx, "hello chancellor", nil)
 	require.Nil(t, cmd)
 
-	// Should route to the tab target (chancellor), not a minister
+	// Should route to the minister ID (chancellor = tab.Type), not tab.Target
 	assert.Equal(t, "chancellor", mock.submitPromptTarget)
+	assert.Equal(t, "chancellor", mock.submitPromptChanID)
 	assert.Empty(t, mock.pausedChannels, "PauseRitual should not be called on non-ritual tab")
+}
+
+func TestSubmitToCourt_TabnewSage_RoutesToSageMinisterWithUniqueChannel(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Simulate :tabnew sage — creates a tab with Type="sage" but Target="sage-2"
+	model.tabs.Add("Sage", TabType("sage"), "sage-2")
+	model.tabs.SwitchToTabType("sage")
+	// Make sure we're on the second sage tab (target "sage-2")
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	ctx := context.Background()
+	cmd := model.submitToCourt(ctx, "hello from tabnew", nil)
+	require.Nil(t, cmd)
+
+	// Minister lookup should use tab.Type ("sage"), not tab.Target ("sage-2")
+	assert.Equal(t, "sage", mock.submitPromptTarget)
+	// ChannelID should use tab.Target ("sage-2") for session/output isolation
+	assert.Equal(t, "sage-2", mock.submitPromptChanID)
 }
 
 func TestSubmitToCourt_RitualTabNoActiveRestoresSession(t *testing.T) {

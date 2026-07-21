@@ -216,7 +216,9 @@ func TestHandleTabNewCommand_DefaultOpensSageTabWithDerivedLabel(t *testing.T) {
 	assert.Len(t, model.tabs.tabs, initialTabCount+1)
 	newTab := model.tabs.tabs[initialTabCount]
 	assert.Equal(t, ministers.Sage, string(newTab.Type))
-	assert.Equal(t, ministers.Sage, newTab.Target)
+	// Default Sage tab already exists with target "sage", so the new one
+	// gets a unique target for session/channel isolation.
+	assert.Equal(t, "sage-2", newTab.Target)
 	// Label should be derived from defs, not hardcoded
 	defs, _ := ministers.LoadMinisters()
 	sageDef := ministers.LookupByID(defs, ministers.Sage)
@@ -232,10 +234,42 @@ func TestHandleTabNewCommand_SageArgOpensSageTab(t *testing.T) {
 	assert.Len(t, model.tabs.tabs, initialTabCount+1)
 	newTab := model.tabs.tabs[initialTabCount]
 	assert.Equal(t, ministers.Sage, string(newTab.Type))
-	assert.Equal(t, ministers.Sage, newTab.Target)
+	// Default Sage tab already exists with target "sage", so the new one
+	// gets a unique target for session/channel isolation.
+	assert.Equal(t, "sage-2", newTab.Target)
 	defs, _ := ministers.LoadMinisters()
 	sageDef := ministers.LookupByID(defs, ministers.Sage)
 	assert.Contains(t, newTab.Label, sageDef.Title)
+}
+
+func TestUniqueTarget_GeneratesUniqueIDs(t *testing.T) {
+	tm := newTestTabManager()
+	// Default tabs include "sage" as a target
+	assert.Equal(t, "sage-2", tm.UniqueTarget("sage"))
+	// Add a tab with "sage-2" to simulate a second tabnew
+	tm.Add("Sage", TabType(ministers.Sage), "sage-2")
+	assert.Equal(t, "sage-3", tm.UniqueTarget("sage"))
+	// A minister ID not yet present returns the bare ID
+	assert.Equal(t, "forge-2", tm.UniqueTarget("forge"))
+	// After removing all "forge" tabs (forge is a default tab), it still
+	// collides because the default tab uses "forge" as target.
+}
+
+func TestHandleTabNewCommand_MultipleTabnewSageGenerateIncrementingTargets(t *testing.T) {
+	model := newTestModel(t)
+	initialTabCount := len(model.tabs.tabs)
+
+	// First tabnew sage → "sage-2"
+	handleTabNewCommand(model, []string{ministers.Sage})
+	assert.Equal(t, "sage-2", model.tabs.tabs[initialTabCount].Target)
+
+	// Second tabnew sage → "sage-3"
+	handleTabNewCommand(model, []string{ministers.Sage})
+	assert.Equal(t, "sage-3", model.tabs.tabs[initialTabCount+1].Target)
+
+	// Third tabnew (no arg) → "sage-4"
+	handleTabNewCommand(model, []string{})
+	assert.Equal(t, "sage-4", model.tabs.tabs[initialTabCount+2].Target)
 }
 
 func TestSetTabMinister_SetsMinisterOnMatchingTab(t *testing.T) {
