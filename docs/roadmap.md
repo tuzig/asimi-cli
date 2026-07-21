@@ -13,11 +13,11 @@ Below is what is left to develop:
   - Tools (https://github.com/afittestide/asimi-cli/issues/155)
   - DB Schema — sharpen edicts, manifests, verdicts, precedents & seals (https://github.com/afittestide/asimi-cli/issues/152)
 
-### Full Parallelism
+### Autonomous Execution Modes
 
-- Use git worktrees to enable concurrent ritual execution (https://github.com/afittestide/asimi-cli/issues/153)
-- Seal edict command with a UI for the user to review and approve or chat about changes
-- Multiple minister tabs
+- Headless Prompt Mode (`-p` flag) — non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684)
+- Isolated Host Mode (`--isolated-host` flag) — bypass podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683)
+- Handsoff Mode (`--handsoff` flag) — auto-answer zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
 
 ### UI Improvements
 
@@ -34,12 +34,10 @@ Below is what is left to develop:
 
 ## V1.1
 
-### Autonomous Execution Modes
+### Full Parallelism
 
-- Headless Prompt Mode (`-p` flag) — non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684)
-- Isolated Host Mode (`--isolated-host` flag) — bypass podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683)
-- Handsoff Mode (`--handsoff` flag) — auto-answer zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
-
+- Use git worktrees to enable concurrent ritual execution (https://github.com/afittestide/asimi-cli/issues/153)
+- Seal edict command with a UI for the user to review and approve or chat about changes
 
 ### Skills Support
 
@@ -49,9 +47,12 @@ Below is what is left to develop:
 
 ## V1.2
 
-Improved realms alignment. The repo is not only earth, but earth and intent.
+Improved ministers permissions through realms alignment.
+The repo is not only earth, but earth and intent.
 Tests and docs are two examples for Intent content in the repo.
 Earth is just part of the repo, the part with code that is part of the program (https://github.com/afittestide/asimi-cli/issues/160).
+
+Update swift-strike to TDD
 
 ## V2.0
 
