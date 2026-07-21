@@ -10,8 +10,9 @@ import (
 // register builtin tools. Ctx carries shared identity (RepoInfo, MinisterID,
 // Username, Project, DB) — tools query the DB directly through Ctx.DB.
 //
-// Chancellor-backed interfaces (EdictManager, ZhengmingRequester,
-// MinisterConsultant, RitualLauncher) need runtime dispatch and are kept.
+// Runtime-dispatch interfaces (ZhengmingRequester, MinisterConsultant,
+// RitualLauncher) need runtime wiring that can't go through a DB handle.
+// The Court owns these directly and passes them in.
 //
 // Nil fields are safe — the corresponding tools simply won't be registered.
 type ToolRegistrationOpts struct {
@@ -21,8 +22,7 @@ type ToolRegistrationOpts struct {
 	HostChecker func(cmd string) (runOnHost, needsApproval bool)
 	DBPath      string
 
-	// Chancellor-backed — need runtime dispatch, not DB
-	EdictManager       EdictManager
+	// Runtime-dispatch interfaces owned by the Court
 	ZhengmingRequester ZhengmingRequester
 	WaitForZhengming   func(ctx context.Context, requestID string) (string, error)
 	NotifyFn           func() func(any)
@@ -89,14 +89,11 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 	intentExec := Permissions{Intent: Access{Execute: true}}
 
 	r.Register(ListLingTool{Ctx: opts.Ctx}, intentRead)
-	if opts.EdictManager != nil {
-		r.Register(GetEdictStatusTool{
-			Manager:  opts.EdictManager,
-			DB:       opts.Ctx.DB,
-			Username: opts.Ctx.Username,
-			Project:  opts.Ctx.Project,
-		}, intentRead)
-	}
+	r.Register(GetEdictStatusTool{
+		DB:       opts.Ctx.DB,
+		Username: opts.Ctx.Username,
+		Project:  opts.Ctx.Project,
+	}, intentRead)
 	r.Register(ListEdictsTool{DB: opts.Ctx.DB, Username: opts.Ctx.Username, Project: opts.Ctx.Project}, intentRead)
 	r.Register(QueryCourtTool{DB: opts.Ctx.DB, Username: opts.Ctx.Username, Project: opts.Ctx.Project}, intentRead)
 	r.Register(ListQuenchedManifestsTool{Ctx: opts.Ctx}, intentRead)
@@ -105,9 +102,7 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 
 	r.Register(InsertLingTool{Ctx: opts.Ctx}, intentWrite)
 	r.Register(UpdateLingStatusTool{Ctx: opts.Ctx}, intentWrite)
-	if opts.EdictManager != nil {
-		r.Register(UpdateEdictTool{Manager: opts.EdictManager, Username: opts.Ctx.Username, Project: opts.Ctx.Project}, intentWrite)
-	}
+	r.Register(UpdateEdictTool{DB: opts.Ctx.DB, Username: opts.Ctx.Username, Project: opts.Ctx.Project}, intentWrite)
 	r.Register(TransitionEdictTool{DB: opts.Ctx.DB, Username: opts.Ctx.Username, Project: opts.Ctx.Project}, intentWrite)
 	r.Register(CreateIncidentTool{Ctx: opts.Ctx}, intentWrite)
 	r.Register(ResolveIncidentTool{Ctx: opts.Ctx}, intentWrite)

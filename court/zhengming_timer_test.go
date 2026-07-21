@@ -14,7 +14,7 @@ import (
 )
 
 // TestOnZhengmingRaisedCallbackFired verifies that the OnZhengmingRaised callback
-// is invoked when RequestZhengming is called on a MinisterBase.
+// is invoked when RequestZhengming is called on the Court.
 func TestOnZhengmingRaisedCallbackFired(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
@@ -28,8 +28,17 @@ func TestOnZhengmingRaisedCallbackFired(t *testing.T) {
 		raisedMu.Unlock()
 	})
 
+	// Create a forge minister with this base and wire it into a Court
+	forge := NewForge(base)
+	court := &Court{
+		db:        db,
+		ministers: map[string]Minister{"forge": forge},
+		zhengming: newZhengmingDispatch(),
+	}
+	court.SetNotify(func(msg any) {})
+
 	key := storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}
-	_, err := base.RequestZhengming(key, storage.ZhengmingQuestions{{Text: "OK?"}}, storage.PriorityNormal, "forge")
+	_, err := court.RequestZhengming(key, storage.ZhengmingQuestions{{Text: "OK?"}}, storage.PriorityNormal, "forge")
 	require.NoError(t, err)
 
 	raisedMu.Lock()
@@ -52,9 +61,18 @@ func TestOnZhengmingResolvedCallbackFired(t *testing.T) {
 		resolvedMu.Unlock()
 	})
 
+	// Create a forge minister with this base and wire it into a Court
+	forge := NewForge(base)
+	court := &Court{
+		db:        db,
+		ministers: map[string]Minister{"forge": forge},
+		zhengming: newZhengmingDispatch(),
+	}
+	court.SetNotify(func(msg any) {})
+
 	// Create a zhengming request first
 	key := storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}
-	requestID, err := base.RequestZhengming(key, storage.ZhengmingQuestions{{Text: "OK?"}}, storage.PriorityNormal, "forge")
+	requestID, err := court.RequestZhengming(key, storage.ZhengmingQuestions{{Text: "OK?"}}, storage.PriorityNormal, "forge")
 	require.NoError(t, err)
 
 	// Answer it — should fire the resolved callback

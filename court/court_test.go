@@ -927,7 +927,132 @@ func TestBuildToolRegistry_WiresHostChecker(t *testing.T) {
 	assert.False(t, runOnHost, "non-matching command should return runOnHost=false")
 }
 
-// TestUpdateProjectRootTools_PreservesHostChecker verifies that
+// TestCourt_ImplementsRuntimeDispatchInterfaces verifies the Court directly
+// implements the three runtime-dispatch interfaces that were previously
+// extracted from the chancellor via type assertion.
+func TestCourt_ImplementsRuntimeDispatchInterfaces(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	var _ tools.ZhengmingRequester = s
+	var _ tools.MinisterConsultant = s
+	var _ tools.RitualLauncher = s
+}
+
+// TestCourt_StartRitual_EmitsEvent verifies that Court.StartRitual publishes
+// a ritual_enacted event through the event system.
+func TestCourt_StartRitual_EmitsEvent(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	key := storage.EdictKey{ID: 42, Username: cfg.Username, Project: cfg.Project}
+	err := s.StartRitual("test-ritual", key, map[string]string{"foo": "bar"})
+	require.NoError(t, err)
+
+	// Verify event was published to the Tian ledger
+	var events []storage.TianEvent
+	require.NoError(t, db.Find(&events, "edict_id = ? AND event_type = ?", key.ID, storage.EventRitualEnacted).Error)
+	require.Len(t, events, 1, "expected one ritual_enacted event")
+}
+
+// TestCourt_CheckHostCommand_NoConfig verifies that CheckHostCommand returns
+// (false, false) when no session config is set (before ConfigureModel).
+func TestCourt_CheckHostCommand_NoConfig(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	runOnHost, needsApproval := s.CheckHostCommand("gh issue list")
+	assert.False(t, runOnHost)
+	assert.False(t, needsApproval)
+}
+
+// TestCourt_DeliverZhengmingAnswer verifies the Court-owned zhengming dispatch:
+// WaitForZhengming blocks until DeliverZhengmingAnswer is called.
+func TestCourt_DeliverZhengmingAnswer(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start waiting in a goroutine
+	done := make(chan string, 1)
+	go func() {
+		answer, err := s.WaitForZhengming(ctx, "test-request-1")
+		if err != nil {
+			done <- ""
+			return
+		}
+		done <- answer
+	}()
+
+	// Give the goroutine time to register
+	time.Sleep(50 * time.Millisecond)
+
+	// Deliver the answer
+	delivered := s.DeliverZhengmingAnswer(ZhengmingAnswer{
+		RequestID: "test-request-1",
+		Answer:    "yes",
+	})
+	assert.True(t, delivered, "answer should be delivered to waiting caller")
+
+	select {
+	case answer := <-done:
+		assert.Equal(t, "yes", answer)
+	case <-time.After(time.Second):
+		t.Fatal("WaitForZhengming should have returned")
+	}
+}
+
+// TestCourt_DeliverZhengmingAnswer_NoWaiter verifies that DeliverZhengmingAnswer
+// returns false when no one is waiting for the answer.
+func TestCourt_DeliverZhengmingAnswer_NoWaiter(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	delivered := s.DeliverZhengmingAnswer(ZhengmingAnswer{
+		RequestID: "no-waiter",
+		Answer:    "yes",
+	})
+	assert.False(t, delivered, "should return false when no one is waiting")
+}
+
+// TestCourt_WaitForZhengming_Cancel verifies that WaitForZhengming returns
+// an error when the context is cancelled.
+func TestCourt_WaitForZhengming_Cancel(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.WaitForZhengming(ctx, "test-request-cancel")
+		done <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		require.Error(t, err, "should return error on context cancel")
+	case <-time.After(time.Second):
+		t.Fatal("WaitForZhengming should have returned after cancel")
+	}
+}
+
 // updateProjectRootTools re-registers the shell tool with the stored
 // hostChecker (and msgChan) rather than nil values.
 func TestUpdateProjectRootTools_PreservesHostChecker(t *testing.T) {
@@ -1018,9 +1143,8 @@ func TestRequestZhengming_SetsSessionID(t *testing.T) {
 		base.SetSession(sess)
 	}
 
-	// Call RequestZhengming via the ZhengmingRequester interface
-	zr, ok := chancellor.(tools.ZhengmingRequester)
-	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+	// Call RequestZhengming via the Court (implements ZhengmingRequester)
+	var zr tools.ZhengmingRequester = s
 
 	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
 	questions := storage.ZhengmingQuestions{{
@@ -1054,8 +1178,7 @@ func TestRequestZhengming_NilSessionLeavesSessionIDEmpty(t *testing.T) {
 
 	// No session attached — Session() returns nil
 
-	zr, ok := chancellor.(tools.ZhengmingRequester)
-	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+	var zr tools.ZhengmingRequester = s
 
 	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
 	questions := storage.ZhengmingQuestions{{
@@ -1113,8 +1236,7 @@ func TestRequestZhengming_UsesCallingMinisterSessionID(t *testing.T) {
 	}
 
 	// The chancellor calls RequestZhengming on behalf of "sage"
-	zr, ok := chancellor.(tools.ZhengmingRequester)
-	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+	var zr tools.ZhengmingRequester = s
 
 	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
 	questions := storage.ZhengmingQuestions{{
@@ -1160,8 +1282,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterLookupNil(t *testing.T) {
 
 	// Note: SetMinisterLookup is NOT called — getMinister is nil
 
-	zr, ok := chancellor.(tools.ZhengmingRequester)
-	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+	var zr tools.ZhengmingRequester = s
 
 	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
 	questions := storage.ZhengmingQuestions{{
@@ -1211,8 +1332,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterNotFound(t *testing.T) {
 		base.SetSession(chancellorSess)
 	}
 
-	zr, ok := chancellor.(tools.ZhengmingRequester)
-	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+	var zr tools.ZhengmingRequester = s
 
 	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
 	questions := storage.ZhengmingQuestions{{
@@ -1262,8 +1382,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterHasNoSession(t *testing.T) {
 		base.SetSession(chancellorSess)
 	}
 
-	zr, ok := chancellor.(tools.ZhengmingRequester)
-	require.True(t, ok, "chancellor should implement ZhengmingRequester")
+	var zr tools.ZhengmingRequester = s
 
 	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
 	questions := storage.ZhengmingQuestions{{
@@ -1447,10 +1566,224 @@ func TestClearAllSchedulers_MultipleSessionsPerMinister(t *testing.T) {
 	chancellor := court.GetMinister("chancellor")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
-		base.SetSession(sess1)            // interactive session under "chancellor" key
-		base.SetSession(sess2, "e633")   // ritual session under "e633" key
+		base.SetSession(sess1)         // interactive session under "chancellor" key
+		base.SetSession(sess2, "e633") // ritual session under "e633" key
 	}
 
 	count := court.clearAllSchedulers()
 	assert.Equal(t, 2, count, "should abort 1+1 = 2 queued items across two sessions on the same minister")
+}
+
+// ---------------------------------------------------------------------------
+// Court-owned runtime-dispatch tests (edict 678)
+// ---------------------------------------------------------------------------
+
+// TestCourt_RequestZhengming_CreatesDBRecord verifies that Court.RequestZhengming
+// (the new implementation in tool_dispatch.go) creates a zhengming record in
+// the DB with the correct fields.
+func TestCourt_RequestZhengming_CreatesDBRecord(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	key := storage.EdictKey{ID: 42, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Which approach?",
+		Summary: "approach check",
+		Options: []string{"Option A", "Option B"},
+	}}
+
+	requestID, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	require.NoError(t, err)
+	assert.NotEmpty(t, requestID)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Equal(t, uint(42), req.EdictID)
+	assert.Equal(t, cfg.Username, req.Username)
+	assert.Equal(t, cfg.Project, req.Project)
+	assert.Equal(t, "sage", req.MinisterID)
+	assert.Equal(t, storage.ZhengmingPending, req.Status)
+	assert.Equal(t, storage.PriorityNormal, req.Priority)
+}
+
+// TestCourt_RequestZhengming_UrgentPrioritySetsShorterTimeout verifies that
+// urgent priority sets a 1-hour timeout instead of the default 24-hour.
+func TestCourt_RequestZhengming_UrgentPrioritySetsShorterTimeout(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	key := storage.EdictKey{ID: 42, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Urgent question?",
+		Summary: "urgent",
+		Options: []string{"A", "B"},
+	}}
+
+	requestID, err := s.RequestZhengming(key, questions, storage.PriorityUrgent, "sage")
+	require.NoError(t, err)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Equal(t, storage.PriorityUrgent, req.Priority)
+
+	// Urgent timeout should be ~1 hour, not ~24 hours
+	remaining := time.Until(req.TimeoutAt)
+	assert.Less(t, remaining, 2*time.Hour, "urgent timeout should be ~1 hour")
+	assert.Greater(t, remaining, 30*time.Minute, "urgent timeout should not be too short")
+}
+
+// TestCourt_RequestZhengming_EmitsEvent verifies that Court.RequestZhengming
+// publishes a zhengming_requested event to the Tian ledger.
+func TestCourt_RequestZhengming_EmitsEvent(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	key := storage.EdictKey{ID: 42, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Which approach?",
+		Summary: "approach check",
+		Options: []string{"Option A", "Option B"},
+	}}
+
+	requestID, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	require.NoError(t, err)
+
+	var events []storage.TianEvent
+	require.NoError(t, db.Find(&events, "edict_id = ? AND event_type = ?", key.ID, "zhengming_requested").Error)
+	require.Len(t, events, 1, "expected one zhengming_requested event")
+
+	// Verify event payload contains the request_id and minister_id
+	assert.Equal(t, requestID, events[0].Payload["request_id"])
+	assert.Equal(t, "sage", events[0].Payload["minister_id"])
+}
+
+// TestCourt_RequestZhengming_FiresCallbackOnCaller verifies that
+// Court.RequestZhengming fires the onZhengmingRaised callback on the
+// CALLING minister (not the chancellor).
+func TestCourt_RequestZhengming_FiresCallbackOnCaller(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	sageRaised := false
+	sage := s.GetMinister("sage")
+	require.NotNil(t, sage)
+
+	if base, ok := sage.(interface{ SetOnZhengmingRaised(func()) }); ok {
+		base.SetOnZhengmingRaised(func() { sageRaised = true })
+	}
+
+	chancellorRaised := false
+	chancellor := s.GetMinister("chancellor")
+	require.NotNil(t, chancellor)
+	if base, ok := chancellor.(interface{ SetOnZhengmingRaised(func()) }); ok {
+		base.SetOnZhengmingRaised(func() { chancellorRaised = true })
+	}
+
+	key := storage.EdictKey{ID: 42, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Which approach?",
+		Summary: "approach check",
+		Options: []string{"Option A", "Option B"},
+	}}
+
+	_, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	require.NoError(t, err)
+
+	assert.True(t, sageRaised, "onZhengmingRaised should fire on the calling minister (sage)")
+	assert.False(t, chancellorRaised, "onZhengmingRaised should NOT fire on the chancellor")
+}
+
+// TestCourt_ConsultMinister_NotFound verifies that Court.ConsultMinister
+// returns an error when the requested minister doesn't exist.
+func TestCourt_ConsultMinister_NotFound(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	key := storage.EdictKey{ID: 1, Username: cfg.Username, Project: cfg.Project}
+	_, err := s.ConsultMinister(context.Background(), "nonexistent", key, "do something")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "minister not found")
+}
+
+// TestCourt_CheckHostCommand_SafeRunOnHost verifies that a command matching
+// SafeRunOnHost returns (true, false) — run on host without approval.
+func TestCourt_CheckHostCommand_SafeRunOnHost(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	s.ConfigureModel(nil, &SessionConfig{
+		Sandbox: config.SandboxConfig{
+			RunOnHost:     []string{"^docker "},
+			SafeRunOnHost: []string{"^gh "},
+		},
+	}, repo.RepoInfo{})
+
+	// SafeRunOnHost match — no approval needed
+	runOnHost, needsApproval := s.CheckHostCommand("gh issue list")
+	assert.True(t, runOnHost, "SafeRunOnHost match should return runOnHost=true")
+	assert.False(t, needsApproval, "SafeRunOnHost match should return needsApproval=false")
+
+	// RunOnHost match — approval needed
+	runOnHost, needsApproval = s.CheckHostCommand("docker build .")
+	assert.True(t, runOnHost, "RunOnHost match should return runOnHost=true")
+	assert.True(t, needsApproval, "RunOnHost match should return needsApproval=true")
+
+	// No match — sandbox
+	runOnHost, needsApproval = s.CheckHostCommand("ls -la")
+	assert.False(t, runOnHost, "non-matching command should return runOnHost=false")
+	assert.False(t, needsApproval, "non-matching command should return needsApproval=false")
+}
+
+// TestCourt_CancelZhengmingDispatch verifies that CancelZhengmingDispatch
+// removes a pending wait, causing a blocked WaitForZhengming to return
+// without receiving an answer.
+func TestCourt_CancelZhengmingDispatch(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.WaitForZhengming(ctx, "cancel-test")
+		done <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel the dispatch — the goroutine should NOT return yet because
+	// the channel is deleted but the select is still waiting on ctx.Done().
+	// Only DeliverZhengmingAnswer or ctx cancel unblocks it.
+	s.CancelZhengmingDispatch("cancel-test")
+
+	// DeliverZhengmingAnswer should now return false (no waiter)
+	delivered := s.DeliverZhengmingAnswer(ZhengmingAnswer{
+		RequestID: "cancel-test",
+		Answer:    "too late",
+	})
+	assert.False(t, delivered, "should return false after CancelZhengmingDispatch")
+
+	// Cancel context to unblock the goroutine
+	cancel()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("WaitForZhengming should have returned after cancel")
+	}
 }

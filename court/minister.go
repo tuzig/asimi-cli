@@ -18,14 +18,11 @@ import (
 	"text/template"
 	"time"
 
-	"regexp"
-
 	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
-	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/storage"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/vmihailenco/msgpack/v5"
@@ -219,9 +216,6 @@ type MinisterBase struct {
 	onZhengmingRaised   func()
 	onZhengmingResolved func()
 
-	pendingZhengming   map[string]chan ZhengmingAnswer
-	pendingZhengmingMu sync.Mutex
-
 	sessionMu sync.RWMutex
 	sessions  map[string]*Session // Per-channel sessions: "sage", "e633", "i456", etc.
 
@@ -261,13 +255,12 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, us
 		db:               db,
 		runner:           runner,
 		logger:           logger,
-		msgChan:          msgChan,
-		prompts:          make(chan *Prompt),
-		tasks:            make(chan *Task, 10),
-		username:         username,
-		project:          project,
-		pendingZhengming: make(map[string]chan ZhengmingAnswer),
-		sessions:         make(map[string]*Session),
+		msgChan:    msgChan,
+		prompts:    make(chan *Prompt),
+		tasks:      make(chan *Task, 10),
+		username:   username,
+		project:    project,
+		sessions:   make(map[string]*Session),
 	}
 }
 
@@ -383,8 +376,8 @@ func (m *MinisterBase) ProcessPrompt(ctx context.Context, minister Minister, pro
 		// edict tab can restore it. Only runs when a new session is created
 		// AND the prompt carries an edict key (i.e. the fallback path).
 		if prompt.EdictKey.ID != 0 {
-			if err := m.db.Model(&storage.Edict{}).Where("id = ? AND username = ? AND project = ?",
-				prompt.EdictKey.ID, prompt.EdictKey.Username, prompt.EdictKey.Project).
+			if err := m.db.Model(&storage.Edict{}).Where("id = ? AND username = ? AND project = ? AND session_id = ?",
+				prompt.EdictKey.ID, prompt.EdictKey.Username, prompt.EdictKey.Project, "").
 				Update("session_id", sess.ID).Error; err != nil {
 				m.logger.Warn("failed to link session to edict", "edict_id", prompt.EdictKey.ID, "error", err)
 			}
@@ -447,33 +440,6 @@ func (m *MinisterBase) Scratchpad() string {
 // SetRunner updates the shell runner
 func (m *MinisterBase) SetRunner(r runners.Runner) {
 	m.runner = r
-}
-
-// CheckHostCommand matches a command against config.RunOnHost and config.SafeRunOnHost patterns.
-// Returns (runOnHost, needsApproval):
-//   - (true, true) if command should run on host and requires approval
-//   - (true, false) if command should run on host without approval (e.g. `gh issue list`)
-//   - (false, false) if command should run in the sandbox
-func (m *MinisterBase) CheckHostCommand(cmd string) (runOnHost, needsApproval bool) {
-	if m.config == nil || m.config.Sandbox.RunOnHost == nil {
-		return false, false
-	}
-
-	// Check SafeRunOnHost first (higher priority - no approval needed)
-	for _, pattern := range m.config.Sandbox.SafeRunOnHost {
-		if matched, _ := regexp.MatchString(pattern, cmd); matched {
-			return true, false
-		}
-	}
-
-	// Check RunOnHost patterns (requires approval)
-	for _, pattern := range m.config.Sandbox.RunOnHost {
-		if matched, _ := regexp.MatchString(pattern, cmd); matched {
-			return true, true
-		}
-	}
-
-	return false, false
 }
 
 // RepoInfo returns the repository information
@@ -909,6 +875,18 @@ func (m *MinisterBase) SetOnZhengmingRaised(cb func()) {
 	m.onZhengmingRaised = cb
 }
 
+// fireZhengmingRaised invokes the onZhengmingRaised callback if set.
+// Called by the Court's RequestZhengming implementation to pause the
+// ritual step timer on the minister that requested the clarification.
+func (m *MinisterBase) fireZhengmingRaised() {
+	m.zhengmingMu.Lock()
+	cb := m.onZhengmingRaised
+	m.zhengmingMu.Unlock()
+	if cb != nil {
+		cb()
+	}
+}
+
 // SetOnZhengmingResolved sets a callback invoked when AnswerZhengming is called.
 // The ritual runner uses this to resume the step timeout after an answer is delivered.
 func (m *MinisterBase) SetOnZhengmingResolved(cb func()) {
@@ -925,116 +903,6 @@ func GenerateID(parts ...string) string {
 		h.Write([]byte(p))
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
-}
-
-// RequestZhengming creates a clarification request
-func (m *MinisterBase) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
-	requestID := GenerateID("zhengming", fmt.Sprintf("%d", key.ID), callerMinisterID, fmt.Sprintf("%v", questions), time.Now().String())
-
-	req := storage.Zhengming{
-		RequestID:  requestID,
-		EdictID:    key.ID,
-		Username:   key.Username,
-		Project:    key.Project,
-		MinisterID: callerMinisterID,
-		SessionID: func() string {
-			// Use the calling minister's session, not the requester's (chancellor's)
-			if m.getMinister != nil {
-				if caller := m.getMinister(callerMinisterID); caller != nil {
-					if s := caller.GetSession(); s != nil {
-						return s.ID
-					}
-				}
-			}
-			return ""
-		}(),
-		Questions: questions,
-		Priority:  priority,
-		Status:    storage.ZhengmingPending,
-		TimeoutAt: time.Now().Add(24 * time.Hour), // Default 24h timeout
-	}
-
-	if priority == storage.PriorityUrgent {
-		req.TimeoutAt = time.Now().Add(1 * time.Hour)
-	}
-
-	if err := m.db.Create(&req).Error; err != nil {
-		return "", fmt.Errorf("failed to create zhengming request: %w", err)
-	}
-
-	// Notify ritual runner so it can pause the step timeout
-	m.zhengmingMu.Lock()
-	cb := m.onZhengmingRaised
-	m.zhengmingMu.Unlock()
-	if cb != nil {
-		cb()
-	}
-
-	// Notify UI of pending zhengming
-	if m.notify != nil {
-		m.notify(ZhengmingPendingMsg{
-			RequestID:  requestID,
-			EdictKey:   key,
-			MinisterID: callerMinisterID,
-			Questions:  questions,
-			Priority:   priority,
-		})
-	}
-
-	// Emit zhengming_requested event
-	m.EmitEvent(key, "zhengming_requested", storage.JSON{
-		"request_id":  requestID,
-		"minister_id": callerMinisterID,
-		"questions":   questions,
-		"priority":    string(priority),
-	})
-
-	return requestID, nil
-}
-
-// WaitForZhengming blocks until the zhengming answer arrives or ctx is cancelled.
-func (m *MinisterBase) WaitForZhengming(ctx context.Context, requestID string) (string, error) {
-	m.pendingZhengmingMu.Lock()
-	ch := make(chan ZhengmingAnswer, 1)
-	m.pendingZhengming[requestID] = ch
-	m.pendingZhengmingMu.Unlock()
-
-	defer func() {
-		m.pendingZhengmingMu.Lock()
-		delete(m.pendingZhengming, requestID)
-		m.pendingZhengmingMu.Unlock()
-	}()
-
-	select {
-	case answer := <-ch:
-		return answer.Answer, nil
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-}
-
-// DeliverZhengmingAnswer delivers a zhengming answer to a waiting caller.
-// Returns true if the answer was delivered.
-func (m *MinisterBase) DeliverZhengmingAnswer(answer ZhengmingAnswer) bool {
-	m.pendingZhengmingMu.Lock()
-	ch, ok := m.pendingZhengming[answer.RequestID]
-	m.pendingZhengmingMu.Unlock()
-	if !ok {
-		return false
-	}
-	select {
-	case ch <- answer:
-		return true
-	default:
-		return false
-	}
-}
-
-// CancelZhengming cancels a pending zhengming request, unblocking WaitForZhengming with an error.
-func (m *MinisterBase) CancelZhengming(requestID string) {
-	m.pendingZhengmingMu.Lock()
-	defer m.pendingZhengmingMu.Unlock()
-	delete(m.pendingZhengming, requestID)
 }
 
 // IsZhengmingPending checks if there are pending clarification requests for an edict
@@ -1203,153 +1071,6 @@ func (m *MinisterCompletedMsg) UnmarshalMsgpack(b []byte) error {
 	if w.Error != "" {
 		m.Error = errors.New(w.Error)
 	}
-	return nil
-}
-
-// ConsultMinister dispatches work to a registered minister for an edict (synchronous).
-// Implements tools.MinisterConsultant via MinisterBase embedding.
-func (m *MinisterBase) ConsultMinister(ctx context.Context, ministerID string, key storage.EdictKey, work string) (string, error) {
-	logger := m.logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	// Notify: invoking
-	if m.notify != nil {
-		m.notify(MinisterInvokingMsg{
-			ChannelID:  m.ministerID,
-			MinisterID: ministerID,
-			EdictKey:   key,
-			Task:       work,
-		})
-	}
-
-	// Get minister via injected lookup
-	var minister Minister
-	if m.getMinister != nil {
-		minister = m.getMinister(ministerID)
-	}
-	if minister == nil {
-		err := fmt.Errorf("minister not found: %s", ministerID)
-		if m.notify != nil {
-			m.notify(MinisterCompletedMsg{
-				ChannelID:  m.ministerID,
-				MinisterID: ministerID,
-				EdictKey:   key,
-				Error:      err,
-			})
-		}
-		return "", fmt.Errorf("minister %s failed: %w", ministerID, err)
-	}
-
-	// Wrap notify with WithChannelID so the invoked minister's session routes to caller's tab
-	wrappedNotify := WithChannelID(m.notify, m.GetSession(m.ministerID), m.ministerID)
-
-	// Create per-call done channel (synchronous blocking pattern)
-	doneChan := make(chan Result, 1)
-
-	task := &Task{
-		Ctx:          ctx,
-		EdictKey:     key,
-		Work:         work,
-		Done:         doneChan,
-		Notify:       wrappedNotify,
-		ChannelID:    m.ministerID,
-		ExcludeTools: []string{"consult_minister"},
-	}
-
-	// Send task to minister
-	select {
-	case minister.Tasks() <- task:
-		logger.Info("task sent to minister",
-			"minister", ministerID,
-			"edict_id", key.ID,
-			"work", utils.TruncateMiddle(work, 50))
-	case <-ctx.Done():
-		return "", fmt.Errorf("minister %s failed: context cancelled while sending task to %s", ministerID, ministerID)
-	}
-
-	// Block until minister replies (only blocks this session's goroutine).
-	// The parent context (from the ritual's idle timer) handles cancellation,
-	// so there's no separate dispatch timeout here.
-	var result Result
-	select {
-	case result = <-doneChan:
-	case <-ctx.Done():
-		return "", fmt.Errorf("minister %s failed: %w", ministerID, ctx.Err())
-	}
-
-	if result.Err != nil {
-		if m.notify != nil {
-			m.notify(MinisterCompletedMsg{
-				ChannelID:  m.ministerID,
-				MinisterID: ministerID,
-				EdictKey:   key,
-				Error:      result.Err,
-			})
-		}
-		logger.Error("task returned error",
-			"minister", ministerID,
-			"edict_id", key.ID,
-			"error", result.Err)
-		return "", fmt.Errorf("minister %s failed: %w", ministerID, result.Err)
-	}
-
-	// Notify: completed
-	if m.notify != nil {
-		m.notify(MinisterCompletedMsg{
-			ChannelID:  m.ministerID,
-			MinisterID: ministerID,
-			EdictKey:   key,
-			Output:     work,
-			Sealed:     true,
-		})
-	}
-
-	logger.Info("task completed",
-		"minister", ministerID,
-		"edict_id", key.ID,
-		"sealed", result.Sealed,
-		"output_len", len(result.Output))
-
-	resultMap := map[string]any{
-		"minister_id": ministerID,
-		"edict_id":    key.ID,
-		"status":      "completed",
-		"sealed":      result.Sealed,
-		"output":      result.Output,
-	}
-	resultJSON, _ := json.Marshal(resultMap)
-	return string(resultJSON), nil
-}
-
-// StartRitual emits a ritual_enacted event for the RitualGuard to handle asynchronously.
-// Implements tools.RitualLauncher via MinisterBase embedding.
-func (m *MinisterBase) StartRitual(name string, key storage.EdictKey, inputs map[string]string) error {
-	if inputs == nil {
-		inputs = make(map[string]string)
-	}
-	inputs["edict_id"] = fmt.Sprintf("%d", key.ID)
-
-	logger := m.logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	inputsPayload := make(map[string]interface{}, len(inputs))
-	for k, v := range inputs {
-		inputsPayload[k] = v
-	}
-	payload := storage.JSON{
-		"ritual_name": name,
-		"inputs":      inputsPayload,
-	}
-	if err := m.EmitEvent(key, storage.EventRitualEnacted, payload); err != nil {
-		logger.Warn("failed to emit ritual_enacted event", "error", err)
-		return err
-	}
-
-	logger.Info("ritual requested", "ritual", name, "edict_id", key.ID)
 	return nil
 }
 

@@ -1907,12 +1907,7 @@ func TestInvokeRitualTool_Requested(t *testing.T) {
 	court := newRitualTestCourtWithDB(t, db, "hello\n", nil)
 	court.GetRitualRegistry().Register(ritual)
 
-	base := &MinisterBase{logger: slog.Default(), db: db}
-	base.publish = func(key storage.EdictKey, eventType storage.CourtEvent, payload storage.JSON) uint {
-		return court.PublishEvent(key, eventType, payload)
-	}
-
-	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: base}
+	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: court}
 	input := `{"ritual_name":"test-requested","edict_id":1}`
 
 	result, err := tool.Call(context.Background(), input)
@@ -1953,12 +1948,7 @@ func TestInvokeRitualTool_RequestedEvenForBadRitual(t *testing.T) {
 	court := newRitualTestCourtWithDB(t, db, "", fmt.Errorf("minister failed"))
 	court.GetRitualRegistry().Register(ritual)
 
-	base := &MinisterBase{logger: slog.Default(), db: db}
-	base.publish = func(key storage.EdictKey, eventType storage.CourtEvent, payload storage.JSON) uint {
-		return court.PublishEvent(key, eventType, payload)
-	}
-
-	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: base}
+	tool := tools.InvokeRitualTool{Ctx: tools.ToolContext{Username: "testuser", Project: "testproject"}, Launcher: court}
 	input := `{"ritual_name":"test-fail-requested","edict_id":2}`
 
 	result, err := tool.Call(context.Background(), input)

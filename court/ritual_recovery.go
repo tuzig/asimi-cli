@@ -172,19 +172,8 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 	}
 
 	// Get chancellor for zhengming
-	chancellor := rg.getMinister("chancellor")
-	if chancellor == nil {
-		rg.logger.Warn("chancellor not available for recovery prompts")
-		return
-	}
-
-	type zhengmingRequester interface {
-		RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority, string) (string, error)
-		WaitForZhengming(context.Context, string) (string, error)
-	}
-	requester, ok := chancellor.(zhengmingRequester)
-	if !ok {
-		rg.logger.Warn("chancellor does not support zhengming")
+	if rg.waitForZhengming == nil || rg.requestZhengming == nil {
+		rg.logger.Warn("zhengming functions not wired, skipping recovery prompts")
 		return
 	}
 
@@ -246,13 +235,13 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 		}
 
 		key := storage.EdictKey{ID: exec.EdictID, Username: exec.Username, Project: exec.Project}
-		requestID, err := requester.RequestZhengming(key, questions, storage.PriorityUrgent, "chancellor")
+		requestID, err := rg.requestZhengming(key, questions, storage.PriorityUrgent, "chancellor")
 		if err != nil {
 			rg.logger.Warn("failed to request zhengming for aborted ritual", "execution_id", exec.ID, "error", err)
 			continue
 		}
 
-		answer, err := requester.WaitForZhengming(ctx, requestID)
+		answer, err := rg.waitForZhengming(ctx, requestID)
 		if err != nil {
 			rg.logger.Warn("failed waiting for zhengming answer", "execution_id", exec.ID, "error", err)
 			continue

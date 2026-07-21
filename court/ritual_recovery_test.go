@@ -54,18 +54,18 @@ func setupRecoveryTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// mockChancellorMinister implements Minister plus the zhengming interfaces
+// mockZhengmingMinister implements Minister plus the zhengming interfaces
 // for use in promptForAbortedRituals tests.
-type mockChancellorMinister struct {
+type mockZhengmingMinister struct {
 	requestZhengmingFn func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
 	waitForZhengmingFn func(ctx context.Context, requestID string) (string, error)
 	MinisterBase
 	id string
 }
 
-// newMockChancellor creates a mock chancellor with optional zhengming function overrides.
-func newMockChancellor(requestFn func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error), waitFn func(ctx context.Context, requestID string) (string, error)) *mockChancellorMinister {
-	return &mockChancellorMinister{
+// newMockZhengmingMinister creates a mock minister with optional zhengming function overrides.
+func newMockZhengmingMinister(requestFn func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error), waitFn func(ctx context.Context, requestID string) (string, error)) *mockZhengmingMinister {
+	return &mockZhengmingMinister{
 		MinisterBase:       MinisterBase{logger: slog.Default()},
 		id:                 "chancellor",
 		requestZhengmingFn: requestFn,
@@ -73,19 +73,19 @@ func newMockChancellor(requestFn func(key storage.EdictKey, questions storage.Zh
 	}
 }
 
-func (m *mockChancellorMinister) ID() string              { return m.id }
-func (m *mockChancellorMinister) SystemPrompt() string    { return "" }
-func (m *mockChancellorMinister) Tools() []Tool           { return nil }
-func (m *mockChancellorMinister) Run(ctx context.Context) { <-ctx.Done() }
+func (m *mockZhengmingMinister) ID() string              { return m.id }
+func (m *mockZhengmingMinister) SystemPrompt() string    { return "" }
+func (m *mockZhengmingMinister) Tools() []Tool           { return nil }
+func (m *mockZhengmingMinister) Run(ctx context.Context) { <-ctx.Done() }
 
-func (m *mockChancellorMinister) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
+func (m *mockZhengmingMinister) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 	if m.requestZhengmingFn != nil {
 		return m.requestZhengmingFn(key, questions, priority, callerMinisterID)
 	}
 	return "req-1", nil
 }
 
-func (m *mockChancellorMinister) WaitForZhengming(ctx context.Context, requestID string) (string, error) {
+func (m *mockZhengmingMinister) WaitForZhengming(ctx context.Context, requestID string) (string, error) {
 	if m.waitForZhengmingFn != nil {
 		return m.waitForZhengmingFn(ctx, requestID)
 	}
@@ -93,14 +93,19 @@ func (m *mockChancellorMinister) WaitForZhengming(ctx context.Context, requestID
 }
 
 // newTestRitualGuard creates a RitualGuard wired for promptForAbortedRituals tests.
-func newTestRitualGuard(t *testing.T, db *gorm.DB, getMinister func(id string) Minister) *RitualGuard {
+func newTestRitualGuard(t *testing.T, db *gorm.DB, getMinister func(id string) Minister, chancellor *mockZhengmingMinister) *RitualGuard {
 	t.Helper()
 	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
-	rg := NewRitualGuard(RitualGuardOpts{
+	opts := RitualGuardOpts{
 		Base:         base,
 		GetMinister:  getMinister,
 		StreamingCtx: func(string) context.Context { return context.Background() },
-	})
+	}
+	if chancellor != nil {
+		opts.RequestZhengming = chancellor.RequestZhengming
+		opts.WaitForZhengming = chancellor.WaitForZhengming
+	}
+	rg := NewRitualGuard(opts)
 	return rg
 }
 
@@ -845,7 +850,7 @@ func TestSkipZhengmingPrompt_RecoveringState(t *testing.T) {
 	}
 
 	zhengmingCalled := false
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			zhengmingCalled = true
 			return "req-should-not-be-called", nil
@@ -965,7 +970,7 @@ func TestRitualStart_DismissedStateStartsFresh(t *testing.T) {
 // returns immediately when there are no aborted rituals.
 func TestPromptForAbortedRituals_NoAbortedRituals(t *testing.T) {
 	db := setupRecoveryTestDB(t)
-	rg := newTestRitualGuard(t, db, nil)
+	rg := newTestRitualGuard(t, db, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -1004,7 +1009,7 @@ func TestPromptForAbortedRituals_NilDB(t *testing.T) {
 // returns safely when getMinister is nil.
 func TestPromptForAbortedRituals_NilGetMinister(t *testing.T) {
 	db := setupRecoveryTestDB(t)
-	rg := newTestRitualGuard(t, db, nil)
+	rg := newTestRitualGuard(t, db, nil, nil)
 
 	abortedExec := &RitualExecution{
 		ID:          "aborted-nil-minister",
@@ -1059,7 +1064,7 @@ func TestPromptForAbortedRituals_AutoCompleteSealedEdict(t *testing.T) {
 
 	// Even though we don't need the chancellor for auto-completion,
 	// getMinister must be non-nil for promptForAbortedRituals to proceed past the nil check.
-	rg := newTestRitualGuard(t, db, func(id string) Minister { return nil })
+	rg := newTestRitualGuard(t, db, func(id string) Minister { return nil }, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -1094,7 +1099,7 @@ func TestPromptForAbortedRituals_AutoCompleteCancelledEdict(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	rg := newTestRitualGuard(t, db, func(id string) Minister { return nil })
+	rg := newTestRitualGuard(t, db, func(id string) Minister { return nil }, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -1133,7 +1138,7 @@ func TestPromptForAbortedRituals_RecoverAnswer(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "pending", Message: ""})
 
 	var requestedQuestions storage.ZhengmingQuestions
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			requestedQuestions = questions
 			return "req-recover", nil
@@ -1148,7 +1153,7 @@ func TestPromptForAbortedRituals_RecoverAnswer(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1196,7 +1201,7 @@ func TestPromptForAbortedRituals_MarkAsCompletedAnswer(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "ok"})
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "pending", Message: ""})
 
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			return "req-mark", nil
 		},
@@ -1210,7 +1215,7 @@ func TestPromptForAbortedRituals_MarkAsCompletedAnswer(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1248,7 +1253,7 @@ func TestPromptForAbortedRituals_PassAnswer(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "ok"})
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "pending", Message: ""})
 
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			return "req-pass", nil
 		},
@@ -1262,7 +1267,7 @@ func TestPromptForAbortedRituals_PassAnswer(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1299,7 +1304,7 @@ func TestPromptForAbortedRituals_ChancellorNil(t *testing.T) {
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
 		return nil // chancellor not available
-	})
+	}, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -1334,7 +1339,7 @@ func TestPromptForAbortedRituals_RequestZhengmingFails(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			return "", fmt.Errorf("zhengming unavailable")
 		},
@@ -1346,7 +1351,7 @@ func TestPromptForAbortedRituals_RequestZhengmingFails(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1385,7 +1390,7 @@ func TestPromptForAbortedRituals_ContextCancelled(t *testing.T) {
 
 	var mu sync.Mutex
 	chancellorCallCount := 0
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			mu.Lock()
 			chancellorCallCount++
@@ -1403,7 +1408,7 @@ func TestPromptForAbortedRituals_ContextCancelled(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -1456,7 +1461,7 @@ func TestPromptForAbortedRituals_IncompleteStepDetection(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 2, Name: "step2", Status: "completed", Message: "context canceled"})
 
 	var capturedStepIdx int
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			for _, opt := range questions[0].Options {
 				if strings.HasPrefix(opt, "Recover from step ") {
@@ -1477,7 +1482,7 @@ func TestPromptForAbortedRituals_IncompleteStepDetection(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1512,7 +1517,7 @@ func TestPromptForAbortedRituals_EdictDescriptionTruncation(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "pending", Message: ""})
 
 	var capturedText string
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			capturedText = questions[0].Text
 			return "req-trunc", nil
@@ -1527,7 +1532,7 @@ func TestPromptForAbortedRituals_EdictDescriptionTruncation(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1564,7 +1569,7 @@ func TestPromptForAbortedRituals_UsesSummaryOverIntent(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "pending", Message: ""})
 
 	var capturedText string
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			capturedText = questions[0].Text
 			return "req-summary", nil
@@ -1579,7 +1584,7 @@ func TestPromptForAbortedRituals_UsesSummaryOverIntent(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1609,7 +1614,7 @@ func TestPromptForAbortedRituals_StoppedStateIncluded(t *testing.T) {
 		t.Fatalf("failed to create stopped ritual: %v", err)
 	}
 
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			return "req-stopped", nil
 		},
@@ -1623,7 +1628,7 @@ func TestPromptForAbortedRituals_StoppedStateIncluded(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1657,7 +1662,7 @@ func TestPromptForAbortedRituals_FailedStateIncluded(t *testing.T) {
 		t.Fatalf("failed to create failed ritual: %v", err)
 	}
 
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			return "req-failed", nil
 		},
@@ -1671,7 +1676,7 @@ func TestPromptForAbortedRituals_FailedStateIncluded(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1710,7 +1715,7 @@ func TestPromptForAbortedRituals_LimitFive(t *testing.T) {
 
 	var mu sync.Mutex
 	promptCount := 0
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			mu.Lock()
 			promptCount++
@@ -1727,7 +1732,7 @@ func TestPromptForAbortedRituals_LimitFive(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1759,7 +1764,7 @@ func TestPromptForAbortedRituals_RecoveryCompleteOnReturn(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			return "req-1", nil
 		},
@@ -1773,7 +1778,7 @@ func TestPromptForAbortedRituals_RecoveryCompleteOnReturn(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1801,7 +1806,7 @@ func TestPromptForAbortedRituals_ZeroEdictIDExcluded(t *testing.T) {
 	}
 
 	zhengmingCalled := false
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			zhengmingCalled = true
 			return "req-zero", nil
@@ -1816,7 +1821,7 @@ func TestPromptForAbortedRituals_ZeroEdictIDExcluded(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -1847,7 +1852,7 @@ func TestPromptForAbortedRituals_WaitForZhengmingFails(t *testing.T) {
 		t.Fatalf("failed to create aborted ritual: %v", err)
 	}
 
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			return "req-wait-fail", nil
 		},
@@ -1861,7 +1866,7 @@ func TestPromptForAbortedRituals_WaitForZhengmingFails(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1902,7 +1907,7 @@ func TestPromptForAbortedRituals_EmptyMessageStepIncomplete(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 2, Name: "step2", Status: "pending", Message: ""})
 
 	var capturedStepIdx int
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			for _, opt := range questions[0].Options {
 				if strings.HasPrefix(opt, "Recover from step ") {
@@ -1923,7 +1928,7 @@ func TestPromptForAbortedRituals_EmptyMessageStepIncomplete(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1959,7 +1964,7 @@ func TestPromptForAbortedRituals_AbortedMessageStepIncomplete(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "completed", Message: "step was aborted mid-execution"})
 
 	var capturedStepIdx int
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			for _, opt := range questions[0].Options {
 				if strings.HasPrefix(opt, "Recover from step ") {
@@ -1980,7 +1985,7 @@ func TestPromptForAbortedRituals_AbortedMessageStepIncomplete(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -2047,7 +2052,7 @@ func TestPromptForAbortedRituals_OtherProjectExcluded(t *testing.T) {
 	}
 
 	zhengmingCalled := false
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			zhengmingCalled = true
 			// Verify the key belongs to our user/project
@@ -2066,7 +2071,7 @@ func TestPromptForAbortedRituals_OtherProjectExcluded(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -2125,7 +2130,7 @@ func TestPromptForAbortedRituals_DismissedStateSkipped(t *testing.T) {
 	}
 
 	zhengmingCalled := false
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			zhengmingCalled = true
 			return "req-dismissed-skip", nil
@@ -2140,7 +2145,7 @@ func TestPromptForAbortedRituals_DismissedStateSkipped(t *testing.T) {
 			return chancellor
 		}
 		return nil
-	})
+	}, chancellor)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -2272,7 +2277,7 @@ func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 0, Name: "step0", Status: "completed", Message: "completed"})
 	db.Save(&RitualStepState{ExecutionID: abortedExecID, StepIndex: 1, Name: "step1", Status: "pending", Message: ""})
 
-	chancellor := newMockChancellor(
+	chancellor := newMockZhengmingMinister(
 		func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 			return "req-retrigger", nil
 		},
@@ -2299,7 +2304,9 @@ func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
 			}
 			return nil
 		},
-		StreamingCtx: func(string) context.Context { return context.Background() },
+		StreamingCtx:     func(string) context.Context { return context.Background() },
+		RequestZhengming: chancellor.RequestZhengming,
+		WaitForZhengming: chancellor.WaitForZhengming,
 	})
 	rg.ritualRegistry.Register(ritual)
 	// Set a no-op notify so startRitual doesn't panic on failure

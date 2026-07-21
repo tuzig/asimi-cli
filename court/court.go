@@ -100,10 +100,14 @@ type Court struct {
 	persister SessionPersister
 
 	// hostChecker determines whether a command should run on the host
-	// (from config run_on_host/safe_run_on_host patterns). Extracted from
-	// the chancellor's MinisterBase during buildToolRegistry so both the
-	// initial RegisterBuiltinTools and updateProjectRootTools can use it.
+	// (from config run_on_host/safe_run_on_host patterns). Owned by the
+	// Court and passed into ToolRegistrationOpts.
 	hostChecker func(string) (bool, bool)
+
+	// zhengming holds the Court-owned pending zhengming dispatch state,
+	// replacing the per-MinisterBase map that was previously accessed
+	// through the chancellor.
+	zhengming *zhengmingDispatch
 
 	// msgChan is the approval channel for ephemeral HostRunner instances
 	// used by the shell tool. Set by SetRunnerMessageChannel (via Subscribe).
@@ -119,6 +123,10 @@ type Court struct {
 	tabCancelsMu sync.Mutex
 	tabCancels   map[string]context.CancelFunc
 
+	// sessionCfg holds the session-level config (sandbox, LLM, agents file)
+	// set via ConfigureModel. Used by CheckHostCommand for RunOnHost patterns.
+	sessionCfg *SessionConfig
+
 	// llmClient holds the current LLM provider (typically *bifrost.Bifrost)
 	// so the court can serve ListAllModels requests from the TUI.
 	llmClient LLMProvider
@@ -132,6 +140,7 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 		config:    cfg,
 		runner:    runner,
 		ministers: make(map[string]Minister),
+		zhengming: newZhengmingDispatch(),
 	}
 	s.ensureDefaults()
 
@@ -176,6 +185,9 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 		StreamingCtx: func(channelID string) context.Context {
 			return s.CancellableStreamCtx(channelID)
 		},
+		WaitForZhengming: s.WaitForZhengming,
+		RequestZhengming: s.RequestZhengming,
+		DeliverZhengming: s.DeliverZhengmingAnswer,
 	})
 
 	// Handle zhengming_answered events: merged handler for ritual delivery, edict creation, and legacy path
@@ -184,17 +196,13 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 		answer, _ := e.Payload["answer"].(string)
 		key := e.EdictKey
 
-		// 1. Try to deliver to a waiting minister (tool or ritual via chancellor)
+		// 1. Try to deliver to a waiting caller via the Court's dispatch
 		if requestID != "" {
 			zhAnswer := ZhengmingAnswer{RequestID: requestID, Answer: answer, EdictID: key.ID}
-			for id, m := range s.ministers {
-				if mb, ok := m.(interface{ DeliverZhengmingAnswer(ZhengmingAnswer) bool }); ok {
-					if mb.DeliverZhengmingAnswer(zhAnswer) {
-						s.logger.Info("zhengming answer delivered to minister",
-							"minister", id, "request_id", requestID, "edict_id", key.ID)
-						return
-					}
-				}
+			if s.DeliverZhengmingAnswer(zhAnswer) {
+				s.logger.Info("zhengming answer delivered via court dispatch",
+					"request_id", requestID, "edict_id", key.ID)
+				return
 			}
 		}
 
@@ -294,57 +302,21 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 		DB:       s.db,
 	}
 
-	// Use the chancellor's MinisterBase for EdictManager and ZhengmingRequester.
-	// MinisterBase implements both interfaces.
-	chancellor := s.GetMinister("chancellor")
+	// The Court owns the runtime-dispatch interfaces directly — no type
+	// assertion from the chancellor's MinisterBase. The Court has access
+	// to the notification function, minister map, ritual runner, and the
+	// zhengming dispatch state.
+	hostChecker := s.CheckHostCommand
+	s.hostChecker = hostChecker
 
-	var edictManager tools.EdictManager
-	var zhengmingRequester tools.ZhengmingRequester
-	var waitForZhengming func(ctx context.Context, requestID string) (string, error)
-	if chancellor != nil {
-		if em, ok := chancellor.(tools.EdictManager); ok {
-			edictManager = em
-		}
-		if zr, ok := chancellor.(tools.ZhengmingRequester); ok {
-			zhengmingRequester = zr
-		}
-		if base, ok := chancellor.(interface {
-			WaitForZhengming(ctx context.Context, requestID string) (string, error)
-		}); ok {
-			waitForZhengming = base.WaitForZhengming
-		}
+	// RitualLauncher is only meaningful when a ritual runner exists.
+	var ritualLauncher tools.RitualLauncher
+	if s.GetRitualRunner() != nil {
+		ritualLauncher = s
 	}
 
 	// NotifyFn — lazy getter for the current notify, used by suggest_edict
 	notifyFn := func() func(any) { return s.notify }
-
-	// Extract CheckHostCommand from the chancellor's MinisterBase so
-	// the shell tool honors run_on_host/safe_run_on_host config patterns.
-	// Same extraction pattern as EdictManager/ZhengmingRequester above.
-	var hostChecker func(string) (bool, bool)
-	if chancellor != nil {
-		if hc, ok := chancellor.(interface {
-			CheckHostCommand(cmd string) (runOnHost, needsApproval bool)
-		}); ok {
-			hostChecker = hc.CheckHostCommand
-		}
-	}
-	s.hostChecker = hostChecker
-
-	// Extract MinisterConsultant and RitualLauncher from the chancellor.
-	// Same extraction pattern as the interfaces above.
-	var ministerConsultant tools.MinisterConsultant
-	var ritualLauncher tools.RitualLauncher
-	if chancellor != nil {
-		if mc, ok := chancellor.(tools.MinisterConsultant); ok {
-			ministerConsultant = mc
-		}
-		if s.GetRitualRunner() != nil {
-			if rl, ok := chancellor.(tools.RitualLauncher); ok {
-				ritualLauncher = rl
-			}
-		}
-	}
 
 	// Collect registered minister IDs so tool descriptions can list them dynamically.
 	ministerIDs := make([]string, 0, len(s.ministers))
@@ -358,13 +330,10 @@ func (s *Court) buildToolRegistry() *tools.ToolRegistry {
 		Runner:             s.runner,
 		HostChecker:        hostChecker,
 		MsgChan:            &s.msgChan,
-		EdictManager:       edictManager,
-		ZhengmingRequester: zhengmingRequester,
-		WaitForZhengming:   waitForZhengming,
+		ZhengmingRequester: s,
+		WaitForZhengming:   s.WaitForZhengming,
 		NotifyFn:           notifyFn,
-
-		// MinisterConsultant / RitualLauncher — chancellor-backed
-		MinisterConsultant: ministerConsultant,
+		MinisterConsultant: s,
 		RitualLauncher:     ritualLauncher,
 		MinisterIDs:        ministerIDs,
 	}
@@ -439,7 +408,9 @@ func (s *Court) SetNotify(notify internal.NotifyFunc) {
 		return
 	}
 	s.notify = notify
-	s.ritualGuard.SetNotify(notify)
+	if s.ritualGuard != nil {
+		s.ritualGuard.SetNotify(notify)
+	}
 	for _, minister := range s.Ministers() {
 		if base, ok := minister.(interface{ SetNotify(internal.NotifyFunc) }); ok {
 			base.SetNotify(notify)
@@ -570,6 +541,7 @@ func (s *Court) ConfigureModel(client LLMProvider, config *SessionConfig, repoIn
 		return
 	}
 	s.llmClient = client
+	s.sessionCfg = config
 	for _, minister := range s.Ministers() {
 		if base, ok := minister.(interface {
 			SetMinisterConfig(LLMProvider, *SessionConfig, repo.RepoInfo)
@@ -1285,17 +1257,12 @@ func (s *Court) HandleZhengmingResponse(ctx context.Context, requestID, answer s
 	return fmt.Errorf("no minister accepted zhengming response")
 }
 
-// CancelZhengming cancels a pending zhengming request on whichever minister owns it.
+// CancelZhengming cancels a pending zhengming request on the Court's dispatch.
 func (s *Court) CancelZhengming(requestID string) {
 	if s == nil {
 		return
 	}
-	for _, m := range s.Ministers() {
-		if base, ok := m.(interface{ CancelZhengming(string) }); ok {
-			base.CancelZhengming(requestID)
-			return
-		}
-	}
+	s.CancelZhengmingDispatch(requestID)
 }
 
 // SessionState is a wire-safe snapshot of a minister's conversation state,

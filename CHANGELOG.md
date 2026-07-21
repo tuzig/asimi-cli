@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Minister consultation** — all ministers can now consult another minister, enabling cross-minister collaboration (e653)
+- **Chat action on edicts** — added a Chat action when interacting with an edict, allowing direct conversation within an edict context (e672)
+
+### Changed
+
+- **CI release flow** — CI now releases after tests pass, ensuring only verified builds are published
+- **Documentation links** — added missing documentation links
+
 ### Fixed
 
 - **Self-update asset name mismatch** — asset names in GitHub releases don't include the "v" prefix (e.g. `asimi_0.9.1_darwin_arm64.tar.gz`), but the code was looking for `asimi_v0.9.1_darwin_arm64.tar.gz`. The "v" is now stripped from the tag name before matching, fixing the "no matching asset found" error on `asimi update`
+- **Chatting on an edict** — fixed issues when chatting on an edict
+- **Prompting on edict tab** — fixed prompting behavior on the edict tab (e668)
+- **Session ID storage for edicts** — fixed storing the session ID that mothered an edict (e674)
 
 ## [0.9.1] - 2026-07-19
 

@@ -2,11 +2,13 @@ package court
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/court/tools"
+	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,16 +22,15 @@ import (
 // zhengming notifications routed to MinisterID="chancellor" regardless of
 // which minister actually asked the question.
 func TestZhengmingRouting_Sage(t *testing.T) {
-	db := setupMinisterTestDB(t)
-
-	// Create a MinisterBase acting as the zhengming requester (chancellor's role)
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
 
 	// Capture ZhengmingPendingMsg notifications
 	var mu sync.Mutex
 	var pendingMsgs []ZhengmingPendingMsg
-
-	base.SetNotify(func(msg any) {
+	s.SetNotify(func(msg any) {
 		mu.Lock()
 		defer mu.Unlock()
 		if m, ok := msg.(ZhengmingPendingMsg); ok {
@@ -47,8 +48,8 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 			Project:  "testproject",
 			DB:       db,
 		},
-		ZhengmingRequester: base,
-		WaitForZhengming:    nil, // no WaitForAnswer — Call returns immediately with "pending" status
+		ZhengmingRequester: s,
+		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately with "pending" status
 	})
 
 	// Get Sage's extra tools — request_zhengming is a factory tool
@@ -81,16 +82,15 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 // TestZhengmingRouting_Strategist verifies that when Strategist's request_zhengming
 // tool is invoked, the ZhengmingPendingMsg carries MinisterID="strategist".
 func TestZhengmingRouting_Strategist(t *testing.T) {
-	db := setupMinisterTestDB(t)
-
-	// Create a MinisterBase acting as the zhengming requester
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
 
 	// Capture ZhengmingPendingMsg notifications
 	var mu sync.Mutex
 	var pendingMsgs []ZhengmingPendingMsg
-
-	base.SetNotify(func(msg any) {
+	s.SetNotify(func(msg any) {
 		mu.Lock()
 		defer mu.Unlock()
 		if m, ok := msg.(ZhengmingPendingMsg); ok {
@@ -107,8 +107,8 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 			Project:  "testproject",
 			DB:       db,
 		},
-		ZhengmingRequester: base,
-		WaitForZhengming:    nil, // no WaitForAnswer — Call returns immediately
+		ZhengmingRequester: s,
+		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately
 	})
 
 	// Get Strategist's extra tools
@@ -141,11 +141,11 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 // TestZhengmingRouting_DBRecord verifies that the storage.Zhengming DB record
 // also carries the correct MinisterID from the calling tool, not the requester's ID.
 func TestZhengmingRouting_DBRecord(t *testing.T) {
-	db := setupMinisterTestDB(t)
-
-	// Create a MinisterBase acting as the zhengming requester
-	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	base.SetNotify(func(msg any) {}) // discard notifications
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+	s.SetNotify(func(msg any) {}) // discard notifications
 
 	// Build tool registry — request_zhengming is now a factory extra tool
 	registry := tools.NewToolRegistry()
@@ -156,8 +156,8 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 			Project:  "testproject",
 			DB:       db,
 		},
-		ZhengmingRequester: base,
-		WaitForZhengming:    nil, // no WaitForAnswer — Call returns immediately
+		ZhengmingRequester: s,
+		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately
 	})
 
 	// Get Sage's extra tools and find request_zhengming

@@ -397,6 +397,7 @@ type RitualRunner struct {
 	sandboxConfig   *config.SandboxConfig // injected by ConfigureModel
 	projectSlug     string                // injected by ConfigureModel
 	idleTimeout     time.Duration         // max silence before a step is aborted (0 = default)
+	waitZhengming   func(ctx context.Context, requestID string) (string, error) // injected by Court
 
 	// Pause/resume for ruler interjection. When the ruler prompts on a ritual
 	// tab, the ritual pauses: the step context is cancelled (stopping the
@@ -447,19 +448,11 @@ func (r *RitualRunner) SetConfig(sandboxCfg *config.SandboxConfig, projectSlug s
 	}
 }
 
-// waitForZhengming delegates to the chancellor's MinisterBase blocking wait.
+// waitForZhengming delegates to the Court's blocking wait.
 // It pauses the ritual execution until the answer arrives.
 func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecution, requestID string) (ZhengmingAnswer, error) {
-	minister := r.getMinister("chancellor")
-	if minister == nil {
-		return ZhengmingAnswer{}, fmt.Errorf("chancellor not found for zhengming wait")
-	}
-	type zhengmingWaiter interface {
-		WaitForZhengming(context.Context, string) (string, error)
-	}
-	waiter, ok := minister.(zhengmingWaiter)
-	if !ok {
-		return ZhengmingAnswer{}, fmt.Errorf("chancellor does not support WaitForZhengming")
+	if r.waitZhengming == nil {
+		return ZhengmingAnswer{}, fmt.Errorf("waitZhengming not wired on ritual runner")
 	}
 
 	exec.State = RitualStateStopped
@@ -470,7 +463,7 @@ func (r *RitualRunner) waitForZhengming(ctx context.Context, exec *RitualExecuti
 		"execution_id", exec.ID,
 		"request_id", requestID)
 
-	answerText, err := waiter.WaitForZhengming(ctx, requestID)
+	answerText, err := r.waitZhengming(ctx, requestID)
 
 	exec.State = RitualStateRunning
 	r.saveExecution(exec)

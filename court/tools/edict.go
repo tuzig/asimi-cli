@@ -11,17 +11,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// EdictManager provides edict management capabilities
-type EdictManager interface {
-	GetEdict(key storage.EdictKey) (*storage.Edict, error)
-	AppendToIntent(key storage.EdictKey, clarification string) error
-	EmitEvent(key storage.EdictKey, eventType storage.CourtEvent, payload storage.JSON) error
-}
-
 // UpdateEdictTool refines an existing edict's intent (Chancellor only).
 // Only the Ruler creates edicts via SubmitEdict; the Chancellor refines them.
 type UpdateEdictTool struct {
-	Manager  EdictManager
+	DB       *gorm.DB
 	Username string
 	Project  string
 }
@@ -52,11 +45,13 @@ func (t UpdateEdictTool) Call(ctx context.Context, input string) (string, error)
 
 	key := storage.EdictKey{ID: params.EdictID, Username: t.Username, Project: t.Project}
 
-	if _, err := t.Manager.GetEdict(key); err != nil {
+	var edict storage.Edict
+	if err := t.DB.First(&edict, "id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Error; err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 
-	if err := t.Manager.AppendToIntent(key, params.Clarification); err != nil {
+	newIntent := edict.Intent + "\n\n---\n**Clarification:**\n" + params.Clarification
+	if err := t.DB.Model(&storage.Edict{}).Where("id = ?", edict.ID).Update("intent", newIntent).Error; err != nil {
 		return "", fmt.Errorf("update edict: %w", err)
 	}
 
@@ -101,7 +96,6 @@ func (t UpdateEdictTool) ParameterSchema() map[string]any {
 
 // GetEdictStatusTool retrieves the status of an edict.
 type GetEdictStatusTool struct {
-	Manager  EdictManager
 	DB       *gorm.DB
 	Username string
 	Project  string
@@ -132,8 +126,8 @@ func (t GetEdictStatusTool) Call(ctx context.Context, input string) (string, err
 	}
 
 	key := storage.EdictKey{ID: params.EdictID, Username: t.Username, Project: t.Project}
-	edict, err := t.Manager.GetEdict(key)
-	if err != nil {
+	var edict storage.Edict
+	if err := t.DB.First(&edict, "id = ? AND username = ? AND project = ?", key.ID, key.Username, key.Project).Error; err != nil {
 		return "", fmt.Errorf("get edict: %w", err)
 	}
 

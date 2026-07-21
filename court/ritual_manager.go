@@ -53,6 +53,11 @@ type RitualGuard struct {
 	streamingCtx func(string) context.Context
 	version      string // Application version for health checks
 
+	// Zhengming functions injected by Court
+	waitForZhengming   func(ctx context.Context, requestID string) (string, error)
+	requestZhengming   func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
+	deliverZhengming   func(answer ZhengmingAnswer) bool
+
 	// recoveryMu blocks event-driven rituals during recovery prompts
 	recoveryMu       sync.RWMutex
 	recoveryComplete bool
@@ -60,12 +65,15 @@ type RitualGuard struct {
 
 // RitualGuardOpts configures a new RitualGuard.
 type RitualGuardOpts struct {
-	Base            *MinisterBase
-	Runner          runners.Runner
-	GetMinister     func(id string) Minister
-	OnRunnerUpgrade func(runners.Runner) // propagates runner changes back to court
-	StreamingCtx    func(string) context.Context
-	Version         string // Application version for health checks
+	Base               *MinisterBase
+	Runner             runners.Runner
+	GetMinister        func(id string) Minister
+	OnRunnerUpgrade    func(runners.Runner) // propagates runner changes back to court
+	StreamingCtx       func(string) context.Context
+	Version            string // Application version for health checks
+	WaitForZhengming   func(ctx context.Context, requestID string) (string, error)
+	RequestZhengming   func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
+	DeliverZhengming   func(answer ZhengmingAnswer) bool
 }
 
 // NewRitualGuard creates a new Ritual Guard that owns all ritual/event infrastructure.
@@ -76,16 +84,19 @@ func NewRitualGuard(opts RitualGuardOpts) *RitualGuard {
 	eventCh := make(chan Event, 256)
 
 	rg := &RitualGuard{
-		MinisterBase:   opts.Base,
-		ritualRegistry: registry,
-		eventRegistry:  eventRegistry,
-		eventCh:        eventCh,
-		maxRetries:     3,
-		batchSize:      100,
-		flatlineAge:    5 * time.Minute,
-		getMinister:    opts.GetMinister,
-		streamingCtx:   opts.StreamingCtx,
-		version:        opts.Version,
+		MinisterBase:     opts.Base,
+		ritualRegistry:   registry,
+		eventRegistry:    eventRegistry,
+		eventCh:          eventCh,
+		maxRetries:       3,
+		batchSize:        100,
+		flatlineAge:      5 * time.Minute,
+		getMinister:      opts.GetMinister,
+		streamingCtx:     opts.StreamingCtx,
+		version:          opts.Version,
+		waitForZhengming: opts.WaitForZhengming,
+		requestZhengming: opts.RequestZhengming,
+		deliverZhengming: opts.DeliverZhengming,
 	}
 
 	// Create ritual runner with injected functions
@@ -99,6 +110,7 @@ func NewRitualGuard(opts RitualGuardOpts) *RitualGuard {
 		opts.Base.repoInfo,
 	)
 	rg.ritualRunner.onRunnerUpgrade = opts.OnRunnerUpgrade
+	rg.ritualRunner.waitZhengming = opts.WaitForZhengming
 
 	return rg
 }
@@ -557,16 +569,10 @@ func (rg *RitualGuard) SetNotify(notify internal.NotifyFunc) {
 }
 
 // DeliverZhengmingAnswer delivers a zhengming answer to a waiting ritual.
-// DeliverZhengmingAnswer delivers a zhengming answer to the chancellor's pending wait.
 // Returns true if the answer was delivered to a waiting caller.
 func (rg *RitualGuard) DeliverZhengmingAnswer(answer ZhengmingAnswer) bool {
-	if rg.getMinister != nil {
-		chancellor := rg.getMinister("chancellor")
-		if chancellor != nil {
-			if deliverer, ok := chancellor.(interface{ DeliverZhengmingAnswer(ZhengmingAnswer) bool }); ok {
-				return deliverer.DeliverZhengmingAnswer(answer)
-			}
-		}
+	if rg.deliverZhengming != nil {
+		return rg.deliverZhengming(answer)
 	}
 	return false
 }
