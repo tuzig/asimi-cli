@@ -5,7 +5,7 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.2] - 2026-07-21
 
 ### Added
 
@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Self-update asset name mismatch** — asset names in GitHub releases don't include the "v" prefix (e.g. `asimi_0.9.1_darwin_arm64.tar.gz`), but the code was looking for `asimi_v0.9.1_darwin_arm64.tar.gz`. The "v" is now stripped from the tag name before matching, fixing the "no matching asset found" error on `asimi update`
 - **Prompting on edict tab** — fixed prompting behavior on the edict tab (e668)
 - **Session ID storage for edicts** — fixed storing the session ID that mothered an edict (e674)
+- **Multiple minister tabs** — `tabnew` now creates unique channel IDs so new tabs get independent streams (e680)
+- **Template expansion with map inputs** — `expandTemplate` now handles `map[string]string` inputs correctly (e685)
+- **consult_minister output routing** — minister responses now route to the correct tab
+- **Chat on an edict** — fixed conversation flow when chatting within an edict context
 
 ## [0.9.1] - 2026-07-19
 
@@ -318,6 +322,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prompt placeholder now shows helpful navigation hints in RESUME & MODEL modes (#69)
 - Conversation history is now automatically compacted when context usage exceeds 90% (#54)
 - Model thinking/reasoning messages are now displayed in the chat (e.g., Claude extended thinking) (#38)
+- Status line now shows error emoji (❌) when model errors occur mid-conversation (#65)
+- Current prompt text is now preserved when navigating history with up/down arrows (#71)
+
+### Removed
+
+- non-vi mode is no longer supported - vi FTW!
+- `/` is just a slash. Use `:` to enter command mode
+
+
+
+## [0.1.0] - 2025/11/1
+
+A development snapshort made for a friend. Not production ready at all.
+inking) (#38)
 - Status line now shows error emoji (❌) when model errors occur mid-conversation (#65)
 - Current prompt text is now preserved when navigating history with up/down arrows (#71)
 
