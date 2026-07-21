@@ -2741,6 +2741,56 @@ func TestExpandTemplate_GivenContextFlattening(t *testing.T) {
 	}
 }
 
+// TestExpandTemplate_Inputs verifies that ritual inputs stored under
+// exec.Data["inputs"] are flattened into the top-level template context
+// so that {{ .version }} resolves correctly.
+func TestExpandTemplate_Inputs(t *testing.T) {
+	runner := &RitualRunner{logger: slog.Default()}
+
+	// Case 1: map[string]interface{} — the type that appears after DB
+	// round-trip via storage.JSON.Scan (e.g. in the recovery path).
+	exec := &RitualExecution{
+		EdictID: 1,
+		Data: storage.JSON{
+			"inputs": map[string]interface{}{"version": "1.2.3"},
+		},
+	}
+
+	result := runner.expandTemplate("{{ .version }}", exec)
+	expected := "1.2.3"
+	if result != expected {
+		t.Errorf("map[string]interface{}: expected %q, got %q", expected, result)
+	}
+
+	// Case 2: map[string]string — the type that Start() creates in-memory
+	// (the normal first-run execution path before any DB reload).
+	exec2 := &RitualExecution{
+		EdictID: 1,
+		Data: storage.JSON{
+			"inputs": map[string]string{"version": "1.2.3"},
+		},
+	}
+
+	result2 := runner.expandTemplate("{{ .version }}", exec2)
+	if result2 != expected {
+		t.Errorf("map[string]string: expected %q, got %q", expected, result2)
+	}
+
+	// Case 3: multiple inputs with mixed usage in a template
+	exec3 := &RitualExecution{
+		EdictID: 1,
+		Data: storage.JSON{
+			"inputs": map[string]string{"version": "1.2.3", "name": "release"},
+		},
+	}
+
+	result3 := runner.expandTemplate("{{ .name }} v{{ .version }}", exec3)
+	expected3 := "release v1.2.3"
+	if result3 != expected3 {
+		t.Errorf("multi-input: expected %q, got %q", expected3, result3)
+	}
+}
+
 // TestRitualActToolCallsDoNotPolluteChancellorSession verifies that ritual Act sessions
 // are ephemeral and do not pollute the Chancellor's interactive session.
 func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {

@@ -34,6 +34,13 @@ Below is what is left to develop:
 
 ## V1.1
 
+### Autonomous Execution Modes
+
+- Headless Prompt Mode (`-p` flag) — non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684)
+- Isolated Host Mode (`--isolated-host` flag) — bypass podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683)
+- Handsoff Mode (`--handsoff` flag) — auto-answer zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
+
+
 ### Skills Support
 
 - Skill marketplace discovery via `https://agentskills.io/llms.txt`

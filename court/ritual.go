@@ -2137,6 +2137,20 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 		data[k] = v
 	}
 
+	// Flatten inputs into top-level template context.
+	// Inputs may be map[string]string (in-memory from Start) or
+	// map[string]interface{} (after DB round-trip via storage.JSON.Scan).
+	switch inputs := exec.Data["inputs"].(type) {
+	case map[string]interface{}:
+		for k, v := range inputs {
+			data[k] = v
+		}
+	case map[string]string:
+		for k, v := range inputs {
+			data[k] = v
+		}
+	}
+
 	// Build step_results from completed steps
 	stepResults := map[string]interface{}{}
 	for i, ss := range exec.stepStates {
