@@ -6,18 +6,11 @@ Below is what is left to develop:
 
 ### Court Alignment
 
-- Rename `invoke_minister` → `consult_minister`, make available to all ministers (https://github.com/afittestide/asimi-cli/issues/155)
 - Realign ministers to full 三省 (Three Departments) alignment (https://github.com/afittestide/asimi-cli/issues/154)
 - Sharpen:
   - Roles: Improving definitions & translating to 文言文 (https://github.com/afittestide/asimi-cli/issues/156)
   - Tools (https://github.com/afittestide/asimi-cli/issues/155)
   - DB Schema — sharpen edicts, manifests, verdicts, precedents & seals (https://github.com/afittestide/asimi-cli/issues/152)
-
-### Autonomous Execution Modes
-
-- Headless Prompt Mode (`-p` flag) — non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684)
-- Isolated Host Mode (`--isolated-host` flag) — bypass podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683)
-- Handsoff Mode (`--handsoff` flag) — auto-answer zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
 
 ### UI Improvements
 
@@ -33,6 +26,12 @@ Below is what is left to develop:
 ### Skills Support (https://github.com/afittestide/asimi-cli/issues/159)
 
 ## V1.1
+
+### Autonomous Execution Modes
+
+- Headless Prompt Mode (`-p` flag) — non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684)
+- Isolated Host Mode (`--isolated-host` flag) — bypass podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683)
+- Handsoff Mode (`--handsoff` flag) — auto-answer zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
 
 ### Full Parallelism
 
