@@ -14,11 +14,11 @@ import (
 )
 
 // TestForgeChannelID_Routing verifies that streaming messages from Forge are routed to ChannelID="forge".
-// This test MUST FAIL before the fix (when Forge hardcodes ChannelID="chancellor")
+// This test MUST FAIL before the fix (when Forge hardcodes ChannelID="secretary")
 // and MUST PASS after the fix (when Forge uses its own ChannelID).
 //
 // The bug: Forge's streamTask() called CreateSessionWithOpts with
-// ChannelID="chancellor" instead of ChannelID="forge", causing streaming notifications to
+// ChannelID="secretary" instead of ChannelID="forge", causing streaming notifications to
 // route to the Chancellor tab instead of the Forge tab.
 func TestForgeChannelID_Routing(t *testing.T) {
 	db := setupMinisterTestDB(t)
@@ -129,7 +129,7 @@ func TestForgeChannelID_DirectStreamTask(t *testing.T) {
 }
 
 // TestJudgeChannelID_Routing verifies that streaming messages from Judge are routed to ChannelID="judge".
-// This test MUST FAIL before the fix (when Judge hardcodes ChannelID="chancellor")
+// This test MUST FAIL before the fix (when Judge hardcodes ChannelID="secretary")
 // and MUST PASS after the fix (when Judge uses ChannelID="judge").
 func TestJudgeChannelID_Routing(t *testing.T) {
 	db := setupMinisterTestDB(t)
@@ -184,10 +184,10 @@ func TestJudgeChannelID_Routing(t *testing.T) {
 	}
 }
 
-// TestSageChannelID_Routing verifies that streaming messages from Sage are routed to ChannelID="sage".
-// This test MUST FAIL before the fix (when Sage hardcodes ChannelID="chancellor" in streamTask)
-// and MUST PASS after the fix (when Sage uses ChannelID="sage").
-func TestSageChannelID_Routing(t *testing.T) {
+// TestChancellorChannelID_Routing verifies that streaming messages from Chancellor are routed to ChannelID="chancellor".
+// This test MUST FAIL before the fix (when Chancellor hardcodes ChannelID="secretary" in streamTask)
+// and MUST PASS after the fix (when Chancellor uses ChannelID="chancellor").
+func TestChancellorChannelID_Routing(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -197,7 +197,7 @@ func TestSageChannelID_Routing(t *testing.T) {
 
 	// Create Sage with mock LLM client
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	// Collect all streaming notifications
@@ -229,13 +229,13 @@ func TestSageChannelID_Routing(t *testing.T) {
 	result := <-doneCh
 	require.NoError(t, result.Err, "processTask should not return an error")
 
-	// Verify all streaming chunks were routed to ChannelID="sage"
+	// Verify all streaming chunks were routed to ChannelID="chancellor"
 	mu.Lock()
 	defer mu.Unlock()
 
 	require.NotEmpty(t, streamMsgs, "should have received at least one StreamChunkMsg")
 
 	for i, msg := range streamMsgs {
-		assert.Equal(t, "sage", msg.ChannelID, "StreamChunkMsg[%d] should have ChannelID='sage', got ChannelID='%s' (routing bug)", i, msg.ChannelID)
+		assert.Equal(t, "chancellor", msg.ChannelID, "StreamChunkMsg[%d] should have ChannelID='chancellor', got ChannelID='%s' (routing bug)", i, msg.ChannelID)
 	}
 }

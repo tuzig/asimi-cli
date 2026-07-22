@@ -25,7 +25,7 @@ func (m *mockRequester) RequestZhengming(key storage.EdictKey, questions storage
 func TestRequestZhengmingTool_KeyIncludesUsernameAndProject(t *testing.T) {
 	mock := &mockRequester{}
 	tool := RequestZhengmingTool{
-		MinisterID: "chancellor",
+		MinisterID: "secretary",
 		Requester:  mock,
 		Username:   "daonb",
 		Project:    "afittestide-asimi-cli",
@@ -55,7 +55,7 @@ func TestRequestZhengmingTool_KeyIncludesUsernameAndProject(t *testing.T) {
 func TestRequestZhengmingTool_CallPassesMinisterIDAsCallerMinisterID(t *testing.T) {
 	mock := &mockRequester{}
 	tool := RequestZhengmingTool{
-		MinisterID: "sage",
+		MinisterID: "chancellor",
 		Requester:  mock,
 		Username:   "daonb",
 		Project:    "afittestide-asimi-cli",
@@ -71,8 +71,8 @@ func TestRequestZhengmingTool_CallPassesMinisterIDAsCallerMinisterID(t *testing.
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if mock.capturedCallerMinisterID != "sage" {
-		t.Errorf("expected callerMinisterID 'sage', got %q", mock.capturedCallerMinisterID)
+	if mock.capturedCallerMinisterID != "chancellor" {
+		t.Errorf("expected callerMinisterID 'chancellor', got %q", mock.capturedCallerMinisterID)
 	}
 }
 
@@ -80,9 +80,9 @@ func TestRequestZhengmingTool_CallPassesMinisterIDAsCallerMinisterID_ForDifferen
 	tests := []struct {
 		ministerID string
 	}{
+		{"secretary"},
 		{"chancellor"},
-		{"sage"},
-		{"strategist"},
+		{"war"},
 		{"judge"},
 		{"forge"},
 	}
@@ -146,7 +146,7 @@ func TestSuggestEdictTool_PassesEdictIDInKey(t *testing.T) {
 			DB:        db,
 			Username:  "sageuser",
 			Project:   "myproject",
-			MinisterID: "sage",
+			MinisterID: "chancellor",
 		},
 		Requester: mock,
 	}
@@ -181,7 +181,7 @@ func TestSuggestEdictTool_EdictIDZeroDefaultsToNewEdict(t *testing.T) {
 			DB:        db,
 			Username:  "sageuser",
 			Project:   "myproject",
-			MinisterID: "sage",
+			MinisterID: "chancellor",
 		},
 		Requester: mock,
 	}
@@ -209,7 +209,7 @@ func TestSuggestEdictTool_NonexistentEdictReturnsError(t *testing.T) {
 			DB:        db,
 			Username:  "sageuser",
 			Project:   "myproject",
-			MinisterID: "sage",
+			MinisterID: "chancellor",
 		},
 		Requester: mock,
 	}
@@ -246,7 +246,7 @@ func TestSuggestEdictTool_WrongUserProjectReturnsError(t *testing.T) {
 			DB:        db,
 			Username:  "sageuser",
 			Project:   "myproject",
-			MinisterID: "sage",
+			MinisterID: "chancellor",
 		},
 		Requester: mock,
 	}

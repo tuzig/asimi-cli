@@ -98,12 +98,12 @@ type Tab struct {
 
 The `NewTabManager` creates 4 default tabs mirroring the Court's ministers:
 
-| Index | Label           | Target      | Minister  |
-|-------|-----------------|-------------|-----------|
-| 0     | 宰相 Chancellor  | chancellor  | Prime Minister |
-| 1     | 聖人 Sage       | sage        | Sage      |
-| 2     | 工部 Forge      | forge       | Ministry of Works |
-| 3     | 刑部 Judge      | judge       | Ministry of Justice |
+| Index | Label               | Target      | Minister         |
+|-------|---------------------|-------------|------------------|
+| 0     | 中書令 Secretary    | secretary   | Secretariat      |
+| 1     | 門下侍中 Chancellor  | chancellor  | Chancellery      |
+| 2     | 工部 Forge          | forge       | Ministry of Works |
+| 3     | 刑部 Judge          | judge       | Ministry of Justice |
 
 ### Key Operations
 
@@ -115,7 +115,7 @@ The `NewTabManager` creates 4 default tabs mirroring the Court's ministers:
 - **StreamingChatByTab(tabID)** — Returns the chat component for a specific streaming tab
 - **FlushDirtyChats()** — Calls `UpdateContent` on every dirty chat (used by the debounce tick to flush all streaming tabs)
 - **CancelTabByID(tabID)** — Cancels streaming on a specific tab and creates a fresh context
-- **CancelAllTabs()** — Cancels all streaming; Chancellor gets a fresh context for future rituals
+- **CancelAllTabs()** — Cancels all streaming; Secretary gets a fresh context for future rituals
 
 ### Tab Greetings
 

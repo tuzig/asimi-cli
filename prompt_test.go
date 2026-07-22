@@ -402,7 +402,7 @@ func TestHandleZhengmingPendingAppendsEditChat(t *testing.T) {
 
 	msg := court.ZhengmingPendingMsg{
 		RequestID:  "zhengming-1",
-		MinisterID: "sage",
+		MinisterID: "chancellor",
 		Questions: storage.ZhengmingQuestions{
 			{Text: "Which approach?", Summary: "Approach?", Options: []string{"Option A", "Option B"}},
 			{Text: "Confirm?", Summary: "Confirm?", Options: []string{"Yes", "No"}},

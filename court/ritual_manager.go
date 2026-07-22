@@ -430,13 +430,13 @@ func (rg *RitualGuard) RunHealthCheck(event Event) *HealthCheckResult {
 
 	// Check 2: Model - Verify LLM connectivity with actual ping
 	if rg.getMinister != nil {
-		chancellor := rg.getMinister("chancellor")
-		if chancellor != nil {
-			if chancellor.Model() == nil {
+		secretary := rg.getMinister("secretary")
+		if secretary != nil {
+			if secretary.Model() == nil {
 				result.ModelOK = false
 				result.Remediation["model"] = "Configure LLM model in settings"
 				fail("✗ LLM model not configured")
-			} else if !rg.pingLLM(chancellor) {
+			} else if !rg.pingLLM(secretary) {
 				result.ModelOK = false
 				result.Remediation["model"] = "Check LLM API endpoint and credentials"
 				fail("✗ LLM model not responsive")
@@ -502,9 +502,9 @@ func (rg *RitualGuard) pingLLM(minister Minister) bool {
 // getSandboxImageName returns the sandbox image name from the runner
 func (rg *RitualGuard) getSandboxImageName() string {
 	if rg.getMinister != nil {
-		chancellor := rg.getMinister("chancellor")
-		if chancellor != nil {
-			if runnerProvider, ok := chancellor.(interface{ Runner() runners.Runner }); ok {
+		secretary := rg.getMinister("secretary")
+		if secretary != nil {
+			if runnerProvider, ok := secretary.(interface{ Runner() runners.Runner }); ok {
 				runner := runnerProvider.Runner()
 				if runner != nil {
 					if podmanRunner, ok := runner.(*runners.PodmanRunner); ok {

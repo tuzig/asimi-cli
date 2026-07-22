@@ -144,6 +144,10 @@ func (db *DB) runMigrations(currentVersion int) error {
 			if err := db.migrateV4toV5(); err != nil {
 				return fmt.Errorf("migration v4→v5 failed: %w", err)
 			}
+		case 6:
+			if err := db.migrateV5toV6(); err != nil {
+				return fmt.Errorf("migration v5→v6 failed: %w", err)
+			}
 		default:
 			return fmt.Errorf("unknown migration version: %d", v)
 		}
@@ -260,6 +264,43 @@ func (db *DB) migrateV4toV5() error {
 		return fmt.Errorf("record version 5: %w", err)
 	}
 	slog.Debug("migrated schema v4→v5: renamed shogunate_* event values to court_*")
+	return nil
+}
+
+// migrateV5toV6 renames stale minister_id values in the seals table.
+// The 三省 alignment (edict 629) renamed minister roles:
+//   - "sage" → "chancellor" (the second seal in the chain)
+//
+// Existing databases still have seals with minister_id='sage' from before
+// the rename. This migration updates them so the seal chain code (which now
+// checks for 'chancellor') recognizes old seals.
+func (db *DB) migrateV5toV6() error {
+	// The seals table is created by GORM AutoMigrate, so it may not exist
+	// when the migration runs on a DB that hasn't been opened by the app yet.
+	var tableExists bool
+	err := db.conn.QueryRow(
+		"SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='seals'",
+	).Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("check seals table existence: %w", err)
+	}
+
+	if tableExists {
+		_, err := db.conn.Exec(
+			`UPDATE seals SET minister_id = 'chancellor' WHERE minister_id = 'sage'`,
+		)
+		if err != nil {
+			return fmt.Errorf("rename sage seals to chancellor: %w", err)
+		}
+	}
+
+	if _, err := db.conn.Exec(
+		"INSERT INTO schema_version (version, applied_at) VALUES (?, unixepoch())",
+		6,
+	); err != nil {
+		return fmt.Errorf("record version 6: %w", err)
+	}
+	slog.Debug("migrated schema v5→v6: renamed sage seals to chancellor")
 	return nil
 }
 

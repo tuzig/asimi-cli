@@ -39,7 +39,7 @@
       on_failure: goto
       on_failure_target: forging
     - name: reviewing
-      minister: sage
+      minister: chancellor
       given:
         - the manifests
         - the verdicts
@@ -60,7 +60,7 @@
         {{ .verdicts }}
       then:
         - the precedent is approved
-        - record the sage's seal
+        - record the chancellor's seal
       on_failure: goto
       on_failure_target: forging
   then:
@@ -77,7 +77,7 @@
     - the edict details
   steps:
     - name: strategizing
-      minister: strategist
+      minister: war
       act: |
         Analyze the edict below and produce a technical Battle Plan.
 
@@ -123,7 +123,7 @@
       on_failure_target: implementing
 
     - name: reviewing
-      minister: sage
+      minister: chancellor
       given:
         - the manifests
         - the verdicts
@@ -143,14 +143,14 @@
         {{ .verdicts }}
       then:
         - the precedent is approved
-        - record the sage's seal
+        - record the chancellor's seal
       on_failure: goto
       on_failure_target: implementing
   then:
     - the edict awaits ruler's seal
 
 - name: dawn-audience
-  description: "Startup ritual - Chancellor reports court status on Court boot, then requests zhengming"
+  description: "Startup ritual - Secretary reports court status on Court boot, then requests zhengming"
   max_retries: 2
   # triggers:
   #  - event: court_started
@@ -174,7 +174,7 @@
         {{- end }}
     - name: summarize
       on_failure: retry
-      minister: strategist
+      minister: war
       given:
         - the unsealed edicts
         - a heaven's snapshot
@@ -199,7 +199,7 @@
         {{ .court_status }}
     - name: next
       on_failure: retry
-      minister: chancellor
+      minister: secretary
       effort: low
       act: |
         Court briefing:
@@ -210,7 +210,7 @@
         
 - name: review-borderlands
   description: |
-    Code review - judge and sage review the borderlands before
+    Code review - judge and chancellor review the borderlands before
     staging
   background:
     - the borderlands
@@ -232,7 +232,7 @@
         Use record_verdict to record pass/fail for this edict.
         Reviewing is next so don't stage, commit nor push.
     - name: reviewing
-      minister: sage
+      minister: chancellor
       given:
         - the borderlands
         - manifests for the borderlands
@@ -241,7 +241,7 @@
         Review the code changes for the edict.
         Check for style violations, security concerns, and architectural issues.
         Record your insights using record_precedent.
-        Produce a comprehensive code review report summarizing findings from both judge and sage.
+        Produce a comprehensive code review report summarizing findings from both judge and chancellor.
         Highlight any blocking issues and suggest improvements.
         
         ## Edict
@@ -263,7 +263,7 @@
     - the unsealed edicts
   steps:
     - name: survey
-      minister: strategist
+      minister: war
       given:
         - "!git log -1 --format='%H %s'  # head_commit"
       act: |
@@ -292,7 +292,7 @@
         Return the plan as a structured list. If there are no changes,
         say so and stop.
     - name: commit
-      minister: chancellor
+      minister: secretary
       act: |
         Execute the commit plan from the survey step:
 
@@ -341,7 +341,7 @@
           on_failure_target: fix-file
 
     - name: commit-all
-      minister: chancellor
+      minister: secretary
       given:
         - the earth status
       act: |
@@ -424,8 +424,8 @@
       on_failure: goto
       on_failure_target: establish-infrastructure
 
-    - name: sage-reviews
-      minister: sage
+    - name: chancellor-reviews
+      minister: chancellor
       given:
         - the earth status
         - the verdicts
@@ -448,5 +448,5 @@
       on_failure: goto
       on_failure_target: establish-infrastructure
       then:
-        - record the sage's seal
+        - record the chancellor's seal
         - the infrastructure is staged

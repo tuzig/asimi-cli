@@ -29,7 +29,7 @@
   max_retries: 2
   steps:
     - name: prepare-changelog
-      minister: strategist
+      minister: war
       effort: medium
       given:
         - "!git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~20)..HEAD --oneline  # recent_commits"
@@ -93,8 +93,8 @@
       on_failure: goto
       on_failure_target: prepare-changelog
 
-    - name: sage-reviews
-      minister: sage
+    - name: chancellor-reviews
+      minister: chancellor
       effort: low
       given:
         - the earth status
@@ -106,12 +106,12 @@
         Call record_precedent ONCE with approved=true if the release artifacts
         are clean. Then return a one-sentence confirmation.
       then:
-        - record the sage's seal
+        - record the chancellor's seal
       on_failure: goto
       on_failure_target: prepare-changelog
 
     - name: commit-and-tag
-      minister: chancellor
+      minister: secretary
       effort: low
       given:
         - the earth status
@@ -125,7 +125,7 @@
         - the release is committed and tagged
 
     - name: confirm-push
-      minister: chancellor
+      minister: secretary
       effort: low
       act: |
         Call request_zhengming asking the Ruler to confirm pushing the release

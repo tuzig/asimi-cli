@@ -1,7 +1,7 @@
 package court
 
 // Test helpers for constructing ministers from their builtin YAML definitions.
-// These preserve the test API (NewChancellor, NewForge, etc.) while the
+// These preserve the test API (NewSecretary, NewForge, etc.) while the
 // underlying implementation is now the generic ministerImpl.
 
 // builtinDefByID returns the builtin MinisterDef for the given id.
@@ -15,9 +15,9 @@ func builtinDefByID(id string) MinisterDef {
 	return MinisterDef{ID: id}
 }
 
-// NewChancellor creates a chancellor minister for tests.
-func NewChancellor(base *MinisterBase) *ministerImpl {
-	return NewMinister(builtinDefByID("chancellor"), base)
+// NewSecretary creates a secretary minister for tests.
+func NewSecretary(base *MinisterBase) *ministerImpl {
+	return NewMinister(builtinDefByID("secretary"), base)
 }
 
 // NewForge creates a forge minister for tests.
@@ -31,16 +31,16 @@ func NewJudge(base *MinisterBase, _ any) *ministerImpl {
 	return NewMinister(builtinDefByID("judge"), base)
 }
 
-// NewSage creates a sage minister for tests.
-func NewSage(base *MinisterBase) *ministerImpl {
-	return NewMinister(builtinDefByID("sage"), base)
+// NewChancellor creates a chancellor minister for tests.
+func NewChancellor(base *MinisterBase) *ministerImpl {
+	return NewMinister(builtinDefByID("chancellor"), base)
 }
 
-// NewStrategist creates a strategist minister for tests.
-func NewStrategist(base *MinisterBase) *ministerImpl {
-	return NewMinister(builtinDefByID("strategist"), base)
+// NewWar creates a war minister for tests.
+func NewWar(base *MinisterBase) *ministerImpl {
+	return NewMinister(builtinDefByID("war"), base)
 }
 
-// StrategistRole is the role text for the strategist, kept for tests that
+// WarRole is the role text for the war minister, kept for tests that
 // validate its content. Loaded from the embedded YAML definition.
-var StrategistRole = builtinDefByID("strategist").Role
+var WarRole = builtinDefByID("war").Role

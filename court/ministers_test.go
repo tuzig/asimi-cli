@@ -19,7 +19,7 @@ func TestLoadMinisters_BuiltinHasAllFive(t *testing.T) {
 	for _, d := range defs {
 		ids[d.ID] = true
 	}
-	for _, expected := range []string{ministers.Chancellor, ministers.Forge, ministers.Judge, ministers.Sage, ministers.Strategist} {
+	for _, expected := range []string{ministers.Secretary, ministers.Forge, ministers.Judge, ministers.Chancellor, ministers.War} {
 		assert.True(t, ids[expected], "builtin ministers must include %s", expected)
 	}
 }

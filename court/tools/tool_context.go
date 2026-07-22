@@ -13,7 +13,7 @@ import (
 // MinisterID is the one field that varies per minister tool set.
 type ToolContext struct {
 	RepoInfo   *repo.RepoInfo // shared pointer — all contexts see live state
-	MinisterID string         // per-minister: "forge", "sage", etc.
+	MinisterID string         // per-minister: "forge", "chancellor", etc.
 	Username   string         // daemon-level: OS username for DB scoping
 	Project    string         // daemon-level: project slug for DB scoping
 	DB         *gorm.DB       // daemon-level singleton

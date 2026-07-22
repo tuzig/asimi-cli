@@ -129,7 +129,7 @@ func TestRecordPrecedentTool_GrantsSageSealOnApproval(t *testing.T) {
 
 	// Verify sage seal was created
 	var seal storage.Seal
-	if err := db.Where("edict_id = ? AND minister_id = ?", 7, "sage").First(&seal).Error; err != nil {
+	if err := db.Where("edict_id = ? AND minister_id = ?", 7, "chancellor").First(&seal).Error; err != nil {
 		t.Errorf("expected sage seal to be granted: %v", err)
 	}
 }
@@ -210,7 +210,7 @@ func TestRecordPrecedentTool_NoManifests_Rejected(t *testing.T) {
 
 	// Verify NO sage seal was granted
 	var sealCount int64
-	db.Model(&storage.Seal{}).Where("edict_id = ? AND minister_id = ?", 11, "sage").Count(&sealCount)
+	db.Model(&storage.Seal{}).Where("edict_id = ? AND minister_id = ?", 11, "chancellor").Count(&sealCount)
 	if sealCount != 0 {
 		t.Errorf("expected no sage seal for rejected edict, got %d", sealCount)
 	}
@@ -252,7 +252,7 @@ func TestRecordPrecedentTool_NoManifests_Approved(t *testing.T) {
 
 	// Verify sage seal WAS granted
 	var seal storage.Seal
-	if err := db.Where("edict_id = ? AND minister_id = ?", 13, "sage").First(&seal).Error; err != nil {
+	if err := db.Where("edict_id = ? AND minister_id = ?", 13, "chancellor").First(&seal).Error; err != nil {
 		t.Errorf("expected sage seal to be granted: %v", err)
 	}
 }

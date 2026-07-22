@@ -89,7 +89,7 @@ func (t RecordPrecedentTool) Call(ctx context.Context, input string) (string, er
 	}
 
 	if params.Approved {
-		if err := grantSageSeal(t.Ctx.DB, key, "sage", storage.JSON{"reason": params.Reasoning}); err != nil {
+		if err := grantChancellorSeal(t.Ctx.DB, key, "chancellor", storage.JSON{"reason": params.Reasoning}); err != nil {
 			return "", fmt.Errorf("failed to grant seal: %w", err)
 		}
 	}
@@ -241,8 +241,8 @@ func (t QueryPrecedentsTool) Format(input, result string, err error) string {
 	return fmt.Sprintf("Query Precedents: %s\n", result)
 }
 
-// grantSageSeal records the Sage's seal on an edict (idempotent).
-func grantSageSeal(db *gorm.DB, key storage.EdictKey, ministerID string, metadata storage.JSON) error {
+// grantChancellorSeal records the Chancellor's seal on an edict (idempotent).
+func grantChancellorSeal(db *gorm.DB, key storage.EdictKey, ministerID string, metadata storage.JSON) error {
 	var count int64
 	if err := db.Model(&storage.Seal{}).
 		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.ID, key.Username, key.Project, ministerID).

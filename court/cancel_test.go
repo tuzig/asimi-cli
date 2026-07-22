@@ -105,7 +105,7 @@ func TestCancelEdictCancelsEdictChannel(t *testing.T) {
 
 	// Register streaming contexts for both the edict channel and chancellor
 	edictCtx := s.CancellableStreamCtx("e644")
-	chancellorCtx := s.CancellableStreamCtx("chancellor")
+	chancellorCtx := s.CancellableStreamCtx("secretary")
 
 	// Both should be active before CancelEdict
 	select {

@@ -298,8 +298,8 @@ func intString(n int) string {
 // Court RPC surface end-to-end over net.Pipe.
 func TestCourtRPCLoopback(t *testing.T) {
 	impl := newFakeCourt()
+	impl.hasIDs["secretary"] = true
 	impl.hasIDs["chancellor"] = true
-	impl.hasIDs["sage"] = true
 
 	pa, pb := net.Pipe()
 	server := New(pa, Options{})
@@ -319,16 +319,16 @@ func TestCourtRPCLoopback(t *testing.T) {
 
 	client := NewCourtClient(clientConn)
 
-	if !client.HasMinister("chancellor") {
+	if !client.HasMinister("secretary") {
 		t.Error("HasMinister(chancellor) = false")
 	}
 	if client.HasMinister("unknown") {
 		t.Error("HasMinister(unknown) = true")
 	}
 
-	client.ResetMinisterSession("sage")
+	client.ResetMinisterSession("chancellor")
 	impl.mu.Lock()
-	if got := impl.resetLog; len(got) != 1 || got[0] != "sage" {
+	if got := impl.resetLog; len(got) != 1 || got[0] != "chancellor" {
 		t.Errorf("resetLog = %v", got)
 	}
 	impl.mu.Unlock()
@@ -525,7 +525,7 @@ func TestCourtRPCLoopback(t *testing.T) {
 	}
 
 	// SubmitPrompt (ctx should be rebuilt server-side).
-	if err := client.SubmitPrompt("chancellor", &court.Prompt{
+	if err := client.SubmitPrompt("secretary", &court.Prompt{
 		Message:      "hello shogun",
 		EdictKey:     storage.EdictKey{ID: 42},
 		ChannelID:    "ruling",
@@ -534,7 +534,7 @@ func TestCourtRPCLoopback(t *testing.T) {
 		t.Fatalf("SubmitPrompt: %v", err)
 	}
 	impl.mu.Lock()
-	if len(impl.prompts) != 1 || impl.prompts[0] != "chancellor/hello shogun" {
+	if len(impl.prompts) != 1 || impl.prompts[0] != "secretary/hello shogun" {
 		t.Errorf("prompts = %v", impl.prompts)
 	}
 	impl.mu.Unlock()

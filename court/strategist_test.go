@@ -63,12 +63,12 @@ func (m *capturingMinister) allCapturedText() string {
 	return sb.String()
 }
 
-// TestStrategist_ZhengmingRoutesToStrategist verifies that when the Strategist
-// raises a Zhengming request, the question is routed to the Strategist's tab.
-// Before edict 489, all zhengming routed to "chancellor" regardless of caller.
+// TestWar_ZhengmingRoutesToWar verifies that when the War minister
+// raises a Zhengming request, the question is routed to the War minister's tab.
+// Before edict 489, all zhengming routed to "secretary" regardless of caller.
 // Now each minister's request_zhengming carries its own MinisterID so the
 // ZhengmingPendingMsg routes to the correct tab.
-func TestStrategist_ZhengmingRoutesToStrategist(t *testing.T) {
+func TestWar_ZhengmingRoutesToWar(t *testing.T) {
 	db := setupRitualTestDB(t)
 	require.NoError(t, db.AutoMigrate(&storage.Edict{}))
 
@@ -77,7 +77,7 @@ func TestStrategist_ZhengmingRoutesToStrategist(t *testing.T) {
 	require.NotNil(t, court)
 	court.ConfigureModel(nil, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
-	strategist := court.GetMinister("strategist")
+	strategist := court.GetMinister("war")
 	require.NotNil(t, strategist)
 
 	tools := strategist.Tools()
@@ -89,19 +89,19 @@ func TestStrategist_ZhengmingRoutesToStrategist(t *testing.T) {
 		}
 	}
 
-	// The MinisterID must be "strategist" so the question appears in the Strategist's tab
-	assert.Equal(t, "strategist", zhengmingTool.MinisterID,
-		"Strategist's Zhengming must route to Strategist's tab, not Chancellor's")
+	// The MinisterID must be "war" so the question appears in the War minister's tab
+	assert.Equal(t, "war", zhengmingTool.MinisterID,
+		"War's Zhengming must route to War's tab, not Secretary's")
 
 	// Requester should be the strategist itself (for answer delivery via DeliverZhengming)
 	assert.NotNil(t, zhengmingTool.Requester, "Requester must be set")
 }
 
-// TestStrategist_InsertLingTool_DescriptionMentionsFullLingID verifies that
+// TestWar_InsertLingTool_DescriptionMentionsFullLingID verifies that
 // InsertLingTool.Description() explicitly instructs the LLM to use full ling IDs
 // and to avoid shorthand aliases. This prevents the DAG resolver from failing
-// when the strategist invents abbreviated dependency references.
-func TestStrategist_InsertLingTool_DescriptionMentionsFullLingID(t *testing.T) {
+// when the war minister invents abbreviated dependency references.
+func TestWar_InsertLingTool_DescriptionMentionsFullLingID(t *testing.T) {
 	tool := asimitools.InsertLingTool{}
 
 	desc := tool.Description()
@@ -119,10 +119,10 @@ func TestStrategist_InsertLingTool_DescriptionMentionsFullLingID(t *testing.T) {
 		"Description must warn against shorthand aliases")
 }
 
-// TestStrategist_InsertLingTool_ParameterSchemaWarnsAboutShorthand verifies that
+// TestWar_InsertLingTool_ParameterSchemaWarnsAboutShorthand verifies that
 // the dependencies parameter in ParameterSchema explicitly warns against
 // shorthand aliases and instructs use of full ling IDs.
-func TestStrategist_InsertLingTool_ParameterSchemaWarnsAboutShorthand(t *testing.T) {
+func TestWar_InsertLingTool_ParameterSchemaWarnsAboutShorthand(t *testing.T) {
 	tool := asimitools.InsertLingTool{}
 
 	schema := tool.ParameterSchema()
@@ -144,25 +144,25 @@ func TestStrategist_InsertLingTool_ParameterSchemaWarnsAboutShorthand(t *testing
 		"ParameterSchema dependencies description must warn against inventing shorthand aliases")
 }
 
-// TestStrategist_StrategistRoleMentionsFullLingID verifies that the StrategistRole
+// TestWar_WarRoleMentionsFullLingID verifies that the WarRole
 // system prompt includes the critical rule about using exact ling_id values.
-func TestStrategist_StrategistRoleMentionsFullLingID(t *testing.T) {
+func TestWar_WarRoleMentionsFullLingID(t *testing.T) {
 	// Must mention the rule about exact ling_id values
-	assert.Contains(t, StrategistRole, "exact ling_id",
-		"StrategistRole must instruct use of exact ling_id values for dependencies")
+	assert.Contains(t, WarRole, "exact ling_id",
+		"WarRole must instruct use of exact ling_id values for dependencies")
 
 	// Must include an example of a real ling_id format
-	assert.Contains(t, StrategistRole, "'74183c66ba0507ba'",
-		"StrategistRole must include a concrete full ling_id example")
+	assert.Contains(t, WarRole, "'74183c66ba0507ba'",
+		"WarRole must include a concrete full ling_id example")
 
 	// Must warn against shorthand
-	assert.Contains(t, StrategistRole, "Never use shorthand",
-		"StrategistRole must warn against shorthand dependency references")
+	assert.Contains(t, WarRole, "Never use shorthand",
+		"WarRole must warn against shorthand dependency references")
 }
 
-// TestCastleSiege_StrategistTaskCarriesContext verifies the ritual builds
-// the correct Work prompt before dispatching to the strategist.
-func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
+// TestCastleSiege_WarTaskCarriesContext verifies the ritual builds
+// the correct Work prompt before dispatching to the war minister.
+func TestCastleSiege_WarTaskCarriesContext(t *testing.T) {
 	db := setupRitualTestDB(t)
 	// Additional tables needed for edict background step
 	require.NoError(t, db.AutoMigrate(&storage.Edict{}, &storage.Zhengming{}, &storage.Ling{}, &storage.Seal{}))
@@ -174,7 +174,7 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 	// Set up capturing strategist; other ministers are plain auto-completing
 	strat := &capturingMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
-		id:           "strategist",
+		id:           "war",
 		tasksCh:      make(chan *Task, 1),
 		result:       "battle plan created",
 	}
@@ -182,8 +182,8 @@ func TestCastleSiege_StrategistTaskCarriesContext(t *testing.T) {
 	defer cancel()
 	go strat.Run(ctx)
 
-	ministers := map[string]Minister{"strategist": strat}
-	for _, id := range []string{"forge", "judge", "sage", "chancellor"} {
+	ministers := map[string]Minister{"war": strat}
+	for _, id := range []string{"forge", "judge", "chancellor", "secretary"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,

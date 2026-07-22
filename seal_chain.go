@@ -27,7 +27,7 @@ func renderSealChain(seals []storage.Seal, w int) string {
 		granted[seal.MinisterID] = true
 	}
 
-	// Render each seal in the chain order: Judge → Sage → Ruler
+	// Render each seal in the chain order: Judge → Chancellor → Ruler
 	for i, ministerID := range ministers.SealChainIDs {
 		if i > 0 {
 			b.WriteString(" ")

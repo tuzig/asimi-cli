@@ -4,18 +4,18 @@ package ministers
 // seal chain order, ritual routing) and are used throughout the codebase
 // instead of raw string literals.
 const (
-	Chancellor = "chancellor"
-	Forge      = "forge"
-	Judge      = "judge"
-	Sage       = "sage"
-	Strategist = "strategist"
-	Ruler      = "ruler"
+	Secretary   = "secretary"
+	Forge       = "forge"
+	Judge       = "judge"
+	Chancellor  = "chancellor"
+	War         = "war"
+	Ruler       = "ruler"
 )
 
 // DefaultTabIDs is the ordered list of ministers that get interactive tabs
-// in the TUI: Forge, Sage, Judge, Chancellor.
-var DefaultTabIDs = []string{Forge, Sage, Judge, Chancellor}
+// in the TUI: Forge, Chancellor, Judge, Secretary.
+var DefaultTabIDs = []string{Forge, Chancellor, Judge, Secretary}
 
 // SealChainIDs is the ordered list of minister IDs whose seals form the
-// ascension chain: Judge → Sage → Ruler.
-var SealChainIDs = []string{Judge, Sage, Ruler}
+// ascension chain: Judge → Chancellor → Ruler.
+var SealChainIDs = []string{Judge, Chancellor, Ruler}

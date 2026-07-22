@@ -105,7 +105,7 @@ type Seal struct {
 	EdictID    uint      `gorm:"column:edict_id;index"`
 	Username   string    `gorm:"column:username"`
 	Project    string    `gorm:"column:project"`
-	MinisterID string    `gorm:"column:minister_id"` // "judge", "sage", "ruler"
+	MinisterID string    `gorm:"column:minister_id"` // "judge", "chancellor", "ruler"
 	SealedAt   time.Time `gorm:"column:sealed_at;autoCreateTime"`
 	Metadata   JSON      `gorm:"column:metadata;type:json"` // Optional: verdict_id, precedent_id, etc.
 }

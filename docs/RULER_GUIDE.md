@@ -44,7 +44,7 @@ An **Edict** (詔令) is a work order. You issue it; ministers execute it throug
 
 #### Step 1: Open the Hunting Tab
 
-Press `gt` till you get to the **Hunting** tab. You're now talking to the **Sage** (孔子) — your advisor who sees everything but changes nothing.
+Press `gt` till you get to the **Hunting** tab. You're now talking to the **Chancellor** (門下侍中) — your advisor who sees everything but changes nothing.
 
 #### Step 2: State Your Intent
 
@@ -54,13 +54,13 @@ Type something like:
 Add a --version flag that prints the build version and exits
 ```
 
-The Sage will help you crystallize this into a proper edict and enact a ritual
+The Chancellor will help you crystallize this into a proper edict and enact a ritual
 to seal it.
 
 When the edict shows **sealed**, the work is complete. Asimi uses a local SQLite database (`asimi.db`) to track edicts, manifests, and seals. The seals table records:
 
 - **Judge's Seal** — Tests passed
-- **Sage's Seal** — Code review approved  
+- **Chancellor's Seal** — Code review approved  
 - **Ruler's Seal** — Final approval (granted automatically when you confirm)
 
 Check `git log` to see the committed changes. The edict is now ascended to Heaven.
@@ -93,9 +93,9 @@ For small, focused changes (< 50 lines):
 
 ```
 Hunting tab: "Fix the null pointer in auth/handler.go line 42"
-→ Sage creates edict
-→ Chancellor enacts swift-strike ritual
-→ Forge fixes, Judge tests, Sage reviews
+→ Chancellor creates edict
+→ Secretary enacts swift-strike ritual
+→ Forge fixes, Judge tests, Chancellor reviews
 → Sealed in ~5 minutes
 ```
 
@@ -105,9 +105,9 @@ For medium work (50-200 lines):
 
 ```
 Hunting tab: "Add user logout endpoint"
-→ Sage helps scope it
-→ Chancellor enacts castle-siege ritual
-→ Strategist plans, Forge implements, Judge tests, Sage reviews
+→ Chancellor helps scope it
+→ Secretary enacts castle-siege ritual
+→ War plans, Forge implements, Judge tests, Chancellor reviews
 → Sealed in ~30 minutes
 ```
 
@@ -115,7 +115,7 @@ Hunting tab: "Add user logout endpoint"
 
 ```
 Ruling tab: "What's the status of all edicts?"
-→ Chancellor reports active edicts, phases, pending questions
+→ Secretary reports active edicts, phases, pending questions
 ```
 
 Or check a specific edict:
@@ -125,7 +125,7 @@ Ruling tab: "Status of edict-123456"
 → Shows phase, lings, test results
 ```
 
-### "I'm Confused" — Ask the Sage
+### "I'm Confused" — Ask the Chancellor
 
 Hunting tab is for exploration. Ask:
 
@@ -134,7 +134,7 @@ Hunting tab is for exploration. Ask:
 - "Show me the code changes from edict-789"
 - "Is there a better way to structure this?"
 
-The Sage sees all code, edicts, tests, and precedents.
+The Chancellor sees all code, edicts, tests, and precedents.
 
 ---
 
@@ -143,7 +143,7 @@ The Sage sees all code, edicts, tests, and precedents.
 When the Court encounters ambiguity, it **halts** and asks:
 
 ```
-Zhengming from Chancellor:
+Zhengming from Secretary:
 "Should the logout confirmation use a modal dialog or inline message?"
 
 Options:
@@ -157,7 +157,7 @@ Options:
 
 **Why this matters:** The Court never guesses. If it's unclear, it stops. This prevents wasted work and ensures the code matches your intent.
 
-To keep the number of zhengmings low, we make it the goal of your Chancellor to free you to hunt for future edicts. There's a healthy tension between not guessing and freeing you, one that keeps the Chancellor on his toes.
+To keep the number of zhengmings low, we make it the goal of your Secretary to free you to hunt for future edicts. There's a healthy tension between not guessing and freeing you, one that keeps the Secretary on his toes.
 
 ---
 
@@ -165,15 +165,15 @@ To keep the number of zhengmings low, we make it the goal of your Chancellor to 
 
 | Minister | Role | When You'd Talk to Them |
 |----------|------|------------------------|
-| **Chancellor (宰相)** | Coordinator, interfaces with you | Always — all requests go through Chancellor |
-| **Sage (孔子)** | Advisor + code reviewer, sees all, creates edicts, reviews code | Hunting tab — for exploration, edict creation, and code review |
-| **Strategist (兵部)** | Plans complex work | Indirectly — creates battle plans for M/L edicts |
+| **Secretary (中書令)** | Coordinator, interfaces with you | Always — all requests go through Secretary |
+| **Chancellor (門下侍中)** | Advisor + code reviewer, sees all, creates edicts, reviews code | Hunting tab — for exploration, edict creation, and code review |
+| **War (兵部)** | Plans complex work | Indirectly — creates battle plans for M/L edicts |
 | **Forge (工部)** | Writes code | Indirectly — you see their manifests in work logs |
 | **Judge (刑部)** | Runs tests, validates | Indirectly — you see verdicts (pass/fail) |
 
-**Note:** The Sage serves as both advisor and code reviewer — reviewing code quality and recording precedents. This consolidates the review function.
+**Note:** The Chancellor serves as both advisor and code reviewer — reviewing code quality and recording precedents. This consolidates the review function.
 
-**Key insight:** You talk to **Chancellor** (Ruling tab) and **Sage** (Hunting tab). The other ministers work behind the scenes.
+**Key insight:** You talk to **Secretary** (Ruling tab) and **Chancellor** (Hunting tab). The other ministers work behind the scenes.
 
 ---
 
@@ -184,7 +184,7 @@ To keep the number of zhengmings low, we make it the goal of your Chancellor to 
 **Check for Zhengming:**
 ```
 Ruling tab: "Any pending zhengming?"
-→ Chancellor lists unanswered questions
+→ Secretary lists unanswered questions
 ```
 
 **Check test failures:**
@@ -212,7 +212,7 @@ Suggested next steps:
 
 You can always:
 1. **Cancel the edict:** `Ruling tab: "Cancel edict-123"`
-2. **Fix it yourself:** Edit the code, commit, and ask the Sage to review
+2. **Fix it yourself:** Edit the code, commit, and ask the Chancellor to review
 3. **Create a new edict:** With corrected scope
 
 The Court serves you — not the other way around.
@@ -232,7 +232,7 @@ The Confucian metaphor isn't decoration. It encodes principles:
 | **Zhi (智)** | Wisdom | Planning before implementation |
 | **Xin (信)** | Trustworthiness | Event ledger provides accountability |
 
-**The Five Constant Virtues (五常)** are embodied by the ministers. The Sage is 仁 (benevolence), the Judge is 义 (righteousness), rituals are 礼 (propriety), the Strategist is 智 (wisdom), and the Tian ledger is 信 (trustworthiness).
+**The Five Constant Virtues (五常)** are embodied by the ministers. The Chancellor is 仁 (benevolence), the Judge is 义 (righteousness), rituals are 礼 (propriety), War is 智 (wisdom), and the Tian ledger is 信 (trustworthiness).
 
 As Confucius taught:
 
@@ -248,7 +248,7 @@ As Confucius taught:
 ## Next Steps
 
 1. **Try a small edict** — Fix a typo, add a log statement
-2. **Explore the Hunting tab** — Ask the Sage about the codebase
+2. **Explore the Hunting tab** — Ask the Chancellor about the codebase
 3. **Watch a ritual execute** — See how ministers coordinate
 4. **Read the full guide** — `docs/court_guide.md` for deep dives
 
@@ -259,7 +259,7 @@ Welcome to the Court, Ruler. The court awaits your command.
 ## Quick Reference Card
 
 ```
-Tabs: 1=Ruling (Chancellor), 2=Hunting (Sage)
+Tabs: 1=Ruling (Secretary), 2=Hunting (Chancellor)
 Edict Phases: brewing → planning → forging → judging → reviewing → sealed
 Rituals: swift-strike (S), castle-siege (M), grand-orchestration (L/XL)
 Zhengming: When Asimi asks, answer — work resumes after

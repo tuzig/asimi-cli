@@ -1463,7 +1463,7 @@ func TestSession_AddMessage_TriggersPersisterWhenTabTypeSet(t *testing.T) {
 
 	sess, err := NewSession(nil, nil, nil, nil, func(any) {}, "system prompt", "")
 	require.NoError(t, err)
-	sess.TabType = "chancellor"
+	sess.TabType = "secretary"
 
 	rec := &recordingPersister{}
 	sess.SetPersister(rec)
@@ -1472,7 +1472,7 @@ func TestSession_AddMessage_TriggersPersisterWhenTabTypeSet(t *testing.T) {
 	sess.AddMessage(schemas.ChatMessageRoleAssistant, "hi")
 
 	assert.Equal(t, 2, rec.calls, "persister should fire once per AddMessage")
-	assert.Equal(t, "chancellor", rec.lastTabType)
+	assert.Equal(t, "secretary", rec.lastTabType)
 	assert.GreaterOrEqual(t, rec.lastLen, 2)
 }
 
@@ -1481,7 +1481,7 @@ func TestSession_AddMessage_NoPersisterMeansNoSave(t *testing.T) {
 
 	sess, err := NewSession(nil, nil, nil, nil, func(any) {}, "system prompt", "")
 	require.NoError(t, err)
-	sess.TabType = "chancellor"
+	sess.TabType = "secretary"
 	// Deliberately no SetPersister — matches ephemeral ritual-task sessions.
 
 	sess.AddMessage(schemas.ChatMessageRoleUser, "hello")
@@ -1494,7 +1494,7 @@ func TestSession_SetMessages_DoesNotPersist(t *testing.T) {
 
 	sess, err := NewSession(nil, nil, nil, nil, func(any) {}, "system prompt", "")
 	require.NoError(t, err)
-	sess.TabType = "chancellor"
+	sess.TabType = "secretary"
 
 	rec := &recordingPersister{}
 	sess.SetPersister(rec)

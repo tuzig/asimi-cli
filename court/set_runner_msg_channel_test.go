@@ -59,7 +59,7 @@ func TestSetRunnerMessageChannel_UpdatesPointerHolders(t *testing.T) {
 	assert.NotNil(t, runner.msgChan, "runner should receive a non-nil msg channel")
 
 	// Verify every minister's msgChan pointer dereferences to the new channel.
-	for _, id := range []string{"chancellor", "sage", "forge", "judge"} {
+	for _, id := range []string{"secretary", "chancellor", "forge", "judge"} {
 		m := court.GetMinister(id)
 		require.NotNil(t, m, "minister %s should exist", id)
 

@@ -46,7 +46,7 @@ func TestNotificationPipeline(t *testing.T) {
 		court.StreamStartMsg{ChannelID: "ruling", EdictID: 9},
 		court.StreamChunkMsg{ChannelID: "ruling", Text: "hello "},
 		court.StreamChunkMsg{ChannelID: "ruling", Text: "world"},
-		court.StreamChunkMsg{ChannelID: "sage", Text: "thinking"},
+		court.StreamChunkMsg{ChannelID: "chancellor", Text: "thinking"},
 		court.StreamCompleteMsg{ChannelID: "ruling"},
 		court.StreamErrorMsg{ChannelID: "forge", Err: errors.New("boom")},
 		court.EventsDrainedMsg{Events: []court.DrainedEvent{
@@ -55,7 +55,7 @@ func TestNotificationPipeline(t *testing.T) {
 		court.MinisterInvokingMsg{ChannelID: "ruling", MinisterID: "forge", EdictKey: storage.EdictKey{ID: 9}, Task: "write code"},
 		court.MinisterCompletedMsg{ChannelID: "ruling", MinisterID: "forge", EdictKey: storage.EdictKey{ID: 9}, Output: "done", Sealed: true},
 		court.EventNotificationMsg{ChannelID: "ruling", EventType: storage.EventSealGranted, EdictKey: storage.EdictKey{ID: 9}, Message: "sealed"},
-		court.ZhengmingPendingMsg{RequestID: "z-1", MinisterID: "sage", EdictKey: storage.EdictKey{ID: 9}},
+		court.ZhengmingPendingMsg{RequestID: "z-1", MinisterID: "chancellor", EdictKey: storage.EdictKey{ID: 9}},
 		court.ZhengmingAnsweredMsg{RequestID: "z-1", Answer: "yes"},
 		court.RitualStepMsg{ChannelID: "ruling", RitualName: "swift-strike", StepIndex: 1, TotalSteps: 3, Status: "ok"},
 		runners.ContainerLaunchedMsg{Message: "up", ContainerID: "abc123"},
