@@ -38,8 +38,8 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 		}
 	})
 
-	// Build tool registry — request_zhengming is now a factory extra tool,
-	// resolved per-minister via ExtraTools(ministerID, names).
+	// Build tool registry — request_zhengming is now in commonTools,
+	// resolved per-minister via ExtraTools(ministerID, commonTools).
 	registry := tools.NewToolRegistry()
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
@@ -52,8 +52,8 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately with "pending" status
 	})
 
-	// Get Sage's extra tools — request_zhengming is a factory tool
-	sageExtras := registry.ExtraTools("sage", []string{"request_zhengming"})
+	// Get Sage's tools — request_zhengming is now a common tool
+	sageExtras := registry.ExtraTools("sage", commonTools)
 
 	// Find the request_zhengming tool
 	var zhengmingTool tools.Tool
@@ -98,7 +98,7 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 		}
 	})
 
-	// Build tool registry — request_zhengming is now a factory extra tool
+	// Build tool registry — request_zhengming is now a common tool
 	registry := tools.NewToolRegistry()
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
@@ -111,8 +111,8 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately
 	})
 
-	// Get Strategist's extra tools
-	strategistExtras := registry.ExtraTools("strategist", []string{"request_zhengming"})
+	// Get Strategist's tools — request_zhengming is now a common tool
+	strategistExtras := registry.ExtraTools("strategist", commonTools)
 
 	// Find the request_zhengming tool
 	var zhengmingTool tools.Tool
@@ -147,7 +147,7 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 	require.NotNil(t, s)
 	s.SetNotify(func(msg any) {}) // discard notifications
 
-	// Build tool registry — request_zhengming is now a factory extra tool
+	// Build tool registry — request_zhengming is now a common tool
 	registry := tools.NewToolRegistry()
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
@@ -160,8 +160,8 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately
 	})
 
-	// Get Sage's extra tools and find request_zhengming
-	sageExtras := registry.ExtraTools("sage", []string{"request_zhengming"})
+	// Get Sage's tools and find request_zhengming
+	sageExtras := registry.ExtraTools("sage", commonTools)
 	var zhengmingTool tools.Tool
 	for _, tool := range sageExtras {
 		if tool.Name() == "request_zhengming" {
