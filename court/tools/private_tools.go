@@ -32,7 +32,8 @@ func (t ConsultMinisterTool) Description() string {
 	return fmt.Sprintf(`Consult a minister by ID to get its perspective or execute its logic for an edict.
 	Ministers process edicts through their specialized phase logic
 	(e.g., %s).
-	Provide specific task instructions for what the minister should do.`, examples)
+	Provide specific task instructions for what the minister should do.
+	A minister cannot consult itself — if you need to perform a task within your own domain, do it directly.`, examples)
 }
 
 func (t ConsultMinisterTool) Call(ctx context.Context, input string) (string, error) {
@@ -53,6 +54,10 @@ func (t ConsultMinisterTool) Call(ctx context.Context, input string) (string, er
 	}
 	if params.Work == "" {
 		return "", fmt.Errorf("task is required")
+	}
+
+	if params.MinisterID == t.Ctx.MinisterID {
+		return "", fmt.Errorf("a minister cannot consult itself (caller: %s, target: %s) — use direct execution instead", t.Ctx.MinisterID, params.MinisterID)
 	}
 
 	key := storage.EdictKey{
@@ -100,7 +105,7 @@ func (t ConsultMinisterTool) ParameterSchema() map[string]any {
 		"properties": map[string]any{
 			"minister_id": map[string]any{
 				"type":        "string",
-				"description": fmt.Sprintf("The minister to consult (%s)", examples),
+				"description": fmt.Sprintf("The minister to consult (must be different from yourself) (%s)", examples),
 			},
 			"edict_id": map[string]any{
 				"type":        "integer",
