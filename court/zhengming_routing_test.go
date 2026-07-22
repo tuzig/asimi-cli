@@ -14,14 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestZhengmingRouting_Sage verifies that when Sage's request_zhengming tool
-// is invoked, the ZhengmingPendingMsg carries MinisterID="sage" — not "chancellor".
+// TestZhengmingRouting_Chancellor verifies that when Chancellor's request_zhengming tool
+// is invoked, the ZhengmingPendingMsg carries MinisterID="chancellor" — not "secretary".
 //
 // Before the fix (edict 489), the shared RequestZhengmingTool in the registry
 // omitted MinisterID, and the Requester was always the Chancellor, so all
-// zhengming notifications routed to MinisterID="chancellor" regardless of
+// zhengming notifications routed to MinisterID="secretary" regardless of
 // which minister actually asked the question.
-func TestZhengmingRouting_Sage(t *testing.T) {
+func TestZhengmingRouting_Chancellor(t *testing.T) {
 	db := setupCourtTestDB(t)
 	cfg := config.DefaultCourtConfig()
 	s := NewCourt(db, cfg, nil, slog.Default())
@@ -53,7 +53,7 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 	})
 
 	// Get Sage's tools — request_zhengming is now a common tool
-	sageExtras := registry.ExtraTools("sage", commonTools)
+	sageExtras := registry.ExtraTools("chancellor", commonTools)
 
 	// Find the request_zhengming tool
 	var zhengmingTool tools.Tool
@@ -70,18 +70,18 @@ func TestZhengmingRouting_Sage(t *testing.T) {
 	_, err := zhengmingTool.Call(context.Background(), input)
 	require.NoError(t, err, "request_zhengming Call should not error")
 
-	// Verify the ZhengmingPendingMsg has MinisterID="sage"
+	// Verify the ZhengmingPendingMsg has MinisterID="chancellor"
 	mu.Lock()
 	defer mu.Unlock()
 
 	require.Len(t, pendingMsgs, 1, "should have received one ZhengmingPendingMsg")
-	assert.Equal(t, "sage", pendingMsgs[0].MinisterID,
-		"ZhengmingPendingMsg.MinisterID should be 'sage', not 'chancellor' — the tool's MinisterID must flow through to the pending message")
+	assert.Equal(t, "chancellor", pendingMsgs[0].MinisterID,
+		"ZhengmingPendingMsg.MinisterID should be 'chancellor', not 'secretary' — the tool's MinisterID must flow through to the pending message")
 }
 
-// TestZhengmingRouting_Strategist verifies that when Strategist's request_zhengming
-// tool is invoked, the ZhengmingPendingMsg carries MinisterID="strategist".
-func TestZhengmingRouting_Strategist(t *testing.T) {
+// TestZhengmingRouting_War verifies that when War's request_zhengming
+// tool is invoked, the ZhengmingPendingMsg carries MinisterID="war".
+func TestZhengmingRouting_War(t *testing.T) {
 	db := setupCourtTestDB(t)
 	cfg := config.DefaultCourtConfig()
 	s := NewCourt(db, cfg, nil, slog.Default())
@@ -111,8 +111,8 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately
 	})
 
-	// Get Strategist's tools — request_zhengming is now a common tool
-	strategistExtras := registry.ExtraTools("strategist", commonTools)
+	// Get War's tools — request_zhengming is now a common tool
+	strategistExtras := registry.ExtraTools("war", commonTools)
 
 	// Find the request_zhengming tool
 	var zhengmingTool tools.Tool
@@ -122,20 +122,20 @@ func TestZhengmingRouting_Strategist(t *testing.T) {
 			break
 		}
 	}
-	require.NotNil(t, zhengmingTool, "strategist should have request_zhengming tool")
+	require.NotNil(t, zhengmingTool, "war should have request_zhengming tool")
 
 	// Call the tool
 	input := `{"edict_id": 2, "questions": [{"text": "Which approach?", "options": ["A", "B"]}]}`
 	_, err := zhengmingTool.Call(context.Background(), input)
 	require.NoError(t, err, "request_zhengming Call should not error")
 
-	// Verify the ZhengmingPendingMsg has MinisterID="strategist"
+	// Verify the ZhengmingPendingMsg has MinisterID="war"
 	mu.Lock()
 	defer mu.Unlock()
 
 	require.Len(t, pendingMsgs, 1, "should have received one ZhengmingPendingMsg")
-	assert.Equal(t, "strategist", pendingMsgs[0].MinisterID,
-		"ZhengmingPendingMsg.MinisterID should be 'strategist', not 'chancellor'")
+	assert.Equal(t, "war", pendingMsgs[0].MinisterID,
+		"ZhengmingPendingMsg.MinisterID should be 'war', not 'secretary'")
 }
 
 // TestZhengmingRouting_DBRecord verifies that the storage.Zhengming DB record
@@ -160,26 +160,26 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately
 	})
 
-	// Get Sage's tools and find request_zhengming
-	sageExtras := registry.ExtraTools("sage", commonTools)
+	// Get Chancellor's tools and find request_zhengming
+	chancellorExtras := registry.ExtraTools("chancellor", commonTools)
 	var zhengmingTool tools.Tool
-	for _, tool := range sageExtras {
+	for _, tool := range chancellorExtras {
 		if tool.Name() == "request_zhengming" {
 			zhengmingTool = tool
 			break
 		}
 	}
-	require.NotNil(t, zhengmingTool, "sage should have request_zhengming tool")
+	require.NotNil(t, zhengmingTool, "chancellor should have request_zhengming tool")
 
 	// Call the tool
 	input := `{"edict_id": 3, "questions": [{"text": "OK?", "options": ["Yes", "No"]}]}`
 	_, err := zhengmingTool.Call(context.Background(), input)
 	require.NoError(t, err, "request_zhengming Call should not error")
 
-	// Verify the DB record has MinisterID="sage"
+	// Verify the DB record has MinisterID="chancellor"
 	var zhengming storage.Zhengming
 	err = db.Where("edict_id = ? AND username = ? AND project = ?", 3, "testuser", "testproject").First(&zhengming).Error
 	require.NoError(t, err, "should find the zhengming DB record")
-	assert.Equal(t, "sage", zhengming.MinisterID,
-		"storage.Zhengming.MinisterID should be 'sage', not 'chancellor'")
+	assert.Equal(t, "chancellor", zhengming.MinisterID,
+		"storage.Zhengming.MinisterID should be 'chancellor', not 'secretary'")
 }

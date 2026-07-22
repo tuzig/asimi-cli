@@ -43,15 +43,15 @@ func TestListActiveEdicts_ORSemantics(t *testing.T) {
 	now := time.Now()
 	db.Model(&Edict{}).Where("id = ?", 2).Update("cancelled_at", &now)
 
-	// Seal edict 3 with all three seals (judge, sage, ruler)
-	for _, ministerID := range []string{"judge", "sage", "ruler"} {
+	// Seal edict 3 with all three seals (judge, chancellor, ruler)
+	for _, ministerID := range []string{"judge", "chancellor", "ruler"} {
 		if err := svc.GrantSeal(edicts[2].Key(), ministerID, JSON{}); err != nil {
 			t.Fatalf("failed to grant seal: %v", err)
 		}
 	}
 
 	// Seal edict 4 with all three seals
-	for _, ministerID := range []string{"judge", "sage", "ruler"} {
+	for _, ministerID := range []string{"judge", "chancellor", "ruler"} {
 		if err := svc.GrantSeal(edicts[3].Key(), ministerID, JSON{}); err != nil {
 			t.Fatalf("failed to grant seal: %v", err)
 		}
@@ -137,8 +137,40 @@ func TestListActiveEdicts_SealStatusPopulated(t *testing.T) {
 	if !activeEdicts[0].HasJudgeSeal {
 		t.Error("Expected HasJudgeSeal to be true")
 	}
-	if activeEdicts[0].HasSageSeal {
-		t.Error("Expected HasSageSeal to be false")
+	if activeEdicts[0].HasChancellorSeal {
+		t.Error("Expected HasChancellorSeal to be false")
+	}
+}
+
+func TestListActiveEdicts_ChancellorSealPopulated(t *testing.T) {
+	db := setupSealServiceTestDB(t)
+	svc := NewSealService(db)
+
+	// Create an edict
+	edict := Edict{ID: 1, Username: "testuser", Project: "testproject", Intent: "Test"}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Grant chancellor seal
+	if err := svc.GrantSeal(edict.Key(), "chancellor", JSON{}); err != nil {
+		t.Fatalf("failed to grant chancellor seal: %v", err)
+	}
+
+	activeEdicts, err := svc.ListActiveEdicts("testuser", "testproject")
+	if err != nil {
+		t.Fatalf("ListActiveEdicts failed: %v", err)
+	}
+
+	if len(activeEdicts) != 1 {
+		t.Fatalf("Expected 1 edict, got %d", len(activeEdicts))
+	}
+
+	if activeEdicts[0].HasJudgeSeal {
+		t.Error("Expected HasJudgeSeal to be false (only chancellor seal granted)")
+	}
+	if !activeEdicts[0].HasChancellorSeal {
+		t.Error("Expected HasChancellorSeal to be true — the SQL must fetch chancellor seals")
 	}
 }
 

@@ -266,9 +266,9 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 		}
 
 		// 4. Forward to chancellor as fallback for legacy path
-		s.logger.Info("Default forwarding zhengming answer to chancellor")
+		s.logger.Info("Default forwarding zhengming answer to secretary")
 		work := fmt.Sprintf("Resume edict %d with clarification: %s", key.ID, answer)
-		if ch := s.GetMinister("chancellor"); ch != nil {
+		if ch := s.GetMinister("secretary"); ch != nil {
 			if rs, ok := ch.(interface {
 				ResumeEdict(context.Context, storage.EdictKey, string)
 			}); ok {
@@ -451,9 +451,9 @@ func (s *Court) Start(ctx context.Context) error {
 		}
 	}
 
-	// Inject ritual summaries hook into the chancellor so its Scratchpad
+	// Inject ritual summaries hook into the secretary so its Scratchpad
 	// includes available rituals.
-	if ch := s.GetMinister("chancellor"); ch != nil {
+	if ch := s.GetMinister("secretary"); ch != nil {
 		if base, ok := ch.(interface{ SetRitualSummaries(func() string) }); ok {
 			base.SetRitualSummaries(func() string {
 				if s.GetRitualRegistry() == nil {
@@ -1113,20 +1113,20 @@ func (s *Court) RestoreMinisterSession(tabType string, msgs []schemas.ChatMessag
 	return minister.RestoreSession(minister, msgs, channelID...)
 }
 
-// ResetChancellor resets the chancellor session
+// ResetChancellor resets the secretary (formerly chancellor) session
 func (s *Court) ResetChancellor() {
 	if s == nil {
 		return
 	}
-	s.ResetMinisterSession("chancellor")
+	s.ResetMinisterSession("secretary")
 }
 
-// ResetHunting resets the hunting session
+// ResetHunting resets the chancellor (formerly sage) session
 func (s *Court) ResetHunting() {
 	if s == nil {
 		return
 	}
-	s.ResetMinisterSession("sage")
+	s.ResetMinisterSession("chancellor")
 }
 
 // GetSealService returns the seal service
@@ -1282,7 +1282,7 @@ func (s *Court) sessionForTab(tabTarget string) *Session {
 	if s == nil {
 		return nil
 	}
-	// Try direct minister lookup first (interactive tabs: "sage", "chancellor")
+	// Try direct minister lookup first (interactive tabs: "chancellor", "secretary")
 	m := s.GetMinister(tabTarget)
 	if m != nil {
 		return m.GetSession(tabTarget)

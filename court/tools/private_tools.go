@@ -24,7 +24,7 @@ func (t ConsultMinisterTool) Name() string {
 }
 
 func (t ConsultMinisterTool) Description() string {
-	examples := "strategist, forge, judge, sage"
+	examples := "war, forge, judge, chancellor"
 	if len(t.MinisterIDs) > 0 {
 		// Use the last two as examples, rest as a plain list
 		examples = strings.Join(t.MinisterIDs, ", ")
@@ -98,7 +98,7 @@ func (t ConsultMinisterTool) ParameterSchema() map[string]any {
 	if len(t.MinisterIDs) > 0 {
 		examples = strings.Join(t.MinisterIDs, ", ")
 	} else {
-		examples = "strategist, forge, judge, sage"
+		examples = "war, forge, judge, chancellor"
 	}
 	return map[string]any{
 		"type": "object",

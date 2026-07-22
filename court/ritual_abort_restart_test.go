@@ -57,7 +57,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 		Steps: []RitualStep{
 			{Name: "step1", Minister: "forge", Act: "First"},
 			{Name: "step2", Minister: "judge", Act: "Second"},
-			{Name: "step3", Minister: "sage", Act: "Third"},
+			{Name: "step3", Minister: "chancellor", Act: "Third"},
 		},
 	}
 
@@ -68,7 +68,7 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 		ministers: map[string]Minister{
 			"forge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "forge", tasksCh: make(chan *Task, 1)},
 			"judge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "judge", tasksCh: make(chan *Task, 1)},
-			"sage":  &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "sage", tasksCh: make(chan *Task, 1)},
+			"chancellor":  &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "chancellor", tasksCh: make(chan *Task, 1)},
 		},
 		logger: slog.Default(),
 	}
@@ -156,7 +156,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 		Steps: []RitualStep{
 			{Name: "setup", Minister: "forge", Act: "Setup work"},
 			{Name: "process", Minister: "judge", Act: "Process data"},
-			{Name: "finalize", Minister: "sage", Act: "Finalize"},
+			{Name: "finalize", Minister: "chancellor", Act: "Finalize"},
 		},
 	}
 
@@ -167,7 +167,7 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 		ministers: map[string]Minister{
 			"forge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "forge", tasksCh: make(chan *Task, 1)},
 			"judge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "judge", tasksCh: make(chan *Task, 1)},
-			"sage":  &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "sage", tasksCh: make(chan *Task, 1)},
+			"chancellor":  &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "chancellor", tasksCh: make(chan *Task, 1)},
 		},
 		logger: slog.Default(),
 	}

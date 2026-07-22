@@ -78,7 +78,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the edict awaits ruler's seal", "await_ruler_seal", "awaiting_seal"},
 		{"the infrastructure is staged", "stage_infrastructure", "infrastructure_staged"},
 		{"record the judge's seal", "record_judge_seal", ""},
-		{"record the sage's seal", "record_sage_seal", ""},
+		{"record the chancellor's seal", "record_chancellor_seal", ""},
 		{"record the ling completed", "record_ling_completed", ""},
 		{"the verdicts are passed", "check_verdicts_passed", ""},
 		{"the precedent is approved", "check_precedent_approved", ""},
@@ -184,7 +184,7 @@ func (r *RitualRunner) getUnsealedEdicts(ctx context.Context, exec *RitualExecut
 			"status":     "active",
 			"updated_at": e.UpdatedAt,
 			"has_judge":  e.HasJudgeSeal,
-			"has_sage":   e.HasSageSeal,
+			"has_chancellor":   e.HasChancellorSeal,
 		}
 	}
 	return result, nil
@@ -358,7 +358,7 @@ SELECT
     CASE
         WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler') THEN 'sealed'
         WHEN EXISTS (SELECT 1 FROM zhengming_requests z WHERE z.edict_id = e.id AND z.username = e.username AND z.project = e.project AND z.status = 'pending') THEN 'blocked'
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'sage') THEN 'active'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'chancellor') THEN 'active'
         WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'judge') THEN 'active'
         ELSE 'active'
     END as status
@@ -898,16 +898,16 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 	case "request_zhengming":
 		// Use the chancellor for zhengming requests, as it's the minister that interacts with the ruler
 		// and has a corresponding tab for displaying zhengming questions
-		minister := r.getMinister("chancellor")
+		minister := r.getMinister("secretary")
 		if minister == nil {
-			return fmt.Errorf("minister not found: chancellor")
+			return fmt.Errorf("minister not found: secretary")
 		}
 		type zhengmingGate interface {
 			RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority, string) (string, error)
 		}
 		gate, ok := minister.(zhengmingGate)
 		if !ok {
-			return fmt.Errorf("minister chancellor does not support zhengming")
+			return fmt.Errorf("minister secretary does not support zhengming")
 		}
 		// Get the step that just completed to include in the question
 		stepName := ""
@@ -918,7 +918,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			Text:    fmt.Sprintf("The %s has completed work on edict %d. Do you approve?", stepName, exec.EdictID),
 			Options: []string{tools.AnswerApproveAndProceed, tools.AnswerLetMeClarify, tools.AnswerReject},
 		}}
-		requestID, err := gate.RequestZhengming(thenKey, questions, storage.PriorityUrgent, "chancellor")
+		requestID, err := gate.RequestZhengming(thenKey, questions, storage.PriorityUrgent, "secretary")
 		if err != nil {
 			return fmt.Errorf("failed to request zhengming: %w", err)
 		}
@@ -989,11 +989,11 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			return fmt.Errorf("failed to record judge's seal: %w", err)
 		}
 		return nil
-	case "record_sage_seal":
-		// Record the sage's seal on the edict
+	case "record_chancellor_seal":
+		// Record the chancellor's seal on the edict
 		sealService := storage.NewSealService(r.db)
-		if err := sealService.GrantSeal(thenKey, "sage", storage.JSON{"ritual": exec.RitualName}); err != nil {
-			return fmt.Errorf("failed to record sage's seal: %w", err)
+		if err := sealService.GrantSeal(thenKey, "chancellor", storage.JSON{"ritual": exec.RitualName}); err != nil {
+			return fmt.Errorf("failed to record chancellor's seal: %w", err)
 		}
 		return nil
 	case "record_ling_completed":

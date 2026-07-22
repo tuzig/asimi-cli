@@ -24,7 +24,7 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 		Steps: []RitualStep{
 			{
 				Name:     "prepare",
-				Minister: "strategist",
+				Minister: "war",
 				Task:     "prepare work units",
 			},
 			{
@@ -48,7 +48,7 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 
 	strategistM := &ritualTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
-		id:           "strategist",
+		id:           "war",
 		tasksCh:      make(chan *Task, 1),
 		result:       "work units prepared",
 	}
@@ -62,7 +62,7 @@ func TestExecuteForkStep_Parallel(t *testing.T) {
 	go forgeM.Run(ctx)
 
 	court := &Court{
-		ministers: map[string]Minister{"strategist": strategistM, "forge": forgeM},
+		ministers: map[string]Minister{"war": strategistM, "forge": forgeM},
 		logger:    slog.Default(),
 	}
 

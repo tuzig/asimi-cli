@@ -92,7 +92,7 @@ func TestChancellor_EdictLifecycle(t *testing.T) {
 
 	// Create chancellor
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	chancellor := NewChancellor(base)
+	chancellor := NewSecretary(base)
 
 	// Create an edict (starts in brewing phase)
 	edict, err := CreateEdictForTest(db, "Add a simple hello world function")
@@ -117,7 +117,7 @@ func TestStrategist_ProcessTask(t *testing.T) {
 	assert.NotNil(t, edict)
 
 	// Create strategist (no LLM)
-	strategist := NewStrategist(base)
+	strategist := NewWar(base)
 
 	// Send task via processTask with ritual-built Work
 	doneCh := make(chan Result, 1)
@@ -183,7 +183,7 @@ func TestProcessPrompt_NoPreprocessor(t *testing.T) {
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	// Sage does not set a preprocessor — promptPreprocessor is nil.
@@ -221,7 +221,7 @@ func TestProcessPrompt_ChannelIDRouting(t *testing.T) {
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	var mu sync.Mutex
@@ -259,7 +259,7 @@ func TestProcessPrompt_DefaultChannelID(t *testing.T) {
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	var mu sync.Mutex
@@ -281,7 +281,7 @@ func TestProcessPrompt_DefaultChannelID(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, "sage", doneChannelID, "StreamDoneMsg should use minister ID when ChannelID is empty")
+	assert.Equal(t, "chancellor", doneChannelID, "StreamDoneMsg should use minister ID when ChannelID is empty")
 }
 
 // TestProcessPrompt_NewSessionSavesEdictSessionID verifies that when a new
@@ -303,7 +303,7 @@ func TestProcessPrompt_NewSessionSavesEdictSessionID(t *testing.T) {
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	var mu sync.Mutex
@@ -353,7 +353,7 @@ func TestProcessPrompt_ExistingSessionDoesNotOverwriteEdictSessionID(t *testing.
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	// Pre-create a session so ProcessPrompt finds m.sessions[channelID] != nil
@@ -409,7 +409,7 @@ func TestProcessPrompt_NewSessionDoesNotOverwriteExistingEdictSessionID(t *testi
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	var mu sync.Mutex
@@ -477,7 +477,7 @@ func TestHappyFlowE2E(t *testing.T) {
 
 	// Create Chancellor and Court
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	chancellor := NewChancellor(base)
+	chancellor := NewSecretary(base)
 
 	// Create a simple Court with just Forge for this test
 	forge := NewForge(base)
@@ -548,7 +548,7 @@ func TestConsultMinisterTool_InvalidMinister(t *testing.T) {
 	ctx := context.Background()
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	chancellor := NewChancellor(base)
+	chancellor := NewSecretary(base)
 	court := &Court{
 		db: db,
 		ministers: map[string]Minister{
@@ -708,7 +708,7 @@ func TestConsultMinisterTool_ContextCancelledDuringWait(t *testing.T) {
 
 // TestCourt_ConsultMinister_RoutesToCallerTab verifies that when a non-chancellor
 // minister calls ConsultMinister, the ChannelID in notifications and the Task
-// dispatched to the target minister are set to the caller's ID, not "chancellor".
+// dispatched to the target minister are set to the caller's ID, not "secretary".
 // This is the core fix for edict 686.
 func TestCourt_ConsultMinister_RoutesToCallerTab(t *testing.T) {
 	db := setupMinisterTestDB(t)
@@ -928,7 +928,7 @@ func TestCourt_ConsultMinister_SetsExcludeTools(t *testing.T) {
 		task.Done <- Result{MinisterID: "target", Sealed: true, Output: "done"}
 	}()
 
-	_, err := court.ConsultMinister(ctx, "chancellor", "target",
+	_, err := court.ConsultMinister(ctx, "secretary", "target",
 		storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "do work")
 	assert.NoError(t, err)
 }
@@ -977,8 +977,8 @@ func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	if !strings.Contains(prompt, "You are a test minister.") {
 		t.Errorf("Expected role text in system prompt, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "幕府") {
-		t.Errorf("Expected Realm (幕府) in system prompt, got:\n%s", prompt)
+	if !strings.Contains(prompt, "三省六部") {
+		t.Errorf("Expected Realm (三省六部) in system prompt, got:\n%s", prompt)
 	}
 
 	// Without edict ID — should not contain "Current Edict"
@@ -1008,7 +1008,7 @@ func TestBuildSystemPrompt_Scratchpad(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 
 	fake := &fakeMinisterWithScratchpad{
-		fakeMinister: fakeMinister{MinisterBase: base, id: "strategist"},
+		fakeMinister: fakeMinister{MinisterBase: base, id: "war"},
 		scratchpad:   "# Available Rituals\n- implement: Run implementation",
 	}
 
@@ -1053,7 +1053,7 @@ func (f *fakeMinister) Run(ctx context.Context)     {}
 func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	db := setupMinisterTestDB(t)
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	chancellor := NewChancellor(base)
+	chancellor := NewSecretary(base)
 
 	court := &Court{
 		db:        db,
@@ -1399,38 +1399,38 @@ func TestMinisterBase_SessionMethods(t *testing.T) {
 
 // TestMinisterBase_PerChannelSessionIsolation verifies that two sessions
 // on the same minister with different channel IDs are independent —
-// prompting on "e633" doesn't affect "sage".
+// prompting on "e633" doesn't affect "chancellor".
 func TestMinisterBase_PerChannelSessionIsolation(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
-	base.ministerID = "sage"
+	base.ministerID = "chancellor"
 
-	sess1 := &Session{ID: "sess-sage"}
-	sess1.SetChannelID("sage")
+	sess1 := &Session{ID: "sess-chancellor"}
+	sess1.SetChannelID("chancellor")
 	sess2 := &Session{ID: "sess-e633"}
 	sess2.SetChannelID("e633")
 
-	base.SetSession(sess1, "sage")
+	base.SetSession(sess1, "chancellor")
 	base.SetSession(sess2, "e633")
 
 	// Both sessions exist under their respective channel keys
-	assert.NotNil(t, base.GetSession("sage"))
+	assert.NotNil(t, base.GetSession("chancellor"))
 	assert.NotNil(t, base.GetSession("e633"))
-	assert.Equal(t, "sess-sage", base.GetSession("sage").ID)
+	assert.Equal(t, "sess-chancellor", base.GetSession("chancellor").ID)
 	assert.Equal(t, "sess-e633", base.GetSession("e633").ID)
 
 	// Default (no channelID) returns the minister's own session
-	assert.Equal(t, "sess-sage", base.GetSession().ID)
+	assert.Equal(t, "sess-chancellor", base.GetSession().ID)
 
-	// Resetting "e633" doesn't affect "sage"
+	// Resetting "e633" doesn't affect "chancellor"
 	base.ResetSession("e633")
 	assert.Nil(t, base.GetSession("e633"))
-	assert.NotNil(t, base.GetSession("sage"))
-	assert.Equal(t, "sess-sage", base.GetSession("sage").ID)
+	assert.NotNil(t, base.GetSession("chancellor"))
+	assert.Equal(t, "sess-chancellor", base.GetSession("chancellor").ID)
 
 	// GetSessions returns all remaining sessions
 	all := base.GetSessions()
 	assert.Len(t, all, 1)
-	assert.Contains(t, all, "sage")
+	assert.Contains(t, all, "chancellor")
 }
 
 
@@ -1449,7 +1449,7 @@ func TestRestoreMinisterSession_AllTabs(t *testing.T) {
 	// is required; the test only exercises session restore wiring.
 	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
-	for _, id := range []string{"chancellor", "sage", "forge", "judge"} {
+	for _, id := range []string{"secretary", "chancellor", "forge", "judge"} {
 		t.Run(id, func(t *testing.T) {
 			err := court.RestoreMinisterSession(id, nil)
 			require.NoError(t, err, "%s tab should be resumable", id)
@@ -1513,12 +1513,12 @@ func TestRestoreSession_SetsPersister(t *testing.T) {
 
 	// Restore a session for the chancellor — this calls the exported
 	// RestoreSession path.
-	err := court.RestoreMinisterSession("chancellor", []schemas.ChatMessage{
+	err := court.RestoreMinisterSession("secretary", []schemas.ChatMessage{
 		{Role: schemas.ChatMessageRoleUser, Content: textContent("hello")},
 	})
 	require.NoError(t, err)
 
-	chancellor := court.GetMinister("chancellor")
+	chancellor := court.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 	sess := chancellor.GetSession()
 	require.NotNil(t, sess, "chancellor should have a restored session")
@@ -1648,7 +1648,7 @@ func TestStrategist_ProcessTask_NoLLM_NoHookError(t *testing.T) {
 	assert.NoError(t, err)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	strategist := NewStrategist(base)
+	strategist := NewWar(base)
 
 	// Insert lings with a circular dependency — the postTaskHook is gone,
 	// so processTask won't detect the cycle. The ritual's then step will.
@@ -1702,7 +1702,7 @@ func TestStrategist_ProcessTask_ValidDAG_NoHookError(t *testing.T) {
 	assert.NoError(t, err)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	strategist := NewStrategist(base)
+	strategist := NewWar(base)
 
 	lingA := &storage.Ling{
 		LingID:       "ling-x",
@@ -1753,7 +1753,7 @@ func TestSage_ProcessTask_NoHooks(t *testing.T) {
 	assert.NoError(t, err)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 
 	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
 
@@ -1770,7 +1770,7 @@ func TestSage_ProcessTask_NoHooks(t *testing.T) {
 
 	assert.NoError(t, result.Err)
 	assert.True(t, result.Sealed)
-	assert.Equal(t, "sage", result.MinisterID)
+	assert.Equal(t, "chancellor", result.MinisterID)
 	assert.Contains(t, result.Output, "no LLM configured")
 }
 
@@ -1824,7 +1824,7 @@ func TestProcessTask_NoLLM_NoFallback_Acknowledges(t *testing.T) {
 	assert.NoError(t, err)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	strategist := NewStrategist(base)
+	strategist := NewWar(base)
 
 	// Strategist has no LLM and no taskFallback
 	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
@@ -1855,7 +1855,7 @@ func TestProcessTask_SendResult_NonBlocking(t *testing.T) {
 	assert.NoError(t, err)
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	strategist := NewStrategist(base)
+	strategist := NewWar(base)
 
 	// Create a done channel with buffer 1 and fill it
 	doneCh := make(chan Result, 1)
@@ -1891,7 +1891,7 @@ func TestRunLoop_ConcurrentTaskDispatch(t *testing.T) {
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.ministerID = "test"
-	strategist := NewStrategist(base)
+	strategist := NewWar(base)
 	strategist.SetNotify(func(any) {})
 
 	var taskStarted sync.WaitGroup
@@ -2044,7 +2044,7 @@ func TestRunLoop_GracefulShutdownWaitsInFlightTasks(t *testing.T) {
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.ministerID = "test"
-	strategist := NewStrategist(base)
+	strategist := NewWar(base)
 	strategist.SetNotify(func(any) {})
 
 	var taskDone sync.WaitGroup
@@ -2102,19 +2102,19 @@ func TestStreamTask_RitualTaskCreatesOwnSession(t *testing.T) {
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	base.ministerID = "sage"
-	sage := NewSage(base)
+	base.ministerID = "chancellor"
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 	sage.SetNotify(func(any) {})
 
 	// Create an interactive session on m.session (simulating ProcessPrompt)
-	interactiveSession, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "sage")
+	interactiveSession, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "chancellor")
 	require.NoError(t, err)
 	base.SetSession(interactiveSession)
 	interactiveMsgCount := len(interactiveSession.Messages())
 
 	// Call streamTask with existingSession=nil (ritual task scenario)
-	session, _, err := base.streamTask(ctx, "ritual work", storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}, "# scratch", func(any) {}, nil, "sage", nil)
+	session, _, err := base.streamTask(ctx, "ritual work", storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}, "# scratch", func(any) {}, nil, "chancellor", nil)
 	require.NoError(t, err)
 
 	// The returned session must NOT be the interactive session
@@ -2133,15 +2133,15 @@ func TestStreamTask_ExistingSessionStillReused(t *testing.T) {
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	base.ministerID = "sage"
-	sage := NewSage(base)
+	base.ministerID = "chancellor"
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 	sage.SetNotify(func(any) {})
 
-	existing, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "sage")
+	existing, err := CreateSession(sage, mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, func(any) {}, "chancellor")
 	require.NoError(t, err)
 
-	session, _, err := base.streamTask(ctx, "more work", storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "", func(any) {}, existing, "sage", nil)
+	session, _, err := base.streamTask(ctx, "more work", storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "", func(any) {}, existing, "chancellor", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, existing, session, "existing session should be reused")
@@ -2158,7 +2158,7 @@ func TestRunLoop_SlowPromptDoesNotBlockTaskDispatch(t *testing.T) {
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
 	base.ministerID = "test"
-	strategist := NewStrategist(base)
+	strategist := NewWar(base)
 	strategist.SetNotify(func(any) {})
 
 	var promptStarted sync.WaitGroup
@@ -2236,7 +2236,7 @@ func TestProcessTask_EmitsStreamStartAndDone(t *testing.T) {
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	var mu sync.Mutex
@@ -2303,7 +2303,7 @@ func TestProcessTask_StreamStartDefaultChannelID(t *testing.T) {
 
 	mockLLM := mocks.NewLLMProvider()
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
-	sage := NewSage(base)
+	sage := NewChancellor(base)
 	sage.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
 	var mu sync.Mutex
@@ -2338,6 +2338,6 @@ func TestProcessTask_StreamStartDefaultChannelID(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, "sage", startChannelID, "StreamStartMsg should fall back to minister ID")
-	assert.Equal(t, "sage", doneChannelID, "StreamDoneMsg should fall back to minister ID")
+	assert.Equal(t, "chancellor", startChannelID, "StreamStartMsg should fall back to minister ID")
+	assert.Equal(t, "chancellor", doneChannelID, "StreamDoneMsg should fall back to minister ID")
 }

@@ -75,7 +75,7 @@ func initTabGreetings(tm *TabManager, defs []ministers.MinisterDef) {
 }
 
 // NewTabManager creates a TabManager with default tabs built from the given
-// minister defs. The default tabs are Forge, Sage, Judge, Chancellor —
+// minister defs. The default tabs are Forge, Chancellor, Judge, Secretary —
 // using "Kanji Title" as the label, derived from the defs.
 func NewTabManager(w, h int, mdEnabled bool, getStatus func() string, defs []ministers.MinisterDef) TabManager {
 	defsByID := ministers.LookupMap(defs)
@@ -322,13 +322,13 @@ func (tm *TabManager) CancelTabByID(tabID string) {
 }
 
 // CancelAllTabs cancels streaming on all tabs.
-// The Chancellor tab gets a fresh context for future rituals.
+// The Secretary tab gets a fresh context for future rituals.
 func (tm *TabManager) CancelAllTabs() {
 	for i := range tm.tabs {
 		if tm.tabs[i].Cancel != nil {
 			tm.tabs[i].Cancel()
 		}
-		if tm.tabs[i].Target == "chancellor" {
+		if tm.tabs[i].Target == "secretary" {
 			tm.tabs[i].Ctx, tm.tabs[i].Cancel = context.WithCancel(context.Background())
 		} else {
 			tm.tabs[i].Cancel = nil
@@ -351,8 +351,8 @@ func (tm *TabManager) SwitchTo(index int) {
 
 // UniqueTarget returns a target ID for the given minister ID that does not
 // collide with any existing tab's Target. The first occurrence uses the
-// bare minister ID (e.g. "sage"); subsequent ones get a suffix counter
-// (e.g. "sage-2", "sage-3").
+// bare minister ID (e.g. "chancellor"); subsequent ones get a suffix counter
+// (e.g. "chancellor-2", "chancellor-3").
 func (tm *TabManager) UniqueTarget(ministerID string) string {
 	existing := map[string]bool{}
 	for i := range tm.tabs {

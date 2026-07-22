@@ -9,10 +9,10 @@ timeless principles into the craft of software development.
 
 The Five Constant Virtues (五常, Wǔcháng):
 
-- 仁 (Rén) — Benevolence/Humaneness: The Sage embodies 仁, ensuring code serves users with compassion
+- 仁 (Rén) — Benevolence/Humaneness: The Chancellor embodies 仁, ensuring code serves users with compassion
 - 义 (Yì) — Righteousness: The Judge upholds 义, validating that implementations meet their proper purpose
 - 礼 (Lǐ) — Ritual Propriety: Rituals themselves are 礼, the formal patterns that maintain order
-- 智 (Zhì) — Wisdom: The Strategist exercises 智, discerning the proper path through complexity
+- 智 (Zhì) — Wisdom: The War exercises 智, discerning the proper path through complexity
 - 信 (Xìn) — Trustworthiness: The Tian ledger maintains 信, providing immutable accountability
 
 As Confucius taught in the Analects (論語): 
@@ -27,7 +27,7 @@ This is the essence of Zhengming (正名).
 ### Main Function
 
 The Court's purpose is to free the Ruler to hunt.
-The Ruler together with the Sage will hunt for new rituals,
+The Ruler together with the Chancellor will hunt for new rituals,
 improvments and look behind corners to come up with knight moves.
 The court handles the bureaucracy so the Ruler
 can stay in skirmish tempo, spotting openings and shaping direction.
@@ -58,7 +58,7 @@ The Court embodies these principles:
    ensuring the earth stays free of friction and bureaucracy.
 
 3. **De** (德) — Virtue.
-   The Sage ensures ethical behavior. Code must be beautiful.
+   The Chancellor ensures ethical behavior. Code must be beautiful.
 
 The metaphor isn't just aesthetic — it encodes a philosophy of careful, principled software development where clarity precedes action and quality is non-negotiable.
 
@@ -83,16 +83,16 @@ to handle complex software engineering tasks from inception to deployment.
                         └─────┬───────────────┬───────┘
                               │ Prompt        │ Prompt
                         ┌─────▼─────┐   ┌────▼──────┐
-                        │Chancellor │   │   Sage    │
-                        │  (宰相)    │   │  (孔子)    │
+                        │Chancellor │   │ Chancellor │
+                        │  (宰相)    │   │  (門下侍中)│
                         └─────┬─────┘   └───────────┘
                               │              sees all (read-only)
                               │              creates edicts ──►─┐
                               │ Task / Result                   │
           ┌────────────┬──────┼───────┬────────────┐            │
           ▼            ▼      ▼       ▼            ▼            │
-     Strategist     Forge   Judge   Sage                      │
-      (兵部)        (工部)  (刑部)  (孔子)                    │
+     War        Forge   Judge   Chancellor                 │
+      (兵部)        (工部)  (刑部)  (門下侍中)                    │
                                                                 │
                         ┌─────────────────┐                     │
                         │  Ritual Runner  │◄────────────────────┘
@@ -121,10 +121,10 @@ Classifying → Planning → Forging → Judging → Reviewing → Sealed
 ```
 
 - `brewing` — Chancellor determines the scope and approach
-- `planning` — Strategist breaks down the work into Lings
+- `planning` — War breaks down the work into Lings
 - `forging` — Forge implements the code changes
 - `judging` — Judge runs tests and validates changes
-- `reviewing` — Sage reviews for quality and standards
+- `reviewing` — Chancellor reviews for quality and standards
 - `sealed` — Edict successfully completed (minister marks it sealed after successful completion)
 - `cancelled` — Edict was cancelled
 
@@ -139,16 +139,16 @@ Each minister is a specialized AI agent with a specific role:
 | Minister | Role | Core Tools | Specialized Tools |
 |----------|------|------------|-------------------|
 | **Chancellor** | Coordinates all ministers, manages edict lifecycle, interfaces with the Ruler | — | `create_edict`, `cancel_edict`, `answer_zhengming`, `get_edict_status`, `list_edicts`, `list_rituals`, `enact_ritual`, `get_tian_events`, `asimisql` |
-| **Strategist** | Analyzes edicts, creates execution plans, decomposes work into Lings | `read_file`, `glob`, `grep` | `create_ling`, `update_ling`, `list_lings` |
+| **War** | Analyzes edicts, creates execution plans, decomposes work into Lings | `read_file`, `glob`, `grep` | `create_ling`, `update_ling`, `list_lings` |
 | **Forge** | Implements code changes according to plans | `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `run_shell_command` | `create_manifest`, `update_manifest`, `commit_manifest` |
 | **Judge** | Writes tests and validates changes through test coverage | `read_file`, `write_file`, `edit_file`, `glob`, `run_shell_command` | `record_verdict`, `reject_manifest` |
-| **Sage** | Sees all state read-only, helps distill intent into edicts, performs code review with precedent tracking | `read_file`, `glob`, `grep` (all tables) | `create_edict`, `record_precedent` |
+| **Chancellor** | Sees all state read-only, helps distill intent into edicts, performs code review with precedent tracking | `read_file`, `glob`, `grep` (all tables) | `create_edict`, `record_precedent` |
 
 **Core Tools** are the basic file system and shell tools needed for each minister's work. **Specialized Tools** are unique to each minister's role in the Court. All ministers also share two common tools: `consult_minister` and `request_zhengming`.
 
 ### Lings
 
-A **Ling** is a sub-task within an edict's execution plan. The Strategist
+A **Ling** is a sub-task within an edict's execution plan. The War
 creates Lings during the planning phase, breaking down the edict intent into
 actionable work items with dependencies.
 
@@ -252,8 +252,8 @@ For medium-complexity work with planning and review:
   background:
     - the edict details
   steps:
-    - name: strategist
-      minister: strategist
+    - name: war
+      minister: war
       act: |
         Analyze edict {{ .edict_id }} and produce a technical Battle Plan.
         Break down the work into clear phases with dependencies.
@@ -266,8 +266,8 @@ For medium-complexity work with planning and review:
         - the manifests
       act: |
         Execute the Battle Plan for edict {{ .edict_id }}.
-        Implement changes according to the Strategist's design.
-      depends_on: [strategist]
+        Implement changes according to the War plan.
+      depends_on: [war]
       on_failure: retry
 
     - name: judge
@@ -284,7 +284,7 @@ For medium-complexity work with planning and review:
       on_failure_target: forge
 
     - name: review
-      minister: sage
+      minister: chancellor
       given:
         - the manifests
         - the verdicts
@@ -293,7 +293,7 @@ For medium-complexity work with planning and review:
         Verify it adheres to the Imperial Code (project standards).
       depends_on: [judge]
       on_failure: goto
-      on_failure_target: strategist
+      on_failure_target: war
   then:
     - the edict is sealed
 ```
@@ -308,8 +308,8 @@ Full lifecycle orchestration with deployment:
   background:
     - the edict details
   steps:
-    - name: strategist
-      minister: strategist
+    - name: war
+      minister: war
       act: |
         Produce a comprehensive Battle Plan for edict {{ .edict_id }}.
         Decompose into lings with dependencies.
@@ -322,7 +322,7 @@ Full lifecycle orchestration with deployment:
       act: |
         Execute all lings for edict {{ .edict_id }}.
         Implement each change and stage manifests.
-      depends_on: [strategist]
+      depends_on: [war]
       on_failure: retry
 
     - name: judge
@@ -338,7 +338,7 @@ Full lifecycle orchestration with deployment:
       on_failure_target: forge
 
     - name: review
-      minister: sage
+      minister: chancellor
       given:
         - the manifests
         - the verdicts
@@ -346,7 +346,7 @@ Full lifecycle orchestration with deployment:
         Full quality and standards review for edict {{ .edict_id }}.
       depends_on: [judge]
       on_failure: goto
-      on_failure_target: strategist
+      on_failure_target: war
 
     - name: deploy
       minister: marshal
@@ -365,7 +365,7 @@ Full lifecycle orchestration with deployment:
 
 #### Review (Code review)
 
-Judge and Sage review changes in the working tree:
+Judge and Chancellor review changes in the working tree:
 
 ```yaml
 - name: review
@@ -381,7 +381,7 @@ Judge and Sage review changes in the working tree:
         bugs, or missing test coverage.
 
     - name: review
-      minister: sage
+      minister: chancellor
       act: |
         Review the code changes for quality and standards compliance.
         Check for style violations, security concerns, and architectural issues.
@@ -391,7 +391,7 @@ Judge and Sage review changes in the working tree:
       minister: chancellor
       act: |
         Produce a comprehensive code review report.
-        Summarize the findings from the judge and sage.
+        Summarize the findings from the judge and chancellor.
         Highlight any blocking issues and suggest improvements.
       depends_on: [review]
 ```
@@ -492,7 +492,7 @@ Both `given` and `then` fields match entries against registered step definitions
 | `the court status` | `get_court_status` | `court_status` | `given` | Current state of all active edicts |
 | `the manifests` | `get_manifests` | `manifests` | `given` | List of forge manifests for the edict |
 | `the verdicts` | `get_verdicts` | `verdicts` | `given` | Judge verdicts for the edict |
-| `the precedents` | `get_precedents` | `precedents` | `given` | Sage precedents for the edict |
+| `the precedents` | `get_precedents` | `precedents` | `given` | Chancellor precedents for the edict |
 | `the edict is sealed` | `seal_edict` | `sealed` | `then` | Mark the edict as sealed |
 | `the edict is blocked` | `block_edict` | `blocked` | `then` | Mark the edict as blocked |
 | `the edict is unblocked` | `unblock_edict` | `unblocked` | `then` | Mark the edict as unblocked |
@@ -560,7 +560,7 @@ When a step exhausts all `max_retries` attempts, the Court invokes the `report_f
 
 > The Chancellor orchestrates ministers through rituals, not direct invocation. For ad-hoc minister work, use `enact_ritual` with a custom ritual.
 
-### Strategist Tools
+### War Tools
 
 - `create_ling(edict_id, description, depends_on?)` — Create a new Ling (sub-task) for an edict
 - `update_ling(ling_id, status?, description?)` — Update a Ling's status or description
@@ -577,7 +577,7 @@ When a step exhausts all `max_retries` attempts, the Court invokes the `report_f
 - `record_verdict(edict_id, ling_id?, passed, details?)` — Record test results for an edict or specific Ling
 - `reject_manifest(manifest_id, reason)` — Mark a manifest as rejected with reasoning
 
-### Sage Tools
+### Chancellor Tools
 
 - `record_precedent(edict_id, approved, reasoning)` — Record code review outcome with reasoning
 
@@ -592,7 +592,7 @@ When the Forge implements changes, it creates **Manifests** tracking each file m
 - `staged` — Change created but not committed
 - `live` — Committed to the repository
 - `quenched` — Validated by the Judge
-- `rejected` — Failed review (set by Judge or Sage via `reject_manifest`)
+- `rejected` — Failed review (set by Judge or Chancellor via `reject_manifest`)
 
 ### Ling Status
 
@@ -609,9 +609,9 @@ The Judge creates **Verdicts** after running tests:
 - `passed` — Tests succeeded
 - `failed` — Tests failed
 
-### Sage Precedents
+### Chancellor Precedents
 
-The Sage records **Precedents** from code reviews:
+The Chancellor records **Precedents** from code reviews:
 - `approved` — Code meets standards
 - `rejected` — Code violates principles
 
@@ -627,9 +627,9 @@ These events trigger minister actions via subscriptions. Ministers subscribe to 
 
 | Event | Emitted by | Subscribers | Action Triggered |
 |-------|-----------|-------------|------------------|
-| `edict_created` | Chancellor | Strategist | Begin planning |
+| `edict_created` | Chancellor | War | Begin planning |
 | `manifest_committed` | Forge | Judge | Run tests |
-| `manifest_rejected` | Judge, Sage | Forge | Reforge changes |
+| `manifest_rejected` | Judge, Chancellor | Forge | Reforge changes |
 | `zhengming_answered` | Chancellor | originating minister | Resume halted work |
 | `court_started` | Court | — | Triggers `wakeup` ritual |
 
@@ -745,17 +745,17 @@ The Ruling tab is the court. You talk to the **Chancellor**, edicts flow through
 
 #### Hunting Tab — Skirmish Tempo
 
-The Hunting tab is where agility lives — knight moves, L-shaped lateral thinking. You talk to **Sage** (孔子), who sits outside the court hierarchy.
+The Hunting tab is where agility lives — knight moves, L-shaped lateral thinking. You talk to **Chancellor** (門下侍中), who sits outside the court hierarchy.
 
-**Sage** sees everything: edicts, ling, manifests, precedents, code — full read-only access across the entire system. His job is to distill the Ruler's *ren* (仁) — to help fuzzy intent crystallize into sharp edicts.
+**Chancellor** sees everything: edicts, ling, manifests, precedents, code — full read-only access across the entire system. Its job is to distill the Ruler's *ren* (仁) — to help fuzzy intent crystallize into sharp edicts.
 
 ```
 Hunting tab                          Ruling tab
 ───────────                          ──────────
-You + Sage                      Chancellor + Court
+You + Chancellor                      Chancellor + Court
     │                                     │
     ├─ "this auth is brittle"             │
-    ├─ Sage probes, questions        │
+    ├─ Chancellor probes, questions        │
     ├─ intent crystallizes                │
     ├─ creates edict ────────────────────►│
     │   [edict-a3f8b2c1](ruling://...)    ├─ Chancellor classifies
@@ -763,7 +763,7 @@ You + Sage                      Chancellor + Court
     │                                     ▼
 ```
 
-When Sage creates an edict, the Hunting tab shows a clickable link. Clicking it switches to the Ruling tab, scrolled to where that edict's conversation begins.
+When Chancellor creates an edict, the Hunting tab shows a clickable link. Clicking it switches to the Ruling tab, scrolled to where that edict's conversation begins.
 
 #### Minister Tabs — Observation
 
@@ -773,15 +773,15 @@ Useful for monitoring what a minister is doing without interrupting the court.
 Examples:
 - `:tabnew forge` — file changes, manifests, commit history
 - `:tabnew judge` — test runs, verdicts
-- `:tabnew sage` — review outcomes, precedents
-- `:tabnew strategist` — battle plans, lings
+- `:tabnew chancellor` — review outcomes, precedents
+- `:tabnew war` — battle plans, lings
 
 | Aspect | Ruling | Hunting | Minister |
 |--------|--------|---------|----------|
-| **Counterpart** | Chancellor | Sage | — (scroll-only log) |
+| **Counterpart** | Chancellor | Chancellor | — (scroll-only log) |
 | **Tempo** | Campaign (castle-siege) | Skirmish (swift-strike) | Observation |
 | **Purpose** | Execute edicts | Spot openings, distill intent | Monitor minister activity |
-| **Edict creation** | Ruler dictates directly | Sage distills from conversation | — |
+| **Edict creation** | Ruler dictates directly | Chancellor distills from conversation | — |
 | **Awareness** | Court ministers only | Full read-only across all state | Single minister's history |
 
 ---
@@ -881,14 +881,14 @@ The Court maintains a central event registry. Ministers subscribe to event types
 
 | Event | Emitted by | Subscribers |
 |-------|-----------|-------------|
-| `edict_created` | Chancellor | Strategist |
+| `edict_created` | Chancellor | War |
 | `phase_changed` | any minister | Chancellor |
 | `zhengming_raised` | any minister | Chancellor |
 | `zhengming_answered` | Chancellor | originating minister |
 | `manifest_committed` | Forge | Judge |
-| `manifest_rejected` | Judge, Sage | Forge |
-| `verdict_delivered` | Judge | Chancellor, Sage |
-| `precedent_recorded` | Sage | Chancellor |
+| `manifest_rejected` | Judge, Chancellor | Forge |
+| `verdict_delivered` | Judge | Chancellor, Chancellor |
+| `precedent_recorded` | Chancellor | Chancellor |
 | `ritual_step_started` | Ritual Runner | — |
 | `ritual_step_completed` | Ritual Runner | — |
 | `ritual_step_failed` | Ritual Runner | — |
@@ -900,16 +900,16 @@ Ministers are isolated by **tool catalogs** — each minister receives a differe
 | Minister | File Tools | Shell | DB Tables | Orchestration Tools |
 |----------|-----------|-------|-----------|-------------------|
 | **Chancellor** | read-only (list, read, read_many, grep) | no | edicts, zhengming, forge_manifests, ling | create_edict, enact_ritual, asimi_sql |
-| **Strategist** | read-only | no | ling | create_ling, list_ling, update_ling |
+| **War** | read-only | no | ling | create_ling, list_ling, update_ling |
 | **Forge** | read-write (read, write, replace, list, read_many, grep) | yes | forge_manifests | create_manifest, update_manifest, commit_manifest |
 | **Judge** | edit (read, write, replace, list, read_many, grep) | yes | verdicts, forge_manifests | record_verdict, reject_manifest |
-| **Sage** | read-only (all tables) | no | edicts, ling, forge_manifests, verdicts, censor_precedents | create_edict, record_precedent |
+| **Chancellor** | read-only (all tables) | no | edicts, ling, forge_manifests, verdicts, censor_precedents | create_edict, record_precedent |
 
 Key constraints:
-- **Strategist cannot write code** — it only plans (ling) and reads.
+- **War cannot write code** — it only plans (ling) and reads.
 - **Chancellor cannot write files** — it orchestrates, never implements.
 - **Only Forge and Judge have shell access**.
-- **Sage sees all but changes nothing** — full read-only across every table; can only create edicts and record precedents.
+- **Chancellor sees all but changes nothing** — full read-only across every table; can only create edicts and record precedents.
 - **All ministers share** `consult_minister` and `request_zhengming` as common tools.
 
 The `Session` also enforces **write protection** — a file must be read via `read_file` before it can be written via `write_file`. This is tracked per-session in `filesRead`.
@@ -920,13 +920,13 @@ The `Session` also enforces **write protection** — a file must be read via `re
 |---------|---------------------|
 | **Minister writes code it shouldn't** | Tool catalogs: only Forge and Judge get write/edit tools |
 | **Minister runs shell commands it shouldn't** | Shell tool only granted to Forge, Judge |
-| **Intent drift** | Chancellor classifies edicts; Strategist plans before Forge implements |
+| **Intent drift** | Chancellor classifies edicts; War plans before Forge implements |
 | **Ambiguity propagation** | Zhengming: any minister can halt and request clarification |
 | **Runaway minister** | Idle timer aborts silent steps after `step_idle_timeout` (default 5m); context cancellation propagates |
 | **Tool call loops** | Session detects repeated identical tool calls after 3 attempts; invokes `report_failure` ritual |
 | **Unauthorized file writes** | Write protection: file must be `read_file`'d before `write_file` or `replace_text` |
-| **Ritual failure** | Step-level retry, goto, abort; Sage can regress to Strategist |
-| **Precedent violation** | Sage logs all rulings to `censor_precedents` table as searchable case law |
+| **Ritual failure** | Step-level retry, goto, abort; Chancellor can regress to War |
+| **Precedent violation** | Chancellor logs all rulings to `censor_precedents` table as searchable case law |
 
 ---
 

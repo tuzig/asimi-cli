@@ -48,7 +48,7 @@ name: test-ritual
 description: A test ritual
 steps:
   - name: step1
-    minister: strategist
+    minister: war
     task: Plan the work
 `,
 			wantErr: false,
@@ -59,8 +59,8 @@ steps:
 				if len(r.Steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(r.Steps))
 				}
-				if r.Steps[0].Minister != "strategist" {
-					t.Errorf("expected minister 'strategist', got %q", r.Steps[0].Minister)
+				if r.Steps[0].Minister != "war" {
+					t.Errorf("expected minister 'war', got %q", r.Steps[0].Minister)
 				}
 			},
 		},
@@ -601,7 +601,7 @@ func TestLoadAllRituals_ProjectReleaseVersionRitual(t *testing.T) {
 		"bump-version",
 		"update-roadmap",
 		"verify-release-readiness",
-		"sage-reviews",
+		"chancellor-reviews",
 		"commit-and-tag",
 		"confirm-push",
 	}
@@ -613,13 +613,13 @@ func TestLoadAllRituals_ProjectReleaseVersionRitual(t *testing.T) {
 
 	// Verify ministers are assigned correctly
 	expectedMinisters := map[string]string{
-		"prepare-changelog":      "strategist",
+		"prepare-changelog":      "war",
 		"bump-version":           "forge",
 		"update-roadmap":         "forge",
 		"verify-release-readiness": "judge",
-		"sage-reviews":           "sage",
-		"commit-and-tag":         "chancellor",
-		"confirm-push":           "chancellor",
+		"chancellor-reviews":           "chancellor",
+		"commit-and-tag":         "secretary",
+		"confirm-push":           "secretary",
 	}
 	for _, step := range release.Steps {
 		if want, ok := expectedMinisters[step.Name]; ok {
@@ -820,7 +820,7 @@ func TestRitualStreamMessages_MultiStep(t *testing.T) {
 		Steps: []RitualStep{
 			{Name: "step1", Minister: "forge", Task: "do one"},
 			{Name: "step2", Minister: "judge", Task: "do two"},
-			{Name: "step3", Minister: "sage", Task: "do three"},
+			{Name: "step3", Minister: "chancellor", Task: "do three"},
 		},
 	}
 
@@ -1781,7 +1781,7 @@ func (m *ritualTestMinister) getCallLog() []string {
 func newRitualTestCourt(t *testing.T, output string, err error) *Court {
 	t.Helper()
 	ministers := map[string]Minister{}
-	for _, id := range []string{"forge", "judge", "sage", "strategist", "chancellor"} {
+	for _, id := range []string{"forge", "judge", "chancellor", "war", "secretary"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,
@@ -1811,7 +1811,7 @@ func newRitualTestCourt(t *testing.T, output string, err error) *Court {
 func newRitualTestCourtWithDB(t *testing.T, db *gorm.DB, output string, err error) *Court {
 	t.Helper()
 	ministers := map[string]Minister{}
-	for _, id := range []string{"forge", "judge", "sage", "strategist", "chancellor"} {
+	for _, id := range []string{"forge", "judge", "chancellor", "war", "secretary"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,
@@ -2820,7 +2820,7 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 	// Create chancellor minister with its own session
 	chancellor := &ritualTestMinister{
 		MinisterBase: MinisterBase{logger: slog.Default()},
-		id:           "chancellor",
+		id:           "secretary",
 		tasksCh:      make(chan *Task, 1),
 		result:       "chancellor response",
 	}
@@ -2832,7 +2832,7 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 	court := &Court{
 		ministers: map[string]Minister{
 			"forge":      forge,
-			"chancellor": chancellor,
+			"secretary": chancellor,
 		},
 		logger: slog.Default(),
 	}
@@ -3851,7 +3851,7 @@ func TestExecuteForkDAG_NoEarlyDispatch(t *testing.T) {
 	go slowMinister.Run(ctx)
 
 	ministers := map[string]Minister{}
-	for _, id := range []string{"judge", "sage", "strategist", "chancellor"} {
+	for _, id := range []string{"judge", "chancellor", "war", "secretary"} {
 		m := &ritualTestMinister{
 			MinisterBase: MinisterBase{logger: slog.Default()},
 			id:           id,
@@ -4115,7 +4115,7 @@ func TestRitualChannelIDHelper(t *testing.T) {
 }
 
 // TestRitualNotifyUsesEdictChannelID verifies that Notify() sets the
-// ChannelID on RitualStepMsg to the edict's channel, not "chancellor".
+// ChannelID on RitualStepMsg to the edict's channel, not "secretary".
 func TestRitualNotifyUsesEdictChannelID(t *testing.T) {
 	var got RitualStepMsg
 	e := &RitualExecution{

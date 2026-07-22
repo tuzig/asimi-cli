@@ -27,8 +27,8 @@ func LoadAllMinisters(projectDir string) ([]MinisterDef, error) {
 var commonTools = []string{"consult_minister", "request_zhengming"}
 
 // ministerImpl is the generic, YAML-driven minister type. It replaces the
-// five hand-coded minister structs (Chancellor, Forge, Judge, Sage,
-// Strategist) with a single implementation that derives its behaviour
+// five hand-coded minister structs (Secretary, Forge, Judge, Chancellor,
+// War) with a single implementation that derives its behaviour
 // from a MinisterDef.
 type ministerImpl struct {
 	*MinisterBase

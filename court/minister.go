@@ -82,7 +82,7 @@ type Result struct {
 
 // Minister is the shared interface for all Court ministers
 type Minister interface {
-	// ID returns the minister's unique identifier (e.g., "strategist", "forge")
+	// ID returns the minister's unique identifier (e.g., "war", "forge")
 	ID() string
 	// Logger returns the minister's logger with scoped metadata.
 	Logger() *slog.Logger
@@ -217,7 +217,7 @@ type MinisterBase struct {
 	onZhengmingResolved func()
 
 	sessionMu sync.RWMutex
-	sessions  map[string]*Session // Per-channel sessions: "sage", "e633", "i456", etc.
+	sessions  map[string]*Session // Per-channel sessions: "chancellor", "e633", "i456", etc.
 
 	username string
 	project  string
@@ -232,7 +232,7 @@ type MinisterBase struct {
 	preTaskHook   PreTaskHook
 	postTaskHook  PostTaskHook
 	taskFallback  TaskFallback
-	ctxMiddleware func(context.Context) context.Context // wraps ctx before streaming (e.g., Sage's failure accumulator)
+	ctxMiddleware func(context.Context) context.Context // wraps ctx before streaming (e.g., Chancellor's failure accumulator)
 
 	// promptPreprocessor transforms a prompt before streaming.
 	// Set by ministers that need edict-specific preprocessing (e.g., Chancellor).
@@ -729,7 +729,7 @@ func (m *MinisterBase) streamTask(ctx context.Context, work string, key storage.
 func (m *MinisterBase) processTask(ctx context.Context, task *Task) {
 	m.logger.Info("processing task", "minister_id", m.ministerID, "edict_id", task.EdictKey.ID, "work", task.Work[:min(60, len(task.Work))])
 
-	// Allow context middleware (e.g., Sage's failure accumulator) to wrap ctx
+	// Allow context middleware (e.g., Chancellor's failure accumulator) to wrap ctx
 	if m.ctxMiddleware != nil {
 		ctx = m.ctxMiddleware(ctx)
 	}

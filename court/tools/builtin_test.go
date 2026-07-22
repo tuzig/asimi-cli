@@ -225,7 +225,7 @@ func TestRegisterBuiltinToolsExtraChancellor(t *testing.T) {
 	assertNotHas(t, publicNames, "enact_ritual")
 
 	// Extra tools should appear when resolved via ExtraTools
-	chancellorExtras := r.ExtraTools("chancellor", []string{"consult_minister", "enact_ritual"})
+	chancellorExtras := r.ExtraTools("secretary", []string{"consult_minister", "enact_ritual"})
 	extraNames := toolNames(chancellorExtras)
 	assertHas(t, extraNames, "consult_minister")
 	assertHas(t, extraNames, "enact_ritual")
@@ -253,7 +253,7 @@ func TestRegisterBuiltinToolsExtraConditionalRitual(t *testing.T) {
 		// RitualLauncher is nil
 	})
 
-	chancellorExtras := r.ExtraTools("chancellor", []string{"consult_minister", "enact_ritual"})
+	chancellorExtras := r.ExtraTools("secretary", []string{"consult_minister", "enact_ritual"})
 	extraNames := toolNames(chancellorExtras)
 
 	assertHas(t, extraNames, "consult_minister")
@@ -272,11 +272,11 @@ func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 	})
 
 	ministerPerms := map[string]string{
-		"chancellor": "rwxr--rwx",
+		"secretary": "rwxr--rwx",
 		"forge":      "rwxr---w-",
 		"judge":      "rwxrwxr--",
-		"sage":       "r--r--rwx",
-		"strategist": "r-----rw-",
+		"chancellor":       "r--r--rwx",
+		"war": "r-----rw-",
 	}
 
 	for minister, permStr := range ministerPerms {
@@ -291,7 +291,7 @@ func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 }
 
 func TestConsultMinisterTool_DynamicMinisterIDs(t *testing.T) {
-	ministerIDs := []string{"chancellor", "forge", "judge", "sage", "strategist"}
+	ministerIDs := []string{"secretary", "forge", "judge", "chancellor", "war"}
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
 		Ctx:                testCtx(),
@@ -299,7 +299,7 @@ func TestConsultMinisterTool_DynamicMinisterIDs(t *testing.T) {
 		MinisterIDs:        ministerIDs,
 	})
 
-	extras := r.ExtraTools("chancellor", []string{"consult_minister"})
+	extras := r.ExtraTools("secretary", []string{"consult_minister"})
 	if len(extras) != 1 {
 		t.Fatalf("expected 1 extra tool, got %d", len(extras))
 	}
@@ -361,7 +361,7 @@ func TestConsultMinisterTool_DefaultMinisterIDs(t *testing.T) {
 		// MinisterIDs is nil — should fall back to hardcoded examples
 	})
 
-	extras := r.ExtraTools("chancellor", []string{"consult_minister"})
+	extras := r.ExtraTools("secretary", []string{"consult_minister"})
 	if len(extras) != 1 {
 		t.Fatalf("expected 1 extra tool, got %d", len(extras))
 	}
@@ -375,8 +375,8 @@ func TestConsultMinisterTool_DefaultMinisterIDs(t *testing.T) {
 	if !ok {
 		t.Fatal("minister_id description is not a string")
 	}
-	if !strings.Contains(desc, "strategist") {
-		t.Errorf("default description should contain 'strategist', got: %s", desc)
+	if !strings.Contains(desc, "war") {
+		t.Errorf("default description should contain 'war', got: %s", desc)
 	}
 }
 
@@ -432,11 +432,11 @@ func TestConsultMinisterTool_FactoryProducesPerMinisterInstances(t *testing.T) {
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
 		Ctx:                testCtx(),
 		MinisterConsultant: mockConsultant{},
-		MinisterIDs:        []string{"chancellor", "forge", "judge"},
+		MinisterIDs:        []string{"secretary", "forge", "judge"},
 	})
 
 	// Resolve the tool for different ministers
-	for _, mid := range []string{"judge", "forge", "chancellor"} {
+	for _, mid := range []string{"judge", "forge", "secretary"} {
 		extras := r.ExtraTools(mid, []string{"consult_minister"})
 		if len(extras) != 1 {
 			t.Fatalf("expected 1 extra tool for %s, got %d", mid, len(extras))

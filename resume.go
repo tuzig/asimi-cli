@@ -295,13 +295,13 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 	m.tabs.Content().Chat.FlushDirty()
 
 	// Re-hydrate the minister session so follow-up prompts continue the
-	// conversation. TabType holds the minister id (chancellor/sage/forge/judge);
+	// conversation. TabType holds the minister id (secretary/chancellor/forge/judge);
 	// legacy rows with no TabType predate per-minister persistence and are
-	// treated as chancellor sessions.
+	// treated as secretary sessions.
 	if m.court != nil {
 		tabType := session.TabType
 		if tabType == "" {
-			tabType = "chancellor"
+			tabType = "secretary"
 		}
 
 		if ritualRestore {
@@ -316,7 +316,7 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 			// Submit the pending prompt to the minister, routed to the ritual tab
 			ministerID := session.TabType
 			if ministerID == "" {
-				ministerID = "chancellor"
+				ministerID = "secretary"
 			}
 			p := &court.Prompt{
 				Ctx:       context.Background(),

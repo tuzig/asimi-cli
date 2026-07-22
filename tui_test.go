@@ -1309,7 +1309,7 @@ func TestCancelActiveStreaming(t *testing.T) {
 	model := newTestModel(t)
 
 	// Set up active streaming on the Chancellor tab
-	model.tabs.SwitchToTabType("chancellor")
+	model.tabs.SwitchToTabType("secretary")
 	tab := model.tabs.ActiveTab()
 	tab.Streaming = true
 	cancelCalled := false
@@ -1331,7 +1331,7 @@ func TestCancelActiveStreaming_NotActive(t *testing.T) {
 	model := newTestModel(t)
 
 	// Switch to Chancellor tab and set up non-streaming state
-	model.tabs.SwitchToTabType("chancellor")
+	model.tabs.SwitchToTabType("secretary")
 	tab := model.tabs.ActiveTab()
 	tab.Streaming = false
 	tab.Cancel = nil
@@ -1893,7 +1893,7 @@ func TestStopStreamingTab_ClearsPendingRetry(t *testing.T) {
 func TestStopStreaming_ClearsAllPendingRetries(t *testing.T) {
 	model := newTestModel(t)
 	model.connDropPendingRetry = map[string]pendingRetry{
-		"chancellor": {prompt: "retry 1"},
+		"secretary": {prompt: "retry 1"},
 		"forge":      {prompt: "retry 2"},
 	}
 
@@ -1922,9 +1922,9 @@ func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
 
 	// Simulate a "started" message first
 	startedMsg := court.RitualStepMsg{
-		ChannelID:  "chancellor",
+		ChannelID:  "secretary",
 		RitualName: "dawn-audience",
-		StepName:   "strategist",
+		StepName:   "war",
 		StepIndex:  0,
 		TotalSteps: 3,
 		Status:     "started",
@@ -1934,9 +1934,9 @@ func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
 
 	// Now send the "completed" message with minister output
 	completedMsg := court.RitualStepMsg{
-		ChannelID:  "chancellor",
+		ChannelID:  "secretary",
 		RitualName: "dawn-audience",
-		StepName:   "strategist",
+		StepName:   "war",
 		StepIndex:  0,
 		TotalSteps: 3,
 		Status:     "completed",
@@ -1947,7 +1947,7 @@ func TestRitualStepMsg_CompletedWithMessage(t *testing.T) {
 	require.True(t, ok)
 
 	// The completed step with a Message should add a new message with checkmark and message
-	chancellorChat := updatedModel.tabs.ChatByTab("chancellor")
+	chancellorChat := updatedModel.tabs.ChatByTab("secretary")
 	lastMsg := chancellorChat.Messages[len(chancellorChat.Messages)-1]
 	assert.Contains(t, lastMsg.Content, "✓")
 	assert.Contains(t, lastMsg.Content, "三界 summary")
@@ -1960,7 +1960,7 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 
 	// Simulate a "started" message
 	startedMsg := court.RitualStepMsg{
-		ChannelID:  "chancellor",
+		ChannelID:  "secretary",
 		RitualName: "dawn-audience",
 		StepName:   "check-sandbox",
 		StepIndex:  1,
@@ -1971,12 +1971,12 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	startedModel := newModel.(TUIModel)
 
 	// Count messages before
-	chancellorChatBefore := startedModel.tabs.ChatByTab("chancellor")
+	chancellorChatBefore := startedModel.tabs.ChatByTab("secretary")
 	msgCountBefore := len(chancellorChatBefore.Messages)
 
 	// Send "completed" without a Message (e.g., check-sandbox which uses ToolCallScheduledMsg)
 	completedMsg := court.RitualStepMsg{
-		ChannelID:  "chancellor",
+		ChannelID:  "secretary",
 		RitualName: "dawn-audience",
 		StepName:   "check-sandbox",
 		StepIndex:  1,
@@ -1989,7 +1989,7 @@ func TestRitualStepMsg_CompletedWithoutMessage(t *testing.T) {
 	require.True(t, ok)
 
 	// A new message should be added for the completed step
-	chancellorChatAfter := updatedModel.tabs.ChatByTab("chancellor")
+	chancellorChatAfter := updatedModel.tabs.ChatByTab("secretary")
 	msgCountAfter := len(chancellorChatAfter.Messages)
 	assert.Equal(t, msgCountBefore+1, msgCountAfter)
 
@@ -3540,7 +3540,7 @@ func TestEventZhengmingAnswered_ShowsAnswerInChat(t *testing.T) {
 	model.court = mock
 
 	eventMsg := court.EventNotificationMsg{
-		ChannelID: "chancellor",
+		ChannelID: "secretary",
 		EventType: storage.EventZhengmingAnswered,
 		EdictKey:  storage.EdictKey{ID: 42, Username: "test", Project: "test"},
 		Payload: map[string]interface{}{
@@ -3552,7 +3552,7 @@ func TestEventZhengmingAnswered_ShowsAnswerInChat(t *testing.T) {
 	updated, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
-	chat := updated.tabs.ChatByTab("chancellor")
+	chat := updated.tabs.ChatByTab("secretary")
 	var found bool
 	for _, m := range chat.Messages {
 		if strings.Contains(m.Content, "Answered for e42") && strings.Contains(m.Content, "yes, proceed with the plan") {
@@ -3569,7 +3569,7 @@ func TestEventEdictCreated_EntersYesNoMode(t *testing.T) {
 
 	// Simulate EventEdictCreated notification
 	eventMsg := court.EventNotificationMsg{
-		ChannelID: "chancellor",
+		ChannelID: "secretary",
 		EventType: storage.EventEdictCreated,
 		EdictKey:  storage.EdictKey{ID: 13, Username: "test", Project: "test"},
 		Payload: map[string]interface{}{
@@ -4419,7 +4419,7 @@ func TestEventSealGranted_RulerShowsToast(t *testing.T) {
 	model.court = mock
 
 	eventMsg := court.EventNotificationMsg{
-		ChannelID: "chancellor",
+		ChannelID: "secretary",
 		EventType: storage.EventSealGranted,
 		EdictKey:  storage.EdictKey{ID: 7, Username: "test", Project: "test"},
 		Payload: map[string]interface{}{
@@ -4439,7 +4439,7 @@ func TestEventSealGranted_RulerShowsToast(t *testing.T) {
 	assert.Contains(t, toast.Message, sealPrefix)
 
 	// Chat should NOT contain the seal message
-	chat := updated.tabs.ChatByTab("chancellor")
+	chat := updated.tabs.ChatByTab("secretary")
 	for _, m := range chat.Messages {
 		assert.NotContains(t, m.Content, "Ruler sealed edict 7",
 			"ruler seal should not be added to chat")
@@ -4458,7 +4458,7 @@ func TestEventSealGranted_NonRulerAddsChatMessage(t *testing.T) {
 	model.court = mock
 
 	eventMsg := court.EventNotificationMsg{
-		ChannelID: "chancellor",
+		ChannelID: "secretary",
 		EventType: storage.EventSealGranted,
 		EdictKey:  storage.EdictKey{ID: 7, Username: "test", Project: "test"},
 		Payload: map[string]interface{}{
@@ -4474,7 +4474,7 @@ func TestEventSealGranted_NonRulerAddsChatMessage(t *testing.T) {
 	assert.Empty(t, updated.commandLine.toasts, "no toast expected for non-ruler seal")
 
 	// Chat should contain the seal message with seal chain
-	chat := updated.tabs.ChatByTab("chancellor")
+	chat := updated.tabs.ChatByTab("secretary")
 	require.NotEmpty(t, chat.Messages, "expected a chat message for judge seal")
 	found := false
 	for _, m := range chat.Messages {
@@ -4633,9 +4633,9 @@ func TestDispatchEdictAction_Chat_NoSession(t *testing.T) {
 	cmd := dispatchEdictAction(model, 42, []string{"Chat"})
 	require.NotNil(t, cmd)
 	msg := cmd()
-	sysMsg, ok := msg.(showContextMsg)
-	assert.True(t, ok, "expected showContextMsg when edict has no linked session")
-	assert.Contains(t, sysMsg.content, "No session linked to edict 42")
+	toast, ok := msg.(toastMsg)
+	assert.True(t, ok, "expected toastMsg when edict has no linked session")
+	assert.Contains(t, toast.message, "No session linked to edict 42")
 }
 
 func TestHandleSessionSelected_SwitchesToSessionTab(t *testing.T) {
@@ -4643,18 +4643,18 @@ func TestHandleSessionSelected_SwitchesToSessionTab(t *testing.T) {
 	model.tabs.DismissWelcome()
 
 	// Start on the chancellor tab
-	model.tabs.SwitchToTabType("chancellor")
-	require.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type))
+	model.tabs.SwitchToTabType("secretary")
+	require.Equal(t, "secretary", string(model.tabs.ActiveTab().Type))
 
 	// Simulate a session that belongs to the sage tab
 	session := &court.Session{
 		ID:      "sess-sage-1",
-		TabType: "sage",
+		TabType: "chancellor",
 	}
 	model.handleSessionSelected(session)
 
 	// The active tab should now be sage, not chancellor
-	assert.Equal(t, "sage", string(model.tabs.ActiveTab().Type),
+	assert.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type),
 		"handleSessionSelected should switch to the session's tab type")
 }
 
@@ -4663,8 +4663,8 @@ func TestHandleSessionSelected_EmptyTabTypeStaysOnCurrentTab(t *testing.T) {
 	model.tabs.DismissWelcome()
 
 	// Start on the chancellor tab
-	model.tabs.SwitchToTabType("chancellor")
-	require.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type))
+	model.tabs.SwitchToTabType("secretary")
+	require.Equal(t, "secretary", string(model.tabs.ActiveTab().Type))
 
 	// Session with no TabType — should not switch
 	session := &court.Session{
@@ -4673,7 +4673,7 @@ func TestHandleSessionSelected_EmptyTabTypeStaysOnCurrentTab(t *testing.T) {
 	}
 	model.handleSessionSelected(session)
 
-	assert.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type),
+	assert.Equal(t, "secretary", string(model.tabs.ActiveTab().Type),
 		"empty TabType should not cause a tab switch")
 }
 
@@ -4681,10 +4681,10 @@ func TestHandleSessionSelected_NilSessionIsNoOp(t *testing.T) {
 	model := newTestModel(t)
 	model.tabs.DismissWelcome()
 
-	model.tabs.SwitchToTabType("chancellor")
+	model.tabs.SwitchToTabType("secretary")
 	model.handleSessionSelected(nil)
 
-	assert.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type),
+	assert.Equal(t, "secretary", string(model.tabs.ActiveTab().Type),
 		"nil session should not change the active tab")
 }
 
@@ -4796,9 +4796,10 @@ func TestResumeEdictSession_NoSessionLinked(t *testing.T) {
 	cmd := resumeEdictSession(model, 5)
 	require.NotNil(t, cmd)
 	msg := cmd()
-	sysMsg, ok := msg.(showContextMsg)
-	require.True(t, ok, "expected showContextMsg")
-	assert.Contains(t, sysMsg.content, "No session linked")
+	toast, ok := msg.(toastMsg)
+	require.True(t, ok, "expected toastMsg")
+	assert.Contains(t, toast.message, "No session linked")
+	assert.Equal(t, "warning", toast.msgType)
 }
 
 // --- Tests for handleEdictCancel already-cancelled ---
@@ -4914,6 +4915,11 @@ func TestDispatchEdictAction_Seal(t *testing.T) {
 	// Seal with no existing seals → enters YesNo mode for missing prerequisites
 	require.NotNil(t, model.pendingSealOverride, "should set pendingSealOverride for missing seals")
 	assert.Equal(t, uint(42), model.pendingSealOverride.edictID)
+	// The missing seals message must say "Chancellor", not the stale "Sage"
+	assert.Contains(t, model.commandLine.yesNoQuestion, "Chancellor",
+		"missing seals message should reference Chancellor, not Sage")
+	assert.NotContains(t, model.commandLine.yesNoQuestion, "Sage",
+		"missing seals message should not reference the old Sage name")
 }
 
 func TestYesNoMsg_PendingSealOverride_YesSeals(t *testing.T) {
@@ -5017,7 +5023,7 @@ func TestDispatchEdictAction_SealAllSealsPresent_ReturnsToEdictsList(t *testing.
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{
 				{MinisterID: "judge"},
-				{MinisterID: "sage"},
+				{MinisterID: "chancellor"},
 			}, nil
 		},
 	}
@@ -5044,7 +5050,7 @@ func TestDispatchEdictAction_SealAlreadySealed_ReturnsToEdictsList(t *testing.T)
 		sealsFn: func() ([]storage.Seal, error) {
 			return []storage.Seal{
 				{MinisterID: "judge"},
-				{MinisterID: "sage"},
+				{MinisterID: "chancellor"},
 				{MinisterID: "ruler"},
 			}, nil
 		},
@@ -5215,7 +5221,7 @@ func TestIsRitualChannel(t *testing.T) {
 		{"e1", true},
 		{"e644", true},
 		{"court", false},
-		{"chancellor", false},
+		{"secretary", false},
 		{"forge", false},
 		{"e", false},
 		{"eabc", false},
@@ -5299,16 +5305,16 @@ func TestRitualStepMsg_Edict1TabLabelCourt(t *testing.T) {
 }
 
 // TestRitualStepMsg_NoAutoCreateForChancellor verifies that messages
-// from the "chancellor" channel do NOT auto-create a ritual tab.
+// from the "secretary" channel do NOT auto-create a ritual tab.
 func TestRitualStepMsg_NoAutoCreateForChancellor(t *testing.T) {
 	model := newTestModel(t)
 
-	tabBefore := model.tabs.TabByTarget("chancellor")
+	tabBefore := model.tabs.TabByTarget("secretary")
 
 	msg := court.RitualStepMsg{
-		ChannelID:  "chancellor",
+		ChannelID:  "secretary",
 		RitualName: "dawn-audience",
-		StepName:   "strategist",
+		StepName:   "war",
 		StepIndex:  0,
 		TotalSteps: 3,
 		Status:     "started",
@@ -5316,9 +5322,9 @@ func TestRitualStepMsg_NoAutoCreateForChancellor(t *testing.T) {
 	newModel, _ := model.handleCustomMessages(msg)
 	updatedModel := newModel.(TUIModel)
 
-	// No "chancellor" ritual tab should have been auto-created
+	// No "secretary" ritual tab should have been auto-created
 	// (existing chancellor tab is the chat tab, not a ritual tab)
-	tab := updatedModel.tabs.TabByTarget("chancellor")
+	tab := updatedModel.tabs.TabByTarget("secretary")
 	if tabBefore == nil {
 		assert.Nil(t, tab, "no ritual tab should be auto-created for chancellor channel")
 	}
@@ -5756,15 +5762,15 @@ func TestSubmitToCourt_NonRitualTab_RoutesToTabTarget(t *testing.T) {
 	model.tabs.DismissWelcome()
 
 	// Switch to the Chancellor tab (non-ritual)
-	model.tabs.SwitchToTabType("chancellor")
+	model.tabs.SwitchToTabType("secretary")
 
 	ctx := context.Background()
 	cmd := model.submitToCourt(ctx, "hello chancellor", nil)
 	require.Nil(t, cmd)
 
 	// Should route to the minister ID (chancellor = tab.Type), not tab.Target
-	assert.Equal(t, "chancellor", mock.submitPromptTarget)
-	assert.Equal(t, "chancellor", mock.submitPromptChanID)
+	assert.Equal(t, "secretary", mock.submitPromptTarget)
+	assert.Equal(t, "secretary", mock.submitPromptChanID)
 	assert.Empty(t, mock.pausedChannels, "PauseRitual should not be called on non-ritual tab")
 }
 
@@ -5774,20 +5780,20 @@ func TestSubmitToCourt_TabnewSage_RoutesToSageMinisterWithUniqueChannel(t *testi
 	model.court = mock
 	model.tabs.DismissWelcome()
 
-	// Simulate :tabnew sage — creates a tab with Type="sage" but Target="sage-2"
-	model.tabs.Add("Sage", TabType("sage"), "sage-2")
-	model.tabs.SwitchToTabType("sage")
-	// Make sure we're on the second sage tab (target "sage-2")
+	// Simulate :tabnew sage — creates a tab with Type="chancellor" but Target="chancellor-2"
+	model.tabs.Add("Sage", TabType("chancellor"), "chancellor-2")
+	model.tabs.SwitchToTabType("chancellor")
+	// Make sure we're on the second sage tab (target "chancellor-2")
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
 	ctx := context.Background()
 	cmd := model.submitToCourt(ctx, "hello from tabnew", nil)
 	require.Nil(t, cmd)
 
-	// Minister lookup should use tab.Type ("sage"), not tab.Target ("sage-2")
-	assert.Equal(t, "sage", mock.submitPromptTarget)
-	// ChannelID should use tab.Target ("sage-2") for session/output isolation
-	assert.Equal(t, "sage-2", mock.submitPromptChanID)
+	// Minister lookup should use tab.Type ("chancellor"), not tab.Target ("chancellor-2")
+	assert.Equal(t, "chancellor", mock.submitPromptTarget)
+	// ChannelID should use tab.Target ("chancellor-2") for session/output isolation
+	assert.Equal(t, "chancellor-2", mock.submitPromptChanID)
 }
 
 func TestSubmitToCourt_RitualTabNoActiveRestoresSession(t *testing.T) {
@@ -5804,7 +5810,7 @@ func TestSubmitToCourt_RitualTabNoActiveRestoresSession(t *testing.T) {
 	model.tabs.Add("Ritual:e647", "ritual", "e647")
 	tab := model.tabs.TabByTarget("e647")
 	require.NotNil(t, tab)
-	tab.CurrentMinister = "sage"
+	tab.CurrentMinister = "chancellor"
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
 	ctx := context.Background()
@@ -5835,7 +5841,7 @@ func TestSubmitToCourt_RitualTabNoActiveNoSessionID(t *testing.T) {
 	model.tabs.Add("Ritual:e647", "ritual", "e647")
 	tab := model.tabs.TabByTarget("e647")
 	require.NotNil(t, tab)
-	tab.CurrentMinister = "chancellor"
+	tab.CurrentMinister = "secretary"
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
 	ctx := context.Background()
@@ -5845,7 +5851,7 @@ func TestSubmitToCourt_RitualTabNoActiveNoSessionID(t *testing.T) {
 	// mean ProcessPrompt creates a new session without touching the interactive one).
 	require.Empty(t, mock.resetMinisterSessionIDs)
 	assert.Equal(t, 1, mock.submitPromptCalls)
-	assert.Equal(t, "chancellor", mock.submitPromptTarget)
+	assert.Equal(t, "secretary", mock.submitPromptTarget)
 	assert.Equal(t, uint(647), mock.submitPromptEdictKey.ID)
 
 	// Should return nil (no LoadSession)
@@ -5869,7 +5875,7 @@ func TestSubmitToCourt_RitualTabNoActiveEdictNotFound(t *testing.T) {
 	model.tabs.Add("Ritual:e647", "ritual", "e647")
 	tab := model.tabs.TabByTarget("e647")
 	require.NotNil(t, tab)
-	tab.CurrentMinister = "chancellor"
+	tab.CurrentMinister = "secretary"
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
 	ctx := context.Background()
@@ -5905,7 +5911,7 @@ func TestHandleSessionSelected_RitualTabRestoration(t *testing.T) {
 	// Create a session with a TabType matching the minister
 	session := &court.Session{
 		ID:      "sess-birth-123",
-		TabType: "sage",
+		TabType: "chancellor",
 	}
 	model.handleSessionSelected(session)
 
@@ -5918,11 +5924,11 @@ func TestHandleSessionSelected_RitualTabRestoration(t *testing.T) {
 
 	// Should have called RestoreMinisterSession
 	require.Len(t, mock.restoreMinisterSessions, 1)
-	assert.Equal(t, "sage", mock.restoreMinisterSessions[0])
+	assert.Equal(t, "chancellor", mock.restoreMinisterSessions[0])
 
 	// Should have submitted the pending prompt
 	assert.Equal(t, 1, mock.submitPromptCalls)
-	assert.Equal(t, "sage", mock.submitPromptTarget)
+	assert.Equal(t, "chancellor", mock.submitPromptTarget)
 	assert.Equal(t, "continue the chat", mock.submitPromptMsg)
 	assert.Equal(t, "e647", mock.submitPromptChanID)
 	assert.Equal(t, uint(647), mock.submitPromptEdictKey.ID)
@@ -5939,8 +5945,8 @@ func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
 	model.tabs.DismissWelcome()
 
 	// Start on the chancellor tab
-	model.tabs.SwitchToTabType("chancellor")
-	require.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type))
+	model.tabs.SwitchToTabType("secretary")
+	require.Equal(t, "secretary", string(model.tabs.ActiveTab().Type))
 
 	// Ensure no pending ritual prompt
 	model.pendingRitualPrompt = ""
@@ -5951,12 +5957,12 @@ func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
 
 	session := &court.Session{
 		ID:      "sess-sage-1",
-		TabType: "sage",
+		TabType: "chancellor",
 	}
 	model.handleSessionSelected(session)
 
 	// Should switch to sage tab (normal resume behavior)
-	assert.Equal(t, "sage", string(model.tabs.ActiveTab().Type),
+	assert.Equal(t, "chancellor", string(model.tabs.ActiveTab().Type),
 		"normal resume should switch to session's tab type")
 
 	// Should clear the edict key
@@ -5965,7 +5971,7 @@ func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
 
 	// Should have called RestoreMinisterSession
 	require.Len(t, mock.restoreMinisterSessions, 1)
-	assert.Equal(t, "sage", mock.restoreMinisterSessions[0])
+	assert.Equal(t, "chancellor", mock.restoreMinisterSessions[0])
 
 	// Should NOT have submitted a prompt
 	assert.Equal(t, 0, mock.submitPromptCalls)
@@ -6035,17 +6041,17 @@ func TestStreamInterruptedMsg_ShownOnNonRitualTab(t *testing.T) {
 	model.tabs.DismissWelcome()
 
 	// Default tab is chancellor (non-ritual)
-	chat := model.tabs.ChatByTab("chancellor")
+	chat := model.tabs.ChatByTab("secretary")
 	chat.Messages = nil // start clean
 
 	msg := court.StreamInterruptedMsg{
-		ChannelID:      "chancellor",
+		ChannelID:      "secretary",
 		PartialContent: "partial...",
 	}
 	newModel, _ := model.handleCustomMessages(msg)
 	updatedModel := newModel.(TUIModel)
 
-	chat = updatedModel.tabs.ChatByTab("chancellor")
+	chat = updatedModel.tabs.ChatByTab("secretary")
 	found := false
 	for _, m := range chat.Messages {
 		if strings.Contains(m.Content, "ABORTED") {

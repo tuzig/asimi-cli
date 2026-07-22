@@ -160,6 +160,18 @@ type showHelpMsg struct {
 }
 type showContextMsg struct{ content string }
 
+// toastMsg displays an ephemeral toast notification.
+type toastMsg struct {
+	message string
+	msgType string // info, success, warning, error
+	timeout time.Duration
+}
+
+// showToast returns a toastMsg for ephemeral user notifications.
+func showToast(msg, msgType string, timeout time.Duration) toastMsg {
+	return toastMsg{message: msg, msgType: msgType, timeout: timeout}
+}
+
 func handleHelpCommand(model *TUIModel, args []string) tea.Cmd {
 	// Determine the help topic from args
 	topic := "index" // Default topic
@@ -863,28 +875,28 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 	defsByID := ministers.LookupMap(defs)
 
 	if len(args) == 0 {
-		// Default: open a Sage tab
-		d := defsByID[ministers.Sage]
+		// Default: open a Chancellor tab
+		d := defsByID[ministers.Chancellor]
 		label := d.Label()
 		if label == "" {
-			label = "Sage"
+			label = "Chancellor"
 		}
-		target := model.tabs.UniqueTarget(ministers.Sage)
-		model.tabs.Add(label, TabType(ministers.Sage), target)
+		target := model.tabs.UniqueTarget(ministers.Chancellor)
+		model.tabs.Add(label, TabType(ministers.Chancellor), target)
 		model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 		return nil
 	}
 
 	target := args[0]
 	switch target {
-	case ministers.Sage:
-		d := defsByID[ministers.Sage]
+	case ministers.Chancellor:
+		d := defsByID[ministers.Chancellor]
 		label := d.Label()
 		if label == "" {
-			label = "Sage"
+			label = "Chancellor"
 		}
-		uniq := model.tabs.UniqueTarget(ministers.Sage)
-		model.tabs.Add(label, TabType(ministers.Sage), uniq)
+		uniq := model.tabs.UniqueTarget(ministers.Chancellor)
+		model.tabs.Add(label, TabType(ministers.Chancellor), uniq)
 		model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 	case "ritual":
 		if len(args) < 2 {
@@ -1111,14 +1123,14 @@ func handleEdictSeal(model *TUIModel, edictID uint, notes string) tea.Cmd {
 	sealChainMsg := renderSealChain(seals, 60)
 
 	hasJudge := false
-	hasSage := false
+	hasChancellor := false
 	hasRuler := false
 	for _, seal := range seals {
 		switch seal.MinisterID {
 		case ministers.Judge:
 			hasJudge = true
-		case ministers.Sage:
-			hasSage = true
+		case ministers.Chancellor:
+			hasChancellor = true
 		case ministers.Ruler:
 			hasRuler = true
 		}
@@ -1137,8 +1149,8 @@ func handleEdictSeal(model *TUIModel, edictID uint, notes string) tea.Cmd {
 	if !hasJudge {
 		missingSeals = append(missingSeals, "Judge")
 	}
-	if !hasSage {
-		missingSeals = append(missingSeals, "Sage")
+	if !hasChancellor {
+		missingSeals = append(missingSeals, "Chancellor")
 	}
 
 	if len(missingSeals) > 0 {
@@ -1175,10 +1187,10 @@ func resumeEdictSession(model *TUIModel, edictID uint) tea.Cmd {
 	return func() tea.Msg {
 		edict, err := model.court.GetEdict(edictID)
 		if err != nil {
-			return showSystemMsg(fmt.Sprintf("Edict not found: %d", edictID))
+			return showToast(fmt.Sprintf("Edict not found: %d", edictID), "error", 3*time.Second)
 		}
 		if edict.SessionID == "" {
-			return showSystemMsg(fmt.Sprintf("No session linked to edict %d", edictID))
+			return showToast(fmt.Sprintf("No session linked to edict %d", edictID), "warning", 3*time.Second)
 		}
 		return resumeEdictSessionMsg{sessionID: edict.SessionID}
 	}

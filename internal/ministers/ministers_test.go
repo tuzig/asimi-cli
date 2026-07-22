@@ -15,7 +15,7 @@ func TestLoadMinisters_BuiltinHasAllFive(t *testing.T) {
 	for _, d := range defs {
 		ids[d.ID] = true
 	}
-	for _, expected := range []string{Chancellor, Forge, Judge, Sage, Strategist} {
+	for _, expected := range []string{Secretary, Forge, Judge, Chancellor, War} {
 		assert.True(t, ids[expected], "builtin ministers must include %s", expected)
 	}
 }
@@ -26,9 +26,9 @@ func TestMinisterDef_Label(t *testing.T) {
 		def  MinisterDef
 		want string
 	}{
-		{"both kanji and title", MinisterDef{Kanji: "宰相", Title: "Chancellor"}, "宰相 Chancellor"},
-		{"only title", MinisterDef{Title: "Chancellor"}, "Chancellor"},
-		{"only kanji", MinisterDef{Kanji: "宰相"}, ""},
+		{"both kanji and title", MinisterDef{Kanji: "中書令", Title: "Secretary"}, "中書令 Secretary"},
+		{"only title", MinisterDef{Title: "Secretary"}, "Secretary"},
+		{"only kanji", MinisterDef{Kanji: "中書令"}, ""},
 		{"neither", MinisterDef{}, ""},
 	}
 	for _, tt := range tests {
@@ -40,12 +40,12 @@ func TestMinisterDef_Label(t *testing.T) {
 
 func TestLookupByID(t *testing.T) {
 	defs := []MinisterDef{
+		{ID: "secretary", Title: "Secretary"},
 		{ID: "chancellor", Title: "Chancellor"},
-		{ID: "sage", Title: "Sage"},
 	}
 
-	d := LookupByID(defs, "sage")
-	assert.Equal(t, "Sage", d.Title)
+	d := LookupByID(defs, "chancellor")
+	assert.Equal(t, "Chancellor", d.Title)
 
 	// Not found — returns zero-value with just ID set
 	d = LookupByID(defs, "ruler")
@@ -55,20 +55,20 @@ func TestLookupByID(t *testing.T) {
 
 func TestLookupMap(t *testing.T) {
 	defs := []MinisterDef{
+		{ID: "secretary", Title: "Secretary"},
 		{ID: "chancellor", Title: "Chancellor"},
-		{ID: "sage", Title: "Sage"},
 	}
 
 	m := LookupMap(defs)
+	assert.Equal(t, "Secretary", m["secretary"].Title)
 	assert.Equal(t, "Chancellor", m["chancellor"].Title)
-	assert.Equal(t, "Sage", m["sage"].Title)
 	assert.Len(t, m, 2)
 }
 
 func TestDefaultTabIDs(t *testing.T) {
-	assert.Equal(t, []string{Forge, Sage, Judge, Chancellor}, DefaultTabIDs)
+	assert.Equal(t, []string{Forge, Chancellor, Judge, Secretary}, DefaultTabIDs)
 }
 
 func TestSealChainIDs(t *testing.T) {
-	assert.Equal(t, []string{Judge, Sage, Ruler}, SealChainIDs)
+	assert.Equal(t, []string{Judge, Chancellor, Ruler}, SealChainIDs)
 }

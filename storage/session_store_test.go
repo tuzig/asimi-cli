@@ -669,9 +669,81 @@ func TestMigrateV4toV5_ShogunateToCourtEventRename(t *testing.T) {
 		require.NotContains(t, et, "shogunate", "no DLQ event should contain 'shogunate' after migration")
 	}
 
-	// Verify schema version is now 5
+	// Verify schema version is now 6 (v4→v5 and v5→v6 both run)
 	var version int
 	err = db.conn.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version)
 	require.NoError(t, err)
-	require.Equal(t, 5, version, "schema should be at version 5 after migration")
+	require.Equal(t, 6, version, "schema should be at version 6 after migration")
+}
+
+// TestMigrateV5toV6_SageToChancellorSealRename verifies that the v5→v6
+// migration renames stale minister_id='sage' values to 'chancellor' in
+// the seals table. This ensures existing users don't lose their seal
+// chain after the 三省 alignment rename.
+func TestMigrateV5toV6_SageToChancellorSealRename(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "migration_v5v6_test.db")
+
+	// Manually create a database at schema v5 with old sage seals
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+
+	_, err = conn.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER)`)
+	require.NoError(t, err)
+	_, err = conn.Exec(`INSERT INTO schema_version (version, applied_at) VALUES (5, unixepoch())`)
+	require.NoError(t, err)
+
+	// Create a minimal seals table matching the GORM model
+	_, err = conn.Exec(`CREATE TABLE seals (
+		seal_id TEXT PRIMARY KEY,
+		edict_id INTEGER NOT NULL,
+		username TEXT NOT NULL DEFAULT '',
+		project TEXT NOT NULL DEFAULT '',
+		minister_id TEXT NOT NULL,
+		sealed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		metadata TEXT
+	)`)
+	require.NoError(t, err)
+
+	// Insert seals with old and new minister_ids
+	_, err = conn.Exec(`INSERT INTO seals (seal_id, edict_id, minister_id, username, project) VALUES
+		('s1', 1, 'judge',     'u', 'p'),
+		('s2', 1, 'sage',      'u', 'p'),
+		('s3', 2, 'judge',     'u', 'p'),
+		('s4', 2, 'chancellor','u', 'p'),
+		('s5', 3, 'ruler',     'u', 'p')`)
+	require.NoError(t, err)
+
+	conn.Close()
+
+	// Open with InitDB — should detect v5 < v6 and run migration
+	db, err := InitDB(dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Verify: all 'sage' seals should now be 'chancellor'
+	rows, err := db.Conn().Query(`SELECT minister_id FROM seals ORDER BY seal_id`)
+	require.NoError(t, err)
+	var ministerIDs []string
+	for rows.Next() {
+		var mid string
+		require.NoError(t, rows.Scan(&mid))
+		ministerIDs = append(ministerIDs, mid)
+	}
+	rows.Close()
+
+	require.Equal(t, []string{"judge", "chancellor", "judge", "chancellor", "ruler"}, ministerIDs,
+		"sage seals should be renamed to chancellor; others untouched")
+
+	// No seals should have minister_id='sage' anymore
+	var sageCount int
+	err = db.Conn().QueryRow("SELECT COUNT(*) FROM seals WHERE minister_id = 'sage'").Scan(&sageCount)
+	require.NoError(t, err)
+	require.Equal(t, 0, sageCount, "no seals should have minister_id='sage' after migration")
+
+	// Verify schema version is now 6
+	var version int
+	err = db.conn.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version)
+	require.NoError(t, err)
+	require.Equal(t, 6, version, "schema should be at version 6 after migration")
 }

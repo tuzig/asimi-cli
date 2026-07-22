@@ -197,8 +197,8 @@ func TestListEdictsTool_FilterByStatus(t *testing.T) {
 	if err := sealService.GrantSeal(edicts[3].Key(), "judge", storage.JSON{}); err != nil {
 		t.Fatalf("failed to grant judge seal: %v", err)
 	}
-	if err := sealService.GrantSeal(edicts[3].Key(), "sage", storage.JSON{}); err != nil {
-		t.Fatalf("failed to grant sage seal: %v", err)
+	if err := sealService.GrantSeal(edicts[3].Key(), "chancellor", storage.JSON{}); err != nil {
+		t.Fatalf("failed to grant chancellor seal: %v", err)
 	}
 	if err := sealService.GrantSeal(edicts[3].Key(), "ruler", storage.JSON{}); err != nil {
 		t.Fatalf("failed to grant ruler seal: %v", err)

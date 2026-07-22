@@ -67,7 +67,7 @@ type mockZhengmingMinister struct {
 func newMockZhengmingMinister(requestFn func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error), waitFn func(ctx context.Context, requestID string) (string, error)) *mockZhengmingMinister {
 	return &mockZhengmingMinister{
 		MinisterBase:       MinisterBase{logger: slog.Default()},
-		id:                 "chancellor",
+		id:                 "secretary",
 		requestZhengmingFn: requestFn,
 		waitForZhengmingFn: waitFn,
 	}
@@ -861,7 +861,7 @@ func TestSkipZhengmingPrompt_RecoveringState(t *testing.T) {
 	runner := NewRitualRunner(
 		registry,
 		func(id string) Minister {
-			if id == "chancellor" {
+			if id == "secretary" {
 				return chancellor
 			}
 			return nil
@@ -1149,7 +1149,7 @@ func TestPromptForAbortedRituals_RecoverAnswer(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1211,7 +1211,7 @@ func TestPromptForAbortedRituals_MarkAsCompletedAnswer(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1263,7 +1263,7 @@ func TestPromptForAbortedRituals_PassAnswer(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1347,7 +1347,7 @@ func TestPromptForAbortedRituals_RequestZhengmingFails(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1404,7 +1404,7 @@ func TestPromptForAbortedRituals_ContextCancelled(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1478,7 +1478,7 @@ func TestPromptForAbortedRituals_IncompleteStepDetection(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1528,7 +1528,7 @@ func TestPromptForAbortedRituals_EdictDescriptionTruncation(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1580,7 +1580,7 @@ func TestPromptForAbortedRituals_UsesSummaryOverIntent(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1624,7 +1624,7 @@ func TestPromptForAbortedRituals_StoppedStateIncluded(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1672,7 +1672,7 @@ func TestPromptForAbortedRituals_FailedStateIncluded(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1728,7 +1728,7 @@ func TestPromptForAbortedRituals_LimitFive(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1774,7 +1774,7 @@ func TestPromptForAbortedRituals_RecoveryCompleteOnReturn(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1817,7 +1817,7 @@ func TestPromptForAbortedRituals_ZeroEdictIDExcluded(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1862,7 +1862,7 @@ func TestPromptForAbortedRituals_WaitForZhengmingFails(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1924,7 +1924,7 @@ func TestPromptForAbortedRituals_EmptyMessageStepIncomplete(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -1981,7 +1981,7 @@ func TestPromptForAbortedRituals_AbortedMessageStepIncomplete(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -2067,7 +2067,7 @@ func TestPromptForAbortedRituals_OtherProjectExcluded(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -2141,7 +2141,7 @@ func TestPromptForAbortedRituals_DismissedStateSkipped(t *testing.T) {
 	)
 
 	rg := newTestRitualGuard(t, db, func(id string) Minister {
-		if id == "chancellor" {
+		if id == "secretary" {
 			return chancellor
 		}
 		return nil
@@ -2299,7 +2299,7 @@ func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
 	rg := NewRitualGuard(RitualGuardOpts{
 		Base: base,
 		GetMinister: func(id string) Minister {
-			if id == "chancellor" {
+			if id == "secretary" {
 				return chancellor
 			}
 			return nil

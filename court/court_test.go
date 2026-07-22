@@ -246,7 +246,7 @@ func TestSetContext_PropagatesRepoInfo(t *testing.T) {
 	// Verify ministers were configured by checking one of them has a session.
 	// ConfigureModel sets the config on all ministers; if SetContext
 	// completed without error, ConfigureModel was called successfully.
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	assert.NotNil(t, chancellor)
 }
 
@@ -278,7 +278,7 @@ func TestSetContext_EmptyProjectDerivesSlugFromGitRemote(t *testing.T) {
 
 	// The chancellor's MinisterBase should have received the repoInfo
 	// with a non-empty slug derived from the git remote.
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ RepoInfo() repo.RepoInfo }); ok {
 		ri := base.RepoInfo()
@@ -304,7 +304,7 @@ func TestSetContext_NonEmptyProjectUsesExplicitSlug(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ RepoInfo() repo.RepoInfo }); ok {
 		ri := base.RepoInfo()
@@ -365,7 +365,7 @@ func TestConfigureModel_DoesNotReloadRitualsWhenRegistryNotEmpty(t *testing.T) {
 	customRitual := &RitualDef{
 		Name: "custom-ritual",
 		Steps: []RitualStep{
-			{Minister: "chancellor", Act: "do something"},
+			{Minister: "secretary", Act: "do something"},
 		},
 	}
 	require.NoError(t, reg.Register(customRitual))
@@ -449,13 +449,13 @@ func TestClearAllSchedulers_WithQueuedItems(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 
 	// Create sessions with these schedulers and attach to ministers
-	sess1, err := NewSession(mockLLM, &SessionConfig{}, nil, sched1, nil, "test", "chancellor")
+	sess1, err := NewSession(mockLLM, &SessionConfig{}, nil, sched1, nil, "test", "secretary")
 	require.NoError(t, err)
 	sess2, err := NewSession(mockLLM, &SessionConfig{}, nil, sched2, nil, "test", "forge")
 	require.NoError(t, err)
 
 	// Attach sessions to ministers
-	chancellor := court.GetMinister("chancellor")
+	chancellor := court.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess1)
@@ -487,13 +487,13 @@ func TestClearAllSchedulers_MinistersWithNilScheduler(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 
 	// Create a session with a scheduler then nil it out to simulate edge case
-	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
 	require.NoError(t, err)
 
 	// Manually nil out the scheduler
 	sess.scheduler = nil
 
-	chancellor := court.GetMinister("chancellor")
+	chancellor := court.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess)
@@ -528,10 +528,10 @@ func TestSubscribe_HandlesClearSchedulerMsg(t *testing.T) {
 	sched.Schedule(context.Background(), &blockingTool{name: "tool_y", done: doneY}, `{}`)
 
 	mockLLM := mocks.NewLLMProvider()
-	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, sched, nil, "test", "chancellor")
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, sched, nil, "test", "secretary")
 	require.NoError(t, err)
 
-	chancellor := court.GetMinister("chancellor")
+	chancellor := court.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess)
@@ -711,7 +711,7 @@ func TestZhengmingAnswered_ApproveEdictCreatesEdict(t *testing.T) {
 		EdictID:    0,
 		Username:   cfg.Username,
 		Project:    cfg.Project,
-		MinisterID: "sage",
+		MinisterID: "chancellor",
 		Questions: storage.ZhengmingQuestions{{
 			Text:    "Refactor the zhengming constants",
 			Summary: "refactor constants",
@@ -786,7 +786,7 @@ func TestZhengmingAnswered_ApproveEdictRefinesExistingEdict(t *testing.T) {
 		EdictID:    42,
 		Username:   cfg.Username,
 		Project:    cfg.Project,
-		MinisterID: "sage",
+		MinisterID: "chancellor",
 		Questions: storage.ZhengmingQuestions{{
 			Text:    "Add better error handling",
 			Summary: "refine error handling",
@@ -1132,12 +1132,12 @@ func TestRequestZhengming_SetsSessionID(t *testing.T) {
 		}
 	}
 
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 
 	// Create and attach a session to the chancellor
 	mockLLM := mocks.NewLLMProvider()
-	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
 	require.NoError(t, err)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sess)
@@ -1152,7 +1152,7 @@ func TestRequestZhengming_SetsSessionID(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "secretary")
 	require.NoError(t, err)
 
 	// Verify the zhengming record has the session ID
@@ -1173,7 +1173,7 @@ func TestRequestZhengming_NilSessionLeavesSessionIDEmpty(t *testing.T) {
 	s.ctx, s.cancel = ctx, cancel
 	defer cancel()
 
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 
 	// No session attached — Session() returns nil
@@ -1186,7 +1186,7 @@ func TestRequestZhengming_NilSessionLeavesSessionIDEmpty(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "secretary")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1214,28 +1214,28 @@ func TestRequestZhengming_UsesCallingMinisterSessionID(t *testing.T) {
 		}
 	}
 
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 
-	sage := s.GetMinister("sage")
+	sage := s.GetMinister("chancellor")
 	require.NotNil(t, sage)
 
 	// Attach a session to the chancellor
 	mockLLM := mocks.NewLLMProvider()
-	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
 	require.NoError(t, err)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(chancellorSess)
 	}
 
 	// Attach a DIFFERENT session to the sage
-	sageSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "sage")
+	sageSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
 	require.NoError(t, err)
 	if base, ok := sage.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(sageSess)
 	}
 
-	// The chancellor calls RequestZhengming on behalf of "sage"
+	// The chancellor calls RequestZhengming on behalf of "chancellor"
 	var zr tools.ZhengmingRequester = s
 
 	key := storage.EdictKey{ID: 0, Username: cfg.Username, Project: cfg.Project}
@@ -1244,7 +1244,7 @@ func TestRequestZhengming_UsesCallingMinisterSessionID(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	// The zhengming record should carry the SAGE's session ID, not the chancellor's
@@ -1268,13 +1268,13 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterLookupNil(t *testing.T) {
 	s.ctx, s.cancel = ctx, cancel
 	defer cancel()
 
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 
 	// Attach a session to the chancellor — this is the "wrong" session
 	// that the old code would have used as fallback
 	mockLLM := mocks.NewLLMProvider()
-	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
 	require.NoError(t, err)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(chancellorSess)
@@ -1290,8 +1290,8 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterLookupNil(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	// Caller is "sage" but getMinister is nil, so lookup fails
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	// Caller is "chancellor" but getMinister is nil, so lookup fails
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1321,12 +1321,12 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterNotFound(t *testing.T) {
 		}
 	}
 
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 
 	// Chancellor has a session, but the caller ("nonexistent") does not
 	mockLLM := mocks.NewLLMProvider()
-	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
 	require.NoError(t, err)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(chancellorSess)
@@ -1368,15 +1368,15 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterHasNoSession(t *testing.T) {
 		}
 	}
 
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 
-	sage := s.GetMinister("sage")
+	sage := s.GetMinister("chancellor")
 	require.NotNil(t, sage)
 
 	// Chancellor has a session, sage does NOT
 	mockLLM := mocks.NewLLMProvider()
-	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "chancellor")
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
 	require.NoError(t, err)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(chancellorSess)
@@ -1390,8 +1390,8 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterHasNoSession(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	// "sage" exists but has no session → SessionID should be empty
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	// "chancellor" exists but has no session → SessionID should be empty
+	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1423,7 +1423,7 @@ func TestZhengmingAnswered_NonSentinelCreatesEdictWithSessionID(t *testing.T) {
 		EdictID:    0,
 		Username:   cfg.Username,
 		Project:    cfg.Project,
-		MinisterID: "chancellor",
+		MinisterID: "secretary",
 		SessionID:  sessionID,
 		Questions:  storage.ZhengmingQuestions{{Text: "?", Summary: "?", Options: []string{"A", "B"}}},
 		Status:     storage.ZhengmingPending,
@@ -1468,7 +1468,7 @@ func TestSessionForTab_RitualTabFindsSessionOnMinister(t *testing.T) {
 	ritualSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "", "e633")
 	require.NoError(t, err)
 
-	sage := court.GetMinister("sage")
+	sage := court.GetMinister("chancellor")
 	require.NotNil(t, sage)
 	if base, ok := sage.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(ritualSess, "e633")
@@ -1486,7 +1486,7 @@ func TestSessionForTab_RitualTabFindsSessionOnMinister(t *testing.T) {
 }
 
 // TestSessionForTab_InteractiveTabUsesDirectLookup verifies that for
-// interactive tabs (e.g. "sage"), sessionForTab uses the direct minister
+// interactive tabs (e.g. "chancellor"), sessionForTab uses the direct minister
 // lookup path and returns that minister's session keyed by its own ID.
 func TestSessionForTab_InteractiveTabUsesDirectLookup(t *testing.T) {
 	db := setupMinisterTestDB(t)
@@ -1496,16 +1496,16 @@ func TestSessionForTab_InteractiveTabUsesDirectLookup(t *testing.T) {
 	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	mockLLM := mocks.NewLLMProvider()
-	interactiveSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "", "sage")
+	interactiveSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "", "chancellor")
 	require.NoError(t, err)
 
-	sage := court.GetMinister("sage")
+	sage := court.GetMinister("chancellor")
 	require.NotNil(t, sage)
 	if base, ok := sage.(interface{ SetSession(*Session, ...string) }); ok {
 		base.SetSession(interactiveSess)
 	}
 
-	sess := court.sessionForTab("sage")
+	sess := court.sessionForTab("chancellor")
 	require.NotNil(t, sess)
 	assert.Equal(t, interactiveSess.ID, sess.ID)
 }
@@ -1521,13 +1521,13 @@ func TestSessionForTab_RitualTabDoesNotFindInteractiveSession(t *testing.T) {
 	court.ConfigureModel(nil, &SessionConfig{}, repo.RepoInfo{})
 
 	mockLLM := mocks.NewLLMProvider()
-	interactiveSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "", "sage")
+	interactiveSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "", "chancellor")
 	require.NoError(t, err)
 
-	sage := court.GetMinister("sage")
+	sage := court.GetMinister("chancellor")
 	require.NotNil(t, sage)
 	if base, ok := sage.(interface{ SetSession(*Session, ...string) }); ok {
-		base.SetSession(interactiveSess) // stored under "sage" key
+		base.SetSession(interactiveSess) // stored under "chancellor" key
 	}
 
 	// "e633" is a ritual tab — should return nil since no session is keyed "e633"
@@ -1558,15 +1558,15 @@ func TestClearAllSchedulers_MultipleSessionsPerMinister(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 
 	// Create two sessions on the SAME minister (chancellor) under different channel IDs
-	sess1, err := NewSession(mockLLM, &SessionConfig{}, nil, sched1, nil, "", "chancellor")
+	sess1, err := NewSession(mockLLM, &SessionConfig{}, nil, sched1, nil, "", "secretary")
 	require.NoError(t, err)
 	sess2, err := NewSession(mockLLM, &SessionConfig{}, nil, sched2, nil, "", "e633")
 	require.NoError(t, err)
 
-	chancellor := court.GetMinister("chancellor")
+	chancellor := court.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
-		base.SetSession(sess1)         // interactive session under "chancellor" key
+		base.SetSession(sess1)         // interactive session under "secretary" key
 		base.SetSession(sess2, "e633") // ritual session under "e633" key
 	}
 
@@ -1594,7 +1594,7 @@ func TestCourt_RequestZhengming_CreatesDBRecord(t *testing.T) {
 		Options: []string{"Option A", "Option B"},
 	}}
 
-	requestID, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	requestID, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 	assert.NotEmpty(t, requestID)
 
@@ -1603,7 +1603,7 @@ func TestCourt_RequestZhengming_CreatesDBRecord(t *testing.T) {
 	assert.Equal(t, uint(42), req.EdictID)
 	assert.Equal(t, cfg.Username, req.Username)
 	assert.Equal(t, cfg.Project, req.Project)
-	assert.Equal(t, "sage", req.MinisterID)
+	assert.Equal(t, "chancellor", req.MinisterID)
 	assert.Equal(t, storage.ZhengmingPending, req.Status)
 	assert.Equal(t, storage.PriorityNormal, req.Priority)
 }
@@ -1623,7 +1623,7 @@ func TestCourt_RequestZhengming_UrgentPrioritySetsShorterTimeout(t *testing.T) {
 		Options: []string{"A", "B"},
 	}}
 
-	requestID, err := s.RequestZhengming(key, questions, storage.PriorityUrgent, "sage")
+	requestID, err := s.RequestZhengming(key, questions, storage.PriorityUrgent, "chancellor")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1651,7 +1651,7 @@ func TestCourt_RequestZhengming_EmitsEvent(t *testing.T) {
 		Options: []string{"Option A", "Option B"},
 	}}
 
-	requestID, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	requestID, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	var events []storage.TianEvent
@@ -1660,7 +1660,7 @@ func TestCourt_RequestZhengming_EmitsEvent(t *testing.T) {
 
 	// Verify event payload contains the request_id and minister_id
 	assert.Equal(t, requestID, events[0].Payload["request_id"])
-	assert.Equal(t, "sage", events[0].Payload["minister_id"])
+	assert.Equal(t, "chancellor", events[0].Payload["minister_id"])
 }
 
 // TestCourt_RequestZhengming_FiresCallbackOnCaller verifies that
@@ -1673,7 +1673,7 @@ func TestCourt_RequestZhengming_FiresCallbackOnCaller(t *testing.T) {
 	require.NotNil(t, s)
 
 	sageRaised := false
-	sage := s.GetMinister("sage")
+	sage := s.GetMinister("chancellor")
 	require.NotNil(t, sage)
 
 	if base, ok := sage.(interface{ SetOnZhengmingRaised(func()) }); ok {
@@ -1681,7 +1681,7 @@ func TestCourt_RequestZhengming_FiresCallbackOnCaller(t *testing.T) {
 	}
 
 	chancellorRaised := false
-	chancellor := s.GetMinister("chancellor")
+	chancellor := s.GetMinister("secretary")
 	require.NotNil(t, chancellor)
 	if base, ok := chancellor.(interface{ SetOnZhengmingRaised(func()) }); ok {
 		base.SetOnZhengmingRaised(func() { chancellorRaised = true })
@@ -1694,7 +1694,7 @@ func TestCourt_RequestZhengming_FiresCallbackOnCaller(t *testing.T) {
 		Options: []string{"Option A", "Option B"},
 	}}
 
-	_, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "sage")
+	_, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	assert.True(t, sageRaised, "onZhengmingRaised should fire on the calling minister (sage)")
@@ -1710,7 +1710,7 @@ func TestCourt_ConsultMinister_NotFound(t *testing.T) {
 	require.NotNil(t, s)
 
 	key := storage.EdictKey{ID: 1, Username: cfg.Username, Project: cfg.Project}
-	_, err := s.ConsultMinister(context.Background(), "chancellor", "nonexistent", key, "do something")
+	_, err := s.ConsultMinister(context.Background(), "secretary", "nonexistent", key, "do something")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "minister not found")
 }

@@ -1571,7 +1571,7 @@ func (m *TUIModel) submitToCourt(ctx context.Context, prompt string, contextFile
 	if tab.Type == "ritual" && isRitualChannel(tab.Target) {
 		ministerID := tab.CurrentMinister
 		if ministerID == "" {
-			ministerID = "chancellor" // fallback
+			ministerID = "secretary" // fallback
 		}
 
 		// Try to pause the ritual — cancels the step's LLM stream but keeps
@@ -2636,6 +2636,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tabs.Content().Chat.AddToRawHistory("CONTEXT", msg.content)
 		m.tabs.Content().Chat.AddMessage(msg.content)
 		m.sessionActive = true
+
+	case toastMsg:
+		m.commandLine.AddToast(msg.message, msg.msgType, msg.timeout)
 
 	case updateCheckMsg:
 		if msg.err != nil {

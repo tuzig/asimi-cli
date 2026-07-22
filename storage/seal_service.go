@@ -71,7 +71,7 @@ func (s *SealService) HasSeal(key EdictKey, ministerID string) (bool, error) {
 
 // GetMissingSeals returns the list of required seals that are missing
 func (s *SealService) GetMissingSeals(key EdictKey) ([]string, error) {
-	requiredMinisters := []string{"judge", "sage", "ruler"}
+	requiredMinisters := []string{"judge", "chancellor", "ruler"}
 	var missing []string
 
 	for _, ministerID := range requiredMinisters {
@@ -87,14 +87,14 @@ func (s *SealService) GetMissingSeals(key EdictKey) ([]string, error) {
 	return missing, nil
 }
 
-// IsPendingAscension checks if an edict has judge and sage seals but is awaiting ruler seal
+// IsPendingAscension checks if an edict has judge and chancellor seals but is awaiting ruler seal
 func (s *SealService) IsPendingAscension(key EdictKey) (bool, error) {
 	hasJudge, err := s.HasSeal(key, "judge")
 	if err != nil {
 		return false, err
 	}
 
-	hasSage, err := s.HasSeal(key, "sage")
+	hasChancellor, err := s.HasSeal(key, "chancellor")
 	if err != nil {
 		return false, err
 	}
@@ -104,13 +104,13 @@ func (s *SealService) IsPendingAscension(key EdictKey) (bool, error) {
 		return false, err
 	}
 
-	return hasJudge && hasSage && !hasRuler, nil
+	return hasJudge && hasChancellor && !hasRuler, nil
 }
 
 // GetSealStatus returns a map of minister IDs to their seal status
 func (s *SealService) GetSealStatus(key EdictKey) (map[string]bool, error) {
 	status := make(map[string]bool)
-	requiredMinisters := []string{"judge", "sage", "ruler"}
+	requiredMinisters := []string{"judge", "chancellor", "ruler"}
 
 	for _, ministerID := range requiredMinisters {
 		hasSeal, err := s.HasSeal(key, ministerID)
@@ -155,7 +155,7 @@ func (s *SealService) GetEdictStatus(key EdictKey) (EdictStatus, error) {
 	return EdictActive, nil
 }
 
-// IsEdictSealed checks if an edict has all three seals (judge, sage, ruler)
+// IsEdictSealed checks if an edict has all three seals (judge, chancellor, ruler)
 func (s *SealService) IsEdictSealed(key EdictKey) (bool, error) {
 	status, err := s.GetEdictStatus(key)
 	if err != nil {
@@ -186,7 +186,7 @@ func (s *SealService) IsEdictCancelled(key EdictKey) (bool, error) {
 type ActiveEdict struct {
 	Edict
 	HasJudgeSeal bool
-	HasSageSeal  bool
+	HasChancellorSeal  bool
 }
 
 // ListActiveEdicts returns all edicts that are both un-cancelled and unsealed (no ruler seal)
@@ -210,7 +210,7 @@ func (s *SealService) ListActiveEdicts(username, project string) ([]ActiveEdict,
 		edictIDs[i] = e.ID
 	}
 	if len(edictIDs) > 0 {
-		s.db.Where("edict_id IN ? AND username = ? AND project = ? AND minister_id IN ('judge','sage')",
+		s.db.Where("edict_id IN ? AND username = ? AND project = ? AND minister_id IN ('judge','chancellor')",
 			edictIDs, username, project).Find(&seals)
 	}
 
@@ -228,7 +228,7 @@ func (s *SealService) ListActiveEdicts(username, project string) ([]ActiveEdict,
 		result[i] = ActiveEdict{
 			Edict:        e,
 			HasJudgeSeal: sealMap[e.ID]["judge"],
-			HasSageSeal:  sealMap[e.ID]["sage"],
+			HasChancellorSeal:  sealMap[e.ID]["chancellor"],
 		}
 	}
 	return result, nil

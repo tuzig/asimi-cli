@@ -545,12 +545,12 @@ func (s *EdictSelectWindow) RenderList(selectedIndex, scrollOffset, visibleSlots
 				judge = "刑"
 			}
 
-			sage := "  "
-			if edict.HasSageSeal {
-				sage = "聖"
+			chancellor := "  "
+			if edict.HasChancellorSeal {
+				chancellor = "門"
 			}
 
-			linePrefix := fmt.Sprintf("%s[%3d] %s %s ", prefix, edict.ID, judge, sage)
+			linePrefix := fmt.Sprintf("%s[%3d] %s %s ", prefix, edict.ID, judge, chancellor)
 			intentWidth := s.Width - lipgloss.Width(linePrefix)
 			if intentWidth < 0 {
 				intentWidth = 0

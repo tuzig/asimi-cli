@@ -386,7 +386,7 @@ func TestRegisterExtra(t *testing.T) {
 	r.RegisterExtra("enact_ritual", mockTool{name: "enact_ritual"})
 
 	// Any minister that lists these names gets the same static tool instances
-	chancellorExtras := r.ExtraTools("chancellor", []string{"consult_minister", "enact_ritual"})
+	chancellorExtras := r.ExtraTools("secretary", []string{"consult_minister", "enact_ritual"})
 	if len(chancellorExtras) != 2 {
 		t.Fatalf("expected 2 extra tools, got %d", len(chancellorExtras))
 	}
@@ -407,7 +407,7 @@ func TestRegisterExtra(t *testing.T) {
 	}
 
 	// Unknown names are silently skipped
-	unknownExtras := r.ExtraTools("chancellor", []string{"nonexistent"})
+	unknownExtras := r.ExtraTools("secretary", []string{"nonexistent"})
 	if len(unknownExtras) != 0 {
 		t.Errorf("unknown extra tool name should be skipped, got %d", len(unknownExtras))
 	}
@@ -420,18 +420,18 @@ func TestRegisterExtraFactory(t *testing.T) {
 	})
 
 	// Each minister gets its own instance via the factory
-	sageExtras := r.ExtraTools("sage", []string{"request_zhengming"})
-	require := len(sageExtras)
+	chancellorExtras := r.ExtraTools("chancellor", []string{"request_zhengming"})
+	require := len(chancellorExtras)
 	if require != 1 {
 		t.Fatalf("expected 1 factory extra tool, got %d", require)
 	}
-	if sageExtras[0].Name() != "request_zhengming_sage" {
-		t.Errorf("factory should produce per-minister tool, got %q", sageExtras[0].Name())
+	if chancellorExtras[0].Name() != "request_zhengming_chancellor" {
+		t.Errorf("factory should produce per-minister tool, got %q", chancellorExtras[0].Name())
 	}
 
-	strategistExtras := r.ExtraTools("strategist", []string{"request_zhengming"})
-	if len(strategistExtras) != 1 || strategistExtras[0].Name() != "request_zhengming_strategist" {
-		t.Errorf("factory should produce per-minister tool for strategist, got %v", strategistExtras)
+	warExtras := r.ExtraTools("war", []string{"request_zhengming"})
+	if len(warExtras) != 1 || warExtras[0].Name() != "request_zhengming_war" {
+		t.Errorf("factory should produce per-minister tool for war, got %v", warExtras)
 	}
 }
 
@@ -443,10 +443,10 @@ func TestExtraToolsMixedStaticAndFactory(t *testing.T) {
 	})
 
 	// A minister listing both gets both
-	all := r.ExtraTools("chancellor", []string{"consult_minister", "request_zhengming"})
+	all := r.ExtraTools("secretary", []string{"consult_minister", "request_zhengming"})
 	names := toolNames(all)
 	assertHas(t, names, "consult_minister")
-	assertHas(t, names, "request_zhengming_chancellor")
+	assertHas(t, names, "request_zhengming_secretary")
 }
 
 func TestExtraToolsNotInPublicEntries(t *testing.T) {
@@ -571,7 +571,7 @@ func TestForPermissionsDoesNotReturnExtraTools(t *testing.T) {
 	assertNotHas(t, names, "consult_minister")
 
 	// Extra tools are resolved separately
-	extras := r.ExtraTools("chancellor", []string{"consult_minister"})
+	extras := r.ExtraTools("secretary", []string{"consult_minister"})
 	extraNames := toolNames(extras)
 	assertHas(t, extraNames, "consult_minister")
 }
