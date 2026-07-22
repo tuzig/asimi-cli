@@ -1979,6 +1979,10 @@ func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
 			// Every minister should have consult_minister via commonTools
 			assert.True(t, names["consult_minister"],
 				"%s should have consult_minister via commonTools", def.ID)
+
+			// Every minister should have request_zhengming via commonTools
+			assert.True(t, names["request_zhengming"],
+				"%s should have request_zhengming via commonTools", def.ID)
 		})
 	}
 }
