@@ -160,6 +160,10 @@ func (s *Court) ConsultMinister(ctx context.Context, callerID, ministerID string
 		logger = slog.Default()
 	}
 
+	if callerID == ministerID {
+		return "", fmt.Errorf("a minister cannot consult itself (caller: %s, target: %s) — use direct execution instead", callerID, ministerID)
+	}
+
 	if s.notify != nil {
 		s.notify(MinisterInvokingMsg{
 			ChannelID:  callerID,

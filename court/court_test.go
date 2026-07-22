@@ -1715,6 +1715,20 @@ func TestCourt_ConsultMinister_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "minister not found")
 }
 
+// TestCourt_ConsultMinister_SelfConsultationRejected verifies that
+// Court.ConsultMinister rejects self-consultation as a defense-in-depth guard.
+func TestCourt_ConsultMinister_SelfConsultationRejected(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	key := storage.EdictKey{ID: 1, Username: cfg.Username, Project: cfg.Project}
+	_, err := s.ConsultMinister(context.Background(), "forge", "forge", key, "do work")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot consult itself")
+}
+
 // TestCourt_CheckHostCommand_SafeRunOnHost verifies that a command matching
 // SafeRunOnHost returns (true, false) — run on host without approval.
 func TestCourt_CheckHostCommand_SafeRunOnHost(t *testing.T) {

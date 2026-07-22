@@ -320,6 +320,39 @@ func TestConsultMinisterTool_DynamicMinisterIDs(t *testing.T) {
 	}
 }
 
+// TestConsultMinisterTool_SelfConsultationRejected verifies that a minister
+// calling consult_minister with its own minister_id receives an error.
+func TestConsultMinisterTool_SelfConsultationRejected(t *testing.T) {
+	tool := ConsultMinisterTool{
+		Ctx:         ToolContext{MinisterID: "forge", Username: "testuser", Project: "testproject"},
+		Consultant:  mockConsultant{},
+		MinisterIDs: []string{"forge", "judge"},
+	}
+
+	_, err := tool.Call(context.Background(), `{"minister_id": "forge", "edict_id": 1, "task": "do work"}`)
+	if err == nil {
+		t.Fatal("expected error when minister consults itself, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot consult itself") {
+		t.Errorf("error should mention self-consultation, got: %v", err)
+	}
+}
+
+// TestConsultMinisterTool_OtherMinisterSucceeds verifies that the
+// self-consultation guard does not block legitimate cross-minister calls.
+func TestConsultMinisterTool_OtherMinisterSucceeds(t *testing.T) {
+	tool := ConsultMinisterTool{
+		Ctx:         ToolContext{MinisterID: "forge", Username: "testuser", Project: "testproject"},
+		Consultant:  mockConsultant{},
+		MinisterIDs: []string{"forge", "judge"},
+	}
+
+	_, err := tool.Call(context.Background(), `{"minister_id": "judge", "edict_id": 1, "task": "do work"}`)
+	if err != nil {
+		t.Fatalf("expected no error for cross-minister call, got: %v", err)
+	}
+}
+
 func TestConsultMinisterTool_DefaultMinisterIDs(t *testing.T) {
 	r := NewToolRegistry()
 	RegisterBuiltinTools(r, ToolRegistrationOpts{
