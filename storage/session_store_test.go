@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // DEPRECATED: TestClearSession tests removed - ClearSession function was removed
@@ -746,4 +748,92 @@ func TestMigrateV5toV6_SageToChancellorSealRename(t *testing.T) {
 	err = db.conn.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version)
 	require.NoError(t, err)
 	require.Equal(t, 6, version, "schema should be at version 6 after migration")
+}
+
+// TestMigrateV5toV6_SealsTableNotExist verifies the migration handles
+// databases where the seals table doesn't exist yet (e.g., a DB created
+// by a tool that only ran raw SQL migrations without GORM AutoMigrate).
+// The migration should succeed without error and record version 6.
+func TestMigrateV5toV6_SealsTableNotExist(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "migration_v5v6_no_seals.db")
+
+	// Manually create a database at schema v5 WITHOUT a seals table
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+
+	_, err = conn.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER)`)
+	require.NoError(t, err)
+	_, err = conn.Exec(`INSERT INTO schema_version (version, applied_at) VALUES (5, unixepoch())`)
+	require.NoError(t, err)
+
+	conn.Close()
+
+	// Open with InitDB — should detect v5 < v6 and run migration
+	// The migration must not fail even though seals table doesn't exist
+	db, err := InitDB(dbPath)
+	require.NoError(t, err, "migration should succeed when seals table does not exist")
+	defer db.Close()
+
+	// Verify schema version is now 6
+	var version int
+	err = db.conn.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version)
+	require.NoError(t, err)
+	require.Equal(t, 6, version, "schema should be at version 6 after migration")
+
+	// Verify seals table still doesn't exist (migration shouldn't create it)
+	var tableExists bool
+	err = db.conn.QueryRow(
+		"SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='seals'",
+	).Scan(&tableExists)
+	require.NoError(t, err)
+	require.False(t, tableExists, "migration should not create the seals table")
+}
+
+// TestPostGormMigrate_RenamesSageSeals verifies that PostGormMigrate
+// renames all seals with minister_id='sage' to minister_id='chancellor'.
+func TestPostGormMigrate_RenamesSageSeals(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+
+	require.NoError(t, gormDB.AutoMigrate(&Seal{}))
+
+	// Insert seals with mixed minister_ids
+	seals := []Seal{
+		{SealID: "seal-1", EdictID: 1, MinisterID: "sage"},
+		{SealID: "seal-2", EdictID: 1, MinisterID: "judge"},
+		{SealID: "seal-3", EdictID: 2, MinisterID: "sage"},
+		{SealID: "seal-4", EdictID: 3, MinisterID: "ruler"},
+		{SealID: "seal-5", EdictID: 3, MinisterID: "chancellor"},
+	}
+	for i := range seals {
+		require.NoError(t, gormDB.Create(&seals[i]).Error)
+	}
+
+	// Call PostGormMigrate — should rename sage → chancellor
+	require.NoError(t, PostGormMigrate(gormDB))
+
+	// Verify no seals remain with minister_id='sage'
+	var sageCount int64
+	require.NoError(t, gormDB.Model(&Seal{}).Where("minister_id = 'sage'").Count(&sageCount).Error)
+	require.Equal(t, int64(0), sageCount, "no seals should have minister_id='sage' after migration")
+
+	// Verify exactly 3 seals now have minister_id='chancellor' (2 renamed + 1 original)
+	var chancellorCount int64
+	require.NoError(t, gormDB.Model(&Seal{}).Where("minister_id = 'chancellor'").Count(&chancellorCount).Error)
+	require.Equal(t, int64(3), chancellorCount, "exactly 3 seals should have minister_id='chancellor' after migration")
+
+	// Verify other minister_ids are untouched
+	var judgeCount, rulerCount int64
+	require.NoError(t, gormDB.Model(&Seal{}).Where("minister_id = 'judge'").Count(&judgeCount).Error)
+	require.Equal(t, int64(1), judgeCount, "judge seals should be untouched")
+	require.NoError(t, gormDB.Model(&Seal{}).Where("minister_id = 'ruler'").Count(&rulerCount).Error)
+	require.Equal(t, int64(1), rulerCount, "ruler seals should be untouched")
+
+	// Verify idempotency: running again should be a no-op
+	require.NoError(t, PostGormMigrate(gormDB))
+	require.NoError(t, gormDB.Model(&Seal{}).Where("minister_id = 'sage'").Count(&sageCount).Error)
+	require.Equal(t, int64(0), sageCount, "idempotent: still no sage seals")
+	require.NoError(t, gormDB.Model(&Seal{}).Where("minister_id = 'chancellor'").Count(&chancellorCount).Error)
+	require.Equal(t, int64(3), chancellorCount, "idempotent: still 3 chancellor seals")
 }

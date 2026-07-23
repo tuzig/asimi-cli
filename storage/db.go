@@ -314,6 +314,20 @@ func (db *DB) registerRegexpFunction() error {
 	return nil
 }
 
+// PostGormMigrate runs data migrations that depend on GORM-managed tables
+// existing. It must be called after db.AutoMigrate has run so that tables
+// like `seals` are guaranteed to exist. This is idempotent and safe to run
+// on every startup.
+func PostGormMigrate(db *gorm.DB) error {
+	result := db.Exec(`UPDATE seals SET minister_id = 'chancellor' WHERE minister_id = 'sage'`)
+	if result.Error != nil {
+		return fmt.Errorf("rename sage seals to chancellor: %w", result.Error)
+	}
+	slog.Debug("post-GORM migration: renamed sage seals to chancellor",
+		"rows_affected", result.RowsAffected)
+	return nil
+}
+
 // Close closes the database connection
 func (db *DB) Close() error {
 	if db.conn != nil {

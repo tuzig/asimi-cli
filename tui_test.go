@@ -1894,7 +1894,7 @@ func TestStopStreaming_ClearsAllPendingRetries(t *testing.T) {
 	model := newTestModel(t)
 	model.connDropPendingRetry = map[string]pendingRetry{
 		"secretary": {prompt: "retry 1"},
-		"forge":      {prompt: "retry 2"},
+		"forge":     {prompt: "retry 2"},
 	}
 
 	model.stopStreaming()
