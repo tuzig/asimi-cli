@@ -353,6 +353,10 @@ func ProvideGormDB(params GormDBParams) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to migrate Court schema: %w", err)
 	}
 
+	if err := storage.PostGormMigrate(db); err != nil {
+		return nil, fmt.Errorf("failed post-GORM migration: %w", err)
+	}
+
 	params.Logger.Info("GORM database initialized")
 	return db, nil
 }
