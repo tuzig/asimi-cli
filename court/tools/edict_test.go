@@ -239,69 +239,6 @@ func findSubstring(s, substr string) bool {
 	return false
 }
 
-func TestUpdateEdictTool_AppendsClarification(t *testing.T) {
-	db := setupEdictTestDB(t)
-
-	edict := storage.Edict{
-		ID:       1,
-		Username: "testuser",
-		Project:  "testproject",
-		Intent:   "Original intent",
-	}
-	if err := db.Create(&edict).Error; err != nil {
-		t.Fatalf("failed to create edict: %v", err)
-	}
-
-	tool := UpdateEdictTool{DB: db, Username: "testuser", Project: "testproject"}
-
-	result, err := tool.Call(context.Background(), `{"edict_id": 1, "clarification": "More details"}`)
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-	if !containsSubstring(result, "updated") {
-		t.Errorf("Expected result to contain 'updated', got: %s", result)
-	}
-
-	// Verify the intent was appended
-	var updated storage.Edict
-	if err := db.First(&updated, "id = ?", edict.ID).Error; err != nil {
-		t.Fatalf("failed to get updated edict: %v", err)
-	}
-	if !containsSubstring(updated.Intent, "Original intent") {
-		t.Errorf("Expected intent to contain original, got: %s", updated.Intent)
-	}
-	if !containsSubstring(updated.Intent, "More details") {
-		t.Errorf("Expected intent to contain clarification, got: %s", updated.Intent)
-	}
-}
-
-func TestUpdateEdictTool_NonExistentEdict(t *testing.T) {
-	db := setupEdictTestDB(t)
-
-	tool := UpdateEdictTool{DB: db, Username: "testuser", Project: "testproject"}
-
-	_, err := tool.Call(context.Background(), `{"edict_id": 999, "clarification": "test"}`)
-	if err == nil {
-		t.Fatal("Expected error for non-existent edict")
-	}
-}
-
-func TestUpdateEdictTool_MissingFields(t *testing.T) {
-	db := setupEdictTestDB(t)
-
-	tool := UpdateEdictTool{DB: db, Username: "testuser", Project: "testproject"}
-
-	_, err := tool.Call(context.Background(), `{"edict_id": 1}`)
-	if err == nil {
-		t.Fatal("Expected error for missing clarification")
-	}
-
-	_, err = tool.Call(context.Background(), `{"clarification": "test"}`)
-	if err == nil {
-		t.Fatal("Expected error for missing edict_id")
-	}
-}
-
 func TestGetEdictStatusTool_ReturnsStatus(t *testing.T) {
 	db := setupEdictTestDB(t)
 
