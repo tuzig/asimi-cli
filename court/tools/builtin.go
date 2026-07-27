@@ -102,7 +102,6 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 
 	r.Register(InsertLingTool{Ctx: opts.Ctx}, intentWrite)
 	r.Register(UpdateLingStatusTool{Ctx: opts.Ctx}, intentWrite)
-	r.Register(UpdateEdictTool{DB: opts.Ctx.DB, Username: opts.Ctx.Username, Project: opts.Ctx.Project}, intentWrite)
 	r.Register(TransitionEdictTool{DB: opts.Ctx.DB, Username: opts.Ctx.Username, Project: opts.Ctx.Project}, intentWrite)
 	r.Register(CreateIncidentTool{Ctx: opts.Ctx}, intentWrite)
 	r.Register(ResolveIncidentTool{Ctx: opts.Ctx}, intentWrite)
