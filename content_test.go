@@ -185,16 +185,17 @@ func TestTabManager_RenderTabBar_ActiveAfterDismiss(t *testing.T) {
 	assert.Contains(t, bar, chancellorDef.Title)
 }
 
-func TestTabManager_DefaultTabsUseKanjiLabels(t *testing.T) {
+func TestTabManager_DefaultTabsUseEnglishLabels(t *testing.T) {
 	tm := newTestTabManager()
 	defs, err := ministers.LoadMinisters()
 	require.NoError(t, err)
 
 	bar := tm.RenderTabBar(80)
-	// Labels should be derived from defs (Kanji + " " + Title)
+	// Labels should be the English title only — kanji must NOT appear
 	for _, id := range ministers.DefaultTabIDs {
 		def := ministers.LookupByID(defs, id)
-		assert.Contains(t, bar, def.Kanji)
+		assert.Contains(t, bar, def.Title)
+		assert.NotContains(t, bar, def.Kanji)
 	}
 }
 

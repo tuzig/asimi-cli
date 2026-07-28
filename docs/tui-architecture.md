@@ -30,7 +30,7 @@ Asimi tries to follow vi, vim & neovim as closely as possible.
 ├─────────────────────────────────────────┤
 │                                         │
 │         CONTENT AREA                    │  ← Mouse wheel works here
-│         (Chat/Help/Models/Resume/Seal)  │
+│         (Chat/Help/Models/Resume/Edict)  │
 │                                         │
 │  Height = screen - prompt - status -    │  ← Dynamic based on prompt height
 │           cmdline - tabbar - modal      │
@@ -81,29 +81,11 @@ The `TabManager` (`content.go`) is a core architectural component that manages m
 
 ### Structure
 
-```go
-type Tab struct {
-    Label     string
-    Type      TabType
-    Target    string             // minister ID, edict ID, or ritual run ID
-    Content   ContentComponent   // Own content buffer per tab
-    EdictID   uint               // Current edict ID for this tab
-    Streaming bool               // True when this tab is actively receiving stream data
-    Ctx       context.Context    // per-tab context, flows to rituals for ruling tab
-    Cancel    context.CancelFunc // per-tab streaming cancellation
-}
-```
+See `Tab` in `content.go`.
 
 ### Default Tabs
 
-The `NewTabManager` creates 4 default tabs mirroring the Court's ministers:
-
-| Index | Label               | Target      | Minister         |
-|-------|---------------------|-------------|------------------|
-| 0     | 中書令 Secretary    | secretary   | Secretariat      |
-| 1     | 門下侍中 Chancellor  | chancellor  | Chancellery      |
-| 2     | 工部 Forge          | forge       | Ministry of Works |
-| 3     | 刑部 Judge          | judge       | Ministry of Justice |
+Default tabs are derived from `DefaultTabIDs` in `internal/ministers/constants.go`.
 
 ### Key Operations
 
@@ -281,7 +263,7 @@ case ChangeModeMsg:
 | `command`   | `<COMMAND>` | Command line input (`:`) |
 | `help`      | `<HELP>`    | Help viewer |
 | `models`    | `<MODELS>`   | Model selection with search support |
-| `select`    | `<SELECT>`  | Unified list selection (resume, seal) |
+| `select`    | `<SELECT>`  | Unified list selection (resume, edict) |
 | `scroll`    | `<SCROLL>`  | Chat history navigation |
 | `yesno`     | `<YESNO>`   | Yes/no prompt |
 | `input`     | `<INPUT>`   | Free text input prompt |
@@ -310,7 +292,7 @@ case ChangeModeMsg:
   - `Enter` - Select model
   - `Esc` - Return to chat
 
-- **`select`** — Unified list selection for resume and seal views:
+- **`select`** — Unified list selection for resume and edict views:
   - `j` / `k` / `↓` / `↑` - Navigate
   - `Ctrl-D` / `Ctrl-U` - Half page down/up
   - `g` / `G` - Jump to top/bottom
