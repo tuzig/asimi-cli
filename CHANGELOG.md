@@ -5,6 +5,43 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — v0.10.0 (Court Alignment & Autonomous Foundations)
+
+### Added
+
+- **Classic ministers** — renamed ministers to align with the 三省六部 (Three Departments and Six Ministries) system: Sage → Chancellor (門下侍中), Strategist → War (兵部), Chancellor → Secretary (中書令). Seal chain is now Judge → Chancellor → Ruler (e629)
+- **Zhengming as common tool** — `request_zhengming` is now a shared tool available to all ministers, not restricted to specific roles
+- **Headless Prompt Mode** — `-p` flag for non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684) _(in progress)_
+- **Isolated Host Mode** — `--isolated-host` flag bypasses podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683) _(in progress)_
+- **Handsoff Mode** — `--handsoff` flag auto-answers zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682) _(in progress)_
+
+### Changed
+
+- **consult_minister scope** — `consult_minister` is now restricted to the Secretary only, concentrating cross-minister coordination through the secretary role (e706)
+- **Removed update_edict tool** — the `update_edict` tool has been removed; edict updates are now handled through `suggest_edict` for refinement (e701)
+- **Removed "Current Edict" injection** — prompt no longer injects the edict ID as contextual formatting (e692) _(pending)_
+- **Removed kanji prefix from TUI tab labels** — tab display labels no longer show kanji prefixes (e703) _(pending)_
+- **Removed duplicate tui-architecture.md docs** — stale/duplicate documentation removed (e705) _(pending)_
+
+### Fixed
+
+- **CI dependencies** — restored `libgpgme-dev` in CI dependencies (e1)
+- **consult_minister self-call** — `consult_minister` can no longer call itself, preventing circular consultations (e688)
+- **Earth-wide ritual edict** — earth-wide rituals now correctly use court edict 1 instead of edict 0 (e687)
+- **DB seal migration** — fixed database seal migration for existing sessions
+- **DB event string migration** — renamed stale `shogunate_*` event strings in the database (e691) _(pending)_
+- **Post-GORM migration** — fixed post-GORM migration step for existing sessions (e694) _(pending)_
+- **Zhengming routing** — zhengming prompts now route to the active tab; fixed hardcoded caller in `suggest_edict` (e704)
+- **suggest_edict zhengming routing** — zhengming from `suggest_edict` now routes to the Secretary tab, not the Chancellor tab (e693) _(pending)_
+- **TUI garbage characters** — fixed rendering artifacts (`bg:1e1e/...` codes) in the content renderer (e697) _(pending)_
+- **CTRL-C on ritual tab** — CTRL-C on a ritual tab now resumes the ritual correctly (e681) _(pending)_
+- **Ritual input flattening** — `expandTemplate` now handles `map[string]string` inputs correctly (e685)
+
+### Postponed
+
+- **Realm-Aware File Permissions** — `RealmGuard` system for earth/intent file access control; proved more complex than expected, work stored on `realm-aware-permissions` branch for a future version (e695, e696, e698, e699, e702)
+
+
 ## [0.9.2] - 2026-07-21
 
 ### Added

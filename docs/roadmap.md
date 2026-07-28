@@ -2,6 +2,28 @@
 
 Below is what is left to develop:
 
+## V0.10.0 (in progress)
+
+### Court Alignment Cleanup
+
+- Fix suggest_edict zhengming routing to Secretary tab (e693)
+- Update stale docs referencing consult_minister (e707)
+
+### UX Fixes
+
+- Fix TUI garbage characters / rendering artifacts (e697)
+- CTRL-C on ritual tab should resume (e681)
+
+### Autonomous Execution Modes
+
+- Headless Prompt Mode (`-p` flag) — non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684)
+- Isolated Host Mode (`--isolated-host` flag) — bypass podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683)
+- Handsoff Mode (`--handsoff` flag) — auto-answer zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
+
+### Postponed (from 0.10.0)
+
+- Realm-Aware File Permissions — `RealmGuard` system for earth/intent file access control; proved more complex than expected, work stored on `realm-aware-permissions` branch (e695, e696, e698, e699, e702)
+
 ## V1.0
 
 ### Court Alignment
@@ -26,12 +48,6 @@ Below is what is left to develop:
 ### Skills Support (https://github.com/afittestide/asimi-cli/issues/159)
 
 ## V1.1
-
-### Autonomous Execution Modes
-
-- Headless Prompt Mode (`-p` flag) — non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684)
-- Isolated Host Mode (`--isolated-host` flag) — bypass podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683)
-- Handsoff Mode (`--handsoff` flag) — auto-answer zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
 
 ### Full Parallelism
 
@@ -64,6 +80,6 @@ fed by webhooks and cron jobs — CI results, GitHub issues, TODO comments, bran
 checks, website analytics.
 
 The Court is a process engine (seal chain, ritual
-DAGs, permissions) that reads the spec at startup and pulls realm data from the
-Mandate server as ritual context.
+DAGs, permissions) that reads the spec at startup and pulls realm data from
+the Mandate server as ritual context.
 The second mandate server — for digital marketers — proves the abstraction.
