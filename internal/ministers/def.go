@@ -11,11 +11,9 @@ type MinisterDef struct {
 	ExtraTools  []string `yaml:"extra_tools,omitempty"`
 }
 
-// Label returns the display label for a minister: "Kanji Title" when both
-// are present, or just Title otherwise.
+// Label returns the display label for a minister: just the English title.
+// The kanji field is kept for minister identity (greetings, system prompts)
+// but is not shown in tab labels.
 func (d MinisterDef) Label() string {
-	if d.Kanji != "" && d.Title != "" {
-		return d.Kanji + " " + d.Title
-	}
 	return d.Title
 }

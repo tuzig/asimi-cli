@@ -76,7 +76,7 @@ func initTabGreetings(tm *TabManager, defs []ministers.MinisterDef) {
 
 // NewTabManager creates a TabManager with default tabs built from the given
 // minister defs. The default tabs are Forge, Chancellor, Judge, Secretary —
-// using "Kanji Title" as the label, derived from the defs.
+// using the English title as the label, derived from the defs.
 func NewTabManager(w, h int, mdEnabled bool, getStatus func() string, defs []ministers.MinisterDef) TabManager {
 	defsByID := ministers.LookupMap(defs)
 

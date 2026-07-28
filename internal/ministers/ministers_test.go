@@ -26,7 +26,7 @@ func TestMinisterDef_Label(t *testing.T) {
 		def  MinisterDef
 		want string
 	}{
-		{"both kanji and title", MinisterDef{Kanji: "中書令", Title: "Secretary"}, "中書令 Secretary"},
+		{"both kanji and title", MinisterDef{Kanji: "中書令", Title: "Secretary"}, "Secretary"},
 		{"only title", MinisterDef{Title: "Secretary"}, "Secretary"},
 		{"only kanji", MinisterDef{Kanji: "中書令"}, ""},
 		{"neither", MinisterDef{}, ""},
