@@ -64,11 +64,18 @@ func (t AsimiSQLTool) Call(ctx context.Context, input string) (string, error) {
 
 	runnerOutput, err := runners.HostRun(ctx, runnerInput, t.ProjectRoot)
 	if err != nil {
+		if runnerOutput.Output != "" {
+			return "", fmt.Errorf("sqlite3 error: %s: %w", strings.TrimSpace(runnerOutput.Output), err)
+		}
 		return "", fmt.Errorf("sqlite3 error: %w", err)
 	}
 
 	if runnerOutput.ExitCode != "0" {
-		return "", fmt.Errorf("sqlite3 error: exit code %s", runnerOutput.ExitCode)
+		msg := strings.TrimSpace(runnerOutput.Output)
+		if msg == "" {
+			return "", fmt.Errorf("sqlite3 error: exit code %s", runnerOutput.ExitCode)
+		}
+		return "", fmt.Errorf("sqlite3 error: %s", msg)
 	}
 
 	result := strings.TrimSpace(runnerOutput.Output)

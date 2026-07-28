@@ -98,6 +98,39 @@ func TestAsimiSQLTool_ErrorsHandled(t *testing.T) {
 	assert.Contains(t, err.Error(), "query is required")
 }
 
+// TestAsimiSQLTool_NonZeroExitIncludesOutput verifies that when sqlite3
+// returns a non-zero exit code, the error message includes the actual
+// sqlite3 error output (not just the exit code).
+func TestAsimiSQLTool_NonZeroExitIncludesOutput(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+
+	// Create a minimal SQLite database
+	err := os.WriteFile(dbPath, []byte(""), 0644)
+	require.NoError(t, err)
+
+	// Check if sqlite3 is available - if not, skip
+	_, err = os.Stat("/usr/bin/sqlite3")
+	if os.IsNotExist(err) {
+		_, err = os.Stat("/usr/local/bin/sqlite3")
+	}
+	if os.IsNotExist(err) {
+		t.Skip("sqlite3 not available in this environment")
+	}
+
+	tool := AsimiSQLTool{DBPath: dbPath, ProjectRoot: tempDir}
+
+	// Query a nonexistent column — sqlite3 will fail with a descriptive error
+	_, err = tool.Call(context.Background(), `{"query":"SELECT nonexistent_column FROM sqlite_master"}`)
+	require.Error(t, err)
+
+	// The error should contain the actual sqlite3 error message, not just "exit code"
+	errMsg := err.Error()
+	assert.Contains(t, errMsg, "sqlite3 error:")
+	assert.Contains(t, errMsg, "no such column")
+	assert.NotContains(t, errMsg, "exit code")
+}
+
 // TestAsimiSQLTool_Format verifies the Format method works correctly
 func TestAsimiSQLTool_Format(t *testing.T) {
 	tool := AsimiSQLTool{DBPath: "/test/path", ProjectRoot: t.TempDir()}
