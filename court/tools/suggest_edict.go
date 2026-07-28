@@ -136,7 +136,7 @@ func (t SuggestEdictTool) Call(ctx context.Context, input string) (string, error
 		Username: t.Ctx.Username,
 		Project:  t.Ctx.Project,
 	}
-	requestID, err := t.Requester.RequestZhengming(key, questions, priority, "chancellor")
+	requestID, err := t.Requester.RequestZhengming(key, questions, priority, t.Ctx.MinisterID)
 	if err != nil {
 		return "", fmt.Errorf("failed to suggest edict: %w", err)
 	}

@@ -6061,3 +6061,45 @@ func TestStreamInterruptedMsg_ShownOnNonRitualTab(t *testing.T) {
 	}
 	assert.True(t, found, "ABORTED should be shown on non-ritual tabs")
 }
+
+// TestZhengmingPendingMsg_RoutesToActiveTabPrompt verifies that a
+// ZhengmingPendingMsg is routed to the active tab's prompt — not the
+// minister's own tab. Even when MinisterID="war", the prompt on the
+// currently active "secretary" tab should enter answering mode.
+func TestZhengmingPendingMsg_RoutesToActiveTabPrompt(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Active tab is secretary
+	model.tabs.SwitchToTabType("secretary")
+	require.Equal(t, "secretary", string(model.tabs.ActiveTab().Type))
+
+	// Ensure no answering state before
+	require.Nil(t, model.prompt().answering, "prompt should not be in answering mode initially")
+
+	// Send a zhengming from the war minister
+	msg := court.ZhengmingPendingMsg{
+		RequestID:  "zhengming-test-1",
+		MinisterID: "war",
+		Questions: storage.ZhengmingQuestions{
+			{Text: "Which approach?", Summary: "Approach?", Options: []string{"Option A", "Option B"}},
+		},
+	}
+
+	newModel, _ := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// The active tab's prompt should now be in answering mode
+	prompt := updated.prompt()
+	require.NotNil(t, prompt.answering, "active tab's prompt should be in answering mode after ZhengmingPendingMsg")
+	assert.Equal(t, "zhengming-test-1", prompt.answering.RequestID)
+	assert.Contains(t, prompt.answering.Title, "war", "title should mention the asking minister")
+
+	// The war tab's prompt (if it exists) should NOT be in answering mode
+	if warTab := updated.tabs.TabByTarget("war"); warTab != nil {
+		if warPrompt, ok := updated.prompts[warTab.Label]; ok {
+			assert.Nil(t, warPrompt.answering, "war tab's prompt should not be in answering mode")
+		}
+	}
+}
