@@ -2453,12 +2453,9 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case court.ZhengmingPendingMsg:
-		// Route to the correct tab's prompt by matching MinisterID to tab target
-		if tab := m.tabs.TabByTarget(msg.MinisterID); tab != nil {
-			if p, ok := m.prompts[tab.Label]; ok {
-				p.HandleZhengmingPending(msg)
-			}
-		}
+		// A zhengming halts the court — route to the active tab's prompt,
+		// regardless of which minister raised it.
+		m.prompt().HandleZhengmingPending(msg)
 		return m, nil
 
 	case AnsweredMsg:

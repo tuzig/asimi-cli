@@ -171,6 +171,9 @@ func TestSuggestEdictTool_PassesEdictIDInKey(t *testing.T) {
 	if mock.capturedKey.Project != "myproject" {
 		t.Errorf("expected project 'myproject', got %q", mock.capturedKey.Project)
 	}
+	if mock.capturedCallerMinisterID != "chancellor" {
+		t.Errorf("expected callerMinisterID 'chancellor', got %q", mock.capturedCallerMinisterID)
+	}
 }
 
 func TestSuggestEdictTool_EdictIDZeroDefaultsToNewEdict(t *testing.T) {
@@ -178,10 +181,10 @@ func TestSuggestEdictTool_EdictIDZeroDefaultsToNewEdict(t *testing.T) {
 	mock := &mockRequester{}
 	tool := SuggestEdictTool{
 		Ctx: ToolContext{
-			DB:        db,
-			Username:  "sageuser",
-			Project:   "myproject",
-			MinisterID: "chancellor",
+			DB:         db,
+			Username:   "sageuser",
+			Project:    "myproject",
+			MinisterID: "secretary",
 		},
 		Requester: mock,
 	}
@@ -198,6 +201,9 @@ func TestSuggestEdictTool_EdictIDZeroDefaultsToNewEdict(t *testing.T) {
 
 	if mock.capturedKey.ID != 0 {
 		t.Errorf("expected edict_id 0 for new edict, got %d", mock.capturedKey.ID)
+	}
+	if mock.capturedCallerMinisterID != "secretary" {
+		t.Errorf("expected callerMinisterID 'secretary', got %q", mock.capturedCallerMinisterID)
 	}
 }
 
