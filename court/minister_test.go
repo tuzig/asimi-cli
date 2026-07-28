@@ -1082,12 +1082,12 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 		t.Errorf("Expected ritual description in system prompt, got:\n%s", prompt)
 	}
 
-	// Verify castle-siege is NOT auto-selected
-	if !strings.Contains(prompt, "Use swift-strike for all code changes") {
-		t.Errorf("Expected 'Use swift-strike for all code changes' in system prompt, got:\n%s", prompt)
+	// Verify secretary role text includes new guidance
+	if !strings.Contains(prompt, "You harmonize the ruler's intent") {
+		t.Errorf("Expected 'You harmonize the ruler's intent' in system prompt, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "castle-siege is reserved for explicit ruler invocation only") {
-		t.Errorf("Expected 'castle-siege is reserved for explicit ruler invocation only' in system prompt, got:\n%s", prompt)
+	if !strings.Contains(prompt, "To summarize the session as a new edict call suggest_edict") {
+		t.Errorf("Expected 'To summarize the session as a new edict call suggest_edict' in system prompt, got:\n%s", prompt)
 	}
 	// Verify old auto-selection guidance is gone
 	if strings.Contains(prompt, "Use castle-siege for medium sized changes") {
@@ -1947,10 +1947,11 @@ func TestRunLoop_ConcurrentTaskDispatch(t *testing.T) {
 }
 
 // TestMinisterImpl_Tools_IncludesCommonTools verifies that every minister
-// gets consult_minister via the commonTools constant, even when their
-// extra_tools definition does not list it.
+// gets request_zhengming via the commonTools constant, even when their
+// extra_tools definition does not list it. Only the secretary should have
+// consult_minister (via extra_tools).
 func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
-	// Build a tool registry with consult_minister registered as an extra tool
+	// Build a tool registry with consult_minister and request_zhengming registered as extra tools
 	registry := tools.NewToolRegistry()
 	registry.RegisterExtraFactory("consult_minister", func(mid string) tools.Tool {
 		return tools.ConsultMinisterTool{Ctx: tools.ToolContext{MinisterID: mid}}
@@ -1976,13 +1977,18 @@ func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
 				names[tool.Name()] = true
 			}
 
-			// Every minister should have consult_minister via commonTools
-			assert.True(t, names["consult_minister"],
-				"%s should have consult_minister via commonTools", def.ID)
-
 			// Every minister should have request_zhengming via commonTools
 			assert.True(t, names["request_zhengming"],
 				"%s should have request_zhengming via commonTools", def.ID)
+
+			// Only the secretary should have consult_minister (via extra_tools)
+			if def.ID == "secretary" {
+				assert.True(t, names["consult_minister"],
+					"secretary should have consult_minister via extra_tools")
+			} else {
+				assert.False(t, names["consult_minister"],
+					"%s should NOT have consult_minister", def.ID)
+			}
 		})
 	}
 }
@@ -1992,10 +1998,10 @@ func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
 func TestCreateSessionWithOpts_ExcludeTools(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	// Build a tool registry with consult_minister and other tools
+	// Build a tool registry with request_zhengming (common tool) registered
 	registry := tools.NewToolRegistry()
-	registry.RegisterExtraFactory("consult_minister", func(mid string) tools.Tool {
-		return tools.ConsultMinisterTool{Ctx: tools.ToolContext{MinisterID: mid}}
+	registry.RegisterExtraFactory("request_zhengming", func(mid string) tools.Tool {
+		return tools.RequestZhengmingTool{MinisterID: mid}
 	})
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
@@ -2009,7 +2015,7 @@ func TestCreateSessionWithOpts_ExcludeTools(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 	forge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
-	// Create session WITHOUT excluding tools — consult_minister should be present
+	// Create session WITHOUT excluding tools — request_zhengming should be present
 	session, err := CreateSessionWithOpts(forge, mockLLM,
 		&SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}},
 		func(any) {},
@@ -2018,23 +2024,23 @@ func TestCreateSessionWithOpts_ExcludeTools(t *testing.T) {
 		})
 	require.NoError(t, err)
 	assert.NotNil(t, session)
-	_, hasConsult := session.toolCatalog["consult_minister"]
-	assert.True(t, hasConsult,
-		"session without ExcludeTools should have consult_minister in toolCatalog")
+	_, hasZhengming := session.toolCatalog["request_zhengming"]
+	assert.True(t, hasZhengming,
+		"session without ExcludeTools should have request_zhengming in toolCatalog")
 
-	// Create session WITH ExcludeTools — consult_minister should be absent
+	// Create session WITH ExcludeTools — request_zhengming should be absent
 	session2, err := CreateSessionWithOpts(forge, mockLLM,
 		&SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}},
 		func(any) {},
 		CreateSessionOpts{
 			EdictKey:     storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
-			ExcludeTools: []string{"consult_minister"},
+			ExcludeTools: []string{"request_zhengming"},
 		})
 	require.NoError(t, err)
 	assert.NotNil(t, session2)
-	_, hasConsult2 := session2.toolCatalog["consult_minister"]
-	assert.False(t, hasConsult2,
-		"session with ExcludeTools=[consult_minister] should NOT have consult_minister in toolCatalog")
+	_, hasZhengming2 := session2.toolCatalog["request_zhengming"]
+	assert.False(t, hasZhengming2,
+		"session with ExcludeTools=[request_zhengming] should NOT have request_zhengming in toolCatalog")
 }
 
 // TestRunLoop_GracefulShutdownWaitsInFlightTasks verifies that RunLoop's

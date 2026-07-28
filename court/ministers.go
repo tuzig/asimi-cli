@@ -24,7 +24,9 @@ func LoadAllMinisters(projectDir string) ([]MinisterDef, error) {
 // commonTools lists tool names available to every minister, regardless of
 // their extra_tools definition. These are resolved via the tool registry's
 // ExtraTools mechanism (the minister ID is passed for factory tools).
-var commonTools = []string{"consult_minister", "request_zhengming"}
+// consult_minister is NOT included here — only the secretary needs it,
+// and it is provided via the secretary's extra_tools list.
+var commonTools = []string{"request_zhengming"}
 
 // ministerImpl is the generic, YAML-driven minister type. It replaces the
 // five hand-coded minister structs (Secretary, Forge, Judge, Chancellor,
