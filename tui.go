@@ -752,34 +752,36 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyMsg processes keyboard input filtering out escape sequences
 func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// TODO: This is till not good enough. Not sure how sends them and why
-	// Filter out terminal escape sequences that shouldn't be processed
+	// Filter out terminal escape sequences that shouldn't be processed.
 	// These are responses to terminal queries (background color, cursor position, etc.)
+	// They arrive as key events in alt-screen mode and would otherwise be typed
+	// into the prompt textarea, producing garbage characters like `bg:1e1e/1e1e/1e1e`.
 	keyStr := msg.String()
 
-	/*
-		// Ignore OSC (Operating System Command) responses like ]11;rgb:...
-		// These come from terminal background color queries
-		if strings.HasPrefix(keyStr, "]") || strings.Contains(keyStr, "rgb:") || strings.Contains(keyStr, ";rgb") {
+	// Ignore OSC (Operating System Command) responses like ]11;rgb:...
+	// Also catch `bg:` — some terminals truncate the leading `r` from `rgb:`,
+	// leaving the response as `bg:1e1e/1e1e/1e1e`.
+	if strings.HasPrefix(keyStr, "]") ||
+		strings.Contains(keyStr, "rgb:") ||
+		strings.Contains(keyStr, ";rgb") ||
+		strings.Contains(keyStr, "bg:") {
+		return m, nil
+	}
+
+	// Ignore CSI (Control Sequence Introducer) responses like cursor position
+	// reports [1;1R. Pattern: starts with `[`, ends with `R`, contains `;`.
+	if (strings.HasPrefix(keyStr, "[") || strings.HasPrefix(keyStr, "\x1b[")) &&
+		strings.HasSuffix(keyStr, "R") && strings.Contains(keyStr, ";") {
+		return m, nil
+	}
+
+	// Ignore any key containing an escape character that isn't the normal
+	// escape key. This catches malformed or partial terminal responses.
+	if len(keyStr) > 3 && strings.Contains(keyStr, "\x1b") {
+		if keyStr != "esc" && keyStr != "escape" {
 			return m, nil
 		}
-
-		// Ignore CSI (Control Sequence Introducer) responses like cursor position reports [1;1R
-		// Check for pattern: starts with [ and ends with R and contains ;
-		if (strings.HasPrefix(keyStr, "[") || strings.HasPrefix(keyStr, "\x1b[")) &&
-			strings.HasSuffix(keyStr, "R") && strings.Contains(keyStr, ";") {
-			return m, nil
-		}
-
-		// Ignore any key that looks like a terminal response (contains escape sequences)
-		// This catches malformed or partial escape sequences
-		if len(keyStr) > 3 && (strings.Contains(keyStr, "\x1b") || strings.Contains(keyStr, "\\")) {
-			// But allow normal escape key
-			if keyStr != "esc" && keyStr != "escape" {
-				return m, nil
-			}
-		}
-	*/
+	}
 
 	// Always handle Ctrl+C first
 	var cmd tea.Cmd

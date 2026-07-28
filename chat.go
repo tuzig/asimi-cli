@@ -184,6 +184,11 @@ func (b *ChatMsgBuilder) String() string {
 	return result.String()
 }
 
+// cachedMarkdownRenderer is created once at first use and reused across all
+// ChatComponent instances. This prevents glamour.WithAutoStyle() from sending
+// an OSC 11 background-color query every time a new tab is created.
+var cachedMarkdownRenderer *glamour.TermRenderer
+
 // NewChatComponent creates a new chat component
 func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
 	return NewChatComponentWithStatus(width, height, markdownEnabled, func() string { return "insert" })
@@ -195,14 +200,21 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 
 	var renderer *glamour.TermRenderer
 	if markdownEnabled {
-		rendererStart := time.Now()
-		var err error
-		renderer, err = glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(0), // 0 disables glamour's word wrapping
-		)
-
-		slog.Debug("[TIMING] Markdown renderer initialized", "load time", time.Since(rendererStart), "err", err)
+		if cachedMarkdownRenderer != nil {
+			renderer = cachedMarkdownRenderer
+		} else {
+			rendererStart := time.Now()
+			var err error
+			renderer, err = glamour.NewTermRenderer(
+				glamour.WithAutoStyle(),
+				glamour.WithWordWrap(0), // 0 disables glamour's word wrapping
+			)
+			slog.Debug("[TIMING] Markdown renderer initialized", "load time", time.Since(rendererStart), "err", err)
+			// Cache for reuse by future ChatComponent instances
+			if err == nil {
+				cachedMarkdownRenderer = renderer
+			}
+		}
 	}
 
 	ret := &ChatComponent{
