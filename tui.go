@@ -98,6 +98,8 @@ type TUIModel struct {
 	pendingEdictCancel  *pendingEdictCancel
 	// Onboarding model selection confirmation state
 	pendingOnboarding bool
+	// Handsoff mode: auto-answer zhengming and YESNO prompts
+	handsoff bool
 	// Pending API key input: set when user selects a login_required non-OpenAI provider
 	pendingAPIKeyProvider string
 	// Pending model name entry: set when user selects a manual_entry model
@@ -203,6 +205,17 @@ type resumeEdictSessionMsg struct {
 	sessionID string
 }
 
+// enterYesNoOrAuto enters yes/no mode, unless handsoff mode is active.
+// When handsoff is on, it short-circuits with the given answer via a
+// yesNoResponseMsg instead of prompting the user.
+func (m *TUIModel) enterYesNoOrAuto(question string, autoAnswer bool) tea.Cmd {
+	if m.handsoff {
+		slog.Info("handsoff: auto-answering yesno", "question", question, "answer", autoAnswer)
+		return func() tea.Msg { return yesNoResponseMsg{answer: autoAnswer} }
+	}
+	return m.commandLine.EnterYesNoMode(question)
+}
+
 // NewTUIModel creates a new TUI model
 // NewTUIModelWithStores creates a new TUI model with provided stores (for fx injection)
 func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHistory, commandHistory *CommandHistory, sessionStore *SessionStore, db *storage.DB, scheduler *runners.CoreToolScheduler, courtClient courtapi.Client) *TUIModel {
@@ -253,6 +266,7 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 		persistentPromptHistory:  promptHistory,
 		persistentCommandHistory: commandHistory,
 		connDropPendingRetry:     make(map[string]pendingRetry),
+		handsoff:                 cli.Handsoff,
 	}
 
 	// Initialize tab system with default tabs built from minister defs
@@ -1736,7 +1750,7 @@ func (m TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
 	state := onboardingState(m.config)
 	if state != onboardingConfigured {
 		m.pendingOnboarding = true
-		return m, m.commandLine.EnterYesNoMode(onboardingPromptText(state))
+		return m, m.enterYesNoOrAuto(onboardingPromptText(state), false)
 	}
 
 	// Handle learning mode - append to agents file
@@ -1963,7 +1977,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		obState := onboardingState(m.config)
 		if obState != onboardingConfigured {
 			m.pendingOnboarding = true
-			return m, m.commandLine.EnterYesNoMode(onboardingPromptText(obState))
+			return m, m.enterYesNoOrAuto(onboardingPromptText(obState), false)
 		}
 
 		// This logic is adapted from handleEnterKey
@@ -2378,7 +2392,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			message = fmt.Sprintf("Edict %d Created:\n    %s", id, intent)
 			// Prompt the ruler to enact swift-strike
 			m.pendingRitualEnact = &pendingRitualEnact{edictID: id, intent: intent}
-			cmds = append(cmds, m.commandLine.EnterYesNoMode(fmt.Sprintf("Enact swift-strike for edict %d?", id)))
+			cmds = append(cmds, m.enterYesNoOrAuto(fmt.Sprintf("Enact swift-strike for edict %d?", id), true))
 		case storage.EventEdictSealed:
 			icon = "✅"
 			message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", msg.EdictKey.ID)
@@ -2453,6 +2467,19 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case court.ZhengmingPendingMsg:
+		// Handsoff mode: auto-answer with the recommended option (option[0])
+		// for each question, skip the answering UI entirely.
+		if m.handsoff {
+			answers := make([]string, len(msg.Questions))
+			for i, q := range msg.Questions {
+				if len(q.Options) > 0 {
+					answers[i] = q.Options[0]
+				}
+			}
+			slog.Info("handsoff: auto-answering zhengming", "request_id", msg.RequestID, "answers", answers)
+			go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: answers})
+			return m, nil
+		}
 		// A zhengming halts the court — route to the active tab's prompt,
 		// regardless of which minister raised it.
 		m.prompt().HandleZhengmingPending(msg)
@@ -2650,7 +2677,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update available - ask for confirmation
 		question := fmt.Sprintf("%sUpdate available: %s → %s. Do you want to update now?", systemPrefix, utils.AsimiVersion, msg.latest)
-		return m, m.commandLine.EnterYesNoMode(question)
+		return m, m.enterYesNoOrAuto(question, true)
 
 	case updateAvailableMsg:
 		// Background update check found a new version - just set the flag
@@ -2665,7 +2692,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.pendingOnboarding = true
-		return m, m.commandLine.EnterYesNoMode(onboardingPromptText(state))
+		return m, m.enterYesNoOrAuto(onboardingPromptText(state), false)
 
 	case yesNoResponseMsg:
 		// Check if this is a response to the onboarding model selection prompt
@@ -2800,7 +2827,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(displayCmd) > maxLen {
 			displayCmd = displayCmd[:maxLen] + "..."
 		}
-		return m, m.commandLine.EnterYesNoMode(fmt.Sprintf("Allow `%s` to run?", displayCmd))
+		return m, m.enterYesNoOrAuto(fmt.Sprintf("Allow `%s` to run?", displayCmd), true)
 
 	case updateCompleteMsg:
 		if msg.err != nil {

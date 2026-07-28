@@ -35,6 +35,7 @@ var cli struct {
 	Prompt        string `short:"p" help:"Prompt to send to the agent"`
 	Debug         bool   `help:"Enable debug logging"`
 	NoCleanup     bool   `help:"Don't remove container on exit (for debugging)"`
+	Handsoff      bool   `help:"Auto-answer zhengming and YESNO prompts (hands-off mode)"`
 	CPUProfile    string `help:"Write CPU profile to file"`
 	MemProfile    string `help:"Write memory profile to file"`
 	Trace         string `help:"Write execution trace to file"`

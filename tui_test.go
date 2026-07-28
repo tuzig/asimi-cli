@@ -6109,3 +6109,199 @@ func TestZhengmingPendingMsg_RoutesToActiveTabPrompt(t *testing.T) {
 		}
 	}
 }
+
+// --- Handsoff mode tests ---
+
+// TestHandsoff_ZhengmingAutoAnswer verifies that in handsoff mode, a
+// ZhengmingPendingMsg is auto-answered with the recommended option (option[0])
+// without entering answering mode.
+func TestHandsoff_ZhengmingAutoAnswer(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.handsoff = true
+
+	msg := court.ZhengmingPendingMsg{
+		RequestID:  "zhengming-handsoff-1",
+		MinisterID: "chancellor",
+		Questions: storage.ZhengmingQuestions{
+			{Text: "Which approach?", Summary: "Approach?", Options: []string{"Option A", "Option B"}},
+		},
+	}
+
+	newModel, _ := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Prompt should NOT be in answering mode — handsoff short-circuits
+	assert.Nil(t, updated.prompt().answering, "prompt should not enter answering mode in handsoff")
+
+	// The zhengming should have been auto-answered via HandleZhengmingResponse
+	// (called in a goroutine, so we poll)
+	require.Eventually(t, func() bool {
+		return len(mock.zhengmingResponses) == 1
+	}, 2*time.Second, 10*time.Millisecond, "HandleZhengmingResponse should be called")
+	resp := mock.zhengmingResponses[0]
+	assert.Equal(t, "zhengming-handsoff-1", resp.requestID)
+	assert.Equal(t, "Option A", resp.answer, "should auto-answer with the recommended option[0]")
+}
+
+// TestHandsoff_ZhengmingMultipleQuestions verifies that handsoff mode
+// auto-answers all questions, joining answers with "; ".
+func TestHandsoff_ZhengmingMultipleQuestions(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.handsoff = true
+
+	msg := court.ZhengmingPendingMsg{
+		RequestID:  "zhengming-handsoff-2",
+		MinisterID: "forge",
+		Questions: storage.ZhengmingQuestions{
+			{Text: "Q1?", Options: []string{"A", "B"}},
+			{Text: "Q2?", Options: []string{"X", "Y"}},
+		},
+	}
+
+	model.handleCustomMessages(msg)
+
+	require.Eventually(t, func() bool {
+		return len(mock.zhengmingResponses) == 1
+	}, 2*time.Second, 10*time.Millisecond, "HandleZhengmingResponse should be called")
+	resp := mock.zhengmingResponses[0]
+	assert.Equal(t, "A; X", resp.answer, "should join recommended options with '; '")
+}
+
+// TestHandsoff_YesNoAutoAnswerYes verifies that enterYesNoOrAuto returns
+// a yesNoResponseMsg with answer=true when handsoff is on and autoAnswer is true.
+func TestHandsoff_YesNoAutoAnswerYes(t *testing.T) {
+	model := newTestModel(t)
+	model.handsoff = true
+
+	cmd := model.enterYesNoOrAuto("Enact swift-strike?", true)
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	resp, ok := msg.(yesNoResponseMsg)
+	require.True(t, ok, "should return yesNoResponseMsg")
+	assert.True(t, resp.answer, "should auto-answer YES")
+
+	// Command line should NOT be in yes/no mode
+	assert.False(t, model.commandLine.IsInYesNoMode(), "should not enter yes/no mode in handsoff")
+}
+
+// TestHandsoff_YesNoAutoAnswerNo verifies that enterYesNoOrAuto returns
+// a yesNoResponseMsg with answer=false when handsoff is on and autoAnswer is false.
+func TestHandsoff_YesNoAutoAnswerNo(t *testing.T) {
+	model := newTestModel(t)
+	model.handsoff = true
+
+	cmd := model.enterYesNoOrAuto("Cancel edict?", false)
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	resp, ok := msg.(yesNoResponseMsg)
+	require.True(t, ok, "should return yesNoResponseMsg")
+	assert.False(t, resp.answer, "should auto-answer NO")
+}
+
+// TestHandsoff_YesNoDisabled verifies that enterYesNoOrAuto falls through
+// to EnterYesNoMode when handsoff is off.
+func TestHandsoff_YesNoDisabled(t *testing.T) {
+	model := newTestModel(t)
+	model.handsoff = false
+
+	cmd := model.enterYesNoOrAuto("Are you sure?", true)
+	require.NotNil(t, cmd)
+
+	// Command line should be in yes/no mode
+	assert.True(t, model.commandLine.IsInYesNoMode(), "should enter yes/no mode when handsoff is off")
+	assert.Equal(t, "Are you sure?", model.commandLine.yesNoQuestion)
+}
+
+// TestHandsoff_SwiftStrikeAutoEnacts verifies that in handsoff mode,
+// an edict-created event auto-enacts swift-strike without prompting.
+func TestHandsoff_SwiftStrikeAutoEnacts(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.handsoff = true
+
+	eventMsg := court.EventNotificationMsg{
+		ChannelID: "secretary",
+		EventType: storage.EventEdictCreated,
+		EdictKey:  storage.EdictKey{ID: 13, Username: "test", Project: "test"},
+		Payload: map[string]interface{}{
+			"intent": "Add new feature",
+			"id":     uint(13),
+		},
+	}
+
+	newModel, cmd := model.handleCustomMessages(eventMsg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Should NOT be in yes/no mode — handsoff short-circuits
+	assert.False(t, updated.commandLine.IsInYesNoMode(), "should not enter yes/no mode in handsoff")
+
+	// pendingRitualEnact should be set (the state is set before the prompt)
+	require.NotNil(t, updated.pendingRitualEnact)
+	assert.Equal(t, uint(13), updated.pendingRitualEnact.edictID)
+
+	// A command should be returned — the auto-answer yesNoResponseMsg
+	assert.NotNil(t, cmd)
+}
+
+// TestHandsoff_EdictCancelAutoNo verifies that in handsoff mode, the edict
+// cancel prompt auto-answers NO (destructive action).
+func TestHandsoff_EdictCancelAutoNo(t *testing.T) {
+	mock := &mockCourtClient{
+		getEdictFn: func(id uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: id, Intent: "test"}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.handsoff = true
+
+	cmd := handleEdictCancel(model, 42)
+	require.NotNil(t, cmd)
+
+	// The command should be a yesNoResponseMsg with answer=false (NO)
+	msg := cmd()
+	resp, ok := msg.(yesNoResponseMsg)
+	require.True(t, ok, "should return yesNoResponseMsg in handsoff mode")
+	assert.False(t, resp.answer, "cancel edict should auto-answer NO in handsoff mode")
+
+	// pendingEdictCancel should be set
+	require.NotNil(t, model.pendingEdictCancel)
+	assert.Equal(t, uint(42), model.pendingEdictCancel.edictID)
+}
+
+// TestHandsoff_OnboardingAutoNo verifies that in handsoff mode, the onboarding
+// prompt auto-answers NO (requires interactive input).
+func TestHandsoff_OnboardingAutoNo(t *testing.T) {
+	cfg := mockConfig()
+	cfg.LLM.Provider = ""
+	cfg.LLM.Model = ""
+	model := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	model.handsoff = true
+
+	// Simulate onboardingPromptMsg
+	newModel, cmd := model.handleCustomMessages(onboardingPromptMsg{})
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Should NOT be in yes/no mode
+	assert.False(t, updated.commandLine.IsInYesNoMode(), "should not enter yes/no mode in handsoff")
+
+	// pendingOnboarding should be set
+	assert.True(t, updated.pendingOnboarding, "pendingOnboarding should be set before auto-answer")
+
+	// Should return a yesNoResponseMsg with answer=false
+	require.NotNil(t, cmd)
+	msg := cmd()
+	resp, ok := msg.(yesNoResponseMsg)
+	require.True(t, ok, "should return yesNoResponseMsg")
+	assert.False(t, resp.answer, "onboarding should auto-answer NO in handsoff mode")
+}

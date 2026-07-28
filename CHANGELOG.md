@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Zhengming as common tool** — `request_zhengming` is now a shared tool available to all ministers, not restricted to specific roles
 - **Headless Prompt Mode** — `-p` flag for non-interactive execution with stdout output and exit codes, `--max-turns` for benchmark control (e684) _(in progress)_
 - **Isolated Host Mode** — `--isolated-host` flag bypasses podman sandbox and approval gates for already-isolated environments like terminal-bench and CI (e683) _(in progress)_
-- **Handsoff Mode** — `--handsoff` flag auto-answers zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682) _(in progress)_
+- **Handsoff Mode** — `--handsoff` flag auto-answers zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
 
 ### Changed
 

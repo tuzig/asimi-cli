@@ -1159,7 +1159,7 @@ func handleEdictSeal(model *TUIModel, edictID uint, notes string) tea.Cmd {
 			edictID: edictID,
 			notes:   notes,
 		}
-		return model.commandLine.EnterYesNoMode(question)
+		return model.enterYesNoOrAuto(question, true)
 	}
 
 	return grantRulerSealCmd(model, edictID, notes)
@@ -1214,7 +1214,7 @@ func handleEdictCancel(model *TUIModel, edictID uint) tea.Cmd {
 		)
 	}
 	model.pendingEdictCancel = &pendingEdictCancel{edictID: edictID}
-	return model.commandLine.EnterYesNoMode(fmt.Sprintf("Cancel edict %d?", edictID))
+	return model.enterYesNoOrAuto(fmt.Sprintf("Cancel edict %d?", edictID), false)
 }
 
 // cancelEdictCmd cancels an edict, shows a confirmation, and returns
