@@ -66,3 +66,26 @@ func TestProvideConfig_SucceedsWithDefaults(t *testing.T) {
 	// (the old dead fallback hardcoded "openai")
 	assert.Empty(t, cfg.LLM.Provider, "provider should default to empty, not a hardcoded value")
 }
+
+// TestProvideConfig_MaxTurnsOverride verifies that the --max-turns CLI flag
+// overrides the LLMConfig.MaxTurns value from the config file.
+func TestProvideConfig_MaxTurnsOverride(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	_, err := config.EnsureUserConfigExists()
+	require.NoError(t, err)
+
+	originalMaxTurns := cli.MaxTurns
+	cli.MaxTurns = 42
+	defer func() { cli.MaxTurns = originalMaxTurns }()
+
+	logger := slog.Default()
+	ri := repo.RepoInfo{ProjectRoot: ""}
+
+	cfg, err := ProvideConfig(logger, ri)
+	require.NoError(t, err)
+	assert.Equal(t, 42, cfg.LLM.MaxTurns, "MaxTurns should be overridden by --max-turns CLI flag")
+}

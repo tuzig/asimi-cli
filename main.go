@@ -36,6 +36,7 @@ var cli struct {
 	Debug         bool   `help:"Enable debug logging"`
 	NoCleanup     bool   `help:"Don't remove container on exit (for debugging)"`
 	Handsoff      bool   `help:"Auto-answer zhengming and YESNO prompts (hands-off mode)"`
+	MaxTurns      int    `help:"Override max conversation turns (benchmark control)"`
 	CPUProfile    string `help:"Write CPU profile to file"`
 	MemProfile    string `help:"Write memory profile to file"`
 	Trace         string `help:"Write execution trace to file"`
@@ -380,7 +381,7 @@ func main() {
 	}
 
 	if hasPromptArg {
-		fmt.Println("Not implmented yet")
+		os.Exit(runHeadlessMode())
 	}
 
 	// Interactive mode
