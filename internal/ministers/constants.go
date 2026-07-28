@@ -14,7 +14,7 @@ const (
 
 // DefaultTabIDs is the ordered list of ministers that get interactive tabs
 // in the TUI: Forge, Chancellor, Judge, Secretary.
-var DefaultTabIDs = []string{Forge, Chancellor, Judge, Secretary}
+var DefaultTabIDs = []string{Forge, Secretary, Judge, Chancellor}
 
 // SealChainIDs is the ordered list of minister IDs whose seals form the
 // ascension chain: Judge → Chancellor → Ruler.

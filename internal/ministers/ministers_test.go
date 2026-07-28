@@ -66,7 +66,7 @@ func TestLookupMap(t *testing.T) {
 }
 
 func TestDefaultTabIDs(t *testing.T) {
-	assert.Equal(t, []string{Forge, Chancellor, Judge, Secretary}, DefaultTabIDs)
+	assert.Equal(t, []string{Forge, Secretary, Judge, Chancellor}, DefaultTabIDs)
 }
 
 func TestSealChainIDs(t *testing.T) {
