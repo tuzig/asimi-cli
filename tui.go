@@ -2919,7 +2919,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case edictIntentUpdatedMsg:
 		m.tabs.Content().Chat.AddToRawHistory("CONTEXT", systemPrefix+msg.message)
-		m.tabs.Content().Chat.AddMessage(systemPrefix + msg.message)
+		toastType := "success"
+		switch {
+		case strings.Contains(msg.message, "Failed"):
+			toastType = "error"
+		case strings.Contains(msg.message, "No changes"):
+			toastType = "info"
+		}
+		m.commandLine.AddToast(msg.message, toastType, 3*time.Second)
 		m.sessionActive = true
 		return m, reloadEdictsListCmd(&m)
 

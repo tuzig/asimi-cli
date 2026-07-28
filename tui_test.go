@@ -4996,6 +4996,12 @@ func TestEdictIntentUpdatedMsg_ReloadsEdictsList(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, cmd, "should return reload cmd for edictIntentUpdatedMsg")
 
+	// Verify a toast was added instead of a chat message
+	toasts := model.commandLine.ActiveToasts()
+	require.Len(t, toasts, 1, "should add a toast notification")
+	assert.Equal(t, "Edict 42 intent updated", toasts[0].Message)
+	assert.Equal(t, "success", toasts[0].Type)
+
 	msg := cmd()
 	_, ok = msg.(edictsLoadedMsg)
 	assert.True(t, ok, "expected edictsLoadedMsg from edictIntentUpdatedMsg handler")
