@@ -103,6 +103,9 @@ func ProvideConfig(logger *slog.Logger, repoInfo repo.RepoInfo) (*Config, error)
 	if cli.NoCleanup {
 		cfg.Sandbox.NoCleanup = true
 	}
+	if cli.MaxTurns > 0 {
+		cfg.LLM.MaxTurns = cli.MaxTurns
+	}
 	logger.Info("configuration loaded")
 	return cfg, nil
 }
