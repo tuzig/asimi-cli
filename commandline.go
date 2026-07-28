@@ -145,6 +145,11 @@ func (cl *CommandLineComponent) ClearToasts() {
 	cl.toasts = nil
 }
 
+// ActiveToasts returns the current toast notifications.
+func (cl *CommandLineComponent) ActiveToasts() []Toast {
+	return cl.toasts
+}
+
 // EnterCommandMode enters command mode with optional initial text
 func (cl *CommandLineComponent) EnterCommandMode(initialText string) tea.Cmd {
 	cl.mode = CommandLineCommand
