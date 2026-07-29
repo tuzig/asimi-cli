@@ -964,28 +964,24 @@ func TestConsultMinisterTool_Format(t *testing.T) {
 	}
 }
 
-// TestBuildSystemPrompt_EdictID verifies the edict ID is injected into the scratchpad
+// TestBuildSystemPrompt_EdictID verifies role text and realm are present in the prompt
+// and that the edict ID is NOT injected into the scratchpad (edict 692 removed this).
 func TestBuildSystemPrompt_EdictID(t *testing.T) {
 	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
 
 	fake := &fakeMinister{MinisterBase: base, id: "test"}
 
-	// With edict ID — should appear in system prompt alongside Realm and role text
+	// With edict ID — role text and realm should be present
 	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{ID: 123456})
-	if !strings.Contains(prompt, "Current Edict: 123456") {
-		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
-	}
 	if !strings.Contains(prompt, "You are a test minister.") {
 		t.Errorf("Expected role text in system prompt, got:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "三省六部") {
 		t.Errorf("Expected Realm (三省六部) in system prompt, got:\n%s", prompt)
 	}
-
-	// Without edict ID — should not contain "Current Edict"
-	prompt = buildSystemPrompt(fake, nil, storage.EdictKey{})
+	// The edict ID must NOT be injected into the scratchpad (removed in edict 692)
 	if strings.Contains(prompt, "Current Edict") {
-		t.Errorf("Expected no edict ID in system prompt, got:\n%s", prompt)
+		t.Errorf("System prompt must not contain 'Current Edict' injection, got:\n%s", prompt)
 	}
 }
 
@@ -1317,9 +1313,6 @@ func TestBuildSystemPrompt_GivenContext(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "# Given Context") {
 		t.Errorf("Expected '# Given Context' heading, got:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "Current Edict: 42") {
-		t.Errorf("Expected edict ID in system prompt, got:\n%s", prompt)
 	}
 
 	// Without given context — should not contain "Given Context"

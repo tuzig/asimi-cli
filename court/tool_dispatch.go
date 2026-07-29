@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/utils"
 	"github.com/afittestide/asimi/storage"
@@ -46,13 +47,18 @@ type zhengmingRaisedFirer interface {
 // RequestZhengming creates a clarification request in the DB, notifies the
 // UI, fires the onZhengmingRaised callback on the calling minister (if any),
 // and emits a zhengming_requested event.
-func (s *Court) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
+func (s *Court) RequestZhengming(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 	requestID := GenerateID("zhengming", fmt.Sprintf("%d", key.ID), callerMinisterID, fmt.Sprintf("%v", questions), time.Now().String())
 
-	sessionID := ""
-	if caller := s.GetMinister(callerMinisterID); caller != nil {
-		if sess := caller.GetSession(); sess != nil {
-			sessionID = sess.ID
+	// Prefer session ID from context (the session that's actually executing
+	// the tool). Fall back to the minister's interactive session for backward
+	// compatibility when no context value is present.
+	sessionID := tools.SessionIDFromContext(ctx)
+	if sessionID == "" {
+		if caller := s.GetMinister(callerMinisterID); caller != nil {
+			if sess := caller.GetSession(); sess != nil {
+				sessionID = sess.ID
+			}
 		}
 	}
 

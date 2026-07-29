@@ -16,7 +16,7 @@ type mockRequester struct {
 	capturedCallerMinisterID string
 }
 
-func (m *mockRequester) RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
+func (m *mockRequester) RequestZhengming(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error) {
 	m.capturedKey = key
 	m.capturedCallerMinisterID = callerMinisterID
 	return "req-123", nil

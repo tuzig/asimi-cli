@@ -1209,7 +1209,7 @@ func TestRequestZhengming_SetsSessionID(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "secretary")
+	requestID, err := zr.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "secretary")
 	require.NoError(t, err)
 
 	// Verify the zhengming record has the session ID
@@ -1243,7 +1243,7 @@ func TestRequestZhengming_NilSessionLeavesSessionIDEmpty(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "secretary")
+	requestID, err := zr.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "secretary")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1301,7 +1301,7 @@ func TestRequestZhengming_UsesCallingMinisterSessionID(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	requestID, err := zr.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	// The zhengming record should carry the SAGE's session ID, not the chancellor's
@@ -1348,7 +1348,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterLookupNil(t *testing.T) {
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
 	// Caller is "chancellor" but getMinister is nil, so lookup fails
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	requestID, err := zr.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1397,7 +1397,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterNotFound(t *testing.T) {
 		Summary: "proceed check",
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "nonexistent")
+	requestID, err := zr.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "nonexistent")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1448,7 +1448,7 @@ func TestRequestZhengming_EmptySessionIDWhenMinisterHasNoSession(t *testing.T) {
 		Options: []string{tools.AnswerApproveEdict, tools.AnswerReject},
 	}}
 	// "chancellor" exists but has no session → SessionID should be empty
-	requestID, err := zr.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	requestID, err := zr.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1651,7 +1651,7 @@ func TestCourt_RequestZhengming_CreatesDBRecord(t *testing.T) {
 		Options: []string{"Option A", "Option B"},
 	}}
 
-	requestID, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	requestID, err := s.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 	assert.NotEmpty(t, requestID)
 
@@ -1680,7 +1680,7 @@ func TestCourt_RequestZhengming_UrgentPrioritySetsShorterTimeout(t *testing.T) {
 		Options: []string{"A", "B"},
 	}}
 
-	requestID, err := s.RequestZhengming(key, questions, storage.PriorityUrgent, "chancellor")
+	requestID, err := s.RequestZhengming(context.Background(), key, questions, storage.PriorityUrgent, "chancellor")
 	require.NoError(t, err)
 
 	var req storage.Zhengming
@@ -1708,7 +1708,7 @@ func TestCourt_RequestZhengming_EmitsEvent(t *testing.T) {
 		Options: []string{"Option A", "Option B"},
 	}}
 
-	requestID, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	requestID, err := s.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	var events []storage.TianEvent
@@ -1751,11 +1751,155 @@ func TestCourt_RequestZhengming_FiresCallbackOnCaller(t *testing.T) {
 		Options: []string{"Option A", "Option B"},
 	}}
 
-	_, err := s.RequestZhengming(key, questions, storage.PriorityNormal, "chancellor")
+	_, err := s.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "chancellor")
 	require.NoError(t, err)
 
 	assert.True(t, sageRaised, "onZhengmingRaised should fire on the calling minister (sage)")
 	assert.False(t, chancellorRaised, "onZhengmingRaised should NOT fire on the chancellor")
+}
+
+// TestRequestZhengming_ContextSessionIDOverridesMinisterLookup verifies that
+// when the context carries a session ID, RequestZhengming uses it even when
+// callerMinisterID is empty or points to a minister with no interactive
+// session. This is the core fix for edict 717: the session ID from context
+// (the session actually executing the tool) takes priority over the
+// minister-lookup path.
+func TestRequestZhengming_ContextSessionIDOverridesMinisterLookup(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	// Wire minister lookup so the old fallback path *could* find a minister
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
+			base.SetMinisterLookup(s.GetMinister)
+		}
+	}
+
+	// Attach a session to the secretary — this is the "wrong" session the
+	// old fallback would return if callerMinisterID were "secretary".
+	chancellor := s.GetMinister("secretary")
+	require.NotNil(t, chancellor)
+	mockLLM := mocks.NewLLMProvider()
+	chancellorSess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
+	require.NoError(t, err)
+	if base, ok := chancellor.(interface{ SetSession(*Session, ...string) }); ok {
+		base.SetSession(chancellorSess)
+	}
+
+	// Inject a DIFFERENT session ID via context — the one actually executing
+	// the tool (e.g. a ritual session "e717").
+	ritualSessionID := "ritual-session-e717"
+	ctxWithSession := context.WithValue(ctx, tools.SessionIDKey{}, ritualSessionID)
+
+	key := storage.EdictKey{ID: 42, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{
+		Text:    "Approve?",
+		Summary: "approval check",
+		Options: []string{"Yes", "No"},
+	}}
+
+	// callerMinisterID is "" — no minister to look up, but context has the ID
+	requestID, err := s.RequestZhengming(ctxWithSession, key, questions, storage.PriorityNormal, "")
+	require.NoError(t, err)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Equal(t, ritualSessionID, req.SessionID,
+		"zhengming should use the session ID from context, not the minister lookup")
+	assert.NotEqual(t, chancellorSess.ID, req.SessionID,
+		"zhengming must NOT use the chancellor's session")
+}
+
+// TestRequestZhengming_ContextSessionIDWithMinisterSession verifies that
+// when both context and minister lookup would provide a session ID, the
+// context value wins. (edict 717)
+func TestRequestZhengming_ContextSessionIDWithMinisterSession(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
+			base.SetMinisterLookup(s.GetMinister)
+		}
+	}
+
+	// Attach a session to secretary
+	secretary := s.GetMinister("secretary")
+	require.NotNil(t, secretary)
+	mockLLM := mocks.NewLLMProvider()
+	secretarySess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
+	require.NoError(t, err)
+	if base, ok := secretary.(interface{ SetSession(*Session, ...string) }); ok {
+		base.SetSession(secretarySess)
+	}
+
+	// Context carries a different session ID
+	ctxSessionID := "ctx-session-xyz"
+	ctxWithSession := context.WithValue(ctx, tools.SessionIDKey{}, ctxSessionID)
+
+	key := storage.EdictKey{ID: 1, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{Text: "OK?", Options: []string{"A", "B"}}}
+
+	requestID, err := s.RequestZhengming(ctxWithSession, key, questions, storage.PriorityNormal, "secretary")
+	require.NoError(t, err)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Equal(t, ctxSessionID, req.SessionID,
+		"context session ID should take priority over minister lookup")
+}
+
+// TestRequestZhengming_FallbackToMinisterSessionWhenNoContextSession verifies
+// that when context has no session ID, the old minister-lookup fallback is
+// used. This ensures backward compatibility. (edict 717)
+func TestRequestZhengming_FallbackToMinisterSessionWhenNoContextSession(t *testing.T) {
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	defer cancel()
+
+	for _, minister := range s.Ministers() {
+		if base, ok := minister.(interface{ SetMinisterLookup(func(string) Minister) }); ok {
+			base.SetMinisterLookup(s.GetMinister)
+		}
+	}
+
+	secretary := s.GetMinister("secretary")
+	require.NotNil(t, secretary)
+	mockLLM := mocks.NewLLMProvider()
+	secretarySess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, nil, "test", "secretary")
+	require.NoError(t, err)
+	if base, ok := secretary.(interface{ SetSession(*Session, ...string) }); ok {
+		base.SetSession(secretarySess)
+	}
+
+	// No session ID in context
+	key := storage.EdictKey{ID: 1, Username: cfg.Username, Project: cfg.Project}
+	questions := storage.ZhengmingQuestions{{Text: "OK?", Options: []string{"A", "B"}}}
+
+	requestID, err := s.RequestZhengming(context.Background(), key, questions, storage.PriorityNormal, "secretary")
+	require.NoError(t, err)
+
+	var req storage.Zhengming
+	require.NoError(t, db.First(&req, "request_id = ?", requestID).Error)
+	assert.Equal(t, secretarySess.ID, req.SessionID,
+		"should fall back to minister's session when context has no session ID")
 }
 
 // TestCourt_ConsultMinister_NotFound verifies that Court.ConsultMinister

@@ -8,6 +8,21 @@ import (
 	"gorm.io/gorm"
 )
 
+// SessionIDKey is a context key for propagating the executing session's ID
+// to tools via context.Context. This allows tools (e.g. RequestZhengming) to
+// know which session invoked them, even when called through the scheduler
+// or from a ritual step where the minister's own interactive session differs.
+type SessionIDKey struct{}
+
+// SessionIDFromContext extracts the session ID from the context, or returns
+// "" if none is set.
+func SessionIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(SessionIDKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // ToolContext carries shared identity and daemon-level resources to all tools.
 // RepoInfo is a pointer so all contexts see live state (ProjectRoot, Branch, etc.)
 // MinisterID is the one field that varies per minister tool set.

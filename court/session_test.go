@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afittestide/asimi/court/tools"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/mocks"
 	"github.com/afittestide/asimi/internal/runners"
@@ -1954,4 +1955,52 @@ func (t *mockToolSlow) Format(input, result string, err error) string {
 }
 func (t *mockToolSlow) ParameterSchema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
+}
+
+// sessionIDCaptureTool captures the session ID from the context.
+type sessionIDCaptureTool struct {
+	capturedSessionID string
+}
+
+func (t *sessionIDCaptureTool) Name() string        { return "capture_session_id" }
+func (t *sessionIDCaptureTool) Description() string { return "Captures session ID from context" }
+func (t *sessionIDCaptureTool) Call(ctx context.Context, input string) (string, error) {
+	t.capturedSessionID = tools.SessionIDFromContext(ctx)
+	return t.capturedSessionID, nil
+}
+func (t *sessionIDCaptureTool) Format(input, result string, err error) string {
+	return result
+}
+func (t *sessionIDCaptureTool) ParameterSchema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{}}
+}
+
+// TestExecuteToolCall_InjectsSessionIDIntoContext verifies that
+// executeToolCall injects the session's ID into the context, making it
+// available to tools via tools.SessionIDFromContext. (edict 717)
+func TestExecuteToolCall_InjectsSessionIDIntoContext(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	captureTool := &sessionIDCaptureTool{}
+	sess, err := NewSession(mockLLM, &SessionConfig{}, []Tool{captureTool}, nil, func(any) {}, "", "test-channel")
+	require.NoError(t, err)
+
+	msg := sess.executeToolCall(context.Background(), captureTool, "call-1", "capture_session_id", `{}`)
+	assert.Equal(t, schemas.ChatMessageRoleTool, msg.Role)
+	assert.Equal(t, sess.ID, captureTool.capturedSessionID,
+		"tool should receive the session's ID via context")
+}
+
+// TestExecuteToolCall_InjectsSessionIDViaScheduler verifies that the session
+// ID propagates through the scheduler path as well. (edict 717)
+func TestExecuteToolCall_InjectsSessionIDViaScheduler(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	captureTool := &sessionIDCaptureTool{}
+	sched := runners.NewCoreToolScheduler(func(any) {})
+	sess, err := NewSession(mockLLM, &SessionConfig{}, []Tool{captureTool}, sched, func(any) {}, "", "e717")
+	require.NoError(t, err)
+
+	msg := sess.executeToolCall(context.Background(), captureTool, "call-1", "capture_session_id", `{}`)
+	assert.Equal(t, schemas.ChatMessageRoleTool, msg.Role)
+	assert.Equal(t, sess.ID, captureTool.capturedSessionID,
+		"tool should receive the session's ID via context through the scheduler")
 }
