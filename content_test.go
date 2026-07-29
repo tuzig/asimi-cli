@@ -207,22 +207,51 @@ func TestTabManager_DefaultTabIDs(t *testing.T) {
 	}
 }
 
-func TestHandleTabNewCommand_DefaultOpensChancellorTabWithDerivedLabel(t *testing.T) {
+func TestHandleTabNewCommand_DefaultInheritsActiveTabMinister(t *testing.T) {
 	model := newTestModel(t)
 	initialTabCount := len(model.tabs.tabs)
+
+	// Default active tab is Forge (index 0) — tabnew with no args
+	// should inherit the active tab's minister type.
+	handleTabNewCommand(model, []string{})
+
+	assert.Len(t, model.tabs.tabs, initialTabCount+1)
+	newTab := model.tabs.tabs[initialTabCount]
+	assert.Equal(t, ministers.Forge, string(newTab.Type))
+	assert.Equal(t, "forge-2", newTab.Target)
+	defs, _ := ministers.LoadMinisters()
+	forgeDef := ministers.LookupByID(defs, ministers.Forge)
+	assert.Contains(t, newTab.Label, forgeDef.Title)
+}
+
+func TestHandleTabNewCommand_DefaultOnEdictTabOpensSecretary(t *testing.T) {
+	model := newTestModel(t)
+	initialTabCount := len(model.tabs.tabs)
+
+	// Simulate being on a minister tab with an edict context.
+	model.tabs.SetActiveEdictID(42)
 
 	handleTabNewCommand(model, []string{})
 
 	assert.Len(t, model.tabs.tabs, initialTabCount+1)
 	newTab := model.tabs.tabs[initialTabCount]
-	assert.Equal(t, ministers.Chancellor, string(newTab.Type))
-	// Default Chancellor tab already exists with target "chancellor", so the new one
-	// gets a unique target for session/channel isolation.
-	assert.Equal(t, "chancellor-2", newTab.Target)
-	// Label should be derived from defs, not hardcoded
-	defs, _ := ministers.LoadMinisters()
-	chancellorDef := ministers.LookupByID(defs, ministers.Chancellor)
-	assert.Contains(t, newTab.Label, chancellorDef.Title)
+	assert.Equal(t, ministers.Secretary, string(newTab.Type))
+	assert.Equal(t, "secretary-2", newTab.Target)
+}
+
+func TestHandleTabNewCommand_DefaultOnRitualTabOpensSecretary(t *testing.T) {
+	model := newTestModel(t)
+	initialTabCount := len(model.tabs.tabs)
+
+	// Switch to a ritual tab (non-minister type, no EdictID).
+	model.tabs.Add("Ritual:e99", "ritual", "e99")
+
+	handleTabNewCommand(model, []string{})
+
+	assert.Len(t, model.tabs.tabs, initialTabCount+2) // +1 for ritual, +1 for tabnew
+	newTab := model.tabs.tabs[initialTabCount+1]
+	assert.Equal(t, ministers.Secretary, string(newTab.Type))
+	assert.Equal(t, "secretary-2", newTab.Target)
 }
 
 func TestHandleTabNewCommand_ChancellorArgOpensChancellorTab(t *testing.T) {
