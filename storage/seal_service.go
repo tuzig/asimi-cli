@@ -45,6 +45,24 @@ func (s *SealService) GrantSeal(key EdictKey, ministerID string, metadata JSON) 
 	return nil
 }
 
+// InvalidateSeals marks all non-stale seals on an edict as stale.
+// Called when the edict's intent changes (appendToIntent) to signal that
+// existing seals were earned against the old intent.
+func (s *SealService) InvalidateSeals(key EdictKey) error {
+	if key.ID == 0 {
+		return fmt.Errorf("id is required")
+	}
+	now := time.Now()
+	result := s.db.Model(&Seal{}).
+		Where("edict_id = ? AND username = ? AND project = ? AND stale_at IS NULL",
+			key.ID, key.Username, key.Project).
+		Update("stale_at", now)
+	if result.Error != nil {
+		return fmt.Errorf("failed to invalidate seals: %w", result.Error)
+	}
+	return nil
+}
+
 // GetSeals retrieves all seals for an edict
 func (s *SealService) GetSeals(key EdictKey) ([]Seal, error) {
 	var seals []Seal
@@ -61,7 +79,7 @@ func (s *SealService) GetSeals(key EdictKey) ([]Seal, error) {
 func (s *SealService) HasSeal(key EdictKey, ministerID string) (bool, error) {
 	var count int64
 	err := s.db.Model(&Seal{}).
-		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.ID, key.Username, key.Project, ministerID).
+		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ? AND stale_at IS NULL", key.ID, key.Username, key.Project, ministerID).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check seal: %w", err)
@@ -197,7 +215,7 @@ func (s *SealService) ListActiveEdicts(username, project string) ([]ActiveEdict,
 		WHERE e.username = ? AND e.project = ?
 		AND e.project != ''
 		AND e.cancelled_at IS NULL
-		AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler')
+		AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler' AND s.stale_at IS NULL)
 		ORDER BY e.id DESC`, username, project).Scan(&edicts).Error
 	if err != nil {
 		return nil, fmt.Errorf("list pending seals: %w", err)
@@ -210,7 +228,7 @@ func (s *SealService) ListActiveEdicts(username, project string) ([]ActiveEdict,
 		edictIDs[i] = e.ID
 	}
 	if len(edictIDs) > 0 {
-		s.db.Where("edict_id IN ? AND username = ? AND project = ? AND minister_id IN ('judge','chancellor')",
+		s.db.Where("edict_id IN ? AND username = ? AND project = ? AND minister_id IN ('judge','chancellor') AND stale_at IS NULL",
 			edictIDs, username, project).Find(&seals)
 	}
 

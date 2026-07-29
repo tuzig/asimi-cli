@@ -8,7 +8,7 @@ import (
 )
 
 // Schema version
-const SchemaVersion = 6
+const SchemaVersion = 7
 
 // Type aliases - use types from internal/config as the single source of truth
 type (

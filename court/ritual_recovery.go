@@ -161,7 +161,7 @@ func (rg *RitualGuard) promptForAbortedRituals(ctx context.Context) {
 			continue
 		}
 		var sealCount int64
-		rg.db.Model(&storage.Seal{}).Where("edict_id = ? AND username = ? AND project = ?", exec.EdictID, exec.Username, exec.Project).Count(&sealCount)
+		rg.db.Model(&storage.Seal{}).Where("edict_id = ? AND username = ? AND project = ? AND stale_at IS NULL", exec.EdictID, exec.Username, exec.Project).Count(&sealCount)
 		if sealCount > 0 || edict.CancelledAt != nil {
 			exec.State = RitualStateCompleted
 			rg.db.Save(exec)
