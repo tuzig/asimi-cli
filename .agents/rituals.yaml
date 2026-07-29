@@ -121,8 +121,6 @@
         "chore: releasing v{{ .version }}". Then create an annotated git tag:
         git tag -a v{{ .version }} -m "Release v{{ .version }}".
         Do NOT push — the Ruler must confirm the push as the final step.
-      then:
-        - the release is committed and tagged
 
     - name: confirm-push
       minister: secretary
