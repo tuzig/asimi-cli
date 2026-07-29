@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/afittestide/asimi/court"
@@ -134,13 +136,15 @@ func headlessContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 // headlessSink receives court events and writes plain text to stdout.
 // When handsoff is true, it auto-answers zhengming requests and auto-enacts
 // swift-strike rituals, mirroring the TUI's handsoff mode behavior.
-// When handsoff is false, zhengming requests are left unanswered (the
-// headless process blocks until the zhengming times out or fails).
+// When handsoff is false, zhengming requests are answered interactively:
+// each question is printed as a numbered menu and the user selects from stdin.
 type headlessSink struct {
 	court      *court.Court
 	handsoff   bool
 	done       chan int
 	enactedSet map[uint]bool // tracks edicts we've already auto-enacted
+	stdin      io.Reader     // for interactive zhengming prompts
+	stdout     io.Writer     // for interactive zhengming menus
 }
 
 func newHeadlessSink(c *court.Court) *headlessSink {
@@ -149,6 +153,8 @@ func newHeadlessSink(c *court.Court) *headlessSink {
 		handsoff:   true, // default true for backward compat; overridden in runHeadlessMode
 		done:       make(chan int, 1),
 		enactedSet: make(map[uint]bool),
+		stdin:      os.Stdin,
+		stdout:     os.Stdout,
 	}
 }
 
@@ -189,9 +195,9 @@ func (s *headlessSink) handle(msg any) {
 	case court.ZhengmingPendingMsg:
 		if s.handsoff {
 			s.autoAnswerZhengming(m)
+		} else {
+			s.interactiveAnswerZhengming(m)
 		}
-		// When handsoff is off, the zhengming is left unanswered; the
-		// headless process will block until the zhengming times out.
 
 	case court.EventNotificationMsg:
 		s.handleEvent(m)
@@ -315,6 +321,55 @@ func (s *headlessSink) autoAnswerZhengming(msg court.ZhengmingPendingMsg) {
 			slog.Error("headless: failed to answer zhengming", "error", err)
 		}
 	}()
+}
+
+// interactiveAnswerZhengming prints each question as a numbered menu to
+// stdout, reads the user's selection from stdin, and submits the answers
+// via HandleZhengmingResponse. Invalid input re-prompts the same question.
+func (s *headlessSink) interactiveAnswerZhengming(msg court.ZhengmingPendingMsg) {
+	if s.court == nil {
+		return
+	}
+	answers := make([]string, len(msg.Questions))
+	for i, q := range msg.Questions {
+		answers[i] = s.promptQuestion(q)
+	}
+	answer := strings.Join(answers, "; ")
+	slog.Info("headless: interactive zhengming answered", "request_id", msg.RequestID, "answer", answer)
+	go func() {
+		if err := s.court.HandleZhengmingResponse(context.Background(), msg.RequestID, answer); err != nil {
+			slog.Error("headless: failed to answer zhengming", "error", err)
+		}
+	}()
+}
+
+// promptQuestion prints a numbered menu for a single question and reads
+// the user's selection from stdin, re-prompting on invalid input.
+func (s *headlessSink) promptQuestion(q storage.ZhengmingQuestion) string {
+	label := q.Text
+	if q.Summary != "" {
+		label = q.Summary
+	}
+	fmt.Fprintf(s.stdout, "\n%s\n", label)
+	for {
+		for j, opt := range q.Options {
+			if j > 0 {
+				fmt.Fprint(s.stdout, "  ")
+			}
+			fmt.Fprintf(s.stdout, "%d) %s", j+1, opt)
+		}
+		fmt.Fprint(s.stdout, "\n> ")
+
+		var input string
+		fmt.Fscanln(s.stdin, &input)
+
+		n, err := strconv.Atoi(input)
+		if err != nil || n < 1 || n > len(q.Options) {
+			fmt.Fprintf(s.stdout, "Invalid selection. Please enter a number 1-%d.\n", len(q.Options))
+			continue
+		}
+		return q.Options[n-1]
+	}
 }
 
 // enactSwiftStrike publishes EventRitualEnacted to trigger the swift-strike
