@@ -1532,6 +1532,48 @@ func TestBuildSandbox_NilRunner(t *testing.T) {
 	assert.Equal(t, "built", resultMap["status"])
 }
 
+// TestBuildSandbox_IsolatedHost verifies that buildSandbox is a no-op
+// when isolatedHost is set.
+func TestBuildSandbox_IsolatedHost(t *testing.T) {
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, slog.Default(), repo.RepoInfo{})
+	runner.isolatedHost = true
+
+	result, err := runner.buildSandbox(context.Background())
+	require.NoError(t, err)
+
+	resultMap := result.(map[string]string)
+	assert.Equal(t, "skipped", resultMap["status"])
+}
+
+// TestVerifySandboxUp_IsolatedHost verifies that verifySandboxUp
+// succeeds immediately in isolated-host mode.
+func TestVerifySandboxUp_IsolatedHost(t *testing.T) {
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, slog.Default(), repo.RepoInfo{})
+	runner.isolatedHost = true
+
+	result, err := runner.verifySandboxUp(context.Background())
+	require.NoError(t, err)
+
+	resultMap := result.(map[string]string)
+	assert.Equal(t, "ready", resultMap["status"])
+}
+
+// TestVerifySandboxReady_IsolatedHost verifies that verifySandboxReady
+// succeeds immediately in isolated-host mode.
+func TestVerifySandboxReady_IsolatedHost(t *testing.T) {
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, slog.Default(), repo.RepoInfo{})
+	runner.isolatedHost = true
+
+	result, err := runner.verifySandboxReady(context.Background())
+	require.NoError(t, err)
+
+	resultMap := result.(map[string]string)
+	assert.Equal(t, "ready", resultMap["status"])
+}
+
 // TestCheckVerdictsPassed_PassedThenFailed verifies latest-wins: a failed
 // verdict after a passed one should fail.
 func TestCheckVerdictsPassed_EdictLevelFailed(t *testing.T) {
@@ -1955,4 +1997,41 @@ func TestRunThenStep_BashFailure_TruncatesOutput(t *testing.T) {
 	assert.Contains(t, err.Error(), "…")
 	assert.Less(t, len(err.Error()), 600,
 		"error message should be truncated, not contain the full 2000-char output")
+}
+
+// TestGetCourtStatus_StaleRulerSealShowsActive verifies that getCourtStatus
+// filters stale seals — an edict whose ruler seal was invalidated by
+// appendToIntent must reappear as 'active' (edict 714).
+func TestGetCourtStatus_StaleRulerSealShowsActive(t *testing.T) {
+	db := setupRitualTestDB(t)
+	require.NoError(t, db.AutoMigrate(&storage.Edict{}, &storage.Seal{}, &storage.Zhengming{}))
+
+	edict := storage.Edict{
+		ID: 1, Username: "testuser", Project: "testproject", Intent: "test",
+	}
+	require.NoError(t, db.Create(&edict).Error)
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, db, nil, slog.Default(), repo.RepoInfo{})
+
+	key := storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}
+	sealSvc := storage.NewSealService(db)
+
+	// Seal with all three — edict is sealed
+	for _, m := range []string{"judge", "chancellor", "ruler"} {
+		require.NoError(t, sealSvc.GrantSeal(key, m, storage.JSON{}))
+	}
+	result, err := runner.getCourtStatus(key)
+	require.NoError(t, err)
+	rows, _ := result.([]map[string]interface{})
+	assert.Empty(t, rows, "sealed edict should not appear in court status")
+
+	// Invalidate seals (intent changed) — edict should reappear as 'active'
+	require.NoError(t, sealSvc.InvalidateSeals(key))
+	result, err = runner.getCourtStatus(key)
+	require.NoError(t, err)
+	rows, ok := result.([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, rows, 1, "edict with stale ruler seal should reappear as active")
+	assert.Equal(t, "active", rows[0]["status"])
 }

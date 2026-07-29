@@ -179,12 +179,12 @@ func (r *RitualRunner) getUnsealedEdicts(ctx context.Context, exec *RitualExecut
 	result := make([]map[string]interface{}, len(edicts))
 	for i, e := range edicts {
 		result[i] = map[string]interface{}{
-			"edict_id":   e.ID,
-			"summary":    e.IssueRef,
-			"status":     "active",
-			"updated_at": e.UpdatedAt,
-			"has_judge":  e.HasJudgeSeal,
-			"has_chancellor":   e.HasChancellorSeal,
+			"edict_id":       e.ID,
+			"summary":        e.IssueRef,
+			"status":         "active",
+			"updated_at":     e.UpdatedAt,
+			"has_judge":      e.HasJudgeSeal,
+			"has_chancellor": e.HasChancellorSeal,
 		}
 	}
 	return result, nil
@@ -356,15 +356,15 @@ func (r *RitualRunner) getCourtStatus(key storage.EdictKey) (interface{}, error)
 SELECT
     e.id, e.session_id, e.issue_ref, e.intent, e.created_at, e.updated_at,
     CASE
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler') THEN 'sealed'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler' AND s.stale_at IS NULL) THEN 'sealed'
         WHEN EXISTS (SELECT 1 FROM zhengming_requests z WHERE z.edict_id = e.id AND z.username = e.username AND z.project = e.project AND z.status = 'pending') THEN 'blocked'
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'chancellor') THEN 'active'
-        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'judge') THEN 'active'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'chancellor' AND s.stale_at IS NULL) THEN 'active'
+        WHEN EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'judge' AND s.stale_at IS NULL) THEN 'active'
         ELSE 'active'
     END as status
 FROM edicts e
 WHERE e.username = ? AND e.project = ?
-  AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler')
+  AND NOT EXISTS (SELECT 1 FROM seals s WHERE s.edict_id = e.id AND s.username = e.username AND s.project = e.project AND s.minister_id = 'ruler' AND s.stale_at IS NULL)
 ORDER BY e.updated_at DESC
 `
 	if err := r.db.Raw(query, key.Username, key.Project).Scan(&result).Error; err != nil {
@@ -620,6 +620,9 @@ func (r *RitualRunner) getInfrastructureTemplates(ctx context.Context) (interfac
 // establish-infrastructure step resolves (via its background) before each
 // attempt — including on retry — so this function does not need to reset them.
 func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
+	if r.isolatedHost {
+		return map[string]string{"status": "skipped", "output": "isolated-host mode: sandbox not needed"}, nil
+	}
 	output, err := runners.HostRun(ctx, runners.Input{
 		Command:        "just build-sandbox",
 		Description:    "build the sandbox",
@@ -647,6 +650,9 @@ func (r *RitualRunner) buildSandbox(ctx context.Context) (interface{}, error) {
 // verifySandboxUp runs a quick smoke test and verify it's on linux
 // It distinguishes between configuration failures (blocking) and transient failures (non-blocking).
 func (r *RitualRunner) verifySandboxUp(ctx context.Context) (interface{}, error) {
+	if r.isolatedHost {
+		return map[string]string{"status": "ready", "output": "isolated-host mode: sandbox check skipped"}, nil
+	}
 	output, err := r.runner.Run(ctx, runners.Input{
 		Command:        "echo $container",
 		Description:    "print podman if in a sandbox",
@@ -671,6 +677,9 @@ func (r *RitualRunner) verifySandboxUp(ctx context.Context) (interface{}, error)
 }
 
 func (r *RitualRunner) verifySandboxReady(ctx context.Context) (interface{}, error) {
+	if r.isolatedHost {
+		return map[string]string{"status": "ready", "output": "isolated-host mode: sandbox check skipped"}, nil
+	}
 	// Step 1: Reload the runner to pick up the newly built sandbox image
 	// Use the injected sandbox config instead of reloading from disk.
 	if r.sandboxConfig == nil {

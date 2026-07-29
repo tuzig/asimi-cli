@@ -7,14 +7,14 @@ import (
 
 // Config represents the application configuration structure
 type Config struct {
-	Storage   StorageConfig   `koanf:"storage"`
-	Logging   LoggingConfig   `koanf:"logging"`
-	UI        UIConfig        `koanf:"ui"`
-	LLM       LLMConfig       `koanf:"llm"`
-	History   HistoryConfig   `koanf:"history"`
-	Session   SessionConfig   `koanf:"session"`
-	Sandbox   SandboxConfig   `koanf:"sandbox"`
-	Court CourtConfig `koanf:"court"`
+	Storage StorageConfig `koanf:"storage"`
+	Logging LoggingConfig `koanf:"logging"`
+	UI      UIConfig      `koanf:"ui"`
+	LLM     LLMConfig     `koanf:"llm"`
+	History HistoryConfig `koanf:"history"`
+	Session SessionConfig `koanf:"session"`
+	Sandbox SandboxConfig `koanf:"sandbox"`
+	Court   CourtConfig   `koanf:"court"`
 }
 
 // StorageConfig holds storage configuration
@@ -105,10 +105,11 @@ type SandboxConfig struct {
 
 // CourtConfig holds configuration for the Court.
 type CourtConfig struct {
-	RitualTimeout    time.Duration `koanf:"ritual_timeout"`      // legacy, unused
-	StepIdleTimeout  time.Duration `koanf:"step_idle_timeout"`    // max silence before aborting a ritual step (default 5m)
-	Username         string         `koanf:"username"`            // OS username for edict scoping
-	Project          string         `koanf:"project"`             // project slug for edict scoping
+	RitualTimeout   time.Duration `koanf:"ritual_timeout"`    // legacy, unused
+	StepIdleTimeout time.Duration `koanf:"step_idle_timeout"` // max silence before aborting a ritual step (default 5m)
+	Username        string        `koanf:"username"`          // OS username for edict scoping
+	Project         string        `koanf:"project"`           // project slug for edict scoping
+	IsolatedHost    bool          `koanf:"isolated_host"`     // skip sandbox, run commands on host without approval
 }
 
 // DefaultCourtConfig returns the default configuration.
@@ -119,7 +120,7 @@ func DefaultCourtConfig() *CourtConfig {
 	}
 	return &CourtConfig{
 		StepIdleTimeout: 5 * time.Minute,
-		Username:         username,
+		Username:        username,
 	}
 }
 

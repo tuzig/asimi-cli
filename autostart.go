@@ -137,6 +137,9 @@ func spawnDaemonAndWait(ctx context.Context, socketPath string) error {
 	if cli.Debug {
 		args = append(args, "--debug")
 	}
+	if cli.IsolatedHost {
+		args = append(args, "--isolated-host")
+	}
 	cmd := exec.CommandContext(ctx, selfPath, args...)
 	cmd.Env = append(os.Environ(), "ASIMI_READY_FD=3")
 	cmd.ExtraFiles = []*os.File{readW}
