@@ -133,8 +133,8 @@ func (t InvokeRitualTool) Name() string {
 }
 
 func (t InvokeRitualTool) Description() string {
-	return `Execute a YAML-defined ritual workflow for an existing edict. Blocks until the ritual completes or fails.
-Rituals are predefined workflows that orchestrate ministers and commands through a series of steps.`
+	//TODO: the tool needs to listen to this event and ???
+	return `Starts a ritual for an existing edict. Returns immediately with 'requested' status; the ritual runs asynchronously and completion is reported via events (ritual_completed, ritual_failed).`
 }
 
 func (t InvokeRitualTool) Call(ctx context.Context, input string) (string, error) {
