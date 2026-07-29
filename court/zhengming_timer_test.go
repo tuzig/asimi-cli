@@ -38,7 +38,7 @@ func TestOnZhengmingRaisedCallbackFired(t *testing.T) {
 	court.SetNotify(func(msg any) {})
 
 	key := storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}
-	_, err := court.RequestZhengming(key, storage.ZhengmingQuestions{{Text: "OK?"}}, storage.PriorityNormal, "forge")
+	_, err := court.RequestZhengming(context.Background(), key, storage.ZhengmingQuestions{{Text: "OK?"}}, storage.PriorityNormal, "forge")
 	require.NoError(t, err)
 
 	raisedMu.Lock()
@@ -72,7 +72,7 @@ func TestOnZhengmingResolvedCallbackFired(t *testing.T) {
 
 	// Create a zhengming request first
 	key := storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}
-	requestID, err := court.RequestZhengming(key, storage.ZhengmingQuestions{{Text: "OK?"}}, storage.PriorityNormal, "forge")
+	requestID, err := court.RequestZhengming(context.Background(), key, storage.ZhengmingQuestions{{Text: "OK?"}}, storage.PriorityNormal, "forge")
 	require.NoError(t, err)
 
 	// Answer it — should fire the resolved callback

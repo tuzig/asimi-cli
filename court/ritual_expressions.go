@@ -912,7 +912,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			return fmt.Errorf("minister not found: secretary")
 		}
 		type zhengmingGate interface {
-			RequestZhengming(storage.EdictKey, storage.ZhengmingQuestions, storage.ZhengmingPriority, string) (string, error)
+			RequestZhengming(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
 		}
 		gate, ok := minister.(zhengmingGate)
 		if !ok {
@@ -927,7 +927,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			Text:    fmt.Sprintf("The %s has completed work on edict %d. Do you approve?", stepName, exec.EdictID),
 			Options: []string{tools.AnswerApproveAndProceed, tools.AnswerLetMeClarify, tools.AnswerReject},
 		}}
-		requestID, err := gate.RequestZhengming(thenKey, questions, storage.PriorityUrgent, "secretary")
+		requestID, err := gate.RequestZhengming(ctx, thenKey, questions, storage.PriorityUrgent, "secretary")
 		if err != nil {
 			return fmt.Errorf("failed to request zhengming: %w", err)
 		}

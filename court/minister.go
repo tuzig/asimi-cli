@@ -38,7 +38,7 @@ var ministerTmpl = template.Must(template.New("minister").Parse(systemBase))
 
 // ZhengmingConn provides clarification request capabilities (behavioral interface)
 type ZhengmingConn interface {
-	RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (requestID string, err error)
+	RequestZhengming(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (requestID string, err error)
 	IsZhengmingPending(key storage.EdictKey) (bool, error)
 }
 
@@ -512,7 +512,6 @@ func CreateSessionWithOpts(minister Minister, client LLMProvider, config *Sessio
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
 // with the minister's Role, Scratchpad, and project context from AGENTS.md.
-// If id is non-empty, it's prepended to the scratchpad.
 // Optional args, when provided, is appended to the scratchpad.
 func buildSystemPrompt(minister Minister, config *SessionConfig, key storage.EdictKey, args ...string) string {
 	agentsFile := "AGENTS.md"
@@ -521,9 +520,6 @@ func buildSystemPrompt(minister Minister, config *SessionConfig, key storage.Edi
 	}
 
 	scratchpad := minister.Scratchpad()
-	if key.ID != 0 {
-		scratchpad = fmt.Sprintf("# Current Edict: %d\n\n%s", key.ID, scratchpad)
-	}
 	if len(args) > 0 && args[0] != "" {
 		scratchpad += "\n\n" + args[0]
 	}

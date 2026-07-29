@@ -29,7 +29,7 @@ const (
 
 // ZhengmingRequester provides clarification request capabilities
 type ZhengmingRequester interface {
-	RequestZhengming(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (requestID string, err error)
+	RequestZhengming(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (requestID string, err error)
 }
 
 // RequestZhengmingTool requests clarification from the user.
@@ -80,7 +80,7 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 	}
 
 	key := storage.EdictKey{ID: params.EdictID, Username: t.Username, Project: t.Project}
-	requestID, err := t.Requester.RequestZhengming(key, storage.ZhengmingQuestions(params.Questions), priority, t.MinisterID)
+	requestID, err := t.Requester.RequestZhengming(ctx, key, storage.ZhengmingQuestions(params.Questions), priority, t.MinisterID)
 	if err != nil {
 		return "", fmt.Errorf("request zhengming: %w", err)
 	}

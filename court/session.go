@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
@@ -1367,6 +1368,7 @@ func hasToolCallResponse(toolMessages []schemas.ChatMessage, toolCallID string) 
 
 // executeToolCall executes a single tool call and returns the response content
 func (s *Session) executeToolCall(ctx context.Context, tool Tool, toolCallID, toolName, argsJSON string) schemas.ChatMessage {
+	ctx = context.WithValue(ctx, tools.SessionIDKey{}, s.ID)
 	var out string
 	var callErr error
 

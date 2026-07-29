@@ -55,7 +55,7 @@ type RitualGuard struct {
 
 	// Zhengming functions injected by Court
 	waitForZhengming   func(ctx context.Context, requestID string) (string, error)
-	requestZhengming   func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
+	requestZhengming   func(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
 	deliverZhengming   func(answer ZhengmingAnswer) bool
 
 	// recoveryMu blocks event-driven rituals during recovery prompts
@@ -72,7 +72,7 @@ type RitualGuardOpts struct {
 	StreamingCtx       func(string) context.Context
 	Version            string // Application version for health checks
 	WaitForZhengming   func(ctx context.Context, requestID string) (string, error)
-	RequestZhengming   func(key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
+	RequestZhengming   func(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
 	DeliverZhengming   func(answer ZhengmingAnswer) bool
 }
 
