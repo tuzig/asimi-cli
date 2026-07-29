@@ -77,7 +77,7 @@ func NewCommandRegistry() CommandRegistry {
 	registry.RegisterCommand("update", "Check for and install updates", handleUpdateCommand)
 	registry.RegisterCommand("logout", "Logout from current provider and clear credentials", handleLogoutCommand)
 	registry.RegisterCommand("login", "Authenticate with an AI provider", handleLoginCommand)
-	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [hunting|<minister>|ritual <run_id>])", handleTabNewCommand)
+	registry.RegisterCommand("tabnew", "Open a new tab (usage: :tabnew [<minister>|ritual <run_id>])", handleTabNewCommand)
 	registry.RegisterCommand("tabclose", "Close the current tab", handleTabCloseCommand)
 	registry.RegisterCommand("edicts", "Manage edicts: read, enact, seal, resume, or cancel (usage: :edict [id] [enact|seal|resume|cancel])", handleEdictCommand)
 	registry.RegisterCommand("continue", "Resume a paused ritual on the current tab", handleContinueCommand)
@@ -870,34 +870,25 @@ func handleUpdateConfirm(model *TUIModel) tea.Cmd {
 }
 
 func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
-	// Load defs for label derivation
 	defs, _ := ministers.LoadMinisters()
 	defsByID := ministers.LookupMap(defs)
 
 	if len(args) == 0 {
-		// Default: open a Chancellor tab
-		d := defsByID[ministers.Chancellor]
-		label := d.Label()
-		if label == "" {
-			label = "Chancellor"
+		// Default: inherit the active tab's minister type.
+		// If on a plain minister tab (no edict context), open a new tab
+		// of the same minister. If on an edict or ritual tab, fall back
+		// to Secretary so the ruler can draft a new edict.
+		active := model.tabs.ActiveTab()
+		ministerID := ministers.Secretary
+		if _, ok := defsByID[string(active.Type)]; ok && active.EdictID == 0 {
+			ministerID = string(active.Type)
 		}
-		target := model.tabs.UniqueTarget(ministers.Chancellor)
-		model.tabs.Add(label, TabType(ministers.Chancellor), target)
-		model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
+		addMinisterTab(model, defsByID, ministerID)
 		return nil
 	}
 
 	target := args[0]
 	switch target {
-	case ministers.Chancellor:
-		d := defsByID[ministers.Chancellor]
-		label := d.Label()
-		if label == "" {
-			label = "Chancellor"
-		}
-		uniq := model.tabs.UniqueTarget(ministers.Chancellor)
-		model.tabs.Add(label, TabType(ministers.Chancellor), uniq)
-		model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 	case "ritual":
 		if len(args) < 2 {
 			model.commandLine.AddToast("Usage: :tabnew ritual <run_id>", "error", time.Second*3)
@@ -907,17 +898,28 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 		model.tabs.Add("Ritual:"+runID, "ritual", runID)
 		model.commandLine.AddToast(fmt.Sprintf("Opened Ritual tab: %s", runID), "success", time.Second*2)
 	default:
-		// Treat as minister name
-		if model.court != nil && model.court.HasMinister(target) {
-			label := strings.ToUpper(target[:1]) + target[1:]
-			uniq := model.tabs.UniqueTarget(target)
-			model.tabs.Add(label, TabType(target), uniq)
-			model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
+		// Treat as minister name — accept any minister known from defs
+		// or registered on the court.
+		if _, ok := defsByID[target]; ok || (model.court != nil && model.court.HasMinister(target)) {
+			addMinisterTab(model, defsByID, target)
 		} else {
 			model.commandLine.AddToast(fmt.Sprintf("Unknown minister: %s", target), "error", time.Second*3)
 		}
 	}
 	return nil
+}
+
+// addMinisterTab creates a new tab for the given minister ID, deriving the
+// label from defs (falling back to a capitalized ID), and shows a toast.
+func addMinisterTab(model *TUIModel, defsByID map[string]ministers.MinisterDef, ministerID string) {
+	d := defsByID[ministerID]
+	label := d.Label()
+	if label == "" {
+		label = strings.ToUpper(ministerID[:1]) + ministerID[1:]
+	}
+	target := model.tabs.UniqueTarget(ministerID)
+	model.tabs.Add(label, TabType(ministerID), target)
+	model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 }
 
 func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
