@@ -185,9 +185,28 @@ func (b *ChatMsgBuilder) String() string {
 }
 
 // cachedMarkdownRenderer is created once at first use and reused across all
-// ChatComponent instances. This prevents glamour.WithAutoStyle() from sending
-// an OSC 11 background-color query every time a new tab is created.
+// ChatComponent and HelpWindow instances. This prevents glamour.WithAutoStyle()
+// from sending an OSC 11 background-color query every time a new tab is created.
 var cachedMarkdownRenderer *glamour.TermRenderer
+
+// getOrCreateGlamourRenderer returns the cached glamour renderer, creating it
+// on first call. Shared by ChatComponent and HelpWindow so that NewHelpWindow
+// never triggers a new OSC 11 query.
+func getOrCreateGlamourRenderer() *glamour.TermRenderer {
+	if cachedMarkdownRenderer != nil {
+		return cachedMarkdownRenderer
+	}
+	rendererStart := time.Now()
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(0), // 0 disables glamour's word wrapping
+	)
+	slog.Debug("[TIMING] Markdown renderer initialized", "load time", time.Since(rendererStart), "err", err)
+	if err == nil {
+		cachedMarkdownRenderer = renderer
+	}
+	return renderer
+}
 
 // NewChatComponent creates a new chat component
 func NewChatComponent(width, height int, markdownEnabled bool) *ChatComponent {
@@ -200,21 +219,7 @@ func NewChatComponentWithStatus(width, height int, markdownEnabled bool, getStat
 
 	var renderer *glamour.TermRenderer
 	if markdownEnabled {
-		if cachedMarkdownRenderer != nil {
-			renderer = cachedMarkdownRenderer
-		} else {
-			rendererStart := time.Now()
-			var err error
-			renderer, err = glamour.NewTermRenderer(
-				glamour.WithAutoStyle(),
-				glamour.WithWordWrap(0), // 0 disables glamour's word wrapping
-			)
-			slog.Debug("[TIMING] Markdown renderer initialized", "load time", time.Since(rendererStart), "err", err)
-			// Cache for reuse by future ChatComponent instances
-			if err == nil {
-				cachedMarkdownRenderer = renderer
-			}
-		}
+		renderer = getOrCreateGlamourRenderer()
 	}
 
 	ret := &ChatComponent{

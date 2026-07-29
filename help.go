@@ -28,13 +28,7 @@ func NewHelpWindow() HelpWindow {
 		height: 20,
 		topic:  "index",
 	}
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(0), // 0 disables glamour's word wrapping
-	)
-	if err == nil {
-		hw.renderer = r
-	}
+	hw.renderer = getOrCreateGlamourRenderer()
 	return hw
 }
 
