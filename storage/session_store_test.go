@@ -671,11 +671,11 @@ func TestMigrateV4toV5_ShogunateToCourtEventRename(t *testing.T) {
 		require.NotContains(t, et, "shogunate", "no DLQ event should contain 'shogunate' after migration")
 	}
 
-	// Verify schema version is now 6 (v4→v5 and v5→v6 both run)
+	// Verify schema version is now 7 (v4→v5, v5→v6, v6→v7 all run)
 	var version int
 	err = db.conn.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version)
 	require.NoError(t, err)
-	require.Equal(t, 6, version, "schema should be at version 6 after migration")
+	require.Equal(t, 7, version, "schema should be at version 7 after migration")
 }
 
 // TestMigrateV5toV6_SageToChancellorSealRename verifies that the v5→v6
@@ -747,13 +747,13 @@ func TestMigrateV5toV6_SageToChancellorSealRename(t *testing.T) {
 	var version int
 	err = db.conn.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version)
 	require.NoError(t, err)
-	require.Equal(t, 6, version, "schema should be at version 6 after migration")
+	require.Equal(t, 7, version, "schema should be at version 7 after migration")
 }
 
 // TestMigrateV5toV6_SealsTableNotExist verifies the migration handles
 // databases where the seals table doesn't exist yet (e.g., a DB created
 // by a tool that only ran raw SQL migrations without GORM AutoMigrate).
-// The migration should succeed without error and record version 6.
+// The migration should succeed without error and record version 7.
 func TestMigrateV5toV6_SealsTableNotExist(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "migration_v5v6_no_seals.db")
@@ -779,7 +779,7 @@ func TestMigrateV5toV6_SealsTableNotExist(t *testing.T) {
 	var version int
 	err = db.conn.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version)
 	require.NoError(t, err)
-	require.Equal(t, 6, version, "schema should be at version 6 after migration")
+	require.Equal(t, 7, version, "schema should be at version 7 after migration")
 
 	// Verify seals table still doesn't exist (migration shouldn't create it)
 	var tableExists bool

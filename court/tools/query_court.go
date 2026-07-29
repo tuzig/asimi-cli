@@ -72,6 +72,7 @@ func (t QueryCourtTool) Call(ctx context.Context, input string) (string, error) 
 			sealList[j] = map[string]interface{}{
 				"minister_id": seal.MinisterID,
 				"sealed_at":   seal.SealedAt,
+				"stale_at":    seal.StaleAt,
 			}
 		}
 		sealSummaries[i] = map[string]interface{}{

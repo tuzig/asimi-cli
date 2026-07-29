@@ -2,14 +2,13 @@
 asimi
 .gocache/
 # Test output
-test.out
-coverage.txt
-coverage.out
-coverage.html
+*.out
 *.swp
 *.swo
 *.log
+coverage.*
 worktrees/
 notes/
 tmp/
 dist/
+.envrc

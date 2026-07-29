@@ -148,6 +148,10 @@ func (db *DB) runMigrations(currentVersion int) error {
 			if err := db.migrateV5toV6(); err != nil {
 				return fmt.Errorf("migration v5→v6 failed: %w", err)
 			}
+		case 7:
+			if err := db.migrateV6toV7(); err != nil {
+				return fmt.Errorf("migration v6→v7 failed: %w", err)
+			}
 		default:
 			return fmt.Errorf("unknown migration version: %d", v)
 		}
@@ -301,6 +305,44 @@ func (db *DB) migrateV5toV6() error {
 		return fmt.Errorf("record version 6: %w", err)
 	}
 	slog.Debug("migrated schema v5→v6: renamed sage seals to chancellor")
+	return nil
+}
+
+// migrateV6toV7 adds the stale_at column to the seals table.
+// This column tracks seal invalidation when an edict's intent changes.
+func (db *DB) migrateV6toV7() error {
+	var tableExists bool
+	err := db.conn.QueryRow(
+		"SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='seals'",
+	).Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("check seals table existence: %w", err)
+	}
+
+	if tableExists {
+		// Check if the column already exists (idempotent)
+		var colExists bool
+		err := db.conn.QueryRow(
+			"SELECT COUNT(*) > 0 FROM pragma_table_info('seals') WHERE name = 'stale_at'",
+		).Scan(&colExists)
+		if err != nil {
+			return fmt.Errorf("check stale_at column existence: %w", err)
+		}
+		if !colExists {
+			_, err := db.conn.Exec(`ALTER TABLE seals ADD COLUMN stale_at DATETIME DEFAULT NULL`)
+			if err != nil {
+				return fmt.Errorf("add stale_at column: %w", err)
+			}
+		}
+	}
+
+	if _, err := db.conn.Exec(
+		"INSERT INTO schema_version (version, applied_at) VALUES (?, unixepoch())",
+		7,
+	); err != nil {
+		return fmt.Errorf("record version 7: %w", err)
+	}
+	slog.Debug("migrated schema v6→v7: added stale_at column to seals")
 	return nil
 }
 

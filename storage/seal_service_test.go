@@ -210,3 +210,218 @@ func TestListActiveEdicts_ExcludesEmptyProject(t *testing.T) {
 		}
 	}
 }
+
+func TestInvalidateSealsMarksExistingSealsStale(t *testing.T) {
+	db := setupSealServiceTestDB(t)
+	svc := NewSealService(db)
+
+	edict := Edict{ID: 1, Username: "testuser", Project: "testproject", Intent: "Original intent"}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Grant judge and chancellor seals
+	for _, ministerID := range []string{"judge", "chancellor"} {
+		if err := svc.GrantSeal(edict.Key(), ministerID, JSON{}); err != nil {
+			t.Fatalf("failed to grant %s seal: %v", ministerID, err)
+		}
+	}
+
+	// Verify seals exist and are not stale
+	hasJudge, err := svc.HasSeal(edict.Key(), "judge")
+	if err != nil {
+		t.Fatalf("HasSeal judge: %v", err)
+	}
+	if !hasJudge {
+		t.Fatal("Expected judge seal to exist before invalidation")
+	}
+
+	// Invalidate seals (simulates intent change)
+	if err := svc.InvalidateSeals(edict.Key()); err != nil {
+		t.Fatalf("InvalidateSeals: %v", err)
+	}
+
+	// HasSeal should now return false for both
+	hasJudge, err = svc.HasSeal(edict.Key(), "judge")
+	if err != nil {
+		t.Fatalf("HasSeal judge after invalidation: %v", err)
+	}
+	if hasJudge {
+		t.Error("Expected HasSeal(judge) to return false after invalidation")
+	}
+
+	hasChancellor, err := svc.HasSeal(edict.Key(), "chancellor")
+	if err != nil {
+		t.Fatalf("HasSeal chancellor after invalidation: %v", err)
+	}
+	if hasChancellor {
+		t.Error("Expected HasSeal(chancellor) to return false after invalidation")
+	}
+
+	// GetSeals should show stale_at set
+	seals, err := svc.GetSeals(edict.Key())
+	if err != nil {
+		t.Fatalf("GetSeals: %v", err)
+	}
+	if len(seals) != 2 {
+		t.Fatalf("Expected 2 seals, got %d", len(seals))
+	}
+	for _, seal := range seals {
+		if seal.StaleAt == nil {
+			t.Errorf("Expected seal %s to have StaleAt set, got nil", seal.MinisterID)
+		}
+	}
+}
+
+func TestResealAfterStalenessRestoresStatus(t *testing.T) {
+	db := setupSealServiceTestDB(t)
+	svc := NewSealService(db)
+
+	edict := Edict{ID: 1, Username: "testuser", Project: "testproject", Intent: "Original intent"}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Grant judge and chancellor seals
+	for _, ministerID := range []string{"judge", "chancellor"} {
+		if err := svc.GrantSeal(edict.Key(), ministerID, JSON{}); err != nil {
+			t.Fatalf("failed to grant %s seal: %v", ministerID, err)
+		}
+	}
+
+	// Invalidate seals (intent changed)
+	if err := svc.InvalidateSeals(edict.Key()); err != nil {
+		t.Fatalf("InvalidateSeals: %v", err)
+	}
+
+	// Status should be "active" (no valid seals)
+	status, err := svc.GetEdictStatus(edict.Key())
+	if err != nil {
+		t.Fatalf("GetEdictStatus after invalidation: %v", err)
+	}
+	if status != EdictActive {
+		t.Errorf("Expected status active after invalidation, got %s", status)
+	}
+
+	// Re-seal with all three
+	for _, ministerID := range []string{"judge", "chancellor", "ruler"} {
+		if err := svc.GrantSeal(edict.Key(), ministerID, JSON{}); err != nil {
+			t.Fatalf("failed to re-grant %s seal: %v", ministerID, err)
+		}
+	}
+
+	// Status should now be "sealed"
+	status, err = svc.GetEdictStatus(edict.Key())
+	if err != nil {
+		t.Fatalf("GetEdictStatus after re-seal: %v", err)
+	}
+	if status != EdictSealed {
+		t.Errorf("Expected status sealed after re-seal, got %s", status)
+	}
+
+	// GetSeals should return 5 seals total (2 stale + 3 fresh)
+	seals, err := svc.GetSeals(edict.Key())
+	if err != nil {
+		t.Fatalf("GetSeals: %v", err)
+	}
+	if len(seals) != 5 {
+		t.Errorf("Expected 5 seals (2 stale + 3 fresh), got %d", len(seals))
+	}
+
+	// Verify the fresh seals are not stale
+	freshCount := 0
+	for _, seal := range seals {
+		if seal.StaleAt == nil {
+			freshCount++
+		}
+	}
+	if freshCount != 3 {
+		t.Errorf("Expected 3 fresh (non-stale) seals, got %d", freshCount)
+	}
+}
+
+func TestListActiveEdicts_SealedEdictReappearsAfterStaleness(t *testing.T) {
+	db := setupSealServiceTestDB(t)
+	svc := NewSealService(db)
+
+	edict := Edict{ID: 1, Username: "testuser", Project: "testproject", Intent: "Sealed then refined"}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	// Seal with all three ministers
+	for _, ministerID := range []string{"judge", "chancellor", "ruler"} {
+		if err := svc.GrantSeal(edict.Key(), ministerID, JSON{}); err != nil {
+			t.Fatalf("failed to grant %s seal: %v", ministerID, err)
+		}
+	}
+
+	// Should NOT appear in active edicts (it's sealed)
+	active, err := svc.ListActiveEdicts("testuser", "testproject")
+	if err != nil {
+		t.Fatalf("ListActiveEdicts before staleness: %v", err)
+	}
+	if len(active) != 0 {
+		t.Errorf("Expected 0 active edicts (sealed), got %d", len(active))
+	}
+
+	// Invalidate seals (intent changed)
+	if err := svc.InvalidateSeals(edict.Key()); err != nil {
+		t.Fatalf("InvalidateSeals: %v", err)
+	}
+
+	// Should reappear in active edicts (ruler seal is now stale)
+	active, err = svc.ListActiveEdicts("testuser", "testproject")
+	if err != nil {
+		t.Fatalf("ListActiveEdicts after staleness: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("Expected 1 active edict after staleness, got %d", len(active))
+	}
+	if active[0].ID != 1 {
+		t.Errorf("Expected edict 1, got edict %d", active[0].ID)
+	}
+}
+
+func TestInvalidateSealsOnlyAffectsTargetEdict(t *testing.T) {
+	db := setupSealServiceTestDB(t)
+	svc := NewSealService(db)
+
+	edict1 := Edict{ID: 1, Username: "testuser", Project: "testproject", Intent: "Edict 1"}
+	edict2 := Edict{ID: 2, Username: "testuser", Project: "testproject", Intent: "Edict 2"}
+	for _, e := range []Edict{edict1, edict2} {
+		if err := db.Create(&e).Error; err != nil {
+			t.Fatalf("failed to create edict: %v", err)
+		}
+	}
+
+	// Grant judge seal on both edicts
+	for _, e := range []Edict{edict1, edict2} {
+		if err := svc.GrantSeal(e.Key(), "judge", JSON{}); err != nil {
+			t.Fatalf("failed to grant judge seal: %v", err)
+		}
+	}
+
+	// Invalidate seals on edict1 only
+	if err := svc.InvalidateSeals(edict1.Key()); err != nil {
+		t.Fatalf("InvalidateSeals: %v", err)
+	}
+
+	// Edict1's seal should be stale
+	hasJudge1, err := svc.HasSeal(edict1.Key(), "judge")
+	if err != nil {
+		t.Fatalf("HasSeal edict1: %v", err)
+	}
+	if hasJudge1 {
+		t.Error("Expected edict1 judge seal to be stale")
+	}
+
+	// Edict2's seal should still be valid
+	hasJudge2, err := svc.HasSeal(edict2.Key(), "judge")
+	if err != nil {
+		t.Fatalf("HasSeal edict2: %v", err)
+	}
+	if !hasJudge2 {
+		t.Error("Expected edict2 judge seal to still be valid")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -2346,4 +2347,36 @@ func TestProcessTask_StreamStartDefaultChannelID(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, "chancellor", startChannelID, "StreamStartMsg should fall back to minister ID")
 	assert.Equal(t, "chancellor", doneChannelID, "StreamDoneMsg should fall back to minister ID")
+}
+
+// TestMinisterBase_AppendToIntent_InvalidatesSeals verifies that the
+// minister-path AppendToIntent invalidates seals after modifying the intent.
+func TestMinisterBase_AppendToIntent_InvalidatesSeals(t *testing.T) {
+	db := setupMinisterTestDB(t)
+
+	base := NewMinisterBase(db, nil, slog.Default(), "testuser", "testproject", nil)
+
+	edict := storage.Edict{Intent: "original intent", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(&edict).Error)
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+	sealSvc := storage.NewSealService(db)
+	require.NoError(t, sealSvc.GrantSeal(key, "judge", storage.JSON{}))
+	require.NoError(t, sealSvc.GrantSeal(key, "chancellor", storage.JSON{}))
+
+	// Confirm seals are valid before append
+	hasJudge, err := sealSvc.HasSeal(key, "judge")
+	require.NoError(t, err)
+	require.True(t, hasJudge)
+
+	// Append — should invalidate seals
+	require.NoError(t, base.AppendToIntent(key, "clarification from minister"))
+
+	hasJudge, err = sealSvc.HasSeal(key, "judge")
+	require.NoError(t, err)
+	require.False(t, hasJudge, "judge seal should be stale after minister AppendToIntent")
+
+	hasChancellor, err := sealSvc.HasSeal(key, "chancellor")
+	require.NoError(t, err)
+	require.False(t, hasChancellor, "chancellor seal should be stale after minister AppendToIntent")
 }

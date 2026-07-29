@@ -960,6 +960,11 @@ func (m *MinisterBase) AppendToIntent(key storage.EdictKey, clarification string
 	if result.Error != nil {
 		return fmt.Errorf("failed to append to intent: %w", result.Error)
 	}
+
+	// Invalidate existing seals — they were earned against the old intent
+	if err := storage.NewSealService(m.db).InvalidateSeals(key); err != nil {
+		return fmt.Errorf("failed to invalidate seals: %w", err)
+	}
 	return nil
 }
 

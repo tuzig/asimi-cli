@@ -101,13 +101,14 @@ func (Edict) TableName() string {
 
 // Seal represents a minister's seal on an edict
 type Seal struct {
-	SealID     string    `gorm:"primaryKey;column:seal_id"`
-	EdictID    uint      `gorm:"column:edict_id;index"`
-	Username   string    `gorm:"column:username"`
-	Project    string    `gorm:"column:project"`
-	MinisterID string    `gorm:"column:minister_id"` // "judge", "chancellor", "ruler"
-	SealedAt   time.Time `gorm:"column:sealed_at;autoCreateTime"`
-	Metadata   JSON      `gorm:"column:metadata;type:json"` // Optional: verdict_id, precedent_id, etc.
+	SealID     string     `gorm:"primaryKey;column:seal_id"`
+	EdictID    uint       `gorm:"column:edict_id;index"`
+	Username   string     `gorm:"column:username"`
+	Project    string     `gorm:"column:project"`
+	MinisterID string     `gorm:"column:minister_id"` // "judge", "chancellor", "ruler"
+	SealedAt   time.Time  `gorm:"column:sealed_at;autoCreateTime"`
+	Metadata   JSON       `gorm:"column:metadata;type:json"` // Optional: verdict_id, precedent_id, etc.
+	StaleAt    *time.Time `gorm:"column:stale_at"`           // Non-null when invalidated by intent change
 }
 
 // TableName returns the table name for Seal

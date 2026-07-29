@@ -2342,3 +2342,48 @@ func TestPromptForAbortedRituals_RecoverRetriggersRitual(t *testing.T) {
 			RitualStateCompleted, execAfter.State)
 	}
 }
+
+// TestPromptForAbortedRituals_StaleSealsNotAutoCompleted verifies that an
+// aborted ritual on an edict whose seals are all stale is NOT auto-completed
+// — it should remain pending for re-execution because the seal chain is broken
+// (edict 714).
+func TestPromptForAbortedRituals_StaleSealsNotAutoCompleted(t *testing.T) {
+	db := setupRecoveryTestDB(t)
+
+	edict := storage.Edict{Intent: "Test stale-sealed edict", Username: "testuser", Project: "testproject"}
+	if err := db.Create(&edict).Error; err != nil {
+		t.Fatalf("failed to create edict: %v", err)
+	}
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+	sealSvc := storage.NewSealService(db)
+
+	// Grant a ruler seal, then invalidate it (simulating intent change)
+	if err := sealSvc.GrantSeal(key, "ruler", storage.JSON{}); err != nil {
+		t.Fatalf("failed to grant ruler seal: %v", err)
+	}
+	if err := sealSvc.InvalidateSeals(key); err != nil {
+		t.Fatalf("failed to invalidate seals: %v", err)
+	}
+
+	abortedExec := &RitualExecution{
+		ID: "aborted-stale-sealed", RitualName: "test-ritual", EdictID: edict.ID,
+		Username: "testuser", Project: "testproject", State: RitualStateAborted, CurrentStep: 1,
+	}
+	if err := db.Save(abortedExec).Error; err != nil {
+		t.Fatalf("failed to create aborted ritual: %v", err)
+	}
+
+	rg := newTestRitualGuard(t, db, func(id string) Minister { return nil }, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	rg.promptForAbortedRituals(ctx)
+
+	var exec RitualExecution
+	if err := db.First(&exec, "id = ?", "aborted-stale-sealed").Error; err != nil {
+		t.Fatalf("failed to find ritual: %v", err)
+	}
+	if exec.State == RitualStateCompleted {
+		t.Error("aborted ritual with stale seals should NOT be auto-completed — it should remain pending for re-execution")
+	}
+}

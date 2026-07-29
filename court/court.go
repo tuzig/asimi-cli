@@ -837,6 +837,11 @@ func (s *Court) appendToIntent(key storage.EdictKey, clarification string) error
 	if err := s.db.Model(&storage.Edict{}).Where("id = ?", edict.ID).Update("intent", updatedIntent).Error; err != nil {
 		return fmt.Errorf("update edict intent: %w", err)
 	}
+
+	// Invalidate existing seals — they were earned against the old intent
+	if err := s.GetSealService().InvalidateSeals(key); err != nil {
+		return fmt.Errorf("invalidate seals: %w", err)
+	}
 	return nil
 }
 

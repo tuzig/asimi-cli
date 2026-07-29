@@ -245,7 +245,7 @@ func (t QueryPrecedentsTool) Format(input, result string, err error) string {
 func grantChancellorSeal(db *gorm.DB, key storage.EdictKey, ministerID string, metadata storage.JSON) error {
 	var count int64
 	if err := db.Model(&storage.Seal{}).
-		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ?", key.ID, key.Username, key.Project, ministerID).
+		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ? AND stale_at IS NULL", key.ID, key.Username, key.Project, ministerID).
 		Count(&count).Error; err != nil {
 		return fmt.Errorf("failed to check existing seal: %w", err)
 	}

@@ -256,3 +256,40 @@ func TestRecordPrecedentTool_NoManifests_Approved(t *testing.T) {
 		t.Errorf("expected sage seal to be granted: %v", err)
 	}
 }
+
+// TestGrantChancellorSeal_StaleSealAllowsReseal verifies that
+// grantChancellorSeal allows re-sealing when a previous chancellor seal
+// is stale (invalidated by intent change). This is the idempotency fix
+// from edict 714 — without AND stale_at IS NULL, the stale seal would
+// block re-sealing and the seal chain could never be restored.
+func TestGrantChancellorSeal_StaleSealAllowsReseal(t *testing.T) {
+	db := setupPrecedentTestDB(t)
+
+	key := storage.EdictKey{ID: 42, Username: "testuser", Project: "testproject"}
+
+	// Grant a chancellor seal, then invalidate it
+	sealSvc := storage.NewSealService(db)
+	if err := sealSvc.GrantSeal(key, "chancellor", storage.JSON{}); err != nil {
+		t.Fatalf("failed to grant chancellor seal: %v", err)
+	}
+	if err := sealSvc.InvalidateSeals(key); err != nil {
+		t.Fatalf("failed to invalidate seals: %v", err)
+	}
+
+	// grantChancellorSeal must not find the stale seal and block
+	if err := grantChancellorSeal(db, key, "chancellor", storage.JSON{}); err != nil {
+		t.Fatalf("grantChancellorSeal should succeed after staleness: %v", err)
+	}
+
+	// Verify a new (non-stale) chancellor seal was created
+	var count int64
+	if err := db.Model(&storage.Seal{}).
+		Where("edict_id = ? AND username = ? AND project = ? AND minister_id = ? AND stale_at IS NULL",
+			key.ID, key.Username, key.Project, "chancellor").
+		Count(&count).Error; err != nil {
+		t.Fatalf("failed to count non-stale seals: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 non-stale chancellor seal after re-seal, got %d", count)
+	}
+}
