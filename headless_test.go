@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -435,8 +436,8 @@ func TestHeadlessSink_UnknownMessage_NoPanic(t *testing.T) {
 }
 
 // TestHeadlessSink_HandsoffOff_ZhengmingNotAnswered verifies that when
-// handsoff is false, a ZhengmingPendingMsg is NOT auto-answered (the
-// sink should not attempt to call HandleZhengmingResponse).
+// handsoff is false and court is nil, a ZhengmingPendingMsg does not panic
+// or signal done (interactiveAnswerZhengming guards against nil court).
 func TestHeadlessSink_HandsoffOff_ZhengmingNotAnswered(t *testing.T) {
 	sink := newHeadlessSink(nil)
 	sink.handsoff = false
@@ -505,4 +506,84 @@ func TestHeadlessSink_HandsoffOn_AutoEnacts(t *testing.T) {
 		Payload:   map[string]interface{}{"intent": "test"},
 	})
 	assert.True(t, sink.enactedSet[11], "edict 11 should be tracked")
+}
+
+// TestHeadlessSink_InteractiveZhengming_SingleQuestion verifies that
+// interactiveAnswerZhengming reads a selection from stdin and builds
+// the correct answer. Uses a mock stdin/stdout and nil court (which
+// causes interactiveAnswerZhengming to return early, but promptQuestion
+// is tested directly).
+func TestHeadlessSink_InteractiveZhengming_SingleQuestion(t *testing.T) {
+	sink := newHeadlessSink(nil)
+	sink.stdin = strings.NewReader("2\n")
+	var out strings.Builder
+	sink.stdout = &out
+
+	answer := sink.promptQuestion(storage.ZhengmingQuestion{
+		Text:    "Which option?",
+		Options: []string{"A", "B", "C"},
+	})
+	assert.Equal(t, "B", answer)
+	assert.Contains(t, out.String(), "Which option?")
+	assert.Contains(t, out.String(), "1) A")
+	assert.Contains(t, out.String(), "2) B")
+	assert.Contains(t, out.String(), "3) C")
+}
+
+// TestHeadlessSink_InteractiveZhengming_UsesSummary verifies that
+// promptQuestion uses the summary field when available.
+func TestHeadlessSink_InteractiveZhengming_UsesSummary(t *testing.T) {
+	sink := newHeadlessSink(nil)
+	sink.stdin = strings.NewReader("1\n")
+	var out strings.Builder
+	sink.stdout = &out
+
+	answer := sink.promptQuestion(storage.ZhengmingQuestion{
+		Text:    "Which approach do you prefer for this particular situation?",
+		Summary: "Approach?",
+		Options: []string{"Option A", "Option B"},
+	})
+	assert.Equal(t, "Option A", answer)
+	assert.Contains(t, out.String(), "Approach?")
+	assert.NotContains(t, out.String(), "Which approach do you prefer")
+}
+
+// TestHeadlessSink_InteractiveZhengming_InvalidInput_Reprompts verifies
+// that invalid input re-prompts the same question until a valid
+// selection is made.
+func TestHeadlessSink_InteractiveZhengming_InvalidInput_Reprompts(t *testing.T) {
+	sink := newHeadlessSink(nil)
+	sink.stdin = strings.NewReader("abc\n0\n5\n2\n")
+	var out strings.Builder
+	sink.stdout = &out
+
+	answer := sink.promptQuestion(storage.ZhengmingQuestion{
+		Text:    "Pick one",
+		Options: []string{"A", "B", "C"},
+	})
+	assert.Equal(t, "B", answer)
+	assert.Contains(t, out.String(), "Invalid selection")
+}
+
+// TestHeadlessSink_InteractiveZhengming_NilCourt_NoPanic verifies that
+// interactiveAnswerZhengming with nil court returns early without panic.
+func TestHeadlessSink_InteractiveZhengming_NilCourt_NoPanic(t *testing.T) {
+	sink := newHeadlessSink(nil)
+	sink.handsoff = false
+	sink.stdin = strings.NewReader("1\n")
+	var out strings.Builder
+	sink.stdout = &out
+
+	// Should not panic, should not signal done
+	sink.handle(court.ZhengmingPendingMsg{
+		RequestID: "req-1",
+		Questions: storage.ZhengmingQuestions{
+			{Text: "Pick one", Options: []string{"A", "B"}},
+		},
+	})
+	select {
+	case <-sink.done:
+		t.Fatal("should not signal done on ZhengmingPendingMsg")
+	default:
+	}
 }
