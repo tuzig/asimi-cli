@@ -106,6 +106,9 @@ func ProvideConfig(logger *slog.Logger, repoInfo repo.RepoInfo) (*Config, error)
 	if cli.MaxTurns > 0 {
 		cfg.LLM.MaxTurns = cli.MaxTurns
 	}
+	if cli.IsolatedHost {
+		cfg.Court.IsolatedHost = true
+	}
 	logger.Info("configuration loaded")
 	return cfg, nil
 }
@@ -181,8 +184,13 @@ type ShellRunnerParams struct {
 func ProvideShellRunner(params ShellRunnerParams) runners.Runner {
 	params.Logger.Info("initializing shell runner")
 
-	// Use auto-detection to select the appropriate shell runner
-	runner := runners.InitShellRunner(&params.Config.Sandbox, params.RepoInfo)
+	var runner runners.Runner
+	if params.Config.Court.IsolatedHost {
+		runner = runners.NewHostRunner(0, params.RepoInfo.ProjectRoot)
+		params.Logger.Info("using host runner (isolated-host mode)")
+	} else {
+		runner = runners.InitShellRunner(&params.Config.Sandbox, params.RepoInfo)
+	}
 
 	params.Logger.Info("shell runner initialized", "type", runner.RunnerType())
 
@@ -389,6 +397,7 @@ func ProvideCourt(params CourtParams) *court.Court {
 	} else if params.RepoInfo.Slug != "" {
 		cfg.Project = params.RepoInfo.Slug
 	}
+	cfg.IsolatedHost = params.Config.Court.IsolatedHost
 	params.Logger.Info("initializing Court", "user", cfg.Username, "project", cfg.Project)
 
 	s := court.NewCourt(params.GormDB, cfg, params.Runner, params.Logger)

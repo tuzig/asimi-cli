@@ -138,7 +138,7 @@ func serveOne(ctx context.Context, conn net.Conn, shared *Shared, connID uint64)
 	})
 
 	var ct *court.Court
-	var runner *runners.PodmanRunner
+	var runner runners.Runner
 	firstHandshakeCh := make(chan struct{})
 	var firstHandshakeOnce sync.Once
 

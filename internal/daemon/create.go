@@ -17,10 +17,11 @@ import (
 // so the daemon package doesn't depend on the main package.
 type SessionStoreFactory func(sdb *storage.DB, repoInfo repo.RepoInfo, maxSessions, maxAgeDays int) (court.SessionPersister, error)
 
-// createCourt creates a PodmanRunner and Court for a new
-// daemon connection. It loads the project config, builds the runner,
-// creates the Court, wires the session persister (using
-// config.DefaultSessionConfig for defaults), and starts it.
+// createCourt creates a runner and Court for a new daemon connection.
+// It loads the project config, builds the runner (PodmanRunner or
+// HostRunner depending on isolated-host mode), creates the Court,
+// wires the session persister (using config.DefaultSessionConfig for
+// defaults), and starts it.
 func createCourt(
 	ctx context.Context,
 	shared *Shared,
@@ -29,8 +30,13 @@ func createCourt(
 	projectCfg *config.Config,
 	repoInfo repo.RepoInfo,
 	newSessionStore SessionStoreFactory,
-) (*court.Court, *runners.PodmanRunner, error) {
-	runner := runners.NewPodmanRunner(&projectCfg.Sandbox, repoInfo, connID, nil)
+) (*court.Court, runners.Runner, error) {
+	var runner runners.Runner
+	if shared.IsolatedHost {
+		runner = runners.NewHostRunner(connID, repoInfo.ProjectRoot)
+	} else {
+		runner = runners.NewPodmanRunner(&projectCfg.Sandbox, repoInfo, connID, nil)
+	}
 
 	courtCfg := config.DefaultCourtConfig()
 	if hp.Username != "" {
@@ -41,6 +47,7 @@ func createCourt(
 	} else if repoInfo.Slug != "" {
 		courtCfg.Project = repoInfo.Slug
 	}
+	courtCfg.IsolatedHost = shared.IsolatedHost
 
 	ct := court.NewCourt(shared.DB, courtCfg, runner, shared.Logger)
 	ct.SetRepoInfo(repoInfo)

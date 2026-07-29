@@ -87,7 +87,8 @@ type TUIModel struct {
 	waitingForResponse bool
 	waitingStart       time.Time
 
-	ctrlCLastPress time.Time // Time of last Ctrl-C press for double-press detection
+	ctrlCLastPress  time.Time // Time of last Ctrl-C press for double-press detection
+	oscFilterActive time.Time // Tracks when we last filtered an OSC/CSI response
 
 	// Host command approval state
 	pendingHostApproval *runners.ApprovalRequestMsg
@@ -480,43 +481,7 @@ func (m *TUIModel) switchModel() tea.Cmd {
 // current state. APIKeys is always populated from environment variables
 // so that daemon mode receives the keys on every call (e.g., model switch).
 func (m *TUIModel) setContextParams() types.SetContextParams {
-	projectRoot := ""
-	worktreePath := ""
-	branch := ""
-	if m.repoInfo != nil {
-		projectRoot = m.repoInfo.ProjectRoot
-		worktreePath = m.repoInfo.WorktreePath
-		branch = m.repoInfo.Branch
-	}
-	// Fallback to CWD when repoInfo is unavailable or ProjectRoot is empty
-	// (e.g., outside a git repo). The daemon's "." would resolve to its own
-	// launch directory, so we must provide an absolute path here.
-	if projectRoot == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			projectRoot = cwd
-		}
-	}
-	project := ""
-	username := ""
-	if m.config != nil {
-		project = m.config.Court.Project
-		username = m.config.Court.Username
-	}
-	// Fall back to repoInfo.Slug (from git remote) when config doesn't set it.
-	// This mirrors ProvideCourt (providers.go) and ensures the daemon
-	// receives the correct slug for sandbox image naming.
-	if project == "" && m.repoInfo != nil {
-		project = m.repoInfo.Slug
-	}
-	return types.SetContextParams{
-		Project:        project,
-		Username:       username,
-		ProjectRoot:    projectRoot,
-		WorktreePath:   worktreePath,
-		Branch:         branch,
-		APIKeys:        collectAPIKeys(),
-		CodexAccountID: getCodexAccountID(),
-	}
+	return buildSetContextParams(m.config, m.repoInfo)
 }
 
 // collectAPIKeys gathers API keys from environment variables and the OS keyring
@@ -758,6 +723,15 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// into the prompt textarea, producing garbage characters like `bg:1e1e/1e1e/1e1e`.
 	keyStr := msg.String()
 
+	// Swallow the lone backslash from an OSC String Terminator (ST = ESC \).
+	// When the terminal responds to an OSC 11 query, the response ends with \x1b\
+	// (the ST). Bubble Tea delivers the main response body and the trailing \ as
+	// separate key events. The body is caught by the filters below, but the lone
+	// backslash would otherwise be typed into the prompt.
+	if keyStr == "\\" && time.Since(m.oscFilterActive) < 200*time.Millisecond {
+		return m, nil
+	}
+
 	// Ignore OSC (Operating System Command) responses like ]11;rgb:...
 	// Also catch `bg:` — some terminals truncate the leading `r` from `rgb:`,
 	// leaving the response as `bg:1e1e/1e1e/1e1e`.
@@ -765,6 +739,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		strings.Contains(keyStr, "rgb:") ||
 		strings.Contains(keyStr, ";rgb") ||
 		strings.Contains(keyStr, "bg:") {
+		m.oscFilterActive = time.Now()
 		return m, nil
 	}
 
@@ -772,6 +747,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// reports [1;1R. Pattern: starts with `[`, ends with `R`, contains `;`.
 	if (strings.HasPrefix(keyStr, "[") || strings.HasPrefix(keyStr, "\x1b[")) &&
 		strings.HasSuffix(keyStr, "R") && strings.Contains(keyStr, ";") {
+		m.oscFilterActive = time.Now()
 		return m, nil
 	}
 
@@ -779,6 +755,7 @@ func (m TUIModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// escape key. This catches malformed or partial terminal responses.
 	if len(keyStr) > 3 && strings.Contains(keyStr, "\x1b") {
 		if keyStr != "esc" && keyStr != "escape" {
+			m.oscFilterActive = time.Now()
 			return m, nil
 		}
 	}
@@ -2354,6 +2331,7 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case court.EventNotificationMsg:
+		//TODO: events should be displayed as toast and not as a chat message
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("EVENT_NOTIFICATION",
 			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictKey.ID, msg.Message))

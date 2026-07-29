@@ -59,6 +59,7 @@ func provideDaemonShared(db *gorm.DB, sdb *storage.DB, cfg *config.Config, logge
 		Config:          cfg,
 		Logger:          logger,
 		NewSessionStore: newDaemonSessionStore,
+		IsolatedHost:    cli.IsolatedHost,
 	}
 }
 

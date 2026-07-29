@@ -394,10 +394,11 @@ type RitualRunner struct {
 	logger          *slog.Logger
 	maxRetries      int
 	repoInfo        repo.RepoInfo
-	sandboxConfig   *config.SandboxConfig // injected by ConfigureModel
-	projectSlug     string                // injected by ConfigureModel
-	idleTimeout     time.Duration         // max silence before a step is aborted (0 = default)
+	sandboxConfig   *config.SandboxConfig                                       // injected by ConfigureModel
+	projectSlug     string                                                      // injected by ConfigureModel
+	idleTimeout     time.Duration                                               // max silence before a step is aborted (0 = default)
 	waitZhengming   func(ctx context.Context, requestID string) (string, error) // injected by Court
+	isolatedHost    bool                                                        // skip sandbox steps when true
 
 	// Pause/resume for ruler interjection. When the ruler prompts on a ritual
 	// tab, the ritual pauses: the step context is cancelled (stopping the

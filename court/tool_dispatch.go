@@ -302,6 +302,11 @@ func (s *Court) StartRitual(name string, key storage.EdictKey, inputs map[string
 // CheckHostCommand matches a command against config.RunOnHost and
 // config.SafeRunOnHost patterns. Returns (runOnHost, needsApproval).
 func (s *Court) CheckHostCommand(cmd string) (runOnHost, needsApproval bool) {
+	// In isolated-host mode, all commands run on host without approval
+	if s.isolatedHost {
+		return true, false
+	}
+
 	if s.sessionCfg == nil || s.sessionCfg.Sandbox.RunOnHost == nil {
 		return false, false
 	}

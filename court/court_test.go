@@ -972,6 +972,63 @@ func TestCourt_CheckHostCommand_NoConfig(t *testing.T) {
 	assert.False(t, needsApproval)
 }
 
+// TestCourt_CheckHostCommand_IsolatedHost verifies that in isolated-host
+// mode, every command runs on host without approval.
+func TestCourt_CheckHostCommand_IsolatedHost(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	cfg.IsolatedHost = true
+	s := NewCourt(db, cfg, nil, nil)
+	require.NotNil(t, s)
+
+	runOnHost, needsApproval := s.CheckHostCommand("git status")
+	assert.True(t, runOnHost, "isolated-host should route to host")
+	assert.False(t, needsApproval, "isolated-host should not require approval")
+}
+
+// TestCourt_AppendToIntent_InvalidatesSeals verifies that appending to an
+// edict's intent invalidates all existing seals, since they were earned
+// against the old intent (edict 683 seal-invalidation feature).
+func TestCourt_AppendToIntent_InvalidatesSeals(t *testing.T) {
+	db := setupMinisterTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	cfg.Username = "testuser"
+	cfg.Project = "testproject"
+	s := NewCourt(db, cfg, nil, slog.Default())
+	require.NotNil(t, s)
+
+	// Create an edict and grant judge + chancellor seals
+	edict := storage.Edict{Intent: "original intent", Username: "testuser", Project: "testproject"}
+	require.NoError(t, db.Create(&edict).Error)
+
+	key := storage.EdictKey{ID: edict.ID, Username: "testuser", Project: "testproject"}
+	sealSvc := s.GetSealService()
+	require.NoError(t, sealSvc.GrantSeal(key, "judge", storage.JSON{}))
+	require.NoError(t, sealSvc.GrantSeal(key, "chancellor", storage.JSON{}))
+
+	// Confirm seals exist
+	hasJudge, err := sealSvc.HasSeal(key, "judge")
+	require.NoError(t, err)
+	require.True(t, hasJudge, "judge seal should exist before appendToIntent")
+
+	// AppendToIntent should invalidate all seals
+	require.NoError(t, s.AppendToIntent(edict.ID, "additional clarification"))
+
+	// Seals should now be stale
+	hasJudge, err = sealSvc.HasSeal(key, "judge")
+	require.NoError(t, err)
+	require.False(t, hasJudge, "judge seal should be stale after appendToIntent")
+
+	hasChancellor, err := sealSvc.HasSeal(key, "chancellor")
+	require.NoError(t, err)
+	require.False(t, hasChancellor, "chancellor seal should be stale after appendToIntent")
+
+	// Edict status should be active again (no valid seals)
+	status, err := sealSvc.GetEdictStatus(key)
+	require.NoError(t, err)
+	assert.Equal(t, storage.EdictActive, status, "edict should be active after seal invalidation")
+}
+
 // TestCourt_DeliverZhengmingAnswer verifies the Court-owned zhengming dispatch:
 // WaitForZhengming blocks until DeliverZhengmingAnswer is called.
 func TestCourt_DeliverZhengmingAnswer(t *testing.T) {

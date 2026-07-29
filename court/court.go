@@ -127,6 +127,10 @@ type Court struct {
 	// set via ConfigureModel. Used by CheckHostCommand for RunOnHost patterns.
 	sessionCfg *SessionConfig
 
+	// isolatedHost, when true, runs all shell commands on the host
+	// without podman sandbox or approval gates. Set from CourtConfig.
+	isolatedHost bool
+
 	// llmClient holds the current LLM provider (typically *bifrost.Bifrost)
 	// so the court can serve ListAllModels requests from the TUI.
 	llmClient LLMProvider
@@ -135,12 +139,13 @@ type Court struct {
 // NewCourt creates a new Court coordinator.
 func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logger *slog.Logger) *Court {
 	s := &Court{
-		db:        db,
-		logger:    logger,
-		config:    cfg,
-		runner:    runner,
-		ministers: make(map[string]Minister),
-		zhengming: newZhengmingDispatch(),
+		db:           db,
+		logger:       logger,
+		config:       cfg,
+		runner:       runner,
+		ministers:    make(map[string]Minister),
+		zhengming:    newZhengmingDispatch(),
+		isolatedHost: cfg != nil && cfg.IsolatedHost,
 	}
 	s.ensureDefaults()
 
@@ -189,6 +194,7 @@ func NewCourt(db *gorm.DB, cfg *config.CourtConfig, runner runners.Runner, logge
 		RequestZhengming: s.RequestZhengming,
 		DeliverZhengming: s.DeliverZhengmingAnswer,
 	})
+	s.ritualGuard.ritualRunner.isolatedHost = s.isolatedHost
 
 	// Handle zhengming_answered events: merged handler for ritual delivery, edict creation, and legacy path
 	s.ritualGuard.Subscribe(storage.EventZhengmingAnswered, func(e Event) {
