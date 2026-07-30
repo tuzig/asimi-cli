@@ -27,11 +27,6 @@ Below is what is left to develop:
 
 ### Skills Support (https://github.com/afittestide/asimi-cli/issues/159)
 
-### Postponed
-
-- Handsoff Mode (`--handsoff` flag) — auto-answer zhengming with the recommended option, enabling fully autonomous runs without human intervention (e682)
-- Realm-Aware File Permissions — `RealmGuard` system for earth/intent file access control; proved more complex than expected, work stored on `realm-aware-permissions` branch (e695, e696, e698, e699, e702)
-
 ## V1.1
 
 ### Full Parallelism
