@@ -1386,6 +1386,7 @@ func hasToolCallResponse(toolMessages []schemas.ChatMessage, toolCallID string) 
 // executeToolCall executes a single tool call and returns the response content
 func (s *Session) executeToolCall(ctx context.Context, tool Tool, toolCallID, toolName, argsJSON string) schemas.ChatMessage {
 	ctx = context.WithValue(ctx, tools.SessionIDKey{}, s.ID)
+	ctx = context.WithValue(ctx, tools.ChannelIDKey{}, s.channelID)
 	var out string
 	var callErr error
 

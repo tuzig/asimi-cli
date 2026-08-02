@@ -42,7 +42,7 @@ func newRepoInfo(projectRoot string) *repo.RepoInfo {
 // mockConsultant satisfies MinisterConsultant for testing.
 type mockConsultant struct{}
 
-func (m mockConsultant) ConsultMinister(ctx context.Context, callerID, ministerID string, key storage.EdictKey, work string) (string, error) {
+func (m mockConsultant) ConsultMinister(ctx context.Context, callerMinisterID, ministerID, channelID string, key storage.EdictKey, work string) (string, error) {
 	return "ok", nil
 }
 

@@ -740,7 +740,7 @@ func TestCourt_ConsultMinister_RoutesToCallerTab(t *testing.T) {
 	}()
 
 	// Simulate the "judge" minister calling consult_minister
-	_, err := court.ConsultMinister(ctx, "judge", "target",
+	_, err := court.ConsultMinister(ctx, "judge", "target", "judge",
 		storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "do work")
 	assert.NoError(t, err)
 
@@ -769,11 +769,12 @@ func TestCourt_ConsultMinister_RoutesToCallerTab(t *testing.T) {
 
 // TestConsultMinisterTool_PassesMinisterIDAsCallerID verifies that
 // ConsultMinisterTool.Call passes its embedded Ctx.MinisterID as the
-// callerID to the consultant interface.
+// callerMinisterID to the consultant interface, and uses the channel ID
+// from context (falling back to MinisterID when context is empty).
 func TestConsultMinisterTool_PassesMinisterIDAsCallerID(t *testing.T) {
-	var recordedCallerID, recordedMinisterID string
+	var recordedCallerID, recordedChannelID, recordedMinisterID string
 
-	consultant := &callerIDCapturingConsultant{callerIDPtr: &recordedCallerID, ministerIDPtr: &recordedMinisterID}
+	consultant := &callerIDCapturingConsultant{callerIDPtr: &recordedCallerID, channelIDPtr: &recordedChannelID, ministerIDPtr: &recordedMinisterID}
 	tool := tools.ConsultMinisterTool{
 		Ctx:         tools.ToolContext{MinisterID: "judge", Username: "testuser", Project: "testproject"},
 		Consultant:  consultant,
@@ -784,7 +785,33 @@ func TestConsultMinisterTool_PassesMinisterIDAsCallerID(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, "judge", recordedCallerID,
-		"ConsultMinisterTool.Call should pass Ctx.MinisterID as callerID")
+		"ConsultMinisterTool.Call should pass Ctx.MinisterID as callerMinisterID")
+	assert.Equal(t, "judge", recordedChannelID,
+		"ConsultMinisterTool.Call should fall back to MinisterID as channelID when context is empty")
+	assert.Equal(t, "forge", recordedMinisterID,
+		"ConsultMinisterTool.Call should pass the target minister_id")
+}
+
+// TestConsultMinisterTool_ChannelIDFromContext verifies that when the context
+// carries an explicit ChannelID, it is used for routing instead of the minister's ID.
+func TestConsultMinisterTool_ChannelIDFromContext(t *testing.T) {
+	var recordedCallerID, recordedChannelID, recordedMinisterID string
+
+	consultant := &callerIDCapturingConsultant{callerIDPtr: &recordedCallerID, channelIDPtr: &recordedChannelID, ministerIDPtr: &recordedMinisterID}
+	tool := tools.ConsultMinisterTool{
+		Ctx:         tools.ToolContext{MinisterID: "judge", Username: "testuser", Project: "testproject"},
+		Consultant:  consultant,
+		MinisterIDs: []string{"forge"},
+	}
+
+	ctx := context.WithValue(context.Background(), tools.ChannelIDKey{}, "e633")
+	_, err := tool.Call(ctx, `{"minister_id": "forge", "edict_id": 1, "task": "do work"}`)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "judge", recordedCallerID,
+		"ConsultMinisterTool.Call should pass Ctx.MinisterID as callerMinisterID")
+	assert.Equal(t, "e633", recordedChannelID,
+		"ConsultMinisterTool.Call should use ChannelID from context when present")
 	assert.Equal(t, "forge", recordedMinisterID,
 		"ConsultMinisterTool.Call should pass the target minister_id")
 }
@@ -792,11 +819,13 @@ func TestConsultMinisterTool_PassesMinisterIDAsCallerID(t *testing.T) {
 // callerIDCapturingConsultant records the callerID passed to ConsultMinister.
 type callerIDCapturingConsultant struct {
 	callerIDPtr   *string
+	channelIDPtr  *string
 	ministerIDPtr *string
 }
 
-func (c *callerIDCapturingConsultant) ConsultMinister(ctx context.Context, callerID, ministerID string, key storage.EdictKey, work string) (string, error) {
-	*c.callerIDPtr = callerID
+func (c *callerIDCapturingConsultant) ConsultMinister(ctx context.Context, callerMinisterID, ministerID, channelID string, key storage.EdictKey, work string) (string, error) {
+	*c.callerIDPtr = callerMinisterID
+	*c.channelIDPtr = channelID
 	*c.ministerIDPtr = ministerID
 	return `{"status":"completed"}`, nil
 }
@@ -929,7 +958,7 @@ func TestCourt_ConsultMinister_SetsExcludeTools(t *testing.T) {
 		task.Done <- Result{MinisterID: "target", Sealed: true, Output: "done"}
 	}()
 
-	_, err := court.ConsultMinister(ctx, "secretary", "target",
+	_, err := court.ConsultMinister(ctx, "secretary", "target", "secretary",
 		storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"}, "do work")
 	assert.NoError(t, err)
 }

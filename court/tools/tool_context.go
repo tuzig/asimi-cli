@@ -23,6 +23,21 @@ func SessionIDFromContext(ctx context.Context) string {
 	return ""
 }
 
+// ChannelIDKey is a context key for propagating the executing session's
+// ChannelID to tools via context.Context. This allows tools (e.g.
+// ConsultMinisterTool) to route streaming output to the correct tab,
+// rather than defaulting to the minister's static ID.
+type ChannelIDKey struct{}
+
+// ChannelIDFromContext extracts the channel ID from the context, or returns
+// "" if none is set.
+func ChannelIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(ChannelIDKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // ToolContext carries shared identity and daemon-level resources to all tools.
 // RepoInfo is a pointer so all contexts see live state (ProjectRoot, Branch, etc.)
 // MinisterID is the one field that varies per minister tool set.
@@ -48,7 +63,8 @@ type RitualLauncher interface {
 }
 
 // MinisterConsultant dispatches work to a minister (implemented by MinisterBase).
-// callerID is the minister ID of the caller, used to route output to the caller's tab.
+// callerMinisterID is the minister ID of the caller (used for session lookup and
+// self-consult guard), and channelID is the routing target for streaming output.
 type MinisterConsultant interface {
-	ConsultMinister(ctx context.Context, callerID, ministerID string, key storage.EdictKey, work string) (string, error)
+	ConsultMinister(ctx context.Context, callerMinisterID, ministerID, channelID string, key storage.EdictKey, work string) (string, error)
 }

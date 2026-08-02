@@ -1912,7 +1912,7 @@ func TestCourt_ConsultMinister_NotFound(t *testing.T) {
 	require.NotNil(t, s)
 
 	key := storage.EdictKey{ID: 1, Username: cfg.Username, Project: cfg.Project}
-	_, err := s.ConsultMinister(context.Background(), "secretary", "nonexistent", key, "do something")
+	_, err := s.ConsultMinister(context.Background(), "secretary", "nonexistent", "secretary", key, "do something")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "minister not found")
 }
@@ -1926,7 +1926,7 @@ func TestCourt_ConsultMinister_SelfConsultationRejected(t *testing.T) {
 	require.NotNil(t, s)
 
 	key := storage.EdictKey{ID: 1, Username: cfg.Username, Project: cfg.Project}
-	_, err := s.ConsultMinister(context.Background(), "forge", "forge", key, "do work")
+	_, err := s.ConsultMinister(context.Background(), "forge", "forge", "forge", key, "do work")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot consult itself")
 }

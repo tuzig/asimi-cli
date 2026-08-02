@@ -66,7 +66,14 @@ func (t ConsultMinisterTool) Call(ctx context.Context, input string) (string, er
 		Project:  t.Ctx.Project,
 	}
 
-	return t.Consultant.ConsultMinister(ctx, t.Ctx.MinisterID, params.MinisterID, key, params.Work)
+	// Resolve the real channel ID from context (the session's actual tab),
+	// falling back to the minister's static ID for backward compat.
+	channelID := ChannelIDFromContext(ctx)
+	if channelID == "" {
+		channelID = t.Ctx.MinisterID
+	}
+
+	return t.Consultant.ConsultMinister(ctx, t.Ctx.MinisterID, params.MinisterID, channelID, key, params.Work)
 }
 
 func (t ConsultMinisterTool) Format(input, result string, err error) string {
