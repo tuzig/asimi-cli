@@ -30,7 +30,7 @@ CRITICAL RULES:
 // EventNotificationMsg notifies the UI of significant Court events
 type EventNotificationMsg struct {
 	ChannelID string                 `msgpack:"channel_id,omitempty"`
-	EventType storage.CourtEvent `msgpack:"event_type"`
+	EventType storage.CourtEvent     `msgpack:"event_type"`
 	EdictKey  storage.EdictKey       `msgpack:"edict_key"`
 	Message   string                 `msgpack:"message,omitempty"`
 	Payload   map[string]interface{} `msgpack:"payload,omitempty"`
@@ -43,7 +43,7 @@ type RitualGuard struct {
 	ritualRunner   *RitualRunner
 	eventRegistry  *EventRegistry
 	eventCh        chan Event
-	ritualMu       sync.Mutex // serializes ritual execution without blocking the event loop
+	ritualMu       sync.Mutex   // serializes ritual execution without blocking the event loop
 	queuedCount    atomic.Int32 // number of rituals waiting for the lock
 	maxRetries     int
 	batchSize      int
@@ -54,9 +54,9 @@ type RitualGuard struct {
 	version      string // Application version for health checks
 
 	// Zhengming functions injected by Court
-	waitForZhengming   func(ctx context.Context, requestID string) (string, error)
-	requestZhengming   func(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
-	deliverZhengming   func(answer ZhengmingAnswer) bool
+	waitForZhengming func(ctx context.Context, requestID string) (string, error)
+	requestZhengming func(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
+	deliverZhengming func(answer ZhengmingAnswer) bool
 
 	// recoveryMu blocks event-driven rituals during recovery prompts
 	recoveryMu       sync.RWMutex
@@ -65,15 +65,15 @@ type RitualGuard struct {
 
 // RitualGuardOpts configures a new RitualGuard.
 type RitualGuardOpts struct {
-	Base               *MinisterBase
-	Runner             runners.Runner
-	GetMinister        func(id string) Minister
-	OnRunnerUpgrade    func(runners.Runner) // propagates runner changes back to court
-	StreamingCtx       func(string) context.Context
-	Version            string // Application version for health checks
-	WaitForZhengming   func(ctx context.Context, requestID string) (string, error)
-	RequestZhengming   func(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
-	DeliverZhengming   func(answer ZhengmingAnswer) bool
+	Base             *MinisterBase
+	Runner           runners.Runner
+	GetMinister      func(id string) Minister
+	OnRunnerUpgrade  func(runners.Runner) // propagates runner changes back to court
+	StreamingCtx     func(string) context.Context
+	Version          string // Application version for health checks
+	WaitForZhengming func(ctx context.Context, requestID string) (string, error)
+	RequestZhengming func(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (string, error)
+	DeliverZhengming func(answer ZhengmingAnswer) bool
 }
 
 // NewRitualGuard creates a new Ritual Guard that owns all ritual/event infrastructure.
@@ -206,7 +206,7 @@ func (rg *RitualGuard) startRitual(ritualName string, key storage.EdictKey, inpu
 			}
 			rg.logger.Warn("ritual failed", "ritual", ritualName, "error", err)
 			rg.notify(RitualStepMsg{
-				ChannelID:  ritualChannelID(key.ID),
+				ChannelID:   ritualChannelID(key.ID),
 				RitualName:  ritualName,
 				ExecutionID: exec.ID,
 				EdictID:     key.ID,

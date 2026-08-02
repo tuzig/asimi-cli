@@ -1830,6 +1830,16 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 	}
 	actSession.ReasoningEffort = effort
 
+	// Load court history into the scratchpad for this step.
+	// The scratchpad is injected as a one-shot prefix to the next user message
+	// and cleared automatically, so it never pollutes the system prompt.
+	if exec.EdictID > 1 {
+		scratchpad := r.buildStepScratchpad(exec, step)
+		if scratchpad != "" {
+			actSession.SetScratchpad(scratchpad)
+		}
+	}
+
 	// Build work prompt with ritual context and previous step results
 	prompt := r.buildWorkPrompt(exec, act)
 
@@ -1985,6 +1995,123 @@ func (r *RitualRunner) buildWorkPrompt(exec *RitualExecution, act string) string
 		return act
 	}
 	return buf.String()
+}
+
+// buildStepScratchpad queries the edict's court history and returns a markdown
+// block suitable for the transient scratchpad. On goto retry (step has prior
+// failure), rejected precedents are shown prominently with principle and
+// justification so the LLM sees exactly what the Chancellor objected to.
+func (r *RitualRunner) buildStepScratchpad(exec *RitualExecution, step RitualStep) string {
+	key := exec.EdictKey()
+	var parts []string
+
+	// Precedents — show all, with rejected ones highlighted on retry
+	precedents, _ := r.arrangeGetPrecedents(key)
+	if preclist, ok := precedents.([]interface{}); ok && len(preclist) > 0 {
+		var buf strings.Builder
+		buf.WriteString("## Court Precedents\n")
+		for _, p := range preclist {
+			if pm, ok := p.(map[string]interface{}); ok {
+				ruling, _ := pm["ruling"].(string)
+				principle, _ := pm["principle"].(string)
+				justification, _ := pm["justification"].(string)
+				manifestID, _ := pm["manifest_id"].(string)
+
+				isRejected := ruling == string(storage.PrecedentRejected)
+
+				// Check if we're on a retry — highlight rejected precedents
+				isRetry := exec.CurrentStep < len(exec.stepStates) &&
+					exec.stepStates[exec.CurrentStep].RetryCount > 0
+
+				if isRejected && isRetry {
+					buf.WriteString(fmt.Sprintf("\n### ⚠️ Rejected (manifest: %s)\n", manifestID))
+					buf.WriteString(fmt.Sprintf("- **Principle:** %s\n", principle))
+					buf.WriteString(fmt.Sprintf("- **Justification:** %s\n", justification))
+				} else {
+					buf.WriteString(fmt.Sprintf("\n- **%s** (%s)", manifestID, ruling))
+					if principle != "" {
+						buf.WriteString(fmt.Sprintf(" — %s", principle))
+					}
+				}
+				buf.WriteString("\n")
+			}
+		}
+		parts = append(parts, buf.String())
+	}
+
+	// Manifests
+	manifests, _ := r.arrangeGetManifests(key)
+	if manlist, ok := manifests.([]map[string]interface{}); ok && len(manlist) > 0 {
+		var buf strings.Builder
+		buf.WriteString("## Manifests\n")
+		for _, m := range manlist {
+			filePath, _ := m["file_path"].(string)
+			status, _ := m["status"].(string)
+			funcName, _ := m["func_name"].(string)
+			buf.WriteString(fmt.Sprintf("- **%s** (%s)", filePath, status))
+			if funcName != "" {
+				buf.WriteString(fmt.Sprintf(" — %s", funcName))
+			}
+			buf.WriteString("\n")
+		}
+		parts = append(parts, buf.String())
+	}
+
+	// Verdicts
+	verdicts, _ := r.arrangeGetVerdicts(key)
+	if verlist, ok := verdicts.([]map[string]interface{}); ok && len(verlist) > 0 {
+		var buf strings.Builder
+		buf.WriteString("## Verdicts\n")
+		for _, v := range verlist {
+			verdictID, _ := v["verdict_id"].(string)
+			outcome, _ := v["outcome"].(string)
+			buf.WriteString(fmt.Sprintf("- **%s**: %s\n", verdictID, outcome))
+		}
+		parts = append(parts, buf.String())
+	}
+
+	// Seals — show all non-stale seals with minister and timestamp
+	seals, _ := r.arrangeGetSeals(key)
+	if sealist, ok := seals.([]map[string]interface{}); ok && len(sealist) > 0 {
+		var buf strings.Builder
+		buf.WriteString("## Seals (Seal Chain)\n")
+		for _, s := range sealist {
+			ministerID, _ := s["minister_id"].(string)
+			sealedAt, _ := s["sealed_at"].(time.Time)
+			var icon string
+			switch ministerID {
+			case "judge":
+				icon = "🪶"
+			case "chancellor":
+				icon = "📜"
+			case "ruler":
+				icon = "👑"
+			default:
+				icon = "🔏"
+			}
+			buf.WriteString(fmt.Sprintf("- %s **%s** — sealed %s\n", icon, ministerID, sealedAt.Format(time.RFC3339)))
+		}
+		parts = append(parts, buf.String())
+	}
+
+	// Lings — show all sub-tasks with their status
+	lings, _ := r.arrangeGetLings(key)
+	if linglist, ok := lings.([]map[string]interface{}); ok && len(linglist) > 0 {
+		var buf strings.Builder
+		buf.WriteString("## Lings (Sub-tasks)\n")
+		for _, l := range linglist {
+			lingID, _ := l["ling_id"].(string)
+			desc, _ := l["description"].(string)
+			status, _ := l["status"].(string)
+			buf.WriteString(fmt.Sprintf("- **%s** (%s) — %s\n", lingID[:8], status, desc))
+		}
+		parts = append(parts, buf.String())
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return "---\n# Court History\n" + strings.Join(parts, "\n")
 }
 
 // handleFailure handles step failure based on on_failure action

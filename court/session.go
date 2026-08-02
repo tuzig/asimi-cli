@@ -203,6 +203,12 @@ type Session struct {
 	// Context files - dynamically added via @ references
 	ContextFiles map[string]string `json:"context_files"`
 
+	// Transient scratchpad — injected once into the next user message and
+	// cleared. Never persisted. Used by the Court to carry structured data
+	// (e.g. precedent feedback) across turns without baking it into the
+	// immutable system prompt.
+	scratchpad string
+
 	// Write protection - track files read during session
 	filesRead map[string]bool
 
@@ -599,6 +605,7 @@ var openRouterContextSizes = map[string]int{
 	"google/gemini-2.5-flash":      1_000_000,
 	"google/gemini-2.5-pro":        1_000_000,
 	"deepseek/deepseek-v4-pro":     1_000_000,
+	"deepseek/deepseek-v4-flash":   1_000_000,
 	"deepseek/deepseek-v3.2":       128_000,
 	"deepseek/deepseek-r1":         128_000,
 	"minimax/minimax-m2.5":         1_000_000,
@@ -1044,11 +1051,21 @@ func (s *Session) prepareUserMessage(prompt string, contextFiles map[string]stri
 	s.toolCallLoopHits = 0
 
 	fullPrompt := buildPromptWithContext(prompt, contextFiles)
+	if s.scratchpad != "" {
+		fullPrompt = s.scratchpad + "\n\n" + fullPrompt
+		s.scratchpad = ""
+	}
 	s.messages = append(s.messages, schemas.ChatMessage{
 		Role:    schemas.ChatMessageRoleUser,
 		Content: textContent(fullPrompt),
 	})
 	s.persist()
+}
+
+// SetScratchpad sets the transient scratchpad buffer. Its content is injected
+// once into the next user message and then cleared automatically.
+func (s *Session) SetScratchpad(content string) {
+	s.scratchpad = content
 }
 
 // buildPromptWithContext builds a prompt that includes all file content

@@ -427,10 +427,55 @@ func (r *RitualRunner) arrangeGetPrecedents(key storage.EdictKey) (interface{}, 
 	result := make([]interface{}, len(precedents))
 	for i, p := range precedents {
 		result[i] = map[string]interface{}{
-			"precedent_id": p.PrecedentID,
-			"manifest_id":  p.ManifestID,
-			"ruling":       string(p.Ruling),
-			"principle":    p.Principle,
+			"precedent_id":  p.PrecedentID,
+			"manifest_id":   p.ManifestID,
+			"ruling":        string(p.Ruling),
+			"principle":     p.Principle,
+			"justification": p.Justification,
+		}
+	}
+	return result, nil
+}
+
+// arrangeGetSeals queries the edict's seals and returns them as a slice of maps.
+// Non-stale seals only — stale seals (invalidated by intent change) are excluded.
+func (r *RitualRunner) arrangeGetSeals(key storage.EdictKey) (interface{}, error) {
+	var seals []storage.Seal
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ? AND stale_at IS NULL",
+		key.ID, key.Username, key.Project).
+		Order("sealed_at ASC").
+		Find(&seals).Error; err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, len(seals))
+	for i, s := range seals {
+		result[i] = map[string]interface{}{
+			"seal_id":     s.SealID,
+			"minister_id": s.MinisterID,
+			"sealed_at":   s.SealedAt,
+		}
+	}
+	return result, nil
+}
+
+// arrangeGetLings queries the edict's lings (sub-tasks) and returns them as a
+// slice of maps. Unlike getLings (which errors on empty), this returns an empty
+// slice for use in the scratchpad where no lings is a valid state.
+func (r *RitualRunner) arrangeGetLings(key storage.EdictKey) (interface{}, error) {
+	var lings []storage.Ling
+	if err := r.db.Where("edict_id = ? AND username = ? AND project = ?",
+		key.ID, key.Username, key.Project).
+		Order("created_at ASC").
+		Find(&lings).Error; err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, len(lings))
+	for i, l := range lings {
+		result[i] = map[string]interface{}{
+			"ling_id":      l.LingID,
+			"description":  l.Description,
+			"dependencies": l.Dependencies,
+			"status":       string(l.Status),
 		}
 	}
 	return result, nil
@@ -1117,12 +1162,16 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			return fmt.Errorf("failed to query precedents: %w", err)
 		}
 		if len(rejectedPrecedents) > 0 {
-			// Collect manifest IDs for error reporting
-			manifestIDs := make([]string, len(rejectedPrecedents))
-			for i, p := range rejectedPrecedents {
-				manifestIDs[i] = p.ManifestID
+			// Build detailed error with principle + justification for each rejection
+			var details []string
+			for _, p := range rejectedPrecedents {
+				detail := fmt.Sprintf("principle=%q", p.Principle)
+				if p.Justification != "" {
+					detail += fmt.Sprintf(" justification=%q", p.Justification)
+				}
+				details = append(details, detail)
 			}
-			return fmt.Errorf("precedent check failed: %d precedent(s) rejected: %v", len(rejectedPrecedents), manifestIDs)
+			return fmt.Errorf("precedent check failed: %d precedent(s) rejected — %s", len(rejectedPrecedents), strings.Join(details, "; "))
 		}
 
 		// Also check edict-level precedents (manifest_id = '')
@@ -1142,7 +1191,12 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 			return fmt.Errorf("failed to query edict-level precedents: %w", err)
 		}
 		if len(rejectedEdictPrecedents) > 0 {
-			return fmt.Errorf("precedent check failed: edict-level precedent %s is rejected", rejectedEdictPrecedents[0].PrecedentID)
+			p := rejectedEdictPrecedents[0]
+			detail := fmt.Sprintf("principle=%q", p.Principle)
+			if p.Justification != "" {
+				detail += fmt.Sprintf(" justification=%q", p.Justification)
+			}
+			return fmt.Errorf("precedent check failed: edict-level precedent %s is rejected — %s", p.PrecedentID, detail)
 		}
 		return nil
 	case "check_asimi_version":
