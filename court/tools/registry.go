@@ -6,15 +6,6 @@ import (
 	"sync"
 )
 
-// Realm represents one of the three kingdoms (三界).
-type Realm string
-
-const (
-	Earth  Realm = "earth"
-	Heaven Realm = "heaven"
-	Intent Realm = "intent"
-)
-
 // Access represents read/write/execute permissions within a single realm.
 type Access struct {
 	Read    bool

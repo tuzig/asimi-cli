@@ -23,12 +23,9 @@
       minister: judge
       given:
         - "!just test"
-        - the manifests
       act: |
         If any tests were changed, you need to verify that were not weakened
         and that non trivial changes are justified by the edict.
-
-        {{ .manifests }}
 
         If tests fail, provide clear feedback for the Forge on what needs to be fixed.
         If changes are not covered by test, add the missing tests and write them so they ensure the changed code will always work.
@@ -40,9 +37,6 @@
       on_failure_target: forging
     - name: reviewing
       minister: chancellor
-      given:
-        - the manifests
-        - the verdicts
       act: |
         Review the code changes for the edict.
         Check for style violations, security concerns, and architectural issues.
@@ -53,11 +47,6 @@
         ## Edict
         {{ .edict }}
 
-        ## Manifests
-        {{ .manifests }}
-
-        ## Verdicts
-        {{ .verdicts }}
       then:
         - the precedent is approved
         - record the chancellor's seal
@@ -110,11 +99,8 @@
 
     - name: judging
       minister: judge
-      given:
-        - the manifests
       act: |
-        Judge the changes made in the manifests:
-        {{ .manifests }}
+        Judge the changes made in the manifests.
         Make sure test coverage was not diminished
       then:
         - the verdicts are passed
@@ -125,8 +111,6 @@
     - name: reviewing
       minister: chancellor
       given:
-        - the manifests
-        - the verdicts
         - the earth status
       act: |
         Review the code changes in this ritual.
@@ -137,10 +121,6 @@
         {{ .earth_borderlands }}
         {{ .earth_middle_kingdom }}
         {{ .earth_capital }}
-        ## Manifests
-        {{ .manifests }}
-        ## Verdicts
-        {{ .verdicts }}
       then:
         - the precedent is approved
         - record the chancellor's seal
@@ -236,7 +216,6 @@
       given:
         - the borderlands
         - manifests for the borderlands
-        - the verdicts
       act: |
         Review the code changes for the edict.
         Check for style violations, security concerns, and architectural issues.
@@ -245,13 +224,7 @@
         Highlight any blocking issues and suggest improvements.
         
         ## Edict
-        {{ .edict }} 
-
-        ## Manifests
-        {{ .manifests }}
-
-        ## Verdicts
-        {{ .verdicts }}
+        {{ .edict }}
 
 - name: clean-slate
   description: |
@@ -428,7 +401,6 @@
       minister: chancellor
       given:
         - the earth status
-        - the verdicts
       act: |
         Review the infrastructure files for quality and convention adherence.
 
