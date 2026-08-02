@@ -25,18 +25,18 @@ import (
 // PodmanRunner executes shell commands in a podman container using per-command
 // `podman exec` sessions.
 type PodmanRunner struct {
-	imageName     string
-	containerName string
-	allowFallback bool
-	noCleanup     bool
-	config        *Config
-	repoInfo      repo.RepoInfo
-	msgChan       chan<- Msg
-	fallback      Runner
-	mu            sync.Mutex
-	conn          context.Context
-	establishConn func(ctx context.Context) (context.Context, error)
-	checkImage    func(ctx context.Context) error
+	imageName        string
+	containerName    string
+	allowFallback    bool
+	noCleanup        bool
+	config           *Config
+	repoInfo         repo.RepoInfo
+	msgChan          chan<- Msg
+	fallback         Runner
+	mu               sync.Mutex
+	conn             context.Context
+	establishConn    func(ctx context.Context) (context.Context, error)
+	checkImage       func(ctx context.Context) error
 	containerStarted bool
 }
 

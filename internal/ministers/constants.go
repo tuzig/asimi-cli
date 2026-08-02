@@ -4,12 +4,12 @@ package ministers
 // seal chain order, ritual routing) and are used throughout the codebase
 // instead of raw string literals.
 const (
-	Secretary   = "secretary"
-	Forge       = "forge"
-	Judge       = "judge"
-	Chancellor  = "chancellor"
-	War         = "war"
-	Ruler       = "ruler"
+	Secretary  = "secretary"
+	Forge      = "forge"
+	Judge      = "judge"
+	Chancellor = "chancellor"
+	War        = "war"
+	Ruler      = "ruler"
 )
 
 // DefaultTabIDs is the ordered list of ministers that get interactive tabs

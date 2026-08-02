@@ -203,8 +203,8 @@ func (s *SealService) IsEdictCancelled(key EdictKey) (bool, error) {
 // ActiveEdict is an edict with its minister seal status
 type ActiveEdict struct {
 	Edict
-	HasJudgeSeal bool
-	HasChancellorSeal  bool
+	HasJudgeSeal      bool
+	HasChancellorSeal bool
 }
 
 // ListActiveEdicts returns all edicts that are both un-cancelled and unsealed (no ruler seal)
@@ -244,9 +244,9 @@ func (s *SealService) ListActiveEdicts(username, project string) ([]ActiveEdict,
 	result := make([]ActiveEdict, len(edicts))
 	for i, e := range edicts {
 		result[i] = ActiveEdict{
-			Edict:        e,
-			HasJudgeSeal: sealMap[e.ID]["judge"],
-			HasChancellorSeal:  sealMap[e.ID]["chancellor"],
+			Edict:             e,
+			HasJudgeSeal:      sealMap[e.ID]["judge"],
+			HasChancellorSeal: sealMap[e.ID]["chancellor"],
 		}
 	}
 	return result, nil

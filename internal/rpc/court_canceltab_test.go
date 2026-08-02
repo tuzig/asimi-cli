@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/internal/courtapi"
 )
 
 // cancellingFake stands in for the server-side Court just enough to

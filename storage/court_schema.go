@@ -191,8 +191,8 @@ func (Zhengming) TableName() string {
 type CourtEvent string
 
 const (
-	EventCourtStarted  CourtEvent = "court_started"
-	EventCourtReady    CourtEvent = "court_ready"
+	EventCourtStarted      CourtEvent = "court_started"
+	EventCourtReady        CourtEvent = "court_ready"
 	EventEdictAssigned     CourtEvent = "edict_assigned"
 	EventEdictCreated      CourtEvent = "edict_created"
 	EventForgeCommitted    CourtEvent = "forge_committed"
@@ -216,13 +216,13 @@ const (
 
 // TianEvent represents an event in the Tian ledger
 type TianEvent struct {
-	ID        uint           `gorm:"primaryKey;autoIncrement"`
-	EdictID   uint           `gorm:"column:edict_id;index"`
-	Username  string         `gorm:"column:username"`
-	Project   string         `gorm:"column:project"`
+	ID        uint       `gorm:"primaryKey;autoIncrement"`
+	EdictID   uint       `gorm:"column:edict_id;index"`
+	Username  string     `gorm:"column:username"`
+	Project   string     `gorm:"column:project"`
 	EventType CourtEvent `gorm:"column:event_type"`
-	Payload   JSON           `gorm:"column:payload;type:json"`
-	CreatedAt time.Time      `gorm:"column:created_at;autoCreateTime"`
+	Payload   JSON       `gorm:"column:payload;type:json"`
+	CreatedAt time.Time  `gorm:"column:created_at;autoCreateTime"`
 }
 
 // TableName returns the table name for TianEvent
@@ -232,16 +232,16 @@ func (TianEvent) TableName() string {
 
 // TianEventDLQ represents a dead-letter queue entry for failed event processing
 type TianEventDLQ struct {
-	ID           uint           `gorm:"primaryKey;autoIncrement"`
-	OriginalID   uint           `gorm:"column:original_id"`
-	EdictID      uint           `gorm:"column:edict_id;index"`
-	Username     string         `gorm:"column:username"`
-	Project      string         `gorm:"column:project"`
+	ID           uint       `gorm:"primaryKey;autoIncrement"`
+	OriginalID   uint       `gorm:"column:original_id"`
+	EdictID      uint       `gorm:"column:edict_id;index"`
+	Username     string     `gorm:"column:username"`
+	Project      string     `gorm:"column:project"`
 	EventType    CourtEvent `gorm:"column:event_type"`
-	Payload      JSON           `gorm:"column:payload;type:json"`
-	ErrorMessage string         `gorm:"column:error_message"`
-	RetryCount   int            `gorm:"column:retry_count"`
-	CreatedAt    time.Time      `gorm:"column:created_at;autoCreateTime"`
+	Payload      JSON       `gorm:"column:payload;type:json"`
+	ErrorMessage string     `gorm:"column:error_message"`
+	RetryCount   int        `gorm:"column:retry_count"`
+	CreatedAt    time.Time  `gorm:"column:created_at;autoCreateTime"`
 }
 
 // TableName returns the table name for TianEventDLQ

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	asimitools "github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
-	asimitools "github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/storage"
 
 	"github.com/stretchr/testify/assert"

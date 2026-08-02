@@ -272,11 +272,11 @@ func TestRegisterBuiltinToolsAllMinisters(t *testing.T) {
 	})
 
 	ministerPerms := map[string]string{
-		"secretary": "rwxr--rwx",
+		"secretary":  "rwxr--rwx",
 		"forge":      "rwxr---w-",
 		"judge":      "rwxrwxr--",
-		"chancellor":       "r--r--rwx",
-		"war": "r-----rw-",
+		"chancellor": "r--r--rwx",
+		"war":        "r-----rw-",
 	}
 
 	for minister, permStr := range ministerPerms {

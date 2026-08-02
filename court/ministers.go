@@ -3,8 +3,8 @@ package court
 import (
 	"context"
 
-	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/court/tools"
+	"github.com/afittestide/asimi/internal/ministers"
 )
 
 // MinisterDef is an alias for ministers.MinisterDef so existing code in
@@ -94,5 +94,3 @@ func (m *ministerImpl) Tools() []Tool {
 func (m *ministerImpl) Run(ctx context.Context) {
 	m.RunLoop(ctx, m, nil, m.MinisterBase.processTask)
 }
-
-

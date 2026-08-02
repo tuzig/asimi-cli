@@ -6,9 +6,9 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/afittestide/asimi/court"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/wire"
-	"github.com/afittestide/asimi/court"
 )
 
 // Notification method names (server → client). Keep in sync with the
@@ -43,20 +43,20 @@ const (
 var (
 	typeToMethodMu sync.RWMutex
 	typeToMethod   = map[reflect.Type]string{
-		reflect.TypeOf(court.StreamStartMsg{}):              NotifyStreamStart,
-		reflect.TypeOf(court.StreamChunkMsg{}):              NotifyStreamChunk,
-		reflect.TypeOf(court.StreamCompleteMsg{}):           NotifyStreamComplete,
-		reflect.TypeOf(court.StreamDoneMsg{}):               NotifyStreamDone,
-		reflect.TypeOf(court.StreamInterruptedMsg{}):        NotifyStreamInterrupted,
-		reflect.TypeOf(court.StreamMaxTokensReachedMsg{}):   NotifyStreamMaxTokens,
-		reflect.TypeOf(court.StreamErrorMsg{}):              NotifyStreamError,
-		reflect.TypeOf(court.EventsDrainedMsg{}):            NotifyEventsDrained,
-		reflect.TypeOf(court.MinisterInvokingMsg{}):         NotifyMinisterInvoking,
-		reflect.TypeOf(court.MinisterCompletedMsg{}):        NotifyMinisterCompleted,
-		reflect.TypeOf(court.EventNotificationMsg{}):        NotifyEvent,
-		reflect.TypeOf(court.ZhengmingPendingMsg{}):         NotifyZhengmingPending,
-		reflect.TypeOf(court.ZhengmingAnsweredMsg{}):        NotifyZhengmingAnswered,
-		reflect.TypeOf(court.RitualStepMsg{}):               NotifyRitualStep,
+		reflect.TypeOf(court.StreamStartMsg{}):                  NotifyStreamStart,
+		reflect.TypeOf(court.StreamChunkMsg{}):                  NotifyStreamChunk,
+		reflect.TypeOf(court.StreamCompleteMsg{}):               NotifyStreamComplete,
+		reflect.TypeOf(court.StreamDoneMsg{}):                   NotifyStreamDone,
+		reflect.TypeOf(court.StreamInterruptedMsg{}):            NotifyStreamInterrupted,
+		reflect.TypeOf(court.StreamMaxTokensReachedMsg{}):       NotifyStreamMaxTokens,
+		reflect.TypeOf(court.StreamErrorMsg{}):                  NotifyStreamError,
+		reflect.TypeOf(court.EventsDrainedMsg{}):                NotifyEventsDrained,
+		reflect.TypeOf(court.MinisterInvokingMsg{}):             NotifyMinisterInvoking,
+		reflect.TypeOf(court.MinisterCompletedMsg{}):            NotifyMinisterCompleted,
+		reflect.TypeOf(court.EventNotificationMsg{}):            NotifyEvent,
+		reflect.TypeOf(court.ZhengmingPendingMsg{}):             NotifyZhengmingPending,
+		reflect.TypeOf(court.ZhengmingAnsweredMsg{}):            NotifyZhengmingAnswered,
+		reflect.TypeOf(court.RitualStepMsg{}):                   NotifyRitualStep,
 		reflect.TypeOf(runners.ContainerLaunchedMsg{}):          NotifyContainerLaunched,
 		reflect.TypeOf(runners.ToolCallScheduledMsg{}):          NotifyToolCallScheduled,
 		reflect.TypeOf(runners.ToolCallExecutingMsg{}):          NotifyToolCallExecuting,

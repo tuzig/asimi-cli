@@ -540,8 +540,8 @@ func TestForPermissionsMultiToolFiltering(t *testing.T) {
 	strategistTools := r.ForPermissions(strategistPerm)
 	strategistNames := toolNames(strategistTools)
 	assertHas(t, strategistNames, "read_file")            // earth Read matches
-	assertHas(t, strategistNames, "write_file")            // earth Read matches (shared Read)
-	assertHas(t, strategistNames, "create_manifest")       // intent Write matches
+	assertHas(t, strategistNames, "write_file")           // earth Read matches (shared Read)
+	assertHas(t, strategistNames, "create_manifest")      // intent Write matches
 	assertNotHas(t, strategistNames, "run_shell_command") // strategist has no earth Execute
 
 	// Forge: rwxr---w- (earth: rwx, intent: -w-)

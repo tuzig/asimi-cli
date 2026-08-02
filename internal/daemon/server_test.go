@@ -78,10 +78,11 @@ func (l *testSlogGormLogger) LogMode(level gormlogger.LogLevel) gormlogger.Inter
 	return &testSlogGormLogger{logger: l.logger, logLevel: level}
 }
 
-func (l *testSlogGormLogger) Info(ctx context.Context, msg string, args ...interface{})    {}
-func (l *testSlogGormLogger) Warn(ctx context.Context, msg string, args ...interface{})    {}
-func (l *testSlogGormLogger) Error(ctx context.Context, msg string, args ...interface{})   {}
-func (l *testSlogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {}
+func (l *testSlogGormLogger) Info(ctx context.Context, msg string, args ...interface{})  {}
+func (l *testSlogGormLogger) Warn(ctx context.Context, msg string, args ...interface{})  {}
+func (l *testSlogGormLogger) Error(ctx context.Context, msg string, args ...interface{}) {}
+func (l *testSlogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
+}
 
 // newTestShared builds a Shared suitable for test.
 func newTestShared(t *testing.T) (*Shared, func()) {

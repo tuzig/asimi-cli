@@ -1427,7 +1427,6 @@ func TestMinisterBase_PerChannelSessionIsolation(t *testing.T) {
 	assert.Contains(t, all, "chancellor")
 }
 
-
 // every minister that owns a UI tab. Each tab saves with TabType =
 // minister id; this test feeds those ids into RestoreMinisterSession and
 // verifies the right minister ends up with a populated session whose

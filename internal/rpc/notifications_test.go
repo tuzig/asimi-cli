@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
 )
 

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/afittestide/asimi/internal/repo"
-	"github.com/afittestide/asimi/internal/courtapi"
 	"github.com/afittestide/asimi/court"
+	"github.com/afittestide/asimi/internal/courtapi"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -30,7 +30,7 @@ type LoopbackCourt struct {
 func NewLoopbackCourt(conn *Conn, local courtapi.Client) *LoopbackCourt {
 	return &LoopbackCourt{
 		CourtClient: NewCourtClient(conn),
-		Local:           local,
+		Local:       local,
 	}
 }
 

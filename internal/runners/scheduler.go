@@ -36,14 +36,14 @@ const (
 
 // ToolCall represents a single tool call task
 type ToolCall struct {
-	ID       string
-	Ctx      context.Context
-	Cancel   context.CancelFunc
-	Tool     Tool
-	Input    string
-	Status   ToolCallStatus
-	Result   string
-	Error    error
+	ID     string
+	Ctx    context.Context
+	Cancel context.CancelFunc
+	Tool   Tool
+	Input  string
+	Status ToolCallStatus
+	Result string
+	Error  error
 }
 
 // ToolCallResult is used to send the result of a tool call back to the caller

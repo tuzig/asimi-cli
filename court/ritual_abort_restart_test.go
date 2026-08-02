@@ -66,9 +66,9 @@ func TestRitualAbortAndRestart_Integration(t *testing.T) {
 
 	court := &Court{
 		ministers: map[string]Minister{
-			"forge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "forge", tasksCh: make(chan *Task, 1)},
-			"judge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "judge", tasksCh: make(chan *Task, 1)},
-			"chancellor":  &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "chancellor", tasksCh: make(chan *Task, 1)},
+			"forge":      &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "forge", tasksCh: make(chan *Task, 1)},
+			"judge":      &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "judge", tasksCh: make(chan *Task, 1)},
+			"chancellor": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "chancellor", tasksCh: make(chan *Task, 1)},
 		},
 		logger: slog.Default(),
 	}
@@ -165,9 +165,9 @@ func TestRitualAbortMidStep_VerifySkipExplicit(t *testing.T) {
 
 	court := &Court{
 		ministers: map[string]Minister{
-			"forge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "forge", tasksCh: make(chan *Task, 1)},
-			"judge": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "judge", tasksCh: make(chan *Task, 1)},
-			"chancellor":  &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "chancellor", tasksCh: make(chan *Task, 1)},
+			"forge":      &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "forge", tasksCh: make(chan *Task, 1)},
+			"judge":      &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "judge", tasksCh: make(chan *Task, 1)},
+			"chancellor": &blockingTestMinister{MinisterBase: MinisterBase{logger: slog.Default()}, id: "chancellor", tasksCh: make(chan *Task, 1)},
 		},
 		logger: slog.Default(),
 	}

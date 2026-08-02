@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"reflect"
+
 	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/mocks"
@@ -24,7 +26,6 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"reflect"
 
 	_ "modernc.org/sqlite"
 )

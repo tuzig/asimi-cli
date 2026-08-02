@@ -252,15 +252,15 @@ func NewMinisterBase(db *gorm.DB, runner runners.Runner, logger *slog.Logger, us
 		logger = slog.Default()
 	}
 	return &MinisterBase{
-		db:               db,
-		runner:           runner,
-		logger:           logger,
-		msgChan:    msgChan,
-		prompts:    make(chan *Prompt),
-		tasks:      make(chan *Task, 10),
-		username:   username,
-		project:    project,
-		sessions:   make(map[string]*Session),
+		db:       db,
+		runner:   runner,
+		logger:   logger,
+		msgChan:  msgChan,
+		prompts:  make(chan *Prompt),
+		tasks:    make(chan *Task, 10),
+		username: username,
+		project:  project,
+		sessions: make(map[string]*Session),
 	}
 }
 
@@ -692,6 +692,9 @@ func (m *MinisterBase) streamTask(ctx context.Context, work string, key storage.
 			sessionChannelID = m.ministerID
 		}
 		session.SetNotify(notify, sessionChannelID)
+		if scratchpad != "" {
+			session.SetScratchpad(scratchpad)
+		}
 		output, err = session.AskWithStreaming(ctx, work, nil)
 		if err != nil {
 			return session, "", err

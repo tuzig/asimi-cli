@@ -143,9 +143,9 @@ func TestSuggestEdictTool_PassesEdictIDInKey(t *testing.T) {
 	mock := &mockRequester{}
 	tool := SuggestEdictTool{
 		Ctx: ToolContext{
-			DB:        db,
-			Username:  "sageuser",
-			Project:   "myproject",
+			DB:         db,
+			Username:   "sageuser",
+			Project:    "myproject",
 			MinisterID: "chancellor",
 		},
 		Requester: mock,
@@ -212,9 +212,9 @@ func TestSuggestEdictTool_NonexistentEdictReturnsError(t *testing.T) {
 	mock := &mockRequester{}
 	tool := SuggestEdictTool{
 		Ctx: ToolContext{
-			DB:        db,
-			Username:  "sageuser",
-			Project:   "myproject",
+			DB:         db,
+			Username:   "sageuser",
+			Project:    "myproject",
 			MinisterID: "chancellor",
 		},
 		Requester: mock,
@@ -249,9 +249,9 @@ func TestSuggestEdictTool_WrongUserProjectReturnsError(t *testing.T) {
 	mock := &mockRequester{}
 	tool := SuggestEdictTool{
 		Ctx: ToolContext{
-			DB:        db,
-			Username:  "sageuser",
-			Project:   "myproject",
+			DB:         db,
+			Username:   "sageuser",
+			Project:    "myproject",
 			MinisterID: "chancellor",
 		},
 		Requester: mock,

@@ -20,6 +20,7 @@ import (
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/storage"
+	"github.com/google/uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -613,13 +614,13 @@ func TestLoadAllRituals_ProjectReleaseVersionRitual(t *testing.T) {
 
 	// Verify ministers are assigned correctly
 	expectedMinisters := map[string]string{
-		"prepare-changelog":      "war",
-		"bump-version":           "forge",
-		"update-roadmap":         "forge",
+		"prepare-changelog":        "war",
+		"bump-version":             "forge",
+		"update-roadmap":           "forge",
 		"verify-release-readiness": "judge",
-		"chancellor-reviews":           "chancellor",
-		"commit-and-tag":         "secretary",
-		"confirm-push":           "secretary",
+		"chancellor-reviews":       "chancellor",
+		"commit-and-tag":           "secretary",
+		"confirm-push":             "secretary",
 	}
 	for _, step := range release.Steps {
 		if want, ok := expectedMinisters[step.Name]; ok {
@@ -1883,7 +1884,7 @@ func setupRitualTestDB(t *testing.T) *gorm.DB {
 	}
 
 	// Migrate ritual tables
-	err = db.AutoMigrate(&RitualExecution{}, &RitualStepState{}, &storage.TianEvent{}, &storage.ForgeManifest{}, &storage.Ling{})
+	err = db.AutoMigrate(&RitualExecution{}, &RitualStepState{}, &storage.TianEvent{}, &storage.ForgeManifest{}, &storage.Ling{}, &storage.Seal{})
 	if err != nil {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
@@ -2831,7 +2832,7 @@ func TestRitualActToolCallsDoNotPolluteChancellorSession(t *testing.T) {
 
 	court := &Court{
 		ministers: map[string]Minister{
-			"forge":      forge,
+			"forge":     forge,
 			"secretary": chancellor,
 		},
 		logger: slog.Default(),
@@ -4500,4 +4501,94 @@ func TestStepLevelGivenEmitsCmdRunningDone(t *testing.T) {
 	if cmdDone.Message != "step-given-data\n" {
 		t.Errorf("expected cmd_done Message 'step-given-data\\n', got %q", cmdDone.Message)
 	}
+}
+
+// TestBuildStepScratchpad_SealsAndLings verifies that buildStepScratchpad includes
+// the Seals (Seal Chain) and Lings (Sub-tasks) sections when data exists in the DB.
+func TestBuildStepScratchpad_SealsAndLings(t *testing.T) {
+	db := setupRitualTestDB(t)
+	key := testEK(42)
+
+	// Seed a JudgeVerdict and ForgeManifest so the existing sections also show up
+	sealSvc := storage.NewSealService(db)
+
+	// Grant judge seal
+	require.NoError(t, sealSvc.GrantSeal(key, "judge", nil))
+	// Grant chancellor seal
+	require.NoError(t, sealSvc.GrantSeal(key, "chancellor", nil))
+
+	// Add a couple of lings
+	ling1 := uuid.New().String()
+	ling2 := uuid.New().String()
+
+	for _, ling := range []storage.Ling{
+		{LingID: ling1, EdictID: key.ID, Username: key.Username, Project: key.Project, Description: "First task", Status: storage.LingPending},
+		{LingID: ling2, EdictID: key.ID, Username: key.Username, Project: key.Project, Description: "Second task", Status: storage.LingInProgress},
+	} {
+		require.NoError(t, db.Create(&ling).Error)
+	}
+
+	// Build a minimal runner
+	runner := NewRitualRunner(NewRitualRegistry(), nil, nil, db, nil, nil, repo.RepoInfo{})
+
+	// Create a minimal RitualExecution
+	exec := &RitualExecution{
+		ID:          "test-1",
+		RitualName:  "test",
+		EdictID:     key.ID,
+		Username:    key.Username,
+		Project:     key.Project,
+		State:       RitualStateRunning,
+		CurrentStep: 0,
+		stepStates:  make([]RitualStepState, 1),
+	}
+
+	step := RitualStep{Name: "test-step", Minister: "forge"}
+
+	scratchpad := runner.buildStepScratchpad(exec, step)
+
+	// Must contain seals section
+	require.Contains(t, scratchpad, "Seals (Seal Chain)")
+	require.Contains(t, scratchpad, "judge")
+	require.Contains(t, scratchpad, "chancellor")
+
+	// Must contain lings section
+	require.Contains(t, scratchpad, "Lings (Sub-tasks)")
+	require.Contains(t, scratchpad, "First task")
+	require.Contains(t, scratchpad, "Second task")
+
+	// Verify ling ID prefix is shown (first 8 chars)
+	require.Contains(t, scratchpad, ling1[:8])
+	require.Contains(t, scratchpad, ling2[:8])
+
+	// Verify status labels
+	require.Contains(t, scratchpad, "pending")
+	require.Contains(t, scratchpad, "in_progress")
+}
+
+// TestBuildStepScratchpad_EmptySealsLings verifies that buildStepScratchpad
+// omits the Seals and Lings sections when no data exists.
+func TestBuildStepScratchpad_EmptySealsLings(t *testing.T) {
+	db := setupRitualTestDB(t)
+	key := testEK(43)
+
+	runner := NewRitualRunner(NewRitualRegistry(), nil, nil, db, nil, nil, repo.RepoInfo{})
+
+	exec := &RitualExecution{
+		ID:          "test-2",
+		RitualName:  "test-empty",
+		EdictID:     key.ID,
+		Username:    key.Username,
+		Project:     key.Project,
+		State:       RitualStateRunning,
+		CurrentStep: 0,
+		stepStates:  make([]RitualStepState, 1),
+	}
+
+	step := RitualStep{Name: "test-step", Minister: "forge"}
+
+	scratchpad := runner.buildStepScratchpad(exec, step)
+
+	// When nothing exists, scratchpad should be empty string
+	require.Empty(t, scratchpad, "expected empty scratchpad when no court history exists")
 }

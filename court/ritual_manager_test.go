@@ -977,12 +977,12 @@ func (m *blockingRunner) Run(ctx context.Context, input runners.Input) (runners.
 	<-ctx.Done()
 	return runners.Output{Output: "interrupted\n", ExitCode: "1"}, ctx.Err()
 }
-func (m *blockingRunner) Restart(ctx context.Context) error    { return nil }
-func (m *blockingRunner) Close(ctx context.Context) error      { return nil }
-func (m *blockingRunner) AllowFallback(bool)                   {}
-func (m *blockingRunner) RunnerType() string                   { return "blocking" }
-func (m *blockingRunner) GetOS() string                        { return runtime.GOOS }
-func (m *blockingRunner) SetMessageChannel(chan<- runners.Msg) {}
+func (m *blockingRunner) Restart(ctx context.Context) error     { return nil }
+func (m *blockingRunner) Close(ctx context.Context) error       { return nil }
+func (m *blockingRunner) AllowFallback(bool)                    {}
+func (m *blockingRunner) RunnerType() string                    { return "blocking" }
+func (m *blockingRunner) GetOS() string                         { return runtime.GOOS }
+func (m *blockingRunner) SetMessageChannel(chan<- runners.Msg)  {}
 func (m *blockingRunner) HealthCheck(ctx context.Context) error { return nil }
 
 // TestStartRitualContextCancelNoFailedNotification verifies that when a
@@ -993,7 +993,7 @@ func TestStartRitualContextCancelNoFailedNotification(t *testing.T) {
 	db := setupEventTestDB(t)
 
 	ritual := &RitualDef{
-		Name:      "cancel-test",
+		Name:       "cancel-test",
 		Background: []string{"!sleep 30"},
 		Steps: []RitualStep{
 			{Name: "work", Minister: "forge", Task: "do work"},

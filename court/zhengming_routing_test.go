@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
+	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

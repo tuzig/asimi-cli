@@ -399,11 +399,11 @@ func readBranchFromWorktreeAt(dir string) string {
 // branch can't be recovered.
 func branchFromDetachedHead(projectRoot string) string {
 	for _, candidate := range []struct {
-	 subdir, file string
+		subdir, file string
 	}{
-		{".git/rebase-merge", "head-name"},  // rebase --merge (default)
-		{".git/rebase-apply", "head-name"},  // rebase --apply (legacy)
-		{".git", "BISECT_START"},            // git bisect
+		{".git/rebase-merge", "head-name"}, // rebase --merge (default)
+		{".git/rebase-apply", "head-name"}, // rebase --apply (legacy)
+		{".git", "BISECT_START"},           // git bisect
 	} {
 		path := filepath.Join(projectRoot, candidate.subdir, candidate.file)
 		content, err := os.ReadFile(path)
