@@ -2,11 +2,11 @@
 
 Below is what is left to develop:
 
+## V0.11.0
 ## V1.0
 
 ### Court Alignment
 
-- Fix suggest_edict zhengming routing to Secretary tab (e693)
 - Realign ministers to full 三省 (Three Departments) alignment (https://github.com/afittestide/asimi-cli/issues/154)
 - Sharpen:
   - Roles: Improving definitions & translating to 文言文 (https://github.com/afittestide/asimi-cli/issues/156)
