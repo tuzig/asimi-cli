@@ -407,7 +407,21 @@ func (r *PodmanRunner) createContainer(ctx context.Context) (string, error) {
 	slog.Debug("calling CreateWithSpec")
 	createResponse, err := containers.CreateWithSpec(r.conn, s, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create container: %w", err)
+		if strings.Contains(err.Error(), "container already exists") {
+			slog.Info("container name already in use, removing stale container", "containerName", r.containerName)
+			force := true
+			volumes := true
+			if _, rmErr := containers.Remove(r.conn, r.containerName, &containers.RemoveOptions{Force: &force, Volumes: &volumes}); rmErr != nil {
+				return "", fmt.Errorf("failed to remove stale container: %w", rmErr)
+			}
+			slog.Info("stale container removed, retrying creation", "containerName", r.containerName)
+			createResponse, err = containers.CreateWithSpec(r.conn, s, nil)
+			if err != nil {
+				return "", fmt.Errorf("failed to create container after removing stale one: %w", err)
+			}
+		} else {
+			return "", fmt.Errorf("failed to create container: %w", err)
+		}
 	}
 	slog.Debug("container created", "containerID", createResponse.ID)
 
