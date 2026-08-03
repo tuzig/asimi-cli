@@ -4615,10 +4615,11 @@ func TestDispatchEdictAction_Chat(t *testing.T) {
 
 	cmd := dispatchEdictAction(model, 42, []string{"Chat"})
 	require.NotNil(t, cmd)
+	// The cmd loads the session directly; it will return a sessionResumeErrorMsg
+	// since the test model has no session store.
 	msg := cmd()
-	resumed, ok := msg.(resumeEdictSessionMsg)
-	assert.True(t, ok, "expected resumeEdictSessionMsg for Chat action")
-	assert.Equal(t, "sess-123", resumed.sessionID)
+	_, ok := msg.(sessionResumeErrorMsg)
+	assert.True(t, ok, "expected sessionResumeErrorMsg for Chat action (no session store)")
 }
 
 func TestDispatchEdictAction_Chat_NoSession(t *testing.T) {
@@ -4779,9 +4780,10 @@ func TestResumeEdictSession_WithSessionID(t *testing.T) {
 	cmd := resumeEdictSession(model, 5)
 	require.NotNil(t, cmd)
 	msg := cmd()
-	resumeMsg, ok := msg.(resumeEdictSessionMsg)
-	require.True(t, ok, "expected resumeEdictSessionMsg")
-	assert.Equal(t, "sess-123", resumeMsg.sessionID)
+	// The cmd loads the session via loadSessionFn; expect sessionResumeErrorMsg
+	// since the test model has no session store.
+	_, ok := msg.(sessionResumeErrorMsg)
+	require.True(t, ok, "expected sessionResumeErrorMsg (no session store)")
 }
 
 func TestResumeEdictSession_NoSessionLinked(t *testing.T) {
@@ -5826,8 +5828,8 @@ func TestSubmitToCourt_RitualTabNoActiveRestoresSession(t *testing.T) {
 	require.NotNil(t, cmd)
 
 	// Pending fields should be set
-	assert.Equal(t, "continue the chat", model.pendingRitualPrompt)
-	assert.Equal(t, uint(647), model.pendingRitualEdictKey.ID)
+	assert.Equal(t, "continue the chat", model.pendingEdictPrompt)
+	assert.Equal(t, uint(647), model.pendingEdictKey.ID)
 
 	// SubmitPrompt should NOT have been called yet
 	assert.Equal(t, 0, mock.submitPromptCalls)
@@ -5864,7 +5866,7 @@ func TestSubmitToCourt_RitualTabNoActiveNoSessionID(t *testing.T) {
 	require.Nil(t, cmd)
 
 	// Pending fields should NOT be set
-	assert.Empty(t, model.pendingRitualPrompt)
+	assert.Empty(t, model.pendingEdictPrompt)
 }
 
 func TestSubmitToCourt_RitualTabNoActiveEdictNotFound(t *testing.T) {
@@ -5894,7 +5896,7 @@ func TestSubmitToCourt_RitualTabNoActiveEdictNotFound(t *testing.T) {
 	assert.True(t, ok, "expected showContextMsg when edict not found")
 
 	// Pending fields should NOT be set
-	assert.Empty(t, model.pendingRitualPrompt)
+	assert.Empty(t, model.pendingEdictPrompt)
 
 	// SubmitPrompt should NOT have been called
 	assert.Equal(t, 0, mock.submitPromptCalls)
@@ -5911,8 +5913,8 @@ func TestHandleSessionSelected_RitualTabRestoration(t *testing.T) {
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
 	// Simulate the pending state set by submitToCourt
-	model.pendingRitualPrompt = "continue the chat"
-	model.pendingRitualEdictKey = storage.EdictKey{ID: 647, Username: "test", Project: "test"}
+	model.pendingEdictPrompt = "continue the chat"
+	model.pendingEdictKey = storage.EdictKey{ID: 647, Username: "test", Project: "test"}
 
 	// Create a session with a TabType matching the minister
 	session := &court.Session{
@@ -5940,8 +5942,8 @@ func TestHandleSessionSelected_RitualTabRestoration(t *testing.T) {
 	assert.Equal(t, uint(647), mock.submitPromptEdictKey.ID)
 
 	// Pending fields should be cleared
-	assert.Empty(t, model.pendingRitualPrompt)
-	assert.Equal(t, uint(0), model.pendingRitualEdictKey.ID)
+	assert.Empty(t, model.pendingEdictPrompt)
+	assert.Equal(t, uint(0), model.pendingEdictKey.ID)
 }
 
 func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
@@ -5954,9 +5956,9 @@ func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
 	model.tabs.SwitchToTabType("secretary")
 	require.Equal(t, "secretary", string(model.tabs.ActiveTab().Type))
 
-	// Ensure no pending ritual prompt
-	model.pendingRitualPrompt = ""
-	model.pendingRitualEdictKey = storage.EdictKey{}
+	// Ensure no pending edict prompt
+	model.pendingEdictPrompt = ""
+	model.pendingEdictKey = storage.EdictKey{}
 
 	// Set a current edict key to verify it gets cleared
 	model.currentEdictKey = storage.EdictKey{ID: 999, Username: "test", Project: "test"}

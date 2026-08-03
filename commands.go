@@ -1186,16 +1186,21 @@ func enactRitualForEdict(model *TUIModel, edictID uint, ritualName string) tea.C
 
 // resumeEdictSession loads the session linked to an edict
 func resumeEdictSession(model *TUIModel, edictID uint) tea.Cmd {
-	return func() tea.Msg {
-		edict, err := model.court.GetEdict(edictID)
-		if err != nil {
+	edict, err := model.court.GetEdict(edictID)
+	if err != nil {
+		return func() tea.Msg {
 			return showToast(fmt.Sprintf("Edict not found: %d", edictID), "error", 3*time.Second)
 		}
-		if edict.SessionID == "" {
+	}
+	if edict.SessionID == "" {
+		return func() tea.Msg {
 			return showToast(fmt.Sprintf("No session linked to edict %d", edictID), "warning", 3*time.Second)
 		}
-		return resumeEdictSessionMsg{sessionID: edict.SessionID}
 	}
+	if loadFn := model.tabs.Content().loadSessionFn; loadFn != nil {
+		return loadFn(edict.SessionID)
+	}
+	return nil
 }
 
 // handleEdictCancel enters YesNo mode to confirm edict cancellation

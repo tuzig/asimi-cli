@@ -64,11 +64,13 @@ type TUIModel struct {
 	// Court integration
 	currentEdictKey storage.EdictKey // Tracks current edict for multi-turn conversations
 
-	// Ritual tab session restoration: when the Ruler prompts on a ritual tab
-	// with no active ritual, we load the edict's birth session and replay the
-	// prompt after the session is restored.
-	pendingRitualPrompt   string           // Prompt waiting for session restoration on a ritual tab
-	pendingRitualEdictKey storage.EdictKey // Edict key for the pending ritual prompt
+	// Edict tab session restoration. When non-zero, the session is being restored
+	// onto an e<N> tab (ritual or edict) instead of switching to the original tab.
+	// If pendingEdictPrompt is non-empty, it will be submitted to the minister
+	// after the session is restored (ritual prompt path). If empty, the user
+	// will type a prompt (Chat action path).
+	pendingEdictKey    storage.EdictKey
+	pendingEdictPrompt string
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -199,11 +201,6 @@ type pendingEdictCancel struct {
 // showEdictDashboardMsg requests showing the edict dashboard view
 type showEdictDashboardMsg struct {
 	content string
-}
-
-// resumeEdictSessionMsg requests resuming the session linked to an edict
-type resumeEdictSessionMsg struct {
-	sessionID string
 }
 
 // enterYesNoOrAuto enters yes/no mode, unless handsoff mode is active.
@@ -1607,8 +1604,8 @@ func (m *TUIModel) submitToCourt(ctx context.Context, prompt string, contextFile
 
 		if edict.SessionID != "" {
 			// Store pending prompt and edict key for handleSessionSelected
-			m.pendingRitualPrompt = prompt
-			m.pendingRitualEdictKey = m.court.EdictKey(uint(edictID))
+			m.pendingEdictPrompt = prompt
+			m.pendingEdictKey = m.court.EdictKey(uint(edictID))
 			// Trigger session loading → sessionSelectedMsg → handleSessionSelected
 			return m.tabs.Content().resume.LoadSession(edict.SessionID, m.sessionStore)
 		}
@@ -2940,13 +2937,6 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reloadEdictsMsg:
 		return m, reloadEdictsListCmd(&m)
 
-	case resumeEdictSessionMsg:
-		// Resume the session linked to the edict
-		if loadFn := m.tabs.Content().loadSessionFn; loadFn != nil {
-			return m, loadFn(msg.sessionID)
-		}
-		return m, nil
-
 	case ChangeModeMsg:
 		// Centralized mode change handling
 		oldMode := m.Mode
@@ -3901,6 +3891,17 @@ func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
 		}
 		return tea.Batch(enactRitualForEdict(m, edictID, "swift-strike"), reloadEdictsListCmd(m))
 	case "Chat":
+		// Pre-create the edict tab and set restore flags so the session is
+		// restored on the edict tab ("e<id>") instead of the minister's
+		// original interactive tab.
+		channelID := fmt.Sprintf("e%d", edictID)
+		if m.tabs.TabByTarget(channelID) == nil {
+			m.tabs.Add(ritualTabLabel(channelID), "ritual", channelID)
+			chat := m.tabs.ChatByTab(channelID)
+			chat.AddMessage(fmt.Sprintf("%sRestoring session for edict %d…", systemPrefix, edictID))
+		}
+		m.pendingEdictKey = m.court.EdictKey(edictID)
+		m.pendingEdictPrompt = ""
 		return resumeEdictSession(m, edictID)
 	case "Seal":
 		return handleEdictSeal(m, edictID, "")
