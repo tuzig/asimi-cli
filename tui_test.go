@@ -2518,6 +2518,223 @@ func TestEscapeDuringStreaming_StopsWaiting(t *testing.T) {
 	require.False(t, updatedModel.waitingForResponse)
 }
 
+// TestCtrlCOnRitualTab_PausesNotKills verifies that CTRL-C on a ritual tab
+// calls PauseRitual (not stopStreamingTab), sets ChatMode, and shows the
+// pause announcement in the chat.
+func TestCtrlCOnRitualTab_PausesNotKills(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return true },
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab with streaming active
+	model.tabs.Add("Ritual:e681", "ritual", "e681")
+	tab := model.tabs.TabByTarget("e681")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "forge"
+	tab.Streaming = true
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Press CTRL-C
+	newModel, cmd := model.handleCtrlC()
+	updatedModel := newModel.(TUIModel)
+	require.Nil(t, cmd, "CTRL-C on ritual tab should not return a command")
+
+	// PauseRitual should have been called
+	require.Len(t, mock.pausedChannels, 1)
+	assert.Equal(t, "e681", mock.pausedChannels[0])
+
+	// ChatMode should be set
+	tab = updatedModel.tabs.TabByTarget("e681")
+	assert.True(t, tab.ChatMode, "ChatMode should be true after pausing ritual")
+
+	// The pause announcement should be in the chat
+	chat := updatedModel.tabs.ChatByTab("e681")
+	found := false
+	for _, m := range chat.Messages {
+		if strings.Contains(m.Content, "Now chatting with forge") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Chat should contain the pause announcement")
+}
+
+// TestCtrlCOnRitualTab_NotPaused_FallsBack verifies that when PauseRitual
+// returns false (no active step), CTRL-C falls back to stopStreamingTab.
+func TestCtrlCOnRitualTab_NotPaused_FallsBack(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return false },
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab with streaming active
+	model.tabs.Add("Ritual:e681", "ritual", "e681")
+	tab := model.tabs.TabByTarget("e681")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "forge"
+	tab.Streaming = true
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Press CTRL-C
+	newModel, _ := model.handleCtrlC()
+	updatedModel := newModel.(TUIModel)
+
+	// PauseRitual should have been called
+	require.Len(t, mock.pausedChannels, 1)
+
+	// Streaming should be stopped (fallback to stopStreamingTab)
+	tab = updatedModel.tabs.TabByTarget("e681")
+	assert.False(t, tab.Streaming, "Streaming should be stopped when PauseRitual returns false")
+
+	// ChatMode should NOT be set
+	assert.False(t, tab.ChatMode, "ChatMode should not be set when pause fails")
+}
+
+// TestCtrlCOnNonRitualTab_StillStopsStreaming verifies that non-ritual tabs
+// still get stopStreamingTab on CTRL-C (existing behavior unchanged).
+func TestCtrlCOnNonRitualTab_StillStopsStreaming(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// The default tab is a non-ritual tab (e.g. secretary)
+	tab := model.tabs.ActiveTab()
+	tab.Streaming = true
+
+	// Press CTRL-C
+	newModel, _ := model.handleCtrlC()
+	updatedModel := newModel.(TUIModel)
+
+	// PauseRitual should NOT have been called
+	assert.Empty(t, mock.pausedChannels, "PauseRitual should not be called on non-ritual tab")
+
+	// Streaming should be stopped
+	assert.False(t, updatedModel.tabs.ActiveTab().Streaming, "Streaming should be stopped on non-ritual tab")
+}
+
+// TestEscapeOnRitualTab_PausesNotKills verifies that ESC on a ritual tab
+// calls PauseRitual (not stopStreamingTab), sets ChatMode, and shows the
+// pause announcement.
+func TestEscapeOnRitualTab_PausesNotKills(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return true },
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab with streaming active
+	model.tabs.Add("Ritual:e681", "ritual", "e681")
+	tab := model.tabs.TabByTarget("e681")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "forge"
+	tab.Streaming = true
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Press ESC
+	newModel, cmd := model.handleEscape()
+	updatedModel := newModel.(TUIModel)
+	require.Nil(t, cmd, "ESC on ritual tab should not return a command")
+
+	// PauseRitual should have been called
+	require.Len(t, mock.pausedChannels, 1)
+	assert.Equal(t, "e681", mock.pausedChannels[0])
+
+	// ChatMode should be set
+	tab = updatedModel.tabs.TabByTarget("e681")
+	assert.True(t, tab.ChatMode, "ChatMode should be true after pausing ritual via ESC")
+
+	// The pause announcement should be in the chat
+	chat := updatedModel.tabs.ChatByTab("e681")
+	found := false
+	for _, m := range chat.Messages {
+		if strings.Contains(m.Content, "Now chatting with forge") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Chat should contain the pause announcement")
+}
+
+// TestEscapeOnRitualTab_NotPaused_FallsBack verifies that when PauseRitual
+// returns false, ESC falls back to stopStreamingTab.
+func TestEscapeOnRitualTab_NotPaused_FallsBack(t *testing.T) {
+	mock := &mockCourtClient{
+		pauseRitualFn: func(channelID string) bool { return false },
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab with streaming active
+	model.tabs.Add("Ritual:e681", "ritual", "e681")
+	tab := model.tabs.TabByTarget("e681")
+	require.NotNil(t, tab)
+	tab.CurrentMinister = "forge"
+	tab.Streaming = true
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Press ESC
+	newModel, _ := model.handleEscape()
+	updatedModel := newModel.(TUIModel)
+
+	// PauseRitual should have been called
+	require.Len(t, mock.pausedChannels, 1)
+
+	// Streaming should be stopped (fallback)
+	tab = updatedModel.tabs.TabByTarget("e681")
+	assert.False(t, tab.Streaming, "Streaming should be stopped when PauseRitual returns false")
+
+	// ChatMode should NOT be set
+	assert.False(t, tab.ChatMode, "ChatMode should not be set when pause fails")
+}
+
+// TestCtrlCOnRitualTab_NoCourt_StillStopsStreaming verifies that CTRL-C on a
+// ritual tab with no court client still stops streaming gracefully.
+func TestCtrlCOnRitualTab_NoCourt_StillStopsStreaming(t *testing.T) {
+	model := newTestModel(t)
+	model.court = nil
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab with streaming active
+	model.tabs.Add("Ritual:e681", "ritual", "e681")
+	tab := model.tabs.TabByTarget("e681")
+	require.NotNil(t, tab)
+	tab.Streaming = true
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Press CTRL-C — should not panic
+	newModel, _ := model.handleCtrlC()
+	updatedModel := newModel.(TUIModel)
+
+	// Streaming should be stopped
+	tab = updatedModel.tabs.TabByTarget("e681")
+	assert.False(t, tab.Streaming, "Streaming should be stopped when court is nil")
+}
+
+// TestEscapeOnNonRitualTab_StillStopsStreaming verifies that non-ritual tabs
+// still get stopStreamingTab on ESC (existing behavior unchanged).
+func TestEscapeOnNonRitualTab_StillStopsStreaming(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	tab := model.tabs.ActiveTab()
+	tab.Streaming = true
+
+	// Press ESC
+	newModel, _ := model.handleEscape()
+	updatedModel := newModel.(TUIModel)
+
+	// Streaming should be stopped
+	assert.False(t, updatedModel.tabs.ActiveTab().Streaming, "Streaming should be stopped on non-ritual tab via ESC")
+}
+
 // TestInitCommandE2E verifies that typing :init in the TUI triggers the
 // project-init ritual through the full Court event pipeline:
 // event dispatch → background checks → infrastructure template creation →
@@ -4766,44 +4983,6 @@ func TestAnsweringEditMsg_EdictActionMenu_ExitsAnsweringMode(t *testing.T) {
 	assert.Nil(t, updated.prompt().answering, "should exit answering mode before opening editor")
 }
 
-// --- Tests for resumeEdictSession ---
-
-func TestResumeEdictSession_WithSessionID(t *testing.T) {
-	mock := &mockCourtClient{
-		getEdictFn: func(id uint) (*storage.Edict, error) {
-			return &storage.Edict{ID: id, SessionID: "sess-123"}, nil
-		},
-	}
-	model := newTestModel(t)
-	model.court = mock
-
-	cmd := resumeEdictSession(model, 5)
-	require.NotNil(t, cmd)
-	msg := cmd()
-	// The cmd loads the session via loadSessionFn; expect sessionResumeErrorMsg
-	// since the test model has no session store.
-	_, ok := msg.(sessionResumeErrorMsg)
-	require.True(t, ok, "expected sessionResumeErrorMsg (no session store)")
-}
-
-func TestResumeEdictSession_NoSessionLinked(t *testing.T) {
-	mock := &mockCourtClient{
-		getEdictFn: func(id uint) (*storage.Edict, error) {
-			return &storage.Edict{ID: id, SessionID: ""}, nil
-		},
-	}
-	model := newTestModel(t)
-	model.court = mock
-
-	cmd := resumeEdictSession(model, 5)
-	require.NotNil(t, cmd)
-	msg := cmd()
-	toast, ok := msg.(toastMsg)
-	require.True(t, ok, "expected toastMsg")
-	assert.Contains(t, toast.message, "No session linked")
-	assert.Equal(t, "warning", toast.msgType)
-}
-
 // --- Tests for handleEdictCancel already-cancelled ---
 
 func TestHandleEdictCancel_AlreadyCancelled(t *testing.T) {
@@ -5828,8 +6007,8 @@ func TestSubmitToCourt_RitualTabNoActiveRestoresSession(t *testing.T) {
 	require.NotNil(t, cmd)
 
 	// Pending fields should be set
-	assert.Equal(t, "continue the chat", model.pendingEdictPrompt)
-	assert.Equal(t, uint(647), model.pendingEdictKey.ID)
+	assert.Equal(t, "continue the chat", model.pendingPrompt)
+	assert.Equal(t, "e647", model.creatingTab)
 
 	// SubmitPrompt should NOT have been called yet
 	assert.Equal(t, 0, mock.submitPromptCalls)
@@ -5866,7 +6045,8 @@ func TestSubmitToCourt_RitualTabNoActiveNoSessionID(t *testing.T) {
 	require.Nil(t, cmd)
 
 	// Pending fields should NOT be set
-	assert.Empty(t, model.pendingEdictPrompt)
+	assert.Empty(t, model.pendingPrompt)
+	assert.Empty(t, model.creatingTab)
 }
 
 func TestSubmitToCourt_RitualTabNoActiveEdictNotFound(t *testing.T) {
@@ -5896,7 +6076,7 @@ func TestSubmitToCourt_RitualTabNoActiveEdictNotFound(t *testing.T) {
 	assert.True(t, ok, "expected showContextMsg when edict not found")
 
 	// Pending fields should NOT be set
-	assert.Empty(t, model.pendingEdictPrompt)
+	assert.Empty(t, model.pendingPrompt)
 
 	// SubmitPrompt should NOT have been called
 	assert.Equal(t, 0, mock.submitPromptCalls)
@@ -5913,8 +6093,8 @@ func TestHandleSessionSelected_RitualTabRestoration(t *testing.T) {
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
 	// Simulate the pending state set by submitToCourt
-	model.pendingEdictPrompt = "continue the chat"
-	model.pendingEdictKey = storage.EdictKey{ID: 647, Username: "test", Project: "test"}
+	model.pendingPrompt = "continue the chat"
+	model.creatingTab = "e647"
 
 	// Create a session with a TabType matching the minister
 	session := &court.Session{
@@ -5942,8 +6122,8 @@ func TestHandleSessionSelected_RitualTabRestoration(t *testing.T) {
 	assert.Equal(t, uint(647), mock.submitPromptEdictKey.ID)
 
 	// Pending fields should be cleared
-	assert.Empty(t, model.pendingEdictPrompt)
-	assert.Equal(t, uint(0), model.pendingEdictKey.ID)
+	assert.Empty(t, model.pendingPrompt)
+	assert.Empty(t, model.creatingTab)
 }
 
 func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
@@ -5956,9 +6136,9 @@ func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
 	model.tabs.SwitchToTabType("secretary")
 	require.Equal(t, "secretary", string(model.tabs.ActiveTab().Type))
 
-	// Ensure no pending edict prompt
-	model.pendingEdictPrompt = ""
-	model.pendingEdictKey = storage.EdictKey{}
+	// Ensure no pending prompt or creatingTab
+	model.pendingPrompt = ""
+	model.creatingTab = ""
 
 	// Set a current edict key to verify it gets cleared
 	model.currentEdictKey = storage.EdictKey{ID: 999, Username: "test", Project: "test"}
@@ -5996,8 +6176,8 @@ func TestHandleSessionSelected_RitualTabRestoration_ShowsUserMessage(t *testing.
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
 	// Simulate the pending state set by submitToCourt
-	model.pendingEdictPrompt = "fix the tests"
-	model.pendingEdictKey = storage.EdictKey{ID: 647, Username: "test", Project: "test"}
+	model.pendingPrompt = "fix the tests"
+	model.creatingTab = "e647"
 
 	// Create a session with messages so rebuildChatFromMessages adds content
 	session := &court.Session{
@@ -6040,8 +6220,8 @@ func TestHandleSessionSelected_RitualTabRestoration_ShowsUserMessage(t *testing.
 	assert.True(t, foundOriginal, "expected original session messages to be rebuilt in chat")
 
 	// Pending fields should be cleared
-	assert.Empty(t, model.pendingEdictPrompt)
-	assert.Equal(t, uint(0), model.pendingEdictKey.ID)
+	assert.Empty(t, model.pendingPrompt)
+	assert.Empty(t, model.creatingTab)
 }
 
 func TestHandleSessionSelected_EdictRestoreChatAction(t *testing.T) {
@@ -6054,9 +6234,9 @@ func TestHandleSessionSelected_EdictRestoreChatAction(t *testing.T) {
 	model.tabs.Add("Ritual:e647", "ritual", "e647")
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
-	// Simulate Chat action state: pendingEdictKey set, pendingEdictPrompt empty
-	model.pendingEdictPrompt = ""
-	model.pendingEdictKey = storage.EdictKey{ID: 647, Username: "test", Project: "test"}
+	// Simulate Chat action state: creatingTab set, pendingPrompt empty
+	model.pendingPrompt = ""
+	model.creatingTab = "e647"
 
 	// Create a session with a TabType matching the minister
 	session := &court.Session{
@@ -6082,8 +6262,9 @@ func TestHandleSessionSelected_EdictRestoreChatAction(t *testing.T) {
 	assert.Equal(t, 0, mock.submitPromptCalls,
 		"Chat action should not submit a prompt — user will type one")
 
-	// Pending edict key should be cleared
-	assert.Equal(t, uint(0), model.pendingEdictKey.ID)
+	// Pending fields should be cleared
+	assert.Empty(t, model.pendingPrompt)
+	assert.Empty(t, model.creatingTab)
 
 	// Should show a toast about the restored session
 	assert.NotEmpty(t, model.commandLine.toasts, "should show a toast for restored session")
@@ -6182,11 +6363,58 @@ func TestStreamInterruptedMsg_ShownOnNonRitualTab(t *testing.T) {
 	assert.True(t, found, "ABORTED should be shown on non-ritual tabs")
 }
 
-// TestZhengmingPendingMsg_RoutesToActiveTabPrompt verifies that a
-// ZhengmingPendingMsg is routed to the active tab's prompt — not the
-// minister's own tab. Even when MinisterID="war", the prompt on the
-// currently active "secretary" tab should enter answering mode.
-func TestZhengmingPendingMsg_RoutesToActiveTabPrompt(t *testing.T) {
+// TestZhengmingPendingMsg_RoutesToMinisterTab verifies that a
+// ZhengmingPendingMsg is routed to the minister's own tab, switching to it
+// and auto-scrolling the chat. The active tab changes to the minister's tab
+// and that tab's prompt enters answering mode.
+func TestZhengmingPendingMsg_RoutesToMinisterTab(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+
+	// Start on secretary tab
+	model.tabs.SwitchToTabType("secretary")
+	require.Equal(t, "secretary", string(model.tabs.ActiveTab().Type))
+
+	// Ensure no answering state before
+	require.Nil(t, model.prompt().answering, "prompt should not be in answering mode initially")
+
+	// Send a zhengming from the judge minister (who has a tab)
+	msg := court.ZhengmingPendingMsg{
+		RequestID:  "zhengming-test-1",
+		MinisterID: "judge",
+		Questions: storage.ZhengmingQuestions{
+			{Text: "Which approach?", Summary: "Approach?", Options: []string{"Option A", "Option B"}},
+		},
+	}
+
+	newModel, _ := model.handleCustomMessages(msg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// The active tab should have switched to the judge's tab
+	require.Equal(t, "judge", string(updated.tabs.ActiveTab().Target),
+		"active tab should be the judge's tab after zhengming")
+
+	// The judge tab's prompt should now be in answering mode
+	judgeTab := updated.tabs.TabByTarget("judge")
+	require.NotNil(t, judgeTab)
+	judgePrompt, ok := updated.prompts[judgeTab.Label]
+	require.True(t, ok, "judge tab should have a prompt")
+	require.NotNil(t, judgePrompt.answering, "judge tab's prompt should be in answering mode after ZhengmingPendingMsg")
+	assert.Equal(t, "zhengming-test-1", judgePrompt.answering.RequestID)
+	assert.Contains(t, judgePrompt.answering.Title, "judge", "title should mention the asking minister")
+
+	// The secretary tab's prompt should NOT be in answering mode
+	secTab := updated.tabs.TabByTarget("secretary")
+	require.NotNil(t, secTab)
+	if secPrompt, ok := updated.prompts[secTab.Label]; ok {
+		assert.Nil(t, secPrompt.answering, "secretary tab's prompt should not be in answering mode")
+	}
+}
+
+// TestZhengmingPendingMsg_FallbackToActiveTab verifies that when the
+// minister has no tab, the zhengming falls back to the active tab's prompt.
+func TestZhengmingPendingMsg_FallbackToActiveTab(t *testing.T) {
 	model := newTestModel(t)
 	model.tabs.DismissWelcome()
 
@@ -6194,12 +6422,9 @@ func TestZhengmingPendingMsg_RoutesToActiveTabPrompt(t *testing.T) {
 	model.tabs.SwitchToTabType("secretary")
 	require.Equal(t, "secretary", string(model.tabs.ActiveTab().Type))
 
-	// Ensure no answering state before
-	require.Nil(t, model.prompt().answering, "prompt should not be in answering mode initially")
-
-	// Send a zhengming from the war minister
+	// Send a zhengming from a minister without a tab
 	msg := court.ZhengmingPendingMsg{
-		RequestID:  "zhengming-test-1",
+		RequestID:  "zhengming-fallback-1",
 		MinisterID: "war",
 		Questions: storage.ZhengmingQuestions{
 			{Text: "Which approach?", Summary: "Approach?", Options: []string{"Option A", "Option B"}},
@@ -6210,18 +6435,14 @@ func TestZhengmingPendingMsg_RoutesToActiveTabPrompt(t *testing.T) {
 	updated, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
-	// The active tab's prompt should now be in answering mode
-	prompt := updated.prompt()
-	require.NotNil(t, prompt.answering, "active tab's prompt should be in answering mode after ZhengmingPendingMsg")
-	assert.Equal(t, "zhengming-test-1", prompt.answering.RequestID)
-	assert.Contains(t, prompt.answering.Title, "war", "title should mention the asking minister")
+	// Active tab should still be secretary (no war tab to switch to)
+	require.Equal(t, "secretary", string(updated.tabs.ActiveTab().Type))
 
-	// The war tab's prompt (if it exists) should NOT be in answering mode
-	if warTab := updated.tabs.TabByTarget("war"); warTab != nil {
-		if warPrompt, ok := updated.prompts[warTab.Label]; ok {
-			assert.Nil(t, warPrompt.answering, "war tab's prompt should not be in answering mode")
-		}
-	}
+	// The active tab's prompt should be in answering mode (fallback)
+	prompt := updated.prompt()
+	require.NotNil(t, prompt.answering, "active tab's prompt should be in answering mode (fallback)")
+	assert.Equal(t, "zhengming-fallback-1", prompt.answering.RequestID)
+	assert.Contains(t, prompt.answering.Title, "war", "title should mention the asking minister")
 }
 
 // --- Handsoff mode tests ---
