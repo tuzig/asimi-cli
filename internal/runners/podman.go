@@ -113,49 +113,61 @@ func (r *PodmanRunner) initialize(ctx context.Context) error {
 
 	r.mu.Lock()
 	if !r.containerStarted {
+		// Claim the work atomically: no other goroutine will enter this path.
+		r.containerStarted = true
 		r.mu.Unlock()
+
 		slog.Debug("ensuring container for this instance", "containerName", r.containerName)
 
 		inspectData, err := containers.Inspect(r.conn, r.containerName, nil)
 		if err == nil {
 			if inspectData.State.Running {
 				slog.Debug("container already running", "containerName", r.containerName)
-				r.mu.Lock()
-				r.containerStarted = true
 				existingRunning = true
-				r.mu.Unlock()
 				r.sendContainerLaunched(fmt.Sprintf("%d", inspectData.State.Pid))
 			} else {
 				slog.Debug("starting existing container", "containerName", r.containerName)
 				if err := containers.Start(r.conn, r.containerName, nil); err != nil {
+					r.mu.Lock()
+					r.containerStarted = false
+					r.mu.Unlock()
 					return fmt.Errorf("failed to start existing container: %w", err)
 				}
 				slog.Debug("existing container started", "containerName", r.containerName)
 				startedInspect, err := containers.Inspect(r.conn, r.containerName, nil)
 				if err != nil {
+					r.mu.Lock()
+					r.containerStarted = false
+					r.mu.Unlock()
 					return fmt.Errorf("failed to inspect started container: %w", err)
 				}
-				r.mu.Lock()
-				r.containerStarted = true
-				r.mu.Unlock()
 				r.sendContainerLaunched(fmt.Sprintf("%d", startedInspect.State.Pid))
 			}
 		} else {
 			slog.Debug("container doesn't exist, creating new one", "containerName", r.containerName)
 			containerID, err := r.createContainer(ctx)
 			if err != nil {
+				r.mu.Lock()
+				r.containerStarted = false
+				r.mu.Unlock()
 				return err
 			}
-			r.mu.Lock()
-			r.containerStarted = true
-			r.mu.Unlock()
 			r.sendContainerLaunched(containerID)
 		}
 	} else {
 		r.mu.Unlock()
 
-		// Container may have been stopped externally. Verify it's still running.
+		// Container may still be starting (another goroutine is creating it).
+		// Retry with backoff to avoid immediately resetting containerStarted.
 		inspectData, err := containers.Inspect(r.conn, r.containerName, nil)
+		if err != nil {
+			for retry := 0; retry < 5; retry++ {
+				time.Sleep(10 * time.Millisecond)
+				if inspectData, err = containers.Inspect(r.conn, r.containerName, nil); err == nil {
+					break
+				}
+			}
+		}
 		if err != nil {
 			slog.Info("container inspect failed, resetting", "error", err)
 			r.mu.Lock()
@@ -407,7 +419,7 @@ func (r *PodmanRunner) createContainer(ctx context.Context) (string, error) {
 	slog.Debug("calling CreateWithSpec")
 	createResponse, err := containers.CreateWithSpec(r.conn, s, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "container already exists") {
+		if strings.Contains(err.Error(), "is already in use") {
 			slog.Info("container name already in use, removing stale container", "containerName", r.containerName)
 			force := true
 			volumes := true

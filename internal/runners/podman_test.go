@@ -384,6 +384,7 @@ type mockPodmanServer struct {
 	startCount          int
 	createCount         int
 	createConflictCount int
+	containerCreated    bool
 	removeCount         int
 	execCount           int
 	mu                  sync.Mutex
@@ -431,14 +432,17 @@ func newMockPodmanServer(inspectResp string, inspectCode int) *mockPodmanServer 
 		if parts[4] == "create" {
 			m.mu.Lock()
 			m.createCount++
-			if m.createConflictCount > 0 {
-				m.createConflictCount--
+			if m.containerCreated || m.createConflictCount > 0 {
+				if m.createConflictCount > 0 {
+					m.createConflictCount--
+				}
 				m.mu.Unlock()
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusConflict)
-				fmt.Fprint(w, `{"cause":"container already exists","message":"container already exists","response":409}`)
+				fmt.Fprint(w, `{"cause":"container already exists","message":"container is already in use by","response":409}`)
 				return
 			}
+			m.containerCreated = true
 			m.inspectResp = mockInspectJSON(true)
 			m.inspectCode = http.StatusOK
 			m.mu.Unlock()
@@ -452,6 +456,7 @@ func newMockPodmanServer(inspectResp string, inspectCode int) *mockPodmanServer 
 		if len(parts) == 5 && r.Method == http.MethodDelete {
 			m.mu.Lock()
 			m.removeCount++
+			m.containerCreated = false
 			m.inspectResp = ""
 			m.inspectCode = http.StatusNotFound
 			m.mu.Unlock()
@@ -851,6 +856,53 @@ func TestContainerLaunchedMsgAllPaths(t *testing.T) {
 func TestSendContainerLaunchedNoChannel(t *testing.T) {
 	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: t.TempDir(), Slug: "test/nochan"}, 0, nil)
 	runner.sendContainerLaunched("test-id")
+}
+
+// TestInitializeConcurrentSafety verifies Edict 736: the synchronization fix in
+// initialize() prevents concurrent Run() calls from racing to initialize the
+// same container. The test uses a mock podman server that enforces name uniqueness
+// (second create returns 409) — the error string fix ("is already in use") ensures
+// the stale container cleanup fires correctly.
+func TestInitializeConcurrentSafety(t *testing.T) {
+	// This test exercises the synchronization guard in initialize(): the first
+	// goroutine to acquire r.mu sets containerStarted=true atomically under the
+	// lock. Subsequent goroutines on the fast path may still race, but the
+	// error string fix in createContainer() ensures name conflicts are handled
+	// gracefully. All goroutines MUST succeed.
+	mock := newMockPodmanServer("", http.StatusNotFound)
+	defer mock.close()
+
+	host := mock.start(t)
+	connCtx := makeConnCtx(t, host)
+
+	projectRoot := t.TempDir()
+	makeSandboxFiles(t, projectRoot)
+	runner := NewPodmanRunner(&Config{}, repo.RepoInfo{ProjectRoot: projectRoot, Slug: "test/concurrent-safety"}, 0, nil)
+	runner.conn = connCtx
+	runner.checkImage = func(context.Context) error { return nil }
+
+	const goroutines = 10
+	var wg sync.WaitGroup
+	errs := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- runner.initialize(context.Background())
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err, "all concurrent initialize() calls should succeed")
+	}
+
+	runner.mu.Lock()
+	assert.True(t, runner.containerStarted, "containerStarted should be true after concurrent init")
+	runner.mu.Unlock()
 }
 
 func TestPodmanImageExistsErrorPodmanMachineDown(t *testing.T) {
