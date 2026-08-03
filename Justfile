@@ -42,6 +42,10 @@ test-coverage:
     go test -tags containers_image_openpgp -v -coverprofile=coverage.out ./...
     go tool cover -html=coverage.out -o coverage.html
 
+# Run intent/gherkin BDD scenarios
+test-intent:
+    go test -mod=mod -v -run TestIntentGherkin -timeout 30s .
+
 # Run linting
 lint:
     go vet ./...
@@ -55,10 +59,6 @@ fmt:
 freeze-log suffix:
     cp asimi.log asimi.{{suffix}}.log
     cp asimi-daemon.log asimi-daemon.{{suffix}}.log
-
-# Start neovim with the asimi plugin loaded (interactive dev session)
-nvim:
-    nvim -u nvim/tests/dev_init.lua
 
 # Clean build artifacts
 clean:

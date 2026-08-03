@@ -297,6 +297,12 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 	// Flush any debounced content from the rebuild loop above
 	m.tabs.Content().Chat.FlushDirty()
 
+	// If restoring with a pending prompt, show it as a user message so the
+	// Ruler can see their own input before the AI response arrives.
+	if hasPrompt {
+		m.tabs.Content().Chat.AddUserMessage(m.pendingEdictPrompt)
+	}
+
 	// Re-hydrate the minister session so follow-up prompts continue the
 	// conversation. TabType holds the minister id (secretary/chancellor/forge/judge);
 	// legacy rows with no TabType predate per-minister persistence and are

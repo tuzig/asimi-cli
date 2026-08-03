@@ -12,6 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install neovim (latest from GitHub, architecture-aware)
+RUN ARCH=$(uname -m | sed 's/aarch64/arm64/; s/x86_64/x86_64/') && \
+    curl -sL "https://github.com/neovim/neovim/releases/download/v0.12.4/nvim-linux-${ARCH}.tar.gz" \
+    | tar xz -C /usr/local --strip-components=1
+
 # Install just
 RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 

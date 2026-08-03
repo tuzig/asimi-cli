@@ -5985,6 +5985,118 @@ func TestHandleSessionSelected_NormalResumeUnchanged(t *testing.T) {
 	assert.Equal(t, 0, mock.submitPromptCalls)
 }
 
+func TestHandleSessionSelected_RitualTabRestoration_ShowsUserMessage(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Set up a ritual tab as the active tab
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Simulate the pending state set by submitToCourt
+	model.pendingEdictPrompt = "fix the tests"
+	model.pendingEdictKey = storage.EdictKey{ID: 647, Username: "test", Project: "test"}
+
+	// Create a session with messages so rebuildChatFromMessages adds content
+	session := &court.Session{
+		ID:      "sess-birth-123",
+		TabType: "chancellor",
+	}
+	session.SetMessages([]schemas.ChatMessage{
+		{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: strPtr("original message")}},
+		{Role: schemas.ChatMessageRoleAssistant, Content: &schemas.ChatMessageContent{ContentStr: strPtr("original response")}},
+	})
+	model.handleSessionSelected(session)
+
+	// Should stay on the ritual tab (not switch to sage)
+	assert.Equal(t, "ritual", string(model.tabs.ActiveTab().Type),
+		"should stay on ritual tab during restoration")
+
+	// Chat should contain the original messages AND the pending prompt as a user message
+	chat := model.tabs.ChatByTab("e647")
+	require.NotNil(t, chat)
+
+	// Find messages with the pending prompt content
+	var foundUserMsg bool
+	for _, m := range chat.Messages {
+		if m.Content == "fix the tests" {
+			foundUserMsg = true
+			assert.Equal(t, "fix the tests", m.Content)
+			break
+		}
+	}
+	assert.True(t, foundUserMsg, "expected user message 'fix the tests' to be added to chat")
+
+	// Original messages should also be present
+	var foundOriginal bool
+	for _, m := range chat.Messages {
+		if m.Content == "original message" {
+			foundOriginal = true
+			break
+		}
+	}
+	assert.True(t, foundOriginal, "expected original session messages to be rebuilt in chat")
+
+	// Pending fields should be cleared
+	assert.Empty(t, model.pendingEdictPrompt)
+	assert.Equal(t, uint(0), model.pendingEdictKey.ID)
+}
+
+func TestHandleSessionSelected_EdictRestoreChatAction(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Set up a ritual tab as the active tab (pre-created by dispatchEdictAction)
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	// Simulate Chat action state: pendingEdictKey set, pendingEdictPrompt empty
+	model.pendingEdictPrompt = ""
+	model.pendingEdictKey = storage.EdictKey{ID: 647, Username: "test", Project: "test"}
+
+	// Create a session with a TabType matching the minister
+	session := &court.Session{
+		ID:           "sess-birth-123",
+		TabType:      "chancellor",
+		LastUpdated:  time.Now().Add(-1 * time.Hour),
+		MessageCount: 3,
+	}
+	model.handleSessionSelected(session)
+
+	// Should stay on the ritual tab (not switch to sage)
+	assert.Equal(t, "ritual", string(model.tabs.ActiveTab().Type),
+		"should stay on ritual tab during edict restore")
+
+	// Should set the edict key (not clear it)
+	assert.Equal(t, uint(647), model.currentEdictKey.ID)
+
+	// Should have called RestoreMinisterSession with channelID
+	require.Len(t, mock.restoreMinisterSessions, 1)
+	assert.Equal(t, "chancellor", mock.restoreMinisterSessions[0])
+
+	// Should NOT have submitted a prompt (Chat action restores without submitting)
+	assert.Equal(t, 0, mock.submitPromptCalls,
+		"Chat action should not submit a prompt — user will type one")
+
+	// Pending edict key should be cleared
+	assert.Equal(t, uint(0), model.pendingEdictKey.ID)
+
+	// Should show a toast about the restored session
+	assert.NotEmpty(t, model.commandLine.toasts, "should show a toast for restored session")
+
+	// AddUserMessage should NOT be called (no pending prompt)
+	chat := model.tabs.ChatByTab("e647")
+	require.NotNil(t, chat)
+	for _, m := range chat.Messages {
+		assert.NotContains(t, m.Content, "Resumed session",
+			"toast text should not be in chat messages")
+	}
+}
+
 func TestStreamInterruptedMsg_SuppressedWhenRitualPaused(t *testing.T) {
 	model := newTestModel(t)
 	model.tabs.DismissWelcome()
