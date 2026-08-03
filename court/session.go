@@ -604,15 +604,15 @@ var openRouterContextSizes = map[string]int{
 	"openai/gpt-4.1-mini":          1_000_000,
 	"google/gemini-2.5-flash":      1_000_000,
 	"google/gemini-2.5-pro":        1_000_000,
-	"deepseek/deepseek-v4-pro":     1_000_000,
 	"deepseek/deepseek-v4-flash":   1_000_000,
+	"deepseek/deepseek-v4-pro":     1_000_000,
 	"deepseek/deepseek-v3.2":       128_000,
 	"deepseek/deepseek-r1":         128_000,
 	"minimax/minimax-m2.5":         1_000_000,
 	"minimax/minimax-m2.7":         1_000_000,
 	"z-ai/glm-5.2":                 1_000_000,
 	"mistralai/mistral-large-2512": 128_000,
-	"mistralai/devstral-2512:free": 128_000,
+	"mistralai/devstral-2512":      128_000,
 	"moonshotai/kimi-k2-thinking":  128_000,
 	"moonshotai/kimi-k2.6":         262_000,
 	"qwen/qwen3.5-397b-a17b":       128_000,
@@ -685,7 +685,10 @@ func (s *Session) getModelContextSize() int {
 		return size
 	}
 
-	// Check OpenRouter model names (provider/model format)
+	// Strip routing tag (":nitro", ":free") and look up base model
+	if idx := strings.Index(modelName, ":"); idx > 0 {
+		modelName = modelName[:idx]
+	}
 	if size, ok := openRouterContextSizes[modelName]; ok && size > 0 {
 		return size
 	}
