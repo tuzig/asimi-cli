@@ -769,6 +769,14 @@ func (r *RitualRunner) Run(ctx context.Context, exec *RitualExecution) error {
 		default:
 		}
 
+		// Check if paused between steps (CTRL-C when no step is running).
+		if err := r.waitIfPaused(ctx, exec.ChannelID()); err != nil {
+			exec.State = RitualStateAborted
+			r.saveExecution(exec)
+			return ctx.Err()
+		}
+		r.clearPause(exec.ChannelID())
+
 		step := exec.def.Steps[exec.CurrentStep]
 		result, err := r.executeStep(ctx, exec, step)
 		if err != nil {
@@ -2305,7 +2313,7 @@ func (r *RitualRunner) expandTemplate(text string, exec *RitualExecution) string
 // PauseRitual signals the ritual running on channelID to pause.
 // It cancels the active step's context (stopping the LLM stream) and
 // creates a pause channel that the ritual goroutine will block on.
-// Returns false if no ritual step is running on that channel.
+// Returns false if already paused.
 func (r *RitualRunner) PauseRitual(channelID string) bool {
 	r.pauseMu.Lock()
 	defer r.pauseMu.Unlock()
@@ -2318,13 +2326,10 @@ func (r *RitualRunner) PauseRitual(channelID string) bool {
 	if _, ok := r.pauseChans[channelID]; ok {
 		return false // already paused
 	}
-	// Only pause if a step is actively running (has a registered step cancel).
-	if _, ok := r.stepCancels[channelID]; !ok {
-		return false
-	}
 	r.pauseChans[channelID] = make(chan struct{})
-	// Cancel the active step's context to interrupt the LLM stream.
-	// The ritual goroutine stays alive because we don't cancel the parent context.
+	// Cancel the active step's context if one is running, to interrupt the
+	// LLM stream. The ritual goroutine stays alive because we don't cancel
+	// the parent context.
 	if cancel, ok := r.stepCancels[channelID]; ok {
 		cancel()
 	}

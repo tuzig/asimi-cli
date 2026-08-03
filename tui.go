@@ -64,13 +64,12 @@ type TUIModel struct {
 	// Court integration
 	currentEdictKey storage.EdictKey // Tracks current edict for multi-turn conversations
 
-	// Edict tab session restoration. When non-zero, the session is being restored
-	// onto an e<N> tab (ritual or edict) instead of switching to the original tab.
-	// If pendingEdictPrompt is non-empty, it will be submitted to the minister
-	// after the session is restored (ritual prompt path). If empty, the user
-	// will type a prompt (Chat action path).
-	pendingEdictKey    storage.EdictKey
-	pendingEdictPrompt string
+	// creatingTab is non-zero when restoring a session onto an e<N> tab
+	// or a minister's tab. The session is routed to the tab identified by this key
+	// instead of switching to the minister's original interactive tab.
+	// If pendingPrompt is also set, it is submitted to the minister after restore.
+	creatingTab   string
+	pendingPrompt string
 
 	// Prompt history and rollback management
 	// sessionPromptHistory stores prompts with snapshots for current session rollback
@@ -139,6 +138,21 @@ func (m *TUIModel) prompt() *PromptComponent {
 		m.prompts[label] = p
 	}
 	return p
+}
+
+// addTab creates a new tab if one doesn't already exist for target,
+// then calls onReady(tab) to handle post-creation behavior.
+// Idempotent: if the tab already exists, onReady is not called.
+func (m *TUIModel) addTab(label string, tabType TabType, target string, onReady func(tab *Tab) tea.Cmd) tea.Cmd {
+	if m.tabs.TabByTarget(target) != nil {
+		return nil
+	}
+	m.tabs.Add(label, tabType, target)
+	tab := m.tabs.TabByTarget(target)
+	if onReady != nil {
+		return onReady(tab)
+	}
+	return nil
 }
 
 type promptHistoryEntry struct {
@@ -285,13 +299,23 @@ func NewTUIModel(cfg *Config, repoInfo *repo.RepoInfo, promptHistory *PromptHist
 	// Wire welcome screen notification callbacks
 	model.tabs.getUpdateAvail = func() bool { return model.updateAvailable }
 	model.tabs.getConfigCreated = func() bool { return model.configCreated }
-	// Set up tab switch callback to update context percent in status
+	// Set up tab switch callback to update the status bar for the new tab
 	model.tabs.onTabSwitch = func() {
 		if state, ok := model.currentSessionState(); ok {
 			model.status.ContextPercent = state.ContextUsagePercent
 		} else {
 			// No active session for this tab - context usage is 0%
 			model.status.ContextPercent = 0
+		}
+		// Sync waiting/stopwatch state from the active tab's streaming flag
+		if tab := model.tabs.ActiveTab(); tab != nil && tab.Streaming {
+			model.status.StartWaiting()
+			model.waitingForResponse = true
+			model.waitingStart = time.Now()
+		} else {
+			model.status.StopWaiting()
+			model.status.ResetStreamRate()
+			model.waitingForResponse = false
 		}
 	}
 
@@ -1313,8 +1337,29 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 	m.ctrlCLastPress = now
 	activeTab := m.tabs.ActiveTab()
 	if activeTab.Streaming {
-		slog.Info("ctrl_c_during_streaming", "cancelling_active_tab", activeTab.Target)
-		m.stopStreamingTab(activeTab.Target)
+		// On a ritual tab, pause instead of killing the ritual goroutine.
+		// This cancels only the step's LLM stream, keeping the ritual alive
+		// for :continue / :abort.
+		if activeTab.Type == "ritual" && isRitualChannel(activeTab.Target) && m.court != nil {
+			if m.court.PauseRitual(activeTab.Target) {
+				m.tabs.SetTabChatMode(activeTab.Target, true)
+				chat := m.tabs.ChatByTab(activeTab.Target)
+				ministerID := activeTab.CurrentMinister
+				if ministerID == "" {
+					ministerID = "chancellor"
+				}
+				chat.AddMessage(fmt.Sprintf("%s💬 Now chatting with %s — use `:continue` to resume the ritual or `:abort` to cancel",
+					systemPrefix, ministerID))
+			} else {
+				// PauseRitual returned false — no active step to pause.
+				// Fall back to stopStreamingTab (ritual may have been between steps).
+				slog.Info("ctrl_c_ritual_not_paused_no_active_step", "tab", activeTab.Target)
+				m.stopStreamingTab(activeTab.Target)
+			}
+		} else {
+			slog.Info("ctrl_c_during_streaming", "cancelling_active_tab", activeTab.Target)
+			m.stopStreamingTab(activeTab.Target)
+		}
 	}
 
 	m.commandLine.AddToast(
@@ -1329,8 +1374,25 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 func (m TUIModel) handleEscape() (tea.Model, tea.Cmd) {
 	activeTab := m.tabs.ActiveTab()
 	if activeTab.Streaming {
-		slog.Info("escape_during_streaming", "cancelling_active_tab", activeTab.Target)
-		m.stopStreamingTab(activeTab.Target)
+		// On a ritual tab, pause instead of killing the ritual goroutine.
+		if activeTab.Type == "ritual" && isRitualChannel(activeTab.Target) && m.court != nil {
+			if m.court.PauseRitual(activeTab.Target) {
+				m.tabs.SetTabChatMode(activeTab.Target, true)
+				chat := m.tabs.ChatByTab(activeTab.Target)
+				ministerID := activeTab.CurrentMinister
+				if ministerID == "" {
+					ministerID = "chancellor"
+				}
+				chat.AddMessage(fmt.Sprintf("%s💬 Now chatting with %s — use `:continue` to resume the ritual or `:abort` to cancel",
+					systemPrefix, ministerID))
+			} else {
+				slog.Info("escape_ritual_not_paused_no_active_step", "tab", activeTab.Target)
+				m.stopStreamingTab(activeTab.Target)
+			}
+		} else {
+			slog.Info("escape_during_streaming", "cancelling_active_tab", activeTab.Target)
+			m.stopStreamingTab(activeTab.Target)
+		}
 		return m, nil
 	}
 
@@ -1603,9 +1665,9 @@ func (m *TUIModel) submitToCourt(ctx context.Context, prompt string, contextFile
 		}
 
 		if edict.SessionID != "" {
-			// Store pending prompt and edict key for handleSessionSelected
-			m.pendingEdictPrompt = prompt
-			m.pendingEdictKey = m.court.EdictKey(uint(edictID))
+			// Store pending prompt and creatingTab for handleSessionSelected
+			m.creatingTab = tab.Target
+			m.pendingPrompt = prompt
 			// Trigger session loading → sessionSelectedMsg → handleSessionSelected
 			return m.tabs.Content().resume.LoadSession(edict.SessionID, m.sessionStore)
 		}
@@ -2169,8 +2231,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Court streaming message handlers
 	case court.StreamChunkMsg:
 		// Auto-create a ritual tab for "e<N>" channels that don't have one yet
-		if isRitualChannel(msg.ChannelID) && m.tabs.TabByTarget(msg.ChannelID) == nil {
-			m.tabs.Add(ritualTabLabel(msg.ChannelID), "ritual", msg.ChannelID)
+		if isRitualChannel(msg.ChannelID) {
+			m.addTab(ritualTabLabel(msg.ChannelID), "ritual", msg.ChannelID, nil)
 		}
 		// Drop chunks for tabs the user already cancelled; daemon may still
 		// emit a few in-flight chunks before its ctx-cancel takes effect.
@@ -2240,8 +2302,8 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case court.RitualStepMsg:
 		// Auto-create a ritual tab for "e<N>" channels that don't have one yet
-		if isRitualChannel(msg.ChannelID) && m.tabs.TabByTarget(msg.ChannelID) == nil {
-			m.tabs.Add(ritualTabLabel(msg.ChannelID), "ritual", msg.ChannelID)
+		if isRitualChannel(msg.ChannelID) {
+			m.addTab(ritualTabLabel(msg.ChannelID), "ritual", msg.ChannelID, nil)
 		}
 		chat := m.tabs.ChatByTab(msg.ChannelID)
 		chat.AddToRawHistory("RITUAL_STEP",
@@ -2457,8 +2519,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			go m.handleAnsweringComplete(AnsweredMsg{RequestID: msg.RequestID, Answers: answers})
 			return m, nil
 		}
-		// A zhengming halts the court — route to the active tab's prompt,
-		// regardless of which minister raised it.
+		// A zhengming halts the court — route to the minister's own tab
+		// so the Ruler sees the context, then auto-scroll the chat.
+		// Falls back to the active tab if no tab exists for the minister.
+		if m.tabs.SwitchToTarget(msg.MinisterID) {
+			if chat := m.tabs.ChatByTab(msg.MinisterID); chat != nil {
+				chat.ScrollToBottom()
+			}
+		}
 		m.prompt().HandleZhengmingPending(msg)
 		return m, nil
 
@@ -2701,11 +2769,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// to the async tea.Cmd wrapper (same pattern as the
 				// "Implement" action path).
 				channelID := fmt.Sprintf("e%d", edictID)
-				if m.tabs.TabByTarget(channelID) == nil {
-					m.tabs.Add(ritualTabLabel(channelID), "ritual", channelID)
+				m.addTab(ritualTabLabel(channelID), "ritual", channelID, func(tab *Tab) tea.Cmd {
 					chat := m.tabs.ChatByTab(channelID)
 					chat.AddMessage(fmt.Sprintf("%sPreparing ritual for edict %d…", ritualPrefix, edictID))
-				}
+					return nil
+				})
 				return m, enactRitualForEdict(&m, edictID, "swift-strike")
 			}
 			// No explicit "declined" message needed; the 📜 notification already shows
@@ -3884,25 +3952,39 @@ func dispatchEdictAction(m *TUIModel, edictID uint, answers []string) tea.Cmd {
 		// to send the first RitualStepMsg back. The ritual channel ID
 		// follows the "e<N>" convention (see ritualChannelID).
 		channelID := fmt.Sprintf("e%d", edictID)
-		if m.tabs.TabByTarget(channelID) == nil {
-			m.tabs.Add(ritualTabLabel(channelID), "ritual", channelID)
+		m.addTab(ritualTabLabel(channelID), "ritual", channelID, func(tab *Tab) tea.Cmd {
 			chat := m.tabs.ChatByTab(channelID)
 			chat.AddMessage(fmt.Sprintf("%sPreparing ritual for edict %d…", ritualPrefix, edictID))
-		}
+			return nil
+		})
 		return tea.Batch(enactRitualForEdict(m, edictID, "swift-strike"), reloadEdictsListCmd(m))
 	case "Chat":
 		// Pre-create the edict tab and set restore flags so the session is
 		// restored on the edict tab ("e<id>") instead of the minister's
 		// original interactive tab.
 		channelID := fmt.Sprintf("e%d", edictID)
-		if m.tabs.TabByTarget(channelID) == nil {
-			m.tabs.Add(ritualTabLabel(channelID), "ritual", channelID)
+		m.addTab(ritualTabLabel(channelID), "ritual", channelID, func(tab *Tab) tea.Cmd {
 			chat := m.tabs.ChatByTab(channelID)
 			chat.AddMessage(fmt.Sprintf("%sRestoring session for edict %d…", systemPrefix, edictID))
+			return nil
+		})
+		m.creatingTab = channelID
+		m.pendingPrompt = ""
+		edict, err := m.court.GetEdict(edictID)
+		if err != nil {
+			return func() tea.Msg {
+				return showToast(fmt.Sprintf("Edict not found: %d", edictID), "error", 3*time.Second)
+			}
 		}
-		m.pendingEdictKey = m.court.EdictKey(edictID)
-		m.pendingEdictPrompt = ""
-		return resumeEdictSession(m, edictID)
+		if edict.SessionID == "" {
+			return func() tea.Msg {
+				return showToast(fmt.Sprintf("No session linked to edict %d", edictID), "warning", 3*time.Second)
+			}
+		}
+		if loadFn := m.tabs.Content().loadSessionFn; loadFn != nil {
+			return loadFn(edict.SessionID)
+		}
+		return nil
 	case "Seal":
 		return handleEdictSeal(m, edictID, "")
 	case "Cancel":

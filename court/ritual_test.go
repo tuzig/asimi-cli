@@ -4326,15 +4326,18 @@ func TestRitualPauseAbort(t *testing.T) {
 	}
 }
 
-// TestRitualPauseNotRunning verifies that PauseRitual returns false when
-// no step is actively running.
+// TestRitualPauseNotRunning verifies that PauseRitual returns true when
+// no step is actively running — the pause channel sits ready for the
+// between-step check.
 func TestRitualPauseNotRunning(t *testing.T) {
 	db := setupRitualTestDB(t)
 
 	registry := NewRitualRegistry()
 	runner := NewRitualRunner(registry, nil, nil, db, nil, nil, repo.RepoInfo{})
 
-	assert.False(t, runner.PauseRitual("e999"), "PauseRitual should return false when no step is running")
+	assert.True(t, runner.PauseRitual("e999"), "PauseRitual should return true when no step is running")
+	assert.False(t, runner.PauseRitual("e999"), "PauseRitual should return false when already paused")
+	assert.True(t, runner.ResumeRitual("e999"), "ResumeRitual should return true when something is paused")
 	assert.False(t, runner.ResumeRitual("e999"), "ResumeRitual should return false when nothing is paused")
 }
 
