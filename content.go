@@ -513,6 +513,18 @@ func (tm *TabManager) SwitchToTabType(tabType TabType) {
 	}
 }
 
+// SwitchToTarget switches to the first tab whose Target matches the given target.
+// Returns true if a matching tab was found and switched to.
+func (tm *TabManager) SwitchToTarget(target string) bool {
+	for i := range tm.tabs {
+		if tm.tabs[i].Target == target {
+			tm.SwitchTo(i)
+			return true
+		}
+	}
+	return false
+}
+
 // TabCount returns the number of tabs
 func (tm *TabManager) TabCount() int {
 	return len(tm.tabs)

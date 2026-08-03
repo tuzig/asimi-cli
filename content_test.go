@@ -347,3 +347,36 @@ func TestSetTabChatMode_NoMatchIsNoOp(t *testing.T) {
 		assert.False(t, tm.tabs[i].ChatMode, "no tab should have ChatMode set")
 	}
 }
+
+func TestSwitchToTarget_Found(t *testing.T) {
+	tm := newTestTabManager()
+	tm.DismissWelcome()
+
+	tm.Add("Custom:my-target", "secretary", "my-target")
+	require.NotNil(t, tm.TabByTarget("my-target"))
+
+	switched := tm.SwitchToTarget("my-target")
+	assert.True(t, switched, "SwitchToTarget should return true when target is found")
+	assert.Equal(t, "my-target", tm.ActiveTab().Target)
+}
+
+func TestSwitchToTarget_NotFound(t *testing.T) {
+	tm := newTestTabManager()
+	tm.DismissWelcome()
+
+	// Target does not exist
+	switched := tm.SwitchToTarget("nonexistent-target")
+	assert.False(t, switched, "SwitchToTarget should return false when target is not found")
+}
+
+func TestSwitchToTarget_FirstMatch(t *testing.T) {
+	tm := newTestTabManager()
+	tm.DismissWelcome()
+
+	tm.Add("A:dup", "secretary", "dup")
+	tm.Add("B:dup", "secretary", "dup")
+
+	switched := tm.SwitchToTarget("dup")
+	assert.True(t, switched, "SwitchToTarget should find first matching tab")
+	assert.Equal(t, "dup", tm.ActiveTab().Target)
+}
