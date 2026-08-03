@@ -895,7 +895,7 @@ func handleTabNewCommand(model *TUIModel, args []string) tea.Cmd {
 			return nil
 		}
 		runID := args[1]
-		model.tabs.Add("Ritual:"+runID, "ritual", runID)
+		model.addTab("Ritual:"+runID, "ritual", runID, nil)
 		model.commandLine.AddToast(fmt.Sprintf("Opened Ritual tab: %s", runID), "success", time.Second*2)
 	default:
 		// Treat as minister name — accept any minister known from defs
@@ -918,7 +918,7 @@ func addMinisterTab(model *TUIModel, defsByID map[string]ministers.MinisterDef, 
 		label = strings.ToUpper(ministerID[:1]) + ministerID[1:]
 	}
 	target := model.tabs.UniqueTarget(ministerID)
-	model.tabs.Add(label, TabType(ministerID), target)
+	model.addTab(label, TabType(ministerID), target, nil)
 	model.commandLine.AddToast(fmt.Sprintf("Opened %s tab", label), "success", time.Second*2)
 }
 
@@ -1033,7 +1033,21 @@ func handleEdictCommand(model *TUIModel, args []string) tea.Cmd {
 
 	case "resume":
 		// :edict <id> resume — resume linked session
-		return resumeEdictSession(model, edictID)
+		edict, err := model.court.GetEdict(edictID)
+		if err != nil {
+			return func() tea.Msg {
+				return showToast(fmt.Sprintf("Edict not found: %d", edictID), "error", 3*time.Second)
+			}
+		}
+		if edict.SessionID == "" {
+			return func() tea.Msg {
+				return showToast(fmt.Sprintf("No session linked to edict %d", edictID), "warning", 3*time.Second)
+			}
+		}
+		if loadFn := model.tabs.Content().loadSessionFn; loadFn != nil {
+			return loadFn(edict.SessionID)
+		}
+		return nil
 
 	case "cancel":
 		// :edict <id> cancel — cancel the edict
@@ -1182,25 +1196,6 @@ func enactRitualForEdict(model *TUIModel, edictID uint, ritualName string) tea.C
 		// Stay silent — the ritual manager handles all user notifications
 		return nil
 	}
-}
-
-// resumeEdictSession loads the session linked to an edict
-func resumeEdictSession(model *TUIModel, edictID uint) tea.Cmd {
-	edict, err := model.court.GetEdict(edictID)
-	if err != nil {
-		return func() tea.Msg {
-			return showToast(fmt.Sprintf("Edict not found: %d", edictID), "error", 3*time.Second)
-		}
-	}
-	if edict.SessionID == "" {
-		return func() tea.Msg {
-			return showToast(fmt.Sprintf("No session linked to edict %d", edictID), "warning", 3*time.Second)
-		}
-	}
-	if loadFn := model.tabs.Content().loadSessionFn; loadFn != nil {
-		return loadFn(edict.SessionID)
-	}
-	return nil
 }
 
 // handleEdictCancel enters YesNo mode to confirm edict cancellation

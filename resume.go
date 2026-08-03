@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -261,32 +262,25 @@ func formatRelativeTime(t time.Time) string {
 // It rebuilds the chat UI from messages, switches to the correct tab, and
 // re-hydrates the minister session for full conversation continuity.
 //
-// When m.pendingEdictPrompt is non-empty, this is a ritual-tab restoration: the
-// Ruler prompted on an edict's ritual tab with no active ritual, and we're
-// restoring the edict's birth session. We stay on the ritual tab, set the
-// edict key, and submit the pending prompt after restoring the session.
-// When m.pendingEdictKey is non-zero but m.pendingEdictPrompt is empty, this
-// is a Chat action restore: we restore without submitting a prompt.
+// When m.creatingTab is set, the session is restored onto an edict tab (e<N>)
+// instead of switching to the minister's original interactive tab. If
+// m.pendingPrompt is also set, it is submitted to the minister after restore.
+// When m.creatingTab is empty, this is a normal resume from the session list.
 func (m *TUIModel) handleSessionSelected(session *court.Session) {
 	if session == nil {
 		return
 	}
 
-	hasPrompt := m.pendingEdictPrompt != ""
-	isEdictRestore := !hasPrompt && m.pendingEdictKey.ID != 0
-
-	if hasPrompt || isEdictRestore {
-		// Set edict context instead of clearing it
-		m.currentEdictKey = m.pendingEdictKey
-		// Stay on the current tab — don't switch to the session's original tab
-	} else {
-		// Clear current edict ID (resumed sessions are edict-free)
+	if m.creatingTab == "" {
+		// Normal resume: clear edict key, switch to session's tab type
 		m.currentEdictKey = storage.EdictKey{}
-
-		// Switch to the tab matching this session's type before rebuilding chat
 		if session.TabType != "" {
 			m.tabs.SwitchToTabType(TabType(session.TabType))
 		}
+	} else {
+		// Edict tab restore: set edict key, stay on the tab
+		edictID, _ := strconv.ParseUint(m.creatingTab[1:], 10, 64)
+		m.currentEdictKey = m.court.EdictKey(uint(edictID))
 	}
 
 	// Clear and rebuild chat UI from messages
@@ -299,57 +293,51 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 
 	// If restoring with a pending prompt, show it as a user message so the
 	// Ruler can see their own input before the AI response arrives.
-	if hasPrompt {
-		m.tabs.Content().Chat.AddUserMessage(m.pendingEdictPrompt)
+	if m.pendingPrompt != "" {
+		m.tabs.Content().Chat.AddUserMessage(m.pendingPrompt)
 	}
 
-	// Re-hydrate the minister session so follow-up prompts continue the
-	// conversation. TabType holds the minister id (secretary/chancellor/forge/judge);
-	// legacy rows with no TabType predate per-minister persistence and are
-	// treated as secretary sessions.
+	// Restore minister session (with target channel if creatingTab is set)
 	if m.court != nil {
 		tabType := session.TabType
 		if tabType == "" {
 			tabType = "secretary"
 		}
-
-		if hasPrompt {
-			// Pass the ritual tab's channel ID so the restored session is
-			// stored under the right key (e.g. "e633"), not the minister's
-			// interactive session key.
-			tab := m.tabs.ActiveTab()
-			if err := m.court.RestoreMinisterSession(tabType, session.GetMessages(), tab.Target); err != nil {
-				slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
-			}
-
-			// Submit the pending prompt to the minister, routed to the ritual tab
-			ministerID := session.TabType
-			if ministerID == "" {
-				ministerID = "secretary"
-			}
-			p := &court.Prompt{
-				Ctx:       context.Background(),
-				Message:   m.pendingEdictPrompt,
-				EdictKey:  m.pendingEdictKey,
-				ChannelID: tab.Target,
-			}
-			if err := m.court.SubmitPrompt(ministerID, p); err != nil {
-				slog.Warn("failed to submit pending ritual prompt", "error", err)
-			} else {
-				m.tabs.SetStreamingTabByTab(tab.Target)
-			}
-		} else if isEdictRestore {
-			// Edict restore: set edict key and restore session to edict tab,
-			// but do NOT submit a prompt — the Ruler will type one.
-			tab := m.tabs.ActiveTab()
-			if err := m.court.RestoreMinisterSession(tabType, session.GetMessages(), tab.Target); err != nil {
-				slog.Warn("failed to restore minister session to edict tab", "tab_type", tabType, "error", err)
-			}
+		tab := m.tabs.ActiveTab()
+		if m.creatingTab == "" {
+			m.court.RestoreMinisterSession(tabType, session.GetMessages())
 		} else {
-			if err := m.court.RestoreMinisterSession(tabType, session.GetMessages()); err != nil {
-				slog.Warn("failed to restore minister session", "tab_type", tabType, "error", err)
-			}
+			m.court.RestoreMinisterSession(tabType, session.GetMessages(), tab.Target)
 		}
+	}
+
+	// Submit pending prompt if set
+	if m.pendingPrompt != "" {
+		ministerID := session.TabType
+		if ministerID == "" {
+			ministerID = "secretary"
+		}
+		tab := m.tabs.ActiveTab()
+		p := &court.Prompt{
+			Ctx:       context.Background(),
+			Message:   m.pendingPrompt,
+			EdictKey:  m.currentEdictKey,
+			ChannelID: tab.Target,
+		}
+		if err := m.court.SubmitPrompt(ministerID, p); err != nil {
+			slog.Warn("failed to submit pending prompt", "error", err)
+		} else {
+			m.tabs.SetStreamingTabByTab(tab.Target)
+		}
+		m.pendingPrompt = ""
+	} else if m.creatingTab != "" {
+		// Edict restore without prompt — show toast
+		timeStr := formatRelativeTime(session.LastUpdated)
+		m.commandLine.AddToast(fmt.Sprintf("Resumed session for edict from %s", timeStr), "success", 3000)
+	} else {
+		// Normal resume — show toast
+		timeStr := formatRelativeTime(session.LastUpdated)
+		m.commandLine.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
 	}
 
 	// Reset in-session prompt history state to prevent rollback issues
@@ -363,19 +351,8 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 	m.historyPresentSessionSnapshot = 0
 	m.historyPresentChatSnapshot = 0
 
-	if hasPrompt {
-		// Clear pending fields — the prompt has been submitted
-		m.pendingEdictPrompt = ""
-		m.pendingEdictKey = storage.EdictKey{}
-	} else if isEdictRestore {
-		// Edict restore: clear fields — no prompt submitted, user will type one
-		m.pendingEdictKey = storage.EdictKey{}
-		timeStr := formatRelativeTime(session.LastUpdated)
-		m.commandLine.AddToast(fmt.Sprintf("Resumed session for edict from %s", timeStr), "success", 3000)
-	} else {
-		timeStr := formatRelativeTime(session.LastUpdated)
-		m.commandLine.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
-	}
+	// Clear creatingTab
+	m.creatingTab = ""
 }
 
 // rebuildChatFromMessages renders chat messages into the active tab's chat UI.
