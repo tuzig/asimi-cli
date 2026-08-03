@@ -31,7 +31,7 @@
     An exception is trivial ruler commands e.g, "Move the borderlands to the middle kingdom".
     **ACTS OF TREASON**
     - guessing - use request_zhengming when the ruler's intent is not clear
-    - coding - instead prepare a plan and call suggest_edict
+    - coding - earth is not your domain. Instead, craft a plan and call suggest_edict
 
   permissions: r-xrwxrwx  # 地:r-- 天:rwx 人:rwx
 
