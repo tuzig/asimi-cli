@@ -2563,7 +2563,7 @@ func TestCtrlCOnRitualTab_PausesNotKills(t *testing.T) {
 }
 
 // TestCtrlCOnRitualTab_NotPaused_FallsBack verifies that when PauseRitual
-// returns false (no active step), CTRL-C falls back to stopStreamingTab.
+// returns false (already paused), CTRL-C falls back to stopStreamingTab.
 func TestCtrlCOnRitualTab_NotPaused_FallsBack(t *testing.T) {
 	mock := &mockCourtClient{
 		pauseRitualFn: func(channelID string) bool { return false },
@@ -2663,7 +2663,7 @@ func TestEscapeOnRitualTab_PausesNotKills(t *testing.T) {
 }
 
 // TestEscapeOnRitualTab_NotPaused_FallsBack verifies that when PauseRitual
-// returns false, ESC falls back to stopStreamingTab.
+// returns false (already paused), ESC falls back to stopStreamingTab.
 func TestEscapeOnRitualTab_NotPaused_FallsBack(t *testing.T) {
 	mock := &mockCourtClient{
 		pauseRitualFn: func(channelID string) bool { return false },
@@ -4701,6 +4701,66 @@ func TestEventSealGranted_NonRulerAddsChatMessage(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected chat message about judge sealing edict 7")
+}
+
+func TestEventRitualCompleted_ShowsToast(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+
+	eventMsg := court.EventNotificationMsg{
+		ChannelID: "secretary",
+		EventType: storage.EventRitualCompleted,
+		EdictKey:  storage.EdictKey{ID: 42, Username: "test", Project: "test"},
+		Payload: map[string]interface{}{
+			"ritual":   "swift-strike",
+			"duration": "1.234s",
+		},
+	}
+
+	newModel, _ := model.handleCustomMessages(eventMsg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Toast should be shown with ritual name and duration
+	require.Len(t, updated.commandLine.toasts, 1, "expected one toast for ritual completed")
+	toast := updated.commandLine.toasts[0]
+	assert.Equal(t, "success", toast.Type)
+	assert.Contains(t, toast.Message, "swift-strike")
+	assert.Contains(t, toast.Message, "1.234s")
+	assert.Contains(t, toast.Message, "✅")
+
+	// Chat should NOT contain the ritual completed message (it's a toast-only event)
+	chat := updated.tabs.ChatByTab("secretary")
+	for _, m := range chat.Messages {
+		assert.NotContains(t, m.Content, "swift-strike",
+			"ritual completed should not be added to chat")
+	}
+}
+
+func TestEventRitualCompleted_ToastWithMissingPayload(t *testing.T) {
+	mock := &mockCourtClient{}
+	model := newTestModel(t)
+	model.court = mock
+
+	// Payload missing "ritual" and "duration" keys — should not crash
+	eventMsg := court.EventNotificationMsg{
+		ChannelID: "secretary",
+		EventType: storage.EventRitualCompleted,
+		EdictKey:  storage.EdictKey{ID: 99, Username: "test", Project: "test"},
+		Payload:   map[string]interface{}{},
+	}
+
+	newModel, _ := model.handleCustomMessages(eventMsg)
+	updated, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// Toast should still be shown with empty values
+	require.Len(t, updated.commandLine.toasts, 1, "expected one toast even with missing payload")
+	toast := updated.commandLine.toasts[0]
+	assert.Equal(t, "success", toast.Type)
+	assert.Contains(t, toast.Message, "Ritual")
+	assert.Contains(t, toast.Message, "completed in")
 }
 
 // --- Tests for edict action menu ---

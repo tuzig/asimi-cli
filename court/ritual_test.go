@@ -4595,3 +4595,188 @@ func TestBuildStepScratchpad_EmptySealsLings(t *testing.T) {
 	// When nothing exists, scratchpad should be empty string
 	require.Empty(t, scratchpad, "expected empty scratchpad when no court history exists")
 }
+
+// TestRitualPauseBetweenSteps verifies that pausing a ritual between steps
+// (when no step is actively running) blocks the main loop in waitIfPaused
+// and resumes correctly when ResumeRitual is called.
+func TestRitualPauseBetweenSteps(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "pause-between-steps",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Task: "do step 1"},
+			{Name: "step2", Minister: "forge", Task: "do step 2"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	ministry := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 1),
+		// Use a small delay on step2 so the main loop doesn't zip through
+		// step2 before we can observe the between-steps pause
+		delay:  200 * time.Millisecond,
+		result: "done",
+		err:    nil,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go ministry.Run(ctx)
+
+	court := &Court{
+		ministers: map[string]Minister{"forge": ministry},
+		logger:    slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
+
+	// Track step completions — unbuffered channel for precise synchronization
+	stepDone := make(chan string)
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok && stepMsg.Status == "completed" {
+			stepDone <- stepMsg.StepName
+		}
+	}
+
+	exec, err := runner.Start(ctx, "pause-between-steps", testEK(52), nil, notify)
+	require.NoError(t, err)
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- runner.Run(ctx, exec)
+	}()
+
+	// Wait for step1 to complete (unbuffered channel ensures we synchronize
+	// exactly at the completion boundary, before the loop advances)
+	select {
+	case name := <-stepDone:
+		assert.Equal(t, "step1", name)
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for step1 to complete")
+	}
+
+	// Now the main loop is between steps (step1 done, step2 not yet started
+	// because the minister's delay hasn't elapsed).
+	channelID := exec.ChannelID()
+
+	// PauseRitual should return true (no step actively running — the main
+	// loop hasn't reached waitIfPaused yet either, but the pause channel
+	// will intercept it when it does).
+	paused := runner.PauseRitual(channelID)
+	assert.True(t, paused, "PauseRitual should return true between steps")
+
+	// Double-pause should return false (already paused)
+	assert.False(t, runner.PauseRitual(channelID), "PauseRitual should return false when already paused")
+
+	// Resume the ritual
+	resumed := runner.ResumeRitual(channelID)
+	assert.True(t, resumed, "ResumeRitual should return true when paused between steps")
+
+	// Wait for step2 to complete
+	select {
+	case name := <-stepDone:
+		assert.Equal(t, "step2", name)
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for step2 to complete after resume")
+	}
+
+	// The ritual should complete naturally
+	select {
+	case err := <-runDone:
+		assert.NoError(t, err, "ritual should complete without error after between-steps resume")
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("ritual did not complete after between-steps resume")
+	}
+
+	// Both steps should have been executed
+	assert.Equal(t, 2, exec.CurrentStep, "both steps should have been executed")
+	require.Len(t, exec.stepStates, 2)
+	assert.Equal(t, "completed", exec.stepStates[0].Status, "step1 should be completed")
+	assert.Equal(t, "completed", exec.stepStates[1].Status, "step2 should be completed")
+}
+
+// TestRitualPauseBetweenStepsAbort verifies that aborting a ritual that is
+// paused between steps works correctly — waitIfPaused returns ctx.Err and
+// the ritual exits with aborted state.
+func TestRitualPauseBetweenStepsAbort(t *testing.T) {
+	db := setupRitualTestDB(t)
+
+	ritual := &RitualDef{
+		Name: "pause-between-steps-abort",
+		Steps: []RitualStep{
+			{Name: "step1", Minister: "forge", Task: "do step 1"},
+			{Name: "step2", Minister: "forge", Task: "do step 2"},
+		},
+	}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	ministry := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 1),
+		delay:        200 * time.Millisecond,
+		result:       "done",
+		err:          nil,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go ministry.Run(ctx)
+
+	court := &Court{
+		ministers: map[string]Minister{"forge": ministry},
+		logger:    slog.Default(),
+	}
+
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
+
+	stepDone := make(chan string)
+	notify := func(msg any) {
+		if stepMsg, ok := msg.(RitualStepMsg); ok && stepMsg.Status == "completed" {
+			stepDone <- stepMsg.StepName
+		}
+	}
+
+	exec, err := runner.Start(ctx, "pause-between-steps-abort", testEK(53), nil, notify)
+	require.NoError(t, err)
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- runner.Run(ctx, exec)
+	}()
+
+	// Wait for step1 to complete
+	select {
+	case name := <-stepDone:
+		assert.Equal(t, "step1", name)
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for step1 to complete")
+	}
+
+	// Pause between steps
+	channelID := exec.ChannelID()
+	paused := runner.PauseRitual(channelID)
+	assert.True(t, paused, "PauseRitual should return true between steps")
+
+	// Abort: cancel the parent context (simulates :abort)
+	cancel()
+
+	select {
+	case err := <-runDone:
+		assert.Error(t, err, "ritual should fail with error after abort between steps")
+		assert.Equal(t, RitualStateAborted, exec.State, "ritual should be aborted")
+	case <-time.After(5 * time.Second):
+		t.Fatal("ritual did not abort after between-steps pause")
+	}
+}

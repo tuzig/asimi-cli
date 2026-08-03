@@ -1351,8 +1351,8 @@ func (m TUIModel) handleCtrlC() (tea.Model, tea.Cmd) {
 				chat.AddMessage(fmt.Sprintf("%s💬 Now chatting with %s — use `:continue` to resume the ritual or `:abort` to cancel",
 					systemPrefix, ministerID))
 			} else {
-				// PauseRitual returned false — no active step to pause.
-				// Fall back to stopStreamingTab (ritual may have been between steps).
+				// PauseRitual returned false — already paused.
+				// Fall back to stopStreamingTab to abort the ritual.
 				slog.Info("ctrl_c_ritual_not_paused_no_active_step", "tab", activeTab.Target)
 				m.stopStreamingTab(activeTab.Target)
 			}
@@ -1386,6 +1386,8 @@ func (m TUIModel) handleEscape() (tea.Model, tea.Cmd) {
 				chat.AddMessage(fmt.Sprintf("%s💬 Now chatting with %s — use `:continue` to resume the ritual or `:abort` to cancel",
 					systemPrefix, ministerID))
 			} else {
+				// PauseRitual returned false — already paused.
+				// Fall back to stopStreamingTab to abort the ritual.
 				slog.Info("escape_ritual_not_paused_no_active_step", "tab", activeTab.Target)
 				m.stopStreamingTab(activeTab.Target)
 			}
@@ -2458,6 +2460,14 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				message += fmt.Sprintf("\n  %s", renderSealChain(updatedSeals, 60))
 			}
+		case storage.EventRitualCompleted:
+			ritualName, _ := msg.Payload["ritual"].(string)
+			duration, _ := msg.Payload["duration"].(string)
+			m.commandLine.AddToast(
+				fmt.Sprintf("✅ Ritual %s completed in %s", ritualName, duration),
+				"success", 4*time.Second,
+			)
+			return m, nil
 		case storage.EventManifestCommitted:
 			icon = "🔨"
 			message = fmt.Sprintf("Forge committed manifest for edict %d", msg.EdictKey.ID)
