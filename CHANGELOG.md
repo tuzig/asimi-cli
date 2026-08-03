@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Transient scratchpad** — court history (precedents, manifests, verdicts, seals, lings) is now loaded before each ritual step and injected into the next user message, then cleared. This makes court history visible to the minister on every turn, including during tool calls, without baking it into the immutable system prompt (e723)
+
+### Fixed
+
+- **Edict Chat action** — restored the "Chat" action on the edict dashboard, which creates an edict tab and restores the edict's birth session there for direct conversation within an edict context
+- **Edict session resume** — fixed pending prompt display when restoring a session on a ritual tab, ensuring the Ruler's input is visible before the AI response arrives (e729)
+- **Consulted minister output routing** — `consult_minister` now routes streaming output to the correct tab by using a channelID from context, rather than defaulting to the caller's minister ID (e719)
+- **English follow-up text** — fixed English language follow-up text in prompts (#161)
+
 ## [0.10.0] - 2026-07-29
 
 ### Added
