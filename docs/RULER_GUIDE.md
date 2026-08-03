@@ -221,27 +221,12 @@ The Court serves you — not the other way around.
 
 ## Philosophy — Why Confucius?
 
-The Confucian metaphor isn't decoration. It encodes principles:
+The Confucian metaphor isn't decoration. It encodes principles of
+careful, principled software development where clarity precedes action
+and quality is non-negotiable.
 
-| Principle | Meaning | In Practice |
-|-----------|---------|-------------|
-| **Zhengming (正名)** | Rectification of Names | Never guess at requirements — ask |
-| **Ren (仁)** | Benevolence | Code serves users with compassion |
-| **Yi (义)** | Righteousness | Tests validate proper purpose |
-| **Li (礼)** | Ritual Propriety | Workflows (rituals) maintain order |
-| **Zhi (智)** | Wisdom | Planning before implementation |
-| **Xin (信)** | Trustworthiness | Event ledger provides accountability |
-
-**The Five Constant Virtues (五常)** are embodied by the ministers. The Chancellor is 仁 (benevolence), the Judge is 义 (righteousness), rituals are 礼 (propriety), War is 智 (wisdom), and the Tian ledger is 信 (trustworthiness).
-
-As Confucius taught:
-
-> 名不正，則言不順；言不順，則事不成。
-> 
-> "If names be not correct, language is not in accordance with the truth of things.
-> If language be not in accordance with the truth of things, affairs cannot be carried on to success."
-
-**Translation:** Clear intent → clear execution. The Court exists to make your intent clear before code is written.
+For a full explanation of the Five Constant Virtues (五常) and how they
+map to the Court, see [docs/court_guide.md → Confucian Foundations](court_guide.md).
 
 ---
 
