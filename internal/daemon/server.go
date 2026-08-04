@@ -159,7 +159,7 @@ func serveOne(ctx context.Context, conn net.Conn, shared *Shared, connID uint64)
 				return nil, wire.NewError(0, err.Error())
 			}
 			repoInfo := repo.RepoInfo{ProjectRoot: p.ProjectRoot, WorktreePath: p.WorktreePath, Branch: p.Branch, Slug: p.Project}
-			ct, runner, err = createCourt(ctx, shared, connID, p, projectCfg, repoInfo, shared.NewSessionStore)
+			ct, runner, err = createCourt(ctx, shared, connID, p, projectCfg, repoInfo, shared.NewSessionStore, p.IsolatedHost)
 			if err != nil {
 				return nil, wire.NewError(0, err.Error())
 			}

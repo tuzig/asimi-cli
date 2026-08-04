@@ -125,6 +125,7 @@ func buildSetContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 		Branch:         branch,
 		APIKeys:        collectAPIKeys(),
 		CodexAccountID: getCodexAccountID(),
+		IsolatedHost:   cli.IsolatedHost,
 	}
 }
 

@@ -432,6 +432,7 @@ func TestCreateCourtSetsRepoInfoBeforeStart(t *testing.T) {
 		projectCfg,
 		repoInfo,
 		nil,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("createCourt: %v", err)

@@ -19,7 +19,7 @@ type SessionStoreFactory func(sdb *storage.DB, repoInfo repo.RepoInfo, maxSessio
 
 // createCourt creates a runner and Court for a new daemon connection.
 // It loads the project config, builds the runner (PodmanRunner or
-// HostRunner depending on isolated-host mode), creates the Court,
+// HostRunner depending on isolatedHost), creates the Court,
 // wires the session persister (using config.DefaultSessionConfig for
 // defaults), and starts it.
 func createCourt(
@@ -30,9 +30,10 @@ func createCourt(
 	projectCfg *config.Config,
 	repoInfo repo.RepoInfo,
 	newSessionStore SessionStoreFactory,
+	isolatedHost bool,
 ) (*court.Court, runners.Runner, error) {
 	var runner runners.Runner
-	if shared.IsolatedHost {
+	if isolatedHost {
 		runner = runners.NewHostRunner(connID, repoInfo.ProjectRoot)
 	} else {
 		runner = runners.NewPodmanRunner(&projectCfg.Sandbox, repoInfo, connID, nil)
@@ -47,7 +48,7 @@ func createCourt(
 	} else if repoInfo.Slug != "" {
 		courtCfg.Project = repoInfo.Slug
 	}
-	courtCfg.IsolatedHost = shared.IsolatedHost
+	courtCfg.IsolatedHost = isolatedHost
 
 	ct := court.NewCourt(shared.DB, courtCfg, runner, shared.Logger)
 	ct.SetRepoInfo(repoInfo)

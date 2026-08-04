@@ -132,6 +132,7 @@ func newDaemonConn(ctx context.Context, socketPath string) (*rpc.Conn, error) {
 		Branch:         repoInfo.Branch,
 		APIKeys:        collectAPIKeys(),
 		CodexAccountID: getCodexAccountID(),
+		IsolatedHost:   cli.IsolatedHost,
 	}); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("handshake failed: %w", err)

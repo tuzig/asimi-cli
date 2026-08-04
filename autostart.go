@@ -137,9 +137,6 @@ func spawnDaemonAndWait(ctx context.Context, socketPath string) error {
 	if cli.Debug {
 		args = append(args, "--debug")
 	}
-	if cli.IsolatedHost {
-		args = append(args, "--isolated-host")
-	}
 	cmd := exec.CommandContext(ctx, selfPath, args...)
 	cmd.Env = append(os.Environ(), "ASIMI_READY_FD=3")
 	cmd.ExtraFiles = []*os.File{readW}
@@ -208,6 +205,7 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 		Branch:         repoInfo.Branch,
 		APIKeys:        collectAPIKeys(),
 		CodexAccountID: getCodexAccountID(),
+		IsolatedHost:   cli.IsolatedHost,
 	}); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("installDaemonAutostart: handshake failed: %w", err)

@@ -15,5 +15,4 @@ type Shared struct {
 	Config          *config.Config
 	Logger          *slog.Logger
 	NewSessionStore SessionStoreFactory
-	IsolatedHost    bool
 }
