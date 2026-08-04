@@ -153,6 +153,16 @@ func serveOne(ctx context.Context, conn net.Conn, shared *Shared, connID uint64)
 		if _, err := os.Stat(p.ProjectRoot); err != nil {
 			return nil, wire.NewError(0, "invalid project_root")
 		}
+
+		// Verify the client-supplied Username against the peer credential
+		// from the Unix socket. This prevents any process with socket
+		// access from impersonating another user.
+		if verified := unixPeerUsername(conn); verified != "" && verified != p.Username {
+			msg := fmt.Sprintf("username mismatch: client claims %q, socket peer is %q", p.Username, verified)
+			slog.Info(msg)
+			return nil, wire.NewError(0, msg)
+		}
+
 		if ct == nil {
 			projectCfg, err := config.LoadProjectConfig(p.ProjectRoot, false)
 			if err != nil {

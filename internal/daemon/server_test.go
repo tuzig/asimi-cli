@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,6 +19,17 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
+
+// testUsername returns the current OS user's username for daemon tests.
+// This matches what the server's unixPeerUsername will verify against.
+// Panics on failure because a silent fallback would mask bugs in tests.
+func testUsername() string {
+	u, err := user.Current()
+	if err != nil {
+		panic("testUsername: user.Current() failed: " + err.Error())
+	}
+	return u.Username
+}
 
 // initTestDB creates a temporary SQLite database for daemon tests.
 func initTestDB(t *testing.T) (*gorm.DB, *storage.DB, func()) {
@@ -90,7 +102,7 @@ func newTestShared(t *testing.T) (*Shared, func()) {
 	gdb, sdb, cleanup := initTestDB(t)
 	cfg := &config.Config{
 		Court: config.CourtConfig{
-			Username: "test-user",
+			Username: testUsername(),
 			Project:  "test-project",
 		},
 	}
@@ -144,7 +156,7 @@ func dialServeOne(t *testing.T, shared *Shared, projectRoot string) (*rpc.Conn, 
 	defer handshakeCancel()
 	if err := client.SetContext(handshakeCtx, types.SetContextParams{
 		Project:     "test-project",
-		Username:    "test-user",
+		Username:    testUsername(),
 		ProjectRoot: projectRoot,
 	}); err != nil {
 		cancel()
@@ -321,7 +333,7 @@ func TestDaemonInvalidProjectRoot(t *testing.T) {
 	defer handshakeCancel()
 	err = client.SetContext(handshakeCtx, types.SetContextParams{
 		Project:     "test-project",
-		Username:    "test-user",
+		Username:    testUsername(),
 		ProjectRoot: "/no/such/directory/ever",
 	})
 	// The server should return an error for an invalid project_root.
@@ -376,7 +388,7 @@ func TestDaemonEmptyProjectRoot(t *testing.T) {
 	defer handshakeCancel()
 	err = client.SetContext(handshakeCtx, types.SetContextParams{
 		Project:     "test-project",
-		Username:    "test-user",
+		Username:    testUsername(),
 		ProjectRoot: "",
 	})
 	// The server should return an error for empty project_root.
@@ -426,7 +438,7 @@ func TestCreateCourtSetsRepoInfoBeforeStart(t *testing.T) {
 		1,
 		types.SetContextParams{
 			Project:     "test-project",
-			Username:    "test-user",
+			Username:    testUsername(),
 			ProjectRoot: projectRoot,
 		},
 		projectCfg,
@@ -506,7 +518,7 @@ func dialTwoClients(t *testing.T, shared *Shared, projectRootA, projectRootB str
 		defer handshakeCancel()
 		if err := client.SetContext(handshakeCtx, types.SetContextParams{
 			Project:     "test-project",
-			Username:    "test-user",
+			Username:    testUsername(),
 			ProjectRoot: projectRoot,
 		}); err != nil {
 			t.Fatalf("SetContext handshake: %v", err)
