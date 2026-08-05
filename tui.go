@@ -2392,19 +2392,11 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case court.EventNotificationMsg:
-		//TODO: events should be displayed as toast and not as a chat message
 		chat := m.tabs.ChatByTab(msg.ChannelID)
-		chat.AddToRawHistory("EVENT_NOTIFICATION",
-			fmt.Sprintf("Event %s for edict %d: %s", msg.EventType, msg.EdictKey.ID, msg.Message))
-
 		var cmds []tea.Cmd
 
-		// Use appropriate icon based on event type
-		icon := "📋"   // Default
-		message := "" // What about msg.Message ?
 		switch msg.EventType {
 		case storage.EventCourtStarted:
-			icon = courtPrefix
 			projectDir := ""
 			if m.repoInfo != nil {
 				projectDir = m.repoInfo.ProjectRoot
@@ -2416,10 +2408,10 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			initTabGreetings(&m.tabs, ms)
 			return m, nil
 		case storage.EventCourtReady:
-			icon = courtPrefix
-			message = "READY at " + time.Now().Format("2 January, 3:04 PM MST")
+			text := fmt.Sprintf("%sREADY at %s", courtPrefix, time.Now().Format("2 January, 3:04 PM MST"))
+			chat.AddToRawHistory("CONTEXT", text)
+			m.commandLine.AddToast(text, "info", 3*time.Second)
 		case storage.EventEdictCreated:
-			icon = "📜"
 			intent, _ := msg.Payload["intent"].(string)
 			id := msg.EdictKey.ID
 			if intent == "" {
@@ -2430,15 +2422,17 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(intent) > 60 {
 				intent = intent[:57] + "..."
 			}
-			message = fmt.Sprintf("Edict %d Created:\n    %s", id, intent)
+			text := fmt.Sprintf("%sEdict %d Created: %s", "📜 ", id, intent)
+			chat.AddToRawHistory("CONTEXT", text)
+			m.commandLine.AddToast(text, "info", 3*time.Second)
 			// Prompt the ruler to enact swift-strike
 			m.pendingRitualEnact = &pendingRitualEnact{edictID: id, intent: intent}
 			cmds = append(cmds, m.enterYesNoOrAuto(fmt.Sprintf("Enact swift-strike for edict %d?", id), true))
 		case storage.EventEdictSealed:
-			icon = "✅"
-			message = fmt.Sprintf("Edict %d sealed and ascended to Heaven", msg.EdictKey.ID)
+			text := fmt.Sprintf("✅ Edict %d sealed and ascended to Heaven", msg.EdictKey.ID)
+			chat.AddToRawHistory("CONTEXT", text)
+			m.commandLine.AddToast(text, "success", 3*time.Second)
 		case storage.EventSealGranted:
-			icon = sealPrefix
 			minister, _ := msg.Payload["minister_id"].(string)
 			if minister == "" {
 				minister = "Unknown"
@@ -2452,14 +2446,16 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				)
 				return m, nil
 			}
-			message = fmt.Sprintf("Minister %s sealed edict %d", minister, msg.EdictKey.ID)
+			text := fmt.Sprintf("%sMinister %s sealed edict %d", sealPrefix, minister, msg.EdictKey.ID)
 			// Re-query seals to show fresh seal chain with the minister's seal
 			updatedSeals, err := m.court.GetEdictSeals(msg.EdictKey)
 			if err != nil {
-				message += fmt.Sprintf("\n  (failed to refresh seal chain: %v)", err)
+				text += fmt.Sprintf("\n  (failed to refresh seal chain: %v)", err)
 			} else {
-				message += fmt.Sprintf("\n  %s", renderSealChain(updatedSeals, 60))
+				text += fmt.Sprintf("\n  %s", renderSealChain(updatedSeals, 60))
 			}
+			chat.AddToRawHistory("CONTEXT", text)
+			m.commandLine.AddToast(text, "success", 3*time.Second)
 		case storage.EventRitualCompleted:
 			ritualName, _ := msg.Payload["ritual"].(string)
 			duration, _ := msg.Payload["duration"].(string)
@@ -2469,32 +2465,34 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 			return m, nil
 		case storage.EventManifestCommitted:
-			icon = "🔨"
-			message = fmt.Sprintf("Forge committed manifest for edict %d", msg.EdictKey.ID)
+			text := fmt.Sprintf("🔨 Forge committed manifest for edict %d", msg.EdictKey.ID)
+			chat.AddToRawHistory("CONTEXT", text)
+			m.commandLine.AddToast(text, "info", 3*time.Second)
 		case storage.EventZhengmingNeeded:
-			icon = "❓"
 			summary, _ := msg.Payload["summary"].(string)
 			if summary == "" {
 				summary = "clarification needed"
 			}
-			message = fmt.Sprintf("Zhengming requested for edict %d: %s", msg.EdictKey.ID, summary)
+			chat.AddToRawHistory("EVENT_NOTIFICATION",
+				fmt.Sprintf("Zhengming requested for edict %d: %s", msg.EdictKey.ID, summary))
+			chat.AddMessage(fmt.Sprintf("❓ Zhengming requested for edict %d: %s", msg.EdictKey.ID, summary))
 		case storage.EventZhengmingAnswered:
-			icon = checkPrefix
 			if msg.EdictKey.ID == 0 {
-				message = "Zhengming answered for the court"
+				text := checkPrefix + " Zhengming answered for the court"
+				chat.AddToRawHistory("CONTEXT", text)
+				m.commandLine.AddToast(text, "info", 3*time.Second)
 			} else {
 				answer, _ := msg.Payload["answer"].(string)
-				message = fmt.Sprintf("Answered for e%d: %s", msg.EdictKey.ID, answer)
+				text := fmt.Sprintf("%sAnswered for e%d: %s", checkPrefix, msg.EdictKey.ID, answer)
+				chat.AddToRawHistory("CONTEXT", text)
+				m.commandLine.AddToast(text, "info", 3*time.Second)
 			}
 		case storage.EventEdictCancelled:
-			icon = "⛔"
-			message = fmt.Sprintf("Edict %d cancelled", msg.EdictKey.ID)
+			text := fmt.Sprintf("⛔ Edict %d cancelled", msg.EdictKey.ID)
+			chat.AddToRawHistory("CONTEXT", text)
+			m.commandLine.AddToast(text, "info", 3*time.Second)
 		}
 
-		if message != "" {
-			// TODO: refactor to the bubbletea way and return a function with the next line
-			chat.AddMessage(fmt.Sprintf("%s %s", icon, message))
-		}
 		if len(cmds) > 0 {
 			return m, tea.Batch(cmds...)
 		}
