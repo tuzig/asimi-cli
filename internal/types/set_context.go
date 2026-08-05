@@ -13,4 +13,5 @@ type SetContextParams struct {
 	APIKeys        map[string]string `msgpack:"api_keys,omitempty"`
 	CodexAccountID string            `msgpack:"codex_account_id,omitempty"`
 	IsolatedHost   bool              `msgpack:"isolated_host"`
+	AtifAgentName  string            `msgpack:"atif_agent_name,omitempty"`
 }

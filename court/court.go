@@ -644,10 +644,11 @@ func (s *Court) SetContext(ctx context.Context, params types.SetContextParams) e
 	}
 
 	sessionCfg := &SessionConfig{
-		LLM:        projectCfg.LLM,
-		Sandbox:    projectCfg.Sandbox,
-		AgentsFile: projectCfg.Session.AgentsFile,
-		WorkingDir: params.ProjectRoot,
+		LLM:           projectCfg.LLM,
+		Sandbox:       projectCfg.Sandbox,
+		AgentsFile:    projectCfg.Session.AgentsFile,
+		WorkingDir:    params.ProjectRoot,
+		AtifAgentName: params.AtifAgentName,
 	}
 
 	s.ConfigureModel(bifrostClient, sessionCfg, repoInfo)

@@ -117,6 +117,9 @@ func buildSetContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 	if project == "" && ri != nil {
 		project = ri.Slug
 	}
+	// Determine agent name for ATIF
+	atifAgentName := atifAgentName()
+
 	return types.SetContextParams{
 		Project:        project,
 		Username:       username,
@@ -126,6 +129,7 @@ func buildSetContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 		APIKeys:        collectAPIKeys(),
 		CodexAccountID: getCodexAccountID(),
 		IsolatedHost:   cli.IsolatedHost,
+		AtifAgentName:  atifAgentName,
 	}
 }
 
