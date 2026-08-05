@@ -8,7 +8,8 @@ COMMAND-LINE mode, then type the command and press Enter.
   :edicts            - Manage edicts (read, enact, seal, resume, cancel)
   :continue         - Resume a paused ritual on the current tab
   :abort            - Abort a paused ritual on the current tab
-  :quit             - Quit Asimi (also saves session)
+  :quit / :q       - Close current tab (quit app if last tab)
+  :qa / :quitall    - Quit the application (all tabs)
   :update           - Check for and install updates
 
 ## Information

@@ -43,7 +43,8 @@
   :help [topic]    - Show help
   :new             - New session
   :resume          - Resume session
-  :quit            - Quit
+  :quit / :q     - Close current tab (quit app if last tab)
+  :qa / :quitall - Quit the application (all tabs)
   :update          - Check for updates
   :models          - Login and select the model 
   :login           - Authenticate with a provider
