@@ -128,6 +128,11 @@ func TestTabManager_RenderWelcome(t *testing.T) {
 	assert.NotEmpty(t, view)
 	assert.Contains(t, view, "Asimi")
 	assert.Contains(t, view, "INSERT")
+	// The welcome screen advertises :qa to quit all tabs (e744).
+	assert.Contains(t, view, ":qa")
+	assert.Contains(t, view, "quit all tabs")
+	// The tutorial hint must be advertised now that :help tutorial works.
+	assert.Contains(t, view, ":help tutorial")
 }
 
 func TestTabManager_RenderWelcome_UpdateAvailable(t *testing.T) {
