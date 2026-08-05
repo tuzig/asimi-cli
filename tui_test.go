@@ -3769,14 +3769,10 @@ func TestEventZhengmingAnswered_ShowsAnswerInChat(t *testing.T) {
 	updated, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
-	chat := updated.tabs.ChatByTab("secretary")
-	var found bool
-	for _, m := range chat.Messages {
-		if strings.Contains(m.Content, "Answered for e42") && strings.Contains(m.Content, "yes, proceed with the plan") {
-			found = true
-		}
-	}
-	assert.True(t, found, "expected chat message containing the answer for edict 42")
+	// Toast should contain the answer
+	require.NotEmpty(t, updated.commandLine.toasts, "expected a toast for zhengming answer")
+	assert.Contains(t, updated.commandLine.toasts[0].Message, "Answered for e42")
+	assert.Contains(t, updated.commandLine.toasts[0].Message, "yes, proceed with the plan")
 }
 
 func TestEventEdictCreated_EntersYesNoMode(t *testing.T) {
@@ -4687,20 +4683,9 @@ func TestEventSealGranted_NonRulerAddsChatMessage(t *testing.T) {
 	updated, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
-	// No toast for non-ruler seals
-	assert.Empty(t, updated.commandLine.toasts, "no toast expected for non-ruler seal")
-
-	// Chat should contain the seal message with seal chain
-	chat := updated.tabs.ChatByTab("secretary")
-	require.NotEmpty(t, chat.Messages, "expected a chat message for judge seal")
-	found := false
-	for _, m := range chat.Messages {
-		if strings.Contains(m.Content, "Minister judge sealed edict 7") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "expected chat message about judge sealing edict 7")
+	// Toast should contain the seal message for minister seals
+	require.NotEmpty(t, updated.commandLine.toasts, "expected a toast for judge seal")
+	assert.Contains(t, updated.commandLine.toasts[0].Message, "Minister judge sealed edict 7")
 }
 
 func TestEventRitualCompleted_ShowsToast(t *testing.T) {
