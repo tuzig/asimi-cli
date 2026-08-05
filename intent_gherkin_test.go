@@ -11,6 +11,7 @@ func TestIntentGherkin(t *testing.T) {
 		Name: "intent-gherkin",
 		ScenarioInitializer: func(ctx *godog.ScenarioContext) {
 			registerEdictChatStepDefs(ctx, t)
+			registerContinueStepDefs(ctx, t)
 		},
 		Options: &godog.Options{
 			Format:   "pretty",

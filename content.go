@@ -126,6 +126,7 @@ func (tm *TabManager) DismissWelcome() {
 
 // renderWelcome renders the welcome screen shown before the user starts interacting.
 func (tm *TabManager) renderWelcome(width, height int) string {
+
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(globalTheme.PromptBorder).
@@ -142,38 +143,37 @@ func (tm *TabManager) renderWelcome(width, height int) string {
 	versionDisplay := versionStyle.Render("Version: " + utils.AsimiVersion)
 
 	commands := []string{
-		"▶ Mode base UI, starting in INSERT",
-		"▶ `ESC` to switch modes",
-		"▶ `:help tutorial` for the tut",
-		"▶ `:qa` to quit all tabs",
-		"▶ `CTRL-B` for SCROLL mode",
+		"▶ vi-like UI",
+		"▶ Starts in INSERT mode (press ESC for NORMAL)",
+		"▶ Prompt using the royal 'We'",
+		"▶ `:qa` to quit all tabs and exit",
 		"▶ `CTRL-C` to stop the model, twice to exit",
+		"▶ `ESC` to switch modes",
+		"▶ `:help tutorial` for the tutorial",
+		"▶ `CTRL-B/F` to scroll the chat",
 		"▶ `:!uname` to run uname in the sandbox's shell",
-		"⇒ `TAB` to switch ministers",
+		"⇒ `TAB` to switch tabs",
 	}
 
 	commandStyle := lipgloss.NewStyle().
 		Foreground(globalTheme.ChatBorder).
 		PaddingLeft(2)
 
+	subStyle := lipgloss.NewStyle().
+		Foreground(globalTheme.TextColor).
+		Align(lipgloss.Center).
+		Width(width)
+
 	var commandViews []string
 	for _, command := range commands {
 		commandViews = append(commandViews, commandStyle.Render(command))
 	}
 
-	var contentParts []string
+	contentParts := []string{
+		subStyle.Render("🎂  Happy 50th Birthday to visual mode  🎂")}
+
 	contentParts = append(contentParts, lipgloss.JoinVertical(
 		lipgloss.Left, commandViews...))
-
-	footerStyle := lipgloss.NewStyle().
-		Foreground(globalTheme.TextColor).
-		Align(lipgloss.Center).
-		Width(width)
-
-	contentParts = append(contentParts, lipgloss.JoinVertical(
-		lipgloss.Left, footerStyle.Render("👑 Use the royal `We` 👑"),
-		// the next line is here on purposes. In 2027 we'll change it
-		footerStyle.Render("🎂  Happy 50th Birthday to visual mode  🎂")))
 
 	if tm.getUpdateAvail != nil && tm.getUpdateAvail() {
 		updateStyle := lipgloss.NewStyle().

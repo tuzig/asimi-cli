@@ -26,6 +26,7 @@ import (
 	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/courtapi"
+	"github.com/afittestide/asimi/internal/ministers"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/afittestide/asimi/internal/utils"
@@ -5678,21 +5679,47 @@ func TestHandleContinueCommand_ResumesPausedRitual(t *testing.T) {
 	assert.False(t, tab.ChatMode, "ChatMode should be cleared after :continue")
 }
 
-func TestHandleContinueCommand_WarnsWhenNotPaused(t *testing.T) {
-	mock := &mockCourtClient{}
+func TestHandleContinueCommand_EnactsSwiftStrikeWhenNotPaused(t *testing.T) {
+	mock := &mockCourtClient{
+		getEdictFn: func(edictID uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: edictID, Intent: "Test"}, nil
+		},
+		sealsFn: func() ([]storage.Seal, error) {
+			return nil, nil
+		},
+	}
 	model := newTestModel(t)
 	model.court = mock
 	model.tabs.DismissWelcome()
 
 	// Add a ritual tab but NOT in chat mode (not paused)
 	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	tab.EdictID = 647
 	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
 
 	cmd := handleContinueCommand(model, []string{})
-	require.Nil(t, cmd)
+	require.NotNil(t, cmd, "should return a tea.Cmd to enact a fresh ritual")
 
 	// ResumeRitual should NOT have been called
 	assert.Empty(t, mock.resumedChannels, "ResumeRitual should not be called when ritual is not paused")
+
+	// Execute the cmd to verify it publishes the ritual_enacted event
+	msg := cmd()
+	require.Nil(t, msg, "enactRitualForEdict should return nil message")
+
+	// Verify EventRitualEnacted was published
+	require.Len(t, mock.publishedEvents, 1, "should publish one event")
+	assert.Equal(t, storage.EventRitualEnacted, mock.publishedEvents[0].eventType)
+
+	// Verify the payload contains the correct ritual name and edict ID
+	ritualName, ok := mock.publishedEvents[0].payload["ritual_name"]
+	require.True(t, ok, "payload should have ritual_name")
+	assert.Equal(t, "swift-strike", ritualName)
+
+	edictID, ok := mock.publishedEvents[0].payload["edict_id"]
+	require.True(t, ok, "payload should have edict_id")
+	assert.Equal(t, uint(647), edictID)
 }
 
 func TestHandleContinueCommand_WarnsOnNonRitualTab(t *testing.T) {
@@ -5722,6 +5749,79 @@ func TestHandleContinueCommand_NoCourt(t *testing.T) {
 	// Should not panic when court is nil
 	cmd := handleContinueCommand(model, []string{})
 	require.Nil(t, cmd)
+}
+
+func TestHandleContinueCommand_SealedEdict(t *testing.T) {
+	mock := &mockCourtClient{
+		getEdictFn: func(edictID uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: edictID, Intent: "Test"}, nil
+		},
+		sealsFn: func() ([]storage.Seal, error) {
+			return []storage.Seal{
+				{MinisterID: ministers.Ruler, SealedAt: time.Now()},
+			}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab (not paused) for edict 647
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	tab := model.tabs.TabByTarget("e647")
+	tab.EdictID = 647
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	cmd := handleContinueCommand(model, []string{})
+	require.Nil(t, cmd, "should return nil, not enact a ritual for a sealed edict")
+
+	// No ritual event should be published
+	assert.Empty(t, mock.publishedEvents, "should not publish event for sealed edict")
+}
+
+func TestHandleContinueCommand_CancelledEdict(t *testing.T) {
+	now := time.Now()
+	mock := &mockCourtClient{
+		getEdictFn: func(edictID uint) (*storage.Edict, error) {
+			return &storage.Edict{ID: edictID, Intent: "Test", CancelledAt: &now}, nil
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab (not paused) for edict 647
+	model.tabs.Add("Ritual:e647", "ritual", "e647")
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	cmd := handleContinueCommand(model, []string{})
+	require.Nil(t, cmd, "should return nil, not enact a ritual for a cancelled edict")
+
+	// No ritual event should be published
+	assert.Empty(t, mock.publishedEvents, "should not publish event for cancelled edict")
+}
+
+func TestHandleContinueCommand_NonExistentEdict(t *testing.T) {
+	mock := &mockCourtClient{
+		getEdictFn: func(edictID uint) (*storage.Edict, error) {
+			return nil, fmt.Errorf("edict not found")
+		},
+	}
+	model := newTestModel(t)
+	model.court = mock
+	model.tabs.DismissWelcome()
+
+	// Add a ritual tab (not paused) for edict 999
+	model.tabs.Add("Ritual:e999", "ritual", "e999")
+	tab := model.tabs.TabByTarget("e999")
+	tab.EdictID = 999
+	model.tabs.SwitchTo(len(model.tabs.tabs) - 1)
+
+	cmd := handleContinueCommand(model, []string{})
+	require.Nil(t, cmd, "should return nil for non-existent edict")
+
+	// No ritual event should be published
+	assert.Empty(t, mock.publishedEvents, "should not publish event for non-existent edict")
 }
 
 func TestHandleAbortCommand_AbortsPausedRitual(t *testing.T) {

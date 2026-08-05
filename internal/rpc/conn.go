@@ -57,6 +57,7 @@ type Conn struct {
 	// pending holds in-flight outbound requests awaiting a response.
 	pending sync.Map // uint64 → chan *wire.Frame
 
+	mu             sync.RWMutex
 	handlers       map[string]Handler
 	notifyHandlers map[string]NotifyHandler
 
@@ -103,11 +104,19 @@ func New(rw io.ReadWriteCloser, opts Options) *Conn {
 	}
 }
 
-// Handle registers a request handler for method m. Must be called before Serve.
-func (c *Conn) Handle(m string, h Handler) { c.handlers[m] = h }
+// Handle registers a request handler for method m. Safe to call after Serve.
+func (c *Conn) Handle(m string, h Handler) {
+	c.mu.Lock()
+	c.handlers[m] = h
+	c.mu.Unlock()
+}
 
-// HandleNotify registers a notification handler for method m.
-func (c *Conn) HandleNotify(m string, h NotifyHandler) { c.notifyHandlers[m] = h }
+// HandleNotify registers a notification handler for method m. Safe to call after Serve.
+func (c *Conn) HandleNotify(m string, h NotifyHandler) {
+	c.mu.Lock()
+	c.notifyHandlers[m] = h
+	c.mu.Unlock()
+}
 
 // Serve runs the reader, writer, and notification-dispatch goroutines
 // until the Conn closes. Blocks the caller; typically invoked in its
@@ -145,7 +154,9 @@ func (c *Conn) Serve() error {
 				if !ok {
 					return
 				}
+				c.mu.RLock()
 				h, ok := c.notifyHandlers[f.M]
+				c.mu.RUnlock()
 				if !ok {
 					c.logger.Debug("rpc: no handler for notification", "method", f.M)
 					continue
@@ -201,7 +212,9 @@ func (c *Conn) dispatch(f *wire.Frame) {
 			c.logger.Warn("rpc: orphan response", "id", f.ID)
 		}
 	case wire.FrameRequest:
+		c.mu.RLock()
 		h, ok := c.handlers[f.M]
+		c.mu.RUnlock()
 		if !ok {
 			c.sendResponse(f.ID, nil, wire.NewError(wire.CodeUnknownMethod, "unknown method: "+f.M))
 			return
