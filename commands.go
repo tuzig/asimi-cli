@@ -66,7 +66,10 @@ func NewCommandRegistry() CommandRegistry {
 	// Register built-in commands (stored without prefix)
 	registry.RegisterCommand("help", "Show help (usage: :help [topic])", handleHelpCommand)
 	registry.RegisterCommand("new", "Start a new session", handleNewSessionCommand)
-	registry.RegisterCommand("quit", "Quit the application", handleQuitCommand)
+	registry.RegisterCommand("quit", "Close current tab, or quit if last tab", handleQuitCommand)
+	registry.RegisterCommand("q", "Close current tab, or quit if last tab", handleQuitCommand)
+	registry.RegisterCommand("qa", "Quit the application (all tabs)", handleQuitAllCommand)
+	registry.RegisterCommand("quitall", "Quit the application (all tabs)", handleQuitAllCommand)
 	registry.RegisterCommand("models", "Select AI model", handleModelsCommand)
 	registry.RegisterCommand("context", "Show context usage details", handleContextCommand)
 	registry.RegisterCommand("resume", "Resume a previous session", handleResumeCommand)
@@ -211,9 +214,24 @@ func handleNewSessionCommand(model *TUIModel, args []string) tea.Cmd {
 }
 
 func handleQuitCommand(model *TUIModel, args []string) tea.Cmd {
-	// Shutdown handles saving the session and waiting for completion
+	// If multiple tabs exist, close the current tab (like Vim's :quit)
+	if model.tabs.TabCount() > 1 {
+		err := model.tabs.Close()
+		if err != nil {
+			model.commandLine.AddToast(err.Error(), "error", time.Second*3)
+			return nil
+		}
+		model.commandLine.AddToast("Tab closed", "success", time.Second*2)
+		return nil
+	}
+	// Single tab: quit the application
 	model.shutdown()
-	// Quit the application
+	return tea.Quit
+}
+
+func handleQuitAllCommand(model *TUIModel, args []string) tea.Cmd {
+	// Always quit the application, regardless of tab count
+	model.shutdown()
 	return tea.Quit
 }
 

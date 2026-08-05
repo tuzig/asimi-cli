@@ -8,6 +8,7 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/storage"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,24 +32,38 @@ func TestFindCommand(t *testing.T) {
 			expectMatches: 1,
 		},
 		{
+			name:            "partial match single - qu",
+			input:           ":qu",
+			expectFound:     false,
+			expectMatches:   2, // quit, quitall
+			expectAmbiguous: true,
+		},
+		{
+			name:            "partial match single - qui",
+			input:           ":qui",
+			expectFound:     false,
+			expectMatches:   2, // quit, quitall
+			expectAmbiguous: true,
+		},
+		{
 			name:          "partial match single - q",
 			input:         ":q",
 			expectFound:   true,
-			expectCommand: "quit",
+			expectCommand: "q",
 			expectMatches: 1,
 		},
 		{
-			name:          "partial match single - qu",
-			input:         ":qu",
+			name:          "exact match qa",
+			input:         ":qa",
 			expectFound:   true,
-			expectCommand: "quit",
+			expectCommand: "qa",
 			expectMatches: 1,
 		},
 		{
-			name:          "partial match single - qui",
-			input:         ":qui",
+			name:          "exact match quitall",
+			input:         ":quitall",
 			expectFound:   true,
-			expectCommand: "quit",
+			expectCommand: "quitall",
 			expectMatches: 1,
 		},
 		{
@@ -145,6 +160,117 @@ func TestNormalizeCommandName(t *testing.T) {
 			require.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// TestHandleQuitCommand_SingleTabQuits verifies that :quit on the last tab
+// shuts down and quits the application (Vim semantics).
+func TestHandleQuitCommand_SingleTabQuits(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+	// Reduce to a single tab to simulate the "last tab" case.
+	model.tabs.tabs = model.tabs.tabs[:1]
+	model.tabs.activeTab = 0
+	require.Equal(t, 1, model.tabs.TabCount())
+
+	cmd := handleQuitCommand(model, []string{})
+
+	require.NotNil(t, cmd, "quit on the last tab must return a tea.Cmd")
+	msg := cmd()
+	_, isQuit := msg.(tea.QuitMsg)
+	require.True(t, isQuit, "expected tea.QuitMsg, got %T", msg)
+	// The tab must not have been closed by :quit on the last tab.
+	require.Equal(t, 1, model.tabs.TabCount(), "single-tab :quit must not close the tab")
+}
+
+// TestHandleQuitCommand_MultiTabClosesTab verifies that :quit with multiple
+// tabs open closes the current tab (Vim semantics) instead of quitting.
+func TestHandleQuitCommand_MultiTabClosesTab(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+	initialTabs := model.tabs.TabCount()
+	require.GreaterOrEqual(t, initialTabs, 1)
+
+	model.tabs.Add("chat2", TabType("chat"), "target2")
+	require.Equal(t, initialTabs+1, model.tabs.TabCount())
+	// The new tab becomes active (Add switches to it).
+	require.Equal(t, "target2", model.tabs.ActiveTab().Target)
+
+	cmd := handleQuitCommand(model, []string{})
+
+	// Closing a tab is synchronous: no tea.Cmd is returned.
+	require.Nil(t, cmd, "multi-tab :quit should return no tea.Cmd")
+	require.Equal(t, initialTabs, model.tabs.TabCount(), "multi-tab :quit must close the active tab")
+	// Close() switches to the adjacent tab before removing the closed one.
+	assert.Equal(t, "chancellor", model.tabs.ActiveTab().Target)
+
+	// A success toast must have been shown.
+	toasts := model.commandLine.ActiveToasts()
+	require.Len(t, toasts, 1)
+	assert.Equal(t, "Tab closed", toasts[0].Message)
+}
+
+// TestHandleQuitCommand_MultiTabStreamingShowsError verifies that :quit refuses
+// to close a streaming tab and surfaces the error via a toast, leaving the tab open.
+func TestHandleQuitCommand_MultiTabStreamingShowsError(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+	initialTabs := model.tabs.TabCount()
+
+	model.tabs.Add("chat2", TabType("chat"), "target2")
+	model.tabs.ActiveTab().Streaming = true
+
+	cmd := handleQuitCommand(model, []string{})
+
+	require.Nil(t, cmd, "refusing to close a streaming tab returns no tea.Cmd")
+	require.Equal(t, initialTabs+1, model.tabs.TabCount(), "streaming tab must not be closed")
+
+	toasts := model.commandLine.ActiveToasts()
+	require.Len(t, toasts, 1)
+	assert.Contains(t, toasts[0].Message, "cannot close tab while streaming")
+	assert.Equal(t, "error", toasts[0].Type)
+}
+
+// TestHandleQuitAllCommand_QuitsRegardlessOfTabs verifies that :qa and :quitall
+// always quit the application even when multiple tabs are open.
+func TestHandleQuitAllCommand_QuitsRegardlessOfTabs(t *testing.T) {
+	model := newTestModel(t)
+	model.tabs.DismissWelcome()
+	initialTabs := model.tabs.TabCount()
+
+	model.tabs.Add("chat2", TabType("chat"), "target2")
+	require.Equal(t, initialTabs+1, model.tabs.TabCount())
+
+	cmd := handleQuitAllCommand(model, []string{})
+
+	require.NotNil(t, cmd, "quitall must return a tea.Cmd")
+	msg := cmd()
+	_, isQuit := msg.(tea.QuitMsg)
+	require.True(t, isQuit, "expected tea.QuitMsg, got %T", msg)
+	// The tabs are left untouched: :qa quits the whole application.
+	require.Equal(t, initialTabs+1, model.tabs.TabCount(), ":qa must not close individual tabs")
+}
+
+// TestQuitCommandAliasesDispatch verifies that :q, :qa and :quitall map to the
+// intended handlers so the behavior is reachable through the registered commands.
+func TestQuitCommandAliasesDispatch(t *testing.T) {
+	registry := NewCommandRegistry()
+
+	quitCmd, ok := registry.GetCommand("q")
+	require.True(t, ok)
+	require.Equal(t, "q", quitCmd.Name)
+
+	qaCmd, ok := registry.GetCommand("qa")
+	require.True(t, ok)
+	require.Equal(t, "qa", qaCmd.Name)
+
+	quitAllCmd, ok := registry.GetCommand("quitall")
+	require.True(t, ok)
+	require.Equal(t, "quitall", quitAllCmd.Name)
+
+	// All three must still resolve to a registered handler.
+	require.NotNil(t, quitCmd.Handler)
+	require.NotNil(t, qaCmd.Handler)
+	require.NotNil(t, quitAllCmd.Handler)
 }
 
 func TestHandleInitCommand(t *testing.T) {
