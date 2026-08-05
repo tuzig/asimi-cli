@@ -5,11 +5,14 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.1] - 2026-08-05
 
 ### Added
 
 - **Transient scratchpad** — court history (precedents, manifests, verdicts, seals, lings) is now loaded before each ritual step and injected into the next user message, then cleared. This makes court history visible to the minister on every turn, including during tool calls, without baking it into the immutable system prompt (e723)
+- **Vi-like quit commands** — `:quit` now closes the current tab (or quits the application if it's the last tab). `:qa` and `:quitall` always quit the application, matching Vim conventions (e744)
+- **Messages as toasts** — transient informational messages are now displayed as toast notifications instead of inline messages
+- **Stale container cleanup** — podman container creation now handles 409 conflicts by removing stale containers and retrying, preventing stuck states after ungraceful shutdowns (e734)
 
 ### Fixed
 
@@ -17,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Edict session resume** — fixed pending prompt display when restoring a session on a ritual tab, ensuring the Ruler's input is visible before the AI response arrives (e729)
 - **Consulted minister output routing** — `consult_minister` now routes streaming output to the correct tab by using a channelID from context, rather than defaulting to the caller's minister ID (e719)
 - **English follow-up text** — fixed English language follow-up text in prompts (#161)
+- **Continue on non-paused ritual** — `:continue` now enacts a fresh swift-strike ritual when no ritual is paused, instead of showing "Ritual is not paused" (e740)
+- **Client identity validation** — daemon now validates the client identity against Unix socket peer credentials (SO_PEERCRED), preventing impersonation by other processes with socket access (e739)
+- **Isolated host per-connection** — `--isolated-host` is now per-connection rather than daemon-wide, fixing the issue where the TUI reusing an existing daemon would inherit the daemon's mode instead of its own intent (e742)
+- **CTRL-C between ritual steps** — pressing CTRL-C between ritual steps now pauses the ritual for interjection instead of hard-aborting it (e732)
+- **Sandbox creation race** — fixed a race condition where concurrent container creation attempts caused infinite error loops due to mismatched error string matching (e736)
+- **Status bar tab switching** — the status bar's middle section (bucket utilization, stopwatch) now correctly updates when switching between tabs
 
 ## [0.10.0] - 2026-07-29
 
@@ -395,6 +404,9 @@ inking) (#38)
 - `/` is just a slash. Use `:` to enter command mode
 
 
+
+[0.10.1]: https://github.com/daonb/asimi/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/daonb/asimi/compare/v0.9.2...v0.10.0
 
 ## [0.1.0] - 2025/11/1
 
