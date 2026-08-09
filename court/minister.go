@@ -243,6 +243,10 @@ type MinisterBase struct {
 	// Injected by the Court for ministers that need ritual context.
 	getRitualSummaries func() string
 
+	// getSkills returns formatted skills index for a given minister ID.
+	// Injected by the Court. Returns empty string when no skills match.
+	getSkills func(ministerID string) string
+
 	self Minister // concrete minister, set by RunLoop for session creation
 }
 
@@ -429,12 +433,22 @@ func (m *MinisterBase) Project() string {
 }
 
 // Scratchpad returns dynamic per-minister context. Default returns ritual
-// summaries when the getRitualSummaries hook is injected.
+// summaries when the getRitualSummaries hook is injected, and skills
+// when the getSkills hook is injected.
 func (m *MinisterBase) Scratchpad() string {
-	if m.getRitualSummaries == nil {
+	var parts []string
+	if m.getRitualSummaries != nil {
+		parts = append(parts, "# Available Rituals\n"+m.getRitualSummaries())
+	}
+	if m.getSkills != nil {
+		if s := m.getSkills(m.ministerID); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	return "# Available Rituals\n" + m.getRitualSummaries()
+	return strings.Join(parts, "\n\n")
 }
 
 // SetRunner updates the shell runner
@@ -616,6 +630,13 @@ func (m *MinisterBase) SetMinisterLookup(lookup func(string) Minister) {
 // SetRitualSummaries sets the ritual summaries hook injected by the Court.
 func (m *MinisterBase) SetRitualSummaries(fn func() string) {
 	m.getRitualSummaries = fn
+}
+
+// SetSkills sets the skills hook injected by the Court.
+// fn receives a minister ID and returns a formatted skills index string
+// (empty string when no skills match that minister).
+func (m *MinisterBase) SetSkills(fn func(ministerID string) string) {
+	m.getSkills = fn
 }
 
 // SetSessionPersister stores the persister and propagates it to the

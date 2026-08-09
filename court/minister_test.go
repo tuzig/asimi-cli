@@ -1121,6 +1121,90 @@ func TestChancellor_ScratchpadIncludesRituals(t *testing.T) {
 	}
 }
 
+// TestScratchpad_IncludesSkills verifies that skills are included in the
+// scratchpad when the getSkills hook is set.
+func TestScratchpad_IncludesSkills(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
+	base.SetSkills(func(ministerID string) string {
+		return "### Available Skills\n\n- **go-testing**: Test guidance"
+	})
+
+	sp := base.Scratchpad()
+	assert.Contains(t, sp, "Available Skills")
+	assert.Contains(t, sp, "go-testing")
+	assert.NotContains(t, sp, "Available Rituals")
+}
+
+// TestScratchpad_SkillsWithEmptyString verifies that an empty string from
+// the skills hook does not produce a superfluous section.
+func TestScratchpad_SkillsWithEmptyString(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
+	base.SetSkills(func(ministerID string) string {
+		return "" // no skills match this minister
+	})
+
+	sp := base.Scratchpad()
+	assert.Equal(t, "", sp, "empty skills should produce empty scratchpad")
+}
+
+// TestScratchpad_CombinesSkillsAndRituals verifies that both rituals and
+// skills appear together in the scratchpad.
+func TestScratchpad_CombinesSkillsAndRituals(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
+	base.SetRitualSummaries(func() string {
+		return "- swift-strike: The Swift Strike"
+	})
+	base.SetSkills(func(ministerID string) string {
+		return "### Available Skills\n\n- **go-testing**: Test guidance"
+	})
+
+	sp := base.Scratchpad()
+	assert.Contains(t, sp, "Available Rituals")
+	assert.Contains(t, sp, "swift-strike")
+	assert.Contains(t, sp, "Available Skills")
+	assert.Contains(t, sp, "go-testing")
+
+	// Skills section should come after rituals (rituals appended first)
+	ritualsIdx := strings.Index(sp, "Available Rituals")
+	skillsIdx := strings.Index(sp, "Available Skills")
+	assert.Less(t, ritualsIdx, skillsIdx, "rituals should appear before skills")
+}
+
+// TestScratchpad_SkillsViaBuildSystemPrompt verifies that skills content
+// flows through buildSystemPrompt when the getSkills hook is set.
+func TestScratchpad_SkillsViaBuildSystemPrompt(t *testing.T) {
+	base := NewMinisterBase(nil, nil, nil, "testuser", "testproject", nil)
+	base.SetSkills(func(ministerID string) string {
+		return "### Available Skills\n\n- **go-testing**: Test guidance"
+	})
+
+	fake := &fakeMinisterWithBase{
+		MinisterBase: base,
+		id:           "forge",
+	}
+
+	prompt := buildSystemPrompt(fake, nil, storage.EdictKey{})
+	assert.Contains(t, prompt, "go-testing")
+	assert.Contains(t, prompt, "Test guidance")
+}
+
+// fakeMinisterWithBase uses the real MinisterBase.Scratchpad() instead of
+// overriding it, so tests can exercise the getSkills/getRitualSummaries hooks.
+type fakeMinisterWithBase struct {
+	*MinisterBase
+	id    string
+	tasks chan *Task
+}
+
+func (f *fakeMinisterWithBase) ID() string                  { return f.id }
+func (f *fakeMinisterWithBase) SystemPrompt() string        { return "You are a test minister." }
+func (f *fakeMinisterWithBase) Title() string               { return "Fake" }
+func (f *fakeMinisterWithBase) Tools() []Tool               { return nil }
+func (f *fakeMinisterWithBase) Tasks() chan<- *Task         { return f.tasks }
+func (f *fakeMinisterWithBase) Model() LLMProvider          { return nil }
+func (f *fakeMinisterWithBase) GetConfig() config.LLMConfig { return config.LLMConfig{} }
+func (f *fakeMinisterWithBase) Run(ctx context.Context)     {}
+
 // TestStorage_DBPath tests that storage.DBPath correctly extracts the database path from gorm.DB
 func TestStorage_DBPath(t *testing.T) {
 	db, expectedPath := setupMinisterTestDBWithPath(t)

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afittestide/asimi/court/skills"
 	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
 	"github.com/afittestide/asimi/internal/config"
@@ -470,6 +471,9 @@ func (s *Court) Start(ctx context.Context) error {
 		}
 	}
 
+	// Discover and inject skills into all ministers.
+	s.injectSkills()
+
 	if s.ritualGuard != nil {
 		go s.ritualGuard.Run(s.ctx)
 	}
@@ -504,6 +508,43 @@ func (s *Court) SetRepoInfo(repoInfo repo.RepoInfo) {
 	// Update project-root-dependent tools when the root becomes available
 	if repoInfo.ProjectRoot != "" {
 		s.updateProjectRootTools(repoInfo.ProjectRoot)
+	}
+}
+
+// injectSkills discovers skills and injects them into all ministers.
+func (s *Court) injectSkills() {
+	// Use repoInfo from the first minister — all share the same project root.
+	projectRoot := ""
+	for _, m := range s.Ministers() {
+		if m.RepoInfo().ProjectRoot != "" {
+			projectRoot = m.RepoInfo().ProjectRoot
+			break
+		}
+	}
+	if projectRoot == "" {
+		return
+	}
+
+	skillsMap := skills.Discover(projectRoot)
+	if skillsMap == nil {
+		return
+	}
+
+	for _, m := range s.Ministers() {
+		if base, ok := m.(interface {
+			SetSkills(func(ministerID string) string)
+		}); ok {
+			minID := m.ID()
+			base.SetSkills(func(ministerID string) string {
+				// Always use the actual minister ID from the closure
+				mid := minID
+				if ministerID != "" {
+					mid = ministerID
+				}
+				matchingSkills := skills.ForMinister(skillsMap, mid)
+				return skills.FormatIndex(matchingSkills)
+			})
+		}
 	}
 }
 
@@ -584,6 +625,10 @@ func (s *Court) ConfigureModel(client LLMProvider, config *SessionConfig, repoIn
 			}
 		}
 	}
+
+	// Inject skills when project root becomes available the first time
+	s.injectSkills()
+
 	s.logger.Info("court model configured", "ministers", s.ministerIDs())
 }
 
