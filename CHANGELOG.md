@@ -18,10 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Edict Chat action** — restored the "Chat" action on the edict dashboard, which creates an edict tab and restores the edict's birth session there for direct conversation within an edict context
 - **Edict session resume** — fixed pending prompt display when restoring a session on a ritual tab, ensuring the Ruler's input is visible before the AI response arrives (e729)
+- **Client identity validation** — daemon now validates the client identity against Unix socket peer credentials (SO_PEERCRED), preventing impersonation by other processes with socket access (e739)
+- **SelfUpdate checksum verification** — `SelfUpdate` now computes the SHA256 checksum against the tarball bytes (before extraction), not the extracted binary. This fixes a guaranteed mismatch because `checksums.txt` contains hashes of the `.tar.gz` archives, not the extracted binary (e749)
 - **Consulted minister output routing** — `consult_minister` now routes streaming output to the correct tab by using a channelID from context, rather than defaulting to the caller's minister ID (e719)
 - **English follow-up text** — fixed English language follow-up text in prompts (#161)
 - **Continue on non-paused ritual** — `:continue` now enacts a fresh swift-strike ritual when no ritual is paused, instead of showing "Ritual is not paused" (e740)
-- **Client identity validation** — daemon now validates the client identity against Unix socket peer credentials (SO_PEERCRED), preventing impersonation by other processes with socket access (e739)
 - **Isolated host per-connection** — `--isolated-host` is now per-connection rather than daemon-wide, fixing the issue where the TUI reusing an existing daemon would inherit the daemon's mode instead of its own intent (e742)
 - **CTRL-C between ritual steps** — pressing CTRL-C between ritual steps now pauses the ritual for interjection instead of hard-aborting it (e732)
 - **Sandbox creation race** — fixed a race condition where concurrent container creation attempts caused infinite error loops due to mismatched error string matching (e736)
