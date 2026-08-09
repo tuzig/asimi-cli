@@ -5,6 +5,16 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-08-09
+
+### Added
+
+- **Skills discovery** — added support for the Agent Skills open standard (https://agentskills.io), a lightweight file-based format for giving AI agents specialized knowledge and workflows. Skills live in `.agents/skills/<skill-name>/SKILL.md` with optional supporting files and optional per-minister targeting (e662)
+
+### Fixed
+
+- **SelfUpdate checksum verification** — `SelfUpdate` now computes the SHA256 checksum against the tarball bytes (before extraction), not the extracted binary. This fixes a guaranteed mismatch because `checksums.txt` contains hashes of the `.tar.gz` archives, not the extracted binary (e749)
+
 ## [0.10.1] - 2026-08-05
 
 ### Added
@@ -19,7 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Edict Chat action** — restored the "Chat" action on the edict dashboard, which creates an edict tab and restores the edict's birth session there for direct conversation within an edict context
 - **Edict session resume** — fixed pending prompt display when restoring a session on a ritual tab, ensuring the Ruler's input is visible before the AI response arrives (e729)
 - **Client identity validation** — daemon now validates the client identity against Unix socket peer credentials (SO_PEERCRED), preventing impersonation by other processes with socket access (e739)
-- **SelfUpdate checksum verification** — `SelfUpdate` now computes the SHA256 checksum against the tarball bytes (before extraction), not the extracted binary. This fixes a guaranteed mismatch because `checksums.txt` contains hashes of the `.tar.gz` archives, not the extracted binary (e749)
 - **Consulted minister output routing** — `consult_minister` now routes streaming output to the correct tab by using a channelID from context, rather than defaulting to the caller's minister ID (e719)
 - **English follow-up text** — fixed English language follow-up text in prompts (#161)
 - **Continue on non-paused ritual** — `:continue` now enacts a fresh swift-strike ritual when no ritual is paused, instead of showing "Ritual is not paused" (e740)
@@ -406,6 +415,7 @@ inking) (#38)
 
 
 
+[0.10.2]: https://github.com/daonb/asimi/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/daonb/asimi/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/daonb/asimi/compare/v0.9.2...v0.10.0
 
