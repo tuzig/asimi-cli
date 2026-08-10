@@ -39,3 +39,7 @@ Edict 1 - court business and a filler - is the only edicts that doesn't seek asc
 ### Guessing is Treason
 
 Raise zhengming when ambiguity looms
+
+### Skills
+
+Below is the list of skills you can get using `read_file` to read the the full `SKILL.md`

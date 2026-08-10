@@ -2,7 +2,6 @@
 
 Below is what is left to develop:
 
-## V0.11.0
 ## V1.0
 
 ### Court Alignment
@@ -25,7 +24,6 @@ Below is what is left to develop:
 
 ### MCP Support (https://github.com/afittestide/asimi-cli/issues/158)
 
-### Skills Support (https://github.com/afittestide/asimi-cli/issues/159)
 
 ## V1.1
 

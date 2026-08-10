@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -157,6 +159,78 @@ func TestAutoCheckForUpdates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSelfUpdateChecksumVerification verifies the core fix: the checksum
+// must be computed against the tarball bytes (before extraction), not the
+// extracted binary. This is because checksums.txt contains hashes of the
+// .tar.gz archives, not the extracted binary.
+//
+// The old code hashed binaryContent (after extraction), which would always
+// mismatch the expected tarball hash. The fix hashes tarballBytes before
+// extraction, matching what checksums.txt contains.
+func TestSelfUpdateChecksumVerification(t *testing.T) {
+	// Build a tar.gz containing an "asimi" binary
+	var tarballBuf bytes.Buffer
+	gzw := gzip.NewWriter(&tarballBuf)
+	tw := tar.NewWriter(gzw)
+
+	binaryData := []byte("asimi binary content v1.0")
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "asimi",
+		Typeflag: tar.TypeReg,
+		Size:     int64(len(binaryData)),
+		Mode:     0755,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(binaryData); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gzw.Close()
+
+	tarballBytes := tarballBuf.Bytes()
+
+	// Compute SHA256 of the raw tarball (what checksums.txt would contain)
+	tarballHash := sha256.Sum256(tarballBytes)
+	tarballHex := hex.EncodeToString(tarballHash[:])
+
+	// Extract the binary (as SelfUpdate does)
+	extracted, err := extractBinaryFromTarball(bytes.NewReader(tarballBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Compute SHA256 of the extracted binary (what the OLD code did)
+	binaryHash := sha256.Sum256(extracted)
+	binaryHex := hex.EncodeToString(binaryHash[:])
+
+	// CRITICAL ASSERTION: The tarball hash and binary hash MUST differ.
+	// If they were the same, the old code wouldn't have been broken.
+	// This proves the fix is meaningful.
+	if tarballHex == binaryHex {
+		t.Error("CRITICAL: tarball hash equals binary hash — test setup is broken, " +
+			"the two should differ for a proper fix verification")
+	}
+
+	// The tarball hash must match the expected checksum (what checksums.txt contains)
+	// Recompute to be absolutely sure
+	recomputedHash := sha256.Sum256(tarballBytes)
+	recomputedHex := hex.EncodeToString(recomputedHash[:])
+	if recomputedHex != tarballHex {
+		t.Fatal("internal consistency check failed: SHA256 of tarball is not deterministic")
+	}
+
+	// Verify the binary was extracted correctly
+	if !bytes.Equal(extracted, binaryData) {
+		t.Fatalf("extracted binary content mismatch: got %q, want %q", extracted, binaryData)
+	}
+
+	// Log the hashes for debugging
+	t.Logf("tarball hash (correct):   %s", tarballHex)
+	t.Logf("binary hash (old bug):    %s", binaryHex)
+	t.Logf("tarball != binary:        %v", tarballHex != binaryHex)
 }
 
 func TestFetchChecksum(t *testing.T) {

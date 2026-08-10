@@ -950,29 +950,57 @@ func handleTabCloseCommand(model *TUIModel, args []string) tea.Cmd {
 	return nil
 }
 
-// handleContinueCommand resumes a paused ritual on the current tab.
+// handleContinueCommand resumes a paused ritual or enacts a fresh swift-strike
+// for an active (non-sealed, non-cancelled) edict.
 func handleContinueCommand(model *TUIModel, args []string) tea.Cmd {
 	tab := model.tabs.ActiveTab()
 	if tab.Type != "ritual" || !isRitualChannel(tab.Target) {
-		model.commandLine.AddToast(":continue only works on a paused ritual tab", "warning", 3*time.Second)
-		return nil
-	}
-	if !tab.ChatMode {
-		model.commandLine.AddToast("Ritual is not paused", "warning", 3*time.Second)
+		model.commandLine.AddToast(":continue only works on a ritual tab", "warning", 3*time.Second)
 		return nil
 	}
 	if model.court == nil {
 		model.commandLine.AddToast("Court not active", "error", 3*time.Second)
 		return nil
 	}
-	if model.court.ResumeRitual(tab.Target) {
-		model.tabs.SetTabChatMode(tab.Target, false)
-		chat := model.tabs.ChatByTab(tab.Target)
-		chat.AddMessage(fmt.Sprintf("%s▶ Ritual resuming...", systemPrefix))
-	} else {
-		model.commandLine.AddToast("No paused ritual found on this tab", "warning", 3*time.Second)
+
+	// If paused, resume the ritual
+	if tab.ChatMode {
+		if model.court.ResumeRitual(tab.Target) {
+			model.tabs.SetTabChatMode(tab.Target, false)
+			chat := model.tabs.ChatByTab(tab.Target)
+			chat.AddMessage(fmt.Sprintf("%s▶ Ritual resuming...", systemPrefix))
+		} else {
+			model.commandLine.AddToast("No paused ritual found on this tab", "warning", 3*time.Second)
+		}
+		return nil
 	}
-	return nil
+
+	// Not paused — extract edict ID and enact a fresh ritual
+	edictID := uint64(tab.EdictID)
+	edict, err := model.court.GetEdict(uint(edictID))
+	if err != nil {
+		model.commandLine.AddToast(fmt.Sprintf("Edict %d not found", edictID), "error", 3*time.Second)
+		return nil
+	}
+	if edict.CancelledAt != nil {
+		model.commandLine.AddToast(fmt.Sprintf("Edict %d is cancelled", edictID), "warning", 3*time.Second)
+		return nil
+	}
+
+	// Check for Ruler seal (edict is sealed)
+	key := model.court.EdictKey(uint(edictID))
+	seals, err := model.court.GetEdictSeals(key)
+	if err != nil {
+		slog.Warn("failed to check edict seals", "edict_id", edictID, "error", err)
+	}
+	for _, s := range seals {
+		if s.MinisterID == ministers.Ruler {
+			model.commandLine.AddToast(fmt.Sprintf("Edict %d is already sealed", edictID), "warning", 3*time.Second)
+			return nil
+		}
+	}
+
+	return enactRitualForEdict(model, uint(edictID), "swift-strike")
 }
 
 // handleAbortCommand aborts a paused ritual on the current tab.

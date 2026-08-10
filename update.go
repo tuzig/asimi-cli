@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -111,8 +112,14 @@ func SelfUpdate(currentVersion string) error {
 		return fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
+	// Read the full tarball into a buffer before extraction
+	tarballBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read tarball: %w", err)
+	}
+
 	// Extract the asimi binary from the tarball
-	binaryContent, err := extractBinaryFromTarball(resp.Body)
+	binaryContent, err := extractBinaryFromTarball(bytes.NewReader(tarballBytes))
 	if err != nil {
 		return err
 	}
@@ -125,7 +132,7 @@ func SelfUpdate(currentVersion string) error {
 		slog.Warn("failed to fetch checksums, skipping verification", "error", err)
 	}
 	if expectedHash != "" {
-		actualHash := sha256.Sum256(binaryContent)
+		actualHash := sha256.Sum256(tarballBytes)
 		if hex.EncodeToString(actualHash[:]) != expectedHash {
 			return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, hex.EncodeToString(actualHash[:]))
 		}
