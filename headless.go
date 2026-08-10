@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
 
@@ -110,6 +111,15 @@ func buildSetContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 	if cfg != nil {
 		project = cfg.Court.Project
 		username = cfg.Court.Username
+	}
+	if username == "" {
+		if u, err := user.Current(); err == nil {
+			username = u.Username
+		}
+	}
+	if username == "" {
+		username = "guest"
+		slog.Warn("failed to get current user, running as guest")
 	}
 	// Fall back to repoInfo.Slug (from git remote) when config doesn't set it.
 	// This mirrors ProvideCourt (providers.go) and ensures the daemon
