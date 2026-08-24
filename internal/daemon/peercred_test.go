@@ -22,7 +22,7 @@ func TestUnixPeerUsername_NonUnixConn(t *testing.T) {
 // returns the current OS user when connecting over a real Unix socket.
 func TestUnixPeerUsername_RealSocket(t *testing.T) {
 	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "test.sock")
+	sockPath := filepath.Join(dir, "s.sock")
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestUnixPeerUsername_RealSocket(t *testing.T) {
 // File() fails (e.g. connection already closed).
 func TestUnixPeerUsername_ClosedSocket(t *testing.T) {
 	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "test.sock")
+	sockPath := filepath.Join(dir, "s.sock")
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
