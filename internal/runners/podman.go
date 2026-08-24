@@ -297,25 +297,43 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 		return nil, fmt.Errorf("failed to get current user: %w", err)
 	}
 
+	// macOS applehv machine sockets live under $TMPDIR/podman/ (podman 4.x+ on Apple Silicon)
+	tmpPodmanDir := filepath.Join(os.TempDir(), "podman")
+	if matches, err := filepath.Glob(filepath.Join(tmpPodmanDir, "*-api.sock")); err == nil {
+		// Try the default machine socket first, then any others
+		var sorted []string
+		defaultSock := filepath.Join(tmpPodmanDir, "podman-machine-default-api.sock")
+		for _, m := range matches {
+			if m == defaultSock {
+				sorted = append([]string{m}, sorted...)
+			} else {
+				sorted = append(sorted, m)
+			}
+		}
+		for _, sock := range sorted {
+			slog.Debug("trying macOS applehv podman socket", "socket", sock)
+			conn, err := bindings.NewConnection(context.Background(), "unix://"+sock)
+			if err == nil {
+				slog.Debug("successfully connected via macOS applehv socket", "socket", sock)
+				return conn, nil
+			}
+			slog.Debug("failed to connect via macOS applehv socket", "socket", sock, "error", err)
+		}
+	}
+
+	// macOS qemu machine socket (older podman installations)
 	macOSSocket := filepath.Join(currentUser.HomeDir, ".local/share/containers/podman/machine/podman.sock")
-	slog.Debug("trying macOS podman socket", "socket", macOSSocket)
+	slog.Debug("trying macOS qemu podman socket", "socket", macOSSocket)
 	if _, err := os.Stat(macOSSocket); err == nil {
 		conn, err := bindings.NewConnection(context.Background(), "unix://"+macOSSocket)
 		if err == nil {
-			slog.Debug("successfully connected via macOS socket")
+			slog.Debug("successfully connected via macOS qemu socket")
 			return conn, nil
 		}
 		slog.Debug("failed to connect via macOS socket", "error", err)
 	}
 
-	slog.Debug("trying default podman connection")
-	if conn, err := bindings.NewConnection(context.Background(), ""); err == nil {
-		slog.Debug("successfully connected via default connection")
-		return conn, nil
-	} else {
-		slog.Debug("failed to connect via default connection", "error", err)
-	}
-
+	// Linux: user runtime socket
 	userSocket := fmt.Sprintf("unix:///run/user/%s/podman/podman.sock", currentUser.Uid)
 	slog.Debug("trying user socket", "socket", userSocket)
 	if conn, err := bindings.NewConnection(context.Background(), userSocket); err == nil {
@@ -323,6 +341,7 @@ func (r *PodmanRunner) establishConnection(ctx context.Context) (context.Context
 		return conn, nil
 	}
 
+	// Linux: root system socket
 	slog.Debug("trying system socket")
 	conn, err := bindings.NewConnection(context.Background(), "unix:///var/run/podman/podman.sock")
 	if err != nil {
