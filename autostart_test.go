@@ -64,8 +64,7 @@ func startFakeDaemon(t *testing.T, socketPath string) (stop func()) {
 
 func TestConnectOrStartDaemonFastPath(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "d.sock")
-	if len(path) >= 104 {
+	if len(filepath.Join(dir, rpc.DefaultSocketName)) >= 104 {
 		t.Skip("tmp path too long for unix socket")
 	}
 	t.Setenv("XDG_RUNTIME_DIR", dir)
