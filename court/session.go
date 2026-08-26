@@ -18,11 +18,32 @@ import (
 
 	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/atif"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/runners"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/vmihailenco/msgpack/v5"
 )
+
+// atifRecorder is satisfied by *atif.TrajectoryRecorder. We use a local
+// interface aliasing the atif package to avoid coupling the court
+// package to the atif serialization types while still matching methods.
+type atifRecorder = atif.AtifRecorder
+
+// atifRecorderMessage is an alias for the atif recorder message type.
+type atifRecorderMessage = atif.RecorderMessage
+
+// atifRecorderContentBlock is an alias for the atif content block type.
+type atifRecorderContentBlock = atif.RecorderContentBlock
+
+// atifRecorderUsage is an alias for the atif usage type.
+type atifRecorderUsage = atif.RecorderUsage
+
+// atifRecorderCost is an alias for the atif cost type.
+type atifRecorderCost = atif.RecorderCost
+
+// atifRecorderToolResult is an alias for the atif tool result type.
+type atifRecorderToolResult = atif.RecorderToolResult
 
 // SessionPersister durably stores a Session. The court calls it as
 // messages are added so :resume sees the conversation in near-real time.
@@ -146,10 +167,11 @@ type StreamMaxTokensReachedMsg struct {
 
 // SessionConfig holds configuration for minister sessions
 type SessionConfig struct {
-	LLM        internalconfig.LLMConfig
-	AgentsFile string
-	Sandbox    internalconfig.SandboxConfig
-	WorkingDir string
+	LLM           internalconfig.LLMConfig
+	AgentsFile    string
+	Sandbox       internalconfig.SandboxConfig
+	WorkingDir    string
+	AtifAgentName string // non-empty enables ATIF trajectory recording
 }
 
 // Session represents a chat session for a minister
@@ -172,6 +194,7 @@ type Session struct {
 
 	model        LLMProvider // LLM client (implements ChatCompletionRequest/ChatCompletionStreamRequest)
 	config       *internalconfig.LLMConfig
+	atifRecorder atifRecorder // ATIF trajectory recorder (non-nil when --atif is set)
 	tools        []Tool
 	messages     []schemas.ChatMessage
 	notify       internal.NotifyFunc
@@ -325,6 +348,23 @@ func (s *Session) SetMessages(msgs []schemas.ChatMessage) {
 // doesn't generate a write.
 func (s *Session) SetPersister(p SessionPersister) {
 	s.persister = p
+}
+
+// SetAtifRecorder attaches an ATIF trajectory recorder. The recorder is
+// started when the session is created and closed on session teardown.
+func (s *Session) SetAtifRecorder(r atifRecorder) {
+	s.atifRecorder = r
+	if r != nil {
+		r.Start()
+	}
+}
+
+// Closeat recordings if attached.
+func (s *Session) closeAtif() {
+	if s.atifRecorder != nil {
+		s.atifRecorder.Close()
+		s.atifRecorder = nil
+	}
 }
 
 // persist asks the persister to save the session. Called from the
@@ -1554,6 +1594,25 @@ func collectMessages(results []*schemas.ChatMessage) []schemas.ChatMessage {
 func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFiles map[string]string) (string, error) {
 	s.prepareUserMessage(prompt, contextFiles)
 
+	// ATIF: turn_start
+	s.atifTurnStarted()
+
+	// ATIF: user message_start
+	s.atifMessageStarted(atifRecorderMessage{
+		Role: "user",
+		Content: []atifRecorderContentBlock{
+			{Type: "text", Text: strPtr(prompt)},
+		},
+	})
+
+	// ATIF: user message_end
+	s.atifMessageEnded(atifRecorderMessage{
+		Role: "user",
+		Content: []atifRecorderContentBlock{
+			{Type: "text", Text: strPtr(prompt)},
+		},
+	})
+
 	var finalText string
 	maxTurns := s.config.MaxTurns
 
@@ -1581,6 +1640,20 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			return accumulatedText, ctx.Err()
 		default:
 		}
+
+		// ATIF: assistant message_start (pending)
+		stopReason := "pending"
+		s.atifMessageStarted(atifRecorderMessage{
+			Role:       "assistant",
+			Provider:   s.Provider,
+			Model:      s.Model,
+			StopReason: stopReason,
+			Usage: &atifRecorderUsage{
+				Input:       0,
+				Output:      0,
+				TotalTokens: 0,
+			},
+		})
 
 		choice, err := s.generateLLMResponse(ctx, true)
 		if err != nil {
@@ -1610,6 +1683,9 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 				s.notify(StreamMaxTokensReachedMsg{ChannelID: s.channelID, Content: responseContent})
 			}
 			s.appendMessage(choice)
+			// ATIF: assistant message_end (max_tokens)
+			s.atifMessageEnded(s.buildAssistantMsg(choice, responseContent))
+			s.atifTurnEnded(s.buildAssistantMsg(choice, responseContent), nil)
 			return responseContent + "\n\n[Response truncated due to length limit]", nil
 		}
 
@@ -1625,6 +1701,13 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 			if s.notify != nil {
 				s.notify(StreamErrorMsg{ChannelID: s.channelID, Err: err, PartialContent: responseContent})
 			}
+			// ATIF: assistant message_end (error)
+			errMsg := err.Error()
+			msg := s.buildAssistantMsg(choice, responseContent)
+			msg.StopReason = "error"
+			msg.ErrorMessage = &errMsg
+			s.atifMessageEnded(msg)
+			s.atifTurnEnded(msg, nil)
 			return responseContent, err
 		}
 
@@ -1638,21 +1721,111 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 				ensureToolCallID(&choice.ToolCalls[i], i)
 			}
 		}
+
+		// ATIF: assistant message_end
+		assistantMsg := s.buildAssistantMsg(choice, responseContent)
+		s.atifMessageEnded(assistantMsg)
+
 		s.appendMessage(choice)
 
 		// Handle tool calls - if no tool calls, we're done
 		if len(choice.ToolCalls) == 0 {
+			s.atifTurnEnded(assistantMsg, nil)
 			break
 		}
 
 		// Process tool calls
+		// ATIF: report tool exec started
+		var toolResults []atifRecorderToolResult
+		for _, tc := range choice.ToolCalls {
+			toolCallID := ""
+			if tc.ID != nil {
+				toolCallID = *tc.ID
+			}
+			toolName := ""
+			if tc.Function.Name != nil {
+				toolName = *tc.Function.Name
+			}
+			argsJSON := tc.Function.Arguments
+
+			// ATIF: tool_execution_start
+			var args any
+			if argsJSON != "" {
+				var parsedArgs any
+				if err := json.Unmarshal([]byte(argsJSON), &parsedArgs); err == nil {
+					args = parsedArgs
+				} else {
+					args = argsJSON
+				}
+			}
+			s.atifToolExecutionStarted(toolCallID, toolName, args)
+		}
+
 		toolMessages, shouldReturn := s.processToolCalls(ctx, choice.ToolCalls)
 		if len(toolMessages) > 0 {
 			s.messages = append(s.messages, toolMessages...)
 			s.persist()
 		}
 
+		// ATIF: tool_execution_end + toolResult messages for each tool call
+		for _, tm := range toolMessages {
+			if tm.Role != schemas.ChatMessageRoleTool {
+				continue
+			}
+			toolCallID := ""
+			if tm.ChatToolMessage != nil && tm.ChatToolMessage.ToolCallID != nil {
+				toolCallID = *tm.ChatToolMessage.ToolCallID
+			}
+
+			// Find the tool name from the original tool calls
+			toolName := ""
+			for _, tc := range choice.ToolCalls {
+				tcID := ""
+				if tc.ID != nil {
+					tcID = *tc.ID
+				}
+				if tcID == toolCallID && tc.Function.Name != nil {
+					toolName = *tc.Function.Name
+					break
+				}
+			}
+
+			content := ""
+			isError := false
+			if tm.Content != nil && tm.Content.ContentStr != nil {
+				content = *tm.Content.ContentStr
+				if strings.HasPrefix(content, "Error:") {
+					isError = true
+				}
+			}
+
+			// ATIF: tool_execution_end
+			s.atifToolExecutionEnded(toolCallID, toolName, content, isError)
+
+			// ATIF: toolResult message_start + message_end
+			trMsg := atifRecorderMessage{
+				Role:       "toolResult",
+				ToolCallID: toolCallID,
+				ToolName:   toolName,
+				IsError:    isError,
+				Content: []atifRecorderContentBlock{
+					{Type: "text", Text: strPtr(content)},
+				},
+			}
+			s.atifMessageStarted(trMsg)
+			s.atifMessageEnded(trMsg)
+
+			toolResults = append(toolResults, atifRecorderToolResult{
+				Role:       "toolResult",
+				ToolCallID: toolCallID,
+				ToolName:   toolName,
+				IsError:    isError,
+				Timestamp:  time.Now().UnixMilli(),
+			})
+		}
+
 		if shouldReturn {
+			s.atifTurnEnded(assistantMsg, toolResults)
 			if s.notify != nil {
 				s.notify(StreamCompleteMsg{ChannelID: s.channelID})
 			}
@@ -1668,6 +1841,7 @@ func (s *Session) AskWithStreaming(ctx context.Context, prompt string, contextFi
 		}
 
 		if len(toolMessages) > 0 {
+			s.atifTurnEnded(assistantMsg, toolResults)
 			continue
 		}
 
@@ -1745,6 +1919,110 @@ type ToolResult struct {
 
 // JSON is a map for storing arbitrary JSON data
 type JSON = map[string]any
+
+// --- ATIF helper methods ---
+
+// atifTurnStarted records a turn_start event if the recorder is attached.
+func (s *Session) atifTurnStarted() {
+	if s.atifRecorder != nil {
+		s.atifRecorder.TurnStarted()
+	}
+}
+
+// atifTurnEnded records a turn_end event if the recorder is attached.
+func (s *Session) atifTurnEnded(msg atifRecorderMessage, toolResults []atifRecorderToolResult) {
+	if s.atifRecorder != nil {
+		s.atifRecorder.TurnEnded(msg, toolResults)
+	}
+}
+
+// atifMessageStarted records a message_start event if the recorder is attached.
+func (s *Session) atifMessageStarted(msg atifRecorderMessage) {
+	if s.atifRecorder != nil {
+		s.atifRecorder.MessageStarted(msg)
+	}
+}
+
+// atifMessageEnded records a message_end event if the recorder is attached.
+func (s *Session) atifMessageEnded(msg atifRecorderMessage) {
+	if s.atifRecorder != nil {
+		s.atifRecorder.MessageEnded(msg)
+	}
+}
+
+// atifToolExecutionStarted records a tool_execution_start event if the recorder is attached.
+func (s *Session) atifToolExecutionStarted(toolCallID, toolName string, args any) {
+	if s.atifRecorder != nil {
+		s.atifRecorder.ToolExecutionStarted(toolCallID, toolName, args)
+	}
+}
+
+// atifToolExecutionEnded records a tool_execution_end event if the recorder is attached.
+func (s *Session) atifToolExecutionEnded(toolCallID, toolName string, result string, isError bool) {
+	if s.atifRecorder != nil {
+		s.atifRecorder.ToolExecutionEnded(toolCallID, toolName, result, isError)
+	}
+}
+
+// buildAssistantMsg builds an atifRecorderMessage from a responseChoice.
+func (s *Session) buildAssistantMsg(choice *responseChoice, responseContent string) atifRecorderMessage {
+	msg := atifRecorderMessage{
+		Role:          "assistant",
+		Provider:      s.Provider,
+		Model:         s.Model,
+		StopReason:    choice.StopReason,
+		RawStopReason: choice.StopReason,
+	}
+
+	// Content blocks
+	if responseContent != "" {
+		msg.Content = append(msg.Content, atifRecorderContentBlock{
+			Type: "text",
+			Text: strPtr(responseContent),
+		})
+	}
+	if choice.ReasoningContent != "" {
+		msg.Content = append(msg.Content, atifRecorderContentBlock{
+			Type:     "thinking",
+			Thinking: strPtr(choice.ReasoningContent),
+		})
+	}
+	for _, tc := range choice.ToolCalls {
+		toolCallID := ""
+		toolName := ""
+		if tc.ID != nil {
+			toolCallID = *tc.ID
+		}
+		if tc.Function.Name != nil {
+			toolName = *tc.Function.Name
+		}
+		var args any
+		if tc.Function.Arguments != "" {
+			var parsedArgs any
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &parsedArgs); err == nil {
+				args = parsedArgs
+			} else {
+				args = tc.Function.Arguments
+			}
+		}
+		msg.Content = append(msg.Content, atifRecorderContentBlock{
+			Type:       "toolCall",
+			ToolCallID: toolCallID,
+			ToolName:   toolName,
+			Arguments:  args,
+		})
+	}
+
+	// Usage
+	totalTokens := choice.PromptTokens + choice.CompletionTokens
+	msg.Usage = &atifRecorderUsage{
+		Input:       choice.PromptTokens,
+		Output:      choice.CompletionTokens,
+		TotalTokens: totalTokens,
+	}
+
+	return msg
+}
 
 func GenerateSessionID() string {
 	timestamp := time.Now().Format("2006-01-02-150405")

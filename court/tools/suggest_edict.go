@@ -30,21 +30,7 @@ type SuggestEdictTool struct {
 func (t SuggestEdictTool) Name() string { return "suggest_edict" }
 
 func (t SuggestEdictTool) Description() string {
-	return `Suggest a new edict or a refinement to an existing edict to the Ruler via Zhengming.
-Use this when you identify an improvement opportunity, naming inconsistency, or refactoring need.
-You cannot create or modify edicts directly — only the Ruler can do that.
-This creates a Zhengming request that the Ruler can approve or dismiss.
-Returns immediately with status='suggested' - the edict will be created (or refined) if approved via event.
-
-When edict_id is provided and non-zero, the suggestion is treated as a refinement
-to the existing edict. On Ruler approval, the suggestion text is appended to the
-edict's intent via AppendToIntent instead of creating a new edict.
-
-For large suggestions (>500 chars), the Ruler reviews the text in $EDITOR.
-If the tool returns status='ruler_modified', the Ruler has edited your suggestion.
-Review the original, modified content, and diff. Then either:
-- Call suggest_edict again with the modified content if you find it harmonized with your intent
-- Respond in conversation explaining your concerns and suggesting changes if not harmonized`
+	return `When the path to heaven is revealed, suggest a new edict`
 }
 
 func (t SuggestEdictTool) Call(ctx context.Context, input string) (string, error) {
@@ -169,11 +155,11 @@ func (t SuggestEdictTool) ParameterSchema() map[string]any {
 		"properties": map[string]any{
 			"suggestion": map[string]any{
 				"type":        "string",
-				"description": "What edict should the Ruler consider? Be specific about the change.",
+				"description": "A session-independent, complete change suggestion",
 			},
 			"summary": map[string]any{
 				"type":        "string",
-				"description": "A short one-line summary to help the ruler recall the edict",
+				"description": "A short one-line summary",
 			},
 			"priority": map[string]any{
 				"type":        "string",
@@ -186,7 +172,7 @@ func (t SuggestEdictTool) ParameterSchema() map[string]any {
 			},
 			"edict_id": map[string]any{
 				"type":        "integer",
-				"description": "Optional. When provided and non-zero, the suggestion refines the existing edict instead of creating a new one. On Ruler approval, the suggestion is appended to the edict's intent.",
+				"description": "Optional. When provided and non-zero, the suggestion replaces the existing edict.",
 			},
 		},
 		"required": []string{"suggestion", "summary"},

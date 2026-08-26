@@ -988,22 +988,31 @@ func TestProviderBaseURLFromEnv(t *testing.T) {
 	assert.Equal(t, "", providerBaseURLFromEnv("cohere"))
 }
 
+// clearProviderAuthKeys unsets the API-key env vars and clears the keyring
+// entries for every standard provider, so getConfiguredProviderKeys starts
+// from a clean slate regardless of the shell/CI environment. Iterating over
+// schemas.StandardProviders keeps this list in sync as providers are added.
+func clearProviderAuthKeys() {
+	for _, sp := range schemas.StandardProviders {
+		key := bifrostProviderToAsimi(string(sp))
+		os.Unsetenv(providerEnvVar(key))
+		// Special-case aliases checked in checkProviderAuth/providerEnvVar.
+		if key == "googleai" {
+			os.Unsetenv("GEMINI_API_KEY")
+			os.Unsetenv("GOOGLE_API_KEY")
+		}
+		if key == "bedrock" {
+			os.Unsetenv("AWS_ACCESS_KEY_ID")
+			os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+		}
+		_ = DeleteAPIKeyFromKeyring(key)
+	}
+}
+
 // TestGetConfiguredProviderKeys_NoAuth verifies that without auth, only
 // keyless providers are included
 func TestGetConfiguredProviderKeys_NoAuth(t *testing.T) {
-	DeleteAPIKeyFromKeyring("anthropic")
-	DeleteAPIKeyFromKeyring("openai")
-	DeleteAPIKeyFromKeyring("googleai")
-	DeleteAPIKeyFromKeyring("openrouter")
-	DeleteAPIKeyFromKeyring("cohere")
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	os.Unsetenv("OPENAI_API_KEY")
-	os.Unsetenv("GEMINI_API_KEY")
-	os.Unsetenv("GOOGLE_API_KEY")
-	os.Unsetenv("OPENROUTER_API_KEY")
-	os.Unsetenv("COHERE_API_KEY")
-	os.Unsetenv("AWS_ACCESS_KEY_ID")
-	os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+	clearProviderAuthKeys()
 
 	// Without Ollama available, no providers
 	providers := getConfiguredProviderKeys(false)
@@ -1013,21 +1022,9 @@ func TestGetConfiguredProviderKeys_NoAuth(t *testing.T) {
 // TestGetConfiguredProviderKeys_ConventionAuth verifies that a convention-based
 // env var for a new provider (not in the old hardcoded switches) is detected
 func TestGetConfiguredProviderKeys_ConventionAuth(t *testing.T) {
-	DeleteAPIKeyFromKeyring("anthropic")
-	DeleteAPIKeyFromKeyring("openai")
-	DeleteAPIKeyFromKeyring("googleai")
-	DeleteAPIKeyFromKeyring("openrouter")
-	DeleteAPIKeyFromKeyring("cohere")
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	os.Unsetenv("OPENAI_API_KEY")
-	os.Unsetenv("GEMINI_API_KEY")
-	os.Unsetenv("GOOGLE_API_KEY")
-	os.Unsetenv("OPENROUTER_API_KEY")
-	os.Unsetenv("AWS_ACCESS_KEY_ID")
-	os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+	clearProviderAuthKeys()
 
 	t.Setenv("COHERE_API_KEY", "test-key")
-	defer os.Unsetenv("COHERE_API_KEY")
 
 	providers := getConfiguredProviderKeys(false)
 	assert.Contains(t, providers, "cohere")

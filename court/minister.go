@@ -20,6 +20,7 @@ import (
 
 	"github.com/afittestide/asimi/court/tools"
 	"github.com/afittestide/asimi/internal"
+	"github.com/afittestide/asimi/internal/atif"
 	internalconfig "github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
@@ -501,7 +502,12 @@ func CreateSession(minister Minister, client LLMProvider, config *SessionConfig,
 		key = keys[0]
 	}
 	systemPrompt := buildSystemPrompt(minister, config, key)
-	return NewSession(client, config, minister.Tools(), nil, notify, systemPrompt, channelID)
+	sess, err := NewSession(client, config, minister.Tools(), nil, notify, systemPrompt, channelID)
+	if err != nil {
+		return nil, err
+	}
+	attachAtifRecorder(sess, config)
+	return sess, nil
 }
 
 // CreateSessionWithOpts creates a session with extended options including given context.
@@ -521,7 +527,22 @@ func CreateSessionWithOpts(minister Minister, client LLMProvider, config *Sessio
 		}
 		tools = filtered
 	}
-	return NewSession(client, config, tools, nil, notify, systemPrompt, opts.ChannelID)
+	sess, err := NewSession(client, config, tools, nil, notify, systemPrompt, opts.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	attachAtifRecorder(sess, config)
+	return sess, nil
+}
+
+// attachAtifRecorder creates and attaches an ATIF trajectory recorder to the
+// session if the config has an agent name set. Non-fatal on failure.
+func attachAtifRecorder(sess *Session, cfg *SessionConfig) {
+	if cfg == nil || cfg.AtifAgentName == "" {
+		return
+	}
+	recorder := atif.NewTrajectoryRecorder(cfg.AtifAgentName, sess.ID)
+	sess.SetAtifRecorder(recorder)
 }
 
 // buildSystemPrompt composes the system prompt by rendering the shared template
@@ -856,6 +877,9 @@ func (m *MinisterBase) ResetSession(channelID ...string) {
 	}
 	m.sessionMu.Lock()
 	defer m.sessionMu.Unlock()
+	if sess, ok := m.sessions[key]; ok {
+		sess.closeAtif()
+	}
 	delete(m.sessions, key)
 }
 

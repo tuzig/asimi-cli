@@ -13,6 +13,14 @@
       minister: forge
       effort: low
       act: |
+        {{- if .error }}
+        Your previous work failed. Here is the error output:
+
+        {{ .error }}
+
+        Fix the issues and re-implement the edict correctly.
+        {{- end }}
+
         Implement the changes for the edict:
 
         {{ .edict }}

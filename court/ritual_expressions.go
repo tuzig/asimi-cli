@@ -1305,6 +1305,8 @@ func (r *RitualRunner) runGivenStep(ctx context.Context, exec *RitualExecution, 
 			return nil, err
 		}
 		if output.ExitCode != "0" {
+			storeGivenResult(exec, entry.Key, output.Output)
+			exec.Data["error"] = output.Output
 			return nil, fmt.Errorf("given failed (exit %s): %s", output.ExitCode, utils.TruncateMiddle(output.Output, 500))
 		}
 		return output.Output, nil

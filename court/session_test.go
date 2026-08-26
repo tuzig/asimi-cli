@@ -1992,6 +1992,196 @@ func TestExecuteToolCall_InjectsSessionIDIntoContext(t *testing.T) {
 
 // TestExecuteToolCall_InjectsSessionIDViaScheduler verifies that the session
 // ID propagates through the scheduler path as well. (edict 717)
+// --- ATIF Integration Tests ---
+
+// mockAtifRecorder is a test recorder that captures ATIF events for verification.
+type mockAtifRecorder struct {
+	events []string
+}
+
+func (m *mockAtifRecorder) Start() {
+	m.events = append(m.events, "start")
+}
+func (m *mockAtifRecorder) Close() {
+	m.events = append(m.events, "close")
+}
+func (m *mockAtifRecorder) TurnStarted() {
+	m.events = append(m.events, "turn_start")
+}
+func (m *mockAtifRecorder) TurnEnded(msg atifRecorderMessage, toolResults []atifRecorderToolResult) {
+	m.events = append(m.events, "turn_end")
+}
+func (m *mockAtifRecorder) MessageStarted(msg atifRecorderMessage) {
+	m.events = append(m.events, "msg_start:"+msg.Role)
+}
+func (m *mockAtifRecorder) MessageEnded(msg atifRecorderMessage) {
+	m.events = append(m.events, "msg_end:"+msg.Role)
+}
+func (m *mockAtifRecorder) ToolExecutionStarted(toolCallID, toolName string, args any) {
+	m.events = append(m.events, "tool_start:"+toolName)
+}
+func (m *mockAtifRecorder) ToolExecutionEnded(toolCallID, toolName string, result string, isError bool) {
+	m.events = append(m.events, "tool_end:"+toolName)
+}
+func (m *mockAtifRecorder) ToolExecutionUpdated(toolCallID, toolName string, partialResult string, args any) {
+	m.events = append(m.events, "tool_update:"+toolName)
+}
+
+// compile-time check
+var _ atifRecorder = (*mockAtifRecorder)(nil)
+
+func TestSession_SetAtifRecorder_StartsRecorder(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	rec := &mockAtifRecorder{}
+	sess.SetAtifRecorder(rec)
+	require.Contains(t, rec.events, "start", "SetAtifRecorder should call Start()")
+}
+
+func TestSession_SetAtifRecorder_NilClearsRecorder(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	rec := &mockAtifRecorder{}
+	sess.SetAtifRecorder(rec)
+	assert.True(t, sess.atifRecorder != nil)
+
+	sess.SetAtifRecorder(nil)
+	assert.Nil(t, sess.atifRecorder, "setting nil should clear the recorder")
+}
+
+func TestSession_CloseAtif_ClosesRecorder(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	rec := &mockAtifRecorder{}
+	sess.SetAtifRecorder(rec)
+	sess.closeAtif()
+	require.Contains(t, rec.events, "close", "closeAtif should call Close()")
+	assert.Nil(t, sess.atifRecorder, "recorder should be nil after closeAtif")
+}
+
+func TestSession_CloseAtif_NoRecorder(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	// Should not panic
+	sess.closeAtif()
+}
+
+func TestSession_AtifHooks_NoRecorder(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	// None of these should panic or crash when no recorder is set
+	sess.atifTurnStarted()
+	sess.atifTurnEnded(atifRecorderMessage{}, nil)
+	sess.atifMessageStarted(atifRecorderMessage{})
+	sess.atifMessageEnded(atifRecorderMessage{})
+	sess.atifToolExecutionStarted("id", "tool", nil)
+	sess.atifToolExecutionEnded("id", "tool", "result", false)
+}
+
+func TestSession_AtifHooks_WithRecorder(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	rec := &mockAtifRecorder{}
+	sess.SetAtifRecorder(rec)
+
+	// Test each hook
+	sess.atifTurnStarted()
+	sess.atifMessageStarted(atifRecorderMessage{Role: "user"})
+	sess.atifMessageEnded(atifRecorderMessage{Role: "user"})
+	sess.atifMessageStarted(atifRecorderMessage{Role: "assistant"})
+	sess.atifMessageEnded(atifRecorderMessage{Role: "assistant"})
+	sess.atifToolExecutionStarted("call_1", "read", map[string]any{"path": "/app/file.txt"})
+	sess.atifToolExecutionEnded("call_1", "read", "file content", false)
+	sess.atifTurnEnded(atifRecorderMessage{Role: "assistant", StopReason: "stop"}, nil)
+
+	expected := []string{
+		"start",
+		"turn_start",
+		"msg_start:user",
+		"msg_end:user",
+		"msg_start:assistant",
+		"msg_end:assistant",
+		"tool_start:read",
+		"tool_end:read",
+		"turn_end",
+		"close",
+	}
+
+	sess.closeAtif()
+	assert.Equal(t, expected, rec.events, "ATIF events should be recorded in order")
+}
+
+func TestSession_AtifBuildAssistantMsg(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	choice := &responseChoice{
+		Content:          "Hello!",
+		ReasoningContent: "I think...",
+		StopReason:       "stop",
+		PromptTokens:     10,
+		CompletionTokens: 5,
+		ToolCalls: []schemas.ChatAssistantMessageToolCall{
+			{
+				ID: strPtr("call_1"),
+				Function: schemas.ChatAssistantMessageToolCallFunction{
+					Name:      strPtr("read"),
+					Arguments: `{"path": "/app/file.txt"}`,
+				},
+			},
+		},
+	}
+
+	msg := sess.buildAssistantMsg(choice, "Hello!")
+	assert.Equal(t, "assistant", msg.Role)
+	assert.Equal(t, "stop", msg.StopReason)
+	require.Len(t, msg.Content, 3) // text + thinking + toolCall
+	assert.Equal(t, "text", msg.Content[0].Type)
+	assert.Equal(t, "Hello!", *msg.Content[0].Text)
+	assert.Equal(t, "thinking", msg.Content[1].Type)
+	assert.Equal(t, "I think...", *msg.Content[1].Thinking)
+	assert.Equal(t, "toolCall", msg.Content[2].Type)
+	assert.Equal(t, "call_1", msg.Content[2].ToolCallID)
+	assert.Equal(t, "read", msg.Content[2].ToolName)
+	require.NotNil(t, msg.Usage)
+	assert.Equal(t, 10, msg.Usage.Input)
+	assert.Equal(t, 5, msg.Usage.Output)
+	assert.Equal(t, 15, msg.Usage.TotalTokens)
+}
+
+func TestSession_AtifBuildAssistantMsg_NoToolCalls(t *testing.T) {
+	mockLLM := mocks.NewLLMProvider()
+	sess, err := NewSession(mockLLM, &SessionConfig{}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+
+	choice := &responseChoice{
+		Content:          "Hello!",
+		ReasoningContent: "",
+		StopReason:       "stop",
+		PromptTokens:     10,
+		CompletionTokens: 5,
+	}
+
+	msg := sess.buildAssistantMsg(choice, "Hello!")
+	assert.Equal(t, "assistant", msg.Role)
+	require.Len(t, msg.Content, 1) // only text
+	assert.Equal(t, "text", msg.Content[0].Type)
+	assert.Equal(t, "Hello!", *msg.Content[0].Text)
+}
+
 func TestExecuteToolCall_InjectsSessionIDViaScheduler(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 	captureTool := &sessionIDCaptureTool{}

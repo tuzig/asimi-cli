@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -3505,6 +3506,28 @@ func TestSetContextParams_ProjectEmptyWhenNeitherConfigNorRepoInfoProvides(t *te
 	params := m.setContextParams()
 	assert.Empty(t, params.Project,
 		"Project should be empty when neither config nor repoInfo provides it")
+}
+
+func TestSetContextParams_UsernameFallbackToOSUser(t *testing.T) {
+	// mockConfig() has no Court.Username, so Username should fall back to OS user
+	m := NewTUIModel(mockConfig(), nil, nil, nil, nil, nil, nil, nil)
+	params := m.setContextParams()
+	expected, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current() failed: %v", err)
+	}
+	assert.Equal(t, expected.Username, params.Username,
+		"Username should fall back to OS user when config.Court.Username is empty")
+}
+
+func TestSetContextParams_UsernameFromConfig(t *testing.T) {
+	// When config sets a username, it wins over OS user fallback
+	cfg := mockConfig()
+	cfg.Court.Username = "custom-user"
+	m := NewTUIModel(cfg, nil, nil, nil, nil, nil, nil, nil)
+	params := m.setContextParams()
+	assert.Equal(t, "custom-user", params.Username,
+		"config.Court.Username should take precedence over OS user fallback")
 }
 
 // --- mockCourtClient records PublishEvent calls for test assertions ---

@@ -42,6 +42,7 @@ var cli struct {
 	MemProfile    string `help:"Write memory profile to file"`
 	Trace         string `help:"Write execution trace to file"`
 	ProfileExitMs int    `help:"Exit after N milliseconds (for profiling startup)"`
+	Atif          bool   `help:"Enable ATIF trajectory recording (agent name: asimi)"`
 }
 
 func initLogger() {
@@ -408,4 +409,13 @@ func main() {
 	}
 
 	slog.Debug("[TIMING] Total execution time", "duration", time.Since(startTime))
+}
+
+// atifAgentName returns the agent name for ATIF trajectory recording.
+// Returns "asimi" when --atif is set, empty string otherwise.
+func atifAgentName() string {
+	if cli.Atif {
+		return "asimi"
+	}
+	return ""
 }

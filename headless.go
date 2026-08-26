@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
 
@@ -111,12 +112,24 @@ func buildSetContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 		project = cfg.Court.Project
 		username = cfg.Court.Username
 	}
+	if username == "" {
+		if u, err := user.Current(); err == nil {
+			username = u.Username
+		}
+	}
+	if username == "" {
+		username = "guest"
+		slog.Warn("failed to get current user, running as guest")
+	}
 	// Fall back to repoInfo.Slug (from git remote) when config doesn't set it.
 	// This mirrors ProvideCourt (providers.go) and ensures the daemon
 	// receives the correct slug for sandbox image naming.
 	if project == "" && ri != nil {
 		project = ri.Slug
 	}
+	// Determine agent name for ATIF
+	atifAgentName := atifAgentName()
+
 	return types.SetContextParams{
 		Project:        project,
 		Username:       username,
@@ -126,6 +139,7 @@ func buildSetContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 		APIKeys:        collectAPIKeys(),
 		CodexAccountID: getCodexAccountID(),
 		IsolatedHost:   cli.IsolatedHost,
+		AtifAgentName:  atifAgentName,
 	}
 }
 
