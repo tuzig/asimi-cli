@@ -185,6 +185,16 @@ func TestRunGivenStep_BashFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "FAIL") {
 		t.Errorf("expected output in error, got: %v", err)
 	}
+	// Verify storeGivenResult + exec.Data["error"] are populated on failure
+	if exec.Data == nil {
+		t.Fatal("exec.Data should not be nil after failure")
+	}
+	if exec.Data["error"] != "FAIL\n" {
+		t.Errorf("expected exec.Data[\"error\"] to contain full output, got %q", exec.Data["error"])
+	}
+	if exec.Data["test"] != "FAIL\n" {
+		t.Errorf("expected exec.Data[\"test\"] to contain full output (via storeGivenResult), got %q", exec.Data["test"])
+	}
 }
 
 func TestRunThenStep_Bash(t *testing.T) {
@@ -1970,6 +1980,12 @@ func TestRunGivenStep_BashFailure_TruncatesOutput(t *testing.T) {
 	assert.Contains(t, err.Error(), "…")
 	assert.Less(t, len(err.Error()), 600,
 		"error message should be truncated, not contain the full 2000-char output")
+	// Verify exec.Data["error"] contains the FULL untruncated output
+	require.NotNil(t, exec.Data, "exec.Data should be set on failure")
+	assert.Equal(t, longOutput, exec.Data["error"],
+		"exec.Data[\"error\"] should contain the full output, not truncated")
+	assert.Equal(t, longOutput, exec.Data["test"],
+		"exec.Data[\"test\"] (via storeGivenResult) should contain the full output, not truncated")
 }
 
 func TestRunThenStep_BashFailure_TruncatesOutput(t *testing.T) {
