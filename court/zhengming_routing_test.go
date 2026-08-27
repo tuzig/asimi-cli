@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestZhengmingRouting_Chancellor verifies that when Chancellor's request_zhengming tool
+// TestZhengmingRouting_Chancellor verifies that when Chancellor's ask_ruler tool
 // is invoked, the ZhengmingPendingMsg carries MinisterID="chancellor" — not "secretary".
 //
-// Before the fix (edict 489), the shared RequestZhengmingTool in the registry
+// Before the fix (edict 489), the shared AskRulerTool in the registry
 // omitted MinisterID, and the Requester was always the Chancellor, so all
 // zhengming notifications routed to MinisterID="secretary" regardless of
 // which minister actually asked the question.
@@ -38,7 +38,7 @@ func TestZhengmingRouting_Chancellor(t *testing.T) {
 		}
 	})
 
-	// Build tool registry — request_zhengming is now in commonTools,
+	// Build tool registry — ask_ruler is now in commonTools,
 	// resolved per-minister via ExtraTools(ministerID, commonTools).
 	registry := tools.NewToolRegistry()
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
@@ -52,23 +52,23 @@ func TestZhengmingRouting_Chancellor(t *testing.T) {
 		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately with "pending" status
 	})
 
-	// Get Sage's tools — request_zhengming is now a common tool
+	// Get Sage's tools — ask_ruler is now a common tool
 	sageExtras := registry.ExtraTools("chancellor", commonTools)
 
-	// Find the request_zhengming tool
+	// Find the ask_ruler tool
 	var zhengmingTool tools.Tool
 	for _, tool := range sageExtras {
-		if tool.Name() == "request_zhengming" {
+		if tool.Name() == "ask_ruler" {
 			zhengmingTool = tool
 			break
 		}
 	}
-	require.NotNil(t, zhengmingTool, "sage should have request_zhengming tool")
+	require.NotNil(t, zhengmingTool, "sage should have ask_ruler tool")
 
 	// Call the tool
 	input := `{"edict_id": 1, "questions": [{"text": "Approve?", "options": ["Yes", "No"]}]}`
 	_, err := zhengmingTool.Call(context.Background(), input)
-	require.NoError(t, err, "request_zhengming Call should not error")
+	require.NoError(t, err, "ask_ruler Call should not error")
 
 	// Verify the ZhengmingPendingMsg has MinisterID="chancellor"
 	mu.Lock()
@@ -79,7 +79,7 @@ func TestZhengmingRouting_Chancellor(t *testing.T) {
 		"ZhengmingPendingMsg.MinisterID should be 'chancellor', not 'secretary' — the tool's MinisterID must flow through to the pending message")
 }
 
-// TestZhengmingRouting_War verifies that when War's request_zhengming
+// TestZhengmingRouting_War verifies that when War's ask_ruler
 // tool is invoked, the ZhengmingPendingMsg carries MinisterID="war".
 func TestZhengmingRouting_War(t *testing.T) {
 	db := setupCourtTestDB(t)
@@ -98,7 +98,7 @@ func TestZhengmingRouting_War(t *testing.T) {
 		}
 	})
 
-	// Build tool registry — request_zhengming is now a common tool
+	// Build tool registry — ask_ruler is now a common tool
 	registry := tools.NewToolRegistry()
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
@@ -111,23 +111,23 @@ func TestZhengmingRouting_War(t *testing.T) {
 		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately
 	})
 
-	// Get War's tools — request_zhengming is now a common tool
+	// Get War's tools — ask_ruler is now a common tool
 	strategistExtras := registry.ExtraTools("war", commonTools)
 
-	// Find the request_zhengming tool
+	// Find the ask_ruler tool
 	var zhengmingTool tools.Tool
 	for _, tool := range strategistExtras {
-		if tool.Name() == "request_zhengming" {
+		if tool.Name() == "ask_ruler" {
 			zhengmingTool = tool
 			break
 		}
 	}
-	require.NotNil(t, zhengmingTool, "war should have request_zhengming tool")
+	require.NotNil(t, zhengmingTool, "war should have ask_ruler tool")
 
 	// Call the tool
 	input := `{"edict_id": 2, "questions": [{"text": "Which approach?", "options": ["A", "B"]}]}`
 	_, err := zhengmingTool.Call(context.Background(), input)
-	require.NoError(t, err, "request_zhengming Call should not error")
+	require.NoError(t, err, "ask_ruler Call should not error")
 
 	// Verify the ZhengmingPendingMsg has MinisterID="war"
 	mu.Lock()
@@ -147,7 +147,7 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 	require.NotNil(t, s)
 	s.SetNotify(func(msg any) {}) // discard notifications
 
-	// Build tool registry — request_zhengming is now a common tool
+	// Build tool registry — ask_ruler is now a common tool
 	registry := tools.NewToolRegistry()
 	tools.RegisterBuiltinTools(registry, tools.ToolRegistrationOpts{
 		Ctx: tools.ToolContext{
@@ -160,21 +160,21 @@ func TestZhengmingRouting_DBRecord(t *testing.T) {
 		WaitForZhengming:   nil, // no WaitForAnswer — Call returns immediately
 	})
 
-	// Get Chancellor's tools and find request_zhengming
+	// Get Chancellor's tools and find ask_ruler
 	chancellorExtras := registry.ExtraTools("chancellor", commonTools)
 	var zhengmingTool tools.Tool
 	for _, tool := range chancellorExtras {
-		if tool.Name() == "request_zhengming" {
+		if tool.Name() == "ask_ruler" {
 			zhengmingTool = tool
 			break
 		}
 	}
-	require.NotNil(t, zhengmingTool, "chancellor should have request_zhengming tool")
+	require.NotNil(t, zhengmingTool, "chancellor should have ask_ruler tool")
 
 	// Call the tool
 	input := `{"edict_id": 3, "questions": [{"text": "OK?", "options": ["Yes", "No"]}]}`
 	_, err := zhengmingTool.Call(context.Background(), input)
-	require.NoError(t, err, "request_zhengming Call should not error")
+	require.NoError(t, err, "ask_ruler Call should not error")
 
 	// Verify the DB record has MinisterID="chancellor"
 	var zhengming storage.Zhengming

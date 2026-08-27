@@ -26,7 +26,7 @@ func LoadAllMinisters(projectDir string) ([]MinisterDef, error) {
 // ExtraTools mechanism (the minister ID is passed for factory tools).
 // consult_minister is NOT included here — only the secretary needs it,
 // and it is provided via the secretary's extra_tools list.
-var commonTools = []string{"request_zhengming"}
+var commonTools = []string{"ask_ruler"}
 
 // ministerImpl is the generic, YAML-driven minister type. It replaces the
 // five hand-coded minister structs (Secretary, Forge, Judge, Chancellor,

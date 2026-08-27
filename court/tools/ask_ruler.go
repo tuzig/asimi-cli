@@ -32,9 +32,9 @@ type ZhengmingRequester interface {
 	RequestZhengming(ctx context.Context, key storage.EdictKey, questions storage.ZhengmingQuestions, priority storage.ZhengmingPriority, callerMinisterID string) (requestID string, err error)
 }
 
-// RequestZhengmingTool requests clarification from the user.
+// AskRulerTool asks the ruler (the user) a question.
 // WaitForAnswer blocks until the user responds, returning the actual answer.
-type RequestZhengmingTool struct {
+type AskRulerTool struct {
 	MinisterID    string
 	Requester     ZhengmingRequester
 	WaitForAnswer func(ctx context.Context, requestID string) (string, error)
@@ -42,17 +42,17 @@ type RequestZhengmingTool struct {
 	Project       string
 }
 
-func (t RequestZhengmingTool) Name() string {
-	return "request_zhengming"
+func (t AskRulerTool) Name() string {
+	return "ask_ruler"
 }
 
-func (t RequestZhengmingTool) Description() string {
-	return `Request clarification from the user (Zhengming - 正名).
+func (t AskRulerTool) Description() string {
+	return `Ask the ruler a question. Used for 正名, clarification, approval gates, and decision points that require the ruler's input.
 	Example input:
 	{"questions":[{"text":"Which approach?","options":["Option A","Option B"]}]}`
 }
 
-func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, error) {
+func (t AskRulerTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		EdictID   uint                        `json:"edict_id"`
 		Questions []storage.ZhengmingQuestion `json:"questions"`
@@ -97,7 +97,7 @@ func (t RequestZhengmingTool) Call(ctx context.Context, input string) (string, e
 	return fmt.Sprintf(`{"status":"answered","request_id":"%s","answer":"%s"}`, requestID, answer), nil
 }
 
-func (t RequestZhengmingTool) Format(input, result string, err error) string {
+func (t AskRulerTool) Format(input, result string, err error) string {
 	var params struct {
 		Questions []storage.ZhengmingQuestion `json:"questions"`
 	}
@@ -124,7 +124,7 @@ func (t RequestZhengmingTool) Format(input, result string, err error) string {
 	return msg.String() + "\n"
 }
 
-func (t RequestZhengmingTool) ParameterSchema() map[string]any {
+func (t AskRulerTool) ParameterSchema() map[string]any {
 	return map[string]any{
 		"type":        "object",
 		"description": "Clarification request containing one or more questions",

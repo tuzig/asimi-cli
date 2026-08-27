@@ -66,7 +66,7 @@ func (m *capturingMinister) allCapturedText() string {
 // TestWar_ZhengmingRoutesToWar verifies that when the War minister
 // raises a Zhengming request, the question is routed to the War minister's tab.
 // Before edict 489, all zhengming routed to "secretary" regardless of caller.
-// Now each minister's request_zhengming carries its own MinisterID so the
+// Now each minister's ask_ruler tool carries its own MinisterID so the
 // ZhengmingPendingMsg routes to the correct tab.
 func TestWar_ZhengmingRoutesToWar(t *testing.T) {
 	db := setupRitualTestDB(t)
@@ -81,9 +81,9 @@ func TestWar_ZhengmingRoutesToWar(t *testing.T) {
 	require.NotNil(t, strategist)
 
 	tools := strategist.Tools()
-	var zhengmingTool asimitools.RequestZhengmingTool
+	var zhengmingTool asimitools.AskRulerTool
 	for _, t := range tools {
-		if zt, ok := t.(asimitools.RequestZhengmingTool); ok {
+		if zt, ok := t.(asimitools.AskRulerTool); ok {
 			zhengmingTool = zt
 			break
 		}

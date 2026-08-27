@@ -2053,18 +2053,18 @@ func TestRunLoop_ConcurrentTaskDispatch(t *testing.T) {
 }
 
 // TestMinisterImpl_Tools_IncludesCommonTools verifies that every minister
-// gets request_zhengming via the commonTools constant, even when their
+// gets ask_ruler via the commonTools constant, even when their
 // extra_tools definition does not list it. Only the secretary should have
 // consult_minister (via extra_tools).
 func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
-	// Build a tool registry with consult_minister and request_zhengming registered as extra tools
+	// Build a tool registry with consult_minister and ask_ruler registered as extra tools
 	registry := tools.NewToolRegistry()
 	registry.RegisterExtraFactory("consult_minister", func(mid string) tools.Tool {
 		return tools.ConsultMinisterTool{Ctx: tools.ToolContext{MinisterID: mid}}
 	})
 	registry.RegisterExtra("enact_ritual", tools.InvokeRitualTool{})
-	registry.RegisterExtraFactory("request_zhengming", func(mid string) tools.Tool {
-		return tools.RequestZhengmingTool{MinisterID: mid}
+	registry.RegisterExtraFactory("ask_ruler", func(mid string) tools.Tool {
+		return tools.AskRulerTool{MinisterID: mid}
 	})
 
 	// Test every minister defined in the YAML
@@ -2083,9 +2083,9 @@ func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
 				names[tool.Name()] = true
 			}
 
-			// Every minister should have request_zhengming via commonTools
-			assert.True(t, names["request_zhengming"],
-				"%s should have request_zhengming via commonTools", def.ID)
+			// Every minister should have ask_ruler via commonTools
+			assert.True(t, names["ask_ruler"],
+				"%s should have ask_ruler via commonTools", def.ID)
 
 			// Only the secretary should have consult_minister (via extra_tools)
 			if def.ID == "secretary" {
@@ -2104,10 +2104,10 @@ func TestMinisterImpl_Tools_IncludesCommonTools(t *testing.T) {
 func TestCreateSessionWithOpts_ExcludeTools(t *testing.T) {
 	db := setupMinisterTestDB(t)
 
-	// Build a tool registry with request_zhengming (common tool) registered
+	// Build a tool registry with ask_ruler (common tool) registered
 	registry := tools.NewToolRegistry()
-	registry.RegisterExtraFactory("request_zhengming", func(mid string) tools.Tool {
-		return tools.RequestZhengmingTool{MinisterID: mid}
+	registry.RegisterExtraFactory("ask_ruler", func(mid string) tools.Tool {
+		return tools.AskRulerTool{MinisterID: mid}
 	})
 
 	base := NewMinisterBase(db, nil, nil, "testuser", "testproject", nil)
@@ -2121,7 +2121,7 @@ func TestCreateSessionWithOpts_ExcludeTools(t *testing.T) {
 	mockLLM := mocks.NewLLMProvider()
 	forge.SetMinisterConfig(mockLLM, &SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}}, repo.RepoInfo{})
 
-	// Create session WITHOUT excluding tools — request_zhengming should be present
+	// Create session WITHOUT excluding tools — ask_ruler should be present
 	session, err := CreateSessionWithOpts(forge, mockLLM,
 		&SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}},
 		func(any) {},
@@ -2130,23 +2130,23 @@ func TestCreateSessionWithOpts_ExcludeTools(t *testing.T) {
 		})
 	require.NoError(t, err)
 	assert.NotNil(t, session)
-	_, hasZhengming := session.toolCatalog["request_zhengming"]
+	_, hasZhengming := session.toolCatalog["ask_ruler"]
 	assert.True(t, hasZhengming,
-		"session without ExcludeTools should have request_zhengming in toolCatalog")
+		"session without ExcludeTools should have ask_ruler in toolCatalog")
 
-	// Create session WITH ExcludeTools — request_zhengming should be absent
+	// Create session WITH ExcludeTools — ask_ruler should be absent
 	session2, err := CreateSessionWithOpts(forge, mockLLM,
 		&SessionConfig{LLM: config.LLMConfig{Provider: "test", Model: "test"}},
 		func(any) {},
 		CreateSessionOpts{
 			EdictKey:     storage.EdictKey{ID: 1, Username: "testuser", Project: "testproject"},
-			ExcludeTools: []string{"request_zhengming"},
+			ExcludeTools: []string{"ask_ruler"},
 		})
 	require.NoError(t, err)
 	assert.NotNil(t, session2)
-	_, hasZhengming2 := session2.toolCatalog["request_zhengming"]
+	_, hasZhengming2 := session2.toolCatalog["ask_ruler"]
 	assert.False(t, hasZhengming2,
-		"session with ExcludeTools=[request_zhengming] should NOT have request_zhengming in toolCatalog")
+		"session with ExcludeTools=[ask_ruler] should NOT have ask_ruler in toolCatalog")
 }
 
 // TestRunLoop_GracefulShutdownWaitsInFlightTasks verifies that RunLoop's

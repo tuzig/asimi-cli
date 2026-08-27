@@ -415,22 +415,22 @@ func TestRegisterExtra(t *testing.T) {
 
 func TestRegisterExtraFactory(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterExtraFactory("request_zhengming", func(mid string) Tool {
-		return mockTool{name: "request_zhengming_" + mid}
+	r.RegisterExtraFactory("ask_ruler", func(mid string) Tool {
+		return mockTool{name: "ask_ruler_" + mid}
 	})
 
 	// Each minister gets its own instance via the factory
-	chancellorExtras := r.ExtraTools("chancellor", []string{"request_zhengming"})
+	chancellorExtras := r.ExtraTools("chancellor", []string{"ask_ruler"})
 	require := len(chancellorExtras)
 	if require != 1 {
 		t.Fatalf("expected 1 factory extra tool, got %d", require)
 	}
-	if chancellorExtras[0].Name() != "request_zhengming_chancellor" {
+	if chancellorExtras[0].Name() != "ask_ruler_chancellor" {
 		t.Errorf("factory should produce per-minister tool, got %q", chancellorExtras[0].Name())
 	}
 
-	warExtras := r.ExtraTools("war", []string{"request_zhengming"})
-	if len(warExtras) != 1 || warExtras[0].Name() != "request_zhengming_war" {
+	warExtras := r.ExtraTools("war", []string{"ask_ruler"})
+	if len(warExtras) != 1 || warExtras[0].Name() != "ask_ruler_war" {
 		t.Errorf("factory should produce per-minister tool for war, got %v", warExtras)
 	}
 }
@@ -438,15 +438,15 @@ func TestRegisterExtraFactory(t *testing.T) {
 func TestExtraToolsMixedStaticAndFactory(t *testing.T) {
 	r := NewToolRegistry()
 	r.RegisterExtra("consult_minister", mockTool{name: "consult_minister"})
-	r.RegisterExtraFactory("request_zhengming", func(mid string) Tool {
-		return mockTool{name: "request_zhengming_" + mid}
+	r.RegisterExtraFactory("ask_ruler", func(mid string) Tool {
+		return mockTool{name: "ask_ruler_" + mid}
 	})
 
 	// A minister listing both gets both
-	all := r.ExtraTools("secretary", []string{"consult_minister", "request_zhengming"})
+	all := r.ExtraTools("secretary", []string{"consult_minister", "ask_ruler"})
 	names := toolNames(all)
 	assertHas(t, names, "consult_minister")
-	assertHas(t, names, "request_zhengming_secretary")
+	assertHas(t, names, "ask_ruler_secretary")
 }
 
 func TestExtraToolsNotInPublicEntries(t *testing.T) {
@@ -718,7 +718,7 @@ func TestStrategistPermissions(t *testing.T) {
 	}
 	// Intent: rwx — read/write lings + execute zhengming
 	if !p.Intent.Read || !p.Intent.Write || !p.Intent.Execute {
-		t.Error("strategist should have intent Read, Write, and Execute (request_zhengming)")
+		t.Error("strategist should have intent Read, Write, and Execute (ask_ruler)")
 	}
 }
 

@@ -1,7 +1,7 @@
 # This template is customized by project-init ritual based on the project's language
 # and tool set. 
 
-PROJECT_NAME := `git config --get remote.origin.url | sed -E 's/.*[:\/]([^\/]+)\/([^\/]+)\.git$/\1\/\2/'`
+PROJECT_NAME := `git config --get remote.origin.url | sed -E 's/.*[:\/]([^\/]+)\/([^\/]+)\.git$/\1\/\2/' | tr '[A-Z]' '[a-z]'`
 
 list:
     @just --list

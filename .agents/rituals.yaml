@@ -126,7 +126,7 @@
       minister: secretary
       effort: low
       act: |
-        Call request_zhengming asking the Ruler to confirm pushing the release
+        Call ask_ruler asking the Ruler to confirm pushing the release
         tag and commit to origin. Options:
         - "Push release" (runs `git push origin main --tags`)
         - "Hold — review locally first" (stops here, Ruler pushes manually

@@ -1,7 +1,7 @@
 // tool_dispatch.go implements the Court-side of the tool-facing dispatch
 // interfaces (tools.ZhengmingRequester, tools.MinisterConsultant,
 // tools.RitualLauncher, HostChecker). These are the callbacks that tools
-// (request_zhengming, consult_minister, enact_ritual, run_shell_command)
+// (ask_ruler, consult_minister, enact_ritual, run_shell_command)
 // invoke to access Court services — requesting clarifications, dispatching
 // work to other ministers, starting rituals, and checking host command safety.
 package court

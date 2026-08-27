@@ -122,7 +122,7 @@ func registerIntentTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 // registerExtraTools registers static and factory-based extra tools.
 // Static extra tools (enact_ritual) are registered once
 // and returned to any minister whose def lists them in extra_tools.
-// Factory extra tools (consult_minister, request_zhengming) produce a per-minister instance
+// Factory extra tools (consult_minister, ask_ruler) produce a per-minister instance
 // so the tool carries the correct MinisterID for routing.
 func registerExtraTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 	if opts.MinisterConsultant != nil {
@@ -136,8 +136,8 @@ func registerExtraTools(r *ToolRegistry, opts ToolRegistrationOpts) {
 		r.RegisterExtra("enact_ritual", InvokeRitualTool{Ctx: opts.Ctx, Launcher: opts.RitualLauncher})
 	}
 	if opts.ZhengmingRequester != nil {
-		r.RegisterExtraFactory("request_zhengming", func(mid string) Tool {
-			return RequestZhengmingTool{
+		r.RegisterExtraFactory("ask_ruler", func(mid string) Tool {
+			return AskRulerTool{
 				MinisterID:    mid,
 				Requester:     opts.ZhengmingRequester,
 				WaitForAnswer: opts.WaitForZhengming,

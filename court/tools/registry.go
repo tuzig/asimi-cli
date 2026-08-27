@@ -155,7 +155,7 @@ func (r *ToolRegistry) RegisterExtra(name string, tool Tool) {
 }
 
 // RegisterExtraFactory registers a factory that produces a tool instance
-// for a given ministerID. Used for per-minister tools like request_zhengming
+// for a given ministerID. Used for per-minister tools like ask_ruler
 // that need the MinisterID embedded in the tool.
 func (r *ToolRegistry) RegisterExtraFactory(name string, factory func(string) Tool) {
 	r.mu.Lock()

@@ -22,9 +22,9 @@ func (m *mockRequester) RequestZhengming(ctx context.Context, key storage.EdictK
 	return "req-123", nil
 }
 
-func TestRequestZhengmingTool_KeyIncludesUsernameAndProject(t *testing.T) {
+func TestAskRulerTool_KeyIncludesUsernameAndProject(t *testing.T) {
 	mock := &mockRequester{}
-	tool := RequestZhengmingTool{
+	tool := AskRulerTool{
 		MinisterID: "secretary",
 		Requester:  mock,
 		Username:   "daonb",
@@ -52,9 +52,9 @@ func TestRequestZhengmingTool_KeyIncludesUsernameAndProject(t *testing.T) {
 	}
 }
 
-func TestRequestZhengmingTool_CallPassesMinisterIDAsCallerMinisterID(t *testing.T) {
+func TestAskRulerTool_CallPassesMinisterIDAsCallerMinisterID(t *testing.T) {
 	mock := &mockRequester{}
-	tool := RequestZhengmingTool{
+	tool := AskRulerTool{
 		MinisterID: "chancellor",
 		Requester:  mock,
 		Username:   "daonb",
@@ -76,7 +76,7 @@ func TestRequestZhengmingTool_CallPassesMinisterIDAsCallerMinisterID(t *testing.
 	}
 }
 
-func TestRequestZhengmingTool_CallPassesMinisterIDAsCallerMinisterID_ForDifferentMinisters(t *testing.T) {
+func TestAskRulerTool_CallPassesMinisterIDAsCallerMinisterID_ForDifferentMinisters(t *testing.T) {
 	tests := []struct {
 		ministerID string
 	}{
@@ -90,7 +90,7 @@ func TestRequestZhengmingTool_CallPassesMinisterIDAsCallerMinisterID_ForDifferen
 	for _, tt := range tests {
 		t.Run(tt.ministerID, func(t *testing.T) {
 			mock := &mockRequester{}
-			tool := RequestZhengmingTool{
+			tool := AskRulerTool{
 				MinisterID: tt.ministerID,
 				Requester:  mock,
 				Username:   "daonb",

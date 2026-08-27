@@ -144,7 +144,7 @@ Each minister is a specialized AI agent with a specific role:
 | **Judge** | Writes tests and validates changes through test coverage | `read_file`, `write_file`, `edit_file`, `glob`, `run_shell_command` | `record_verdict`, `reject_manifest` |
 | **Chancellor** | Sees all state read-only, helps distill intent into edicts, performs code review with precedent tracking | `read_file`, `glob`, `grep` (all tables) | `create_edict`, `record_precedent` |
 
-**Core Tools** are the basic file system and shell tools needed for each minister's work. **Specialized Tools** are unique to each minister's role in the Court. All ministers share `request_zhengming` as a common tool. `consult_minister` is available only to the secretary via `extra_tools`.
+**Core Tools** are the basic file system and shell tools needed for each minister's work. **Specialized Tools** are unique to each minister's role in the Court. All ministers share `ask_ruler` as a common tool. `consult_minister` is available only to the secretary via `extra_tools`.
 
 ### Lings
 
@@ -174,7 +174,7 @@ proceeding.
 
 **The Zhengming Loop:**
 
-1. Minister calls `request_zhengming` with a question — edict moves to `halted`
+1. Minister calls `ask_ruler` with a question — edict moves to `halted`
 2. Chancellor receives the question and attempts to answer from its wider context
 3. If the Chancellor cannot answer, it escalates to the Ruler
 4. Answer (from Chancellor or Ruler) is appended to edict intent, edict resumes previous phase
@@ -910,7 +910,7 @@ Key constraints:
 - **Chancellor cannot write files** — it orchestrates, never implements.
 - **Only Forge and Judge have shell access**.
 - **Chancellor sees all but changes nothing** — full read-only across every table; can only create edicts and record precedents.
-- All ministers share `request_zhengming` as a common tool. `consult_minister` is available only to the secretary via `extra_tools`.
+- All ministers share `ask_ruler` as a common tool. `consult_minister` is available only to the secretary via `extra_tools`.
 
 The `Session` also enforces **write protection** — a file must be read via `read_file` before it can be written via `write_file`. This is tracked per-session in `filesRead`.
 
