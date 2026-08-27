@@ -12,6 +12,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -605,57 +606,62 @@ const (
 	defaultUnknownContextRef = 8192
 )
 
-// extendedModelContextSizes maps model names to their context window sizes.
-// For OpenRouter models (provider/model format), use the full name as key.
-var extendedModelContextSizes = map[string]int{
-	// Anthropic Claude models
-	"claude-3-5-sonnet-latest":   200_000,
-	"claude-3-5-sonnet":          200_000,
-	"claude-3-opus-20240229":     200_000,
-	"claude-3-sonnet-20240229":   200_000,
-	"claude-3-5-haiku-latest":    200_000,
-	"claude-3-haiku-20240307":    200_000,
-	"claude-sonnet-4-5-20250929": 200_000,
-	// Google Gemini models
-	"gemini-1.5-flash":        1_000_000,
-	"gemini-1.5-flash-latest": 1_000_000,
-	"gemini-1.5-pro":          2_000_000,
-	"gemini-1.5-pro-latest":   2_000_000,
-	"gemini-pro":              1_000_000,
-	"gemini-2.0-flash":        1_000_000,
-	// MiniMax models (e.g. via AWS Bedrock bedrock-mantle endpoint)
-	"minimax.minimax-m2.5": 196_000,
+// modelContextRule pairs a compiled regexp with a context window size.
+// Rules are matched in order and the first match wins.
+type modelContextRule struct {
+	pattern *regexp.Regexp
+	size    int
+}
+
+// modelContextSizes maps a "<provider>:<model>" key to a context window size.
+// Rules are matched in order and the first match wins, so per-model custom
+// sizes must be listed before their family general size, and family sizes
+// before the provider-level fallback. OpenRouter models carry their own base
+// provider inside the model half ("provider/model"), while direct providers
+// use the bare model name; the optional provider prefix keeps one rule able to
+// match a family across both delivery routes.
+var modelContextSizes = []modelContextRule{
+	// --- Per-model overrides (before family defaults) ---
+	// Gemini 1.5 Pro: a 2M window (rest of the gemini family is 1M).
+	{regexp.MustCompile(`^[^:]+:(google/)?gemini-1\.5-pro.*$`), 2_000_000},
+	// Moonshot Kimi k2.6: a 262k window (rest of the kimi family is 128k).
+	{regexp.MustCompile(`^[^:]+:moonshotai/kimi-k2\.6$`), 262_000},
+	// OpenAI gpt-4o: 128k (below the openai default and the 1M gpt-4.1 line).
+	{regexp.MustCompile(`^[^:]+:(openai/)?gpt-4o$`), 128_000},
+	// DeepSeek v3.2 and R1: 128k (below the 1M deepseek-v4 line).
+	{regexp.MustCompile(`^[^:]+:deepseek/(deepseek-)?v3\.2$`), 128_000},
+	{regexp.MustCompile(`^[^:]+:deepseek/(deepseek-)?r1$`), 128_000},
+	// MiniMax (AWS Bedrock bedrock-mantle endpoint, dotted form): 196k.
+	{regexp.MustCompile(`^[^:]+:minimax\.minimax-m2\.5$`), 196_000},
+
+	// --- General family sizes (shared across providers) ---
+	// DeepSeek v4 line: 1M.
+	{regexp.MustCompile(`deepseek-v4`), 1_000_000},
+	// Anthropic Claude: 200k.
+	{regexp.MustCompile(`^[^:]+:(anthropic/)?claude-.*$`), 200_000},
+	// OpenAI gpt-4.1 line: 1M.
+	{regexp.MustCompile(`^[^:]+:(openai/)?gpt-4\.1.*$`), 1_000_000},
+	// Google Gemini (broad family): 1M.
+	{regexp.MustCompile(`^[^:]+:(google/)?gemini-.*$`), 1_000_000},
+	// MiniMax via OpenRouter (slash form): 1M.
+	{regexp.MustCompile(`^[^:]+:minimax/minimax-m2\.[57]$`), 1_000_000},
+	{regexp.MustCompile(`^[^:]+:z-ai/glm-5\.2$`), 1_000_000},
+	{regexp.MustCompile(`^[^:]+:mistralai/.*$`), 128_000},
+	{regexp.MustCompile(`^[^:]+:moonshotai/kimi-.*$`), 128_000},
+	{regexp.MustCompile(`^[^:]+:qwen/qwen3\.5-397b-a17b$`), 128_000},
+
+	// --- General provider fallbacks ---
+	{regexp.MustCompile(`^anthropic:.*$`), 200_000},
+	{regexp.MustCompile(`^bedrock:.*$`), 200_000},
+	{regexp.MustCompile(`^openai:.*$`), 128_000},
+	{regexp.MustCompile(`^openrouter:.*$`), 128_000},
+	{regexp.MustCompile(`^googleai:.*$`), 1_000_000},
 }
 
 // modelMaxOutputTokens caps MaxCompletionTokens for models with provider-side
 // output limits below the default. Key matches the model ID exactly.
 var modelMaxOutputTokens = map[string]int{
 	"minimax.minimax-m2.5": 8192,
-}
-
-// openRouterContextSizes maps the model portion (after provider/) of OpenRouter
-// model names to context window sizes. Looked up when the provider is "openrouter".
-var openRouterContextSizes = map[string]int{
-	"anthropic/claude-sonnet-4":    200_000,
-	"anthropic/claude-opus-4":      200_000,
-	"anthropic/claude-haiku-4":     200_000,
-	"openai/gpt-4o":                128_000,
-	"openai/gpt-4.1":               1_000_000,
-	"openai/gpt-4.1-mini":          1_000_000,
-	"google/gemini-2.5-flash":      1_000_000,
-	"google/gemini-2.5-pro":        1_000_000,
-	"deepseek/deepseek-v4-flash":   1_000_000,
-	"deepseek/deepseek-v4-pro":     1_000_000,
-	"deepseek/deepseek-v3.2":       128_000,
-	"deepseek/deepseek-r1":         128_000,
-	"minimax/minimax-m2.5":         1_000_000,
-	"minimax/minimax-m2.7":         1_000_000,
-	"z-ai/glm-5.2":                 1_000_000,
-	"mistralai/mistral-large-2512": 128_000,
-	"mistralai/devstral-2512":      128_000,
-	"moonshotai/kimi-k2-thinking":  128_000,
-	"moonshotai/kimi-k2.6":         262_000,
-	"qwen/qwen3.5-397b-a17b":       128_000,
 }
 
 // ContextInfo holds information about context usage.
@@ -716,38 +722,98 @@ func (s *Session) getModelName() string {
 	return "Unknown"
 }
 
+// matchContextRule returns the first rule whose pattern matches the full
+// "<provider>:<model>" key, or 0 when no rule matches.
+func matchContextRule(rules []modelContextRule, key string) int {
+	for _, r := range rules {
+		if r.pattern.MatchString(key) {
+			return r.size
+		}
+	}
+	return 0
+}
+
+// modelContextByKey caches context window sizes resolved from bifrost,
+// keyed "provider:model". Lazily populated on first miss from the regex
+// registry. Shared across all sessions — one network call per model.
+var modelContextByKey sync.Map // map[string]int
+
+// resolveContextSizeFromBifrost queries the LLM provider for the configured
+// model's context length and returns the resolved int. Best-effort: on any
+// error, empty result, or model without a resolvable context window, it
+// returns defaultUnknownContextRef.
+func (s *Session) resolveContextSizeFromBifrost(provider, modelName string) int {
+	if s.model == nil || s.config == nil || s.config.Provider == "" || s.config.Model == "" {
+		return defaultUnknownContextRef
+	}
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	prov := schemas.ModelProvider(asimiProviderToBifrostCourt(strings.ToLower(provider)))
+	resp, bifrostErr := s.model.ListModelsRequest(ctx, &schemas.BifrostListModelsRequest{
+		Provider: prov,
+	})
+	if bifrostErr != nil {
+		slog.Debug("failed to list models from bifrost", "error", bifrostErrorToGoError(bifrostErr))
+		return defaultUnknownContextRef
+	}
+	if resp == nil {
+		return defaultUnknownContextRef
+	}
+
+	for _, m := range resp.Data {
+		if m.ID != modelName {
+			continue
+		}
+		if m.ContextLength != nil && *m.ContextLength > 0 {
+			return *m.ContextLength
+		}
+		if m.MaxInputTokens != nil && m.MaxOutputTokens != nil &&
+			*m.MaxInputTokens > 0 && *m.MaxOutputTokens > 0 {
+			return *m.MaxInputTokens + *m.MaxOutputTokens
+		}
+	}
+	return defaultUnknownContextRef
+}
+
 // getModelContextSize returns the context window size for the current model.
+// The resolved size (including provider defaults) lives in modelContextSizes;
+// a provider:model key lets one general family rule serve many delivery routes.
+// The regex registry is the primary deterministic fast path; bifrost only
+// supplements known models with a shared, lazy per-provider:model cache.
 func (s *Session) getModelContextSize() int {
 	modelName := strings.ToLower(s.getModelName())
 
-	// Check direct model name match
-	if size, ok := extendedModelContextSizes[modelName]; ok && size > 0 {
-		return size
-	}
-
-	// Strip routing tag (":nitro", ":free") and look up base model
+	// Strip routing tag (":nitro", ":free") before matching model rules.
 	if idx := strings.Index(modelName, ":"); idx > 0 {
 		modelName = modelName[:idx]
 	}
-	if size, ok := openRouterContextSizes[modelName]; ok && size > 0 {
-		return size
-	}
 
-	// Provider-based fallback
+	var provider string
 	if s.config != nil {
-		switch strings.ToLower(s.config.Provider) {
-		case "anthropic":
-			return 200_000
-		case "openai":
-			return 128_000
-		case "googleai":
-			return 1_000_000
-		case "openrouter":
-			return 128_000
-		}
+		provider = strings.ToLower(s.config.Provider)
 	}
+	key := provider + ":" + modelName
 
-	return defaultUnknownContextRef
+	// Lazy path: shared bifrost cache — one network lookup per
+	// provider:model, stored at package level for all sessions.
+	if size, ok := modelContextByKey.Load(key); ok {
+		return size.(int)
+	}
+	size := s.resolveContextSizeFromBifrost(provider, modelName)
+	if size == defaultUnknownContextRef {
+		// Fast path: regex registry (deterministic, no I/O).
+		if size := matchContextRule(modelContextSizes, key); size > 0 {
+			slog.Info("Using context size from registry", "size", size)
+			return size // leave uncached — re-probe bifrost on next call
+		}
+		// An unknown window is a guess and must not be cached: every later
+		// session for this provider:model would otherwise receive a
+		// fabricated default. Leave the shared cache clean and re-probe.
+		slog.Warn("context window unknown; not guessing and not caching", "provider", provider, "model", modelName)
+		return defaultUnknownContextRef // no Store — never cache a guess
+	}
+	modelContextByKey.Store(key, size) // only real bifrost values cached
+	return size
 }
 
 // updateTokenCounts recalculates and stores token counts for all context components

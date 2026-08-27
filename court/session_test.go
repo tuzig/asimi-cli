@@ -1131,6 +1131,268 @@ func TestSession_GetContextInfo_OpenAI(t *testing.T) {
 	assert.Equal(t, info.TotalTokens, info.UsedTokens+info.FreeTokens+info.AutocompactBuffer)
 }
 
+// contextSizeFor builds a session with the given provider/model and returns its
+// resolved context window size. Matching is done on "<provider>:<model>".
+func contextSizeFor(t *testing.T, provider, model string) int {
+	t.Helper()
+	sess, err := NewSession(nil, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: provider,
+		Model:    model,
+	}}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	return sess.getModelContextSize()
+}
+
+func TestModelContextSize_Anthropic(t *testing.T) {
+	t.Parallel()
+
+	// Direct Anthropic models must produce the same sizes as before.
+	cases := map[string]int{
+		"claude-3-5-sonnet-latest":   200_000,
+		"claude-3-5-sonnet":          200_000,
+		"claude-3-opus-20240229":     200_000,
+		"claude-3-sonnet-20240229":   200_000,
+		"claude-3-5-haiku-latest":    200_000,
+		"claude-3-haiku-20240307":    200_000,
+		"claude-sonnet-4-5-20250929": 200_000,
+	}
+	for model, want := range cases {
+		assert.Equalf(t, want, contextSizeFor(t, "anthropic", model), "model %q", model)
+	}
+}
+
+func TestModelContextSize_Gemini(t *testing.T) {
+	t.Parallel()
+
+	// Direct Google AI / Gemini models must produce the same sizes as before.
+	cases := map[string]int{
+		"gemini-1.5-flash":        1_000_000,
+		"gemini-1.5-flash-latest": 1_000_000,
+		"gemini-1.5-pro":          2_000_000,
+		"gemini-1.5-pro-latest":   2_000_000,
+		"gemini-pro":              1_000_000,
+		"gemini-2.0-flash":        1_000_000,
+	}
+	for model, want := range cases {
+		assert.Equalf(t, want, contextSizeFor(t, "googleai", model), "model %q", model)
+	}
+}
+
+func TestModelContextSize_MiniMaxBedrock(t *testing.T) {
+	t.Parallel()
+
+	// Small MiniMax window via the AWS Bedrock bedrock-mantle endpoint.
+	assert.Equal(t, 196_000, contextSizeFor(t, "bedrock", "minimax.minimax-m2.5"))
+}
+
+func TestModelContextSize_OpenRouter(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]int{
+		"anthropic/claude-sonnet-4":    200_000,
+		"anthropic/claude-opus-4":      200_000,
+		"anthropic/claude-haiku-4":     200_000,
+		"openai/gpt-4o":                128_000,
+		"openai/gpt-4.1":               1_000_000,
+		"openai/gpt-4.1-mini":          1_000_000,
+		"google/gemini-2.5-flash":      1_000_000,
+		"google/gemini-2.5-pro":        1_000_000,
+		"deepseek/deepseek-v4-flash":   1_000_000,
+		"deepseek/deepseek-v4-pro":     1_000_000,
+		"deepseek/deepseek-v3.2":       128_000,
+		"deepseek/deepseek-r1":         128_000,
+		"minimax/minimax-m2.5":         1_000_000,
+		"minimax/minimax-m2.7":         1_000_000,
+		"z-ai/glm-5.2":                 1_000_000,
+		"mistralai/mistral-large-2512": 128_000,
+		"mistralai/devstral-2512":      128_000,
+		"moonshotai/kimi-k2-thinking":  128_000,
+		"moonshotai/kimi-k2.6":         262_000,
+		"qwen/qwen3.5-397b-a17b":       128_000,
+	}
+	for model, want := range cases {
+		assert.Equalf(t, want, contextSizeFor(t, "openrouter", model), "model %q", model)
+	}
+}
+
+func TestModelContextSize_SupersetMatches(t *testing.T) {
+	t.Parallel()
+
+	// New model variants should be covered by the broadened rules.
+	cases := []struct {
+		provider string
+		model    string
+		want     int
+	}{
+		// Direct (bare) model variants via their own provider.
+		{"anthropic", "claude-sonnet-4-5-20250325", 200_000},
+		{"anthropic", "claude-3-5-sonnet-20250620", 200_000},
+		{"googleai", "gemini-2.5-flash", 1_000_000},
+		{"googleai", "gemini-2.5-pro", 1_000_000},
+		{"googleai", "gemini-2.0-flash-lite", 1_000_000},
+		// OpenRouter broadened variants.
+		{"openrouter", "anthropic/claude-sonnet-4.5", 200_000},
+		{"openrouter", "openai/gpt-4.1-nano", 1_000_000},
+		{"openrouter", "openai/gpt-4.1-mini", 1_000_000},
+		{"openrouter", "google/gemini-2.5-pro-preview", 1_000_000},
+		{"openrouter", "deepseek/deepseek-v4-spec", 1_000_000},
+		{"openrouter", "minimax/minimax-m2.7", 1_000_000},
+		{"openrouter", "mistralai/mixtral-8x22b", 128_000},
+		{"openrouter", "moonshotai/kimi-k2.5", 128_000},
+		{"openrouter", "moonshotai/kimi-k2.6", 262_000},
+	}
+	for i, tc := range cases {
+		assert.Equalf(t, tc.want, contextSizeFor(t, tc.provider, tc.model), "%d (%s:%s)", i, tc.provider, tc.model)
+	}
+}
+
+func TestModelContextSize_FirstMatchWins(t *testing.T) {
+	t.Parallel()
+
+	// claude-sonnet-4-5-* must win over the broader claude rule.
+	assert.Equal(t, 200_000, contextSizeFor(t, "anthropic", "claude-sonnet-4-5-20250929"))
+
+	// moonshotai/kimi-k2.6 has a specific rule (262k) before the broad kimi rule.
+	assert.Equal(t, 262_000, contextSizeFor(t, "openrouter", "moonshotai/kimi-k2.6"))
+
+	// gemini-1.5-pro-specific 2M rule wins over the broad gemini 1M rule.
+	assert.Equal(t, 2_000_000, contextSizeFor(t, "googleai", "gemini-1.5-pro"))
+	assert.Equal(t, 1_000_000, contextSizeFor(t, "googleai", "gemini-1.5-flash"))
+}
+
+func TestModelContextSize_RoutingTagStripped(t *testing.T) {
+	t.Parallel()
+
+	// :nitro / :free routing tags are stripped before lookup.
+	assert.Equal(t, 128_000, contextSizeFor(t, "openrouter", "openai/gpt-4o:nitro"))
+	assert.Equal(t, 200_000, contextSizeFor(t, "anthropic", "claude-3-5-sonnet-latest:free"))
+	assert.Equal(t, 1_000_000, contextSizeFor(t, "openrouter", "openai/gpt-4.1-mini:nitro"))
+}
+
+func TestModelContextSize_BifrostLazyFirstCall(t *testing.T) {
+	t.Parallel()
+
+	// A model not covered by the regex registry falls through to the lazy
+	// bifrost resolution on the first key access.
+	ctxLen := 70_000
+	model := schemas.Model{
+		ID:            "nova-custom-ctx",
+		ContextLength: &ctxLen,
+	}
+	mock := &mocks.MockProvider{ModelsResponse: []schemas.Model{model}}
+
+	sess, err := NewSession(mock, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "cohere",
+		Model:    "nova-custom-ctx",
+	}}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 70_000, sess.getModelContextSize())
+}
+
+func TestModelContextSize_BifrostSharedCache(t *testing.T) {
+	t.Parallel()
+
+	// The bifrost value is cached by "provider:model" at package level. A
+	// second session for the same key reuses the cached value without a
+	// fresh network lookup.
+	ctxLen := 80_000
+	model := schemas.Model{
+		ID:            "shared-custom-model",
+		ContextLength: &ctxLen,
+	}
+	mock := &mocks.MockProvider{ModelsResponse: []schemas.Model{model}}
+
+	sess, err := NewSession(mock, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "cohere",
+		Model:    "shared-custom-model",
+	}}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 80_000, sess.getModelContextSize())
+
+	// A second session with the same provider:model but no models advertised
+	// must still resolve from the shared cache.
+	sess2, err := NewSession(&mocks.MockProvider{}, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "cohere",
+		Model:    "shared-custom-model",
+	}}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 80_000, sess2.getModelContextSize())
+}
+
+func TestModelContextSize_BifrostMaxTokensSum(t *testing.T) {
+	t.Parallel()
+
+	// When ContextLength is absent but MaxInputTokens/MaxOutputTokens are
+	// present (Anthropic-model derived context), bifrost resolution uses
+	// their sum.
+	in := 100_000
+	out := 50_000
+	model := schemas.Model{
+		ID:              "sum-output-model",
+		MaxInputTokens:  &in,
+		MaxOutputTokens: &out,
+	}
+	mock := &mocks.MockProvider{ModelsResponse: []schemas.Model{model}}
+
+	sess, err := NewSession(mock, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "cohere",
+		Model:    "sum-output-model",
+	}}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 150_000, sess.getModelContextSize())
+}
+
+func TestModelContextSize_RegexFastPath(t *testing.T) {
+	t.Parallel()
+
+	// A model covered by the regex registry resolves without any bifrost
+	// network call, even when the provider is nil (unknown provider path).
+	sess, err := NewSession(nil, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "anthropic",
+		Model:    "claude-3-5-sonnet-latest",
+	}}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 200_000, sess.getModelContextSize())
+}
+
+func TestModelContextSize_NoNetworkOnInit(t *testing.T) {
+	t.Parallel()
+
+	// Session construction must never trigger a bifrost network lookup.
+	prov := &networkTrackingProvider{}
+	sess, err := NewSession(prov, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "cohere",
+		Model:    "unknown-model-xyz",
+	}}, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, prov.listCalls, "NewSession must not call ListModelsRequest")
+	assert.Equal(t, defaultUnknownContextRef, sess.getModelContextSize())
+}
+
+func TestModelContextSize_UnknownNotCached(t *testing.T) {
+	t.Parallel()
+
+	// A model resolvable by neither bifrost nor the regex registry must not
+	// grow or reuse the shared cache: the defaultUnknownContextRef guess is
+	// never stored, so a second session for the same provider:model re-probes
+	// bifrost instead of inheriting a fabricated value.
+	prov := &networkTrackingProvider{}
+	cfg := &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "cohere",
+		Model:    "truly-unknown-not-cached",
+	}}
+
+	sess, err := NewSession(prov, cfg, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, defaultUnknownContextRef, sess.getModelContextSize())
+	assert.Equal(t, 1, prov.listCalls, "first unresolved lookup probes bifrost")
+
+	sess2, err := NewSession(prov, cfg, nil, nil, func(any) {}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, defaultUnknownContextRef, sess2.getModelContextSize())
+	assert.Equal(t, 2, prov.listCalls, "unresolved size must not be cached; second session re-probes")
+}
+
 func TestSession_GetContextInfo_WithContextFiles(t *testing.T) {
 	t.Parallel()
 
@@ -1415,6 +1677,27 @@ func (hangingLLMProvider) ListAllModels(ctx *schemas.BifrostContext, req *schema
 }
 
 func (hangingLLMProvider) ListModelsRequest(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	return &schemas.BifrostListModelsResponse{}, nil
+}
+
+// networkTrackingProvider counts ListModelsRequest calls so tests can assert
+// that session construction never triggers a network round-trip.
+type networkTrackingProvider struct{ listCalls int }
+
+func (p *networkTrackingProvider) ChatCompletionRequest(ctx *schemas.BifrostContext, req *schemas.BifrostChatRequest) (*schemas.BifrostChatResponse, *schemas.BifrostError) {
+	return nil, nil
+}
+
+func (p *networkTrackingProvider) ChatCompletionStreamRequest(ctx *schemas.BifrostContext, req *schemas.BifrostChatRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+	return make(chan *schemas.BifrostStreamChunk), nil
+}
+
+func (p *networkTrackingProvider) ListAllModels(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	return &schemas.BifrostListModelsResponse{}, nil
+}
+
+func (p *networkTrackingProvider) ListModelsRequest(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	p.listCalls++
 	return &schemas.BifrostListModelsResponse{}, nil
 }
 
