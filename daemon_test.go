@@ -13,6 +13,8 @@ import (
 	"github.com/afittestide/asimi/internal/config"
 	"github.com/afittestide/asimi/internal/repo"
 	"github.com/afittestide/asimi/internal/runners"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestInitShellRunnerMustNotFallbackToHost verifies that on a system
@@ -39,6 +41,29 @@ func TestInitShellRunnerMustNotFallbackToHost(t *testing.T) {
 	if runner.RunnerType() == "host" {
 		t.Errorf("InitShellRunner returned HostRunner when podman is unavailable — commands will escape to host (uname → Darwin)")
 	}
+}
+
+// TestInitShellRunnerDefaultImage verifies that the default sandbox image
+// name is derived directly from the (canonical lowercase) git slug. Since
+// RepoInfo.Slug is normalized to lowercase at its source, the runner uses it
+// verbatim — no per-callsite lowercasing is needed.
+func TestInitShellRunnerDefaultImage(t *testing.T) {
+	cfg := &config.SandboxConfig{}
+	repoInfo := repo.RepoInfo{
+		ProjectRoot: t.TempDir(),
+		Slug:        "myorg/myproject",
+	}
+
+	runner := runners.InitShellRunner(cfg, repoInfo)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = runner.Close(ctx)
+	}()
+
+	pr, ok := runner.(*runners.PodmanRunner)
+	require.True(t, ok, "InitShellRunner should return a *runners.PodmanRunner")
+	assert.Equal(t, "localhost/asimi/sandbox/myorg/myproject:latest", pr.GetImageName())
 }
 
 // TestPodmanRunnerHostFallbackMustNotLeak verifies that when

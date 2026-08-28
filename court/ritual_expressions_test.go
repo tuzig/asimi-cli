@@ -1189,12 +1189,36 @@ func TestGetInfrastructureTemplates_SlugSubstitution(t *testing.T) {
 	justfileContent, err := os.ReadFile(filepath.Join(projectRoot, "Justfile"))
 	require.NoError(t, err)
 	assert.Contains(t, string(justfileContent), "PROJECT_NAME := `git")
+	// Edict 775: the generated Justfile's PROJECT_NAME must lowercase the
+	// org/repo slug (via tr) so build-sandbox tags and the runner's lookup
+	// agree on a lowercase image tag.
+	assert.Contains(t, string(justfileContent), `tr '[A-Z]' '[a-z]'`)
 
 	// Check asimi.conf has slug-based image name
 	confContent, err := os.ReadFile(filepath.Join(projectRoot, ".agents", "asimi.conf"))
 	require.NoError(t, err)
 	assert.Contains(t, string(confContent), `image_name = "localhost/asimi/sandbox/myorg/myrepo:latest"`)
 	assert.Contains(t, string(confContent), `project = "myorg/myrepo"`)
+}
+
+func TestGetInfrastructureTemplates_SlugSubstitutionLowercasesImage(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	registry := NewRitualRegistry()
+	runner := NewRitualRunner(registry, nil, nil, nil, nil, nil, repo.RepoInfo{
+		ProjectRoot: projectRoot,
+		Slug:        "myorg/myproject",
+	})
+
+	_, err := runner.getInfrastructureTemplates(context.Background())
+	require.NoError(t, err)
+
+	// The slug is canonical lowercase at its source, so the runner uses it
+	// verbatim for both the image_name and project without any ToLower.
+	confContent, err := os.ReadFile(filepath.Join(projectRoot, ".agents", "asimi.conf"))
+	require.NoError(t, err)
+	assert.Contains(t, string(confContent), `image_name = "localhost/asimi/sandbox/myorg/myproject:latest"`)
+	assert.Contains(t, string(confContent), `project = "myorg/myproject"`)
 }
 
 func TestGetInfrastructureTemplates_TemplateFilesListSorted(t *testing.T) {

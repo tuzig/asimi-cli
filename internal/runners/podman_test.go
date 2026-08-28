@@ -43,6 +43,24 @@ func TestNewPodmanRunner(t *testing.T) {
 	assert.Equal(t, "podman", runner.RunnerType())
 }
 
+func TestNewPodmanRunnerLowercasesSlug(t *testing.T) {
+	repoInfo := repo.RepoInfo{
+		ProjectRoot: t.TempDir(),
+		Slug:        "myorg/myproject",
+	}
+
+	hostRunner := NewHostRunner(1, t.TempDir())
+
+	config := &Config{
+		AllowHostFallback: true,
+	}
+
+	runner := NewPodmanRunner(config, repoInfo, 7, hostRunner)
+	require.NotNil(t, runner)
+	assert.Equal(t, "localhost/asimi/sandbox/myorg/myproject:latest", runner.imageName)
+	assert.Equal(t, "asimi-shell-myorg-myproject-7", runner.containerName)
+}
+
 func TestNewPodmanRunnerCustomImage(t *testing.T) {
 	repoInfo := repo.RepoInfo{
 		ProjectRoot: t.TempDir(),

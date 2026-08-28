@@ -279,3 +279,40 @@ func TestSanitizeSegment(t *testing.T) {
 		})
 	}
 }
+
+func TestParseGitRemote(t *testing.T) {
+	tests := []struct {
+		name      string
+		remote    string
+		wantOwner string
+		wantRepo  string
+	}{
+		{"https uppercase", "https://github.com/MyOrg/MyProject.git", "MyOrg", "MyProject"},
+		{"ssh scp syntax", "git@github.com:MyOrg/MyProject.git", "MyOrg", "MyProject"},
+		{"git protocol", "git://github.com/MyOrg/MyProject.git", "MyOrg", "MyProject"},
+		{"mixed case", "https://github.com/myOrg/myProject", "myOrg", "myProject"},
+		{"empty", "", "", ""},
+		{"only owner no repo", "https://github.com/MyOrg", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner, repo := ParseGitRemote(tt.remote)
+			require.Equal(t, tt.wantOwner, owner, "owner mismatch")
+			require.Equal(t, tt.wantRepo, repo, "repo mismatch")
+		})
+	}
+}
+
+func TestProjectSlugLowercasesRemoteSegments(t *testing.T) {
+	// projectSlug uses git config --get remote.origin.url, so set up a real repo.
+	dir := t.TempDir()
+	_, err := runGitCommand(dir, "init")
+	require.NoError(t, err)
+	_, err = runGitCommand(dir, "remote", "add", "origin", "https://github.com/MyOrg/MyProject.git")
+	require.NoError(t, err)
+	t.Setenv("ASIMI_SKIP_GIT_STATUS", "1")
+
+	slug := projectSlug(dir)
+	require.Equal(t, "myorg/myproject", slug)
+}

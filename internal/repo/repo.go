@@ -458,8 +458,9 @@ func projectSlug(projectRoot string) string {
 	if owner == "" || repo == "" {
 		return ""
 	}
-
-	return owner + "/" + repo
+	// Canonical slug is always lowercase; Git remotes may carry uppercase.
+	// Preserve the "/" separator (required by podman image names).
+	return strings.ToLower(owner) + "/" + strings.ToLower(repo)
 }
 
 func collectDiffFromGit(repoPath string, opts []string) (int, int) {
