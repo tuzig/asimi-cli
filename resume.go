@@ -259,16 +259,18 @@ func formatRelativeTime(t time.Time) string {
 }
 
 // handleSessionSelected processes a resumed session and updates the TUI model.
-// It rebuilds the chat UI from messages, switches to the correct tab, and
-// re-hydrates the minister session for full conversation continuity.
+// The full chat rebuild is split into small batches via resumeRebuildBatchMsg
+// ticks so the UI remains responsive while the history assembles. The
+// minister-session (court history) restore is done immediately/synchronously,
+// exactly as before; only the chat RENDER is progressive.
 //
 // When m.creatingTab is set, the session is restored onto an edict tab (e<N>)
 // instead of switching to the minister's original interactive tab. If
 // m.pendingPrompt is also set, it is submitted to the minister after restore.
 // When m.creatingTab is empty, this is a normal resume from the session list.
-func (m *TUIModel) handleSessionSelected(session *court.Session) {
+func (m *TUIModel) handleSessionSelected(session *court.Session) tea.Cmd {
 	if session == nil {
-		return
+		return nil
 	}
 
 	if m.creatingTab == "" {
@@ -283,21 +285,13 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 		m.currentEdictKey = m.court.EdictKey(uint(edictID))
 	}
 
-	// Clear and rebuild chat UI from messages
+	// Clear chat UI; the history is progressively appended below.
 	m.tabs.Content().Chat.Clear()
-	m.rebuildChatFromMessages(session.GetMessages())
 	m.sessionActive = true
 
-	// Flush any debounced content from the rebuild loop above
-	m.tabs.Content().Chat.FlushDirty()
-
-	// If restoring with a pending prompt, show it as a user message so the
-	// Ruler can see their own input before the AI response arrives.
-	if m.pendingPrompt != "" {
-		m.tabs.Content().Chat.AddUserMessage(m.pendingPrompt)
-	}
-
-	// Restore minister session (with target channel if creatingTab is set)
+	// Restore minister session immediately/synchronously (court history).
+	// This must happen before the first rebuild tick so the final batch can
+	// submit the pending prompt in the same order as before.
 	if m.court != nil {
 		tabType := session.TabType
 		if tabType == "" {
@@ -309,6 +303,92 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 		} else {
 			m.court.RestoreMinisterSession(tabType, session.GetMessages(), tab.Target)
 		}
+	}
+
+	// Reset in-session prompt history state to prevent rollback issues
+	// when the user enters a new prompt after resuming.
+	m.sessionPromptHistory = make([]promptHistoryEntry, 0)
+	m.historyCursor = 0
+	m.historySaved = false
+	m.historyPendingPrompt = ""
+	m.historyPresentSessionSnapshot = 0
+	m.historyPresentChatSnapshot = 0
+
+	// Prepare all display messages once (tool-result mapping needs the full set),
+	// then start the progressive pager. The pending prompt and creating-tab
+	// handling run on the final batch, after the full history has assembled.
+	m.resumeRebuildMessages = buildResumeChatMessages(session.GetMessages())
+	m.resumeRebuildCursor = 0
+	m.resumeRebuildSession = session
+	m.resumeRebuildActive = true
+
+	return m.resumeRebuildTick()
+}
+
+// resumeRebuildConstMessages is the number of display messages appended per
+// resumeRebuildBatchMsg tick.
+const resumeRebuildConst = 4
+
+// resumeRebuildTick returns a tea.Cmd that fires a resumeRebuildBatchMsg after
+// a short delay, driving one batch of the progressive chat rebuild.
+func (m *TUIModel) resumeRebuildTick() tea.Cmd {
+	return tea.Tick(30*time.Millisecond, func(time.Time) tea.Msg {
+		return resumeRebuildBatchMsg{messages: m.resumeRebuildMessages, cursor: m.resumeRebuildCursor}
+	})
+}
+
+// handleResumeRebuildBatch processes the next batch of prepared messages for
+// the progressive session resume. It appends a few messages at a time (leaving
+// contentDirty so the render tick shows progress), and on the final batch
+// flushes, restores the pending prompt, and cleans up.
+func (m *TUIModel) handleResumeRebuildBatch(msg resumeRebuildBatchMsg) tea.Cmd {
+	if !m.resumeRebuildActive {
+		return nil
+	}
+	if m.resumeRebuildSession == nil {
+		m.resumeRebuildActive = false
+		return nil
+	}
+
+	cursor := msg.cursor
+	messages := msg.messages
+	chat := m.tabs.Content().Chat
+
+	// Append the next window of prepared messages.
+	end := cursor + resumeRebuildConst
+	if end > len(messages) {
+		end = len(messages)
+	}
+	if cursor < len(messages) {
+		chat.AppendBatch(messages[cursor:end])
+		m.resumeRebuildCursor = end
+	}
+
+	// Not done yet — continue paging.
+	if end < len(messages) {
+		cmds := []tea.Cmd{m.resumeRebuildTick()}
+		// Schedule a debounce render tick so intermediate batches become
+		// visible before the final flush — mirroring the streaming handler.
+		if chat.contentDirty && !m.renderTickPending {
+			m.renderTickPending = true
+			cmds = append(cmds, tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg { return chatRenderTickMsg{} }))
+		}
+		return tea.Batch(cmds...)
+	}
+
+	// Final batch: flush the accumulated dirty content, then handle pending
+	// prompt / creatingTab exactly like the synchronous path did.
+	m.tabs.Content().Chat.FlushDirty()
+	session := m.resumeRebuildSession
+	m.resumeRebuildMessages = nil
+	m.resumeRebuildSession = nil
+	m.resumeRebuildCursor = 0
+	m.resumeRebuildActive = false
+
+	// If restoring with a pending prompt, show it as a user message so the
+	// Ruler can see their own input before the AI response arrives.
+	if m.pendingPrompt != "" {
+		m.tabs.Content().Chat.AddUserMessage(m.pendingPrompt)
 	}
 
 	// Submit pending prompt if set
@@ -340,26 +420,16 @@ func (m *TUIModel) handleSessionSelected(session *court.Session) {
 		m.commandLine.AddToast(fmt.Sprintf("Resumed session from %s", timeStr), "success", 3000)
 	}
 
-	// Reset in-session prompt history state to prevent rollback issues
-	// when the user enters a new prompt after resuming.
-	// We keep the persistent history (loaded from disk) but clear the
-	// session-specific rollback state.
-	m.sessionPromptHistory = make([]promptHistoryEntry, 0)
-	m.historyCursor = 0
-	m.historySaved = false
-	m.historyPendingPrompt = ""
-	m.historyPresentSessionSnapshot = 0
-	m.historyPresentChatSnapshot = 0
-
 	// Clear creatingTab
 	m.creatingTab = ""
+	return nil
 }
 
-// rebuildChatFromMessages renders chat messages into the active tab's chat UI.
-// It builds a tool-results map, then iterates all messages adding user,
-// assistant (with thinking and tool calls), and tool messages.
-func (m *TUIModel) rebuildChatFromMessages(allMessages []schemas.ChatMessage) {
-	// Build a map of tool call IDs to their responses for matching
+// buildResumeChatMessages renders a slice of session ChatMessages into the
+// []ChatMessage (Content+Type) form that the batched append API consumes. It
+// reuses the same mapping as the old synchronous rebuildChatFromMessages.
+func buildResumeChatMessages(allMessages []schemas.ChatMessage) []ChatMessage {
+	// Build a map of tool call IDs to their responses for matching.
 	toolResults := make(map[string]string)
 	for _, msgContent := range allMessages {
 		if msgContent.Role == schemas.ChatMessageRoleTool {
@@ -373,6 +443,7 @@ func (m *TUIModel) rebuildChatFromMessages(allMessages []schemas.ChatMessage) {
 		}
 	}
 
+	var out []ChatMessage
 	for _, msgContent := range allMessages {
 		// Skip system messages
 		if msgContent.Role == schemas.ChatMessageRoleSystem {
@@ -382,19 +453,19 @@ func (m *TUIModel) rebuildChatFromMessages(allMessages []schemas.ChatMessage) {
 		switch msgContent.Role {
 		case schemas.ChatMessageRoleUser:
 			if msgContent.Content != nil && msgContent.Content.ContentStr != nil {
-				m.tabs.Content().Chat.AddUserMessage(*msgContent.Content.ContentStr)
+				out = append(out, ChatMessage{Content: *msgContent.Content.ContentStr, Type: MessageTypeUser})
 			}
 
 		case schemas.ChatMessageRoleAssistant:
-			// First check for thinking/reasoning content
+			// First collect reasoning content as a thinking chunk.
 			if msgContent.ChatAssistantMessage != nil && msgContent.ChatAssistantMessage.Reasoning != nil {
 				text := strings.TrimSpace(*msgContent.ChatAssistantMessage.Reasoning)
 				if text != "" {
-					m.tabs.Content().Chat.AddThinkingChunk(text)
+					out = append(out, ChatMessage{Content: text, Type: MessageTypeThinking})
 				}
 			}
 
-			// Then collect all text content and add as a single message
+			// Then collect all text content and add as a single AI message.
 			var textContent strings.Builder
 			if msgContent.Content != nil && msgContent.Content.ContentStr != nil {
 				text := strings.TrimSpace(*msgContent.Content.ContentStr)
@@ -402,15 +473,12 @@ func (m *TUIModel) rebuildChatFromMessages(allMessages []schemas.ChatMessage) {
 					textContent.WriteString(text)
 				}
 			}
-			// Add as a single AI message if there's any non-empty text content
 			if textContent.Len() > 0 {
-				m.tabs.Content().Chat.AddAIChunk(textContent.String())
-				m.tabs.Content().Chat.FinalizeLastAIMessage()
+				out = append(out, ChatMessage{Content: textContent.String(), Type: MessageTypeAISuccess})
 			}
-			// Then add tool calls with their results
+			// Then add tool calls with their results.
 			if msgContent.ChatAssistantMessage != nil {
 				for _, tc := range msgContent.ChatAssistantMessage.ToolCalls {
-					// Find the corresponding result
 					var result string
 					var toolErr error
 					tcID := ""
@@ -424,14 +492,13 @@ func (m *TUIModel) rebuildChatFromMessages(allMessages []schemas.ChatMessage) {
 							result = resp
 						}
 					}
-					// Format the tool call with its result
 					args := tc.Function.Arguments
 					name := ""
 					if tc.Function.Name != nil {
 						name = *tc.Function.Name
 					}
 					formatted := formatToolCallByName(name, checkPrefix, args, result, toolErr)
-					m.tabs.Content().Chat.AddMessage(formatted)
+					out = append(out, ChatMessage{Content: formatted, Type: MessageTypeSystem})
 				}
 			}
 
@@ -440,4 +507,5 @@ func (m *TUIModel) rebuildChatFromMessages(allMessages []schemas.ChatMessage) {
 			continue
 		}
 	}
+	return out
 }

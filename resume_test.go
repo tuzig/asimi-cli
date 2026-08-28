@@ -8,6 +8,7 @@ import (
 	"github.com/afittestide/asimi/court"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewResumeWindowDefaults(t *testing.T) {
@@ -136,4 +137,87 @@ func testSession(id, prompt string, updated time.Time, messageTexts ...string) c
 	}
 	s.SetMessages(messages)
 	return s
+}
+
+// ===== Progressive Session Resume Pager Tests (edict 771) =====
+
+// TestResumeRebuildBatch_CursorAdvancesAndCompletes drives the pager across
+// enough messages to span multiple batches and verifies the cursor advances to
+// the end, the content is flushed (no loss), and the pager deactivates.
+func TestResumeRebuildBatch_CursorAdvancesAndCompletes(t *testing.T) {
+	model := newTestModel(t)
+	// 10 messages -> batches of 4: 4+4+2.
+	msgs := make([]ChatMessage, 10)
+	for i := range msgs {
+		msgs[i] = ChatMessage{Content: fmt.Sprintf("msg-%d", i), Type: MessageTypeUser}
+	}
+	model.resumeRebuildMessages = msgs
+	model.resumeRebuildCursor = 0
+	model.resumeRebuildActive = true
+	session := testSession("resume-batch", "First", time.Now(), "msg")
+	model.resumeRebuildSession = &session
+
+	// First batch appends 4 and continues paging.
+	cmd := model.handleResumeRebuildBatch(resumeRebuildBatchMsg{messages: msgs, cursor: 0})
+	assert.Equal(t, 4, model.resumeRebuildCursor, "cursor should advance by one batch")
+	require.NotNil(t, cmd, "pager should continue while messages remain")
+	assert.True(t, model.resumeRebuildActive)
+	assert.Len(t, model.tabs.Content().Chat.Messages, 4, "first batch should append 4 messages")
+	// The debounce render tick must be scheduled so intermediate content is
+	// visible before the final flush — guards the progressive-render contract.
+	assert.True(t, model.renderTickPending, "intermediate batch should schedule a chatRenderTickMsg")
+
+	// Second batch appends next 4 -> cursor 8. The pager tick keeps firing so
+	// renderTickPending stays true (a fresh tick is rescheduled each batch).
+	cmd = model.handleResumeRebuildBatch(resumeRebuildBatchMsg{messages: msgs, cursor: model.resumeRebuildCursor})
+	assert.Equal(t, 8, model.resumeRebuildCursor, "cursor should advance to 8 after second batch")
+	require.NotNil(t, cmd)
+	assert.True(t, model.renderTickPending, "every intermediate batch should keep the render tick scheduled")
+
+	// Final batch appends the last 2 and completes.
+	cmd = model.handleResumeRebuildBatch(resumeRebuildBatchMsg{messages: msgs, cursor: model.resumeRebuildCursor})
+	assert.Nil(t, cmd, "final batch should not continue paging")
+	assert.False(t, model.resumeRebuildActive, "pager should deactivate on final batch")
+	assert.Equal(t, 0, model.resumeRebuildCursor, "cursor should reset on completion")
+	assert.Nil(t, model.resumeRebuildMessages, "prepared messages should be cleared on completion")
+	assert.Nil(t, model.resumeRebuildSession, "session should be cleared on completion")
+	assert.Len(t, model.tabs.Content().Chat.Messages, 10, "all messages must be appended, no content loss")
+
+	// Now flush the dirty content via the render tick — simulating the TUI
+	// message loop consuming the chatRenderTickMsg produced by intermediate
+	// batches. Everything accumulated (even before the pager finished) becomes
+	// visible.
+	model.renderTickPending = false
+	model.tabs.FlushDirtyChats()
+	assert.False(t, model.tabs.Content().Chat.contentDirty,
+		"render tick flush should clear contentDirty")
+	assert.Len(t, model.tabs.Content().Chat.Messages, 10, "no messages lost through debounce flush")
+}
+
+// TestResumeRebuildBatch_Inactive_ReturnsNil verifies a deactivated pager no
+// longer appends messages (guards against stray lingering ticks).
+func TestResumeRebuildBatch_Inactive_ReturnsNil(t *testing.T) {
+	model := newTestModel(t)
+	model.resumeRebuildActive = false
+	model.tabs.Content().Chat.Clear()
+
+	cmd := model.handleResumeRebuildBatch(resumeRebuildBatchMsg{
+		messages: []ChatMessage{{Content: "stray", Type: MessageTypeSystem}},
+	})
+	assert.Nil(t, cmd, "inactive pager should return nil")
+	assert.Empty(t, model.tabs.Content().Chat.Messages, "inactive pager should not append")
+}
+
+// TestResumeRebuildBatch_NoSession_Deactivates verifies that a missing session
+// safely deactivates the pager rather than panicking or appending.
+func TestResumeRebuildBatch_NoSession_Deactivates(t *testing.T) {
+	model := newTestModel(t)
+	model.resumeRebuildActive = true
+	model.resumeRebuildSession = nil
+
+	cmd := model.handleResumeRebuildBatch(resumeRebuildBatchMsg{
+		messages: []ChatMessage{{Content: "stray", Type: MessageTypeSystem}},
+	})
+	assert.Nil(t, cmd)
+	assert.False(t, model.resumeRebuildActive, "pager should deactivate when session is nil")
 }

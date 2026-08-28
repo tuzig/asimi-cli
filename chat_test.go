@@ -150,6 +150,105 @@ func TestAddThinkingChunk_SkipsEmptyChunks(t *testing.T) {
 		"no new message should be added for empty thinking chunks")
 }
 
+// ===== Batched (dirty-flag) Append API Tests (edict 771) =====
+
+func TestAppendStringMessage_SetsDirtyWithoutImmediateRender(t *testing.T) {
+	chat := NewChatComponent(80, 20, false)
+	baseline := chat.Viewport.View()
+
+	chat.AppendStringMessage("batched system message")
+
+	// Appended but NOT eagerly rendered — viewport stays stale.
+	assert.True(t, chat.contentDirty, "AppendStringMessage should set contentDirty=true")
+	assert.Len(t, chat.Messages, 1)
+	assert.Equal(t, MessageTypeSystem, chat.Messages[0].Type)
+	assert.Equal(t, baseline, chat.Viewport.View(),
+		"AppendStringMessage should NOT immediately update the viewport")
+
+	chat.FlushDirty()
+	assert.Contains(t, chat.Viewport.View(), "batched system message",
+		"viewport should reflect the message after FlushDirty")
+}
+
+func TestAppendUserMessage_SetsContentDirtyWithoutImmediateRender(t *testing.T) {
+	chat := NewChatComponent(80, 20, false)
+	baseline := chat.Viewport.View()
+
+	chat.AppendUserMessage("batched user text")
+
+	assert.True(t, chat.contentDirty, "AppendUserMessage should set contentDirty=true")
+	assert.Len(t, chat.Messages, 1)
+	assert.Equal(t, MessageTypeUser, chat.Messages[0].Type)
+	assert.Equal(t, "batched user text", chat.Messages[0].Content)
+	assert.Equal(t, baseline, chat.Viewport.View(),
+		"AppendUserMessage should NOT immediately update the viewport")
+
+	chat.FlushDirty()
+	assert.Contains(t, chat.Viewport.View(), "batched user text",
+		"viewport should reflect the message after FlushDirty")
+}
+
+func TestAppendToolCallMessage_SetsContentDirtyWithoutImmediateRender(t *testing.T) {
+	chat := NewChatComponent(80, 20, false)
+	baseline := chat.Viewport.View()
+
+	chat.AppendToolCallMessage("tool call line")
+
+	assert.True(t, chat.contentDirty, "AppendToolCallMessage should set contentDirty=true")
+	assert.Len(t, chat.Messages, 1)
+	assert.Equal(t, MessageTypeSystem, chat.Messages[0].Type)
+	assert.Equal(t, baseline, chat.Viewport.View(),
+		"AppendToolCallMessage should NOT immediately update the viewport")
+
+	chat.FlushDirty()
+	assert.Contains(t, chat.Viewport.View(), "tool call line",
+		"viewport should reflect the tool call line after FlushDirty")
+}
+
+func TestAppendBatch_SetsDirtyOnceAndPreservesTypes(t *testing.T) {
+	chat := NewChatComponent(80, 20, false)
+	baseline := chat.Viewport.View()
+
+	msgs := []ChatMessage{
+		{Content: "user one", Type: MessageTypeUser},
+		{Content: "ai response", Type: MessageTypeAISuccess},
+		{Content: "thinking…", Type: MessageTypeThinking},
+		{Content: "tool line", Type: MessageTypeSystem},
+	}
+	chat.AppendBatch(msgs)
+
+	// All appended in one call, contentDirty set once.
+	assert.True(t, chat.contentDirty, "AppendBatch should set contentDirty=true")
+	assert.Len(t, chat.Messages, 4, "AppendBatch should append all messages in one call")
+	assert.Equal(t, MessageTypeUser, chat.Messages[0].Type)
+	assert.Equal(t, MessageTypeAISuccess, chat.Messages[1].Type)
+	assert.Equal(t, MessageTypeThinking, chat.Messages[2].Type)
+	assert.Equal(t, MessageTypeSystem, chat.Messages[3].Type)
+	assert.Equal(t, "user one", chat.Messages[0].Content)
+	assert.Equal(t, baseline, chat.Viewport.View(),
+		"AppendBatch should NOT immediately update the viewport")
+
+	chat.FlushDirty()
+	assert.Contains(t, chat.Viewport.View(), "user one",
+		"viewport should reflect the batch after FlushDirty")
+	assert.Contains(t, chat.Viewport.View(), "ai response")
+}
+
+func TestAppendMethods_DoNotWeakenSynchronousContract(t *testing.T) {
+	// The batched Append* methods must NOT alter the behaviour of the
+	// existing synchronous AddMessage/AddUserMessage: those still update the
+	// viewport eagerly and leave contentDirty=false.
+	chat := NewChatComponent(80, 20, false)
+
+	chat.AddMessage("sync system")
+	assert.False(t, chat.contentDirty, "AddMessage must remain synchronous (contentDirty=false)")
+	assert.Contains(t, chat.Viewport.View(), "sync system")
+
+	chat.AddUserMessage("sync user")
+	assert.False(t, chat.contentDirty, "AddUserMessage must remain synchronous (contentDirty=false)")
+	assert.Contains(t, chat.Viewport.View(), "sync user")
+}
+
 // ===== Clear() Tests =====
 
 func TestClear_ResetsMessagesAndState(t *testing.T) {

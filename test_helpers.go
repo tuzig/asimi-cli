@@ -26,3 +26,18 @@ func textMessage(role schemas.ChatMessageRole, text string) schemas.ChatMessage 
 		Content: &schemas.ChatMessageContent{ContentStr: &text},
 	}
 }
+
+// drainResumePager drives the progressive session-resume pager to completion
+// synchronously. Tests that call handleSessionSelected directly and assert on
+// the resulting chat/pending-prompt state must drain the pager so the whole
+// history (and any deferred final-batch work) is applied.
+func drainResumePager(model *TUIModel) {
+	guard := 0
+	for model.resumeRebuildActive && guard < 1000 {
+		model.handleResumeRebuildBatch(resumeRebuildBatchMsg{
+			messages: model.resumeRebuildMessages,
+			cursor:   model.resumeRebuildCursor,
+		})
+		guard++
+	}
+}

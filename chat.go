@@ -336,6 +336,60 @@ func (c *ChatComponent) AddUserMessage(text string) {
 	}
 }
 
+// ===== Buffered (dirty-flag) Append API =====
+//
+// These batched methods are used ONLY by the bulk rebuild/resume path. Unlike
+// AddMessage/AddUserMessage they do NOT force an immediate full re-render;
+// instead they set contentDirty=true and let the TUI's debounce render tick
+// (chatRenderTickMsg) flush them, keeping the loop responsive.
+
+// AppendStringMessage appends a system message without re-rendering, marking
+// the content dirty for the debounced flush.
+func (c *ChatComponent) AppendStringMessage(content string) {
+	c.Messages = append(c.Messages, ChatMessage{Content: content, Indent: c.Indent, Type: MessageTypeSystem})
+	if !c.ScrollLocked {
+		c.AutoScroll = true
+		c.UserScrolled = false
+	}
+	c.contentDirty = true
+}
+
+// AppendUserMessage appends a user message without re-rendering, marking the
+// content dirty for the debounced flush.
+func (c *ChatComponent) AppendUserMessage(text string) {
+	c.Messages = append(c.Messages, ChatMessage{Content: text, Indent: c.Indent, Type: MessageTypeUser})
+	if !c.ScrollLocked {
+		c.AutoScroll = true
+		c.UserScrolled = false
+	}
+	c.contentDirty = true
+}
+
+// AppendToolCallMessage appends a formatted tool-call line (like AddMessage)
+// but without re-rendering, marking the content dirty for the debounced flush.
+func (c *ChatComponent) AppendToolCallMessage(formatted string) {
+	c.Messages = append(c.Messages, ChatMessage{Content: formatted, Indent: c.Indent, Type: MessageTypeSystem})
+	if !c.ScrollLocked {
+		c.AutoScroll = true
+		c.UserScrolled = false
+	}
+	c.contentDirty = true
+}
+
+// AppendBatch appends a prepared slice of messages in one go, setting
+// contentDirty=true once so the debounced render tick flushes them together.
+// Used only by the bulk resume rebuild path.
+func (c *ChatComponent) AppendBatch(msgs []ChatMessage) {
+	for _, m := range msgs {
+		c.Messages = append(c.Messages, ChatMessage{Content: m.Content, Indent: c.Indent, Type: m.Type})
+	}
+	if !c.ScrollLocked {
+		c.AutoScroll = true
+		c.UserScrolled = false
+	}
+	c.contentDirty = true
+}
+
 // AddThinkingChunk adds or appends to a thinking/reasoning message (used during streaming).
 // Sets contentDirty=true; the TUI's debounce tick flushes via UpdateContent.
 func (c *ChatComponent) AddThinkingChunk(chunk string) {

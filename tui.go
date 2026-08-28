@@ -111,6 +111,16 @@ type TUIModel struct {
 	// Debounced render tick: prevents stacking multiple 50ms tick commands
 	renderTickPending bool
 
+	// Progressive session resume state. On sessionSelectedMsg the full chat
+	// rebuild is spread across resumeRebuildBatchMsg ticks (a few messages per
+	// tick) so the UI stays responsive. The cursor over the prepared display
+	// messages is kept here; the final batch flushes dirty chats and submits
+	// the pending prompt exactly as the old synchronous path did.
+	resumeRebuildMessages []ChatMessage
+	resumeRebuildCursor   int
+	resumeRebuildSession  *court.Session
+	resumeRebuildActive   bool
+
 	// Connection drop recovery state. When the transport drops during an
 	// active stream, each streaming tab's prompt is saved here for
 	// auto-retry after reconnect.
@@ -178,6 +188,15 @@ type connectionReconnectFailedMsg struct{}
 // chatRenderTickMsg is produced by a debounce tick to flush dirty chat content.
 // Only one tick is pending at a time (guarded by TUIModel.renderTickPending).
 type chatRenderTickMsg struct{}
+
+// resumeRebuildBatchMsg is produced by a tea.Tick while progressively rebuilding
+// a resumed session's chat history. It carries the prepared display messages and
+// the current index cursor so each tick appends a small batch without blocking
+// the TUI update loop.
+type resumeRebuildBatchMsg struct {
+	messages []ChatMessage
+	cursor   int
+}
 
 type shellCommandResultMsg struct {
 	command  string
@@ -3172,7 +3191,17 @@ func (m TUIModel) handleCustomMessages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sessionSelectedMsg:
-		m.handleSessionSelected(msg.session)
+		cmd := m.handleSessionSelected(msg.session)
+		if cmd != nil {
+			return m, cmd
+		}
+		return m, nil
+
+	case resumeRebuildBatchMsg:
+		cmd := m.handleResumeRebuildBatch(msg)
+		if cmd != nil {
+			return m, cmd
+		}
 		return m, nil
 
 	case sessionResumeErrorMsg:

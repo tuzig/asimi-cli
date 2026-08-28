@@ -110,6 +110,7 @@ func registerEdictChatStepDefs(ctx *godog.ScenarioContext, t *testing.T) {
 		s.model.creatingTab = "e647"
 		s.model.pendingPrompt = ""
 		s.model.handleSessionSelected(s.session)
+		drainResumePager(s.model)
 		return nil
 	})
 
@@ -121,6 +122,7 @@ func registerEdictChatStepDefs(ctx *godog.ScenarioContext, t *testing.T) {
 			TabType: "chancellor",
 		}
 		s.model.handleSessionSelected(s.session)
+		drainResumePager(s.model)
 		return nil
 	})
 
@@ -148,6 +150,7 @@ func registerEdictChatStepDefs(ctx *godog.ScenarioContext, t *testing.T) {
 		}
 
 		s.model.handleSessionSelected(s.session)
+		drainResumePager(s.model)
 		return nil
 	})
 
@@ -157,6 +160,7 @@ func registerEdictChatStepDefs(ctx *godog.ScenarioContext, t *testing.T) {
 			TabType: tabType,
 		}
 		s.model.handleSessionSelected(s.session)
+		drainResumePager(s.model)
 		return nil
 	})
 

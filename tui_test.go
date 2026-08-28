@@ -2032,6 +2032,10 @@ func TestSessionResume_ResetsHistoryState(t *testing.T) {
 	updatedModel, ok := newModel.(TUIModel)
 	require.True(t, ok)
 
+	// Drive the progressive resume pager to completion so the whole chat
+	// history is rebuilt before asserting on it.
+	drainResumePager(&updatedModel)
+
 	// Verify history state was reset
 	require.Empty(t, updatedModel.sessionPromptHistory, "sessionPromptHistory should be empty after resume")
 	require.Equal(t, 0, updatedModel.historyCursor, "historyCursor should be 0 after resume")
@@ -2047,6 +2051,60 @@ func TestSessionResume_ResetsHistoryState(t *testing.T) {
 	chat := updatedModel.tabs.Content().Chat
 	require.True(t, containsMessage(chat.Messages, "hello"), "Chat should contain resumed human message")
 	require.True(t, containsMessage(chat.Messages, "hi there"), "Chat should contain resumed AI message")
+}
+
+// TestSessionResume_ProgressivelyReassemblesLargeHistory verifies that resuming
+// a large session is driven through the batched pager: the initial handle
+// leaves the pager active, the chat is progressively appended across multiple
+// batches, and once drained the final chat matches the full message set (no
+// content loss).
+func TestSessionResume_ProgressivelyReassemblesLargeHistory(t *testing.T) {
+	model := newTestModel(t)
+
+	// Build a session large enough to require several 4-message buckets.
+	var msgs []schemas.ChatMessage
+	for i := 0; i < 17; i++ {
+		msgs = append(msgs, textMessage(schemas.ChatMessageRoleUser, fmt.Sprintf("user %d", i)))
+	}
+	resumedSession := &court.Session{
+		ID:          "resumed-large-session",
+		FirstPrompt: "resumed big",
+	}
+	resumedSession.SetMessages(msgs)
+
+	// Process the sessionSelectedMsg.
+	newModel, cmd := model.handleCustomMessages(sessionSelectedMsg{session: resumedSession})
+	updatedModel, ok := newModel.(TUIModel)
+	require.True(t, ok)
+
+	// The pager should be active and a continue command returned.
+	require.True(t, updatedModel.resumeRebuildActive, "pager should be active after session selected")
+	require.NotNil(t, cmd, "sessionSelected should return a tick command to start the pager")
+
+	// The chat should NOT yet be fully rebuilt synchronously.
+	assert.Empty(t, updatedModel.tabs.Content().Chat.Messages,
+		"chat should not be rebuilt synchronously; it awaits pager ticks")
+
+	// Drive the pager to completion.
+	drainResumePager(&updatedModel)
+
+	// Pager deactivated and all 17 messages present, in order.
+	require.False(t, updatedModel.resumeRebuildActive, "pager should be inactive after draining")
+	assert.Len(t, updatedModel.tabs.Content().Chat.Messages, 17,
+		"all resumed messages should be present, no content loss")
+
+	var got string
+	for _, msg := range updatedModel.tabs.Content().Chat.Messages {
+		got += msg.Content + "|"
+	}
+	for i := 0; i < 17; i++ {
+		assert.True(t, strings.Contains(got, fmt.Sprintf("user %d", i)),
+			"message %d should be present in order", i)
+	}
+
+	// The pager's slice was left empty/reset after completion.
+	assert.Nil(t, updatedModel.resumeRebuildMessages)
+	assert.Equal(t, 0, updatedModel.resumeRebuildCursor)
 }
 
 // TestHistoryNavigation_RapidNavigation tests rapid navigation through history
@@ -6270,6 +6328,7 @@ func TestHandleSessionSelected_RitualTabRestoration(t *testing.T) {
 		TabType: "chancellor",
 	}
 	model.handleSessionSelected(session)
+	drainResumePager(model)
 
 	// Should stay on the ritual tab (not switch to sage)
 	assert.Equal(t, "ritual", string(model.tabs.ActiveTab().Type),
@@ -6357,6 +6416,7 @@ func TestHandleSessionSelected_RitualTabRestoration_ShowsUserMessage(t *testing.
 		{Role: schemas.ChatMessageRoleAssistant, Content: &schemas.ChatMessageContent{ContentStr: strPtr("original response")}},
 	})
 	model.handleSessionSelected(session)
+	drainResumePager(model)
 
 	// Should stay on the ritual tab (not switch to sage)
 	assert.Equal(t, "ritual", string(model.tabs.ActiveTab().Type),
@@ -6414,6 +6474,7 @@ func TestHandleSessionSelected_EdictRestoreChatAction(t *testing.T) {
 		MessageCount: 3,
 	}
 	model.handleSessionSelected(session)
+	drainResumePager(model)
 
 	// Should stay on the ritual tab (not switch to sage)
 	assert.Equal(t, "ritual", string(model.tabs.ActiveTab().Type),
