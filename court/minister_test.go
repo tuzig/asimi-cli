@@ -1292,9 +1292,10 @@ func TestRunner_HealthCheck(t *testing.T) {
 
 // mockHealthCheckRunner is a mock runner for testing HealthCheck
 type mockHealthCheckRunner struct {
-	output   string
-	exitCode string
-	runErr   error
+	output     string
+	exitCode   string
+	runErr     error
+	runnerType string
 }
 
 func (m *mockHealthCheckRunner) Run(ctx context.Context, input runners.Input) (runners.Output, error) {
@@ -1307,10 +1308,15 @@ func (m *mockHealthCheckRunner) Run(ctx context.Context, input runners.Input) (r
 	}, nil
 }
 
-func (m *mockHealthCheckRunner) AllowFallback(bool)                           {}
-func (m *mockHealthCheckRunner) Close(context.Context) error                  { return nil }
-func (m *mockHealthCheckRunner) Restart(context.Context) error                { return nil }
-func (m *mockHealthCheckRunner) RunnerType() string                           { return "mock" }
+func (m *mockHealthCheckRunner) AllowFallback(bool)            {}
+func (m *mockHealthCheckRunner) Close(context.Context) error   { return nil }
+func (m *mockHealthCheckRunner) Restart(context.Context) error { return nil }
+func (m *mockHealthCheckRunner) RunnerType() string {
+	if m.runnerType != "" {
+		return m.runnerType
+	}
+	return "mock"
+}
 func (m *mockHealthCheckRunner) GetOS() string                                { return runtime.GOOS }
 func (m *mockHealthCheckRunner) SetMessageChannel(msgChan chan<- runners.Msg) {}
 
@@ -1672,6 +1678,37 @@ func TestSessBuildEnvBlock_UsesRepoInfoProjectRoot(t *testing.T) {
 		runner := &mockHealthCheckRunner{}
 		result := sessBuildEnvBlock(info, runner)
 		assert.Contains(t, result, fmt.Sprintf("**OS:** %s", runtime.GOOS), "should use runner GetOS for OS info")
+	})
+
+	t.Run("host runner includes no-sandbox note", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/test/root",
+			Branch:      "main",
+		}
+		runner := &mockHealthCheckRunner{runnerType: "host"}
+		result := sessBuildEnvBlock(info, runner)
+		assert.Contains(t, result, "Sandbox", "should indicate sandbox status for host runner")
+		assert.Contains(t, result, "none", "should indicate no sandbox for host runner")
+	})
+
+	t.Run("podman runner omits no-sandbox note", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/test/root",
+			Branch:      "main",
+		}
+		runner := &mockHealthCheckRunner{runnerType: "podman"}
+		result := sessBuildEnvBlock(info, runner)
+		assert.NotContains(t, result, "Sandbox", "should not include no-sandbox note for podman runner")
+	})
+
+	t.Run("mock runner omits no-sandbox note", func(t *testing.T) {
+		info := repo.RepoInfo{
+			ProjectRoot: "/test/root",
+			Branch:      "main",
+		}
+		runner := &mockHealthCheckRunner{}
+		result := sessBuildEnvBlock(info, runner)
+		assert.NotContains(t, result, "Sandbox", "should not include no-sandbox note for non-host runner")
 	})
 
 	t.Run("OS is unknown when runner is nil", func(t *testing.T) {

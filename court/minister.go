@@ -1174,6 +1174,10 @@ func sessBuildEnvBlock(repoInfo repo.RepoInfo, runner runners.Runner) string {
 	}
 	env.WriteString(fmt.Sprintf("- **Shell:** %s\n", shell))
 
+	if runner != nil && runner.RunnerType() == "host" {
+		env.WriteString("- **Sandbox:** none (commands run directly on host)\n")
+	}
+
 	if repoInfo.Branch != "" {
 		env.WriteString(fmt.Sprintf("- **Branch:** %s\n", repoInfo.Branch))
 	}
