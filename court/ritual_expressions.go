@@ -68,7 +68,7 @@ func NewStepDefRegistry() *StepDefRegistry {
 		{"the borderlands", "get_borderlands", "borderlands"},
 		{"manifests for the borderlands", "create_borderland_manifests", "borderland_manifests"},
 		{"the edict is sealed", "seal_edict", "sealed"},
-		{"the ruler approves", "request_zhengming", "approved"},
+		{"the ruler approves", "ask_ruler", "approved"},
 		{"a clear working directory", "check_clean_working_directory", "working_directory_clean"},
 		{"the infrastructure templates", "get_infrastructure_templates", "infrastructure_templates"},
 		{"build the sandbox", "build_sandbox", "sandbox_build"},
@@ -949,7 +949,7 @@ func (r *RitualRunner) runThen(ctx context.Context, exec *RitualExecution, fn st
 		// Sealing is now done via the seal chain - grant ruler seal
 		sealService := storage.NewSealService(r.db)
 		return sealService.GrantSeal(thenKey, "ruler", storage.JSON{"ritual": exec.RitualName})
-	case "request_zhengming":
+	case "ask_ruler":
 		// Use the chancellor for zhengming requests, as it's the minister that interacts with the ruler
 		// and has a corresponding tab for displaying zhengming questions
 		minister := r.getMinister("secretary")
