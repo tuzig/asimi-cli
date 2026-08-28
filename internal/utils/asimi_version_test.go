@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+func TestAsVersionIsParseable(t *testing.T) {
+	// The release version constant must always parse as a semantic version,
+	// else CheckForUpdates and auto-update flows would fail at runtime.
+	if _, err := ParseVersion(AsimiVersion); err != nil {
+		t.Fatalf("AsimiVersion = %q is not a valid semantic version: %v", AsimiVersion, err)
+	}
+}
+
 func TestGetAsimiSlug(t *testing.T) {
 	slug := GetAsimiSlug()
 	if slug != "afittestide/asimi-cli" {

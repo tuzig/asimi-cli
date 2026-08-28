@@ -5,6 +5,27 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-28
+
+### Added
+
+- **ATIF recording** — new `--atif` flag and an ATIF session recorder for capturing sessions (e746)
+
+### Changed
+
+- **`request_zhengming` renamed to `ask_ruler`** — the clarification tool is now called `ask_ruler` (e770)
+- **Progressive session resume** — the chat rebuild is now fed through a batched render tick for smoother progressive resume (e771)
+- **Per-model context sizes** — context sizes are now computed per model instead of assumed (e767)
+- **Host runner note** — Asimi now notes when a session executes without a sandbox (host runner)
+- **Rituals error handling** — improved error handling across rituals (e758)
+
+### Fixed
+
+- **Podman socket on macOS** — find the podman socket on macOS applehv machines (#165)
+- **Sandbox image slugs with capitals** — lowercase the sandbox image slug so organizations with capitals in their names work (e775)
+- **System prompt wording** — corrected spelling and improved the description in the system prompt (#163)
+- **macOS peercred tests** — shorten the Unix socket path in peercred tests for macOS (#164)
+
 ## [0.11.0] - 2026-08-09
 
 ### Added
