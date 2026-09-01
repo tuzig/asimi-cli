@@ -1,63 +1,82 @@
 # Roadmap
 
-Below is what is left to develop:
+The Go Bubbletea terminal UI is retired. Neovim is the first-class frontend via
+the in-repo `nvim/` plugin (`asimi.nvim`), which talks to the daemon over
+msgpack-RPC. It is distributed two ways: `lazy-asimi` (a drop-in lazy.nvim
+config that auto-installs `asimi.nvim` and pre-configures it) and as a reusable
+plugin for a user's own nvim.
+
+Legacy TUI UI features (vim clone, sticky messages, step folding, thinking
+scroll, replace view, mode sharpening) are re-cast as nvim-plugin features.
 
 ## V1.0
 
+### MCP Support (e661 — leading)
+
+e661 adds the Minister of Rites (禮部) to ingest MCP servers as foreign envoys:
+it classifies each offered tool into the 三界 permission model
+(地/天/人, read/write/execute) for the Ruler to seal; only sealed tools enter
+the registry, gated by minister realm permissions.
+
+- Bifrost-native MCP client (connection, discovery, sync)
+- Per-server `default_permissions` + per-tool overrides in config
+- `mcp_tool_classifications` table; cached, re-classified only on schema change
+- After e661, a headless terminal emulator (for nvim + terminal-bench drives)
+  is added via config alone.
+
+Ref: https://github.com/afittestide/asimi-cli/issues/158
+
 ### Court Alignment
 
-- Realign ministers to full 三省 (Three Departments) alignment (https://github.com/afittestide/asimi-cli/issues/154)
-- Sharpen:
-  - Roles: Improving definitions & translating to 文言文 (https://github.com/afittestide/asimi-cli/issues/156)
-  - Tools (https://github.com/afittestide/asimi-cli/issues/155)
-  - DB Schema — sharpen edicts, manifests, verdicts, precedents & seals (https://github.com/afittestide/asimi-cli/issues/152)
+- Realign ministers to full 三省 (https://github.com/afittestide/asimi-cli/issues/154)
+- Sharpen roles → 文言文 (issues/156), tools (issues/155), DB schema (issues/152)
 
-### UI Improvements
+### The nvim co-path
 
-- CTRL-C on ritual tab should resume (e681)
-- Sharpen the modes (https://github.com/afittestide/asimi-cli/issues/157)
-- Replace the external $EDITOR with an internal vim clone
-- Thinking has 5 rows of live scrolling reasoning
-- "Stick" important messages to the top so they don't scroll away — the ruler always knows what step the ritual is in
-- Support folding of steps — when a ritual runs, only the current step should be open, the rest folded
-- Replace file should show what was replaced
-
-### MCP Support (https://github.com/afittestide/asimi-cli/issues/158)
-
+- **`lazy-asimi`** start config (install + preconfigure `asimi.nvim`, `~/.config/nvim`)
+- Plugin parity with the retired TUI's Court surface: ritual tabs w/ step folding,
+  sticky active step, 5-row thinking scroll, replace-file view, native modes,
+  CTRL-C resume on a ritual tab (e681)
+- Non-blocking rendering (debounce/tick) on nvim buffers
 
 ## V1.1
 
 ### Full Parallelism
-
-- Use git worktrees to enable concurrent ritual execution (https://github.com/afittestide/asimi-cli/issues/153)
-- Seal edict command with a UI for the user to review and approve or chat about changes
+- Git worktrees for concurrent rituals (issues/153)
+- Seal edict command with review/approval UI
 
 ### Skills Support
-
-- Skill marketplace discovery via `https://agentskills.io/llms.txt`
-- Fetch and cache remote skills into `.agents/skills/`
-- Skill versioning and update detection
+Core (`.agents/skills/**/SKILL.md` discovery + per-minister injection) is done
+(e662). Harmonized skills — a self-improving loop, not a store:
+- Add the **Ministry of Personnel (吏部)** — a minister that performs post-mortems
+  on sessions, distills lessons, and proposes new/improved skills
+- Proposals become/revise `.agents/skills/` SKILL.md files, which then feed back
+  into the existing discovery loop
+- (Remote marketplace via `agentskills.io/llms.txt` is a consideration, not core)
 
 ## V1.2
 
-Improved ministers permissions through realms alignment.
-The repo is not only earth, but earth and intent.
-Tests and docs are two examples for Intent content in the repo.
-Earth is just part of the repo, the part with code that is part of the program (https://github.com/afittestide/asimi-cli/issues/160).
-
-Update swift-strike to TDD
+- Realm-aligned minister permissions: the repo is earth + intent; tests/docs are
+  intent content (https://github.com/afittestide/asimi-cli/issues/160)
+- Update swift-strike to BDD
 
 ## V2.0
 
-V2.0 turns Asimi from a coding agent into a governing agent. A `mandate_url`
-config points to a Mandate server that bridges the external world and the
-Court. The Mandate server holds an OpenAPI spec defining the three realms and
-serves their data as HTTP resources. Earth is always git — local and universal.
-Heaven and Intent are a ritual-updated cache maintained by the Mandate server,
-fed by webhooks and cron jobs — CI results, GitHub issues, TODO comments, brand
-checks, website analytics.
+A `mandate_url` config points to a Mandate server bridging the external world
+and the Court. It serves an OpenAPI spec of the three realms; Earth is git; the
+rest is a ritual-updated cache fed by webhooks/cron (CI, issues, TODOs, brand,
+analytics). The Court is a process engine (seal chain, ritual DAGs, permissions)
+reading the spec at startup and pulling realm data as ritual context. A second
+mandate server — for digital marketers — proves the abstraction.
 
-The Court is a process engine (seal chain, ritual
-DAGs, permissions) that reads the spec at startup and pulls realm data from
-the Mandate server as ritual context.
-The second mandate server — for digital marketers — proves the abstraction.
+### Self-harmonizing model
+
+V2.0 closes the loop: the Court turns its own history into a better mind. The
+Ministry of Personnel (吏部) post-mortems sessions and, alongside revised skills,
+outputs **fine-tuning corpora** (curated trajectories and lessons). These are
+used to fine-tune an **open-weight model**, letting Asimi break from an
+off-the-shelf foundation toward a model that already knows the Court's 三界
+conventions. ATIF trajectory capture (shipped) supplies the raw material; the
+mandate-fed Heaven data (CI, issues, TODOs) supplies the evaluation signal. The
+result feeds back into every living session — a Court that cultivates its own
+instrument.

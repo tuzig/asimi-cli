@@ -5,6 +5,19 @@ All [Semantic Versions](https://semver.org/spec/v2.0.0.html) of this project and
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-09-01
+
+### Added
+
+- **`--model` & `--provider` CLI flags** — new `--model` and `--provider` flags plus
+  `ASIMI_MODEL` / `ASIMI_PROVIDER` environment-variable overrides, so the model can be
+  selected from the command line or environment for harness-driven runs (terminal-bench).
+  Precedence: CLI flag > env var > config `[llm]` section > defaults (e785)
+- **Vertex AI provider** — new `vertex` provider that talks to Google Vertex AI via gcloud
+  application-default credentials (ADC), with all gcloud-specific values read from
+  environment variables (`GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_REGION`, optional
+  `GOOGLE_APPLICATION_CREDENTIALS`); no `VERTEX_API_KEY` needed (e786)
+
 ## [0.12.0] - 2026-08-28
 
 ### Added
