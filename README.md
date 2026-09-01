@@ -295,6 +295,12 @@ After first run the user's file is loaded with all the defaults.
 - **`OPENAI_API_KEY`** - API key for OpenAI GPT models
 - **`GEMINI_API_KEY`** - API key for Google Gemini models
 
+**Vertex AI (Google Cloud) — via gcloud ADC:**
+- `GOOGLE_CLOUD_PROJECT` - GCP project ID (required for Vertex AI)
+- `GOOGLE_CLOUD_REGION` - GCP region (optional, defaults to `global`)
+- `GOOGLE_APPLICATION_CREDENTIALS` - Path to a service-account JSON, or the JSON itself (optional)
+- Auth: `gcloud auth application-default login` (Application Default Credentials). No `VERTEX_API_KEY` is used.
+
 #### OAuth Configuration (Advanced)
 
 For custom OAuth setups, you can override the default OAuth endpoints:

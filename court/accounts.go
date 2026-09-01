@@ -78,9 +78,16 @@ func (a *Account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
 	for _, sp := range schemas.StandardProviders {
 		providerStr := string(sp)
 
-		// Bedrock uses AWS credential pairs, not single API keys
+		// Bedrock uses the single AWS credential pair, not single API keys
 		if providerStr == "bedrock" {
 			if a.hasBedrockCredentials() {
+				providers = append(providers, sp)
+			}
+			continue
+		}
+		// Vertex AI authenticates via gcloud ADC, not a single API key
+		if providerStr == "vertex" {
+			if a.hasVertexCredentials() {
 				providers = append(providers, sp)
 			}
 			continue
@@ -129,12 +136,58 @@ func hasAWSEnvCredentials() bool {
 	return os.Getenv("AWS_ACCESS_KEY_ID") != "" && os.Getenv("AWS_SECRET_ACCESS_KEY") != ""
 }
 
+// hasVertexCredentials checks for gcloud Application Default Credentials in the
+// apiKeys map (daemon mode) or environment variables (in-process mode). Project
+// is the gating dimension; region may default to "global" per bifrost.
+func (a *Account) hasVertexCredentials() bool {
+	if a.apiKeys != nil {
+		return a.apiKeys["GOOGLE_CLOUD_PROJECT"] != ""
+	}
+	return os.Getenv("GOOGLE_CLOUD_PROJECT") != ""
+}
+
+// vertexEnv reads a gcloud env value from the apiKeys map (daemon mode) or
+// environment variables (in-process mode), with the same dual-path discipline
+// as the AWS credential reads.
+func (a *Account) vertexEnv(env string) string {
+	if a.apiKeys != nil {
+		return a.apiKeys[env]
+	}
+	return os.Getenv(env)
+}
+
+// readVertexCredentials reads the service-account JSON contents for Vertex
+// from GOOGLE_APPLICATION_CREDENTIALS. The env var may hold the JSON directly
+// or a path to a service-account file. Returns "" so default ADC is used when
+// unset or unreadable — mirroring the all-gcloud-env design.
+func (a *Account) readVertexCredentials() string {
+	raw := a.vertexEnv("GOOGLE_APPLICATION_CREDENTIALS")
+	if raw == "" {
+		return ""
+	}
+	// If it's already JSON (starts with '{'), pass it through directly.
+	if strings.HasPrefix(strings.TrimSpace(raw), "{") {
+		return raw
+	}
+	// Otherwise treat it as a path to a credentials file (standard gcloud usage).
+	data, err := os.ReadFile(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // GetKeysForProvider returns API keys or OAuth tokens for a given provider
 func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
 	providerStr := string(provider)
 
 	// Primary path: read from the injected apiKeys map (sandbox/daemon mode).
 	if a.apiKeys != nil {
+		// Special handling for Vertex: gcloud ADC, not a single API key.
+		if providerStr == "vertex" {
+			return a.vertexKeys(), nil
+		}
+
 		// Special handling for Bedrock: check for AWS credentials in the map
 		if providerStr == "bedrock" {
 			accessKey := a.apiKeys["AWS_ACCESS_KEY_ID"]
@@ -176,6 +229,12 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 
 	// Fallback: keyring-backed path for in-process mode (providers not in the map).
 
+	// Vertex via gcloud ADC survives the fallback path too; it never falls
+	// through to the single-API-key keyring path.
+	if providerStr == "vertex" {
+		return a.vertexKeys(), nil
+	}
+
 	// Bedrock via keyring: only if AWS keys were injected into the map or
 	// discovered through keyring. Env-var-only Bedrock is the client's
 	// responsibility when using NewAccountWithKeys.
@@ -208,6 +267,40 @@ func (a *Account) GetKeysForProvider(ctx context.Context, provider schemas.Model
 	}
 
 	return []schemas.Key{}, nil
+}
+
+// vertexKeys builds the single Vertex key when the gcloud project is
+// configured using gcloud Application Default Credentials. Returns an empty
+// slice when no project is configured so vertex is not presented.
+func (a *Account) vertexKeys() []schemas.Key {
+	project := a.vertexEnv("GOOGLE_CLOUD_PROJECT")
+	if project == "" {
+		return []schemas.Key{}
+	}
+	region := a.vertexEnv("GOOGLE_CLOUD_REGION")
+	// Bifrost's primary chat paths (ChatCompletion*) hard-require a non-empty
+	// region, so default an unset one to "global" — mirroring bifrost's own
+	// Passthrough convention and the docs' "optional, defaults to global".
+	if region == "" {
+		region = "global"
+	}
+	enabled := true
+	key := schemas.Key{
+		ID:      "vertex_gcloud",
+		Name:    "Vertex AI (gcloud ADC)",
+		Models:  []string{"*"},
+		Weight:  1.0,
+		Enabled: &enabled,
+		VertexKeyConfig: &schemas.VertexKeyConfig{
+			ProjectID: schemas.EnvVar{Val: project},
+			Region:    schemas.EnvVar{Val: region},
+			// Empty AuthCredentials relies on google.FindDefaultCredentials
+			// (gcloud ADC). Only populated when GOOGLE_APPLICATION_CREDENTIALS
+			// carries service-account JSON or a readable file path.
+			AuthCredentials: schemas.EnvVar{Val: a.readVertexCredentials()},
+		},
+	}
+	return []schemas.Key{key}
 }
 
 // getBaseURLFromEnv returns the base URL from the provider's convention-based

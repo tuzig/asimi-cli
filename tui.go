@@ -545,6 +545,10 @@ func collectAPIKeys() map[string]string {
 		if bifrostProvider == "bedrock" {
 			continue
 		}
+		// Vertex uses gcloud ADC, not a single API key
+		if bifrostProvider == "vertex" {
+			continue
+		}
 		// Ollama is keyless
 		if bifrostProvider == "ollama" {
 			continue
@@ -600,6 +604,17 @@ func collectAPIKeys() map[string]string {
 	}
 	if key := os.Getenv("AWS_SESSION_TOKEN"); key != "" {
 		keys["AWS_SESSION_TOKEN"] = key
+	}
+
+	// gcloud credentials for Vertex AI (Application Default Credentials)
+	if key := os.Getenv("GOOGLE_CLOUD_PROJECT"); key != "" {
+		keys["GOOGLE_CLOUD_PROJECT"] = key
+	}
+	if key := os.Getenv("GOOGLE_CLOUD_REGION"); key != "" {
+		keys["GOOGLE_CLOUD_REGION"] = key
+	}
+	if key := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); key != "" {
+		keys["GOOGLE_APPLICATION_CREDENTIALS"] = key
 	}
 
 	return keys

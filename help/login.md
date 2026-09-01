@@ -35,6 +35,18 @@ For Anthropic, Google AI, and OpenRouter, selecting the entry prompts you to
 enter an API key. The key is stored in the OS keyring (not in plaintext config)
 and the models list is refreshed.
 
+## Vertex AI (gcloud ADC)
+
+Vertex AI requires no login within Asimi. It authenticates using gcloud
+Application Default Credentials (ADC), configured out-of-band:
+
+  gcloud auth application-default login
+  export GOOGLE_CLOUD_PROJECT=<your-project-id>
+
+Optionally set GOOGLE_CLOUD_REGION (defaults to "global") and
+GOOGLE_APPLICATION_CREDENTIALS (service-account JSON path or JSON). No
+VERTEX_API_KEY is used.
+
 ## Environment Variables
 
 You can also set API keys via environment variables instead of :login:
@@ -43,6 +55,7 @@ You can also set API keys via environment variables instead of :login:
   OPENAI_API_KEY      - OpenAI API key (plain key, not OAuth)
   GEMINI_API_KEY      - Google Gemini API key
   OPENROUTER_API_KEY  - OpenRouter API key
+  GOOGLE_CLOUD_PROJECT - GCP project ID for Vertex AI (gcloud ADC)
 
 ## Logging Out
 

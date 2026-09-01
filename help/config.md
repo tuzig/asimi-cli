@@ -35,6 +35,7 @@ Supported providers:
   - gemini         (Google Gemini)
   - openrouter     (OpenRouter)
   - bedrock        (AWS Bedrock)
+  - vertex         (Google Vertex AI via gcloud ADC)
   - custom         (Custom OpenAI-compatible endpoint)
 
 ## Environment Variables
@@ -49,6 +50,14 @@ Supported providers:
   ANTHROPIC_BASE_URL        - Custom Anthropic endpoint
   OPENAI_API_KEY            - OpenAI API key
   GEMINI_API_KEY            - Google Gemini API key
+
+### Vertex AI (Google Cloud)
+  No VERTEX_API_KEY is used.
+  Auth for Vertex uses gcloud Application Default Credentials (ADC):
+   gcloud auth application-default login
+  GOOGLE_CLOUD_PROJECT       - GCP project ID for Vertex AI (required)
+  GOOGLE_CLOUD_REGION        - GCP region for Vertex AI (optional, defaults to "global")
+  GOOGLE_APPLICATION_CREDENTIALS - Path to a service-account JSON, or the JSON itself (optional)
 
 ### OAuth Configuration (Advanced)
   GOOGLE_CLIENT_ID          - Google OAuth client ID

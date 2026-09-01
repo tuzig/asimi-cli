@@ -31,6 +31,20 @@ Authentication options:
 Custom endpoint:
   ANTHROPIC_BASE_URL=https://custom-endpoint.com
 
+### Vertex AI (Google Cloud)
+Models: gemini-3.7-flash, gemini-2.5-pro, etc.
+
+Authentication uses gcloud Application Default Credentials (ADC), configured
+out-of-band — no API key prompt and no VERTEX_API_KEY.
+
+Setup:
+  1. gcloud auth application-default login
+  2. export GOOGLE_CLOUD_PROJECT=<your-project-id>
+
+Optionally set GOOGLE_CLOUD_REGION (defaults to "global") and
+GOOGLE_APPLICATION_CREDENTIALS (path to a service-account JSON) instead of
+relying on default ADC.
+
 ### Ollama (Local Models)
 Models: Any model you've pulled locally (llama2, codellama, etc.)
 
@@ -46,6 +60,11 @@ Custom host:
 
 ### API Keys
   ANTHROPIC_API_KEY     - Anthropic API key
+
+### Vertex AI (Google Cloud)
+  GOOGLE_CLOUD_PROJECT  - GCP project ID (required)
+  GOOGLE_CLOUD_REGION   - GCP region (optional, defaults to "global")
+  GOOGLE_APPLICATION_CREDENTIALS - Service-account JSON path or JSON (optional)
 
 ### Base URLs (for custom endpoints)
   ANTHROPIC_BASE_URL    - Custom Anthropic endpoint
@@ -135,6 +154,12 @@ For custom or self-hosted LLM endpoints:
   asimi
   :models
   # Select llama2
+
+  # Use Vertex AI via gcloud ADC
+  gcloud auth application-default login
+  export GOOGLE_CLOUD_PROJECT=my-project
+  asimi
+  # In asimi.conf: provider = "vertex", model = "gemini-3.7-flash"
 
   # Use custom endpoint
   export OPENAI_BASE_URL=https://my-llm.company.com

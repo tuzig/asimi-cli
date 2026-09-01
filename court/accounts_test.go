@@ -8,6 +8,7 @@ import (
 	"github.com/afittestide/asimi/internal/keyring"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHasAWSEnvCredentials(t *testing.T) {
@@ -436,6 +437,179 @@ func TestGetKeysForProvider_Bedrock_OnlyAccessKeySet(t *testing.T) {
 // TestAccountImplementsSchemaAccount ensures the Account type implements schemas.Account
 func TestAccountImplementsSchemaAccount(t *testing.T) {
 	var _ schemas.Account = &Account{}
+}
+
+func TestGetConfiguredProviders_Vertex_WithGcloudEnv(t *testing.T) {
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "my-project")
+	t.Setenv("GOOGLE_CLOUD_REGION", "us-central1")
+	defer os.Unsetenv("GOOGLE_CLOUD_PROJECT")
+
+	account := &Account{}
+	providers, err := account.GetConfiguredProviders()
+	if err != nil {
+		t.Fatalf("GetConfiguredProviders() error = %v", err)
+	}
+	found := false
+	for _, p := range providers {
+		if p == schemas.Vertex {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected Vertex provider when GOOGLE_CLOUD_PROJECT is set")
+	}
+}
+
+func TestGetConfiguredProviders_Vertex_WithoutProject(t *testing.T) {
+	os.Unsetenv("GOOGLE_CLOUD_PROJECT")
+	os.Unsetenv("GOOGLE_CLOUD_REGION")
+
+	account := &Account{}
+	providers, err := account.GetConfiguredProviders()
+	if err != nil {
+		t.Fatalf("GetConfiguredProviders() error = %v", err)
+	}
+	for _, p := range providers {
+		if p == schemas.Vertex {
+			t.Error("expected no Vertex provider when GOOGLE_CLOUD_PROJECT is unset")
+		}
+	}
+}
+
+func TestGetConfiguredProviders_Vertex_InKeysMap(t *testing.T) {
+	keys := map[string]string{
+		"GOOGLE_CLOUD_PROJECT":         "my-project",
+		"GOOGLE_CLOUD_REGION":          "us-central1",
+		"GOOGLE_APPLICATION_CREDENTIALS": "",
+	}
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
+	providers, err := account.GetConfiguredProviders()
+	if err != nil {
+		t.Fatalf("GetConfiguredProviders() error = %v", err)
+	}
+	found := false
+	for _, p := range providers {
+		if p == schemas.Vertex {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected Vertex provider when GOOGLE_CLOUD_PROJECT is in apiKeys map")
+	}
+}
+
+func TestGetKeysForProvider_Vertex_WithGcloudEnv(t *testing.T) {
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "my-project")
+	t.Setenv("GOOGLE_CLOUD_REGION", "us-central1")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	defer os.Unsetenv("GOOGLE_CLOUD_PROJECT")
+	defer os.Unsetenv("GOOGLE_CLOUD_REGION")
+	defer os.Unsetenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+	account := &Account{}
+	keys, err := account.GetKeysForProvider(context.Background(), schemas.Vertex)
+	if err != nil {
+		t.Fatalf("GetKeysForProvider() error = %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	cfg := keys[0].VertexKeyConfig
+	require.NotNil(t, cfg, "expected VertexKeyConfig")
+	assert.Equal(t, "my-project", cfg.ProjectID.Val)
+	assert.Equal(t, "us-central1", cfg.Region.Val)
+	assert.Equal(t, "", cfg.AuthCredentials.Val, "empty AuthCredentials for ADC")
+	assert.Equal(t, schemas.WhiteList{"*"}, keys[0].Models)
+	if keys[0].Enabled == nil || !*keys[0].Enabled {
+		t.Error("expected key Enabled to be true")
+	}
+}
+
+func TestGetKeysForProvider_Vertex_WithCredentialsFile(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := dir + "/creds.json"
+	require.NoError(t, os.WriteFile(jsonPath, []byte(`{"type":"service_account"}`), 0o600))
+
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "my-project")
+	t.Setenv("GOOGLE_CLOUD_REGION", "")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", jsonPath)
+	defer os.Unsetenv("GOOGLE_CLOUD_PROJECT")
+	defer os.Unsetenv("GOOGLE_CLOUD_REGION")
+	defer os.Unsetenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+	account := &Account{}
+	keys, err := account.GetKeysForProvider(context.Background(), schemas.Vertex)
+	if err != nil {
+		t.Fatalf("GetKeysForProvider() error = %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	cfg := keys[0].VertexKeyConfig
+	require.NotNil(t, cfg)
+	assert.Equal(t, `{"type":"service_account"}`, cfg.AuthCredentials.Val,
+		"service-account file contents should be read into AuthCredentials")
+	assert.Equal(t, "global", cfg.Region.Val,
+		"unset GOOGLE_CLOUD_REGION should default to global")
+}
+
+func TestGetKeysForVertex_AuthCredentialsJSONPassthrough_RegionDefaultsGlobal(t *testing.T) {
+	keys := map[string]string{
+		"GOOGLE_CLOUD_PROJECT":         "map-project",
+		"GOOGLE_CLOUD_REGION":          "", // unset → should fall back to "global"
+		"GOOGLE_APPLICATION_CREDENTIALS": `{"type":"service_account"}`,
+	}
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
+	result, err := account.GetKeysForProvider(context.Background(), schemas.Vertex)
+	if err != nil {
+		t.Fatalf("GetKeysForProvider() error = %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(result))
+	}
+	cfg := result[0].VertexKeyConfig
+	require.NotNil(t, cfg)
+	assert.Equal(t, "map-project", cfg.ProjectID.Val)
+	assert.Equal(t, "global", cfg.Region.Val,
+		"empty region in apiKeys map should default to global")
+	assert.Equal(t, `{"type":"service_account"}`, cfg.AuthCredentials.Val,
+		"inline JSON credentials should pass through from the map")
+}
+
+func TestGetKeysForProvider_Vertex_WithoutProject(t *testing.T) {
+	os.Unsetenv("GOOGLE_CLOUD_PROJECT")
+	os.Unsetenv("GOOGLE_CLOUD_REGION")
+	os.Unsetenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+	account := &Account{}
+	keys, err := account.GetKeysForProvider(context.Background(), schemas.Vertex)
+	if err != nil {
+		t.Fatalf("GetKeysForProvider() error = %v", err)
+	}
+	assert.Empty(t, keys, "expected no vertex keys without GOOGLE_CLOUD_PROJECT")
+}
+
+func TestGetKeysForVertex_InKeysMap(t *testing.T) {
+	keys := map[string]string{
+		"GOOGLE_CLOUD_PROJECT":         "map-project",
+		"GOOGLE_CLOUD_REGION":          "europe-west1",
+		"GOOGLE_APPLICATION_CREDENTIALS": `{"type":"service_account"}`,
+	}
+	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
+	result, err := account.GetKeysForProvider(context.Background(), schemas.Vertex)
+	if err != nil {
+		t.Fatalf("GetKeysForProvider() error = %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(result))
+	}
+	cfg := result[0].VertexKeyConfig
+	require.NotNil(t, cfg)
+	assert.Equal(t, "map-project", cfg.ProjectID.Val)
+	assert.Equal(t, "europe-west1", cfg.Region.Val)
+	assert.Equal(t, `{"type":"service_account"}`, cfg.AuthCredentials.Val)
 }
 
 // TestGetConfigForProvider tests the config provider

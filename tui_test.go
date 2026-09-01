@@ -4321,6 +4321,21 @@ func TestCollectAPIKeys_ConventionProviderFromKeyring(t *testing.T) {
 	assert.Equal(t, "kr-cohere-key", keys["cohere"])
 }
 
+// TestCollectAPIKeys_ForwardsGcloudVars verifies that the gcloud env vars for
+// Vertex AI are forwarded into the apiKeys map for the daemon handshake.
+func TestCollectAPIKeys_ForwardsGcloudVars(t *testing.T) {
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "my-project")
+	t.Setenv("GOOGLE_CLOUD_REGION", "us-central1")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/tmp/creds.json")
+
+	keys := collectAPIKeys()
+	assert.Equal(t, "my-project", keys["GOOGLE_CLOUD_PROJECT"])
+	assert.Equal(t, "us-central1", keys["GOOGLE_CLOUD_REGION"])
+	assert.Equal(t, "/tmp/creds.json", keys["GOOGLE_APPLICATION_CREDENTIALS"])
+	// Vertex is not treated as a plain single-API-key provider.
+	assert.Equal(t, "", keys["vertex"])
+}
+
 // --- Tests for in-app API key input flow ---
 
 // TestHandleAPIKeyInput_CancelReturnsModelSelection verifies that when the user

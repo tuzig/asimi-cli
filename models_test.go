@@ -787,6 +787,7 @@ func TestProviderEnvVar_Convention(t *testing.T) {
 	assert.Equal(t, "OPENROUTER_API_KEY", providerEnvVar("openrouter"))
 	assert.Equal(t, "COHERE_API_KEY", providerEnvVar("cohere"))
 	assert.Equal(t, "MISTRAL_API_KEY", providerEnvVar("mistral"))
+	assert.Equal(t, "GOOGLE_CLOUD_PROJECT", providerEnvVar("vertex"))
 }
 
 // TestProviderDisplayName verifies display names from the metadata table
@@ -796,6 +797,7 @@ func TestProviderDisplayName(t *testing.T) {
 	assert.Equal(t, "Google AI", providerDisplayName("googleai"))
 	assert.Equal(t, "OpenRouter", providerDisplayName("openrouter"))
 	assert.Equal(t, "Ollama", providerDisplayName("ollama"))
+	assert.Equal(t, "Vertex AI", providerDisplayName("vertex"))
 	// Unknown providers return the provider name itself
 	assert.Equal(t, "unknown", providerDisplayName("unknown"))
 }
@@ -806,6 +808,7 @@ func TestProviderMeta_AuthType(t *testing.T) {
 	assert.Equal(t, AuthTypeOAuth, providerAuthType("openai"))
 	assert.Equal(t, AuthTypeKeyless, providerAuthType("ollama"))
 	assert.Equal(t, AuthTypeAPIKey, providerAuthType("cohere"))
+	assert.Equal(t, AuthTypeGCloud, providerAuthType("vertex"))
 }
 
 // TestFetchAllModels_WithMockBifrost verifies that fetchAllModels correctly
@@ -1004,6 +1007,10 @@ func clearProviderAuthKeys() {
 		if key == "bedrock" {
 			os.Unsetenv("AWS_ACCESS_KEY_ID")
 			os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+		}
+		if key == "vertex" {
+			os.Unsetenv("GOOGLE_CLOUD_REGION")
+			os.Unsetenv("GOOGLE_APPLICATION_CREDENTIALS")
 		}
 		_ = DeleteAPIKeyFromKeyring(key)
 	}

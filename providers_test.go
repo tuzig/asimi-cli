@@ -89,3 +89,32 @@ func TestProvideConfig_MaxTurnsOverride(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 42, cfg.LLM.MaxTurns, "MaxTurns should be overridden by --max-turns CLI flag")
 }
+
+// TestProvideConfig_ModelOverride verifies that the --model and --provider
+// CLI flags override the LLM config values.
+func TestProvideConfig_ModelOverride(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	_, err := config.EnsureUserConfigExists()
+	require.NoError(t, err)
+
+	originalModel := cli.Model
+	originalProvider := cli.Provider
+	cli.Model = "gpt-4o"
+	cli.Provider = "openai"
+	defer func() {
+		cli.Model = originalModel
+		cli.Provider = originalProvider
+	}()
+
+	logger := slog.Default()
+	ri := repo.RepoInfo{ProjectRoot: ""}
+
+	cfg, err := ProvideConfig(logger, ri)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-4o", cfg.LLM.Model, "Model should be overridden by --model CLI flag")
+	assert.Equal(t, "openai", cfg.LLM.Provider, "Provider should be overridden by --provider CLI flag")
+}

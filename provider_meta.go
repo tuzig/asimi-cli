@@ -18,6 +18,7 @@ const (
 	AuthTypeAPIKey  AuthType = "apikey"
 	AuthTypeOAuth   AuthType = "oauth"
 	AuthTypeKeyless AuthType = "keyless"
+	AuthTypeGCloud  AuthType = "gcloud"
 )
 
 // ProviderMeta holds asimi-specific metadata that cannot be derived by
@@ -42,6 +43,7 @@ var providerMeta = map[string]ProviderMeta{
 	"openrouter": {DisplayName: "OpenRouter", Icon: "🔀", AuthType: AuthTypeAPIKey},
 	"ollama":     {DisplayName: "Ollama", Icon: "🦙", AuthType: AuthTypeKeyless},
 	"bedrock":    {DisplayName: "AWS Bedrock", Icon: "☁️ ", AuthType: AuthTypeAPIKey},
+	"vertex":     {DisplayName: "Vertex AI", Icon: "🗻", AuthType: AuthTypeGCloud},
 	"azure":      {DisplayName: "Azure OpenAI", Icon: "🅱️ ", AuthType: AuthTypeAPIKey},
 	"cohere":     {DisplayName: "Cohere", Icon: "🔗", AuthType: AuthTypeAPIKey},
 	"mistral":    {DisplayName: "Mistral AI", Icon: "🌬️", AuthType: AuthTypeAPIKey},
@@ -92,6 +94,9 @@ func providerEnvVar(provider string) string {
 		return "GEMINI_API_KEY"
 	case "bedrock":
 		return "AWS_ACCESS_KEY_ID"
+	case "vertex":
+		// Vertex authenticates via gcloud ADC, not a single API key.
+		return "GOOGLE_CLOUD_PROJECT"
 	default:
 		return strings.ToUpper(provider) + "_API_KEY"
 	}
@@ -121,6 +126,12 @@ func checkProviderAuth(provider string) bool {
 	// Keyless providers (e.g., Ollama) are always "authenticated"
 	if providerAuthType(provider) == AuthTypeKeyless {
 		return true
+	}
+
+	// gcloud ADC providers (Vertex AI) are authenticated when the gcloud
+	// project is set; credentials are configured out-of-band.
+	if providerAuthType(provider) == AuthTypeGCloud {
+		return os.Getenv("GOOGLE_CLOUD_PROJECT") != ""
 	}
 
 	// Bedrock uses a credential pair
