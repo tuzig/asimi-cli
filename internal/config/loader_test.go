@@ -375,6 +375,75 @@ func TestLoadProjectConfig_DefaultsOnly(t *testing.T) {
 	assert.Equal(t, 3, cfg.LLM.MaxRetries)
 }
 
+// TestLoadProjectConfig_EnvOverridesModel verifies that ASIMI_MODEL and
+// ASIMI_PROVIDER take precedence over config-file [llm] values.
+func TestLoadProjectConfig_EnvOverridesModel(t *testing.T) {
+	skipIfNotCI(t)
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	// User config sets provider/model; env overrides should win.
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	origModel := os.Getenv("ASIMI_MODEL")
+	origProvider := os.Getenv("ASIMI_PROVIDER")
+	defer os.Setenv("ASIMI_MODEL", origModel)
+	defer os.Setenv("ASIMI_PROVIDER", origProvider)
+	os.Setenv("ASIMI_MODEL", "gpt-4o")
+	os.Setenv("ASIMI_PROVIDER", "openai")
+
+	projectDir := t.TempDir()
+	cfg, err := LoadProjectConfig(projectDir, true)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "gpt-4o", cfg.LLM.Model, "ASIMI_MODEL should override config file")
+	assert.Equal(t, "openai", cfg.LLM.Provider, "ASIMI_PROVIDER should override config file")
+	// The overridden provider drives API-key resolution.
+	assert.Equal(t, os.Getenv("OPENAI_API_KEY"), cfg.LLM.APIKey)
+}
+
+// TestLoadProjectConfig_EnvEmptyLeavesConfig verifies that an unset/empty
+// ASIMI_MODEL or ASIMI_PROVIDER does not clobber config-file values.
+func TestLoadProjectConfig_EnvEmptyLeavesConfig(t *testing.T) {
+	skipIfNotCI(t)
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	origModel := os.Getenv("ASIMI_MODEL")
+	origProvider := os.Getenv("ASIMI_PROVIDER")
+	defer os.Setenv("ASIMI_MODEL", origModel)
+	defer os.Setenv("ASIMI_PROVIDER", origProvider)
+	os.Unsetenv("ASIMI_MODEL")
+	os.Unsetenv("ASIMI_PROVIDER")
+
+	projectDir := t.TempDir()
+	cfg, err := LoadProjectConfig(projectDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "anthropic", cfg.LLM.Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", cfg.LLM.Model)
+}
+
 func TestLoadProjectConfig_ProjectOverridesDefaults(t *testing.T) {
 	tempHome := t.TempDir()
 	originalHome := os.Getenv("HOME")

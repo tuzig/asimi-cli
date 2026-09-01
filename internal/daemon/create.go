@@ -91,6 +91,16 @@ func reconfigureModel(ctx context.Context, ct *court.Court, hp types.SetContextP
 		return fmt.Errorf("load project config: %w", err)
 	}
 
+	// Apply per-run CLI/model overrides handed through the handshake.
+	// These take precedence over config-file values (and env vars, which
+	// have already been folded into the config by LoadProjectConfig).
+	if hp.Model != "" {
+		projectCfg.LLM.Model = hp.Model
+	}
+	if hp.Provider != "" {
+		projectCfg.LLM.Provider = hp.Provider
+	}
+
 	repoInfo := repo.RepoInfo{
 		ProjectRoot:  hp.ProjectRoot,
 		WorktreePath: hp.WorktreePath,

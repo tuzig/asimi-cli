@@ -14,4 +14,6 @@ type SetContextParams struct {
 	CodexAccountID string            `msgpack:"codex_account_id,omitempty"`
 	IsolatedHost   bool              `msgpack:"isolated_host"`
 	AtifAgentName  string            `msgpack:"atif_agent_name,omitempty"`
+	Model          string            `msgpack:"model,omitempty"`
+	Provider       string            `msgpack:"provider,omitempty"`
 }

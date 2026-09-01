@@ -140,6 +140,8 @@ func buildSetContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 		CodexAccountID: getCodexAccountID(),
 		IsolatedHost:   cli.IsolatedHost,
 		AtifAgentName:  atifAgentName,
+		Provider:       cli.Provider,
+		Model:          cli.Model,
 	}
 }
 

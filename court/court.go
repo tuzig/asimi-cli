@@ -658,6 +658,16 @@ func (s *Court) SetContext(ctx context.Context, params types.SetContextParams) e
 		return fmt.Errorf("load project config: %w", err)
 	}
 
+	// Apply per-run CLI/model overrides handed through the handshake.
+	// These take precedence over config-file values (and env vars, which
+	// have already been folded into the config by LoadProjectConfig).
+	if params.Model != "" {
+		projectCfg.LLM.Model = params.Model
+	}
+	if params.Provider != "" {
+		projectCfg.LLM.Provider = params.Provider
+	}
+
 	// When params.Project is empty (e.g., during init before config
 	// exists), derive the slug from the git remote so the sandbox image
 	// name is always correctly derived. This mirrors what loopback.go

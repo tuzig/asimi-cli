@@ -109,6 +109,12 @@ func ProvideConfig(logger *slog.Logger, repoInfo repo.RepoInfo) (*Config, error)
 	if cli.IsolatedHost {
 		cfg.Court.IsolatedHost = true
 	}
+	if cli.Model != "" {
+		cfg.LLM.Model = cli.Model
+	}
+	if cli.Provider != "" {
+		cfg.LLM.Provider = cli.Provider
+	}
 	logger.Info("configuration loaded")
 	return cfg, nil
 }

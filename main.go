@@ -37,6 +37,8 @@ var cli struct {
 	NoCleanup     bool   `help:"Don't remove container on exit (for debugging)"`
 	Handsoff      bool   `help:"Auto-answer zhengming and YESNO prompts (hands-off mode)"`
 	MaxTurns      int    `help:"Override max conversation turns (benchmark control)"`
+	Model         string `help:"Override the LLM model (overrides config file and ASIMI_MODEL, for harness-driven runs)"`
+	Provider      string `help:"Override the LLM provider (overrides config file and ASIMI_PROVIDER)"`
 	IsolatedHost  bool   `help:"Run shell commands on host without podman sandbox or approval gates (for already-isolated environments)"`
 	CPUProfile    string `help:"Write CPU profile to file"`
 	MemProfile    string `help:"Write memory profile to file"`

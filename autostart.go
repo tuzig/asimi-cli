@@ -207,6 +207,8 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 		CodexAccountID: getCodexAccountID(),
 		IsolatedHost:   cli.IsolatedHost,
 		AtifAgentName:  atifAgentName(),
+		Provider:       cli.Provider,
+		Model:          cli.Model,
 	}); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("installDaemonAutostart: handshake failed: %w", err)

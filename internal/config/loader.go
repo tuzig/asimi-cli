@@ -196,6 +196,17 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Environment-variable overrides for model selection. These take
+	// precedence over config-file values and exist for harness-driven runs
+	// (terminal-bench) that must name the model per-run. Applied before
+	// resolveAPIKeys so the API-key lookup uses the overridden provider.
+	if v := os.Getenv("ASIMI_MODEL"); v != "" {
+		config.LLM.Model = v
+	}
+	if v := os.Getenv("ASIMI_PROVIDER"); v != "" {
+		config.LLM.Provider = v
+	}
+
 	// Set default for session.enabled if not explicitly configured
 	if !k.Exists("session.enabled") {
 		config.Session.Enabled = true // Default to enabled

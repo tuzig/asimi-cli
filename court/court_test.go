@@ -183,6 +183,46 @@ func TestSetContext_WithAPIKeys(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestSetContext_ModelOverride verifies that SetContextParams.Model and
+// .Provider override config-file [llm] values when reconfiguring the model.
+func TestSetContext_ModelOverride(t *testing.T) {
+	tempHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", origHome)
+
+	// User config sets one provider/model; handshake overrides select another.
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	db := setupCourtTestDB(t)
+	cfg := config.DefaultCourtConfig()
+	s := NewCourt(db, cfg, nil, nil)
+
+	tmpDir, err := os.MkdirTemp("", "setcontext_model_override_test")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".agents"), 0o755))
+
+	err = s.SetContext(context.Background(), types.SetContextParams{
+		ProjectRoot: tmpDir,
+		Project:     "test-project",
+		Username:    "test-user",
+		Model:       "gpt-4o",
+		Provider:    "openai",
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, s.sessionCfg, "sessionCfg should be set after ConfigureModel")
+	assert.Equal(t, "gpt-4o", s.sessionCfg.LLM.Model, "handshake Model should override config file")
+	assert.Equal(t, "openai", s.sessionCfg.LLM.Provider, "handshake Provider should override config file")
+}
+
 func TestSetContext_Idempotent(t *testing.T) {
 	db := setupCourtTestDB(t)
 	cfg := config.DefaultCourtConfig()

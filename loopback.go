@@ -134,6 +134,8 @@ func newDaemonConn(ctx context.Context, socketPath string) (*rpc.Conn, error) {
 		CodexAccountID: getCodexAccountID(),
 		IsolatedHost:   cli.IsolatedHost,
 		AtifAgentName:  atifAgentName(),
+		Provider:       cli.Provider,
+		Model:          cli.Model,
 	}); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("handshake failed: %w", err)
