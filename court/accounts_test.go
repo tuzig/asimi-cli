@@ -479,8 +479,8 @@ func TestGetConfiguredProviders_Vertex_WithoutProject(t *testing.T) {
 
 func TestGetConfiguredProviders_Vertex_InKeysMap(t *testing.T) {
 	keys := map[string]string{
-		"GOOGLE_CLOUD_PROJECT":         "my-project",
-		"GOOGLE_CLOUD_REGION":          "us-central1",
+		"GOOGLE_CLOUD_PROJECT":           "my-project",
+		"GOOGLE_CLOUD_REGION":            "us-central1",
 		"GOOGLE_APPLICATION_CREDENTIALS": "",
 	}
 	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
@@ -557,8 +557,8 @@ func TestGetKeysForProvider_Vertex_WithCredentialsFile(t *testing.T) {
 
 func TestGetKeysForVertex_AuthCredentialsJSONPassthrough_RegionDefaultsGlobal(t *testing.T) {
 	keys := map[string]string{
-		"GOOGLE_CLOUD_PROJECT":         "map-project",
-		"GOOGLE_CLOUD_REGION":          "", // unset → should fall back to "global"
+		"GOOGLE_CLOUD_PROJECT":           "map-project",
+		"GOOGLE_CLOUD_REGION":            "", // unset → should fall back to "global"
 		"GOOGLE_APPLICATION_CREDENTIALS": `{"type":"service_account"}`,
 	}
 	account := NewAccountWithKeys(30, 60, 3, "", keys, "")
@@ -593,8 +593,8 @@ func TestGetKeysForProvider_Vertex_WithoutProject(t *testing.T) {
 
 func TestGetKeysForVertex_InKeysMap(t *testing.T) {
 	keys := map[string]string{
-		"GOOGLE_CLOUD_PROJECT":         "map-project",
-		"GOOGLE_CLOUD_REGION":          "europe-west1",
+		"GOOGLE_CLOUD_PROJECT":           "map-project",
+		"GOOGLE_CLOUD_REGION":            "europe-west1",
 		"GOOGLE_APPLICATION_CREDENTIALS": `{"type":"service_account"}`,
 	}
 	account := NewAccountWithKeys(30, 60, 3, "", keys, "")

@@ -444,6 +444,103 @@ model = "claude-sonnet-4-20250514"
 	assert.Equal(t, "claude-sonnet-4-20250514", cfg.LLM.Model)
 }
 
+// TestLoadProjectConfig_ReasoningEffort verifies that reasoning_effort is
+// parsed from config and defaults to empty (provider default) when unset.
+func TestLoadProjectConfig_ReasoningEffort(t *testing.T) {
+	skipIfNotCI(t)
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+reasoning_effort = "low"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	origEffort := os.Getenv("ASIMI_REASONING_EFFORT")
+	defer os.Setenv("ASIMI_REASONING_EFFORT", origEffort)
+	os.Unsetenv("ASIMI_REASONING_EFFORT")
+
+	projectDir := t.TempDir()
+	cfg, err := LoadProjectConfig(projectDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "low", cfg.LLM.ReasoningEffort, "config file reasoning_effort should be parsed")
+
+	// Unset config should default to empty (provider default).
+	os.Remove(filepath.Join(userConfigDir, "asimi.conf"))
+	cfg, err = LoadProjectConfig(projectDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "", cfg.LLM.ReasoningEffort, "unset reasoning_effort should default to empty")
+}
+
+// TestLoadProjectConfig_EnvOverridesReasoningEffort verifies that
+// ASIMI_REASONING_EFFORT takes precedence over the config file value.
+func TestLoadProjectConfig_EnvOverridesReasoningEffort(t *testing.T) {
+	skipIfNotCI(t)
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+reasoning_effort = "low"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	origEffort := os.Getenv("ASIMI_REASONING_EFFORT")
+	defer os.Setenv("ASIMI_REASONING_EFFORT", origEffort)
+	os.Setenv("ASIMI_REASONING_EFFORT", "high")
+
+	projectDir := t.TempDir()
+	cfg, err := LoadProjectConfig(projectDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "high", cfg.LLM.ReasoningEffort, "ASIMI_REASONING_EFFORT should override config file")
+}
+
+// TestLoadProjectConfig_InvalidReasoningEffort verifies that a
+// reasoning_effort outside empty|low|medium|high is rejected.
+func TestLoadProjectConfig_InvalidReasoningEffort(t *testing.T) {
+	skipIfNotCI(t)
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userConfig := `[llm]
+reasoning_effort = "turbo"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userConfig), 0o644))
+
+	projectDir := t.TempDir()
+	_, err := LoadProjectConfig(projectDir, false)
+	require.Error(t, err, "invalid reasoning_effort should be rejected")
+	assert.Contains(t, err.Error(), "reasoning_effort")
+}
+
+// TestValidateReasoningEffort verifies the shared validator accepts the valid
+// values (including empty for provider default) and rejects everything else.
+// It is used by the config loader and the CLI/handshake merge points.
+func TestValidateReasoningEffort(t *testing.T) {
+	// Valid values
+	for _, v := range []string{"", "low", "medium", "high"} {
+		require.NoError(t, ValidateReasoningEffort(v), "value %q should be valid", v)
+	}
+	// Invalid values
+	for _, v := range []string{"turbo", "Low", "HIGH", "medium ", "auto", "  "} {
+		require.Error(t, ValidateReasoningEffort(v), "value %q should be rejected", v)
+	}
+}
+
 func TestLoadProjectConfig_ProjectOverridesDefaults(t *testing.T) {
 	tempHome := t.TempDir()
 	originalHome := os.Getenv("HOME")

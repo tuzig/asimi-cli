@@ -198,17 +198,18 @@ func installDaemonAutostart(ctx context.Context, model *TUIModel) (func(*tea.Pro
 		username = u.Username
 	}
 	if err := rpc.NewCourtClient(conn).SetContext(ctx, types.SetContextParams{
-		Project:        repoInfo.Slug,
-		Username:       username,
-		ProjectRoot:    repoInfo.ProjectRoot,
-		WorktreePath:   repoInfo.WorktreePath,
-		Branch:         repoInfo.Branch,
-		APIKeys:        collectAPIKeys(),
-		CodexAccountID: getCodexAccountID(),
-		IsolatedHost:   cli.IsolatedHost,
-		AtifAgentName:  atifAgentName(),
-		Provider:       cli.Provider,
-		Model:          cli.Model,
+		Project:         repoInfo.Slug,
+		Username:        username,
+		ProjectRoot:     repoInfo.ProjectRoot,
+		WorktreePath:    repoInfo.WorktreePath,
+		Branch:          repoInfo.Branch,
+		APIKeys:         collectAPIKeys(),
+		CodexAccountID:  getCodexAccountID(),
+		IsolatedHost:    cli.IsolatedHost,
+		AtifAgentName:   atifAgentName(),
+		Provider:        cli.Provider,
+		Model:           cli.Model,
+		ReasoningEffort: cli.ReasoningEffort,
 	}); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("installDaemonAutostart: handshake failed: %w", err)

@@ -100,6 +100,12 @@ func reconfigureModel(ctx context.Context, ct *court.Court, hp types.SetContextP
 	if hp.Provider != "" {
 		projectCfg.LLM.Provider = hp.Provider
 	}
+	if hp.ReasoningEffort != "" {
+		if err := config.ValidateReasoningEffort(hp.ReasoningEffort); err != nil {
+			return err
+		}
+		projectCfg.LLM.ReasoningEffort = hp.ReasoningEffort
+	}
 
 	repoInfo := repo.RepoInfo{
 		ProjectRoot:  hp.ProjectRoot,

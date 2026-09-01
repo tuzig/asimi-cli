@@ -294,6 +294,10 @@ func NewSession(
 		session.config = &cfg.LLM
 		session.Provider = cfg.LLM.Provider
 		session.Model = cfg.LLM.Model
+		// The resolved reasoning effort (CLI flag > env var > config > default)
+		// becomes the session's default. Ritual-level `effort:` overrides (set on
+		// the session per step) take precedence for the steps that declare one.
+		session.ReasoningEffort = cfg.LLM.ReasoningEffort
 	} else {
 		session.config = &internalconfig.LLMConfig{}
 	}
@@ -645,7 +649,7 @@ var modelContextSizes = []modelContextRule{
 	{regexp.MustCompile(`^[^:]+:(google/)?gemini-.*$`), 1_000_000},
 	// MiniMax via OpenRouter (slash form): 1M.
 	{regexp.MustCompile(`^[^:]+:minimax/minimax-m2\.[57]$`), 1_000_000},
-	{regexp.MustCompile(`^[^:]+:z-ai/glm-5\.2$`), 1_000_000},
+	{regexp.MustCompile(`^[^:]+:z-ai/glm-5\.[23]`), 1_000_000},
 	{regexp.MustCompile(`^[^:]+:mistralai/.*$`), 128_000},
 	{regexp.MustCompile(`^[^:]+:moonshotai/kimi-.*$`), 128_000},
 	{regexp.MustCompile(`^[^:]+:qwen/qwen3\.5-397b-a17b$`), 128_000},

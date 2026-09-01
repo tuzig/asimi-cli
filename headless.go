@@ -131,17 +131,18 @@ func buildSetContextParams(cfg *Config, ri *repo.RepoInfo) types.SetContextParam
 	atifAgentName := atifAgentName()
 
 	return types.SetContextParams{
-		Project:        project,
-		Username:       username,
-		ProjectRoot:    projectRoot,
-		WorktreePath:   worktreePath,
-		Branch:         branch,
-		APIKeys:        collectAPIKeys(),
-		CodexAccountID: getCodexAccountID(),
-		IsolatedHost:   cli.IsolatedHost,
-		AtifAgentName:  atifAgentName,
-		Provider:       cli.Provider,
-		Model:          cli.Model,
+		Project:         project,
+		Username:        username,
+		ProjectRoot:     projectRoot,
+		WorktreePath:    worktreePath,
+		Branch:          branch,
+		APIKeys:         collectAPIKeys(),
+		CodexAccountID:  getCodexAccountID(),
+		IsolatedHost:    cli.IsolatedHost,
+		AtifAgentName:   atifAgentName,
+		Provider:        cli.Provider,
+		Model:           cli.Model,
+		ReasoningEffort: cli.ReasoningEffort,
 	}
 }
 

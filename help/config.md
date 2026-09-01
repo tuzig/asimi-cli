@@ -93,6 +93,7 @@ provider = "anthropic"
 model = "claude-sonnet-4-20250514"
 max_turns = 100
 max_thinking_tokens = 10000
+reasoning_effort = "medium"
 max_tool_output = 50000
 
 [session]

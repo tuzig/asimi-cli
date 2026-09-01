@@ -161,7 +161,7 @@ Each minister has a specific role:
 | `out` | string | Output format template |
 | `on_failure` | string | Action on failure: `retry`, `goto`, `zhengming` |
 | `on_failure_target` | string | Target step name for `goto` |
-| `effort` | string | Reasoning effort for this step: `low`, `medium` (default), or `high`. Forwarded as `reasoning_effort` to providers that support it (e.g. Fireworks Kimi K2). |
+| `effort` | string | Reasoning effort for this step: `low`, `medium`, or `high`. Only set when the step declares an `effort:` key; a step with no `effort:` key inherits the user-configured default (from `[llm] reasoning_effort` / `--reasoning-effort` / `ASIMI_REASONING_EFFORT`, or the provider default if unset). Forwarded as `reasoning_effort` to providers that support it (e.g. Fireworks Kimi K2). |
 
 ---
 

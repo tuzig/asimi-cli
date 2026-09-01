@@ -41,6 +41,7 @@ type Config struct {
 type LLMConfig struct {
     Provider string `koanf:"provider" validate:"required,oneof=anthropic openai googleai"`
     Model    string `koanf:"model" validate:"required"`
+    ReasoningEffort string `koanf:"reasoning_effort"` // validated manually via config.ValidateReasoningEffort: empty|low|medium|high
     BaseURL  string `koanf:"base_url" validate:"omitempty,url"`
 }
 
@@ -173,6 +174,11 @@ Create JSON Schema for configuration validation and IDE support:
         "model": {
           "type": "string",
           "description": "Model name to use with the provider"
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "Reasoning effort level"
         }
       },
       "required": ["provider", "model"]
@@ -194,6 +200,7 @@ Create JSON Schema for configuration validation and IDE support:
 var envVarMap = map[string]string{
     "ASIMI_LLM_PROVIDER":     "llm.provider",
     "ASIMI_LLM_MODEL":        "llm.model",
+    "ASIMI_REASONING_EFFORT": "llm.reasoning_effort",
     "ASIMI_AUTH_METHOD":      "auth.method",
     "ASIMI_BASH_TIMEOUT":     "tools.bash.default_timeout_ms",
     "ASIMI_MCP_TIMEOUT":      "tools.mcp.timeout",

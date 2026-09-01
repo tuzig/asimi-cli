@@ -1832,11 +1832,14 @@ func (r *RitualRunner) executeMinisterStep(ctx context.Context, exec *RitualExec
 		exec.stepStates[exec.CurrentStep].Session = actSession
 	}
 	actSession.SetNotify(notify, exec.ChannelID())
-	effort := step.Effort
-	if effort == "" {
-		effort = "medium"
+	// The session is created with the user-configured reasoning effort as
+	// its default (NewSession applies LLM.ReasoningEffort). A step that
+	// declares an explicit `effort:` key takes precedence over that default;
+	// a step with no `effort:` key inherits the user-configured default
+	// rather than forcing a hard-coded "medium".
+	if step.Effort != "" {
+		actSession.ReasoningEffort = step.Effort
 	}
-	actSession.ReasoningEffort = effort
 
 	// Load court history into the scratchpad for this step.
 	// The scratchpad is injected as a one-shot prefix to the next user message

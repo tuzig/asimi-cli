@@ -69,6 +69,12 @@ func TestConnectOrStartDaemonFastPath(t *testing.T) {
 	}
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 
+	// The real daemon spawns and sets ASIMI_READY_FD, which can leak
+	// into this test's environment (e.g. when the suite runs under a
+	// hosted asimi daemon). The fake daemon below asserts it is not
+	// set, so clear it here to keep the fast-path test hermetic.
+	t.Setenv("ASIMI_READY_FD", "")
+
 	// Start a fake daemon at the path rpc.SocketPath() will resolve
 	// to. connectOrStartDaemon should hit the fast-path.
 	resolved, err := rpc.SocketPath()

@@ -1728,7 +1728,8 @@ type ritualTestMinister struct {
 	tasksCh   chan *Task
 	result    string
 	err       error
-	delay     time.Duration // optional delay before completing each task (for race-condition testing)
+	config    config.LLMConfig // LLM config (used as the user-configured session default)
+	delay     time.Duration    // optional delay before completing each task (for race-condition testing)
 	callCount int
 	callLog   []string // ordered list of Work strings received, for verifying dispatch order
 	mu        sync.Mutex
@@ -1740,7 +1741,7 @@ func (m *ritualTestMinister) Title() string               { return m.id }
 func (m *ritualTestMinister) Tools() []Tool               { return nil }
 func (m *ritualTestMinister) Tasks() chan<- *Task         { return m.tasksCh }
 func (m *ritualTestMinister) Model() LLMProvider          { return nil }
-func (m *ritualTestMinister) GetConfig() config.LLMConfig { return config.LLMConfig{} }
+func (m *ritualTestMinister) GetConfig() config.LLMConfig { return m.config }
 func (m *ritualTestMinister) Run(ctx context.Context) {
 	for {
 		select {
@@ -4779,4 +4780,74 @@ func TestRitualPauseBetweenStepsAbort(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("ritual did not abort after between-steps pause")
 	}
+}
+
+// runStepToCompletion runs a one-step ritual and returns the resulting Session,
+// letting callers assert on how the reasoning effort was applied.
+func runStepEffortSession(t *testing.T, effort string, userDefault string) *Session {
+	t.Helper()
+	db := setupRitualTestDB(t)
+
+	step := RitualStep{Name: "step1", Minister: "forge", Task: "do step 1"}
+	if effort != "" {
+		step.Effort = effort
+	}
+	ritual := &RitualDef{Name: "effort-test", Steps: []RitualStep{step}}
+
+	registry := NewRitualRegistry()
+	registry.Register(ritual)
+
+	ministry := &ritualTestMinister{
+		MinisterBase: MinisterBase{logger: slog.Default()},
+		id:           "forge",
+		tasksCh:      make(chan *Task, 1),
+		config:       config.LLMConfig{ReasoningEffort: userDefault},
+		result:       "done",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go ministry.Run(ctx)
+
+	court := &Court{
+		ministers: map[string]Minister{"forge": ministry},
+		logger:    slog.Default(),
+	}
+	runner := NewRitualRunner(registry, court.GetMinister, court.PublishEvent, db, nil, nil, repo.RepoInfo{})
+
+	exec, err := runner.Start(ctx, "effort-test", testEK(54), nil, nil)
+	require.NoError(t, err)
+	runDone := make(chan error, 1)
+	go func() { runDone <- runner.Run(ctx, exec) }()
+
+	select {
+	case err := <-runDone:
+		require.NoError(t, err, "ritual should complete")
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("ritual did not complete")
+	}
+
+	require.Len(t, exec.stepStates, 1)
+	require.NotNil(t, exec.stepStates[0].Session, "step should have a session")
+	return exec.stepStates[0].Session
+}
+
+// TestRitualEffort_InheritsUserDefault verifies that a ritual step with no
+// explicit `effort:` key inherits the user-configured reasoning effort
+// (set via [llm] reasoning_effort / --reasoning-effort / ASIMI_REASONING_EFFORT)
+// rather than forcing a hard-coded "medium".
+func TestRitualEffort_InheritsUserDefault(t *testing.T) {
+	sess := runStepEffortSession(t, "", "high")
+	assert.Equal(t, "high", sess.ReasoningEffort,
+		"ritual step without explicit effort should inherit the user-configured default")
+}
+
+// TestRitualEffort_ExplicitOverridesUserDefault verifies that an explicit
+// `effort:` on a ritual step takes precedence over the user-configured
+// default.
+func TestRitualEffort_ExplicitOverridesUserDefault(t *testing.T) {
+	sess := runStepEffortSession(t, "low", "high")
+	assert.Equal(t, "low", sess.ReasoningEffort,
+		"explicit ritual step effort should take precedence over the user default")
 }

@@ -1701,6 +1701,80 @@ func (p *networkTrackingProvider) ListModelsRequest(ctx *schemas.BifrostContext,
 	return &schemas.BifrostListModelsResponse{}, nil
 }
 
+// capturingProvider records the outgoing BifrostChatRequest so tests can
+// assert on the parameters the session forwards (e.g. reasoning.effort).
+type capturingProvider struct {
+	lastReq *schemas.BifrostChatRequest
+}
+
+func (p *capturingProvider) ChatCompletionRequest(ctx *schemas.BifrostContext, req *schemas.BifrostChatRequest) (*schemas.BifrostChatResponse, *schemas.BifrostError) {
+	p.lastReq = req
+	return nil, nil
+}
+
+func (p *capturingProvider) ChatCompletionStreamRequest(ctx *schemas.BifrostContext, req *schemas.BifrostChatRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+	p.lastReq = req
+	ch := make(chan *schemas.BifrostStreamChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (p *capturingProvider) ListAllModels(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	return &schemas.BifrostListModelsResponse{}, nil
+}
+
+func (p *capturingProvider) ListModelsRequest(ctx *schemas.BifrostContext, req *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	return &schemas.BifrostListModelsResponse{}, nil
+}
+
+// TestSession_ReasoningEffortRoutesToRequest verifies that a session's
+// ReasoningEffort value is forwarded as the reasoning.effort parameter on
+// the outgoing chat request.
+func TestSession_ReasoningEffortRoutesToRequest(t *testing.T) {
+	prov := &capturingProvider{}
+
+	sess, err := NewSession(prov, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "test",
+		Model:    "test-model",
+	}}, nil, nil, func(any) {}, "You are a test assistant", "test-channel")
+	require.NoError(t, err)
+
+	// Simulate the configured default / ritual override being applied.
+	sess.ReasoningEffort = "high"
+
+	ctx := context.Background()
+	_, err = sess.AskWithStreaming(ctx, "Hello", nil)
+	require.NoError(t, err)
+
+	require.NotNil(t, prov.lastReq, "outgoing chat request should have been captured")
+	require.NotNil(t, prov.lastReq.Params, "request params should be present")
+	require.NotNil(t, prov.lastReq.Params.Reasoning, "reasoning params should be present when effort set")
+	require.NotNil(t, prov.lastReq.Params.Reasoning.Effort, "reasoning.effort should be set")
+	assert.Equal(t, "high", *prov.lastReq.Params.Reasoning.Effort)
+}
+
+// TestSession_NoReasoningEffortLeavesParamsUnset verifies that when the
+// session's ReasoningEffort is empty, the reasoning.effort param is not set
+// (provider default).
+func TestSession_NoReasoningEffortLeavesParamsUnset(t *testing.T) {
+	prov := &capturingProvider{}
+
+	sess, err := NewSession(prov, &SessionConfig{LLM: internalconfig.LLMConfig{
+		Provider: "test",
+		Model:    "test-model",
+	}}, nil, nil, func(any) {}, "test", "test-channel")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = sess.AskWithStreaming(ctx, "Hello", nil)
+	require.NoError(t, err)
+
+	require.NotNil(t, prov.lastReq)
+	if prov.lastReq.Params != nil {
+		assert.Nil(t, prov.lastReq.Params.Reasoning, "reasoning params should be nil when effort empty")
+	}
+}
+
 // TestSession_AskWithStreaming_HonorsContextCancellation verifies that a
 // hung provider stream does not wedge the caller. Cancelling ctx must
 // return promptly with ctx.Err() instead of blocking on the chunk channel.

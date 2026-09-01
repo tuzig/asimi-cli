@@ -118,3 +118,77 @@ func TestProvideConfig_ModelOverride(t *testing.T) {
 	assert.Equal(t, "gpt-4o", cfg.LLM.Model, "Model should be overridden by --model CLI flag")
 	assert.Equal(t, "openai", cfg.LLM.Provider, "Provider should be overridden by --provider CLI flag")
 }
+
+// TestProvideConfig_ReasoningEffortPrecedence verifies the precedence
+// chain for reasoning effort: CLI flag > env var > config file.
+// The env var is folded into the config by LoadProjectConfig, and the
+// CLI flag is applied last in ProvideConfig so it wins.
+func TestProvideConfig_ReasoningEffortPrecedence(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	// Config file sets "low".
+	userConfigDir := filepath.Join(tempHome, ".config", "asimi")
+	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
+	userCfg := `[llm]
+reasoning_effort = "low"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(userConfigDir, "asimi.conf"), []byte(userCfg), 0o644))
+
+	// Env var sets "medium".
+	origEnv := os.Getenv("ASIMI_REASONING_EFFORT")
+	defer os.Setenv("ASIMI_REASONING_EFFORT", origEnv)
+	os.Setenv("ASIMI_REASONING_EFFORT", "medium")
+
+	// CLI flag sets "high" — should win.
+	origCli := cli.ReasoningEffort
+	cli.ReasoningEffort = "high"
+	defer func() { cli.ReasoningEffort = origCli }()
+
+	logger := slog.Default()
+	ri := repo.RepoInfo{ProjectRoot: ""}
+
+	cfg, err := ProvideConfig(logger, ri)
+	require.NoError(t, err)
+	assert.Equal(t, "high", cfg.LLM.ReasoningEffort, "CLI flag should take precedence over env var and config")
+
+	// Clear the CLI flag: env var should now win over the config file.
+	cli.ReasoningEffort = ""
+	cfg, err = ProvideConfig(logger, ri)
+	require.NoError(t, err)
+	assert.Equal(t, "medium", cfg.LLM.ReasoningEffort, "env var should take precedence over config file")
+
+	// Clear the env var too: config file should win.
+	os.Unsetenv("ASIMI_REASONING_EFFORT")
+	cfg, err = ProvideConfig(logger, ri)
+	require.NoError(t, err)
+	assert.Equal(t, "low", cfg.LLM.ReasoningEffort, "config file should take precedence over default")
+}
+
+// TestProvideConfig_ReasoningEffortInvalidCLI verifies that ProvideConfig
+// rejects an invalid --reasoning-effort value even though the CLI flag is
+// merged after LoadProjectConfig's validation (C1 from code review): the CLI
+// merge point applies the shared validator too.
+func TestProvideConfig_ReasoningEffortInvalidCLI(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	_, err := config.EnsureUserConfigExists()
+	require.NoError(t, err)
+
+	origCli := cli.ReasoningEffort
+	cli.ReasoningEffort = "turbo"
+	defer func() { cli.ReasoningEffort = origCli }()
+
+	logger := slog.Default()
+	ri := repo.RepoInfo{ProjectRoot: ""}
+
+	cfg, err := ProvideConfig(logger, ri)
+	require.Error(t, err, "invalid --reasoning-effort should be rejected at the CLI merge point")
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "reasoning_effort")
+}

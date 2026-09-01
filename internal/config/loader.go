@@ -206,6 +206,16 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 	if v := os.Getenv("ASIMI_PROVIDER"); v != "" {
 		config.LLM.Provider = v
 	}
+	if v := os.Getenv("ASIMI_REASONING_EFFORT"); v != "" {
+		config.LLM.ReasoningEffort = v
+	}
+
+	// Validate reasoning_effort accepts empty (provider default), low,
+	// medium, or high. Anything else is rejected to catch typos early,
+	// before the value silently reaches the daemon.
+	if err := ValidateReasoningEffort(config.LLM.ReasoningEffort); err != nil {
+		return nil, err
+	}
 
 	// Set default for session.enabled if not explicitly configured
 	if !k.Exists("session.enabled") {
@@ -235,6 +245,19 @@ func LoadProjectConfig(projectRoot string, resolveKeys bool) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// ValidateReasoningEffort validates a reasoning-effort value, accepting
+// empty (provider default), "low", "medium", or "high". It is used by the
+// config loader and by the CLI/handshake merge points so an invalid value
+// can never reach the provider regardless of the source (config, env var,
+// CLI flag, or SetContextParams handshake).
+func ValidateReasoningEffort(effort string) error {
+	switch effort {
+	case "", "low", "medium", "high":
+		return nil
+	}
+	return fmt.Errorf("invalid reasoning_effort %q: must be one of \"low\", \"medium\", \"high\" (or empty for provider default)", effort)
 }
 
 // ValidateConfigFile parses a config file and returns a rich diagnostic

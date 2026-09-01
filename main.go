@@ -31,20 +31,21 @@ var program *tea.Program
 var logBaseName = "asimi"
 
 var cli struct {
-	Version       bool   `help:"Print version information"`
-	Prompt        string `short:"p" help:"Prompt to send to the agent"`
-	Debug         bool   `help:"Enable debug logging"`
-	NoCleanup     bool   `help:"Don't remove container on exit (for debugging)"`
-	Handsoff      bool   `help:"Auto-answer zhengming and YESNO prompts (hands-off mode)"`
-	MaxTurns      int    `help:"Override max conversation turns (benchmark control)"`
-	Model         string `help:"Override the LLM model (overrides config file and ASIMI_MODEL, for harness-driven runs)"`
-	Provider      string `help:"Override the LLM provider (overrides config file and ASIMI_PROVIDER)"`
-	IsolatedHost  bool   `help:"Run shell commands on host without podman sandbox or approval gates (for already-isolated environments)"`
-	CPUProfile    string `help:"Write CPU profile to file"`
-	MemProfile    string `help:"Write memory profile to file"`
-	Trace         string `help:"Write execution trace to file"`
-	ProfileExitMs int    `help:"Exit after N milliseconds (for profiling startup)"`
-	Atif          bool   `help:"Enable ATIF trajectory recording (agent name: asimi)"`
+	Version         bool   `help:"Print version information"`
+	Prompt          string `short:"p" help:"Prompt to send to the agent"`
+	Debug           bool   `help:"Enable debug logging"`
+	NoCleanup       bool   `help:"Don't remove container on exit (for debugging)"`
+	Handsoff        bool   `help:"Auto-answer zhengming and YESNO prompts (hands-off mode)"`
+	MaxTurns        int    `help:"Override max conversation turns (benchmark control)"`
+	Model           string `help:"Override the LLM model (overrides config file and ASIMI_MODEL, for harness-driven runs)"`
+	Provider        string `help:"Override the LLM provider (overrides config file and ASIMI_PROVIDER)"`
+	ReasoningEffort string `help:"Overrides the LLM reasoning effort (low|medium|high), overrides config file and ASIMI_REASONING_EFFORT)"`
+	IsolatedHost    bool   `help:"Run shell commands on host without podman sandbox or approval gates (for already-isolated environments)"`
+	CPUProfile      string `help:"Write CPU profile to file"`
+	MemProfile      string `help:"Write memory profile to file"`
+	Trace           string `help:"Write execution trace to file"`
+	ProfileExitMs   int    `help:"Exit after N milliseconds (for profiling startup)"`
+	Atif            bool   `help:"Enable ATIF trajectory recording (agent name: asimi)"`
 }
 
 func initLogger() {

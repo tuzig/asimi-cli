@@ -667,6 +667,12 @@ func (s *Court) SetContext(ctx context.Context, params types.SetContextParams) e
 	if params.Provider != "" {
 		projectCfg.LLM.Provider = params.Provider
 	}
+	if params.ReasoningEffort != "" {
+		if err := config.ValidateReasoningEffort(params.ReasoningEffort); err != nil {
+			return err
+		}
+		projectCfg.LLM.ReasoningEffort = params.ReasoningEffort
+	}
 
 	// When params.Project is empty (e.g., during init before config
 	// exists), derive the slug from the git remote so the sandbox image

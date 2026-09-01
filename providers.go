@@ -115,6 +115,12 @@ func ProvideConfig(logger *slog.Logger, repoInfo repo.RepoInfo) (*Config, error)
 	if cli.Provider != "" {
 		cfg.LLM.Provider = cli.Provider
 	}
+	if cli.ReasoningEffort != "" {
+		if err := config.ValidateReasoningEffort(cli.ReasoningEffort); err != nil {
+			return nil, err
+		}
+		cfg.LLM.ReasoningEffort = cli.ReasoningEffort
+	}
 	logger.Info("configuration loaded")
 	return cfg, nil
 }

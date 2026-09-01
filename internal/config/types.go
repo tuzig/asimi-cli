@@ -33,6 +33,7 @@ type LoggingConfig struct {
 type LLMConfig struct {
 	Provider                   string `koanf:"provider"`
 	Model                      string `koanf:"model"`
+	ReasoningEffort            string `koanf:"reasoning_effort"` // "low"|"medium"|"high"; empty = provider default
 	APIKey                     string `koanf:"api_key"`
 	BaseURL                    string `koanf:"base_url"`
 	MaxThinkingTokens          int    `koanf:"max_thinking_tokens"`
